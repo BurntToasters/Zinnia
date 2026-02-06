@@ -1,0 +1,47 @@
+{
+  "name": "chrysanthemum",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cross-platform 7z GUI built with Tauri.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "tauri:dev": "npm run sync-version && npm run licenses && npm run prepare:7z && tauri dev",
+    "tauri:build": "npm run sync-version && npm run licenses && npm run prepare:7z && tauri build",
+    "prepare:7z": "node scripts/prepare-7z.js",
+    "sync-version": "node scripts/sync-version.js",
+    "licenses": "npx npm-license-crawler --production --json public/licenses.json",
+    "build:win:x64": "npm run sync-version && npm run licenses && npm run prepare:7z && tauri build --target x86_64-pc-windows-msvc --bundles nsis",
+    "build:win:arm64": "npm run sync-version && npm run licenses && npm run prepare:7z && tauri build --target aarch64-pc-windows-msvc --bundles nsis",
+    "build:win": "npm run build:win:x64 && npm run build:win:arm64",
+    "build:mac:universal": "npm run sync-version && npm run licenses && npm run prepare:7z && tauri build --target universal-apple-darwin --bundles dmg,app",
+    "build:mac:zip": "node scripts/zip-macos.js",
+    "build:linux:x64": "npm run sync-version && npm run licenses && npm run prepare:7z && tauri build --target x86_64-unknown-linux-gnu --bundles appimage,deb,rpm",
+    "build:linux:arm64": "npm run sync-version && npm run licenses && npm run prepare:7z && tauri build --target aarch64-unknown-linux-gnu --bundles appimage,deb,rpm",
+    "build:linux": "npm run build:linux:x64 && npm run build:linux:arm64",
+    "flatpak:bundle": "flatpak-builder --repo=flatpak-repo --force-clean flatpak-build run.rosie.chrysanthemum.yml && flatpak build-bundle flatpak-repo dist/Chrysanthemum-Linux.flatpak run.rosie.chrysanthemum",
+    "flatpak:clean": "rm -rf flatpak-build flatpak-repo",
+    "release:win": "npm run build:win && dotenv -e .env -- node scripts/gpg-sign.js",
+    "release:mac": "npm run build:mac:universal && npm run build:mac:zip && dotenv -e .env -- node scripts/gpg-sign.js",
+    "release:linux": "npm run build:linux && npm run flatpak:clean && npm run flatpak:bundle && dotenv -e .env -- node scripts/gpg-sign.js",
+    "release:sign:gpg": "dotenv -e .env -- node scripts/gpg-sign.js"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-dialog": "^2.6.0",
+    "@tauri-apps/plugin-process": "^2.0.0",
+    "@tauri-apps/plugin-shell": "^2.3.5",
+    "@tauri-apps/plugin-updater": "^2.10.0",
+    "7zip-bin": "^5.2.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "@types/node": "^25.2.1",
+    "dotenv-cli": "^8.0.0",
+    "typescript": "^5.6.0",
+    "vite": "^7.3.1"
+  }
+}

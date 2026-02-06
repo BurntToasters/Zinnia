@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop">
+  <id>run.rosie.chrysanthemum</id>
+  <name>Chrysanthemum</name>
+  <summary>Cross-platform 7z GUI</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MPL-2.0</project_license>
+  <description>
+    <p>Chrysanthemum is a fast, focused GUI for 7z archives on Windows, macOS, and Linux.</p>
+  </description>
+  <launchable type="desktop-id">run.rosie.chrysanthemum.desktop</launchable>
+  <categories>
+    <category>Utility</category>
+    <category>Archiving</category>
+  </categories>
+</component>

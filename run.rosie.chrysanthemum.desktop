@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Chrysanthemum
+Exec=chrysanthemum %F
+Icon=run.rosie.chrysanthemum
+Categories=Utility;Archiving;
+Terminal=false

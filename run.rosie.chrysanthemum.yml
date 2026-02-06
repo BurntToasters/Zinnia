@@ -1,0 +1,38 @@
+app-id: run.rosie.chrysanthemum
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.node22
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: chrysanthemum
+separate-locales: false
+
+finish-args:
+  - --share=ipc
+  - --socket=x11
+  - --socket=wayland
+  - --share=network
+  - --device=dri
+  - --filesystem=host
+
+modules:
+  - name: chrysanthemum
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/node22/bin:/usr/lib/sdk/rust-stable/bin
+      env:
+        CARGO_HOME: /run/build/chrysanthemum/cargo
+        RUSTUP_HOME: /run/build/chrysanthemum/rustup
+        npm_config_cache: /run/build/chrysanthemum/npm-cache
+        HUSKY: '0'
+    build-commands:
+      - npm install
+      - npm run build
+      - cargo build --release --manifest-path src-tauri/Cargo.toml
+      - install -Dm755 src-tauri/target/release/chrysanthemum /app/bin/chrysanthemum
+      - install -Dm644 run.rosie.chrysanthemum.desktop /app/share/applications/run.rosie.chrysanthemum.desktop
+      - install -Dm644 run.rosie.chrysanthemum.metainfo.xml /app/share/metainfo/run.rosie.chrysanthemum.metainfo.xml
+    sources:
+      - type: dir
+        path: .
