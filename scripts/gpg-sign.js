@@ -1,17 +1,5 @@
 #!/usr/bin/env node
-/**
- * Release pipeline — collect build artifacts, upload to GitHub, GPG-sign,
- * then upload signatures + SHA-256 checksums.
- *
- * Required env (via .env or CI secrets):
- *   GH_TOKEN          GitHub PAT with `repo` scope (or GITHUB_TOKEN in Actions)
- *   GPG_KEY_ID        Key ID / fingerprint to sign with
- *   GPG_PASSPHRASE    Passphrase for non-interactive signing
- *
- * Optional:
- *   GH_REPO_OWNER     defaults to "BurntToasters"
- *   GH_REPO_NAME      defaults to "chrysanthemum"
- */
+
 
 import fs from "fs";
 import path from "path";
@@ -20,7 +8,7 @@ import { execSync } from "child_process";
 import https from "https";
 import { fileURLToPath } from "url";
 
-/* ── paths & config ──────────────────────────────────────── */
+
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -36,32 +24,32 @@ const GH_TOKEN = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
 const REPO_OWNER = process.env.GH_REPO_OWNER || "BurntToasters";
 const REPO_NAME = process.env.GH_REPO_NAME || "chrysanthemum";
 
-/* ── artifact matching ───────────────────────────────────── */
+
 
 const ext = (e) => (n) => n.toLowerCase().endsWith(e);
 const rx = (r) => (n) => r.test(n);
 const exact = (f) => (n) => n === f;
 
-/** Every file type we want in the release. */
+
 const ARTIFACT_RULES = [
-  // Installers & packages
+  
   ext(".exe"), ext(".msi"), ext(".dmg"), ext(".deb"), ext(".rpm"), ext(".flatpak"),
   rx(/\.appimage$/i),
-  // macOS zip (from zip-macos.js, inside bundle/macos/)
+  
   rx(/\.zip$/i),
-  // Tauri updater archives
+  
   rx(/\.nsis\.zip$/i),
   rx(/\.app\.tar\.gz$/i),
   rx(/\.appimage\.tar\.gz$/i),
-  // Tauri updater signatures (.sig next to updater archives)
+  
   rx(/\.nsis\.zip\.sig$/i),
   rx(/\.app\.tar\.gz\.sig$/i),
   rx(/\.appimage\.tar\.gz\.sig$/i),
-  // Updater manifest
+  
   exact("latest.json"),
 ];
 
-/** Subset of artifacts that should be GPG-signed (distributables only). */
+
 const SIGN_RULES = [
   ext(".exe"), ext(".msi"), ext(".dmg"), ext(".deb"), ext(".rpm"), ext(".flatpak"),
   rx(/\.appimage$/i),
@@ -79,7 +67,7 @@ const SEARCH_DIRS = [
   path.join(root, "dist"),
 ];
 
-/* ── filesystem helpers ──────────────────────────────────── */
+
 
 function walk(dir, results = []) {
   if (!fs.existsSync(dir)) return results;
@@ -97,7 +85,7 @@ function walk(dir, results = []) {
 function collectArtifacts() {
   fs.mkdirSync(releaseDir, { recursive: true });
 
-  // First try to find new artifacts from build output
+  
   const found = SEARCH_DIRS.flatMap((d) => walk(d));
   if (found.length > 0) {
     const collected = [];
@@ -112,7 +100,7 @@ function collectArtifacts() {
     return collected;
   }
 
-  // Fall back to artifacts already staged in release/ (e.g. from CI download step)
+  
   const staged = fs.readdirSync(releaseDir)
     .filter((n) => isArtifact(n) && !n.endsWith(".asc") && n !== "SHA256SUMS.txt")
     .map((n) => path.join(releaseDir, n));
@@ -126,7 +114,7 @@ function collectArtifacts() {
   return staged;
 }
 
-/* ── checksums ───────────────────────────────────────────── */
+
 
 function sha256(filePath) {
   return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
@@ -142,7 +130,7 @@ function generateChecksums(files) {
   return out;
 }
 
-/* ── GPG signing ─────────────────────────────────────────── */
+
 
 function signFile(filePath) {
   const asc = `${filePath}.asc`;
@@ -165,7 +153,7 @@ function signArtifacts(files) {
   return ascFiles;
 }
 
-/* ── GitHub API ──────────────────────────────────────────── */
+
 
 function ghRequest(method, endpoint, body) {
   return new Promise((resolve, reject) => {
@@ -205,23 +193,23 @@ function ghRequest(method, endpoint, body) {
 }
 
 async function getOrCreateRelease() {
-  // Check for an existing release (published or draft) with this tag
+  
   try {
     return await ghRequest("GET", `/repos/${REPO_OWNER}/${REPO_NAME}/releases/tags/${TAG}`);
   } catch {
-    // Fall through — tag doesn't exist yet
+    
   }
 
-  // Search drafts (drafts have no tag until published)
+  
   try {
     const releases = await ghRequest("GET", `/repos/${REPO_OWNER}/${REPO_NAME}/releases?per_page=30`);
     const draft = releases.find((r) => r.draft && r.tag_name === TAG);
     if (draft) return draft;
   } catch {
-    // Ignore
+    
   }
 
-  // Create a new draft release
+  
   return await ghRequest("POST", `/repos/${REPO_OWNER}/${REPO_NAME}/releases`, {
     tag_name: TAG,
     name: `Chrysanthemum ${VERSION}`,
@@ -259,7 +247,7 @@ async function uploadAsset(uploadUrl, filePath) {
           if (res.statusCode < 300) {
             resolve(true);
           } else if (res.statusCode === 422) {
-            // Asset with same name already exists — skip
+            
             console.log(`  ~ ${fileName} (already uploaded)`);
             resolve(true);
           } else {
@@ -274,12 +262,12 @@ async function uploadAsset(uploadUrl, filePath) {
   });
 }
 
-/* ── main ────────────────────────────────────────────────── */
+
 
 async function main() {
   console.log(`\nChrysanthemum ${VERSION} — release pipeline\n`);
 
-  // 1 — Verify GPG is available
+  
   console.log("[1/5] Checking GPG...");
   try {
     execSync("gpg --version", { stdio: "pipe" });
@@ -288,21 +276,21 @@ async function main() {
     process.exit(1);
   }
 
-  // 2 — Collect build artifacts into release/
+  
   console.log("[2/5] Collecting artifacts...");
   const artifacts = collectArtifacts();
 
-  // 3 — Generate SHA-256 checksums
+  
   console.log("[3/5] Generating checksums...");
   const checksumFile = generateChecksums(artifacts);
 
-  // 4 — GPG-sign distributable artifacts + checksums
+  
   console.log("[4/5] Signing...");
   const ascFiles = signArtifacts(artifacts);
   ascFiles.push(signFile(checksumFile));
   console.log(`  + SHA256SUMS.txt.asc`);
 
-  // 5 — Upload everything to GitHub release
+  
   if (!GH_TOKEN) {
     console.log("\n[5/5] GH_TOKEN not set — skipping GitHub upload.");
     console.log(`Artifacts staged in: ${releaseDir}\n`);

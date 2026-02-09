@@ -10,7 +10,7 @@ struct RunResult {
     code: i32,
 }
 
-/// Returns the path to `settings.json` inside the app data directory.
+
 fn settings_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     let dir = app
         .path()
@@ -30,7 +30,7 @@ fn load_settings(app: tauri::AppHandle) -> Result<String, String> {
 
 #[tauri::command]
 fn save_settings(app: tauri::AppHandle, json: String) -> Result<(), String> {
-    // Validate that the payload is legal JSON before writing.
+    
     serde_json::from_str::<serde_json::Value>(&json)
         .map_err(|e| format!("Invalid JSON: {e}"))?;
 

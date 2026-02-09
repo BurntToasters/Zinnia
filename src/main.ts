@@ -4,17 +4,24 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { getVersion } from "@tauri-apps/api/app";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
-// ── Helpers ──────────────────────────────────────────────────
 
-/** Type-safe shorthand for `document.getElementById`. */
+
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;")
+          .replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+
 function $<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
   if (!el) throw new Error(`Element #${id} not found`);
   return el as T;
 }
 
-// ── Settings types & persistence ─────────────────────────────
+
 
 interface UserSettings {
   format: string;
@@ -50,7 +57,7 @@ async function saveSettings(settings: UserSettings): Promise<void> {
   await invoke("save_settings", { json: JSON.stringify(settings) });
 }
 
-/** Push `currentSettings` values into the main-form controls. */
+
 function applySettingsToForm() {
   $<HTMLSelectElement>("format").value = currentSettings.format;
   $<HTMLSelectElement>("level").value = currentSettings.level;
@@ -60,7 +67,7 @@ function applySettingsToForm() {
   $<HTMLSelectElement>("path-mode").value = currentSettings.pathMode;
 }
 
-/** Populate the settings modal controls from `currentSettings`. */
+
 function populateSettingsModal() {
   $<HTMLSelectElement>("s-format").value = currentSettings.format;
   $<HTMLSelectElement>("s-level").value = currentSettings.level;
@@ -70,7 +77,7 @@ function populateSettingsModal() {
   $<HTMLSelectElement>("s-path-mode").value = currentSettings.pathMode;
 }
 
-/** Read values back from the settings modal controls. */
+
 function readSettingsModal(): UserSettings {
   return {
     format: $<HTMLSelectElement>("s-format").value,
@@ -82,7 +89,7 @@ function readSettingsModal(): UserSettings {
   };
 }
 
-// ── Modal helpers ────────────────────────────────────────────
+
 
 function openSettingsModal() {
   populateSettingsModal();
@@ -93,7 +100,7 @@ function closeSettingsModal() {
   $("settings-overlay").hidden = true;
 }
 
-// ── DOM refs ─────────────────────────────────────────────────
+
 
 const inputList = $("input-list");
 const logEl = $("log");
@@ -101,6 +108,7 @@ const statusEl = $("status");
 const versionLabel = $("version-label");
 const platformLabel = $("platform-label");
 const appEl = $("app");
+const gridEl = document.querySelector(".grid")!;
 
 const inputs: string[] = [];
 
@@ -108,6 +116,18 @@ function log(line: string) {
   const stamp = new Date().toLocaleTimeString();
   logEl.textContent += `[${stamp}] ${line}\n`;
   logEl.scrollTop = logEl.scrollHeight;
+}
+
+
+function devLog(line: string) {
+  if (import.meta.env.DEV) {
+    log(line);
+  }
+}
+
+function toggleActivity() {
+  const isVisible = gridEl.classList.toggle("show-activity");
+  $("toggle-activity").classList.toggle("is-active", isVisible);
 }
 
 function setStatus(text: string) {
@@ -119,7 +139,7 @@ function renderInputs() {
   if (inputs.length === 0) {
     const empty = document.createElement("div");
     empty.textContent = "Drop files here or use the buttons above.";
-    empty.style.color = "#607387";
+    empty.className = "list__empty";
     inputList.appendChild(empty);
     return;
   }
@@ -224,19 +244,25 @@ function buildArgs() {
 }
 
 async function runAction() {
+  const runBtn = $<HTMLButtonElement>("run-action");
   try {
     const args = buildArgs();
-    log(`7z ${args.join(" ")}`);
+    devLog(`7z ${args.join(" ")}`);
     setStatus("Running");
+    runBtn.disabled = true;
     const result = await invoke<{ stdout: string; stderr: string; code: number }>("run_7z", { args });
     if (result.stdout) log(result.stdout.trim());
     if (result.stderr) log(result.stderr.trim());
-    log(`Exit code: ${result.code}`);
+    devLog(`Exit code: ${result.code}`);
     setStatus("Done");
+    setTimeout(() => setStatus("Idle"), 2000);
   } catch (err) {
     const messageText = err instanceof Error ? err.message : String(err);
     log(`Error: ${messageText}`);
     setStatus("Error");
+    setTimeout(() => setStatus("Idle"), 3000);
+  } finally {
+    runBtn.disabled = false;
   }
 }
 
@@ -255,11 +281,20 @@ async function checkUpdates() {
     setStatus("Checking updates");
     const update = await check();
     if (!update) {
-      log("No updates available.");
+      devLog("No updates available.");
+      await message("You are running the latest version.", { title: "No updates" });
       setStatus("Idle");
       return;
     }
     log(`Update available: ${update.version}`);
+    const confirmed = await message(
+      `Version ${update.version} is available. Download and install now?\n\nThe app will restart after installation.`,
+      { title: "Update available", kind: "info", okLabel: "Install", cancelLabel: "Not now" }
+    );
+    if (!confirmed) {
+      setStatus("Idle");
+      return;
+    }
     await update.downloadAndInstall();
     log("Update installed. Relaunching...");
     await relaunch();
@@ -297,10 +332,11 @@ async function addFiles() {
     multiple: true
   });
   if (!selection) return;
-  if (Array.isArray(selection)) {
-    inputs.push(...selection);
-  } else {
-    inputs.push(selection);
+  const newPaths = Array.isArray(selection) ? selection : [selection];
+  for (const path of newPaths) {
+    if (!inputs.includes(path)) {
+      inputs.push(path);
+    }
   }
   renderInputs();
 }
@@ -311,7 +347,9 @@ async function addFolder() {
     directory: true
   });
   if (selection && typeof selection === "string") {
-    inputs.push(selection);
+    if (!inputs.includes(selection)) {
+      inputs.push(selection);
+    }
     renderInputs();
   }
 }
@@ -344,7 +382,7 @@ function setMode(mode: "add" | "extract") {
   });
 }
 
-// ── Licenses modal ───────────────────────────────────────────
+
 
 interface LicenseEntry {
   licenses: string;
@@ -371,7 +409,7 @@ async function renderLicenses() {
     const data = (await resp.json()) as Record<string, LicenseEntry>;
     container.innerHTML = "";
 
-    // Twemoji credit (not in npm deps)
+    
     const twemojiCard = document.createElement("details");
     twemojiCard.className = "license-card";
     twemojiCard.innerHTML =
@@ -386,7 +424,7 @@ async function renderLicenses() {
       `</div>`;
     container.appendChild(twemojiCard);
 
-    // 7-Zip credit
+    
     const sevenZipCard = document.createElement("details");
     sevenZipCard.className = "license-card";
     sevenZipCard.innerHTML =
@@ -400,18 +438,19 @@ async function renderLicenses() {
       `</div>`;
     container.appendChild(sevenZipCard);
 
-    // npm dependency licenses
+    
     for (const [key, entry] of Object.entries(data)) {
       const card = document.createElement("details");
       card.className = "license-card";
 
-      const repoLink = entry.repository
-        ? `<a href="${entry.repository}" target="_blank" rel="noopener">${entry.repository}</a>`
+      const safeRepo = entry.repository ? escapeHtml(entry.repository) : "";
+      const repoLink = safeRepo
+        ? `<a href="${safeRepo}" target="_blank" rel="noopener">${safeRepo}</a>`
         : "N/A";
 
       card.innerHTML =
         `<summary class="license-card__header">` +
-        `<strong>${key}</strong><span class="license-card__tag">${entry.licenses}</span>` +
+        `<strong>${escapeHtml(key)}</strong><span class="license-card__tag">${escapeHtml(entry.licenses)}</span>` +
         `</summary>` +
         `<div class="license-card__body">${repoLink}</div>`;
       container.appendChild(card);
@@ -422,7 +461,7 @@ async function renderLicenses() {
 }
 
 function wireEvents() {
-  // Main form
+  
   $("add-files").addEventListener("click", addFiles);
   $("add-folder").addEventListener("click", addFolder);
   $("clear-inputs").addEventListener("click", () => {
@@ -435,7 +474,10 @@ function wireEvents() {
   $("show-command").addEventListener("click", previewCommand);
   $("clear-log").addEventListener("click", () => (logEl.textContent = ""));
 
-  // Settings modal
+  
+  $("toggle-activity").addEventListener("click", toggleActivity);
+
+  
   $("open-settings").addEventListener("click", openSettingsModal);
   $("close-settings").addEventListener("click", closeSettingsModal);
   $("cancel-settings").addEventListener("click", closeSettingsModal);
@@ -447,7 +489,7 @@ function wireEvents() {
     applySettingsToForm();
     try {
       await saveSettings(currentSettings);
-      log("Settings saved.");
+      devLog("Settings saved.");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log(`Failed to save settings: ${msg}`);
@@ -455,43 +497,86 @@ function wireEvents() {
     closeSettingsModal();
   });
 
-  // Actions inside settings modal
+  
   $("check-updates").addEventListener("click", checkUpdates);
   $("register-explorer").addEventListener("click", registerExplorer);
   $("unregister-explorer").addEventListener("click", unregisterExplorer);
   $("show-licenses").addEventListener("click", openLicensesModal);
 
-  // Licenses modal
+  
   $("close-licenses").addEventListener("click", closeLicensesModal);
   $("licenses-overlay").addEventListener("click", (e) => {
     if (e.target === e.currentTarget) closeLicensesModal();
   });
 
-  // Mode toggle
+  
   document.querySelectorAll("[data-mode-btn]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const mode = (btn as HTMLButtonElement).dataset.modeBtn === "extract" ? "extract" : "add";
       setMode(mode);
     });
   });
+
+  
+  document.addEventListener("keydown", (e) => {
+    
+    if (e.key === "Escape") {
+      if (!$("settings-overlay").hidden) { closeSettingsModal(); return; }
+      if (!$("licenses-overlay").hidden) { closeLicensesModal(); return; }
+    }
+    
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      runAction();
+    }
+  });
 }
 
 async function init() {
-  // Load persisted settings and apply defaults to the form
+  
   currentSettings = await loadSettings();
   applySettingsToForm();
 
   renderInputs();
   wireEvents();
-  platformLabel.textContent = navigator.platform;
-  versionLabel.textContent = `v${await getVersion()}`;
+  const version = `v${await getVersion()}`;
+  const platform = (navigator as any).userAgentData?.platform ?? navigator.platform;
+  versionLabel.textContent = version;
+  platformLabel.textContent = platform;
+  $("s-version-label").textContent = version;
+  $("s-platform-label").textContent = platform;
 
   await listen<string[]>("open-paths", (event) => {
     const paths = event.payload || [];
     if (paths.length) {
-      inputs.push(...paths);
+      for (const path of paths) {
+        if (!inputs.includes(path)) {
+          inputs.push(path);
+        }
+      }
       renderInputs();
-      log(`Received ${paths.length} path(s) from Explorer.`);
+      devLog(`Received ${paths.length} path(s) from Explorer.`);
+    }
+  });
+
+  
+  const appWindow = getCurrentWebviewWindow();
+  await appWindow.onDragDropEvent((event) => {
+    if (event.payload.type === "enter" || event.payload.type === "over") {
+      inputList.classList.add("list--dragover");
+    } else if (event.payload.type === "leave") {
+      inputList.classList.remove("list--dragover");
+    } else if (event.payload.type === "drop") {
+      inputList.classList.remove("list--dragover");
+      const paths = event.payload.paths;
+      if (paths.length) {
+        for (const path of paths) {
+          if (!inputs.includes(path)) {
+            inputs.push(path);
+          }
+        }
+        renderInputs();
+      }
     }
   });
 }

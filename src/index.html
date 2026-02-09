@@ -11,15 +11,17 @@
       <header class="header">
         <div class="header__brand">
           <h1>Chrysanthemum</h1>
-          <span class="status-badge" id="engine-status">Ready</span>
         </div>
-        <button class="btn btn--ghost btn--sm" id="open-settings" title="Settings">
-          <img src="/twemoji/2699.svg" width="16" height="16" alt="" class="twemoji" draggable="false" />
-          Settings
-        </button>
+        <div class="header__actions">
+          <button class="btn btn--ghost btn--sm" id="toggle-activity">Activity</button>
+          <button class="btn btn--ghost btn--sm" id="open-settings" title="Settings">
+            <img src="/twemoji/2699.svg" width="16" height="16" alt="" class="twemoji" draggable="false" />
+            Settings
+          </button>
+        </div>
       </header>
 
-      <!-- Settings modal -->
+      
       <div class="modal-overlay" id="settings-overlay" hidden>
         <div class="modal" role="dialog" aria-labelledby="settings-title">
           <div class="modal__header">
@@ -27,16 +29,16 @@
             <button class="btn btn--ghost btn--sm" id="close-settings">&times;</button>
           </div>
           <div class="modal__body">
-            <!-- About section -->
+            
             <fieldset class="settings-group">
               <legend>About</legend>
               <div class="settings-row">
                 <span class="settings-label">Version</span>
-                <span class="settings-value" id="version-label">v0.1.0</span>
+                <span class="settings-value" id="s-version-label">v0.1.0</span>
               </div>
               <div class="settings-row">
                 <span class="settings-label">Platform</span>
-                <span class="settings-value" id="platform-label">Platform</span>
+                <span class="settings-value" id="s-platform-label">Platform</span>
               </div>
               <div class="settings-row">
                 <span class="settings-label">Bundle ID</span>
@@ -44,7 +46,7 @@
               </div>
             </fieldset>
 
-            <!-- Default compression settings -->
+            
             <fieldset class="settings-group">
               <legend>Default compression options</legend>
               <div class="grid-split">
@@ -110,7 +112,7 @@
               </div>
             </fieldset>
 
-            <!-- Actions -->
+            
             <fieldset class="settings-group">
               <legend>Actions</legend>
               <div class="settings-actions">
@@ -128,7 +130,7 @@
         </div>
       </div>
 
-      <!-- Licenses modal -->
+      
       <div class="modal-overlay" id="licenses-overlay" hidden>
         <div class="modal modal--wide" role="dialog" aria-labelledby="licenses-title">
           <div class="modal__header">
@@ -163,7 +165,7 @@
             </div>
 
             <div class="field" data-mode-visible="add">
-              <label>Archive destination</label>
+              <label for="output-path">Archive destination</label>
               <div class="input-row">
                 <input type="text" id="output-path" placeholder="Select output archive" />
                 <button class="btn" id="choose-output">Browse</button>
@@ -171,7 +173,7 @@
             </div>
 
             <div class="field" data-mode-visible="extract">
-              <label>Extract to</label>
+              <label for="extract-path">Extract to</label>
               <div class="input-row">
                 <input type="text" id="extract-path" placeholder="Select destination folder" />
                 <button class="btn" id="choose-extract">Browse</button>
@@ -180,7 +182,7 @@
 
             <div class="grid-split" data-mode-visible="add">
               <div class="field">
-                <label>Format</label>
+                <label for="format">Format</label>
                 <select id="format">
                   <option value="7z">7z</option>
                   <option value="zip">zip</option>
@@ -191,7 +193,7 @@
                 </select>
               </div>
               <div class="field">
-                <label>Compression level</label>
+                <label for="level">Compression level</label>
                 <select id="level">
                   <option value="0">0 - Store</option>
                   <option value="1">1 - Fastest</option>
@@ -205,7 +207,7 @@
 
             <div class="grid-split" data-mode-visible="add">
               <div class="field">
-                <label>Method</label>
+                <label for="method">Method</label>
                 <select id="method">
                   <option value="lzma2" selected>LZMA2</option>
                   <option value="lzma">LZMA</option>
@@ -216,7 +218,7 @@
                 </select>
               </div>
               <div class="field">
-                <label>Dictionary size</label>
+                <label for="dict">Dictionary size</label>
                 <select id="dict">
                   <option value="16m">16 MB</option>
                   <option value="32m">32 MB</option>
@@ -230,7 +232,7 @@
 
             <div class="grid-split" data-mode-visible="add">
               <div class="field">
-                <label>Word size</label>
+                <label for="word-size">Word size</label>
                 <select id="word-size">
                   <option value="16">16</option>
                   <option value="32">32</option>
@@ -240,7 +242,7 @@
                 </select>
               </div>
               <div class="field">
-                <label>Solid block size</label>
+                <label for="solid">Solid block size</label>
                 <select id="solid">
                   <option value="off">Off</option>
                   <option value="1g">1 GB</option>
@@ -253,11 +255,11 @@
 
             <div class="grid-split" data-mode-visible="add">
               <div class="field">
-                <label>Threads</label>
+                <label for="threads">Threads</label>
                 <input type="number" id="threads" min="1" max="128" value="8" />
               </div>
               <div class="field">
-                <label>Path mode</label>
+                <label for="path-mode">Path mode</label>
                 <select id="path-mode">
                   <option value="relative" selected>Relative</option>
                   <option value="absolute">Absolute</option>
@@ -276,17 +278,17 @@
 
             <div class="grid-split">
               <div class="field">
-                <label>Password</label>
+                <label for="password">Password</label>
                 <input type="password" id="password" placeholder="Leave blank for none" />
               </div>
               <div class="field">
-                <label>Extra arguments</label>
+                <label for="extra-args">Extra arguments</label>
                 <input type="text" id="extra-args" placeholder="-mx=9 -mmt=on" />
               </div>
             </div>
 
             <div class="field" data-mode-visible="extract">
-              <label>Archive password</label>
+              <label for="extract-password">Archive password</label>
               <input type="password" id="extract-password" placeholder="Only if needed" />
             </div>
 
@@ -308,8 +310,11 @@
         </section>
       </main>
 
-      <footer class="footer">
-        <span id="status">Idle</span>
+      <footer class="statusbar">
+        <span class="statusbar__item" id="status">Idle</span>
+        <span class="statusbar__spacer"></span>
+        <span class="statusbar__item" id="version-label">v0.1.0</span>
+        <span class="statusbar__item" id="platform-label">Platform</span>
       </footer>
     </div>
 
