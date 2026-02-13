@@ -13,4 +13,14 @@
     <category>Utility</category>
     <category>Archiving</category>
   </categories>
+  <url type="homepage">https://github.com/BurntToasters/chrysanthemum</url>
+  <url type="bugtracker">https://github.com/BurntToasters/chrysanthemum/issues</url>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.1.0" date="2025-01-01">
+      <description>
+        <p>Initial release.</p>
+      </description>
+    </release>
+  </releases>
 </component>

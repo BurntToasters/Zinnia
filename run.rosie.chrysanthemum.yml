@@ -27,12 +27,19 @@ modules:
         npm_config_cache: /run/build/chrysanthemum/npm-cache
         HUSKY: '0'
     build-commands:
-      - npm install
+      - npm ci
+      - npm run sync-version
+      - npm run prepare:7z
+      - npm run licenses
       - npm run build
-      - cargo build --release --manifest-path src-tauri/Cargo.toml
+      - npx tauri build --bundles none
       - install -Dm755 src-tauri/target/release/chrysanthemum /app/bin/chrysanthemum
+      - install -Dm755 src-tauri/binaries/7z-x86_64-unknown-linux-gnu /app/bin/7z
       - install -Dm644 run.rosie.chrysanthemum.desktop /app/share/applications/run.rosie.chrysanthemum.desktop
       - install -Dm644 run.rosie.chrysanthemum.metainfo.xml /app/share/metainfo/run.rosie.chrysanthemum.metainfo.xml
+      - install -Dm644 src-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/run.rosie.chrysanthemum.png
+      - install -Dm644 src-tauri/icons/32x32.png /app/share/icons/hicolor/32x32/apps/run.rosie.chrysanthemum.png
+      - install -Dm644 src-tauri/icons/icon.svg /app/share/icons/hicolor/scalable/apps/run.rosie.chrysanthemum.svg
     sources:
       - type: dir
         path: .

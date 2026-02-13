@@ -23,7 +23,7 @@
 
       
       <div class="modal-overlay" id="settings-overlay" hidden>
-        <div class="modal" role="dialog" aria-labelledby="settings-title">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
           <div class="modal__header">
             <h2 id="settings-title">Settings</h2>
             <button class="btn btn--ghost btn--sm" id="close-settings">&times;</button>
@@ -46,9 +46,10 @@
               </div>
             </fieldset>
 
-            
+
             <fieldset class="settings-group">
               <legend>Default compression options</legend>
+              <p class="settings-hint">These values are applied automatically when creating new archives.</p>
               <div class="grid-split">
                 <div class="field">
                   <label for="s-format">Format</label>
@@ -99,6 +100,28 @@
               </div>
               <div class="grid-split">
                 <div class="field">
+                  <label for="s-word-size">Word size</label>
+                  <select id="s-word-size">
+                    <option value="16">16</option>
+                    <option value="32">32</option>
+                    <option value="64">64</option>
+                    <option value="96">96</option>
+                    <option value="128">128</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="s-solid">Solid block size</label>
+                  <select id="s-solid">
+                    <option value="off">Off</option>
+                    <option value="1g">1 GB</option>
+                    <option value="4g">4 GB</option>
+                    <option value="16g">16 GB</option>
+                    <option value="solid">Solid</option>
+                  </select>
+                </div>
+              </div>
+              <div class="grid-split">
+                <div class="field">
                   <label for="s-threads">Threads</label>
                   <input type="number" id="s-threads" min="1" max="128" value="8" />
                 </div>
@@ -110,6 +133,14 @@
                   </select>
                 </div>
               </div>
+              <div class="field">
+                <label>Options</label>
+                <div class="toggle-row">
+                  <label class="toggle"><input type="checkbox" id="s-sfx" />Create SFX</label>
+                  <label class="toggle"><input type="checkbox" id="s-encrypt-headers" />Encrypt file names</label>
+                  <label class="toggle"><input type="checkbox" id="s-delete-after" />Delete files after compression</label>
+                </div>
+              </div>
             </fieldset>
 
             
@@ -117,8 +148,8 @@
               <legend>Actions</legend>
               <div class="settings-actions">
                 <button class="btn btn--sm" id="check-updates">Check for updates</button>
-                <button class="btn btn--sm" id="register-explorer">Enable Explorer integration</button>
-                <button class="btn btn--sm" id="unregister-explorer">Disable Explorer integration</button>
+                <button class="btn btn--sm btn--explorer" id="register-explorer">Enable Explorer integration</button>
+                <button class="btn btn--sm btn--explorer" id="unregister-explorer">Disable Explorer integration</button>
                 <button class="btn btn--sm" id="show-licenses">View open-source licenses</button>
               </div>
             </fieldset>
@@ -132,7 +163,7 @@
 
       
       <div class="modal-overlay" id="licenses-overlay" hidden>
-        <div class="modal modal--wide" role="dialog" aria-labelledby="licenses-title">
+        <div class="modal modal--wide" role="dialog" aria-modal="true" aria-labelledby="licenses-title">
           <div class="modal__header">
             <h2 id="licenses-title">Open-Source Licenses</h2>
             <button class="btn btn--ghost btn--sm" id="close-licenses">&times;</button>
@@ -276,25 +307,31 @@
               </div>
             </div>
 
-            <div class="grid-split">
-              <div class="field">
-                <label for="password">Password</label>
+            <div class="field" data-mode-visible="add">
+              <label for="password">Password</label>
+              <div class="input-row">
                 <input type="password" id="password" placeholder="Leave blank for none" />
-              </div>
-              <div class="field">
-                <label for="extra-args">Extra arguments</label>
-                <input type="text" id="extra-args" placeholder="-mx=9 -mmt=on" />
+                <button type="button" class="btn btn--ghost btn--sm" id="toggle-password">Show</button>
               </div>
             </div>
 
             <div class="field" data-mode-visible="extract">
               <label for="extract-password">Archive password</label>
-              <input type="password" id="extract-password" placeholder="Only if needed" />
+              <div class="input-row">
+                <input type="password" id="extract-password" placeholder="Only if needed" />
+                <button type="button" class="btn btn--ghost btn--sm" id="toggle-extract-password">Show</button>
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="extra-args">Extra arguments</label>
+              <input type="text" id="extra-args" placeholder="-mx=9 -mmt=on" />
             </div>
 
             <div class="actions">
-              <button class="btn btn--primary" id="run-action">Run</button>
-              <button class="btn" id="show-command">Preview command</button>
+              <button class="btn btn--primary" id="run-action" title="Run operation (Ctrl+Enter)">Run</button>
+              <button class="btn btn--ghost" id="cancel-action" hidden>Cancel</button>
+              <button class="btn btn--ghost" id="show-command">Preview command</button>
             </div>
           </div>
         </section>
@@ -312,6 +349,7 @@
 
       <footer class="statusbar">
         <span class="statusbar__item" id="status">Idle</span>
+        <span class="statusbar__item" id="progress" hidden></span>
         <span class="statusbar__spacer"></span>
         <span class="statusbar__item" id="version-label">v0.1.0</span>
         <span class="statusbar__item" id="platform-label">Platform</span>

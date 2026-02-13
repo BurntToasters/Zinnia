@@ -62,5 +62,3 @@ jobs:
       - run: npm run prepare:7z
       - run: npm run licenses
       - run: npx tauri build --target ${{ matrix.target }} --ci
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ""

@@ -4,7 +4,7 @@
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
-import { execSync } from "child_process";
+import { execSync, spawnSync } from "child_process";
 import https from "https";
 import { fileURLToPath } from "url";
 
@@ -134,11 +134,20 @@ function generateChecksums(files) {
 
 function signFile(filePath) {
   const asc = `${filePath}.asc`;
-  let cmd = "gpg --batch --yes --armor --detach-sign";
-  if (GPG_KEY_ID) cmd += ` --local-user "${GPG_KEY_ID}"`;
-  if (GPG_PASSPHRASE) cmd += ` --pinentry-mode loopback --passphrase "${GPG_PASSPHRASE}"`;
-  cmd += ` --output "${asc}" "${filePath}"`;
-  execSync(cmd, { stdio: "pipe" });
+  const args = ["--batch", "--yes", "--armor", "--detach-sign"];
+  if (GPG_KEY_ID) {
+    args.push("--local-user", GPG_KEY_ID);
+  }
+  if (GPG_PASSPHRASE) {
+    args.push("--pinentry-mode", "loopback", "--passphrase", GPG_PASSPHRASE);
+  }
+  args.push("--output", asc, filePath);
+
+  const result = spawnSync("gpg", args, { stdio: "pipe" });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`GPG signing failed: ${result.stderr?.toString() || "unknown error"}`);
+  }
   return asc;
 }
 

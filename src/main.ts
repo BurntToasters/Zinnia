@@ -11,7 +11,7 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;")
-          .replace(/</g, "&lt;").replace(/>/g, "&gt;");
+          .replace(/'/g, "&#39;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 
@@ -28,17 +28,27 @@ interface UserSettings {
   level: string;
   method: string;
   dict: string;
+  wordSize: string;
+  solid: string;
   threads: number;
   pathMode: string;
+  sfx: boolean;
+  encryptHeaders: boolean;
+  deleteAfter: boolean;
 }
 
-const SETTING_DEFAULTS: UserSettings = {
+let SETTING_DEFAULTS: UserSettings = {
   format: "7z",
   level: "5",
   method: "lzma2",
   dict: "256m",
+  wordSize: "64",
+  solid: "16g",
   threads: 8,
   pathMode: "relative",
+  sfx: false,
+  encryptHeaders: false,
+  deleteAfter: false,
 };
 
 let currentSettings: UserSettings = { ...SETTING_DEFAULTS };
@@ -63,8 +73,13 @@ function applySettingsToForm() {
   $<HTMLSelectElement>("level").value = currentSettings.level;
   $<HTMLSelectElement>("method").value = currentSettings.method;
   $<HTMLSelectElement>("dict").value = currentSettings.dict;
+  $<HTMLSelectElement>("word-size").value = currentSettings.wordSize;
+  $<HTMLSelectElement>("solid").value = currentSettings.solid;
   $<HTMLInputElement>("threads").value = String(currentSettings.threads);
   $<HTMLSelectElement>("path-mode").value = currentSettings.pathMode;
+  $<HTMLInputElement>("sfx").checked = currentSettings.sfx;
+  $<HTMLInputElement>("encrypt-headers").checked = currentSettings.encryptHeaders;
+  $<HTMLInputElement>("delete-after").checked = currentSettings.deleteAfter;
 }
 
 
@@ -73,8 +88,13 @@ function populateSettingsModal() {
   $<HTMLSelectElement>("s-level").value = currentSettings.level;
   $<HTMLSelectElement>("s-method").value = currentSettings.method;
   $<HTMLSelectElement>("s-dict").value = currentSettings.dict;
+  $<HTMLSelectElement>("s-word-size").value = currentSettings.wordSize;
+  $<HTMLSelectElement>("s-solid").value = currentSettings.solid;
   $<HTMLInputElement>("s-threads").value = String(currentSettings.threads);
   $<HTMLSelectElement>("s-path-mode").value = currentSettings.pathMode;
+  $<HTMLInputElement>("s-sfx").checked = currentSettings.sfx;
+  $<HTMLInputElement>("s-encrypt-headers").checked = currentSettings.encryptHeaders;
+  $<HTMLInputElement>("s-delete-after").checked = currentSettings.deleteAfter;
 }
 
 
@@ -84,8 +104,13 @@ function readSettingsModal(): UserSettings {
     level: $<HTMLSelectElement>("s-level").value,
     method: $<HTMLSelectElement>("s-method").value,
     dict: $<HTMLSelectElement>("s-dict").value,
+    wordSize: $<HTMLSelectElement>("s-word-size").value,
+    solid: $<HTMLSelectElement>("s-solid").value,
     threads: Number($<HTMLInputElement>("s-threads").value) || SETTING_DEFAULTS.threads,
     pathMode: $<HTMLSelectElement>("s-path-mode").value,
+    sfx: $<HTMLInputElement>("s-sfx").checked,
+    encryptHeaders: $<HTMLInputElement>("s-encrypt-headers").checked,
+    deleteAfter: $<HTMLInputElement>("s-delete-after").checked,
   };
 }
 
@@ -105,12 +130,14 @@ function closeSettingsModal() {
 const inputList = $("input-list");
 const logEl = $("log");
 const statusEl = $("status");
+const progressEl = $("progress");
 const versionLabel = $("version-label");
 const platformLabel = $("platform-label");
 const appEl = $("app");
 const gridEl = document.querySelector(".grid")!;
 
 const inputs: string[] = [];
+let statusTimeout: number | undefined;
 
 function log(line: string) {
   const stamp = new Date().toLocaleTimeString();
@@ -130,15 +157,37 @@ function toggleActivity() {
   $("toggle-activity").classList.toggle("is-active", isVisible);
 }
 
-function setStatus(text: string) {
+function setStatus(text: string, autoResetMs?: number) {
+  if (statusTimeout !== undefined) {
+    clearTimeout(statusTimeout);
+    statusTimeout = undefined;
+  }
   statusEl.textContent = text;
+  if (autoResetMs) {
+    statusTimeout = window.setTimeout(() => {
+      setStatus("Idle");
+      progressEl.hidden = true;
+    }, autoResetMs);
+  }
+}
+
+function setProgress(text: string) {
+  progressEl.textContent = text;
+  progressEl.hidden = false;
+}
+
+function hideProgress() {
+  progressEl.hidden = true;
 }
 
 function renderInputs() {
   inputList.innerHTML = "";
   if (inputs.length === 0) {
     const empty = document.createElement("div");
-    empty.textContent = "Drop files here or use the buttons above.";
+    const mode = getMode();
+    empty.textContent = mode === "extract"
+      ? "Select an archive file to extract."
+      : "Drop files here or use the buttons above.";
     empty.className = "list__empty";
     inputList.appendChild(empty);
     return;
@@ -171,6 +220,27 @@ function splitArgs(raw: string) {
   return out;
 }
 
+function validateExtraArgs(args: string[]): void {
+  const dangerous = ["-sdel", "-p", "-mhe"];
+  const dangerousFound = args.filter(arg => {
+    const normalized = arg.toLowerCase();
+    return dangerous.some(d => normalized.startsWith(d));
+  });
+
+  if (dangerousFound.length > 0) {
+    throw new Error(
+      `Dangerous arguments not allowed in extra args: ${dangerousFound.join(", ")}. ` +
+      `Use the dedicated fields instead.`
+    );
+  }
+
+  for (const arg of args) {
+    if (!arg.startsWith("-")) {
+      throw new Error(`Extra arguments must start with '-'. Invalid: ${arg}`);
+    }
+  }
+}
+
 function getMode() {
   return appEl.dataset.mode === "extract" ? "extract" : "add";
 }
@@ -178,6 +248,10 @@ function getMode() {
 function buildArgs() {
   const mode = getMode();
   const extraArgs = splitArgs($<HTMLInputElement>("extra-args").value.trim());
+
+  if (extraArgs.length > 0) {
+    validateExtraArgs(extraArgs);
+  }
 
   if (mode === "extract") {
     const archive = inputs[0];
@@ -214,7 +288,8 @@ function buildArgs() {
   const dict = $<HTMLSelectElement>("dict").value;
   const wordSize = $<HTMLSelectElement>("word-size").value;
   const solid = $<HTMLSelectElement>("solid").value;
-  const threads = $<HTMLInputElement>("threads").value;
+  const threadsRaw = $<HTMLInputElement>("threads").value;
+  const threads = Math.max(1, Math.min(128, Number(threadsRaw) || 8));
   const pathMode = $<HTMLSelectElement>("path-mode").value;
   const password = $<HTMLInputElement>("password").value.trim();
   const encryptHeaders = $<HTMLInputElement>("encrypt-headers").checked;
@@ -245,31 +320,78 @@ function buildArgs() {
 
 async function runAction() {
   const runBtn = $<HTMLButtonElement>("run-action");
+  const cancelBtn = $<HTMLButtonElement>("cancel-action");
   try {
+    const deleteAfter = $<HTMLInputElement>("delete-after").checked;
+
+    if (deleteAfter && getMode() === "add") {
+      const confirmed = await message(
+        "This will permanently delete source files after compression. Continue?",
+        { title: "Confirm deletion", kind: "warning", okLabel: "Delete files", cancelLabel: "Cancel" }
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
     const args = buildArgs();
-    devLog(`7z ${args.join(" ")}`);
+    const logSafe = args.map(a => a.startsWith("-p") ? "-p***" : a);
+    devLog(`7z ${logSafe.join(" ")}`);
     setStatus("Running");
     runBtn.disabled = true;
+    cancelBtn.hidden = false;
     const result = await invoke<{ stdout: string; stderr: string; code: number }>("run_7z", { args });
+
+    const outputLines = result.stdout.split('\n');
+    for (const line of outputLines) {
+      const percentMatch = line.match(/(\d+)%/);
+      if (percentMatch) {
+        setProgress(`${percentMatch[1]}%`);
+      }
+    }
+
     if (result.stdout) log(result.stdout.trim());
     if (result.stderr) log(result.stderr.trim());
     devLog(`Exit code: ${result.code}`);
-    setStatus("Done");
-    setTimeout(() => setStatus("Idle"), 2000);
+
+    if (result.code !== 0) {
+      log(`7z exited with code ${result.code}`);
+      setStatus("Error", 3000);
+      hideProgress();
+    } else {
+      setStatus("Done", 2000);
+      hideProgress();
+    }
   } catch (err) {
     const messageText = err instanceof Error ? err.message : String(err);
     log(`Error: ${messageText}`);
-    setStatus("Error");
-    setTimeout(() => setStatus("Idle"), 3000);
+    setStatus("Error", 3000);
+    hideProgress();
   } finally {
     runBtn.disabled = false;
+    cancelBtn.hidden = true;
+  }
+}
+
+async function cancelAction() {
+  try {
+    await invoke("cancel_7z");
+    log("Operation cancelled by user");
+    setStatus("Cancelled", 2000);
+  } catch (err) {
+    const messageText = err instanceof Error ? err.message : String(err);
+    devLog(`Cancel error: ${messageText}`);
   }
 }
 
 async function previewCommand() {
   try {
     const args = buildArgs();
-    await message(`7z ${args.join(" ")}`, { title: "Command preview" });
+    const sanitized = args.map(arg => {
+      if (arg.startsWith("-p")) return "-p***";
+      return arg;
+    });
+    await message(`7z ${sanitized.join(" ")}`, { title: "Command preview" });
   } catch (err) {
     const messageText = err instanceof Error ? err.message : String(err);
     await message(messageText, { title: "Missing info" });
@@ -380,6 +502,81 @@ function setMode(mode: "add" | "extract") {
     const el = btn as HTMLButtonElement;
     el.classList.toggle("is-active", el.dataset.modeBtn === mode);
   });
+  renderInputs();
+}
+
+function updateCompressionOptionsForFormat(format: string) {
+  const methodSelect = $<HTMLSelectElement>("method");
+  const dictSelect = $<HTMLSelectElement>("dict");
+  const wordSizeSelect = $<HTMLSelectElement>("word-size");
+  const solidSelect = $<HTMLSelectElement>("solid");
+  const levelSelect = $<HTMLSelectElement>("level");
+
+  const currentMethod = methodSelect.value;
+  const currentDict = dictSelect.value;
+  const currentWordSize = wordSizeSelect.value;
+  const currentSolid = solidSelect.value;
+  const currentLevel = levelSelect.value;
+
+  const validMethods: Record<string, string[]> = {
+    "7z": ["lzma2", "lzma", "ppmd", "bzip2"],
+    "zip": ["deflate", "bzip2", "lzma"],
+    "tar": [],
+    "gzip": [],
+    "bzip2": [],
+    "xz": []
+  };
+
+  const methods = validMethods[format] || [];
+
+  methodSelect.innerHTML = "";
+  if (methods.length > 0) {
+    methods.forEach(m => {
+      const opt = document.createElement("option");
+      opt.value = m;
+      opt.textContent = m === "lzma2" ? "LZMA2" :
+                        m === "lzma" ? "LZMA" :
+                        m === "ppmd" ? "PPMd" :
+                        m === "bzip2" ? "BZip2" :
+                        m === "deflate" ? "Deflate" :
+                        m === "zstd" ? "Zstandard" : m;
+      methodSelect.appendChild(opt);
+    });
+    if (methods.includes(currentMethod)) {
+      methodSelect.value = currentMethod;
+    }
+    methodSelect.disabled = false;
+  } else {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "N/A";
+    methodSelect.appendChild(opt);
+    methodSelect.disabled = true;
+  }
+
+  const supportsDict = format === "7z" || format === "xz";
+  dictSelect.disabled = !supportsDict;
+  if (supportsDict && currentDict) {
+    dictSelect.value = currentDict;
+  }
+
+  const supportsWordSize = format === "7z";
+  wordSizeSelect.disabled = !supportsWordSize;
+  if (supportsWordSize && currentWordSize) {
+    wordSizeSelect.value = currentWordSize;
+  }
+
+  const supportsSolid = format === "7z";
+  solidSelect.disabled = !supportsSolid;
+  if (supportsSolid && currentSolid) {
+    solidSelect.value = currentSolid;
+  }
+
+  if (format === "tar" || format === "gzip" || format === "bzip2" || format === "xz") {
+    if (currentLevel === "0") {
+      levelSelect.value = "5";
+    }
+  }
 }
 
 
@@ -406,6 +603,7 @@ async function renderLicenses() {
 
   try {
     const resp = await fetch("/licenses.json");
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = (await resp.json()) as Record<string, LicenseEntry>;
     container.innerHTML = "";
 
@@ -461,7 +659,7 @@ async function renderLicenses() {
 }
 
 function wireEvents() {
-  
+
   $("add-files").addEventListener("click", addFiles);
   $("add-folder").addEventListener("click", addFolder);
   $("clear-inputs").addEventListener("click", () => {
@@ -471,8 +669,40 @@ function wireEvents() {
   $("choose-output").addEventListener("click", chooseOutput);
   $("choose-extract").addEventListener("click", chooseExtract);
   $("run-action").addEventListener("click", runAction);
+  $("cancel-action").addEventListener("click", cancelAction);
   $("show-command").addEventListener("click", previewCommand);
   $("clear-log").addEventListener("click", () => (logEl.textContent = ""));
+
+
+  $("format").addEventListener("change", (e) => {
+    const format = (e.target as HTMLSelectElement).value;
+    updateCompressionOptionsForFormat(format);
+  });
+
+
+  $("toggle-password").addEventListener("click", () => {
+    const input = $<HTMLInputElement>("password");
+    const btn = $<HTMLButtonElement>("toggle-password");
+    if (input.type === "password") {
+      input.type = "text";
+      btn.textContent = "Hide";
+    } else {
+      input.type = "password";
+      btn.textContent = "Show";
+    }
+  });
+
+  $("toggle-extract-password").addEventListener("click", () => {
+    const input = $<HTMLInputElement>("extract-password");
+    const btn = $<HTMLButtonElement>("toggle-extract-password");
+    if (input.type === "password") {
+      input.type = "text";
+      btn.textContent = "Hide";
+    } else {
+      input.type = "password";
+      btn.textContent = "Show";
+    }
+  });
 
   
   $("toggle-activity").addEventListener("click", toggleActivity);
@@ -489,7 +719,7 @@ function wireEvents() {
     applySettingsToForm();
     try {
       await saveSettings(currentSettings);
-      devLog("Settings saved.");
+      log("Settings saved successfully.");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log(`Failed to save settings: ${msg}`);
@@ -533,18 +763,32 @@ function wireEvents() {
 }
 
 async function init() {
-  
+
+  const cpuCount = await invoke<number>("get_cpu_count");
+  SETTING_DEFAULTS.threads = cpuCount;
+
   currentSettings = await loadSettings();
   applySettingsToForm();
 
   renderInputs();
   wireEvents();
+
+  updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
+
   const version = `v${await getVersion()}`;
-  const platform = (navigator as any).userAgentData?.platform ?? navigator.platform;
+  const platform = await invoke<string>("get_platform_info");
+  const platformDisplay = platform === "windows" ? "Windows" :
+                          platform === "macos" ? "macOS" :
+                          platform === "linux" ? "Linux" : platform;
   versionLabel.textContent = version;
-  platformLabel.textContent = platform;
+  platformLabel.textContent = platformDisplay;
   $("s-version-label").textContent = version;
-  $("s-platform-label").textContent = platform;
+  $("s-platform-label").textContent = platformDisplay;
+
+  const isWindows = platform === "windows";
+  if (isWindows) {
+    document.body.classList.add("platform-windows");
+  }
 
   await listen<string[]>("open-paths", (event) => {
     const paths = event.payload || [];
@@ -558,6 +802,17 @@ async function init() {
       devLog(`Received ${paths.length} path(s) from Explorer.`);
     }
   });
+
+  const initialPaths = await invoke<string[]>("get_initial_paths");
+  if (initialPaths.length) {
+    for (const path of initialPaths) {
+      if (!inputs.includes(path)) {
+        inputs.push(path);
+      }
+    }
+    renderInputs();
+    devLog(`Loaded ${initialPaths.length} path(s) from launch args.`);
+  }
 
   
   const appWindow = getCurrentWebviewWindow();
@@ -581,4 +836,6 @@ async function init() {
   });
 }
 
-init();
+init().catch((err) => {
+  document.body.textContent = `Failed to start: ${err instanceof Error ? err.message : String(err)}`;
+});

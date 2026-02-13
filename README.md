@@ -15,5 +15,5 @@ A cross-platform 7z GUI built with Tauri.
 - `npm run release:sign:gpg`
 
 ## Updater setup
-- Generate a Tauri updater keypair and replace `REPLACE_WITH_TAURI_PUBLIC_KEY` in `src-tauri/tauri.conf.json`.
-- Publish `latest.json` and the updater artifacts to GitHub releases.
+- Updater is already configured in `src-tauri/tauri.conf.json`.
+- The release workflow automatically publishes `latest.json` and updater artifacts to GitHub releases.

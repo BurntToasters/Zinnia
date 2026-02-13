@@ -61,6 +61,14 @@ body {
   flex-wrap: wrap;
 }
 
+.header__actions .btn--explorer {
+  display: none;
+}
+
+.platform-windows .header__actions .btn--explorer {
+  display: inline-block;
+}
+
 
 .grid {
   display: grid;
@@ -88,6 +96,13 @@ body {
   border-radius: var(--radius);
   border: 1px solid var(--border);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel > .panel__body {
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .panel__header {
@@ -184,6 +199,11 @@ input:focus, select:focus {
   outline: 1px solid var(--accent);
   outline-offset: -1px;
   border-color: var(--accent);
+}
+
+input:disabled, select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 input[type="number"] {
@@ -309,17 +329,36 @@ input[type="number"] {
   background: var(--bg);
   border: 1px solid var(--border);
   min-height: 64px;
+  max-height: 200px;
   padding: 4px;
   border-radius: var(--radius);
   display: flex;
   flex-direction: column;
   gap: 0;
   font-size: 0.82rem;
+  overflow-y: auto;
 }
 
 .list--dragover {
   border-color: var(--accent);
+  border-width: 2px;
+  border-style: dashed;
   background: #1f2a33;
+}
+
+.list--dragover::after {
+  content: "Drop files to add";
+  display: block;
+  text-align: center;
+  color: var(--accent);
+  font-size: 0.9rem;
+  padding: 20px;
+  font-weight: 500;
+}
+
+.list--dragover .list__empty,
+.list--dragover .list__item {
+  display: none;
 }
 
 .list__empty {
@@ -374,6 +413,16 @@ input[type="number"] {
 
 .actions .btn--primary {
   padding: 6px 24px;
+  position: relative;
+}
+
+.actions .btn--primary::after {
+  content: "Ctrl+⏎";
+  position: absolute;
+  right: 8px;
+  font-size: 0.7rem;
+  opacity: 0.6;
+  font-weight: 400;
 }
 
 
@@ -418,6 +467,10 @@ input[type="number"] {
 .statusbar__item {
   padding: 3px 10px;
   border-right: 1px solid var(--border);
+}
+
+.statusbar__item#status {
+  font-weight: 500;
 }
 
 .statusbar__spacer {
@@ -492,6 +545,13 @@ input[type="number"] {
   font-weight: 600;
   color: var(--muted);
   padding: 0 4px;
+}
+
+.settings-hint {
+  margin: 0 0 12px;
+  font-size: 0.78rem;
+  color: var(--muted);
+  line-height: 1.4;
 }
 
 .settings-row {
