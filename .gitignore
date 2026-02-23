@@ -3,6 +3,10 @@ logs
 *.log
 npm-debug.log*
 
+licenses.json
+**/.*/
+!.github/
+
 # Runtime data
 pids
 *.pid

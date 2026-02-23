@@ -6,14 +6,13 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
-
-
+const MAX_LOG_LINES = 1000;
+const SAFE_URL_PATTERN = /^https?:\/\//i;
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;")
           .replace(/'/g, "&#39;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
-
 
 function $<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -21,7 +20,11 @@ function $<T extends HTMLElement>(id: string): T {
   return el as T;
 }
 
-
+function parseThreads(raw: string, fallback: number): number {
+  const n = parseInt(raw, 10);
+  if (Number.isNaN(n)) return fallback;
+  return Math.max(1, Math.min(128, n));
+}
 
 interface UserSettings {
   format: string;
@@ -67,7 +70,6 @@ async function saveSettings(settings: UserSettings): Promise<void> {
   await invoke("save_settings", { json: JSON.stringify(settings) });
 }
 
-
 function applySettingsToForm() {
   $<HTMLSelectElement>("format").value = currentSettings.format;
   $<HTMLSelectElement>("level").value = currentSettings.level;
@@ -81,7 +83,6 @@ function applySettingsToForm() {
   $<HTMLInputElement>("encrypt-headers").checked = currentSettings.encryptHeaders;
   $<HTMLInputElement>("delete-after").checked = currentSettings.deleteAfter;
 }
-
 
 function populateSettingsModal() {
   $<HTMLSelectElement>("s-format").value = currentSettings.format;
@@ -97,7 +98,6 @@ function populateSettingsModal() {
   $<HTMLInputElement>("s-delete-after").checked = currentSettings.deleteAfter;
 }
 
-
 function readSettingsModal(): UserSettings {
   return {
     format: $<HTMLSelectElement>("s-format").value,
@@ -106,15 +106,13 @@ function readSettingsModal(): UserSettings {
     dict: $<HTMLSelectElement>("s-dict").value,
     wordSize: $<HTMLSelectElement>("s-word-size").value,
     solid: $<HTMLSelectElement>("s-solid").value,
-    threads: Number($<HTMLInputElement>("s-threads").value) || SETTING_DEFAULTS.threads,
+    threads: parseThreads($<HTMLInputElement>("s-threads").value, SETTING_DEFAULTS.threads),
     pathMode: $<HTMLSelectElement>("s-path-mode").value,
     sfx: $<HTMLInputElement>("s-sfx").checked,
     encryptHeaders: $<HTMLInputElement>("s-encrypt-headers").checked,
     deleteAfter: $<HTMLInputElement>("s-delete-after").checked,
   };
 }
-
-
 
 function openSettingsModal() {
   populateSettingsModal();
@@ -125,8 +123,6 @@ function closeSettingsModal() {
   $("settings-overlay").hidden = true;
 }
 
-
-
 const inputList = $("input-list");
 const logEl = $("log");
 const statusEl = $("status");
@@ -134,17 +130,29 @@ const progressEl = $("progress");
 const versionLabel = $("version-label");
 const platformLabel = $("platform-label");
 const appEl = $("app");
-const gridEl = document.querySelector(".grid")!;
+const gridEl = document.querySelector<HTMLElement>(".grid");
+if (!gridEl) throw new Error("Element .grid not found");
+const runBtn = $<HTMLButtonElement>("run-action");
+const cancelBtn = $<HTMLButtonElement>("cancel-action");
 
 const inputs: string[] = [];
 let statusTimeout: number | undefined;
+let running = false;
+
+function trimLog() {
+  const text = logEl.textContent || "";
+  const lines = text.split("\n");
+  if (lines.length > MAX_LOG_LINES) {
+    logEl.textContent = lines.slice(lines.length - MAX_LOG_LINES).join("\n");
+  }
+}
 
 function log(line: string) {
   const stamp = new Date().toLocaleTimeString();
   logEl.textContent += `[${stamp}] ${line}\n`;
+  trimLog();
   logEl.scrollTop = logEl.scrollHeight;
 }
-
 
 function devLog(line: string) {
   if (import.meta.env.DEV) {
@@ -220,23 +228,31 @@ function splitArgs(raw: string) {
   return out;
 }
 
-function validateExtraArgs(args: string[]): void {
-  const dangerous = ["-sdel", "-p", "-mhe"];
-  const dangerousFound = args.filter(arg => {
-    const normalized = arg.toLowerCase();
-    return dangerous.some(d => normalized.startsWith(d));
-  });
+const ALLOWED_EXTRA_PREFIXES = [
+  "-m", "-x", "-i", "-ao", "-bb", "-bs", "-bt",
+  "-scs", "-slt", "-sns", "-snl", "-sni", "-stl",
+  "-slp", "-ssp", "-ssw", "-y", "-r", "-w",
+];
 
-  if (dangerousFound.length > 0) {
-    throw new Error(
-      `Dangerous arguments not allowed in extra args: ${dangerousFound.join(", ")}. ` +
-      `Use the dedicated fields instead.`
-    );
-  }
+function validateExtraArgs(args: string[]): void {
+  const blocked = ["-sdel", "-p", "-mhe", "-o", "-si", "-so", "-t"];
 
   for (const arg of args) {
     if (!arg.startsWith("-")) {
       throw new Error(`Extra arguments must start with '-'. Invalid: ${arg}`);
+    }
+
+    const lower = arg.toLowerCase();
+    if (blocked.some(b => lower.startsWith(b))) {
+      throw new Error(
+        `"${arg}" is not allowed in extra args. Use the dedicated fields instead.`
+      );
+    }
+
+    if (!ALLOWED_EXTRA_PREFIXES.some(p => lower.startsWith(p))) {
+      throw new Error(
+        `Unknown argument "${arg}". Only recognized 7z switches are allowed.`
+      );
     }
   }
 }
@@ -289,7 +305,7 @@ function buildArgs() {
   const wordSize = $<HTMLSelectElement>("word-size").value;
   const solid = $<HTMLSelectElement>("solid").value;
   const threadsRaw = $<HTMLInputElement>("threads").value;
-  const threads = Math.max(1, Math.min(128, Number(threadsRaw) || 8));
+  const threads = parseThreads(threadsRaw, SETTING_DEFAULTS.threads);
   const pathMode = $<HTMLSelectElement>("path-mode").value;
   const password = $<HTMLInputElement>("password").value.trim();
   const encryptHeaders = $<HTMLInputElement>("encrypt-headers").checked;
@@ -319,8 +335,8 @@ function buildArgs() {
 }
 
 async function runAction() {
-  const runBtn = $<HTMLButtonElement>("run-action");
-  const cancelBtn = $<HTMLButtonElement>("cancel-action");
+  if (running) return;
+
   try {
     const deleteAfter = $<HTMLInputElement>("delete-after").checked;
 
@@ -337,9 +353,13 @@ async function runAction() {
     const args = buildArgs();
     const logSafe = args.map(a => a.startsWith("-p") ? "-p***" : a);
     devLog(`7z ${logSafe.join(" ")}`);
+
+    running = true;
     setStatus("Running");
     runBtn.disabled = true;
+    runBtn.setAttribute("aria-busy", "true");
     cancelBtn.hidden = false;
+
     const result = await invoke<{ stdout: string; stderr: string; code: number }>("run_7z", { args });
 
     const outputLines = result.stdout.split('\n');
@@ -368,7 +388,9 @@ async function runAction() {
     setStatus("Error", 3000);
     hideProgress();
   } finally {
+    running = false;
     runBtn.disabled = false;
+    runBtn.removeAttribute("aria-busy");
     cancelBtn.hidden = true;
   }
 }
@@ -579,8 +601,6 @@ function updateCompressionOptionsForFormat(format: string) {
   }
 }
 
-
-
 interface LicenseEntry {
   licenses: string;
   repository?: string;
@@ -597,6 +617,10 @@ function closeLicensesModal() {
   $("licenses-overlay").hidden = true;
 }
 
+function safeHref(url: string): string {
+  return SAFE_URL_PATTERN.test(url) ? escapeHtml(url) : "#";
+}
+
 async function renderLicenses() {
   const container = $("licenses-list");
   container.textContent = "Loading\u2026";
@@ -607,7 +631,6 @@ async function renderLicenses() {
     const data = (await resp.json()) as Record<string, LicenseEntry>;
     container.innerHTML = "";
 
-    
     const twemojiCard = document.createElement("details");
     twemojiCard.className = "license-card";
     twemojiCard.innerHTML =
@@ -622,7 +645,6 @@ async function renderLicenses() {
       `</div>`;
     container.appendChild(twemojiCard);
 
-    
     const sevenZipCard = document.createElement("details");
     sevenZipCard.className = "license-card";
     sevenZipCard.innerHTML =
@@ -636,14 +658,13 @@ async function renderLicenses() {
       `</div>`;
     container.appendChild(sevenZipCard);
 
-    
     for (const [key, entry] of Object.entries(data)) {
       const card = document.createElement("details");
       card.className = "license-card";
 
-      const safeRepo = entry.repository ? escapeHtml(entry.repository) : "";
-      const repoLink = safeRepo
-        ? `<a href="${safeRepo}" target="_blank" rel="noopener">${safeRepo}</a>`
+      const href = entry.repository ? safeHref(entry.repository) : "";
+      const repoLink = href && href !== "#"
+        ? `<a href="${href}" target="_blank" rel="noopener">${escapeHtml(entry.repository!)}</a>`
         : "N/A";
 
       card.innerHTML =
@@ -659,7 +680,6 @@ async function renderLicenses() {
 }
 
 function wireEvents() {
-
   $("add-files").addEventListener("click", addFiles);
   $("add-folder").addEventListener("click", addFolder);
   $("clear-inputs").addEventListener("click", () => {
@@ -673,12 +693,9 @@ function wireEvents() {
   $("show-command").addEventListener("click", previewCommand);
   $("clear-log").addEventListener("click", () => (logEl.textContent = ""));
 
-
-  $("format").addEventListener("change", (e) => {
-    const format = (e.target as HTMLSelectElement).value;
-    updateCompressionOptionsForFormat(format);
+  $<HTMLSelectElement>("format").addEventListener("change", () => {
+    updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
   });
-
 
   $("toggle-password").addEventListener("click", () => {
     const input = $<HTMLInputElement>("password");
@@ -704,10 +721,8 @@ function wireEvents() {
     }
   });
 
-  
   $("toggle-activity").addEventListener("click", toggleActivity);
 
-  
   $("open-settings").addEventListener("click", openSettingsModal);
   $("close-settings").addEventListener("click", closeSettingsModal);
   $("cancel-settings").addEventListener("click", closeSettingsModal);
@@ -727,19 +742,16 @@ function wireEvents() {
     closeSettingsModal();
   });
 
-  
   $("check-updates").addEventListener("click", checkUpdates);
   $("register-explorer").addEventListener("click", registerExplorer);
   $("unregister-explorer").addEventListener("click", unregisterExplorer);
   $("show-licenses").addEventListener("click", openLicensesModal);
 
-  
   $("close-licenses").addEventListener("click", closeLicensesModal);
   $("licenses-overlay").addEventListener("click", (e) => {
     if (e.target === e.currentTarget) closeLicensesModal();
   });
 
-  
   document.querySelectorAll("[data-mode-btn]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const mode = (btn as HTMLButtonElement).dataset.modeBtn === "extract" ? "extract" : "add";
@@ -747,14 +759,11 @@ function wireEvents() {
     });
   });
 
-  
   document.addEventListener("keydown", (e) => {
-    
     if (e.key === "Escape") {
       if (!$("settings-overlay").hidden) { closeSettingsModal(); return; }
       if (!$("licenses-overlay").hidden) { closeLicensesModal(); return; }
     }
-    
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       runAction();
@@ -763,7 +772,6 @@ function wireEvents() {
 }
 
 async function init() {
-
   const cpuCount = await invoke<number>("get_cpu_count");
   SETTING_DEFAULTS.threads = cpuCount;
 
@@ -814,7 +822,6 @@ async function init() {
     devLog(`Loaded ${initialPaths.length} path(s) from launch args.`);
   }
 
-  
   const appWindow = getCurrentWebviewWindow();
   await appWindow.onDragDropEvent((event) => {
     if (event.payload.type === "enter" || event.payload.type === "over") {

@@ -4,6 +4,8 @@ use tauri::Manager;
 use tauri_plugin_shell::process::{CommandEvent, CommandChild};
 use tauri_plugin_shell::ShellExt;
 
+const MAX_OUTPUT_BYTES: usize = 50 * 1024 * 1024;
+
 #[derive(serde::Serialize)]
 struct RunResult {
     stdout: String,
@@ -14,6 +16,9 @@ struct RunResult {
 struct InitialPaths(Mutex<Vec<String>>);
 struct RunningProcess(Mutex<Option<CommandChild>>);
 
+fn lock_process(state: &RunningProcess) -> Result<std::sync::MutexGuard<'_, Option<CommandChild>>, String> {
+    state.0.lock().map_err(|_| "Process lock poisoned".to_string())
+}
 
 fn settings_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     let dir = app
@@ -34,7 +39,6 @@ fn load_settings(app: tauri::AppHandle) -> Result<String, String> {
 
 #[tauri::command]
 fn save_settings(app: tauri::AppHandle, json: String) -> Result<(), String> {
-    
     serde_json::from_str::<serde_json::Value>(&json)
         .map_err(|e| format!("Invalid JSON: {e}"))?;
 
@@ -42,7 +46,25 @@ fn save_settings(app: tauri::AppHandle, json: String) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    std::fs::write(&path, json).map_err(|e| e.to_string())
+
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, &json).map_err(|e| e.to_string())?;
+
+    #[cfg(windows)]
+    {
+        let _ = std::fs::remove_file(&path);
+    }
+
+    std::fs::rename(&tmp, &path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        e.to_string()
+    })
+}
+
+fn sanitize_output(s: &str) -> String {
+    s.chars()
+        .filter(|c| !c.is_control() || matches!(*c, '\n' | '\r' | '\t'))
+        .collect()
 }
 
 #[tauri::command]
@@ -64,14 +86,24 @@ async fn run_7z(app: tauri::AppHandle, args: Vec<String>, state: tauri::State<'_
     let (mut rx, child) = command.spawn().map_err(|e| e.to_string())?;
 
     {
-        let mut process = state.0.lock().unwrap();
+        let mut process = lock_process(&state)?;
         *process = Some(child);
     }
 
     while let Some(event) = rx.recv().await {
         match event {
-            CommandEvent::Stdout(line) => stdout.push_str(&String::from_utf8_lossy(&line)),
-            CommandEvent::Stderr(line) => stderr.push_str(&String::from_utf8_lossy(&line)),
+            CommandEvent::Stdout(line) => {
+                let chunk = String::from_utf8_lossy(&line);
+                if stdout.len() + chunk.len() <= MAX_OUTPUT_BYTES {
+                    stdout.push_str(&chunk);
+                }
+            }
+            CommandEvent::Stderr(line) => {
+                let chunk = String::from_utf8_lossy(&line);
+                if stderr.len() + chunk.len() <= MAX_OUTPUT_BYTES {
+                    stderr.push_str(&chunk);
+                }
+            }
             CommandEvent::Terminated(payload) => {
                 if let Some(code) = payload.code {
                     exit_code = code;
@@ -83,23 +115,32 @@ async fn run_7z(app: tauri::AppHandle, args: Vec<String>, state: tauri::State<'_
     }
 
     {
-        let mut process = state.0.lock().unwrap();
+        let mut process = lock_process(&state)?;
         *process = None;
     }
 
     Ok(RunResult {
-        stdout,
-        stderr,
+        stdout: sanitize_output(&stdout),
+        stderr: sanitize_output(&stderr),
         code: exit_code,
     })
 }
 
 #[tauri::command]
 fn cancel_7z(state: tauri::State<'_, RunningProcess>) -> Result<(), String> {
-    let mut process = state.0.lock().unwrap();
+    let mut process = lock_process(&state)?;
     if let Some(child) = process.take() {
-        child.kill().map_err(|e| e.to_string())?;
-        Ok(())
+        match child.kill() {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("finished") || msg.contains("not running") {
+                    Ok(())
+                } else {
+                    Err(msg)
+                }
+            }
+        }
     } else {
         Err("No running process to cancel".to_string())
     }
@@ -114,6 +155,10 @@ fn register_windows_context_menu() -> Result<(), String> {
 
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         let exe_str = exe.to_string_lossy().to_string();
+
+        if exe_str.contains('"') {
+            return Err("Installation path contains invalid characters for registry integration.".to_string());
+        }
 
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
         let (classes, _) = hkcu
@@ -156,12 +201,17 @@ fn unregister_windows_context_menu() -> Result<(), String> {
         use winreg::RegKey;
 
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-        let (classes, _) = hkcu
-            .create_subkey("Software\\Classes")
+        let classes = hkcu
+            .open_subkey_with_flags("Software\\Classes", KEY_WRITE)
             .map_err(|e| e.to_string())?;
 
-        let _ = classes.delete_subkey_all("*\\shell\\Chrysanthemum");
-        let _ = classes.delete_subkey_all("Directory\\shell\\Chrysanthemum");
+        for path in ["*\\shell\\Chrysanthemum", "Directory\\shell\\Chrysanthemum"] {
+            match classes.delete_subkey_all(path) {
+                Ok(()) => {}
+                Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(format!("Failed to remove {}: {}", path, e)),
+            }
+        }
 
         Ok(())
     }
@@ -173,8 +223,9 @@ fn unregister_windows_context_menu() -> Result<(), String> {
 }
 
 #[tauri::command]
-fn get_initial_paths(state: tauri::State<'_, InitialPaths>) -> Vec<String> {
-    std::mem::take(&mut *state.0.lock().unwrap())
+fn get_initial_paths(state: tauri::State<'_, InitialPaths>) -> Result<Vec<String>, String> {
+    let mut paths = state.0.lock().map_err(|_| "Lock poisoned".to_string())?;
+    Ok(std::mem::take(&mut *paths))
 }
 
 #[tauri::command]
@@ -237,5 +288,5 @@ fn main() {
             get_cpu_count
         ])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .expect("failed to initialize Tauri application");
 }
