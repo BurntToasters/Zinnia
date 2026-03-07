@@ -67,6 +67,48 @@ const SEARCH_DIRS = [
   path.join(root, "dist"),
 ];
 
+function artifactMatchesVersion(name) {
+  if (name === "latest.json") return true;
+  const versions = name.match(/\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?/g);
+  if (!versions || versions.length === 0) return true;
+  return versions.includes(VERSION);
+}
+
+function clearReleaseStaging() {
+  if (!fs.existsSync(releaseDir)) return;
+  for (const name of fs.readdirSync(releaseDir)) {
+    const fullPath = path.join(releaseDir, name);
+    let isFile = false;
+    try {
+      isFile = fs.statSync(fullPath).isFile();
+    } catch {
+      continue;
+    }
+    if (!isFile) continue;
+    if (isArtifact(name) || name.endsWith(".asc") || name === "SHA256SUMS.txt") {
+      fs.rmSync(fullPath, { force: true });
+    }
+  }
+}
+
+function pickNewestByBasename(paths) {
+  const latest = new Map();
+  for (const filePath of paths) {
+    const name = path.basename(filePath);
+    let stat;
+    try {
+      stat = fs.statSync(filePath);
+    } catch {
+      continue;
+    }
+    const current = latest.get(name);
+    if (!current || stat.mtimeMs > current.mtimeMs) {
+      latest.set(name, { filePath, mtimeMs: stat.mtimeMs });
+    }
+  }
+  return Array.from(latest.values()).map((entry) => entry.filePath);
+}
+
 
 
 function walk(dir, results = []) {
@@ -86,15 +128,20 @@ function collectArtifacts() {
   fs.mkdirSync(releaseDir, { recursive: true });
 
   
-  const found = SEARCH_DIRS.flatMap((d) => walk(d));
+  const discovered = SEARCH_DIRS.flatMap((d) => walk(d));
+  const found = discovered.filter((filePath) => artifactMatchesVersion(path.basename(filePath)));
   if (found.length > 0) {
+    clearReleaseStaging();
+    if (found.length < discovered.length) {
+      console.log(`  ~ Skipped ${discovered.length - found.length} artifact(s) not matching ${VERSION}`);
+    }
+
+    const selected = pickNewestByBasename(found);
     const collected = [];
-    for (const src of found) {
+    for (const src of selected) {
       const dest = path.join(releaseDir, path.basename(src));
-      if (!fs.existsSync(dest)) {
-        fs.copyFileSync(src, dest);
-        console.log(`  + ${path.basename(src)}`);
-      }
+      fs.copyFileSync(src, dest);
+      console.log(`  + ${path.basename(src)}`);
       collected.push(dest);
     }
     return collected;
@@ -102,7 +149,7 @@ function collectArtifacts() {
 
   
   const staged = fs.readdirSync(releaseDir)
-    .filter((n) => isArtifact(n) && !n.endsWith(".asc") && n !== "SHA256SUMS.txt")
+    .filter((n) => isArtifact(n) && artifactMatchesVersion(n) && !n.endsWith(".asc") && n !== "SHA256SUMS.txt")
     .map((n) => path.join(releaseDir, n));
 
   if (staged.length === 0) {

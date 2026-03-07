@@ -14,6 +14,10 @@
     "prepare:7z": "node scripts/prepare-7z.js",
     "sync-version": "node scripts/sync-version.js",
     "licenses": "npx npm-license-crawler --production --json public/licenses.json",
+    "dist:clean": "node scripts/dist-tools.js clean",
+    "dist:clean-release": "node scripts/dist-tools.js clean-release",
+    "dist:clean-release-artifacts": "node scripts/dist-tools.js clean-release-artifacts",
+    "dist:clean-all": "node scripts/dist-tools.js clean-all",
     "build:win:x64": "npm run sync-version && npm run licenses && npm run prepare:7z && dotenv -e .env -- tauri build --target x86_64-pc-windows-msvc --bundles nsis",
     "build:win:arm64": "npm run sync-version && npm run licenses && npm run prepare:7z && dotenv -e .env -- tauri build --target aarch64-pc-windows-msvc --bundles nsis",
     "build:win": "npm run build:win:x64 && npm run build:win:arm64",
@@ -24,9 +28,9 @@
     "build:linux": "npm run build:linux:x64 && npm run build:linux:arm64",
     "flatpak:bundle": "flatpak-builder --repo=flatpak-repo --force-clean flatpak-build run.rosie.zinnia.yml && flatpak build-bundle flatpak-repo dist/Zinnia-Linux.flatpak run.rosie.zinnia",
     "flatpak:clean": "rm -rf flatpak-build flatpak-repo",
-    "release:win": "npm run build:win && dotenv -e .env -- node scripts/gpg-sign.js",
-    "release:mac": "npm run build:mac:universal && npm run build:mac:zip && dotenv -e .env -- node scripts/gpg-sign.js",
-    "release:linux": "npm run build:linux && npm run flatpak:clean && npm run flatpak:bundle && dotenv -e .env -- node scripts/gpg-sign.js",
+    "release:win": "npm run dist:clean-release-artifacts && npm run build:win && dotenv -e .env -- node scripts/gpg-sign.js",
+    "release:mac": "npm run dist:clean-release-artifacts && npm run build:mac:universal && npm run build:mac:zip && dotenv -e .env -- node scripts/gpg-sign.js",
+    "release:linux": "npm run dist:clean-release-artifacts && npm run build:linux && npm run flatpak:clean && npm run flatpak:bundle && dotenv -e .env -- node scripts/gpg-sign.js",
     "release:sign:gpg": "dotenv -e .env -- node scripts/gpg-sign.js"
   },
   "dependencies": {
