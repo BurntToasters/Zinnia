@@ -223,6 +223,32 @@ fn unregister_windows_context_menu() -> Result<(), String> {
 }
 
 #[tauri::command]
+fn get_windows_context_menu_status() -> Result<bool, String> {
+    #[cfg(windows)]
+    {
+        use winreg::enums::*;
+        use winreg::RegKey;
+
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let classes = hkcu
+            .open_subkey_with_flags("Software\\Classes", KEY_READ)
+            .map_err(|e| e.to_string())?;
+
+        let file_entry_exists = classes.open_subkey("*\\shell\\Zinnia\\command").is_ok();
+        let dir_entry_exists = classes
+            .open_subkey("Directory\\shell\\Zinnia\\command")
+            .is_ok();
+
+        Ok(file_entry_exists && dir_entry_exists)
+    }
+
+    #[cfg(not(windows))]
+    {
+        Ok(false)
+    }
+}
+
+#[tauri::command]
 fn get_initial_paths(state: tauri::State<'_, InitialPaths>) -> Result<Vec<String>, String> {
     let mut paths = state.0.lock().map_err(|_| "Lock poisoned".to_string())?;
     Ok(std::mem::take(&mut *paths))
@@ -281,6 +307,7 @@ fn main() {
             cancel_7z,
             register_windows_context_menu,
             unregister_windows_context_menu,
+            get_windows_context_menu_status,
             load_settings,
             save_settings,
             get_initial_paths,

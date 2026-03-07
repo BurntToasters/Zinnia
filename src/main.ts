@@ -137,6 +137,7 @@ const cancelBtn = $<HTMLButtonElement>("cancel-action");
 const inputs: string[] = [];
 let statusTimeout: number | undefined;
 let running = false;
+let explorerIntegrationEnabled = false;
 
 function trimLog() {
   const text = logEl.textContent || "";
@@ -497,23 +498,30 @@ async function addFolder() {
   }
 }
 
-async function registerExplorer() {
+function setExplorerToggleState(enabled: boolean) {
+  explorerIntegrationEnabled = enabled;
+  const btn = document.getElementById("toggle-explorer") as HTMLButtonElement | null;
+  if (!btn) return;
+  btn.textContent = enabled
+    ? "Disable Explorer integration"
+    : "Enable Explorer integration";
+  btn.setAttribute("aria-pressed", enabled ? "true" : "false");
+}
+
+async function toggleExplorer() {
   try {
-    await invoke("register_windows_context_menu");
-    log("Explorer integration enabled.");
+    if (explorerIntegrationEnabled) {
+      await invoke("unregister_windows_context_menu");
+      setExplorerToggleState(false);
+      log("Explorer integration disabled.");
+    } else {
+      await invoke("register_windows_context_menu");
+      setExplorerToggleState(true);
+      log("Explorer integration enabled.");
+    }
   } catch (err) {
     const messageText = err instanceof Error ? err.message : String(err);
     log(`Explorer integration failed: ${messageText}`);
-  }
-}
-
-async function unregisterExplorer() {
-  try {
-    await invoke("unregister_windows_context_menu");
-    log("Explorer integration disabled.");
-  } catch (err) {
-    const messageText = err instanceof Error ? err.message : String(err);
-    log(`Explorer integration removal failed: ${messageText}`);
   }
 }
 
@@ -742,8 +750,7 @@ function wireEvents() {
   });
 
   $("check-updates").addEventListener("click", checkUpdates);
-  $("register-explorer").addEventListener("click", registerExplorer);
-  $("unregister-explorer").addEventListener("click", unregisterExplorer);
+  $("toggle-explorer").addEventListener("click", toggleExplorer);
   $("show-licenses").addEventListener("click", openLicensesModal);
 
   $("close-licenses").addEventListener("click", closeLicensesModal);
@@ -795,6 +802,14 @@ async function init() {
   const isWindows = platform === "windows";
   if (isWindows) {
     document.body.classList.add("platform-windows");
+    try {
+      const enabled = await invoke<boolean>("get_windows_context_menu_status");
+      setExplorerToggleState(enabled);
+    } catch (err) {
+      const messageText = err instanceof Error ? err.message : String(err);
+      devLog(`Explorer status probe failed: ${messageText}`);
+      setExplorerToggleState(false);
+    }
   }
 
   await listen<string[]>("open-paths", (event) => {

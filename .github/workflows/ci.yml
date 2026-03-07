@@ -61,4 +61,4 @@ jobs:
       - run: npm run sync-version
       - run: npm run prepare:7z
       - run: npm run licenses
-      - run: npx tauri build --target ${{ matrix.target }} --config src-tauri/tauri.conf.ci.json --ci
+      - run: npx tauri build --target ${{ matrix.target }} --no-bundle --ci

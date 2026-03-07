@@ -68,11 +68,11 @@ body {
   -webkit-app-region: no-drag;
 }
 
-.header__actions .btn--explorer {
+.btn.btn--explorer {
   display: none;
 }
 
-.platform-windows .header__actions .btn--explorer {
+.platform-windows .btn.btn--explorer {
   display: inline-flex;
 }
 
