@@ -1,20 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop">
-  <id>run.rosie.chrysanthemum</id>
-  <name>Chrysanthemum</name>
+  <id>run.rosie.zinnia</id>
+  <name>Zinnia</name>
   <summary>Cross-platform 7z GUI</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MPL-2.0</project_license>
   <description>
-    <p>Chrysanthemum is a fast, focused GUI for 7z archives on Windows, macOS, and Linux.</p>
+    <p>Zinnia is a fast, focused GUI for 7z archives on Windows, macOS, and Linux.</p>
   </description>
-  <launchable type="desktop-id">run.rosie.chrysanthemum.desktop</launchable>
+  <launchable type="desktop-id">run.rosie.zinnia.desktop</launchable>
   <categories>
     <category>Utility</category>
     <category>Archiving</category>
   </categories>
-  <url type="homepage">https://github.com/BurntToasters/chrysanthemum</url>
-  <url type="bugtracker">https://github.com/BurntToasters/chrysanthemum/issues</url>
+  <url type="homepage">https://github.com/BurntToasters/zinnia</url>
+  <url type="bugtracker">https://github.com/BurntToasters/zinnia/issues</url>
   <content_rating type="oars-1.1" />
   <releases>
     <release version="0.1.0" date="2025-01-01">

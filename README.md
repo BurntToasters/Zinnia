@@ -1,4 +1,4 @@
-# Chrysanthemum
+# Zinnia
 A cross-platform 7z GUI built with Tauri.
 
 ## Dev

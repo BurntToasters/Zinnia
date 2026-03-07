@@ -491,7 +491,7 @@ input[type="number"] {
 }
 
 .actions .btn--primary {
-  padding: 8px 28px;
+  padding: 8px 48px 8px 28px;
   font-size: 13px;
   border-radius: var(--radius);
   position: relative;

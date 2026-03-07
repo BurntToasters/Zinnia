@@ -166,10 +166,10 @@ fn register_windows_context_menu() -> Result<(), String> {
             .map_err(|e| e.to_string())?;
 
         let entries = [
-            ("*\\shell\\Chrysanthemum", "Add to Chrysanthemum"),
+            ("*\\shell\\Zinnia", "Add to Zinnia"),
             (
-                "Directory\\shell\\Chrysanthemum",
-                "Add folder to Chrysanthemum",
+                "Directory\\shell\\Zinnia",
+                "Add folder to Zinnia",
             ),
         ];
 
@@ -205,7 +205,7 @@ fn unregister_windows_context_menu() -> Result<(), String> {
             .open_subkey_with_flags("Software\\Classes", KEY_WRITE)
             .map_err(|e| e.to_string())?;
 
-        for path in ["*\\shell\\Chrysanthemum", "Directory\\shell\\Chrysanthemum"] {
+        for path in ["*\\shell\\Zinnia", "Directory\\shell\\Zinnia"] {
             match classes.delete_subkey_all(path) {
                 Ok(()) => {}
                 Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => {}

@@ -453,7 +453,7 @@ async function chooseOutput() {
   const format = $<HTMLSelectElement>("format").value;
   const output = await save({
     title: "Choose output archive",
-    defaultPath: `chrysanthemum.${format}`
+    defaultPath: `zinnia.${format}`
   });
   if (output) {
     $<HTMLInputElement>("output-path").value = output;

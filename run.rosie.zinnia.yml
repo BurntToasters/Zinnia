@@ -1,0 +1,45 @@
+app-id: run.rosie.zinnia
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.node22
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: zinnia
+separate-locales: false
+
+finish-args:
+  - --share=ipc
+  - --socket=x11
+  - --socket=wayland
+  - --share=network
+  - --device=dri
+  - --filesystem=host
+
+modules:
+  - name: zinnia
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/node22/bin:/usr/lib/sdk/rust-stable/bin
+      env:
+        CARGO_HOME: /run/build/zinnia/cargo
+        RUSTUP_HOME: /run/build/zinnia/rustup
+        npm_config_cache: /run/build/zinnia/npm-cache
+        HUSKY: '0'
+    build-commands:
+      - npm ci
+      - npm run sync-version
+      - npm run prepare:7z
+      - npm run licenses
+      - npm run build
+      - npx tauri build --bundles none
+      - install -Dm755 src-tauri/target/release/zinnia /app/bin/zinnia
+      - install -Dm755 src-tauri/binaries/7z-x86_64-unknown-linux-gnu /app/bin/7z
+      - install -Dm644 run.rosie.zinnia.desktop /app/share/applications/run.rosie.zinnia.desktop
+      - install -Dm644 run.rosie.zinnia.metainfo.xml /app/share/metainfo/run.rosie.zinnia.metainfo.xml
+      - install -Dm644 src-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/run.rosie.zinnia.png
+      - install -Dm644 src-tauri/icons/32x32.png /app/share/icons/hicolor/32x32/apps/run.rosie.zinnia.png
+      - install -Dm644 src-tauri/icons/icon.svg /app/share/icons/hicolor/scalable/apps/run.rosie.zinnia.svg
+    sources:
+      - type: dir
+        path: .

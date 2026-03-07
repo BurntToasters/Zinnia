@@ -22,7 +22,7 @@ const GPG_KEY_ID = process.env.GPG_KEY_ID;
 const GPG_PASSPHRASE = process.env.GPG_PASSPHRASE;
 const GH_TOKEN = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
 const REPO_OWNER = process.env.GH_REPO_OWNER || "BurntToasters";
-const REPO_NAME = process.env.GH_REPO_NAME || "chrysanthemum";
+const REPO_NAME = process.env.GH_REPO_NAME || "zinnia";
 
 
 
@@ -172,7 +172,7 @@ function ghRequest(method, endpoint, body) {
       method,
       headers: {
         Authorization: `Bearer ${GH_TOKEN}`,
-        "User-Agent": "Chrysanthemum-Release",
+        "User-Agent": "Zinnia-Release",
         Accept: "application/vnd.github.v3+json",
         "X-GitHub-Api-Version": "2022-11-28",
       },
@@ -221,7 +221,7 @@ async function getOrCreateRelease() {
   
   return await ghRequest("POST", `/repos/${REPO_OWNER}/${REPO_NAME}/releases`, {
     tag_name: TAG,
-    name: `Chrysanthemum ${VERSION}`,
+    name: `Zinnia ${VERSION}`,
     draft: true,
     prerelease: VERSION.includes("beta") || VERSION.includes("alpha"),
   });
@@ -243,7 +243,7 @@ async function uploadAsset(uploadUrl, filePath) {
         method: "POST",
         headers: {
           Authorization: `Bearer ${GH_TOKEN}`,
-          "User-Agent": "Chrysanthemum-Release",
+          "User-Agent": "Zinnia-Release",
           Accept: "application/vnd.github.v3+json",
           "Content-Type": isText ? "text/plain" : "application/octet-stream",
           "Content-Length": content.length,
@@ -274,7 +274,7 @@ async function uploadAsset(uploadUrl, filePath) {
 
 
 async function main() {
-  console.log(`\nChrysanthemum ${VERSION} — release pipeline\n`);
+  console.log(`\nZinnia ${VERSION} — release pipeline\n`);
 
   
   console.log("[1/5] Checking GPG...");

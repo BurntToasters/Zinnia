@@ -1,4 +1,4 @@
-# Build prerequisites for Chrysanthemum
+# Build prerequisites for Zinnia
 
 ## Windows
 - Windows 10/11 x64 or ARM64

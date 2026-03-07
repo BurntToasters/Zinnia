@@ -1,5 +1,5 @@
 [package]
-name = "chrysanthemum"
+name = "zinnia"
 version = "0.1.0"
 description = "Cross-platform 7z GUI built with Tauri."
 authors = ["BurntToasters <code@rosie.run>"]
