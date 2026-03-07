@@ -130,8 +130,7 @@ const progressEl = $("progress");
 const versionLabel = $("version-label");
 const platformLabel = $("platform-label");
 const appEl = $("app");
-const gridEl = document.querySelector<HTMLElement>(".grid");
-if (!gridEl) throw new Error("Element .grid not found");
+const gridEl = document.querySelector<HTMLElement>(".grid")!;
 const runBtn = $<HTMLButtonElement>("run-action");
 const cancelBtn = $<HTMLButtonElement>("cancel-action");
 
@@ -343,7 +342,7 @@ async function runAction() {
     if (deleteAfter && getMode() === "add") {
       const confirmed = await message(
         "This will permanently delete source files after compression. Continue?",
-        { title: "Confirm deletion", kind: "warning", okLabel: "Delete files", cancelLabel: "Cancel" }
+        { title: "Confirm deletion", kind: "warning", okLabel: "Delete files" }
       );
       if (!confirmed) {
         return;
@@ -433,7 +432,7 @@ async function checkUpdates() {
     log(`Update available: ${update.version}`);
     const confirmed = await message(
       `Version ${update.version} is available. Download and install now?\n\nThe app will restart after installation.`,
-      { title: "Update available", kind: "info", okLabel: "Install", cancelLabel: "Not now" }
+      { title: "Update available", kind: "info", okLabel: "Install" }
     );
     if (!confirmed) {
       setStatus("Idle");
