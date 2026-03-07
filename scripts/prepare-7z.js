@@ -10,6 +10,7 @@ const mappings = [
   { source: "win/arm64/7za.exe", target: "7z-aarch64-pc-windows-msvc.exe" },
   { source: "mac/7zz", target: "7z-x86_64-apple-darwin" },
   { source: "mac/7zz", target: "7z-aarch64-apple-darwin" },
+  { source: "mac/7zz", target: "7z-universal-apple-darwin" },
   { source: "linux/x64/7zzs", target: "7z-x86_64-unknown-linux-gnu" },
   { source: "linux/arm64/7zzs", target: "7z-aarch64-unknown-linux-gnu" }
 ];
