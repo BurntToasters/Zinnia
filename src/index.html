@@ -135,10 +135,19 @@
               </div>
             </fieldset>
 
+            <fieldset class="settings-group" data-update-ui>
+              <legend>General</legend>
+              <div class="field">
+                <div class="toggle-row">
+                  <label class="toggle"><input type="checkbox" id="s-auto-check-updates" checked />Check for updates on startup</label>
+                </div>
+              </div>
+            </fieldset>
+
             <fieldset class="settings-group">
               <legend>Actions</legend>
               <div class="settings-actions">
-                <button class="btn btn--sm" id="check-updates">Check for updates</button>
+                <button class="btn btn--sm" id="check-updates" data-update-ui>Check for updates</button>
                 <button class="btn btn--sm btn--explorer" id="toggle-explorer">Enable Explorer integration</button>
                 <button class="btn btn--sm" id="show-licenses">View open-source licenses</button>
               </div>

@@ -260,6 +260,11 @@ fn get_platform_info() -> String {
 }
 
 #[tauri::command]
+fn is_flatpak() -> bool {
+    std::env::var("FLATPAK_ID").is_ok() || std::path::Path::new("/.flatpak-info").exists()
+}
+
+#[tauri::command]
 fn get_cpu_count() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get())
@@ -300,6 +305,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_notification::init())
         .manage(InitialPaths(Mutex::new(collect_cli_paths())))
         .manage(RunningProcess(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
@@ -312,7 +318,8 @@ fn main() {
             save_settings,
             get_initial_paths,
             get_platform_info,
-            get_cpu_count
+            get_cpu_count,
+            is_flatpak
         ])
         .run(tauri::generate_context!())
         .expect("failed to initialize Tauri application");

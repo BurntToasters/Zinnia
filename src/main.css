@@ -746,6 +746,10 @@ input[type="number"] {
   display: none;
 }
 
+.platform-flatpak [data-update-ui] {
+  display: none;
+}
+
 
 img.twemoji {
   height: 1em;

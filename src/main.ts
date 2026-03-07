@@ -1,10 +1,11 @@
-import { open, save, message } from "@tauri-apps/plugin-dialog";
+import { open, save, message, ask } from "@tauri-apps/plugin-dialog";
 import { check } from "@tauri-apps/plugin-updater";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 
 const MAX_LOG_LINES = 1000;
 const SAFE_URL_PATTERN = /^https?:\/\//i;
@@ -38,6 +39,7 @@ interface UserSettings {
   sfx: boolean;
   encryptHeaders: boolean;
   deleteAfter: boolean;
+  autoCheckUpdates: boolean;
 }
 
 let SETTING_DEFAULTS: UserSettings = {
@@ -52,6 +54,7 @@ let SETTING_DEFAULTS: UserSettings = {
   sfx: false,
   encryptHeaders: false,
   deleteAfter: false,
+  autoCheckUpdates: true,
 };
 
 let currentSettings: UserSettings = { ...SETTING_DEFAULTS };
@@ -96,6 +99,7 @@ function populateSettingsModal() {
   $<HTMLInputElement>("s-sfx").checked = currentSettings.sfx;
   $<HTMLInputElement>("s-encrypt-headers").checked = currentSettings.encryptHeaders;
   $<HTMLInputElement>("s-delete-after").checked = currentSettings.deleteAfter;
+  $<HTMLInputElement>("s-auto-check-updates").checked = currentSettings.autoCheckUpdates;
 }
 
 function readSettingsModal(): UserSettings {
@@ -111,6 +115,7 @@ function readSettingsModal(): UserSettings {
     sfx: $<HTMLInputElement>("s-sfx").checked,
     encryptHeaders: $<HTMLInputElement>("s-encrypt-headers").checked,
     deleteAfter: $<HTMLInputElement>("s-delete-after").checked,
+    autoCheckUpdates: $<HTMLInputElement>("s-auto-check-updates").checked,
   };
 }
 
@@ -420,6 +425,17 @@ async function previewCommand() {
   }
 }
 
+async function notify(title: string, body: string) {
+  let granted = await isPermissionGranted();
+  if (!granted) {
+    const permission = await requestPermission();
+    granted = permission === "granted";
+  }
+  if (granted) {
+    sendNotification({ title, body });
+  }
+}
+
 async function checkUpdates() {
   try {
     setStatus("Checking updates");
@@ -439,6 +455,7 @@ async function checkUpdates() {
       setStatus("Idle");
       return;
     }
+    setStatus("Downloading update");
     await update.downloadAndInstall();
     log("Update installed. Relaunching...");
     await relaunch();
@@ -446,6 +463,35 @@ async function checkUpdates() {
     const messageText = err instanceof Error ? err.message : String(err);
     log(`Updater error: ${messageText}`);
     setStatus("Idle");
+  }
+}
+
+async function autoCheckUpdates() {
+  try {
+    const update = await check();
+    if (!update) {
+      devLog("Auto-update check: no updates available.");
+      return;
+    }
+    log(`Update available: ${update.version}`);
+    await notify("Zinnia Update Available", `Version ${update.version} is available. Downloading in the background...`);
+    setStatus("Downloading update");
+    await update.downloadAndInstall();
+    setStatus("Update ready");
+    log(`Update ${update.version} downloaded and ready to install.`);
+    const restart = await ask(
+      `Version ${update.version} has been downloaded and is ready to install.\n\nRestart now to apply the update?`,
+      { title: "Update ready", kind: "info", okLabel: "Restart now", cancelLabel: "Later" }
+    );
+    if (restart) {
+      await relaunch();
+    } else {
+      await notify("Zinnia", "Update will be applied next time you restart.");
+      setStatus("Idle");
+    }
+  } catch (err) {
+    const messageText = err instanceof Error ? err.message : String(err);
+    devLog(`Auto-update error: ${messageText}`);
   }
 }
 
@@ -799,6 +845,11 @@ async function init() {
   $("s-version-label").textContent = version;
   $("s-platform-label").textContent = platformDisplay;
 
+  const flatpak = await invoke<boolean>("is_flatpak");
+  if (flatpak) {
+    document.body.classList.add("platform-flatpak");
+  }
+
   const isWindows = platform === "windows";
   if (isWindows) {
     document.body.classList.add("platform-windows");
@@ -834,6 +885,10 @@ async function init() {
     }
     renderInputs();
     devLog(`Loaded ${initialPaths.length} path(s) from launch args.`);
+  }
+
+  if (currentSettings.autoCheckUpdates && !flatpak) {
+    autoCheckUpdates();
   }
 
   const appWindow = getCurrentWebviewWindow();
