@@ -451,22 +451,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zinnia"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-process",
- "tauri-plugin-shell",
- "tauri-plugin-single-instance",
- "tauri-plugin-updater",
- "winreg 0.52.0",
-]
-
-[[package]]
 name = "combine"
 version = "4.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5618,6 +5602,22 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.114",
+]
+
+[[package]]
+name = "zinnia"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-process",
+ "tauri-plugin-shell",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-updater",
+ "winreg 0.52.0",
 ]
 
 [[package]]
