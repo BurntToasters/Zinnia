@@ -124,6 +124,31 @@ function walk(dir, results = []) {
   return results;
 }
 
+function cleanArtifactName(name) {
+  if (name === "latest.json") return name;
+  if (/\.tar\.gz(\.sig)?$/i.test(name)) return name;
+  if (/\.nsis\.zip(\.sig)?$/i.test(name)) return name;
+
+  if (/\.dmg$/i.test(name)) return "Zinnia-macOS.dmg";
+  if (/^Zinnia\.zip$/i.test(name)) return "Zinnia-macOS.zip";
+
+  if (/x64-setup\.exe$/i.test(name)) return "Zinnia-Windows-x64.exe";
+  if (/arm64-setup\.exe$/i.test(name)) return "Zinnia-Windows-arm64.exe";
+
+  if (/amd64\.AppImage$/i.test(name)) return "Zinnia-Linux-x64.AppImage";
+  if (/aarch64\.AppImage$/i.test(name)) return "Zinnia-Linux-arm64.AppImage";
+
+  if (/amd64\.deb$/i.test(name)) return "Zinnia-Linux-x64.deb";
+  if (/aarch64\.deb$/i.test(name)) return "Zinnia-Linux-arm64.deb";
+
+  if (/x86_64\.rpm$/i.test(name)) return "Zinnia-Linux-x64.rpm";
+  if (/aarch64\.rpm$/i.test(name)) return "Zinnia-Linux-arm64.rpm";
+
+  if (/\.flatpak$/i.test(name)) return name;
+
+  return name;
+}
+
 function collectArtifacts() {
   fs.mkdirSync(releaseDir, { recursive: true });
 
@@ -139,9 +164,15 @@ function collectArtifacts() {
     const selected = pickNewestByBasename(found);
     const collected = [];
     for (const src of selected) {
-      const dest = path.join(releaseDir, path.basename(src));
+      const originalName = path.basename(src);
+      const cleanName = cleanArtifactName(originalName);
+      const dest = path.join(releaseDir, cleanName);
       fs.copyFileSync(src, dest);
-      console.log(`  + ${path.basename(src)}`);
+      if (cleanName !== originalName) {
+        console.log(`  + ${originalName} → ${cleanName}`);
+      } else {
+        console.log(`  + ${originalName}`);
+      }
       collected.push(dest);
     }
     return collected;
