@@ -4,7 +4,7 @@
 - Windows 10/11 x64 or ARM64
 - PowerShell 7.x
 - Node.js 24+ (LTS recommended)
-- Rust (rustup) + Visual Studio Build Tools
+- Rust (rustup) + Visual Studio Build Tools (clang: x64 and arm64)
 
 ## macOS
 - macOS Sonoma or later
