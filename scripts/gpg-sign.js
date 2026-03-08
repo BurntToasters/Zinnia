@@ -32,8 +32,8 @@ const exact = (f) => (n) => n === f;
 
 
 const ARTIFACT_RULES = [
-  
-  ext(".exe"), ext(".msi"), ext(".dmg"), ext(".deb"), ext(".rpm"), ext(".flatpak"),
+
+  rx(/-setup\.exe$/i), ext(".msi"), ext(".dmg"), ext(".deb"), ext(".rpm"), ext(".flatpak"),
   rx(/\.appimage$/i),
   
   rx(/\.zip$/i),
@@ -51,7 +51,7 @@ const ARTIFACT_RULES = [
 
 
 const SIGN_RULES = [
-  ext(".exe"), ext(".msi"), ext(".dmg"), ext(".deb"), ext(".rpm"), ext(".flatpak"),
+  rx(/-setup\.exe$/i), ext(".msi"), ext(".dmg"), ext(".deb"), ext(".rpm"), ext(".flatpak"),
   rx(/\.appimage$/i),
   rx(/\.zip$/i),
   rx(/\.nsis\.zip$/i),

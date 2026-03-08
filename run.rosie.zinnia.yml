@@ -41,7 +41,7 @@ modules:
       - install -Dm644 run.rosie.zinnia.metainfo.xml /app/share/metainfo/run.rosie.zinnia.metainfo.xml
       - install -Dm644 src-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/run.rosie.zinnia.png
       - install -Dm644 src-tauri/icons/32x32.png /app/share/icons/hicolor/32x32/apps/run.rosie.zinnia.png
-      - install -Dm644 src-tauri/icons/icon.svg /app/share/icons/hicolor/scalable/apps/run.rosie.zinnia.svg
+      - install -Dm644 src-tauri/icons/icon.png /app/share/icons/hicolor/512x512/apps/run.rosie.zinnia.png
     sources:
       - type: dir
         path: .
