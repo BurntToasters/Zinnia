@@ -20,6 +20,8 @@ modules:
   - name: zinnia
     buildsystem: simple
     build-options:
+      build-args:
+        - --share=network
       append-path: /usr/lib/sdk/node22/bin:/usr/lib/sdk/rust-stable/bin
       env:
         CARGO_HOME: /run/build/zinnia/cargo
