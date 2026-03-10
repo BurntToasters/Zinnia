@@ -34,6 +34,8 @@
   --select-arrow:  url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23a0a0a0'/%3E%3C/svg%3E");
   --twemoji-saturate: saturate(0.35) brightness(0.8);
   --twemoji-saturate-hover: saturate(0.65) brightness(1);
+  --shortcut-chip-bg: rgba(0, 0, 0, 0.22);
+  --shortcut-chip-border: rgba(255, 255, 255, 0.2);
 }
 
 [data-theme="light"] {
@@ -66,6 +68,8 @@
   --select-arrow:  url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%235c5c5c'/%3E%3C/svg%3E");
   --twemoji-saturate: saturate(1) brightness(1);
   --twemoji-saturate-hover: saturate(1) brightness(1);
+  --shortcut-chip-bg: rgba(255, 255, 255, 0.35);
+  --shortcut-chip-border: rgba(0, 0, 0, 0.16);
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -840,7 +844,7 @@ input[type="number"] {
 }
 
 .actions .btn--primary {
-  padding: 8px 48px 8px 28px;
+  padding: 8px 64px 8px 24px;
   font-size: 13px;
   border-radius: var(--radius);
   position: relative;
@@ -850,9 +854,17 @@ input[type="number"] {
   content: "Ctrl+\23CE";
   position: absolute;
   right: 8px;
-  font-size: 10px;
-  opacity: 0.5;
-  font-weight: 400;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  color: var(--text-on-accent);
+  background: var(--shortcut-chip-bg);
+  border: 1px solid var(--shortcut-chip-border);
+  border-radius: 999px;
+  padding: 2px 7px;
 }
 
 

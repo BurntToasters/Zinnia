@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { message, confirm } from "@tauri-apps/plugin-dialog";
 import { $, parseThreads, escapeHtml, formatSize, splitArgs } from "./utils";
 import { SETTING_DEFAULTS, state } from "./state";
-import { log, devLog, setStatus, setProgress, hideProgress, setRunning, getMode } from "./ui";
+import { log, devLog, setStatus, setProgress, hideProgress, setRunning, getMode, setBrowsePasswordFieldVisible } from "./ui";
 import { ensureArchivePaths, validateExtraArgs } from "./archive-rules";
 import { formatCommandOutputForLogs } from "./output-logging";
 
@@ -66,7 +66,32 @@ export interface ArchiveInfo {
   physicalSize: number;
   method: string;
   solid: boolean;
+  encrypted: boolean;
   entries: BrowseEntry[];
+}
+
+function isEncryptedFlag(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "+" || normalized === "yes" || normalized === "true" || normalized === "1";
+}
+
+function methodLooksEncrypted(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return false;
+  return normalized.includes("7zaes")
+    || normalized.includes("aes")
+    || normalized.includes("zipcrypto");
+}
+
+function looksLikePasswordRequiredError(stdout: string, stderr: string): boolean {
+  const combined = `${stdout}\n${stderr}`.toLowerCase();
+  return combined.includes("wrong password")
+    || combined.includes("can not open encrypted archive")
+    || combined.includes("can't open encrypted archive")
+    || combined.includes("data error in encrypted file")
+    || combined.includes("encrypted headers")
+    || combined.includes("enter password")
+    || combined.includes("is encrypted");
 }
 
 export function buildExtractArgsFor(archive: string): string[] {
@@ -143,7 +168,7 @@ export function buildArgs() {
 
 export function parseArchiveListing(stdout: string): ArchiveInfo {
   const lines = stdout.split("\n");
-  const info: ArchiveInfo = { type: "", physicalSize: 0, method: "", solid: false, entries: [] };
+  const info: ArchiveInfo = { type: "", physicalSize: 0, method: "", solid: false, encrypted: false, entries: [] };
   let inArchiveInfo = false;
   let inFiles = false;
   let current: Partial<BrowseEntry> = {};
@@ -181,14 +206,20 @@ export function parseArchiveListing(stdout: string): ArchiveInfo {
     if (inArchiveInfo) {
       if (key === "Type") info.type = value;
       else if (key === "Physical Size") info.physicalSize = parseInt(value) || 0;
-      else if (key === "Method") info.method = value;
+      else if (key === "Method") {
+        info.method = value;
+        if (methodLooksEncrypted(value)) info.encrypted = true;
+      }
       else if (key === "Solid") info.solid = value === "+";
+      else if (key === "Encrypted" && isEncryptedFlag(value)) info.encrypted = true;
     } else if (inFiles) {
       if (key === "Path") current.path = value;
       else if (key === "Size") current.size = parseInt(value) || 0;
       else if (key === "Packed Size") current.packedSize = parseInt(value) || 0;
       else if (key === "Modified") current.modified = value;
       else if (key === "Folder") current.isFolder = value === "+";
+      else if (key === "Encrypted" && isEncryptedFlag(value)) info.encrypted = true;
+      else if (key === "Method" && methodLooksEncrypted(value)) info.encrypted = true;
     }
   }
 
@@ -220,6 +251,7 @@ export function renderBrowseTable(info: ArchiveInfo) {
     parts.push(`<strong>${escapeHtml(info.type || "Archive")}</strong>`);
     if (info.method) parts.push(`Method: ${escapeHtml(info.method)}`);
     if (info.solid) parts.push("Solid");
+    if (info.encrypted) parts.push("Encrypted");
     parts.push(`${fileCount} file${fileCount !== 1 ? "s" : ""}${folderCount > 0 ? `, ${folderCount} folder${folderCount !== 1 ? "s" : ""}` : ""}`);
     parts.push(`${formatSize(totalSize)} \u2192 ${formatSize(totalPacked)}`);
     summary.innerHTML = parts.join(" &nbsp;\u00b7&nbsp; ");
@@ -531,14 +563,21 @@ export async function browseArchive() {
     logTruncationNotice(result);
 
     if (result.code !== 0) {
+      const needsPassword = looksLikePasswordRequiredError(result.stdout, result.stderr);
+      setBrowsePasswordFieldVisible(needsPassword);
       logCommandResult(result.stdout, result.stderr);
       setStatus("Failed to list archive", 3000);
+      if (needsPassword) {
+        log("Archive appears to be encrypted. Enter a password and try again.");
+      }
+      const passwordHint = needsPassword ? "\n\nThis archive appears to be encrypted. Enter the archive password and try again." : "";
       const errorDetails = result.stderr ? `\n\n${truncateForDialog(result.stderr.trim())}` : "";
-      await message(`Failed to list archive contents (exit code ${result.code}).${errorDetails}`, { title: "Browse failed", kind: "error" });
+      await message(`Failed to list archive contents (exit code ${result.code}).${passwordHint}${errorDetails}`, { title: "Browse failed", kind: "error" });
       return;
     }
 
     const info = parseArchiveListing(result.stdout);
+    setBrowsePasswordFieldVisible(info.encrypted);
     renderBrowseTable(info);
     setStatus(`${info.entries.length} entries listed`, 3000);
   } catch (err) {

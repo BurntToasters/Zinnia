@@ -2,7 +2,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { $ } from "./utils";
 import { state } from "./state";
-import { log, renderInputs } from "./ui";
+import { getMode, log, renderInputs, setBrowsePasswordFieldVisible } from "./ui";
 import { saveSettings } from "./settings";
 
 function setIntegrationMetadata(userDisabled: boolean) {
@@ -42,11 +42,17 @@ export async function addFiles() {
     multiple: true
   });
   if (!selection) return;
+  const previousPrimary = state.inputs[0] ?? null;
   const newPaths = Array.isArray(selection) ? selection : [selection];
+  let changed = false;
   for (const path of newPaths) {
     if (!state.inputs.includes(path)) {
       state.inputs.push(path);
+      changed = true;
     }
+  }
+  if (changed && getMode() === "browse" && (state.inputs[0] ?? null) !== previousPrimary) {
+    setBrowsePasswordFieldVisible(false);
   }
   renderInputs();
 }
@@ -56,9 +62,13 @@ export async function addFolder() {
     title: "Add folder",
     directory: true
   });
+  const previousPrimary = state.inputs[0] ?? null;
   if (selection && typeof selection === "string") {
     if (!state.inputs.includes(selection)) {
       state.inputs.push(selection);
+      if (getMode() === "browse" && (state.inputs[0] ?? null) !== previousPrimary) {
+        setBrowsePasswordFieldVisible(false);
+      }
     }
     renderInputs();
   }

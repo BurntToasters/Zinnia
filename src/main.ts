@@ -7,7 +7,7 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { $ } from "./utils";
 import { SETTING_DEFAULTS, state, dom } from "./state";
 import { applyTheme, loadSettingsWithMetadata, saveSettings, readSettingsModal, applySettingsToForm, openSettingsModal, closeSettingsModal, populateSettingsModal } from "./settings";
-import { log, devLog, toggleActivity, renderInputs, setMode, getMode } from "./ui";
+import { log, devLog, toggleActivity, renderInputs, setMode, getMode, setBrowsePasswordFieldVisible } from "./ui";
 import { runAction, cancelAction, testArchive, browseArchive, previewCommand } from "./archive";
 import { validateArchivePaths } from "./archive-rules";
 import { updateCompressionOptionsForFormat, applyPreset, onCompressionOptionChange } from "./presets";
@@ -95,6 +95,9 @@ async function applyIncomingPaths(paths: string[], mode: string, source: string)
     if (!state.inputs.includes(path)) {
       state.inputs.push(path);
     }
+  }
+  if (shouldAutoBrowse) {
+    setBrowsePasswordFieldVisible(false);
   }
   renderInputs();
   devLog(`Received ${paths.length} path(s) from ${source}.`);
@@ -403,10 +406,14 @@ async function init() {
       dom.inputList.classList.remove("list--dragover");
       const paths = event.payload.paths;
       if (paths.length) {
+        const previousPrimary = state.inputs[0] ?? null;
         for (const path of paths) {
           if (!state.inputs.includes(path)) {
             state.inputs.push(path);
           }
+        }
+        if (getMode() === "browse" && (state.inputs[0] ?? null) !== previousPrimary) {
+          setBrowsePasswordFieldVisible(false);
         }
         renderInputs();
         if (getMode() === "browse" && state.inputs.length > 0 && await allPathsAreArchives([state.inputs[0]])) {

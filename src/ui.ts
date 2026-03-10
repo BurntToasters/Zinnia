@@ -127,20 +127,40 @@ export function getMode(): "add" | "extract" | "browse" {
   return "add";
 }
 
+export function setBrowsePasswordFieldVisible(visible: boolean) {
+  const field = document.getElementById("browse-password-field") as HTMLElement | null;
+  const input = document.getElementById("browse-password") as HTMLInputElement | null;
+  const toggle = document.getElementById("toggle-browse-password") as HTMLButtonElement | null;
+  if (!field || !input || !toggle) return;
+  field.hidden = !visible;
+  if (!visible) {
+    input.value = "";
+    input.type = "password";
+    toggle.textContent = "Show";
+  }
+}
+
 export function setMode(mode: "add" | "extract" | "browse") {
   dom.appEl.dataset.mode = mode;
   document.querySelectorAll("[data-mode-btn]").forEach((btn) => {
     const el = btn as HTMLButtonElement;
     el.classList.toggle("is-active", el.dataset.modeBtn === mode);
   });
+  if (mode !== "browse") {
+    setBrowsePasswordFieldVisible(false);
+  }
   renderInputs();
 }
 
 export function renderInputs() {
+  const mode = getMode();
+  if (mode !== "browse" || state.inputs.length === 0) {
+    setBrowsePasswordFieldVisible(false);
+  }
+
   dom.inputList.innerHTML = "";
   if (state.inputs.length === 0) {
     const empty = document.createElement("div");
-    const mode = getMode();
     empty.textContent = mode === "extract"
       ? "Select an archive file to extract."
       : mode === "browse"
@@ -160,7 +180,11 @@ export function renderInputs() {
     remove.textContent = "Remove";
     remove.disabled = state.running;
     remove.addEventListener("click", () => {
+      const removedPrimary = index === 0;
       state.inputs.splice(index, 1);
+      if (getMode() === "browse" && (removedPrimary || state.inputs.length === 0)) {
+        setBrowsePasswordFieldVisible(false);
+      }
       renderInputs();
     });
     item.appendChild(span);
