@@ -26,22 +26,63 @@
             <h2 id="settings-title">Settings</h2>
             <button class="btn btn--ghost btn--sm" id="close-settings">&times;</button>
           </div>
-          <div class="modal__body">
-            <fieldset class="settings-group">
-              <legend>About</legend>
-              <div class="settings-row">
-                <span class="settings-label">Version</span>
-                <span class="settings-value" id="s-version-label">v0.1.0</span>
-              </div>
-              <div class="settings-row">
-                <span class="settings-label">Platform</span>
-                <span class="settings-value" id="s-platform-label">Platform</span>
-              </div>
-            </fieldset>
 
-            <fieldset class="settings-group">
-              <legend>Default compression options</legend>
-              <p class="settings-hint">These values are applied automatically when creating new archives.</p>
+          <nav class="settings-tabs" role="tablist">
+            <button class="settings-tab is-active" role="tab" data-tab="general">General</button>
+            <button class="settings-tab" role="tab" data-tab="compression">Compression</button>
+            <button class="settings-tab" role="tab" data-tab="about">About</button>
+          </nav>
+
+          <div class="modal__body">
+
+            <!-- General tab -->
+            <div class="settings-panel is-active" data-panel="general">
+              <div class="setting-item">
+                <div class="setting-info">
+                  <span class="setting-title">Check for updates on startup</span>
+                  <span class="setting-desc">Automatically check for new versions when the app opens.</span>
+                </div>
+                <label class="switch" data-update-ui>
+                  <input type="checkbox" id="s-auto-check-updates" checked />
+                  <span class="switch__track"></span>
+                </label>
+              </div>
+
+              <div class="setting-item" data-update-ui>
+                <div class="setting-info">
+                  <span class="setting-title">Check for updates now</span>
+                  <span class="setting-desc">See if a newer version is available.</span>
+                </div>
+                <button class="btn btn--sm" id="check-updates">Check now</button>
+              </div>
+
+              <hr class="setting-divider" />
+
+              <div class="setting-item" id="os-integration-row">
+                <div class="setting-info">
+                  <span class="setting-title" id="os-integration-title">File manager integration</span>
+                  <span class="setting-desc" id="os-integration-desc">Add "Compress with Zinnia" and "Extract with Zinnia" to right-click menus.</span>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" id="s-os-integration" />
+                  <span class="switch__track"></span>
+                </label>
+              </div>
+
+              <hr class="setting-divider" />
+
+              <div class="setting-item">
+                <div class="setting-info">
+                  <span class="setting-title">Open-source licenses</span>
+                  <span class="setting-desc">View third-party libraries and their licenses.</span>
+                </div>
+                <button class="btn btn--sm" id="show-licenses">View</button>
+              </div>
+            </div>
+
+            <!-- Compression tab -->
+            <div class="settings-panel" data-panel="compression">
+              <p class="settings-hint">Default values applied when creating new archives.</p>
               <div class="grid-split">
                 <div class="field">
                   <label for="s-format">Format</label>
@@ -125,33 +166,78 @@
                   </select>
                 </div>
               </div>
-              <div class="field">
-                <label>Options</label>
-                <div class="toggle-row">
-                  <label class="toggle"><input type="checkbox" id="s-sfx" />Create SFX</label>
-                  <label class="toggle"><input type="checkbox" id="s-encrypt-headers" />Encrypt file names</label>
-                  <label class="toggle"><input type="checkbox" id="s-delete-after" />Delete files after compression</label>
+
+              <hr class="setting-divider" />
+
+              <div class="setting-item">
+                <div class="setting-info">
+                  <span class="setting-title">Create self-extracting archive (SFX)</span>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" id="s-sfx" />
+                  <span class="switch__track"></span>
+                </label>
+              </div>
+              <div class="setting-item">
+                <div class="setting-info">
+                  <span class="setting-title">Encrypt file names</span>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" id="s-encrypt-headers" />
+                  <span class="switch__track"></span>
+                </label>
+              </div>
+              <div class="setting-item">
+                <div class="setting-info">
+                  <span class="setting-title">Delete files after compression</span>
+                  <span class="setting-desc">Source files are permanently removed after a successful archive.</span>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" id="s-delete-after" />
+                  <span class="switch__track"></span>
+                </label>
+              </div>
+            </div>
+
+            <!-- About tab -->
+            <div class="settings-panel" data-panel="about">
+              <div class="about-header">
+                <img src="/zinnia_default-logo.png" width="40" height="40" alt="Zinnia" class="about-icon" draggable="false" />
+                <div>
+                  <h3 class="about-name">Zinnia</h3>
+                  <span class="about-tagline">A fast, focused 7z GUI</span>
+                  <span class="about-credit">Made with <img src="/twemoji/2764.svg" width="14" height="14" alt="❤️" class="about-heart" draggable="false" /> by BurntToasters / <a href="https://rosie.run" target="_blank" rel="noopener">rosie.run</a></span>
                 </div>
               </div>
-            </fieldset>
-
-            <fieldset class="settings-group" data-update-ui>
-              <legend>General</legend>
-              <div class="field">
-                <div class="toggle-row">
-                  <label class="toggle"><input type="checkbox" id="s-auto-check-updates" checked />Check for updates on startup</label>
+              <div class="about-rows">
+                <div class="settings-row">
+                  <span class="settings-label">Version</span>
+                  <span class="settings-value" id="s-version-label">v0.1.0</span>
+                </div>
+                <div class="settings-row">
+                  <span class="settings-label">Platform</span>
+                  <span class="settings-value" id="s-platform-label">Platform</span>
+                </div>
+                <div class="settings-row">
+                  <span class="settings-label">License</span>
+                  <span class="settings-value">MPL-2.0</span>
                 </div>
               </div>
-            </fieldset>
 
-            <fieldset class="settings-group">
-              <legend>Actions</legend>
-              <div class="settings-actions">
-                <button class="btn btn--sm" id="check-updates" data-update-ui>Check for updates</button>
-                <button class="btn btn--sm btn--explorer" id="toggle-explorer">Enable Explorer integration</button>
-                <button class="btn btn--sm" id="show-licenses">View open-source licenses</button>
+              <button class="btn btn--sm about-licenses-btn" id="about-show-licenses">View Open-Source Licenses</button>
+
+              <div class="about-notices">
+                <div class="about-notice">
+                  <strong>7-Zip</strong>
+                  <p>This application uses <a href="https://www.7-zip.org/" target="_blank" rel="noopener">7-Zip</a> binaries by Igor Pavlov. 7-Zip is licensed under the GNU LGPL, with portions under the BSD 3-clause, BSD 2-clause, and unRAR licenses. Copyright &copy; 1999&ndash;2025 Igor Pavlov.</p>
+                </div>
+                <div class="about-notice">
+                  <strong>Twemoji</strong>
+                  <p>Emoji graphics by <a href="https://github.com/jdecked/twemoji" target="_blank" rel="noopener">jdecked/twemoji</a>. Graphics licensed under <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC-BY 4.0</a>. Copyright &copy; 2019 Twitter, Inc and other contributors. Copyright &copy; 2024 jdecked and other contributors.</p>
+                </div>
               </div>
-            </fieldset>
+            </div>
+
           </div>
           <div class="modal__footer">
             <button class="btn btn--ghost btn--sm" id="cancel-settings">Cancel</button>
@@ -179,6 +265,7 @@
             <div class="segmented">
               <button class="segmented__btn is-active" data-mode-btn="add">Add</button>
               <button class="segmented__btn" data-mode-btn="extract">Extract</button>
+              <button class="segmented__btn" data-mode-btn="browse">Browse</button>
             </div>
           </div>
 
@@ -209,9 +296,45 @@
               </div>
             </div>
 
+            <div class="field" data-mode-visible="browse">
+              <label for="browse-password">Archive password</label>
+              <div class="input-row">
+                <input type="password" id="browse-password" placeholder="Only if needed" />
+                <button type="button" class="btn btn--ghost btn--sm" id="toggle-browse-password">Show</button>
+              </div>
+            </div>
+
+            <div id="browse-contents" class="browse-contents" data-mode-visible="browse" hidden>
+              <div class="browse-summary" id="browse-summary"></div>
+              <div class="browse-table-wrap">
+                <table class="browse-table">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Size</th>
+                      <th>Compressed</th>
+                      <th>Modified</th>
+                    </tr>
+                  </thead>
+                  <tbody id="browse-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+
             <details class="expander" data-mode-visible="add" open>
               <summary class="expander__header">Compression options</summary>
               <div class="expander__body">
+                <div class="field">
+                  <label for="preset">Preset</label>
+                  <select id="preset">
+                    <option value="store">Store</option>
+                    <option value="quick">Quick</option>
+                    <option value="balanced" selected>Balanced</option>
+                    <option value="high">High</option>
+                    <option value="ultra">Ultra</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </div>
                 <div class="grid-split">
                   <div class="field">
                     <label for="format">Format</label>
@@ -327,15 +450,33 @@
               </div>
             </div>
 
-            <div class="field">
+            <div class="field" data-mode-visible="add">
               <label for="extra-args">Extra arguments</label>
               <input type="text" id="extra-args" placeholder="-mx=9 -mmt=on" />
             </div>
 
-            <div class="actions">
+            <div class="field" data-mode-visible="extract">
+              <label for="extract-extra-args">Extra arguments</label>
+              <input type="text" id="extract-extra-args" placeholder="-r -aos" />
+            </div>
+
+            <div class="actions" data-mode-visible="add">
               <button class="btn btn--primary" id="run-action" title="Run operation (Ctrl+Enter)">Run</button>
               <button class="btn btn--ghost" id="cancel-action" hidden>Cancel</button>
               <button class="btn btn--ghost" id="show-command">Preview command</button>
+            </div>
+
+            <div class="actions" data-mode-visible="extract">
+              <button class="btn btn--primary" id="extract-run" title="Extract archives (Ctrl+Enter)">Extract</button>
+              <button class="btn btn--ghost" id="extract-cancel" hidden>Cancel</button>
+              <button class="btn btn--sm" id="test-integrity">Test integrity</button>
+              <button class="btn btn--ghost" id="extract-preview">Preview command</button>
+            </div>
+
+            <div class="actions" data-mode-visible="browse">
+              <button class="btn btn--primary" id="browse-list">List contents</button>
+              <button class="btn btn--sm" id="browse-test">Test integrity</button>
+              <button class="btn btn--sm" id="browse-extract">Extract all</button>
             </div>
           </div>
         </section>

@@ -15,6 +15,18 @@
   </categories>
   <url type="homepage">https://github.com/BurntToasters/zinnia</url>
   <url type="bugtracker">https://github.com/BurntToasters/zinnia/issues</url>
+  <provides>
+    <mediatype>application/x-7z-compressed</mediatype>
+    <mediatype>application/zip</mediatype>
+    <mediatype>application/x-tar</mediatype>
+    <mediatype>application/gzip</mediatype>
+    <mediatype>application/x-bzip2</mediatype>
+    <mediatype>application/x-xz</mediatype>
+    <mediatype>application/vnd.rar</mediatype>
+    <mediatype>application/x-compressed-tar</mediatype>
+    <mediatype>application/x-bzip2-compressed-tar</mediatype>
+    <mediatype>application/x-xz-compressed-tar</mediatype>
+  </provides>
   <content_rating type="oars-1.1" />
   <releases>
     <release version="0.1.0" date="2025-01-01">

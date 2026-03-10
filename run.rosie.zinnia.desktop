@@ -5,3 +5,4 @@ Exec=zinnia %F
 Icon=run.rosie.zinnia
 Categories=Utility;Archiving;
 Terminal=false
+MimeType=application/x-7z-compressed;application/zip;application/x-tar;application/gzip;application/x-bzip2;application/x-xz;application/vnd.rar;application/x-compressed-tar;application/x-bzip2-compressed-tar;application/x-xz-compressed-tar;

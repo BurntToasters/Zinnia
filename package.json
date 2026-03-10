@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "start": "npm run tauri:dev",
     "tauri": "tauri",
     "tauri:dev": "npm run sync-version && npm run licenses && npm run prepare:7z && tauri dev",
     "tauri:build": "npm run sync-version && npm run licenses && npm run prepare:7z && tauri build",

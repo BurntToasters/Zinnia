@@ -138,11 +138,134 @@ const appEl = $("app");
 const gridEl = document.querySelector<HTMLElement>(".grid")!;
 const runBtn = $<HTMLButtonElement>("run-action");
 const cancelBtn = $<HTMLButtonElement>("cancel-action");
+const extractRunBtn = $<HTMLButtonElement>("extract-run");
+const extractCancelBtn = $<HTMLButtonElement>("extract-cancel");
 
 const inputs: string[] = [];
 let statusTimeout: number | undefined;
 let running = false;
-let explorerIntegrationEnabled = false;
+let batchCancelled = false;
+let osIntegrationEnabled = false;
+let platformName = "";
+let appIsPackaged = false;
+
+const ARCHIVE_EXTENSIONS = new Set([
+  ".7z", ".zip", ".tar", ".gz", ".tgz", ".bz2", ".tbz2",
+  ".xz", ".txz", ".rar",
+]);
+
+function isArchiveFile(path: string): boolean {
+  const lower = path.toLowerCase();
+  for (const ext of ARCHIVE_EXTENSIONS) {
+    if (lower.endsWith(ext)) return true;
+  }
+  return false;
+}
+
+interface PresetConfig {
+  format: string;
+  level: string;
+  method: string;
+  dict: string;
+  wordSize: string;
+  solid: string;
+}
+
+const PRESETS: Record<string, PresetConfig> = {
+  store: { format: "zip", level: "0", method: "deflate", dict: "16m", wordSize: "16", solid: "off" },
+  quick: { format: "zip", level: "1", method: "deflate", dict: "16m", wordSize: "32", solid: "off" },
+  balanced: { format: "7z", level: "5", method: "lzma2", dict: "64m", wordSize: "64", solid: "4g" },
+  high: { format: "7z", level: "7", method: "lzma2", dict: "128m", wordSize: "64", solid: "16g" },
+  ultra: { format: "7z", level: "9", method: "lzma2", dict: "512m", wordSize: "128", solid: "solid" },
+};
+
+interface BrowseEntry {
+  path: string;
+  size: number;
+  packedSize: number;
+  modified: string;
+  isFolder: boolean;
+}
+
+interface ArchiveInfo {
+  type: string;
+  physicalSize: number;
+  method: string;
+  solid: boolean;
+  entries: BrowseEntry[];
+}
+
+function formatSize(bytes: number): string {
+  if (bytes === 0) return "\u2014";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const size = bytes / Math.pow(1024, i);
+  return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+function parseArchiveListing(stdout: string): ArchiveInfo {
+  const lines = stdout.split("\n");
+  const info: ArchiveInfo = { type: "", physicalSize: 0, method: "", solid: false, entries: [] };
+  let inArchiveInfo = false;
+  let inFiles = false;
+  let current: Partial<BrowseEntry> = {};
+
+  for (const raw of lines) {
+    const trimmed = raw.trim();
+
+    if (trimmed === "--") {
+      inArchiveInfo = true;
+      continue;
+    }
+
+    if (trimmed.startsWith("----------")) {
+      if (!inFiles) {
+        inArchiveInfo = false;
+        inFiles = true;
+      } else if (current.path !== undefined) {
+        info.entries.push({
+          path: current.path,
+          size: current.size ?? 0,
+          packedSize: current.packedSize ?? 0,
+          modified: current.modified ?? "",
+          isFolder: current.isFolder ?? false,
+        });
+        current = {};
+      }
+      continue;
+    }
+
+    const eqIdx = trimmed.indexOf(" = ");
+    if (eqIdx === -1) continue;
+    const key = trimmed.substring(0, eqIdx);
+    const value = trimmed.substring(eqIdx + 3);
+
+    if (inArchiveInfo) {
+      if (key === "Type") info.type = value;
+      else if (key === "Physical Size") info.physicalSize = parseInt(value) || 0;
+      else if (key === "Method") info.method = value;
+      else if (key === "Solid") info.solid = value === "+";
+    } else if (inFiles) {
+      if (key === "Path") current.path = value;
+      else if (key === "Size") current.size = parseInt(value) || 0;
+      else if (key === "Packed Size") current.packedSize = parseInt(value) || 0;
+      else if (key === "Modified") current.modified = value;
+      else if (key === "Folder") current.isFolder = value === "+";
+    }
+  }
+
+  if (current.path !== undefined) {
+    info.entries.push({
+      path: current.path,
+      size: current.size ?? 0,
+      packedSize: current.packedSize ?? 0,
+      modified: current.modified ?? "",
+      isFolder: current.isFolder ?? false,
+    });
+  }
+
+  return info;
+}
 
 function trimLog() {
   const text = logEl.textContent || "";
@@ -200,6 +323,8 @@ function renderInputs() {
     const mode = getMode();
     empty.textContent = mode === "extract"
       ? "Select an archive file to extract."
+      : mode === "browse"
+      ? "Select an archive to preview its contents."
       : "Drop files here or use the buttons above.";
     empty.className = "list__empty";
     inputList.appendChild(empty);
@@ -262,37 +387,39 @@ function validateExtraArgs(args: string[]): void {
   }
 }
 
-function getMode() {
-  return appEl.dataset.mode === "extract" ? "extract" : "add";
+function getMode(): "add" | "extract" | "browse" {
+  const m = appEl.dataset.mode;
+  if (m === "extract") return "extract";
+  if (m === "browse") return "browse";
+  return "add";
+}
+
+function buildExtractArgsFor(archive: string): string[] {
+  const dest = $<HTMLInputElement>("extract-path").value.trim();
+  const password = $<HTMLInputElement>("extract-password").value.trim();
+  const extraArgs = splitArgs($<HTMLInputElement>("extract-extra-args").value.trim());
+  if (extraArgs.length > 0) validateExtraArgs(extraArgs);
+
+  if (!dest) throw new Error("Choose a destination folder.");
+
+  const args = ["x", archive, `-o${dest}`, "-y"];
+  if (password) args.push(`-p${password}`);
+  args.push(...extraArgs);
+  return args;
 }
 
 function buildArgs() {
   const mode = getMode();
+
+  if (mode === "extract") {
+    if (!inputs[0]) throw new Error("Select an archive to extract.");
+    return buildExtractArgsFor(inputs[0]);
+  }
+
   const extraArgs = splitArgs($<HTMLInputElement>("extra-args").value.trim());
 
   if (extraArgs.length > 0) {
     validateExtraArgs(extraArgs);
-  }
-
-  if (mode === "extract") {
-    const archive = inputs[0];
-    const dest = $<HTMLInputElement>("extract-path").value.trim();
-    const password = $<HTMLInputElement>("extract-password").value.trim();
-
-    if (!archive) {
-      throw new Error("Select an archive to extract.");
-    }
-
-    if (!dest) {
-      throw new Error("Choose a destination folder.");
-    }
-
-    const args = ["x", archive, `-o${dest}`, "-y"];
-    if (password) {
-      args.push(`-p${password}`);
-    }
-    args.push(...extraArgs);
-    return args;
   }
 
   const outputPath = $<HTMLInputElement>("output-path").value.trim();
@@ -339,31 +466,60 @@ function buildArgs() {
   return args;
 }
 
+function setRunning(active: boolean) {
+  running = active;
+  const mode = getMode();
+  if (mode === "add") {
+    runBtn.disabled = active;
+    if (active) runBtn.setAttribute("aria-busy", "true");
+    else runBtn.removeAttribute("aria-busy");
+    cancelBtn.hidden = !active;
+  } else if (mode === "extract") {
+    extractRunBtn.disabled = active;
+    if (active) extractRunBtn.setAttribute("aria-busy", "true");
+    else extractRunBtn.removeAttribute("aria-busy");
+    extractCancelBtn.hidden = !active;
+  } else {
+    $<HTMLButtonElement>("browse-list").disabled = active;
+    $<HTMLButtonElement>("browse-test").disabled = active;
+    $<HTMLButtonElement>("browse-extract").disabled = active;
+  }
+}
+
 async function runAction() {
   if (running) return;
 
-  try {
-    const deleteAfter = $<HTMLInputElement>("delete-after").checked;
+  const mode = getMode();
 
-    if (deleteAfter && getMode() === "add") {
-      const confirmed = await message(
-        "This will permanently delete source files after compression. Continue?",
-        { title: "Confirm deletion", kind: "warning", okLabel: "Delete files" }
-      );
-      if (!confirmed) {
-        return;
+  if (mode === "extract" && inputs.length > 1) {
+    return runBatchExtract();
+  }
+
+  try {
+    if (mode === "add") {
+      const deleteAfter = $<HTMLInputElement>("delete-after").checked;
+      if (deleteAfter) {
+        const confirmed = await message(
+          "This will permanently delete source files after compression. Continue?",
+          { title: "Confirm deletion", kind: "warning", okLabel: "Delete files" }
+        );
+        if (!confirmed) return;
       }
     }
 
-    const args = buildArgs();
+    let args: string[];
+    if (mode === "extract") {
+      if (!inputs[0]) throw new Error("Select an archive to extract.");
+      args = buildExtractArgsFor(inputs[0]);
+    } else {
+      args = buildArgs();
+    }
+
     const logSafe = args.map(a => a.startsWith("-p") ? "-p***" : a);
     devLog(`7z ${logSafe.join(" ")}`);
 
-    running = true;
+    setRunning(true);
     setStatus("Running");
-    runBtn.disabled = true;
-    runBtn.setAttribute("aria-busy", "true");
-    cancelBtn.hidden = false;
 
     const result = await invoke<{ stdout: string; stderr: string; code: number }>("run_7z", { args });
 
@@ -393,14 +549,76 @@ async function runAction() {
     setStatus("Error", 3000);
     hideProgress();
   } finally {
-    running = false;
-    runBtn.disabled = false;
-    runBtn.removeAttribute("aria-busy");
-    cancelBtn.hidden = true;
+    setRunning(false);
+  }
+}
+
+async function runBatchExtract() {
+  try {
+    const dest = $<HTMLInputElement>("extract-path").value.trim();
+    if (!dest) throw new Error("Choose a destination folder.");
+
+    batchCancelled = false;
+    setRunning(true);
+    let succeeded = 0;
+    let failed = 0;
+
+    for (let i = 0; i < inputs.length; i++) {
+      if (batchCancelled) break;
+
+      const archive = inputs[i];
+      setStatus(`Extracting ${i + 1} of ${inputs.length}`);
+
+      try {
+        const args = buildExtractArgsFor(archive);
+        const logSafe = args.map(a => a.startsWith("-p") ? "-p***" : a);
+        devLog(`7z ${logSafe.join(" ")}`);
+
+        const result = await invoke<{ stdout: string; stderr: string; code: number }>("run_7z", { args });
+
+        const outputLines = result.stdout.split('\n');
+        for (const line of outputLines) {
+          const percentMatch = line.match(/(\d+)%/);
+          if (percentMatch) setProgress(`${percentMatch[1]}% (${i + 1}/${inputs.length})`);
+        }
+
+        if (result.stdout) log(result.stdout.trim());
+        if (result.stderr) log(result.stderr.trim());
+
+        if (result.code === 0) {
+          succeeded++;
+        } else {
+          failed++;
+          log(`Failed: ${archive} (exit code ${result.code})`);
+        }
+      } catch (err) {
+        if (batchCancelled) break;
+        failed++;
+        const msg = err instanceof Error ? err.message : String(err);
+        log(`Error extracting ${archive}: ${msg}`);
+      }
+    }
+
+    hideProgress();
+    if (batchCancelled) {
+      setStatus("Batch cancelled", 3000);
+    } else if (failed === 0) {
+      setStatus(`Done \u2014 ${succeeded} archive(s) extracted`, 3000);
+    } else {
+      setStatus(`Done \u2014 ${succeeded} succeeded, ${failed} failed`, 4000);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Error: ${msg}`);
+    setStatus("Error", 3000);
+    hideProgress();
+  } finally {
+    setRunning(false);
   }
 }
 
 async function cancelAction() {
+  batchCancelled = true;
   try {
     await invoke("cancel_7z");
     log("Operation cancelled by user");
@@ -408,6 +626,144 @@ async function cancelAction() {
   } catch (err) {
     const messageText = err instanceof Error ? err.message : String(err);
     devLog(`Cancel error: ${messageText}`);
+  }
+}
+
+async function testArchive() {
+  if (running) return;
+  const archive = inputs[0];
+  if (!archive) {
+    await message("Select an archive to test.", { title: "No archive selected" });
+    return;
+  }
+
+  const mode = getMode();
+  const passwordField = mode === "browse" ? "browse-password" : "extract-password";
+  const password = $<HTMLInputElement>(passwordField).value.trim();
+
+  const args = ["t", archive];
+  if (password) args.push(`-p${password}`);
+
+  setRunning(true);
+  setStatus("Testing archive integrity");
+
+  try {
+    const result = await invoke<{ stdout: string; stderr: string; code: number }>("run_7z", { args });
+
+    if (result.stdout) log(result.stdout.trim());
+    if (result.stderr) log(result.stderr.trim());
+
+    if (result.code === 0) {
+      setStatus("Integrity test passed", 3000);
+      log("Archive integrity test: OK");
+    } else {
+      setStatus("Integrity test failed", 3000);
+      log(`Archive integrity test: FAILED (exit code ${result.code})`);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Test error: ${msg}`);
+    setStatus("Error", 3000);
+  } finally {
+    setRunning(false);
+  }
+}
+
+async function browseArchive() {
+  if (running) return;
+  const archive = inputs[0];
+  if (!archive) {
+    await message("Select an archive to browse.", { title: "No archive selected" });
+    return;
+  }
+
+  const password = $<HTMLInputElement>("browse-password").value.trim();
+  const args = ["l", "-slt", archive];
+  if (password) args.push(`-p${password}`);
+
+  setRunning(true);
+  setStatus("Listing archive contents");
+
+  try {
+    const result = await invoke<{ stdout: string; stderr: string; code: number }>("run_7z", { args });
+
+    if (result.code !== 0) {
+      if (result.stderr) log(result.stderr.trim());
+      setStatus("Failed to list archive", 3000);
+      return;
+    }
+
+    const info = parseArchiveListing(result.stdout);
+    renderBrowseTable(info);
+    setStatus(`${info.entries.length} entries listed`, 3000);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Browse error: ${msg}`);
+    setStatus("Error", 3000);
+  } finally {
+    setRunning(false);
+  }
+}
+
+function renderBrowseTable(info: ArchiveInfo) {
+  const container = document.getElementById("browse-contents");
+  if (!container) return;
+  container.hidden = false;
+
+  const summary = document.getElementById("browse-summary");
+  if (summary) {
+    const totalSize = info.entries.reduce((sum, e) => sum + e.size, 0);
+    const totalPacked = info.entries.reduce((sum, e) => sum + e.packedSize, 0);
+    const fileCount = info.entries.filter(e => !e.isFolder).length;
+    const folderCount = info.entries.filter(e => e.isFolder).length;
+    const parts: string[] = [];
+    parts.push(`<strong>${escapeHtml(info.type || "Archive")}</strong>`);
+    if (info.method) parts.push(`Method: ${escapeHtml(info.method)}`);
+    if (info.solid) parts.push("Solid");
+    parts.push(`${fileCount} file${fileCount !== 1 ? "s" : ""}${folderCount > 0 ? `, ${folderCount} folder${folderCount !== 1 ? "s" : ""}` : ""}`);
+    parts.push(`${formatSize(totalSize)} \u2192 ${formatSize(totalPacked)}`);
+    summary.innerHTML = parts.join(" &nbsp;\u00b7&nbsp; ");
+  }
+
+  const tbody = document.getElementById("browse-tbody");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+
+  if (info.entries.length === 0) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 4;
+    td.className = "browse-empty";
+    td.textContent = "Archive is empty.";
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+    return;
+  }
+
+  for (const entry of info.entries) {
+    const tr = document.createElement("tr");
+    if (entry.isFolder) tr.className = "is-folder";
+
+    const tdName = document.createElement("td");
+    tdName.textContent = entry.path;
+    tdName.title = entry.path;
+
+    const tdSize = document.createElement("td");
+    tdSize.className = "size-col";
+    tdSize.textContent = entry.isFolder ? "\u2014" : formatSize(entry.size);
+
+    const tdPacked = document.createElement("td");
+    tdPacked.className = "size-col";
+    tdPacked.textContent = entry.isFolder ? "\u2014" : formatSize(entry.packedSize);
+
+    const tdModified = document.createElement("td");
+    tdModified.textContent = entry.modified;
+
+    tr.appendChild(tdName);
+    tr.appendChild(tdSize);
+    tr.appendChild(tdPacked);
+    tr.appendChild(tdModified);
+    tbody.appendChild(tr);
   }
 }
 
@@ -544,34 +900,78 @@ async function addFolder() {
   }
 }
 
-function setExplorerToggleState(enabled: boolean) {
-  explorerIntegrationEnabled = enabled;
-  const btn = document.getElementById("toggle-explorer") as HTMLButtonElement | null;
-  if (!btn) return;
-  btn.textContent = enabled
-    ? "Disable Explorer integration"
-    : "Enable Explorer integration";
-  btn.setAttribute("aria-pressed", enabled ? "true" : "false");
+function setOsIntegrationToggle(enabled: boolean) {
+  osIntegrationEnabled = enabled;
+  const input = document.getElementById("s-os-integration") as HTMLInputElement | null;
+  if (input) input.checked = enabled;
 }
 
-async function toggleExplorer() {
+async function enableOsIntegration(): Promise<boolean> {
   try {
-    if (explorerIntegrationEnabled) {
-      await invoke("unregister_windows_context_menu");
-      setExplorerToggleState(false);
-      log("Explorer integration disabled.");
-    } else {
+    if (platformName === "windows") {
       await invoke("register_windows_context_menu");
-      setExplorerToggleState(true);
-      log("Explorer integration enabled.");
+    } else if (platformName === "linux") {
+      await invoke("register_linux_desktop_integration");
+    } else {
+      return false;
     }
+    return true;
   } catch (err) {
-    const messageText = err instanceof Error ? err.message : String(err);
-    log(`Explorer integration failed: ${messageText}`);
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`OS integration registration failed: ${msg}`);
+    return false;
   }
 }
 
-function setMode(mode: "add" | "extract") {
+async function disableOsIntegration(): Promise<boolean> {
+  try {
+    if (platformName === "windows") {
+      await invoke("unregister_windows_context_menu");
+    } else if (platformName === "linux") {
+      await invoke("unregister_linux_desktop_integration");
+    } else {
+      return false;
+    }
+    return true;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`OS integration removal failed: ${msg}`);
+    return false;
+  }
+}
+
+async function toggleOsIntegration() {
+  if (!appIsPackaged) {
+    log("OS integration is disabled in development builds.");
+    setOsIntegrationToggle(false);
+    return;
+  }
+  if (osIntegrationEnabled) {
+    if (await disableOsIntegration()) {
+      setOsIntegrationToggle(false);
+      log("File manager integration disabled.");
+    }
+  } else {
+    if (await enableOsIntegration()) {
+      setOsIntegrationToggle(true);
+      log("File manager integration enabled.");
+    }
+  }
+}
+
+async function probeOsIntegrationStatus(): Promise<boolean> {
+  try {
+    if (platformName === "windows") {
+      return await invoke<boolean>("get_windows_context_menu_status");
+    } else if (platformName === "linux") {
+      return await invoke<boolean>("get_linux_desktop_integration_status");
+    }
+  } catch {
+  }
+  return false;
+}
+
+function setMode(mode: "add" | "extract" | "browse") {
   appEl.dataset.mode = mode;
   document.querySelectorAll("[data-mode-btn]").forEach((btn) => {
     const el = btn as HTMLButtonElement;
@@ -629,21 +1029,15 @@ function updateCompressionOptionsForFormat(format: string) {
     methodSelect.disabled = true;
   }
 
-  const supportsDict = format === "7z" || format === "xz";
-  dictSelect.disabled = !supportsDict;
-  if (supportsDict && currentDict) {
+  if (currentDict) {
     dictSelect.value = currentDict;
   }
 
-  const supportsWordSize = format === "7z";
-  wordSizeSelect.disabled = !supportsWordSize;
-  if (supportsWordSize && currentWordSize) {
+  if (currentWordSize) {
     wordSizeSelect.value = currentWordSize;
   }
 
-  const supportsSolid = format === "7z";
-  solidSelect.disabled = !supportsSolid;
-  if (supportsSolid && currentSolid) {
+  if (currentSolid) {
     solidSelect.value = currentSolid;
   }
 
@@ -652,6 +1046,41 @@ function updateCompressionOptionsForFormat(format: string) {
       levelSelect.value = "5";
     }
   }
+}
+
+function applyPreset(name: string) {
+  if (name === "custom") return;
+  const preset = PRESETS[name];
+  if (!preset) return;
+
+  $<HTMLSelectElement>("format").value = preset.format;
+  updateCompressionOptionsForFormat(preset.format);
+  $<HTMLSelectElement>("level").value = preset.level;
+  $<HTMLSelectElement>("method").value = preset.method;
+  $<HTMLSelectElement>("dict").value = preset.dict;
+  $<HTMLSelectElement>("word-size").value = preset.wordSize;
+  $<HTMLSelectElement>("solid").value = preset.solid;
+}
+
+function detectPreset(): string {
+  const format = $<HTMLSelectElement>("format").value;
+  const level = $<HTMLSelectElement>("level").value;
+  const method = $<HTMLSelectElement>("method").value;
+  const dict = $<HTMLSelectElement>("dict").value;
+  const wordSize = $<HTMLSelectElement>("word-size").value;
+  const solid = $<HTMLSelectElement>("solid").value;
+
+  for (const [name, p] of Object.entries(PRESETS)) {
+    if (p.format === format && p.level === level && p.method === method &&
+        p.dict === dict && p.wordSize === wordSize && p.solid === solid) {
+      return name;
+    }
+  }
+  return "custom";
+}
+
+function onCompressionOptionChange() {
+  $<HTMLSelectElement>("preset").value = detectPreset();
 }
 
 interface LicenseEntry {
@@ -738,6 +1167,8 @@ function wireEvents() {
   $("clear-inputs").addEventListener("click", () => {
     inputs.length = 0;
     renderInputs();
+    const bc = document.getElementById("browse-contents");
+    if (bc) bc.hidden = true;
   });
   $("choose-output").addEventListener("click", chooseOutput);
   $("choose-extract").addEventListener("click", chooseExtract);
@@ -746,9 +1177,39 @@ function wireEvents() {
   $("show-command").addEventListener("click", previewCommand);
   $("clear-log").addEventListener("click", () => (logEl.textContent = ""));
 
+  $("extract-run").addEventListener("click", runAction);
+  $("extract-cancel").addEventListener("click", cancelAction);
+  $("extract-preview").addEventListener("click", previewCommand);
+  $("test-integrity").addEventListener("click", testArchive);
+
+  $("browse-list").addEventListener("click", browseArchive);
+  $("browse-test").addEventListener("click", testArchive);
+  $("browse-extract").addEventListener("click", () => setMode("extract"));
+
+  $("toggle-browse-password").addEventListener("click", () => {
+    const input = $<HTMLInputElement>("browse-password");
+    const btn = $<HTMLButtonElement>("toggle-browse-password");
+    if (input.type === "password") {
+      input.type = "text";
+      btn.textContent = "Hide";
+    } else {
+      input.type = "password";
+      btn.textContent = "Show";
+    }
+  });
+
+  $<HTMLSelectElement>("preset").addEventListener("change", () => {
+    applyPreset($<HTMLSelectElement>("preset").value);
+  });
+
   $<HTMLSelectElement>("format").addEventListener("change", () => {
     updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
+    onCompressionOptionChange();
   });
+
+  for (const id of ["level", "method", "dict", "word-size", "solid"]) {
+    $(id).addEventListener("change", onCompressionOptionChange);
+  }
 
   $("toggle-password").addEventListener("click", () => {
     const input = $<HTMLInputElement>("password");
@@ -795,9 +1256,20 @@ function wireEvents() {
     closeSettingsModal();
   });
 
+  document.querySelectorAll<HTMLButtonElement>(".settings-tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      document.querySelectorAll(".settings-tab").forEach(t => t.classList.remove("is-active"));
+      document.querySelectorAll(".settings-panel").forEach(p => p.classList.remove("is-active"));
+      tab.classList.add("is-active");
+      const panel = document.querySelector(`[data-panel="${tab.dataset.tab}"]`);
+      if (panel) panel.classList.add("is-active");
+    });
+  });
+
   $("check-updates").addEventListener("click", checkUpdates);
-  $("toggle-explorer").addEventListener("click", toggleExplorer);
+  $("s-os-integration").addEventListener("change", toggleOsIntegration);
   $("show-licenses").addEventListener("click", openLicensesModal);
+  $("about-show-licenses").addEventListener("click", openLicensesModal);
 
   $("close-licenses").addEventListener("click", closeLicensesModal);
   $("licenses-overlay").addEventListener("click", (e) => {
@@ -806,8 +1278,10 @@ function wireEvents() {
 
   document.querySelectorAll("[data-mode-btn]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const mode = (btn as HTMLButtonElement).dataset.modeBtn === "extract" ? "extract" : "add";
-      setMode(mode);
+      const m = (btn as HTMLButtonElement).dataset.modeBtn;
+      if (m === "extract") setMode("extract");
+      else if (m === "browse") setMode("browse");
+      else setMode("add");
     });
   });
 
@@ -818,7 +1292,8 @@ function wireEvents() {
     }
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
-      runAction();
+      if (getMode() === "browse") browseArchive();
+      else runAction();
     }
   });
 }
@@ -837,6 +1312,8 @@ async function init() {
 
   const version = `v${await getVersion()}`;
   const platform = await invoke<string>("get_platform_info");
+  platformName = platform;
+  appIsPackaged = await invoke<boolean>("is_packaged");
   const platformDisplay = platform === "windows" ? "Windows" :
                           platform === "macos" ? "macOS" :
                           platform === "linux" ? "Linux" : platform;
@@ -850,22 +1327,61 @@ async function init() {
     document.body.classList.add("platform-flatpak");
   }
 
-  const isWindows = platform === "windows";
-  if (isWindows) {
-    document.body.classList.add("platform-windows");
-    try {
-      const enabled = await invoke<boolean>("get_windows_context_menu_status");
-      setExplorerToggleState(enabled);
-    } catch (err) {
-      const messageText = err instanceof Error ? err.message : String(err);
-      devLog(`Explorer status probe failed: ${messageText}`);
-      setExplorerToggleState(false);
-    }
+  const osRow = document.getElementById("os-integration-row");
+  const hasOsIntegration = platform === "windows" || (platform === "linux" && !flatpak);
+  if (osRow) {
+    osRow.style.display = hasOsIntegration ? "" : "none";
   }
 
-  await listen<string[]>("open-paths", (event) => {
-    const paths = event.payload || [];
+  if (platform === "windows") {
+    document.body.classList.add("platform-windows");
+    const title = document.getElementById("os-integration-title");
+    const desc = document.getElementById("os-integration-desc");
+    if (title) title.textContent = "Windows Explorer integration";
+    if (desc) desc.textContent = "Add \"Compress with Zinnia\" and \"Extract with Zinnia\" to right-click menus.";
+  } else if (platform === "linux") {
+    document.body.classList.add("platform-linux");
+    const title = document.getElementById("os-integration-title");
+    const desc = document.getElementById("os-integration-desc");
+    if (title) title.textContent = "File manager integration";
+    if (desc) desc.textContent = "Register Zinnia as a handler for archive files in your desktop environment.";
+  }
+
+  if (hasOsIntegration && appIsPackaged) {
+    const isEnabled = await probeOsIntegrationStatus();
+    setOsIntegrationToggle(isEnabled);
+
+    if (!isEnabled) {
+      const raw = await invoke<string>("load_settings");
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      if (parsed._integrationAutoEnabled === undefined) {
+        if (await enableOsIntegration()) {
+          setOsIntegrationToggle(true);
+          devLog("File manager integration auto-enabled on first run.");
+        }
+        parsed._integrationAutoEnabled = true;
+        await invoke("save_settings", { json: JSON.stringify(parsed) });
+      }
+    }
+  } else if (!appIsPackaged) {
+    const input = document.getElementById("s-os-integration") as HTMLInputElement | null;
+    if (input) {
+      input.disabled = true;
+    }
+    const desc = document.getElementById("os-integration-desc");
+    if (desc) desc.textContent = "Disabled in development builds. Only packaged installations can register.";
+  }
+
+  await listen<{ paths: string[]; mode: string }>("open-paths", (event) => {
+    const { paths, mode } = event.payload;
     if (paths.length) {
+      if (mode === "extract") {
+        setMode("extract");
+        inputs.length = 0;
+      } else if (paths.every(p => isArchiveFile(p))) {
+        setMode("browse");
+        inputs.length = 0;
+      }
       for (const path of paths) {
         if (!inputs.includes(path)) {
           inputs.push(path);
@@ -873,9 +1389,11 @@ async function init() {
       }
       renderInputs();
       devLog(`Received ${paths.length} path(s) from Explorer.`);
+      if (getMode() === "browse") browseArchive();
     }
   });
 
+  const initialMode = await invoke<string>("get_initial_mode");
   const initialPaths = await invoke<string[]>("get_initial_paths");
   if (initialPaths.length) {
     for (const path of initialPaths) {
@@ -883,8 +1401,14 @@ async function init() {
         inputs.push(path);
       }
     }
+    if (initialMode === "extract") {
+      setMode("extract");
+    } else if (initialPaths.every(p => isArchiveFile(p))) {
+      setMode("browse");
+    }
     renderInputs();
     devLog(`Loaded ${initialPaths.length} path(s) from launch args.`);
+    if (getMode() === "browse") browseArchive();
   }
 
   if (currentSettings.autoCheckUpdates && !flatpak) {
@@ -907,6 +1431,9 @@ async function init() {
           }
         }
         renderInputs();
+        if (getMode() === "browse" && inputs.length > 0 && isArchiveFile(inputs[0])) {
+          browseArchive();
+        }
       }
     }
   });

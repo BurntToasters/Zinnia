@@ -34,6 +34,43 @@
       "icons/icon.icns"
     ],
     "externalBin": ["binaries/7z"],
+    "fileAssociations": [
+      {
+        "ext": ["7z"],
+        "mimeType": "application/x-7z-compressed",
+        "description": "7-Zip Archive"
+      },
+      {
+        "ext": ["zip"],
+        "mimeType": "application/zip",
+        "description": "ZIP Archive"
+      },
+      {
+        "ext": ["tar"],
+        "mimeType": "application/x-tar",
+        "description": "TAR Archive"
+      },
+      {
+        "ext": ["gz", "tgz"],
+        "mimeType": "application/gzip",
+        "description": "Gzip Archive"
+      },
+      {
+        "ext": ["bz2", "tbz2"],
+        "mimeType": "application/x-bzip2",
+        "description": "Bzip2 Archive"
+      },
+      {
+        "ext": ["xz", "txz"],
+        "mimeType": "application/x-xz",
+        "description": "XZ Archive"
+      },
+      {
+        "ext": ["rar"],
+        "mimeType": "application/vnd.rar",
+        "description": "RAR Archive"
+      }
+    ],
     "createUpdaterArtifacts": true,
     "windows": {
       "nsis": {
