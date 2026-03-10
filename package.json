@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "test": "npm run test:ts && npm run test:rust",
     "test:ts": "node --experimental-strip-types scripts/run-ts-tests.ts",
-    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "test:rust": "npm run prepare:7z && cargo test --manifest-path src-tauri/Cargo.toml",
     "test:all": "npm test",
     "start": "npm run tauri:dev",
     "tauri": "tauri",
