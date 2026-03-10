@@ -4,11 +4,12 @@ import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
-import { $, isArchiveFile } from "./utils";
+import { $ } from "./utils";
 import { SETTING_DEFAULTS, state, dom } from "./state";
-import { applyTheme, loadSettingsWithMetadata, saveSettings, readSettingsModal, applySettingsToForm, openSettingsModal, closeSettingsModal } from "./settings";
+import { applyTheme, loadSettingsWithMetadata, saveSettings, readSettingsModal, applySettingsToForm, openSettingsModal, closeSettingsModal, populateSettingsModal } from "./settings";
 import { log, devLog, toggleActivity, renderInputs, setMode, getMode } from "./ui";
 import { runAction, cancelAction, testArchive, browseArchive, previewCommand } from "./archive";
+import { validateArchivePaths } from "./archive-rules";
 import { updateCompressionOptionsForFormat, applyPreset, onCompressionOptionChange } from "./presets";
 import { checkUpdates, autoCheckUpdates } from "./updater";
 import { openLicensesModal, closeLicensesModal } from "./licenses";
@@ -63,6 +64,43 @@ async function clearLocalLogs() {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Failed to clear logs: ${msg}`, "error");
     await message(`Failed to clear logs.\n\n${msg}`, { title: "Clear logs failed", kind: "error" });
+  }
+}
+
+async function allPathsAreArchives(paths: string[]): Promise<boolean> {
+  if (paths.length === 0) return false;
+  try {
+    const results = await validateArchivePaths(paths);
+    return results.length === paths.length && results.every(result => result.valid);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    devLog(`Archive probe failed for auto-detect: ${msg}`);
+    return false;
+  }
+}
+
+async function applyIncomingPaths(paths: string[], mode: string, source: string): Promise<void> {
+  if (!paths.length) return;
+
+  const shouldAutoBrowse = mode !== "extract" && await allPathsAreArchives(paths);
+  if (mode === "extract") {
+    setMode("extract");
+    state.inputs.length = 0;
+  } else if (shouldAutoBrowse) {
+    setMode("browse");
+    state.inputs.length = 0;
+  }
+
+  for (const path of paths) {
+    if (!state.inputs.includes(path)) {
+      state.inputs.push(path);
+    }
+  }
+  renderInputs();
+  devLog(`Received ${paths.length} path(s) from ${source}.`);
+
+  if (shouldAutoBrowse) {
+    void browseArchive();
   }
 }
 
@@ -164,6 +202,7 @@ function wireEvents() {
       state.currentSettings = previous;
       applyTheme(state.currentSettings.theme);
       applySettingsToForm();
+      populateSettingsModal();
       updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
       onCompressionOptionChange();
 
@@ -211,9 +250,10 @@ function wireEvents() {
       if (!$("licenses-overlay").hidden) { closeLicensesModal(); return; }
     }
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      if (!$("settings-overlay").hidden || !$("licenses-overlay").hidden) return;
       e.preventDefault();
-      if (getMode() === "browse") browseArchive();
-      else runAction();
+      if (getMode() === "browse") void browseArchive();
+      else void runAction();
     }
   });
 }
@@ -328,51 +368,33 @@ async function init() {
     if (desc) desc.textContent = "Disabled in development builds. Only packaged installations can register.";
   }
 
+  let openPathsQueue = Promise.resolve();
   await listen<{ paths: string[]; mode: string }>("open-paths", (event) => {
     const { paths, mode } = event.payload;
-    if (paths.length) {
-      if (mode === "extract") {
-        setMode("extract");
-        state.inputs.length = 0;
-      } else if (paths.every(p => isArchiveFile(p))) {
-        setMode("browse");
-        state.inputs.length = 0;
-      }
-      for (const path of paths) {
-        if (!state.inputs.includes(path)) {
-          state.inputs.push(path);
-        }
-      }
-      renderInputs();
-      devLog(`Received ${paths.length} path(s) from Explorer.`);
-      if (getMode() === "browse") browseArchive();
-    }
+    openPathsQueue = openPathsQueue
+      .then(() => applyIncomingPaths(paths, mode, "Explorer"))
+      .catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        log(`Failed to process incoming Explorer paths: ${msg}`, "error");
+      });
   });
 
   const initialMode = await invoke<string>("get_initial_mode");
   const initialPaths = await invoke<string[]>("get_initial_paths");
-  if (initialPaths.length) {
-    for (const path of initialPaths) {
-      if (!state.inputs.includes(path)) {
-        state.inputs.push(path);
-      }
-    }
-    if (initialMode === "extract") {
-      setMode("extract");
-    } else if (initialPaths.every(p => isArchiveFile(p))) {
-      setMode("browse");
-    }
-    renderInputs();
-    devLog(`Loaded ${initialPaths.length} path(s) from launch args.`);
-    if (getMode() === "browse") browseArchive();
-  }
+  openPathsQueue = openPathsQueue
+    .then(() => applyIncomingPaths(initialPaths, initialMode, "launch args"))
+    .catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`Failed to process launch paths: ${msg}`, "error");
+    });
+  await openPathsQueue;
 
   if (state.currentSettings.autoCheckUpdates && !flatpak) {
     autoCheckUpdates();
   }
 
   const appWindow = getCurrentWebviewWindow();
-  await appWindow.onDragDropEvent((event) => {
+  await appWindow.onDragDropEvent(async (event) => {
     if (event.payload.type === "enter" || event.payload.type === "over") {
       dom.inputList.classList.add("list--dragover");
     } else if (event.payload.type === "leave") {
@@ -387,8 +409,8 @@ async function init() {
           }
         }
         renderInputs();
-        if (getMode() === "browse" && state.inputs.length > 0 && isArchiveFile(state.inputs[0])) {
-          browseArchive();
+        if (getMode() === "browse" && state.inputs.length > 0 && await allPathsAreArchives([state.inputs[0]])) {
+          void browseArchive();
         }
       }
     }

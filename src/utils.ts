@@ -42,11 +42,17 @@ export function splitArgs(raw: string) {
 }
 
 const TOKEN_LIKE_PATTERN = /\b(?:ghp_[a-zA-Z0-9]{20,}|github_pat_[a-zA-Z0-9_]{20,})\b/g;
+const BEARER_TOKEN_PATTERN = /\bBearer\s+[A-Za-z0-9\-._~+/]+=*/gi;
+const JWT_LIKE_PATTERN = /\beyJ[a-zA-Z0-9_-]{6,}\.[a-zA-Z0-9_-]{6,}\.[a-zA-Z0-9_-]{6,}\b/g;
+const OPENAI_KEY_PATTERN = /\bsk-[A-Za-z0-9]{20,}\b/g;
 const KEY_VALUE_SECRET_PATTERN = /\b(password|passphrase|token|private[_-]?key)\s*[:=]\s*\S+/gi;
 const ARG_PASSWORD_PATTERN = /-p\S*/gi;
 
 export function redactSensitiveText(input: string): string {
   return input
+    .replace(BEARER_TOKEN_PATTERN, "Bearer ***")
+    .replace(JWT_LIKE_PATTERN, "***")
+    .replace(OPENAI_KEY_PATTERN, "***")
     .replace(ARG_PASSWORD_PATTERN, "-p***")
     .replace(KEY_VALUE_SECRET_PATTERN, (_match, key: string) => `${key}=***`)
     .replace(TOKEN_LIKE_PATTERN, "***");

@@ -8,6 +8,9 @@ type LogLevel = "info" | "debug" | "error";
 let logWriteQueue = Promise.resolve();
 const MAX_LOG_ENTRY_CHARS = 8_000;
 const LOG_CHUNK_CHARS = 2_000;
+const MAX_PENDING_LOCAL_LOG_WRITES = 250;
+let pendingLocalLogWrites = 0;
+let droppedLocalLogWrites = 0;
 
 function buildLogFragments(input: string): string[] {
   if (input.length <= MAX_LOG_ENTRY_CHARS) return [input];
@@ -26,16 +29,37 @@ function shouldPersistLevel(level: LogLevel, verbosity: LogVerbosity): boolean {
   return true;
 }
 
+function enqueueLocalLogLine(line: string): void {
+  pendingLocalLogWrites += 1;
+  logWriteQueue = logWriteQueue
+    .then(() => invoke("append_local_log", { line }).then(() => undefined))
+    .catch(() => {
+      // Ignore logging backend failures to avoid noisy loops.
+    })
+    .finally(() => {
+      pendingLocalLogWrites = Math.max(0, pendingLocalLogWrites - 1);
+    });
+}
+
 function persistLocalLog(level: LogLevel, line: string): void {
   if (!state.currentSettings.localLoggingEnabled) return;
   if (!shouldPersistLevel(level, state.currentSettings.logVerbosity)) return;
 
+  if (pendingLocalLogWrites >= MAX_PENDING_LOCAL_LOG_WRITES) {
+    droppedLocalLogWrites += 1;
+    return;
+  }
+
+  if (droppedLocalLogWrites > 0) {
+    const dropped = droppedLocalLogWrites;
+    droppedLocalLogWrites = 0;
+    enqueueLocalLogLine(
+      `${new Date().toISOString()} [error] Local log queue overloaded; dropped ${dropped} log entr${dropped === 1 ? "y" : "ies"}.`
+    );
+  }
+
   const entry = `${new Date().toISOString()} [${level}] ${line}`;
-  logWriteQueue = logWriteQueue
-    .then(() => invoke("append_local_log", { line: entry }).then(() => undefined))
-    .catch(() => {
-      // Ignore logging backend failures to avoid noisy loops.
-    });
+  enqueueLocalLogLine(entry);
 }
 
 function trimLog() {
@@ -134,6 +158,7 @@ export function renderInputs() {
     span.textContent = path;
     const remove = document.createElement("button");
     remove.textContent = "Remove";
+    remove.disabled = state.running;
     remove.addEventListener("click", () => {
       state.inputs.splice(index, 1);
       renderInputs();
@@ -162,4 +187,15 @@ export function setRunning(active: boolean) {
     $<HTMLButtonElement>("browse-test").disabled = active;
     $<HTMLButtonElement>("browse-extract").disabled = active;
   }
+
+  for (const id of ["add-files", "add-folder", "clear-inputs", "choose-output", "choose-extract", "open-settings"]) {
+    const el = document.getElementById(id) as HTMLButtonElement | null;
+    if (el) el.disabled = active;
+  }
+
+  document.querySelectorAll<HTMLButtonElement>("[data-mode-btn]").forEach((btn) => {
+    btn.disabled = active;
+  });
+
+  renderInputs();
 }

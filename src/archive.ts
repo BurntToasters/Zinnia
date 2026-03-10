@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { message } from "@tauri-apps/plugin-dialog";
+import { message, confirm } from "@tauri-apps/plugin-dialog";
 import { $, parseThreads, escapeHtml, formatSize, splitArgs } from "./utils";
 import { SETTING_DEFAULTS, state } from "./state";
 import { log, devLog, setStatus, setProgress, hideProgress, setRunning, getMode } from "./ui";
@@ -16,6 +16,40 @@ function logCommandResult(stdout: string, stderr: string) {
   const entries = formatCommandOutputForLogs(stdout, stderr, state.currentSettings.logVerbosity);
   for (const entry of entries) {
     log(entry.text, entry.level === "error" ? "error" : "info");
+  }
+}
+
+interface Run7zResult {
+  stdout: string;
+  stderr: string;
+  code: number;
+  stdout_truncated?: boolean;
+  stderr_truncated?: boolean;
+}
+
+function logTruncationNotice(result: Run7zResult) {
+  if (!result.stdout_truncated && !result.stderr_truncated) return;
+
+  const streams: string[] = [];
+  if (result.stdout_truncated) streams.push("stdout");
+  if (result.stderr_truncated) streams.push("stderr");
+  log(`7z ${streams.join(" and ")} output exceeded 50 MiB and was truncated.`, "error");
+}
+
+async function ensureRuntimeReady(): Promise<boolean> {
+  try {
+    await invoke("probe_7z");
+    return true;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`7-Zip runtime check failed: ${msg}`, "error");
+    setStatus("Missing runtime dependency", 3000);
+    hideProgress();
+    await message(
+      `The bundled 7-Zip binary could not be started.\n\n${msg}`,
+      { title: "Missing runtime dependency", kind: "error" }
+    );
+    return false;
   }
 }
 
@@ -36,7 +70,6 @@ export interface ArchiveInfo {
 }
 
 export function buildExtractArgsFor(archive: string): string[] {
-  ensureArchivePaths([archive], "extract");
   const dest = $<HTMLInputElement>("extract-path").value.trim();
   const password = $<HTMLInputElement>("extract-password").value.trim();
   const extraArgs = splitArgs($<HTMLInputElement>("extract-extra-args").value.trim());
@@ -243,6 +276,8 @@ export async function runAction() {
     return runBatchExtract();
   }
 
+  if (!(await ensureRuntimeReady())) return;
+
   try {
     state.batchCancelled = false;
     state.cancelRequested = false;
@@ -250,7 +285,7 @@ export async function runAction() {
     if (mode === "add") {
       const deleteAfter = $<HTMLInputElement>("delete-after").checked;
       if (deleteAfter) {
-        const confirmed = await message(
+        const confirmed = await confirm(
           "This will permanently delete source files after compression. Continue?",
           { title: "Confirm deletion", kind: "warning", okLabel: "Delete files" }
         );
@@ -261,6 +296,7 @@ export async function runAction() {
     let args: string[];
     if (mode === "extract") {
       if (!state.inputs[0]) throw new Error("Select an archive to extract.");
+      await ensureArchivePaths([state.inputs[0]], "extract");
       args = buildExtractArgsFor(state.inputs[0]);
     } else {
       args = buildArgs();
@@ -272,7 +308,7 @@ export async function runAction() {
     setRunning(true);
     setStatus("Running");
 
-    const result = await invoke<{ stdout: string; stderr: string; code: number }>("run_7z", { args });
+    const result = await invoke<Run7zResult>("run_7z", { args });
     if (state.cancelRequested) {
       hideProgress();
       setStatus("Cancelled", 2000);
@@ -289,6 +325,7 @@ export async function runAction() {
     }
 
     logCommandResult(result.stdout, result.stderr);
+    logTruncationNotice(result);
     devLog(`Exit code: ${result.code}`);
 
     if (result.code !== 0) {
@@ -322,37 +359,46 @@ export async function runAction() {
 
 export async function runBatchExtract() {
   try {
+    if (!(await ensureRuntimeReady())) return;
+
     state.batchCancelled = false;
     state.cancelRequested = false;
-    ensureArchivePaths(state.inputs, "extract");
+    const archives = [...state.inputs];
+    await ensureArchivePaths(archives, "extract");
 
     const dest = $<HTMLInputElement>("extract-path").value.trim();
     if (!dest) throw new Error("Choose a destination folder.");
+    const password = $<HTMLInputElement>("extract-password").value.trim();
+    const extraArgs = splitArgs($<HTMLInputElement>("extract-extra-args").value.trim());
+    if (extraArgs.length > 0) validateExtraArgs(extraArgs);
 
     setRunning(true);
     let succeeded = 0;
     let failed = 0;
 
-    for (let i = 0; i < state.inputs.length; i++) {
+    for (let i = 0; i < archives.length; i++) {
       if (state.batchCancelled || state.cancelRequested) break;
 
-      const archive = state.inputs[i];
-      setStatus(`Extracting ${i + 1} of ${state.inputs.length}`);
+      const archive = archives[i];
+      setStatus(`Extracting ${i + 1} of ${archives.length}`);
 
       try {
-        const args = buildExtractArgsFor(archive);
+        const args = ["x", archive, `-o${dest}`, "-y"];
+        if (password) args.push(`-p${password}`);
+        args.push(...extraArgs);
         const logSafe = args.map(a => a.startsWith("-p") ? "-p***" : a);
         devLog(`7z ${logSafe.join(" ")}`);
 
-        const result = await invoke<{ stdout: string; stderr: string; code: number }>("run_7z", { args });
+        const result = await invoke<Run7zResult>("run_7z", { args });
 
         const outputLines = result.stdout.split('\n');
         for (const line of outputLines) {
           const percentMatch = line.match(/(\d+)%/);
-          if (percentMatch) setProgress(`${percentMatch[1]}% (${i + 1}/${state.inputs.length})`);
+          if (percentMatch) setProgress(`${percentMatch[1]}% (${i + 1}/${archives.length})`);
         }
 
         logCommandResult(result.stdout, result.stderr);
+        logTruncationNotice(result);
 
         if (result.code === 0) {
           succeeded++;
@@ -411,7 +457,7 @@ export async function testArchive() {
     return;
   }
   try {
-    ensureArchivePaths([archive], "test");
+    await ensureArchivePaths([archive], "test");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await message(msg, { title: "Invalid input", kind: "error" });
@@ -425,13 +471,16 @@ export async function testArchive() {
   const args = ["t", archive];
   if (password) args.push(`-p${password}`);
 
+  if (!(await ensureRuntimeReady())) return;
+
   setRunning(true);
   setStatus("Testing archive integrity");
 
   try {
-    const result = await invoke<{ stdout: string; stderr: string; code: number }>("run_7z", { args });
+    const result = await invoke<Run7zResult>("run_7z", { args });
 
     logCommandResult(result.stdout, result.stderr);
+    logTruncationNotice(result);
 
     if (result.code === 0) {
       setStatus("Integrity test passed", 3000);
@@ -461,7 +510,7 @@ export async function browseArchive() {
     return;
   }
   try {
-    ensureArchivePaths([archive], "browse");
+    await ensureArchivePaths([archive], "browse");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await message(msg, { title: "Invalid input", kind: "error" });
@@ -472,11 +521,14 @@ export async function browseArchive() {
   const args = ["l", "-slt", archive];
   if (password) args.push(`-p${password}`);
 
+  if (!(await ensureRuntimeReady())) return;
+
   setRunning(true);
   setStatus("Listing archive contents");
 
   try {
-    const result = await invoke<{ stdout: string; stderr: string; code: number }>("run_7z", { args });
+    const result = await invoke<Run7zResult>("run_7z", { args });
+    logTruncationNotice(result);
 
     if (result.code !== 0) {
       logCommandResult(result.stdout, result.stderr);

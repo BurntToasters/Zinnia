@@ -1,6 +1,6 @@
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { message, ask } from "@tauri-apps/plugin-dialog";
+import { message, ask, confirm } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { log, devLog, setStatus } from "./ui";
 
@@ -26,7 +26,7 @@ export async function checkUpdates() {
       return;
     }
     log(`Update available: ${update.version}`);
-    const confirmed = await message(
+    const confirmed = await confirm(
       `Version ${update.version} is available. Download and install now?\n\nThe app will restart after installation.`,
       { title: "Update available", kind: "info", okLabel: "Install" }
     );
@@ -72,5 +72,6 @@ export async function autoCheckUpdates() {
   } catch (err) {
     const messageText = err instanceof Error ? err.message : String(err);
     devLog(`Auto-update error: ${messageText}`);
+    setStatus("Idle");
   }
 }

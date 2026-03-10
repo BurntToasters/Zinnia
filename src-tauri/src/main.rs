@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::io::{Read, Write};
 use std::sync::Mutex;
 use tauri::Emitter;
 use tauri::Manager;
@@ -9,19 +9,30 @@ const MAX_OUTPUT_BYTES: usize = 50 * 1024 * 1024;
 const MAX_LOG_FILE_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_LOG_ENTRY_BYTES: usize = 16 * 1024;
 const LOG_FILE_NAME: &str = "zinnia.log";
+const ARCHIVE_SIGNATURE_SCAN_BYTES: usize = 512;
+const SUPPORTED_ARCHIVE_EXTENSIONS: &[&str] = &[
+    ".7z", ".zip", ".tar", ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz", ".rar",
+];
 
 #[derive(serde::Serialize)]
 struct RunResult {
     stdout: String,
     stderr: String,
     code: i32,
+    stdout_truncated: bool,
+    stderr_truncated: bool,
 }
 
 struct InitialPaths(Mutex<Vec<String>>);
 struct InitialMode(Mutex<String>);
-struct RunningProcess(Mutex<Option<CommandChild>>);
+struct ProcessState {
+    child: Option<CommandChild>,
+    cancelling: bool,
+}
 
-fn lock_process(state: &RunningProcess) -> Result<std::sync::MutexGuard<'_, Option<CommandChild>>, String> {
+struct RunningProcess(Mutex<ProcessState>);
+
+fn lock_process(state: &RunningProcess) -> Result<std::sync::MutexGuard<'_, ProcessState>, String> {
     state.0.lock().map_err(|_| "Process lock poisoned".to_string())
 }
 
@@ -71,6 +82,33 @@ fn truncate_for_bytes(input: &str, max_bytes: usize) -> String {
 
     let omitted = input.len().saturating_sub(boundary);
     format!("{} [truncated {} bytes]", &input[..boundary], omitted)
+}
+
+fn append_limited_output(target: &mut String, chunk: &str, max_bytes: usize, truncated: &mut bool) {
+    if *truncated {
+        return;
+    }
+
+    if target.len() >= max_bytes {
+        *truncated = true;
+        return;
+    }
+
+    let remaining = max_bytes - target.len();
+    if chunk.len() <= remaining {
+        target.push_str(chunk);
+        return;
+    }
+
+    let mut boundary = remaining;
+    while boundary > 0 && !chunk.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+
+    if boundary > 0 {
+        target.push_str(&chunk[..boundary]);
+    }
+    *truncated = true;
 }
 
 fn atomic_write_text(path: &std::path::Path, contents: &str) -> Result<(), String> {
@@ -136,8 +174,8 @@ fn trim_log_file_if_needed(path: &std::path::Path) -> Result<(), String> {
     std::fs::write(path, clipped).map_err(|e| e.to_string())
 }
 
-fn ensure_idle<T>(slot: &Option<T>) -> Result<(), String> {
-    if slot.is_some() {
+fn ensure_idle(state: &ProcessState) -> Result<(), String> {
+    if state.child.is_some() || state.cancelling {
         Err("Another archive operation is already running.".to_string())
     } else {
         Ok(())
@@ -146,6 +184,262 @@ fn ensure_idle<T>(slot: &Option<T>) -> Result<(), String> {
 
 fn is_non_running_kill_error(message: &str) -> bool {
     message.contains("finished") || message.contains("not running")
+}
+
+#[derive(serde::Serialize, Clone, Debug)]
+struct ArchivePathValidation {
+    path: String,
+    valid: bool,
+    reason: Option<String>,
+}
+
+fn expected_archive_family(lower_path: &str) -> Option<&'static str> {
+    if lower_path.ends_with(".7z") {
+        Some("7z")
+    } else if lower_path.ends_with(".zip") {
+        Some("zip")
+    } else if lower_path.ends_with(".rar") {
+        Some("rar")
+    } else if lower_path.ends_with(".tar") {
+        Some("tar")
+    } else if lower_path.ends_with(".gz") || lower_path.ends_with(".tgz") {
+        Some("gzip")
+    } else if lower_path.ends_with(".bz2") || lower_path.ends_with(".tbz2") {
+        Some("bzip2")
+    } else if lower_path.ends_with(".xz") || lower_path.ends_with(".txz") {
+        Some("xz")
+    } else {
+        None
+    }
+}
+
+fn starts_with_bytes(bytes: &[u8], prefix: &[u8]) -> bool {
+    bytes.len() >= prefix.len() && &bytes[..prefix.len()] == prefix
+}
+
+fn detect_archive_signature(bytes: &[u8]) -> Option<&'static str> {
+    if starts_with_bytes(bytes, &[0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C]) {
+        return Some("7z");
+    }
+    if starts_with_bytes(bytes, &[0x50, 0x4B, 0x03, 0x04])
+        || starts_with_bytes(bytes, &[0x50, 0x4B, 0x05, 0x06])
+        || starts_with_bytes(bytes, &[0x50, 0x4B, 0x07, 0x08])
+    {
+        return Some("zip");
+    }
+    if starts_with_bytes(bytes, &[0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x00])
+        || starts_with_bytes(bytes, &[0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x01, 0x00])
+    {
+        return Some("rar");
+    }
+    if starts_with_bytes(bytes, &[0x1F, 0x8B]) {
+        return Some("gzip");
+    }
+    if starts_with_bytes(bytes, b"BZh") {
+        return Some("bzip2");
+    }
+    if starts_with_bytes(bytes, &[0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00]) {
+        return Some("xz");
+    }
+    None
+}
+
+fn parse_tar_octal_field(field: &[u8]) -> Option<u64> {
+    let end = field.iter().position(|b| *b == 0).unwrap_or(field.len());
+    let text = String::from_utf8_lossy(&field[..end]).trim().to_string();
+    if text.is_empty() {
+        return None;
+    }
+    u64::from_str_radix(text.trim(), 8).ok()
+}
+
+fn is_valid_tar_typeflag(flag: u8) -> bool {
+    matches!(
+        flag,
+        0
+            | b'0'
+            | b'1'
+            | b'2'
+            | b'3'
+            | b'4'
+            | b'5'
+            | b'6'
+            | b'7'
+            | b'g'
+            | b'x'
+            | b'L'
+            | b'K'
+            | b'S'
+            | b'V'
+            | b'A'
+            | b'D'
+            | b'M'
+            | b'N'
+    )
+}
+
+fn is_ascii_printable_or_blank(field: &[u8]) -> bool {
+    field
+        .iter()
+        .all(|byte| *byte == 0 || *byte == b' ' || (0x21..=0x7E).contains(byte))
+}
+
+fn has_tar_checksum(bytes: &[u8]) -> bool {
+    if bytes.len() < 512 {
+        return false;
+    }
+
+    if !is_valid_tar_typeflag(bytes[156]) {
+        return false;
+    }
+    if !is_ascii_printable_or_blank(&bytes[0..100]) {
+        return false;
+    }
+    if parse_tar_octal_field(&bytes[124..136]).is_none() {
+        return false;
+    }
+    if parse_tar_octal_field(&bytes[136..148]).is_none() {
+        return false;
+    }
+
+    let stored = match parse_tar_octal_field(&bytes[148..156]) {
+        Some(value) => value,
+        None => return false,
+    };
+
+    let mut computed: u64 = 0;
+    for (index, byte) in bytes.iter().copied().take(512).enumerate() {
+        if (148..156).contains(&index) {
+            computed += 0x20;
+        } else {
+            computed += byte as u64;
+        }
+    }
+
+    computed == stored
+}
+
+fn has_tar_signature(bytes: &[u8]) -> bool {
+    if bytes.len() < 512 {
+        return false;
+    }
+    bytes.get(257..262) == Some(b"ustar") || has_tar_checksum(bytes)
+}
+
+fn read_probe_bytes(path: &std::path::Path, max_bytes: usize) -> Result<Vec<u8>, String> {
+    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut buf = vec![0u8; max_bytes];
+    let read = file.read(&mut buf).map_err(|e| e.to_string())?;
+    buf.truncate(read);
+    Ok(buf)
+}
+
+fn extension_mismatch_reason(expected: &str, detected: Option<&str>, tar: bool) -> String {
+    if expected == "tar" && tar {
+        return String::new();
+    }
+
+    match detected {
+        Some(kind) => format!(
+            "Extension indicates {expected} but header appears to be {kind}."
+        ),
+        None => format!("Extension indicates {expected} but the archive header is unrecognized."),
+    }
+}
+
+fn validate_archive_path(path: &str) -> ArchivePathValidation {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return ArchivePathValidation {
+            path: path.to_string(),
+            valid: false,
+            reason: Some("Path is empty.".to_string()),
+        };
+    }
+
+    let lower = trimmed.to_lowercase();
+    let fs_path = std::path::Path::new(trimmed);
+    let meta = match std::fs::metadata(fs_path) {
+        Ok(meta) => meta,
+        Err(err) => {
+            let reason = if err.kind() == std::io::ErrorKind::NotFound {
+                "File does not exist.".to_string()
+            } else {
+                format!("Unable to read file metadata: {}", err)
+            };
+            return ArchivePathValidation {
+                path: trimmed.to_string(),
+                valid: false,
+                reason: Some(reason),
+            };
+        }
+    };
+    if !meta.is_file() {
+        return ArchivePathValidation {
+            path: trimmed.to_string(),
+            valid: false,
+            reason: Some("Path is not a file.".to_string()),
+        };
+    }
+
+    let bytes = match read_probe_bytes(fs_path, ARCHIVE_SIGNATURE_SCAN_BYTES) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            return ArchivePathValidation {
+                path: trimmed.to_string(),
+                valid: false,
+                reason: Some(format!("Unable to read file contents: {}", err)),
+            };
+        }
+    };
+
+    let signature = detect_archive_signature(&bytes);
+    let tar = has_tar_signature(&bytes);
+    let valid = match expected_archive_family(&lower) {
+        Some("7z") => signature == Some("7z"),
+        Some("zip") => signature == Some("zip"),
+        Some("rar") => signature == Some("rar"),
+        Some("gzip") => signature == Some("gzip"),
+        Some("bzip2") => signature == Some("bzip2"),
+        Some("xz") => signature == Some("xz"),
+        Some("tar") => tar,
+        _ => signature.is_some() || tar,
+    };
+
+    if valid {
+        return ArchivePathValidation {
+            path: trimmed.to_string(),
+            valid: true,
+            reason: None,
+        };
+    }
+
+    let expected = expected_archive_family(&lower);
+    let reason = match expected {
+        Some(kind) => {
+            let mismatch = extension_mismatch_reason(kind, signature, tar);
+            if mismatch.is_empty() {
+                "Archive header could not be validated.".to_string()
+            } else {
+                mismatch
+            }
+        }
+        None => "File does not look like a supported archive.".to_string(),
+    };
+
+    ArchivePathValidation {
+        path: trimmed.to_string(),
+        valid: false,
+        reason: Some(reason),
+    }
+}
+
+#[tauri::command]
+fn validate_archive_paths(paths: Vec<String>) -> Result<Vec<ArchivePathValidation>, String> {
+    Ok(paths
+        .into_iter()
+        .map(|path| validate_archive_path(&path))
+        .collect())
 }
 
 #[tauri::command]
@@ -294,6 +588,8 @@ async fn run_7z(app: tauri::AppHandle, args: Vec<String>, state: tauri::State<'_
     let mut stdout = String::new();
     let mut stderr = String::new();
     let mut exit_code = -1;
+    let mut stdout_truncated = false;
+    let mut stderr_truncated = false;
 
     let command = app
         .shell()
@@ -306,7 +602,8 @@ async fn run_7z(app: tauri::AppHandle, args: Vec<String>, state: tauri::State<'_
         ensure_idle(&*process)?;
 
         let (rx, child) = command.spawn().map_err(|e| e.to_string())?;
-        *process = Some(child);
+        process.child = Some(child);
+        process.cancelling = false;
         rx
     };
 
@@ -314,15 +611,11 @@ async fn run_7z(app: tauri::AppHandle, args: Vec<String>, state: tauri::State<'_
         match event {
             CommandEvent::Stdout(line) => {
                 let chunk = String::from_utf8_lossy(&line);
-                if stdout.len() + chunk.len() <= MAX_OUTPUT_BYTES {
-                    stdout.push_str(&chunk);
-                }
+                append_limited_output(&mut stdout, &chunk, MAX_OUTPUT_BYTES, &mut stdout_truncated);
             }
             CommandEvent::Stderr(line) => {
                 let chunk = String::from_utf8_lossy(&line);
-                if stderr.len() + chunk.len() <= MAX_OUTPUT_BYTES {
-                    stderr.push_str(&chunk);
-                }
+                append_limited_output(&mut stderr, &chunk, MAX_OUTPUT_BYTES, &mut stderr_truncated);
             }
             CommandEvent::Terminated(payload) => {
                 if let Some(code) = payload.code {
@@ -336,20 +629,36 @@ async fn run_7z(app: tauri::AppHandle, args: Vec<String>, state: tauri::State<'_
 
     {
         let mut process = lock_process(&state)?;
-        *process = None;
+        process.child = None;
+        process.cancelling = false;
     }
 
     Ok(RunResult {
         stdout: sanitize_output(&stdout),
         stderr: sanitize_output(&stderr),
         code: exit_code,
+        stdout_truncated,
+        stderr_truncated,
     })
 }
 
 #[tauri::command]
 fn cancel_7z(state: tauri::State<'_, RunningProcess>) -> Result<(), String> {
-    let mut process = lock_process(&state)?;
-    if let Some(child) = process.take() {
+    let child = {
+        let mut process = lock_process(&state)?;
+        match process.child.take() {
+            Some(child) => {
+                process.cancelling = true;
+                Some(child)
+            }
+            None => {
+                process.cancelling = false;
+                None
+            }
+        }
+    };
+
+    if let Some(child) = child {
         match child.kill() {
             Ok(()) => Ok(()),
             Err(e) => {
@@ -367,10 +676,7 @@ fn cancel_7z(state: tauri::State<'_, RunningProcess>) -> Result<(), String> {
 }
 
 #[cfg(windows)]
-const ARCHIVE_EXTENSIONS: &[&str] = &[
-    ".7z", ".zip", ".tar", ".gz", ".tgz", ".bz2", ".tbz2",
-    ".xz", ".txz", ".rar",
-];
+const ARCHIVE_EXTENSIONS: &[&str] = SUPPORTED_ARCHIVE_EXTENSIONS;
 
 #[tauri::command]
 fn register_windows_context_menu() -> Result<(), String> {
@@ -799,8 +1105,17 @@ mod tests {
 
     #[test]
     fn ensure_idle_detects_busy_state() {
-        assert!(ensure_idle(&Option::<()>::None).is_ok());
-        assert!(ensure_idle(&Some(())).is_err());
+        let idle = ProcessState {
+            child: None,
+            cancelling: false,
+        };
+        let cancelling = ProcessState {
+            child: None,
+            cancelling: true,
+        };
+
+        assert!(ensure_idle(&idle).is_ok());
+        assert!(ensure_idle(&cancelling).is_err());
     }
 
     #[test]
@@ -832,6 +1147,114 @@ mod tests {
         assert!(truncated.contains("[truncated"));
     }
 
+    #[test]
+    fn append_limited_output_marks_truncation_when_over_limit() {
+        let mut out = String::new();
+        let mut truncated = false;
+
+        append_limited_output(&mut out, "abcdef", 4, &mut truncated);
+        assert_eq!(out, "abcd");
+        assert!(truncated);
+    }
+
+    #[test]
+    fn append_limited_output_preserves_utf8_boundaries() {
+        let mut out = String::new();
+        let mut truncated = false;
+        let chunk = "ééé";
+
+        append_limited_output(&mut out, chunk, 5, &mut truncated);
+        assert_eq!(out, "éé");
+        assert!(truncated);
+        assert!(std::str::from_utf8(out.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn detect_archive_signature_recognizes_known_headers() {
+        assert_eq!(detect_archive_signature(&[0x50, 0x4B, 0x03, 0x04]), Some("zip"));
+        assert_eq!(detect_archive_signature(&[0x1F, 0x8B, 0x08]), Some("gzip"));
+        assert_eq!(
+            detect_archive_signature(&[0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x01, 0x00]),
+            Some("rar")
+        );
+        assert_eq!(detect_archive_signature(b"plain-text"), None);
+    }
+
+    #[test]
+    fn has_tar_signature_accepts_checksum_valid_block() {
+        let mut block = [0u8; 512];
+        block[0..8].copy_from_slice(b"file.txt");
+        block[124..136].copy_from_slice(b"00000000000\0");
+        block[136..148].copy_from_slice(b"00000000000\0");
+        block[156] = b'0';
+        for byte in &mut block[148..156] {
+            *byte = b' ';
+        }
+        let checksum: u64 = block.iter().map(|b| *b as u64).sum();
+        let checksum_field = format!("{:06o}\0 ", checksum);
+        block[148..156].copy_from_slice(checksum_field.as_bytes());
+
+        assert!(has_tar_signature(&block));
+    }
+
+    #[test]
+    fn has_tar_signature_rejects_invalid_typeflag() {
+        let mut block = [0u8; 512];
+        block[0..8].copy_from_slice(b"file.txt");
+        block[124..136].copy_from_slice(b"00000000000\0");
+        block[136..148].copy_from_slice(b"00000000000\0");
+        block[156] = 0xFF;
+        for byte in &mut block[148..156] {
+            *byte = b' ';
+        }
+        let checksum: u64 = block.iter().map(|b| *b as u64).sum();
+        let checksum_field = format!("{:06o}\0 ", checksum);
+        block[148..156].copy_from_slice(checksum_field.as_bytes());
+
+        assert!(!has_tar_signature(&block));
+    }
+
+    #[test]
+    fn validate_archive_path_accepts_extensionless_zip_signature() {
+        let base = std::env::temp_dir().join(format!(
+            "zinnia-archive-probe-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time should work")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).expect("temp directory should be created");
+        let file_path = base.join("archive-without-extension");
+        std::fs::write(&file_path, [0x50, 0x4B, 0x03, 0x04, 0x14, 0x00])
+            .expect("probe file should be written");
+
+        let path = file_path.to_string_lossy().to_string();
+        assert!(validate_archive_path(&path).valid);
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn validate_archive_path_rejects_mislabeled_zip_file() {
+        let base = std::env::temp_dir().join(format!(
+            "zinnia-archive-probe-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time should work")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).expect("temp directory should be created");
+        let file_path = base.join("not-an-archive.zip");
+        std::fs::write(&file_path, b"this is plain text").expect("probe file should be written");
+
+        let path = file_path.to_string_lossy().to_string();
+        let result = validate_archive_path(&path);
+        assert!(!result.valid);
+        assert!(result.reason.unwrap_or_default().contains("Extension indicates zip"));
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn desktop_exec_escaping_quotes_spaces() {
@@ -858,11 +1281,15 @@ fn main() {
             let ctx = collect_cli_context();
             InitialMode(Mutex::new(ctx.1))
         })
-        .manage(RunningProcess(Mutex::new(None)))
+        .manage(RunningProcess(Mutex::new(ProcessState {
+            child: None,
+            cancelling: false,
+        })))
         .invoke_handler(tauri::generate_handler![
             run_7z,
             cancel_7z,
             probe_7z,
+            validate_archive_paths,
             register_windows_context_menu,
             unregister_windows_context_menu,
             get_windows_context_menu_status,

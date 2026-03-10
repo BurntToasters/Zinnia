@@ -13,7 +13,6 @@
     "updater:default",
     "dialog:default",
     "process:default",
-    "shell:allow-execute",
     "shell:allow-open",
     "notification:default"
   ]

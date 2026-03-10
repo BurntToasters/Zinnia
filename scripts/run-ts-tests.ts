@@ -5,7 +5,7 @@ import { runUtilsTests } from "../src/tests/utils.test.ts";
 
 type Suite = {
   name: string;
-  run: () => void;
+  run: () => void | Promise<void>;
 };
 
 const suites: Suite[] = [
@@ -19,7 +19,7 @@ let failed = 0;
 
 for (const suite of suites) {
   try {
-    suite.run();
+    await suite.run();
     console.log(`PASS ${suite.name}`);
   } catch (err) {
     failed += 1;
