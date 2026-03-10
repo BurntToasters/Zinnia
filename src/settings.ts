@@ -1,6 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { $, parseThreads } from "./utils";
-import { UserSettings, SETTING_DEFAULTS, state } from "./state";
+import { state } from "./state";
+import {
+  LoadSettingsResult,
+  UserSettings,
+  SETTING_DEFAULTS,
+  mergeSettingsPayload,
+  parseSettingsRaw,
+} from "./settings-model";
 
 export function applyTheme(pref: string) {
   const resolved = pref === "system"
@@ -10,17 +17,27 @@ export function applyTheme(pref: string) {
 }
 
 export async function loadSettings(): Promise<UserSettings> {
+  const result = await loadSettingsWithMetadata();
+  return result.settings;
+}
+
+export async function loadSettingsWithMetadata(): Promise<LoadSettingsResult> {
   try {
     const raw = await invoke<string>("load_settings");
-    const parsed = JSON.parse(raw) as Partial<UserSettings>;
-    return { ...SETTING_DEFAULTS, ...parsed };
-  } catch {
-    return { ...SETTING_DEFAULTS };
+    return parseSettingsRaw(raw);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      settings: { ...SETTING_DEFAULTS },
+      extras: {},
+      malformed: true,
+      warning: `Settings file could not be read (${msg}). Defaults were loaded.`,
+    };
   }
 }
 
-export async function saveSettings(settings: UserSettings): Promise<void> {
-  await invoke("save_settings", { json: JSON.stringify(settings) });
+export async function saveSettings(settings: UserSettings, extras: Record<string, unknown> = {}): Promise<void> {
+  await invoke("save_settings", { json: JSON.stringify(mergeSettingsPayload(settings, extras)) });
 }
 
 export function applySettingsToForm() {
@@ -51,23 +68,32 @@ export function populateSettingsModal() {
   $<HTMLInputElement>("s-encrypt-headers").checked = state.currentSettings.encryptHeaders;
   $<HTMLInputElement>("s-delete-after").checked = state.currentSettings.deleteAfter;
   $<HTMLInputElement>("s-auto-check-updates").checked = state.currentSettings.autoCheckUpdates;
+  $<HTMLInputElement>("s-local-logging").checked = state.currentSettings.localLoggingEnabled;
+  $<HTMLSelectElement>("s-log-verbosity").value = state.currentSettings.logVerbosity;
+
+  const logDir = document.getElementById("s-log-dir");
+  if (logDir) {
+    logDir.textContent = state.logDirectory || "Unavailable";
+  }
 }
 
 export function readSettingsModal(): UserSettings {
   return {
-    theme: $<HTMLSelectElement>("s-theme").value,
-    format: $<HTMLSelectElement>("s-format").value,
+    theme: $<HTMLSelectElement>("s-theme").value as UserSettings["theme"],
+    format: $<HTMLSelectElement>("s-format").value as UserSettings["format"],
     level: $<HTMLSelectElement>("s-level").value,
     method: $<HTMLSelectElement>("s-method").value,
     dict: $<HTMLSelectElement>("s-dict").value,
     wordSize: $<HTMLSelectElement>("s-word-size").value,
     solid: $<HTMLSelectElement>("s-solid").value,
     threads: parseThreads($<HTMLInputElement>("s-threads").value, SETTING_DEFAULTS.threads),
-    pathMode: $<HTMLSelectElement>("s-path-mode").value,
+    pathMode: $<HTMLSelectElement>("s-path-mode").value as UserSettings["pathMode"],
     sfx: $<HTMLInputElement>("s-sfx").checked,
     encryptHeaders: $<HTMLInputElement>("s-encrypt-headers").checked,
     deleteAfter: $<HTMLInputElement>("s-delete-after").checked,
     autoCheckUpdates: $<HTMLInputElement>("s-auto-check-updates").checked,
+    localLoggingEnabled: $<HTMLInputElement>("s-local-logging").checked,
+    logVerbosity: $<HTMLSelectElement>("s-log-verbosity").value as UserSettings["logVerbosity"],
   };
 }
 

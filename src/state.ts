@@ -1,46 +1,22 @@
 import { $ } from "./utils";
+import { SETTING_DEFAULTS, UserSettings } from "./settings-model";
 
-export interface UserSettings {
-  theme: string;
-  format: string;
-  level: string;
-  method: string;
-  dict: string;
-  wordSize: string;
-  solid: string;
-  threads: number;
-  pathMode: string;
-  sfx: boolean;
-  encryptHeaders: boolean;
-  deleteAfter: boolean;
-  autoCheckUpdates: boolean;
-}
-
-export let SETTING_DEFAULTS: UserSettings = {
-  theme: "system",
-  format: "7z",
-  level: "5",
-  method: "lzma2",
-  dict: "256m",
-  wordSize: "64",
-  solid: "16g",
-  threads: 8,
-  pathMode: "relative",
-  sfx: false,
-  encryptHeaders: false,
-  deleteAfter: false,
-  autoCheckUpdates: true,
-};
+export { SETTING_DEFAULTS };
+export type { UserSettings };
 
 export const state = {
   currentSettings: { ...SETTING_DEFAULTS } as UserSettings,
+  lastPersistedSettings: { ...SETTING_DEFAULTS } as UserSettings,
+  settingsExtras: {} as Record<string, unknown>,
   inputs: [] as string[],
   running: false,
   batchCancelled: false,
+  cancelRequested: false,
   statusTimeout: undefined as number | undefined,
   osIntegrationEnabled: false,
   platformName: "",
   appIsPackaged: false,
+  logDirectory: "",
 };
 
 export const dom = {

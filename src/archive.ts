@@ -3,6 +3,21 @@ import { message } from "@tauri-apps/plugin-dialog";
 import { $, parseThreads, escapeHtml, formatSize, splitArgs } from "./utils";
 import { SETTING_DEFAULTS, state } from "./state";
 import { log, devLog, setStatus, setProgress, hideProgress, setRunning, getMode } from "./ui";
+import { ensureArchivePaths, validateExtraArgs } from "./archive-rules";
+import { formatCommandOutputForLogs } from "./output-logging";
+
+function truncateForDialog(text: string, maxChars = 4000): string {
+  if (text.length <= maxChars) return text;
+  const omitted = text.length - maxChars;
+  return `${text.slice(0, maxChars)}\n\n[truncated ${omitted} chars]`;
+}
+
+function logCommandResult(stdout: string, stderr: string) {
+  const entries = formatCommandOutputForLogs(stdout, stderr, state.currentSettings.logVerbosity);
+  for (const entry of entries) {
+    log(entry.text, entry.level === "error" ? "error" : "info");
+  }
+}
 
 export interface BrowseEntry {
   path: string;
@@ -20,36 +35,8 @@ export interface ArchiveInfo {
   entries: BrowseEntry[];
 }
 
-const ALLOWED_EXTRA_PREFIXES = [
-  "-m", "-x", "-i", "-ao", "-bb", "-bs", "-bt",
-  "-scs", "-slt", "-sns", "-snl", "-sni", "-stl",
-  "-slp", "-ssp", "-ssw", "-y", "-r", "-w",
-];
-
-function validateExtraArgs(args: string[]): void {
-  const blocked = ["-sdel", "-p", "-mhe", "-o", "-si", "-so", "-t"];
-
-  for (const arg of args) {
-    if (!arg.startsWith("-")) {
-      throw new Error(`Extra arguments must start with '-'. Invalid: ${arg}`);
-    }
-
-    const lower = arg.toLowerCase();
-    if (blocked.some(b => lower.startsWith(b))) {
-      throw new Error(
-        `"${arg}" is not allowed in extra args. Use the dedicated fields instead.`
-      );
-    }
-
-    if (!ALLOWED_EXTRA_PREFIXES.some(p => lower.startsWith(p))) {
-      throw new Error(
-        `Unknown argument "${arg}". Only recognized 7z switches are allowed.`
-      );
-    }
-  }
-}
-
 export function buildExtractArgsFor(archive: string): string[] {
+  ensureArchivePaths([archive], "extract");
   const dest = $<HTMLInputElement>("extract-path").value.trim();
   const password = $<HTMLInputElement>("extract-password").value.trim();
   const extraArgs = splitArgs($<HTMLInputElement>("extract-extra-args").value.trim());
@@ -257,6 +244,9 @@ export async function runAction() {
   }
 
   try {
+    state.batchCancelled = false;
+    state.cancelRequested = false;
+
     if (mode === "add") {
       const deleteAfter = $<HTMLInputElement>("delete-after").checked;
       if (deleteAfter) {
@@ -283,6 +273,12 @@ export async function runAction() {
     setStatus("Running");
 
     const result = await invoke<{ stdout: string; stderr: string; code: number }>("run_7z", { args });
+    if (state.cancelRequested) {
+      hideProgress();
+      setStatus("Cancelled", 2000);
+      log("Operation cancelled by user");
+      return;
+    }
 
     const outputLines = result.stdout.split('\n');
     for (const line of outputLines) {
@@ -292,21 +288,28 @@ export async function runAction() {
       }
     }
 
-    if (result.stdout) log(result.stdout.trim());
-    if (result.stderr) log(result.stderr.trim());
+    logCommandResult(result.stdout, result.stderr);
     devLog(`Exit code: ${result.code}`);
 
     if (result.code !== 0) {
       log(`7z exited with code ${result.code}`);
       setStatus("Error", 3000);
       hideProgress();
-      await message(`Operation failed with exit code ${result.code}.${result.stderr ? "\n\n" + result.stderr.trim() : ""}`, { title: "Operation failed", kind: "error" });
+      const errorDetails = result.stderr ? `\n\n${truncateForDialog(result.stderr.trim())}` : "";
+      await message(`Operation failed with exit code ${result.code}.${errorDetails}`, { title: "Operation failed", kind: "error" });
     } else {
       setStatus("Done", 2000);
       hideProgress();
       await message(mode === "extract" ? "Extraction completed successfully." : "Archive created successfully.", { title: "Done" });
     }
   } catch (err) {
+    if (state.cancelRequested) {
+      setStatus("Cancelled", 2000);
+      hideProgress();
+      log("Operation cancelled by user");
+      return;
+    }
+
     const messageText = err instanceof Error ? err.message : String(err);
     log(`Error: ${messageText}`);
     setStatus("Error", 3000);
@@ -319,16 +322,19 @@ export async function runAction() {
 
 export async function runBatchExtract() {
   try {
+    state.batchCancelled = false;
+    state.cancelRequested = false;
+    ensureArchivePaths(state.inputs, "extract");
+
     const dest = $<HTMLInputElement>("extract-path").value.trim();
     if (!dest) throw new Error("Choose a destination folder.");
 
-    state.batchCancelled = false;
     setRunning(true);
     let succeeded = 0;
     let failed = 0;
 
     for (let i = 0; i < state.inputs.length; i++) {
-      if (state.batchCancelled) break;
+      if (state.batchCancelled || state.cancelRequested) break;
 
       const archive = state.inputs[i];
       setStatus(`Extracting ${i + 1} of ${state.inputs.length}`);
@@ -346,8 +352,7 @@ export async function runBatchExtract() {
           if (percentMatch) setProgress(`${percentMatch[1]}% (${i + 1}/${state.inputs.length})`);
         }
 
-        if (result.stdout) log(result.stdout.trim());
-        if (result.stderr) log(result.stderr.trim());
+        logCommandResult(result.stdout, result.stderr);
 
         if (result.code === 0) {
           succeeded++;
@@ -356,7 +361,7 @@ export async function runBatchExtract() {
           log(`Failed: ${archive} (exit code ${result.code})`);
         }
       } catch (err) {
-        if (state.batchCancelled) break;
+        if (state.batchCancelled || state.cancelRequested) break;
         failed++;
         const msg = err instanceof Error ? err.message : String(err);
         log(`Error extracting ${archive}: ${msg}`);
@@ -364,7 +369,7 @@ export async function runBatchExtract() {
     }
 
     hideProgress();
-    if (state.batchCancelled) {
+    if (state.batchCancelled || state.cancelRequested) {
       setStatus("Batch cancelled", 3000);
       await message("Batch extraction was cancelled.", { title: "Cancelled" });
     } else if (failed === 0) {
@@ -387,10 +392,11 @@ export async function runBatchExtract() {
 
 export async function cancelAction() {
   state.batchCancelled = true;
+  state.cancelRequested = true;
+  setStatus("Cancelling...");
   try {
     await invoke("cancel_7z");
-    log("Operation cancelled by user");
-    setStatus("Cancelled", 2000);
+    devLog("Cancel signal sent to running process.");
   } catch (err) {
     const messageText = err instanceof Error ? err.message : String(err);
     devLog(`Cancel error: ${messageText}`);
@@ -402,6 +408,13 @@ export async function testArchive() {
   const archive = state.inputs[0];
   if (!archive) {
     await message("Select an archive to test.", { title: "No archive selected" });
+    return;
+  }
+  try {
+    ensureArchivePaths([archive], "test");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await message(msg, { title: "Invalid input", kind: "error" });
     return;
   }
 
@@ -418,8 +431,7 @@ export async function testArchive() {
   try {
     const result = await invoke<{ stdout: string; stderr: string; code: number }>("run_7z", { args });
 
-    if (result.stdout) log(result.stdout.trim());
-    if (result.stderr) log(result.stderr.trim());
+    logCommandResult(result.stdout, result.stderr);
 
     if (result.code === 0) {
       setStatus("Integrity test passed", 3000);
@@ -428,7 +440,8 @@ export async function testArchive() {
     } else {
       setStatus("Integrity test failed", 3000);
       log(`Archive integrity test: FAILED (exit code ${result.code})`);
-      await message(`Archive integrity test failed (exit code ${result.code}).${result.stderr ? "\n\n" + result.stderr.trim() : ""}`, { title: "Test failed", kind: "error" });
+      const errorDetails = result.stderr ? `\n\n${truncateForDialog(result.stderr.trim())}` : "";
+      await message(`Archive integrity test failed (exit code ${result.code}).${errorDetails}`, { title: "Test failed", kind: "error" });
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -447,6 +460,13 @@ export async function browseArchive() {
     await message("Select an archive to browse.", { title: "No archive selected" });
     return;
   }
+  try {
+    ensureArchivePaths([archive], "browse");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await message(msg, { title: "Invalid input", kind: "error" });
+    return;
+  }
 
   const password = $<HTMLInputElement>("browse-password").value.trim();
   const args = ["l", "-slt", archive];
@@ -459,9 +479,10 @@ export async function browseArchive() {
     const result = await invoke<{ stdout: string; stderr: string; code: number }>("run_7z", { args });
 
     if (result.code !== 0) {
-      if (result.stderr) log(result.stderr.trim());
+      logCommandResult(result.stdout, result.stderr);
       setStatus("Failed to list archive", 3000);
-      await message(`Failed to list archive contents (exit code ${result.code}).${result.stderr ? "\n\n" + result.stderr.trim() : ""}`, { title: "Browse failed", kind: "error" });
+      const errorDetails = result.stderr ? `\n\n${truncateForDialog(result.stderr.trim())}` : "";
+      await message(`Failed to list archive contents (exit code ${result.code}).${errorDetails}`, { title: "Browse failed", kind: "error" });
       return;
     }
 

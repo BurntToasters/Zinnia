@@ -3,6 +3,17 @@ import { invoke } from "@tauri-apps/api/core";
 import { $ } from "./utils";
 import { state } from "./state";
 import { log, renderInputs } from "./ui";
+import { saveSettings } from "./settings";
+
+function setIntegrationMetadata(userDisabled: boolean) {
+  state.settingsExtras._integrationAutoEnabled = true;
+  state.settingsExtras._integrationUserDisabled = userDisabled;
+}
+
+async function persistIntegrationMetadata() {
+  await saveSettings(state.currentSettings, state.settingsExtras);
+  state.lastPersistedSettings = { ...state.currentSettings };
+}
 
 export async function chooseOutput() {
   const format = $<HTMLSelectElement>("format").value;
@@ -102,11 +113,25 @@ export async function toggleOsIntegration() {
   if (state.osIntegrationEnabled) {
     if (await disableOsIntegration()) {
       setOsIntegrationToggle(false);
+      setIntegrationMetadata(true);
+      try {
+        await persistIntegrationMetadata();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log(`Failed to persist integration preference: ${msg}`, "error");
+      }
       log("File manager integration disabled.");
     }
   } else {
     if (await enableOsIntegration()) {
       setOsIntegrationToggle(true);
+      setIntegrationMetadata(false);
+      try {
+        await persistIntegrationMetadata();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log(`Failed to persist integration preference: ${msg}`, "error");
+      }
       log("File manager integration enabled.");
     }
   }

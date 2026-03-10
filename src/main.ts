@@ -1,4 +1,4 @@
-import { message } from "@tauri-apps/plugin-dialog";
+import { ask, message, save } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
@@ -6,13 +6,65 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 import { $, isArchiveFile } from "./utils";
 import { SETTING_DEFAULTS, state, dom } from "./state";
-import { applyTheme, loadSettings, saveSettings, readSettingsModal, applySettingsToForm, openSettingsModal, closeSettingsModal } from "./settings";
+import { applyTheme, loadSettingsWithMetadata, saveSettings, readSettingsModal, applySettingsToForm, openSettingsModal, closeSettingsModal } from "./settings";
 import { log, devLog, toggleActivity, renderInputs, setMode, getMode } from "./ui";
 import { runAction, cancelAction, testArchive, browseArchive, previewCommand } from "./archive";
 import { updateCompressionOptionsForFormat, applyPreset, onCompressionOptionChange } from "./presets";
 import { checkUpdates, autoCheckUpdates } from "./updater";
 import { openLicensesModal, closeLicensesModal } from "./licenses";
 import { chooseOutput, chooseExtract, addFiles, addFolder, toggleOsIntegration, setOsIntegrationToggle, enableOsIntegration, probeOsIntegrationStatus } from "./files";
+
+async function exportLocalLogs() {
+  const suggestedName = `zinnia-logs-${new Date().toISOString().slice(0, 10)}.txt`;
+  const destination = await save({
+    title: "Export local diagnostics log",
+    defaultPath: suggestedName,
+    filters: [{ name: "Text files", extensions: ["txt", "log"] }],
+  });
+
+  if (!destination || typeof destination !== "string") return;
+
+  try {
+    await invoke("export_logs", { destinationPath: destination });
+    log(`Logs exported to ${destination}`);
+    await message(`Logs exported successfully.\n\n${destination}`, { title: "Logs exported" });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Failed to export logs: ${msg}`, "error");
+    await message(`Failed to export logs.\n\n${msg}`, { title: "Export failed", kind: "error" });
+  }
+}
+
+async function openLogsFolder() {
+  try {
+    await invoke("open_log_dir");
+    log("Opened local logs folder.");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Failed to open logs folder: ${msg}`, "error");
+    await message(`Failed to open logs folder.\n\n${msg}`, { title: "Open folder failed", kind: "error" });
+  }
+}
+
+async function clearLocalLogs() {
+  const confirmed = await ask("Clear local diagnostics logs? This cannot be undone.", {
+    title: "Clear logs",
+    kind: "warning",
+    okLabel: "Clear logs",
+    cancelLabel: "Cancel",
+  });
+  if (!confirmed) return;
+
+  try {
+    await invoke("clear_logs");
+    log("Local diagnostics logs cleared.");
+    await message("Local diagnostics logs were cleared.", { title: "Logs cleared" });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Failed to clear logs: ${msg}`, "error");
+    await message(`Failed to clear logs.\n\n${msg}`, { title: "Clear logs failed", kind: "error" });
+  }
+}
 
 function wireEvents() {
   $("add-files").addEventListener("click", addFiles);
@@ -97,18 +149,28 @@ function wireEvents() {
     if (e.target === e.currentTarget) closeSettingsModal();
   });
   $("save-settings").addEventListener("click", async () => {
+    const previous = { ...state.lastPersistedSettings };
     state.currentSettings = readSettingsModal();
     applyTheme(state.currentSettings.theme);
     applySettingsToForm();
+    updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
+    onCompressionOptionChange();
     try {
-      await saveSettings(state.currentSettings);
+      await saveSettings(state.currentSettings, state.settingsExtras);
+      state.lastPersistedSettings = { ...state.currentSettings };
       log("Settings saved successfully.");
+      closeSettingsModal();
     } catch (err) {
+      state.currentSettings = previous;
+      applyTheme(state.currentSettings.theme);
+      applySettingsToForm();
+      updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
+      onCompressionOptionChange();
+
       const msg = err instanceof Error ? err.message : String(err);
-      log(`Failed to save settings: ${msg}`);
+      log(`Failed to save settings: ${msg}`, "error");
       await message(`Failed to save settings.\n\n${msg}`, { title: "Settings error", kind: "error" });
     }
-    closeSettingsModal();
   });
 
   document.querySelectorAll<HTMLButtonElement>(".settings-tab").forEach((tab) => {
@@ -122,6 +184,9 @@ function wireEvents() {
   });
 
   $("check-updates").addEventListener("click", checkUpdates);
+  $("export-logs").addEventListener("click", exportLocalLogs);
+  $("open-logs-folder").addEventListener("click", openLogsFolder);
+  $("clear-logs").addEventListener("click", clearLocalLogs);
   $("s-os-integration").addEventListener("change", toggleOsIntegration);
   $("show-licenses").addEventListener("click", openLicensesModal);
   $("about-show-licenses").addEventListener("click", openLicensesModal);
@@ -154,12 +219,35 @@ function wireEvents() {
 }
 
 async function init() {
+  try {
+    await invoke("probe_7z");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await message(
+      `The bundled 7-Zip binary could not be started.\n\n${msg}`,
+      { title: "Missing runtime dependency", kind: "error" }
+    );
+    throw err;
+  }
+
   const cpuCount = await invoke<number>("get_cpu_count");
   SETTING_DEFAULTS.threads = cpuCount;
 
-  state.currentSettings = await loadSettings();
+  const loadedSettings = await loadSettingsWithMetadata();
+  state.currentSettings = loadedSettings.settings;
+  state.lastPersistedSettings = { ...loadedSettings.settings };
+  state.settingsExtras = { ...loadedSettings.extras };
   applyTheme(state.currentSettings.theme);
   applySettingsToForm();
+  updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
+  onCompressionOptionChange();
+
+  try {
+    state.logDirectory = await invoke<string>("get_log_dir");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    devLog(`Unable to resolve log directory: ${msg}`);
+  }
 
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
     if (state.currentSettings.theme === "system") applyTheme("system");
@@ -167,8 +255,9 @@ async function init() {
 
   renderInputs();
   wireEvents();
-
-  updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
+  if (loadedSettings.malformed && loadedSettings.warning) {
+    log(loadedSettings.warning, "error");
+  }
 
   const version = `v${await getVersion()}`;
   const platform = await invoke<string>("get_platform_info");
@@ -212,15 +301,22 @@ async function init() {
     setOsIntegrationToggle(isEnabled);
 
     if (!isEnabled) {
-      const raw = await invoke<string>("load_settings");
-      const parsed = JSON.parse(raw) as Record<string, unknown>;
-      if (parsed._integrationAutoEnabled === undefined) {
+      const userDisabled = state.settingsExtras._integrationUserDisabled === true;
+      const autoEnabled = state.settingsExtras._integrationAutoEnabled === true;
+      if (!userDisabled && !autoEnabled) {
         if (await enableOsIntegration()) {
           setOsIntegrationToggle(true);
+          state.settingsExtras._integrationUserDisabled = false;
           devLog("File manager integration auto-enabled on first run.");
         }
-        parsed._integrationAutoEnabled = true;
-        await invoke("save_settings", { json: JSON.stringify(parsed) });
+        state.settingsExtras._integrationAutoEnabled = true;
+        try {
+          await saveSettings(state.currentSettings, state.settingsExtras);
+          state.lastPersistedSettings = { ...state.currentSettings };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          log(`Failed to persist integration metadata: ${msg}`, "error");
+        }
       }
     }
   } else if (!state.appIsPackaged) {

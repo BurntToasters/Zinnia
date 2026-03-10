@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::sync::Mutex;
 use tauri::Emitter;
 use tauri::Manager;
@@ -5,6 +6,9 @@ use tauri_plugin_shell::process::{CommandEvent, CommandChild};
 use tauri_plugin_shell::ShellExt;
 
 const MAX_OUTPUT_BYTES: usize = 50 * 1024 * 1024;
+const MAX_LOG_FILE_BYTES: u64 = 5 * 1024 * 1024;
+const MAX_LOG_ENTRY_BYTES: usize = 16 * 1024;
+const LOG_FILE_NAME: &str = "zinnia.log";
 
 #[derive(serde::Serialize)]
 struct RunResult {
@@ -29,6 +33,121 @@ fn settings_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     Ok(dir.join("settings.json"))
 }
 
+fn validate_json(json: &str) -> Result<(), String> {
+    serde_json::from_str::<serde_json::Value>(json)
+        .map_err(|e| format!("Invalid JSON: {e}"))?;
+    Ok(())
+}
+
+fn parse_json_object(json: &str) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    let parsed: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("Invalid JSON: {e}"))?;
+    match parsed {
+        serde_json::Value::Object(map) => Ok(map),
+        _ => Err("Settings JSON must be an object.".to_string()),
+    }
+}
+
+fn merge_reserved_settings(
+    existing: &serde_json::Map<String, serde_json::Value>,
+    incoming: &mut serde_json::Map<String, serde_json::Value>,
+) {
+    for (key, value) in existing {
+        if key.starts_with('_') && !incoming.contains_key(key) {
+            incoming.insert(key.clone(), value.clone());
+        }
+    }
+}
+
+fn truncate_for_bytes(input: &str, max_bytes: usize) -> String {
+    if input.len() <= max_bytes {
+        return input.to_string();
+    }
+
+    let mut boundary = max_bytes;
+    while boundary > 0 && !input.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+
+    let omitted = input.len().saturating_sub(boundary);
+    format!("{} [truncated {} bytes]", &input[..boundary], omitted)
+}
+
+fn atomic_write_text(path: &std::path::Path, contents: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, contents).map_err(|e| e.to_string())?;
+
+    #[cfg(windows)]
+    {
+        let _ = std::fs::remove_file(path);
+    }
+
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        e.to_string()
+    })
+}
+
+fn logs_dir_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    Ok(dir.join("logs"))
+}
+
+fn log_file_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    Ok(logs_dir_path(app)?.join(LOG_FILE_NAME))
+}
+
+fn ensure_logs_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    let dir = logs_dir_path(app)?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+fn trim_log_file_if_needed(path: &std::path::Path) -> Result<(), String> {
+    let meta = match std::fs::metadata(path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err.to_string()),
+    };
+
+    if meta.len() <= MAX_LOG_FILE_BYTES {
+        return Ok(());
+    }
+
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let contents = String::from_utf8_lossy(&bytes).to_string();
+    let keep_size = (MAX_LOG_FILE_BYTES / 2) as usize;
+    let mut start = contents.len().saturating_sub(keep_size);
+    while start > 0 && !contents.is_char_boundary(start) {
+        start -= 1;
+    }
+
+    let mut clipped = contents[start..].to_string();
+    if let Some(pos) = clipped.find('\n') {
+        clipped = clipped[pos + 1..].to_string();
+    }
+    std::fs::write(path, clipped).map_err(|e| e.to_string())
+}
+
+fn ensure_idle<T>(slot: &Option<T>) -> Result<(), String> {
+    if slot.is_some() {
+        Err("Another archive operation is already running.".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+fn is_non_running_kill_error(message: &str) -> bool {
+    message.contains("finished") || message.contains("not running")
+}
+
 #[tauri::command]
 fn load_settings(app: tauri::AppHandle) -> Result<String, String> {
     let path = settings_path(&app)?;
@@ -40,26 +159,124 @@ fn load_settings(app: tauri::AppHandle) -> Result<String, String> {
 
 #[tauri::command]
 fn save_settings(app: tauri::AppHandle, json: String) -> Result<(), String> {
-    serde_json::from_str::<serde_json::Value>(&json)
-        .map_err(|e| format!("Invalid JSON: {e}"))?;
-
+    validate_json(&json)?;
     let path = settings_path(&app)?;
-    if let Some(parent) = path.parent() {
+
+    let mut incoming = parse_json_object(&json)?;
+    if path.exists() {
+        if let Ok(existing_raw) = std::fs::read_to_string(&path) {
+            if let Ok(existing) = parse_json_object(&existing_raw) {
+                merge_reserved_settings(&existing, &mut incoming);
+            }
+        }
+    }
+
+    let merged = serde_json::Value::Object(incoming);
+    let serialized = serde_json::to_string(&merged).map_err(|e| e.to_string())?;
+    atomic_write_text(&path, &serialized)
+}
+
+#[tauri::command]
+fn append_local_log(app: tauri::AppHandle, line: String) -> Result<(), String> {
+    let _ = ensure_logs_dir(&app)?;
+    let path = log_file_path(&app)?;
+    trim_log_file_if_needed(&path)?;
+    let line = truncate_for_bytes(&line, MAX_LOG_ENTRY_BYTES);
+
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| e.to_string())?;
+
+    writeln!(file, "{line}").map_err(|e| e.to_string())?;
+    trim_log_file_if_needed(&path)
+}
+
+#[tauri::command]
+fn get_log_dir(app: tauri::AppHandle) -> Result<String, String> {
+    let dir = ensure_logs_dir(&app)?;
+    Ok(dir.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn export_logs(app: tauri::AppHandle, destination_path: String) -> Result<(), String> {
+    if destination_path.trim().is_empty() {
+        return Err("Destination path is required.".to_string());
+    }
+
+    let destination = std::path::PathBuf::from(destination_path);
+    if let Some(parent) = destination.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, &json).map_err(|e| e.to_string())?;
-
-    #[cfg(windows)]
-    {
-        let _ = std::fs::remove_file(&path);
+    let source = log_file_path(&app)?;
+    if source.exists() {
+        std::fs::copy(source, destination).map_err(|e| e.to_string())?;
+    } else {
+        std::fs::write(destination, "No local logs have been recorded yet.\n")
+            .map_err(|e| e.to_string())?;
     }
 
-    std::fs::rename(&tmp, &path).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        e.to_string()
-    })
+    Ok(())
+}
+
+#[tauri::command]
+fn clear_logs(app: tauri::AppHandle) -> Result<(), String> {
+    let path = log_file_path(&app)?;
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err.to_string()),
+    }
+}
+
+#[tauri::command]
+fn open_log_dir(app: tauri::AppHandle) -> Result<(), String> {
+    let dir = ensure_logs_dir(&app)?;
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[allow(unreachable_code)]
+    Err("Opening log folder is not supported on this platform.".to_string())
+}
+
+#[tauri::command]
+async fn probe_7z(app: tauri::AppHandle) -> Result<(), String> {
+    let command = app
+        .shell()
+        .sidecar("7z")
+        .map_err(|e| e.to_string())?
+        .args(["--help"]);
+
+    let (_rx, child) = command.spawn().map_err(|e| e.to_string())?;
+    let _ = child.kill();
+    Ok(())
 }
 
 fn sanitize_output(s: &str) -> String {
@@ -84,12 +301,14 @@ async fn run_7z(app: tauri::AppHandle, args: Vec<String>, state: tauri::State<'_
         .map_err(|e| e.to_string())?
         .args(args);
 
-    let (mut rx, child) = command.spawn().map_err(|e| e.to_string())?;
-
-    {
+    let mut rx = {
         let mut process = lock_process(&state)?;
+        ensure_idle(&*process)?;
+
+        let (rx, child) = command.spawn().map_err(|e| e.to_string())?;
         *process = Some(child);
-    }
+        rx
+    };
 
     while let Some(event) = rx.recv().await {
         match event {
@@ -135,7 +354,7 @@ fn cancel_7z(state: tauri::State<'_, RunningProcess>) -> Result<(), String> {
             Ok(()) => Ok(()),
             Err(e) => {
                 let msg = e.to_string();
-                if msg.contains("finished") || msg.contains("not running") {
+                if is_non_running_kill_error(&msg) {
                     Ok(())
                 } else {
                     Err(msg)
@@ -143,7 +362,7 @@ fn cancel_7z(state: tauri::State<'_, RunningProcess>) -> Result<(), String> {
             }
         }
     } else {
-        Err("No running process to cancel".to_string())
+        Ok(())
     }
 }
 
@@ -300,12 +519,35 @@ fn get_windows_context_menu_status() -> Result<bool, String> {
             .open_subkey_with_flags("Software\\Classes", KEY_READ)
             .map_err(|e| e.to_string())?;
 
-        let file_entry_exists = classes.open_subkey("*\\shell\\Zinnia\\command").is_ok();
-        let dir_entry_exists = classes
-            .open_subkey("Directory\\shell\\Zinnia\\command")
-            .is_ok();
+        for required in [
+            "*\\shell\\Zinnia\\command",
+            "Directory\\shell\\Zinnia\\command",
+            "Zinnia.Archive\\DefaultIcon",
+            "Zinnia.Archive\\shell\\open\\command",
+        ] {
+            if classes.open_subkey(required).is_err() {
+                return Ok(false);
+            }
+        }
 
-        Ok(file_entry_exists && dir_entry_exists)
+        for ext in ARCHIVE_EXTENSIONS {
+            let extract_key = format!("SystemFileAssociations\\{}\\shell\\Zinnia.Extract\\command", ext);
+            if classes.open_subkey(&extract_key).is_err() {
+                return Ok(false);
+            }
+
+            let open_with = format!("{}\\OpenWithProgids", ext);
+            let open_with_key = match classes.open_subkey(&open_with) {
+                Ok(key) => key,
+                Err(_) => return Ok(false),
+            };
+
+            if open_with_key.get_raw_value("Zinnia.Archive").is_err() {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
     }
 
     #[cfg(not(windows))]
@@ -381,6 +623,22 @@ fn linux_desktop_file_path() -> Option<std::path::PathBuf> {
 }
 
 #[cfg(target_os = "linux")]
+fn escape_desktop_exec_arg(arg: &str) -> String {
+    let mut escaped = String::with_capacity(arg.len());
+    for ch in arg.chars() {
+        match ch {
+            ' ' | '\t' | '\n' | '"' | '\'' | '\\' | '>' | '<' | '~' | '|'
+            | '&' | ';' | '$' | '*' | '?' | '#' | '(' | ')' | '`' => {
+                escaped.push('\\');
+                escaped.push(ch);
+            }
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
+#[cfg(target_os = "linux")]
 const LINUX_DESKTOP_ENTRY: &str = r#"[Desktop Entry]
 Type=Application
 Name=Zinnia
@@ -401,7 +659,8 @@ fn register_linux_desktop_integration() -> Result<(), String> {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-        let contents = LINUX_DESKTOP_ENTRY.replace("{exe}", &exe.to_string_lossy());
+        let exe_escaped = escape_desktop_exec_arg(&exe.to_string_lossy());
+        let contents = LINUX_DESKTOP_ENTRY.replace("{exe}", &exe_escaped);
         std::fs::write(&path, contents).map_err(|e| e.to_string())?;
         let _ = std::process::Command::new("update-desktop-database")
             .arg(path.parent().unwrap())
@@ -444,7 +703,16 @@ fn get_linux_desktop_integration_status() -> Result<bool, String> {
     {
         let path = linux_desktop_file_path()
             .ok_or_else(|| "Could not determine HOME directory.".to_string())?;
-        Ok(path.exists())
+        if !path.exists() {
+            return Ok(false);
+        }
+
+        let contents = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        let looks_valid = contents.contains("Name=Zinnia")
+            && contents.contains("Exec=")
+            && contents.contains("%F")
+            && contents.contains("MimeType=");
+        Ok(looks_valid)
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -498,6 +766,80 @@ fn collect_cli_context() -> (Vec<String>, String) {
     (paths, mode)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_json_rejects_invalid_payload() {
+        let result = validate_json("{ not-valid-json }");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn atomic_write_text_replaces_existing_contents() {
+        let base = std::env::temp_dir().join(format!(
+            "zinnia-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time should work")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).expect("temp directory should be created");
+        let file_path = base.join("settings.json");
+
+        std::fs::write(&file_path, "{\"old\":true}").expect("seed file should be written");
+        atomic_write_text(&file_path, "{\"new\":true}").expect("atomic write should succeed");
+
+        let contents = std::fs::read_to_string(&file_path).expect("file should be readable");
+        assert_eq!(contents, "{\"new\":true}");
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn ensure_idle_detects_busy_state() {
+        assert!(ensure_idle(&Option::<()>::None).is_ok());
+        assert!(ensure_idle(&Some(())).is_err());
+    }
+
+    #[test]
+    fn kill_error_detection_handles_known_messages() {
+        assert!(is_non_running_kill_error("process already finished"));
+        assert!(is_non_running_kill_error("child process is not running"));
+        assert!(!is_non_running_kill_error("permission denied"));
+    }
+
+    #[test]
+    fn merge_reserved_settings_preserves_internal_keys() {
+        let existing = parse_json_object(r#"{"theme":"dark","_integrationAutoEnabled":true,"_integrationUserDisabled":true}"#)
+            .expect("existing object should parse");
+        let mut incoming = parse_json_object(r#"{"theme":"light"}"#)
+            .expect("incoming object should parse");
+
+        merge_reserved_settings(&existing, &mut incoming);
+
+        assert_eq!(incoming.get("theme"), Some(&serde_json::Value::String("light".to_string())));
+        assert_eq!(incoming.get("_integrationAutoEnabled"), Some(&serde_json::Value::Bool(true)));
+        assert_eq!(incoming.get("_integrationUserDisabled"), Some(&serde_json::Value::Bool(true)));
+    }
+
+    #[test]
+    fn truncate_for_bytes_caps_large_entries() {
+        let long = "x".repeat(MAX_LOG_ENTRY_BYTES + 100);
+        let truncated = truncate_for_bytes(&long, MAX_LOG_ENTRY_BYTES);
+        assert!(truncated.len() <= MAX_LOG_ENTRY_BYTES + 64);
+        assert!(truncated.contains("[truncated"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn desktop_exec_escaping_quotes_spaces() {
+        let escaped = escape_desktop_exec_arg("/tmp/My App/zinnia");
+        assert_eq!(escaped, "/tmp/My\\ App/zinnia");
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, _| {
@@ -520,6 +862,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             run_7z,
             cancel_7z,
+            probe_7z,
             register_windows_context_menu,
             unregister_windows_context_menu,
             get_windows_context_menu_status,
@@ -528,6 +871,11 @@ fn main() {
             get_linux_desktop_integration_status,
             load_settings,
             save_settings,
+            append_local_log,
+            get_log_dir,
+            export_logs,
+            clear_logs,
+            open_log_dir,
             get_initial_paths,
             get_initial_mode,
             get_platform_info,

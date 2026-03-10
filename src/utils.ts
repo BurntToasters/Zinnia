@@ -41,6 +41,17 @@ export function splitArgs(raw: string) {
   return out;
 }
 
+const TOKEN_LIKE_PATTERN = /\b(?:ghp_[a-zA-Z0-9]{20,}|github_pat_[a-zA-Z0-9_]{20,})\b/g;
+const KEY_VALUE_SECRET_PATTERN = /\b(password|passphrase|token|private[_-]?key)\s*[:=]\s*\S+/gi;
+const ARG_PASSWORD_PATTERN = /-p\S*/gi;
+
+export function redactSensitiveText(input: string): string {
+  return input
+    .replace(ARG_PASSWORD_PATTERN, "-p***")
+    .replace(KEY_VALUE_SECRET_PATTERN, (_match, key: string) => `${key}=***`)
+    .replace(TOKEN_LIKE_PATTERN, "***");
+}
+
 export function safeHref(url: string): string {
   return SAFE_URL_PATTERN.test(url) ? escapeHtml(url) : "#";
 }

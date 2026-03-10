@@ -1,5 +1,42 @@
-import { $, MAX_LOG_LINES } from "./utils";
+import { invoke } from "@tauri-apps/api/core";
+import { $, MAX_LOG_LINES, redactSensitiveText } from "./utils";
 import { state, dom } from "./state";
+import { LogVerbosity } from "./settings-model";
+
+type LogLevel = "info" | "debug" | "error";
+
+let logWriteQueue = Promise.resolve();
+const MAX_LOG_ENTRY_CHARS = 8_000;
+const LOG_CHUNK_CHARS = 2_000;
+
+function buildLogFragments(input: string): string[] {
+  if (input.length <= MAX_LOG_ENTRY_CHARS) return [input];
+
+  const capped = input.slice(0, MAX_LOG_ENTRY_CHARS);
+  const chunks: string[] = [];
+  for (let i = 0; i < capped.length; i += LOG_CHUNK_CHARS) {
+    chunks.push(capped.slice(i, i + LOG_CHUNK_CHARS));
+  }
+  chunks.push(`[truncated ${input.length - MAX_LOG_ENTRY_CHARS} chars]`);
+  return chunks;
+}
+
+function shouldPersistLevel(level: LogLevel, verbosity: LogVerbosity): boolean {
+  if (level === "debug") return verbosity === "debug";
+  return true;
+}
+
+function persistLocalLog(level: LogLevel, line: string): void {
+  if (!state.currentSettings.localLoggingEnabled) return;
+  if (!shouldPersistLevel(level, state.currentSettings.logVerbosity)) return;
+
+  const entry = `${new Date().toISOString()} [${level}] ${line}`;
+  logWriteQueue = logWriteQueue
+    .then(() => invoke("append_local_log", { line: entry }).then(() => undefined))
+    .catch(() => {
+      // Ignore logging backend failures to avoid noisy loops.
+    });
+}
 
 function trimLog() {
   const text = dom.logEl.textContent || "";
@@ -9,16 +46,25 @@ function trimLog() {
   }
 }
 
-export function log(line: string) {
-  const stamp = new Date().toLocaleTimeString();
-  dom.logEl.textContent += `[${stamp}] ${line}\n`;
+export function log(line: string, level: LogLevel = "info") {
+  const sanitized = redactSensitiveText(line);
+  const fragments = buildLogFragments(sanitized);
+
+  for (const [index, fragment] of fragments.entries()) {
+    const stamp = new Date().toLocaleTimeString();
+    const marker = fragments.length > 1 ? ` (${index + 1}/${fragments.length})` : "";
+    const rendered = `${fragment}${marker}`;
+    dom.logEl.textContent += `[${stamp}] ${rendered}\n`;
+    persistLocalLog(level, rendered);
+  }
+
   trimLog();
   dom.logEl.scrollTop = dom.logEl.scrollHeight;
 }
 
 export function devLog(line: string) {
-  if (import.meta.env.DEV) {
-    log(line);
+  if (import.meta.env.DEV || state.currentSettings.logVerbosity === "debug") {
+    log(line, "debug");
   }
 }
 

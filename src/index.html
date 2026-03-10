@@ -72,6 +72,42 @@
 
               <hr class="setting-divider" />
 
+              <div class="setting-item">
+                <div class="setting-info">
+                  <span class="setting-title">Local diagnostics logging</span>
+                  <span class="setting-desc">Store privacy-preserving activity logs on this device only.</span>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" id="s-local-logging" checked />
+                  <span class="switch__track"></span>
+                </label>
+              </div>
+
+              <div class="setting-item">
+                <div class="setting-info">
+                  <span class="setting-title">Log verbosity</span>
+                  <span class="setting-desc">Use Debug only when troubleshooting.</span>
+                </div>
+                <select id="s-log-verbosity" class="setting-select">
+                  <option value="info">Normal</option>
+                  <option value="debug">Debug</option>
+                </select>
+              </div>
+
+              <div class="setting-item">
+                <div class="setting-info">
+                  <span class="setting-title">Export diagnostics logs</span>
+                  <span class="setting-desc" id="s-log-dir">Detecting log directory…</span>
+                </div>
+                <div class="setting-actions">
+                  <button class="btn btn--sm" id="export-logs">Export</button>
+                  <button class="btn btn--ghost btn--sm" id="open-logs-folder">Open folder</button>
+                  <button class="btn btn--ghost btn--sm" id="clear-logs">Clear</button>
+                </div>
+              </div>
+
+              <hr class="setting-divider" />
+
               <div class="setting-item" id="os-integration-row">
                 <div class="setting-info">
                   <span class="setting-title" id="os-integration-title">File manager integration</span>
