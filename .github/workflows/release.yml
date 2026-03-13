@@ -127,18 +127,25 @@ jobs:
           name: artifacts-${{ matrix.label }}
           path: |
             src-tauri/target/**/bundle/**/*.exe
+            src-tauri/target/**/bundle/**/*.exe.sig
             src-tauri/target/**/bundle/**/*.msi
+            src-tauri/target/**/bundle/**/*.msi.sig
             src-tauri/target/**/bundle/**/*.nsis.zip
             src-tauri/target/**/bundle/**/*.nsis.zip.sig
             src-tauri/target/**/bundle/**/*.dmg
+            src-tauri/target/**/bundle/**/*.dmg.sig
             src-tauri/target/**/bundle/**/*.zip
+            src-tauri/target/**/bundle/**/*.zip.sig
             src-tauri/target/**/bundle/**/*.app.tar.gz
             src-tauri/target/**/bundle/**/*.app.tar.gz.sig
             src-tauri/target/**/bundle/**/*.AppImage
+            src-tauri/target/**/bundle/**/*.AppImage.sig
             src-tauri/target/**/bundle/**/*.AppImage.tar.gz
             src-tauri/target/**/bundle/**/*.AppImage.tar.gz.sig
             src-tauri/target/**/bundle/**/*.deb
+            src-tauri/target/**/bundle/**/*.deb.sig
             src-tauri/target/**/bundle/**/*.rpm
+            src-tauri/target/**/bundle/**/*.rpm.sig
             src-tauri/target/**/bundle/**/latest.json
 
   sign-and-publish:

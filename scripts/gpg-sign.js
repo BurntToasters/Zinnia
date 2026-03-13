@@ -23,35 +23,44 @@ const GPG_PASSPHRASE = process.env.GPG_PASSPHRASE;
 const GH_TOKEN = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
 const REPO_OWNER = process.env.GH_REPO_OWNER || "BurntToasters";
 const REPO_NAME = process.env.GH_REPO_NAME || "zinnia";
+const RELEASE_DOWNLOAD_BASE_URL = (
+  process.env.RELEASE_DOWNLOAD_BASE_URL ||
+  `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest/download`
+).replace(/\/+$/, "");
+const RELEASE_NOTES = process.env.RELEASE_NOTES || "";
+const RELEASE_PUB_DATE = process.env.RELEASE_PUB_DATE || new Date().toISOString();
 
 
 
 const ext = (e) => (n) => n.toLowerCase().endsWith(e);
 const rx = (r) => (n) => r.test(n);
 const exact = (f) => (n) => n === f;
+const isPerTargetManifest = rx(/^latest-[a-z0-9]+-[a-z0-9_]+\.json$/i);
 
 
 const ARTIFACT_RULES = [
 
-  rx(/-setup\.exe$/i), ext(".msi"), ext(".dmg"), ext(".deb"), ext(".rpm"), ext(".flatpak"),
+  rx(/-setup\.exe$/i),
+  rx(/^Zinnia-Windows-(?:x64|arm64)\.exe$/i),
+  ext(".msi"), ext(".dmg"), ext(".deb"), ext(".rpm"), ext(".flatpak"),
   rx(/\.appimage$/i),
-  
+
   rx(/\.zip$/i),
-  
+
   rx(/\.nsis\.zip$/i),
   rx(/\.app\.tar\.gz$/i),
   rx(/\.appimage\.tar\.gz$/i),
-  
-  rx(/\.nsis\.zip\.sig$/i),
-  rx(/\.app\.tar\.gz\.sig$/i),
-  rx(/\.appimage\.tar\.gz\.sig$/i),
-  
+
+  rx(/\.(?:exe|msi|dmg|deb|rpm|flatpak|appimage|zip)\.sig$/i),
+  rx(/\.tar\.gz\.sig$/i),
+
   exact("latest.json"),
+  isPerTargetManifest,
 ];
 
 
 const SIGN_RULES = [
-  rx(/-setup\.exe$/i), ext(".msi"), ext(".dmg"), ext(".deb"), ext(".rpm"), ext(".flatpak"),
+  ext(".exe"), ext(".msi"), ext(".dmg"), ext(".deb"), ext(".rpm"), ext(".flatpak"),
   rx(/\.appimage$/i),
   rx(/\.zip$/i),
   rx(/\.nsis\.zip$/i),
@@ -68,7 +77,7 @@ const SEARCH_DIRS = [
 ];
 
 function artifactMatchesVersion(name) {
-  if (name === "latest.json") return true;
+  if (name === "latest.json" || isPerTargetManifest(name)) return true;
   const versions = name.match(/\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?/g);
   if (!versions || versions.length === 0) return true;
   return versions.includes(VERSION);
@@ -124,10 +133,9 @@ function walk(dir, results = []) {
   return results;
 }
 
-function cleanArtifactName(name) {
-  if (name === "latest.json") return name;
-  if (/\.tar\.gz(\.sig)?$/i.test(name)) return name;
-  if (/\.nsis\.zip(\.sig)?$/i.test(name)) return name;
+function cleanArtifactBaseName(name) {
+  if (/\.tar\.gz$/i.test(name)) return name;
+  if (/\.nsis\.zip$/i.test(name)) return name;
 
   if (/\.dmg$/i.test(name)) return "Zinnia-macOS.dmg";
   if (/^Zinnia\.zip$/i.test(name)) return "Zinnia-macOS.zip";
@@ -144,9 +152,154 @@ function cleanArtifactName(name) {
   if (/x86_64\.rpm$/i.test(name)) return "Zinnia-Linux-x64.rpm";
   if (/aarch64\.rpm$/i.test(name)) return "Zinnia-Linux-arm64.rpm";
 
-  if (/\.flatpak$/i.test(name)) return name;
-
   return name;
+}
+
+function cleanArtifactName(name) {
+  if (name === "latest.json") return name;
+  if (name.endsWith(".sig")) {
+    const base = name.slice(0, -4);
+    return `${cleanArtifactBaseName(base)}.sig`;
+  }
+  return cleanArtifactBaseName(name);
+}
+
+const FALLBACK_INSTALLER_PRIORITY = {
+  windows: { nsis: 3, msi: 2 },
+  linux: { appimage: 3, deb: 2, rpm: 1 },
+  darwin: { app: 3 },
+};
+
+function inferArchFromName(name) {
+  if (/(?:^|[-_.])(aarch64|arm64)(?:[-_.]|$)/i.test(name)) return "aarch64";
+  if (/(?:^|[-_.])(x86_64|amd64|x64)(?:[-_.]|$)/i.test(name)) return "x86_64";
+  if (/(?:^|[-_.])(i686|x86)(?:[-_.]|$)/i.test(name)) return "i686";
+  return null;
+}
+
+function resolveUpdaterTargets(name) {
+  const targets = [];
+  if (/\.app\.tar\.gz$/i.test(name)) {
+    const arch = inferArchFromName(name);
+    const arches = arch ? [arch] : ["x86_64", "aarch64"];
+    for (const a of arches) {
+      targets.push({ os: "darwin", arch: a, installer: "app" });
+    }
+    return targets;
+  }
+
+  if (/\.exe$/i.test(name)) {
+    const arch = inferArchFromName(name);
+    if (!arch) return targets;
+    targets.push({ os: "windows", arch, installer: "nsis" });
+    return targets;
+  }
+
+  if (/\.msi$/i.test(name)) {
+    const arch = inferArchFromName(name);
+    if (!arch) return targets;
+    targets.push({ os: "windows", arch, installer: "msi" });
+    return targets;
+  }
+
+  if (/\.appimage$/i.test(name)) {
+    const arch = inferArchFromName(name);
+    if (!arch) return targets;
+    targets.push({ os: "linux", arch, installer: "appimage" });
+    return targets;
+  }
+
+  if (/\.deb$/i.test(name)) {
+    const arch = inferArchFromName(name);
+    if (!arch) return targets;
+    targets.push({ os: "linux", arch, installer: "deb" });
+    return targets;
+  }
+
+  if (/\.rpm$/i.test(name)) {
+    const arch = inferArchFromName(name);
+    if (!arch) return targets;
+    targets.push({ os: "linux", arch, installer: "rpm" });
+    return targets;
+  }
+
+  return targets;
+}
+
+function releaseAssetUrl(fileName) {
+  return `${RELEASE_DOWNLOAD_BASE_URL}/${encodeURIComponent(fileName)}`;
+}
+
+function generateUpdaterManifests(files) {
+  const byName = new Map();
+  for (const filePath of files) {
+    byName.set(path.basename(filePath), filePath);
+  }
+
+  const signatureByBaseName = new Map();
+  for (const [name, filePath] of byName) {
+    if (name.endsWith(".sig")) {
+      signatureByBaseName.set(name.slice(0, -4), filePath);
+    }
+  }
+
+  const manifests = new Map();
+  for (const [name] of byName) {
+    if (name.endsWith(".sig")) continue;
+    const targets = resolveUpdaterTargets(name);
+    if (targets.length === 0) continue;
+
+    const sigPath = signatureByBaseName.get(name);
+    if (!sigPath) {
+      console.log(`  ~ Skipped updater manifest entry for ${name} (missing ${name}.sig)`);
+      continue;
+    }
+
+    const signature = fs.readFileSync(sigPath).toString("base64");
+    const url = releaseAssetUrl(name);
+    for (const target of targets) {
+      const manifestName = `latest-${target.os}-${target.arch}.json`;
+      if (!manifests.has(manifestName)) {
+        manifests.set(manifestName, {
+          version: VERSION,
+          notes: RELEASE_NOTES,
+          pub_date: RELEASE_PUB_DATE,
+          platforms: {},
+          fallbackPriority: -1,
+        });
+      }
+
+      const manifest = manifests.get(manifestName);
+      const installerKey = `${target.os}-${target.arch}-${target.installer}`;
+      const fallbackKey = `${target.os}-${target.arch}`;
+      manifest.platforms[installerKey] = { url, signature };
+
+      const priority = FALLBACK_INSTALLER_PRIORITY[target.os]?.[target.installer] ?? 0;
+      if (!manifest.platforms[fallbackKey] || priority > manifest.fallbackPriority) {
+        manifest.platforms[fallbackKey] = { url, signature };
+        manifest.fallbackPriority = priority;
+      }
+    }
+  }
+
+  const generated = [];
+  for (const manifestName of Array.from(manifests.keys()).sort()) {
+    const manifest = manifests.get(manifestName);
+    const output = {
+      version: manifest.version,
+      pub_date: manifest.pub_date,
+      platforms: manifest.platforms,
+    };
+    if (manifest.notes) {
+      output.notes = manifest.notes;
+    }
+    const dest = path.join(releaseDir, manifestName);
+    fs.writeFileSync(dest, JSON.stringify(output, null, 2) + "\n");
+    console.log(`  + ${manifestName} (${Object.keys(output.platforms).length} platform entries)`);
+    generated.push(dest);
+  }
+
+  return generated;
 }
 
 function collectArtifacts() {
@@ -175,7 +328,8 @@ function collectArtifacts() {
       }
       collected.push(dest);
     }
-    return collected;
+    const manifests = generateUpdaterManifests(collected);
+    return [...collected, ...manifests];
   }
 
   
@@ -189,7 +343,8 @@ function collectArtifacts() {
   }
 
   console.log(`  Found ${staged.length} pre-staged artifact(s) in release/`);
-  return staged;
+  const manifests = generateUpdaterManifests(staged);
+  return Array.from(new Set([...staged, ...manifests]));
 }
 
 
