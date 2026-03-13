@@ -36,6 +36,7 @@ const ext = (e) => (n) => n.toLowerCase().endsWith(e);
 const rx = (r) => (n) => r.test(n);
 const exact = (f) => (n) => n === f;
 const isPerTargetManifest = rx(/^latest-[a-z0-9]+-[a-z0-9_]+\.json$/i);
+const isChecksumTextName = rx(/^SHA256SUMS(?:-[a-z0-9_]+(?:-[a-z0-9_]+)?)?\.txt$/i);
 
 
 const ARTIFACT_RULES = [
@@ -94,7 +95,7 @@ function clearReleaseStaging() {
       continue;
     }
     if (!isFile) continue;
-    if (isArtifact(name) || name.endsWith(".asc") || name === "SHA256SUMS.txt") {
+    if (isArtifact(name) || name.endsWith(".asc") || isChecksumTextName(name)) {
       fs.rmSync(fullPath, { force: true });
     }
   }
@@ -302,6 +303,22 @@ function generateUpdaterManifests(files) {
   return generated;
 }
 
+function parseManifestTargetKey(name) {
+  const m = name.match(/^latest-([a-z0-9]+)-([a-z0-9_]+)\.json$/i);
+  if (!m) return null;
+  return `${m[1].toLowerCase()}-${m[2].toLowerCase()}`;
+}
+
+function targetKeysForArtifactName(name) {
+  const manifestKey = parseManifestTargetKey(name);
+  if (manifestKey) return [manifestKey];
+
+  const baseName = name.endsWith(".sig") ? name.slice(0, -4) : name;
+  return Array.from(
+    new Set(resolveUpdaterTargets(baseName).map((t) => `${t.os}-${t.arch}`))
+  );
+}
+
 function collectArtifacts() {
   fs.mkdirSync(releaseDir, { recursive: true });
 
@@ -334,7 +351,7 @@ function collectArtifacts() {
 
   
   const staged = fs.readdirSync(releaseDir)
-    .filter((n) => isArtifact(n) && artifactMatchesVersion(n) && !n.endsWith(".asc") && n !== "SHA256SUMS.txt")
+    .filter((n) => isArtifact(n) && artifactMatchesVersion(n) && !n.endsWith(".asc") && !isChecksumTextName(n))
     .map((n) => path.join(releaseDir, n));
 
   if (staged.length === 0) {
@@ -354,13 +371,50 @@ function sha256(filePath) {
 }
 
 function generateChecksums(files) {
-  const entries = files
-    .filter((f) => !f.endsWith(".asc") && !path.basename(f).startsWith("SHA256SUMS"))
-    .map((f) => `${sha256(f)}  ${path.basename(f)}`);
-  const out = path.join(releaseDir, "SHA256SUMS.txt");
-  fs.writeFileSync(out, entries.join("\n") + "\n");
-  console.log(`  + SHA256SUMS.txt (${entries.length} entries)`);
-  return out;
+  const candidates = files.filter((f) => {
+    const name = path.basename(f);
+    return !name.endsWith(".asc") && !isChecksumTextName(name);
+  });
+
+  const manifestTargetKeys = Array.from(
+    new Set(candidates.map((f) => parseManifestTargetKey(path.basename(f))).filter(Boolean))
+  );
+
+  const buckets = new Map();
+  const addToBucket = (targetKey, filePath) => {
+    if (!buckets.has(targetKey)) {
+      buckets.set(targetKey, []);
+    }
+    buckets.get(targetKey).push(filePath);
+  };
+
+  for (const filePath of candidates) {
+    const name = path.basename(filePath);
+    let targetKeys = targetKeysForArtifactName(name);
+    if (targetKeys.length === 0 && manifestTargetKeys.length > 0) {
+      targetKeys = manifestTargetKeys;
+    }
+    if (targetKeys.length === 0) {
+      targetKeys = ["generic"];
+    }
+    for (const targetKey of targetKeys) {
+      addToBucket(targetKey, filePath);
+    }
+  }
+
+  const outputs = [];
+  for (const targetKey of Array.from(buckets.keys()).sort()) {
+    const uniqueFiles = Array.from(new Set(buckets.get(targetKey)));
+    const entries = uniqueFiles
+      .sort((a, b) => path.basename(a).localeCompare(path.basename(b)))
+      .map((f) => `${sha256(f)}  ${path.basename(f)}`);
+    const fileName = `SHA256SUMS-${targetKey}.txt`;
+    const out = path.join(releaseDir, fileName);
+    fs.writeFileSync(out, entries.join("\n") + "\n");
+    console.log(`  + ${fileName} (${entries.length} entries)`);
+    outputs.push(out);
+  }
+  return outputs;
 }
 
 
@@ -524,13 +578,15 @@ async function main() {
 
   
   console.log("[3/5] Generating checksums...");
-  const checksumFile = generateChecksums(artifacts);
+  const checksumFiles = generateChecksums(artifacts);
 
   
   console.log("[4/5] Signing...");
   const ascFiles = signArtifacts(artifacts);
-  ascFiles.push(signFile(checksumFile));
-  console.log(`  + SHA256SUMS.txt.asc`);
+  for (const checksumFile of checksumFiles) {
+    ascFiles.push(signFile(checksumFile));
+    console.log(`  + ${path.basename(checksumFile)}.asc`);
+  }
 
   
   if (!GH_TOKEN) {

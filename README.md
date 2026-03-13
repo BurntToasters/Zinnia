@@ -17,3 +17,4 @@ A cross-platform 7z GUI built with Tauri.
 ## Updater setup
 - Updater is already configured in `src-tauri/tauri.conf.json`.
 - The release workflow automatically publishes `latest-{{target}}-{{arch}}.json` manifests and updater artifacts to GitHub releases.
+- The release workflow also publishes `SHA256SUMS-{{target}}-{{arch}}.txt` checksum files and detached `.asc` signatures.
