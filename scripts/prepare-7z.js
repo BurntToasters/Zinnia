@@ -50,6 +50,18 @@ function sanitizeMacSidecar(targetPath) {
       );
     }
   }
+
+  const adHocSign = runTool("codesign", ["--force", "--sign", "-", targetPath]);
+  if (!adHocSign.ok) {
+    throw new Error(
+      `codesign ad-hoc signing failed for ${path.basename(targetPath)}: ${adHocSign.message}`
+    );
+  }
+
+  const verify = runTool("codesign", ["--verify", "--verbose=2", targetPath]);
+  if (!verify.ok) {
+    throw new Error(`codesign verify failed for ${path.basename(targetPath)}: ${verify.message}`);
+  }
 }
 
 fs.mkdirSync(outDir, { recursive: true });
