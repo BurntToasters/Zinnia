@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::io::{Read, Write};
 use std::sync::Mutex;
 use tauri::Emitter;
