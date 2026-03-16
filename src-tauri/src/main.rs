@@ -699,6 +699,7 @@ fn register_windows_context_menu() -> Result<(), String> {
             .create_subkey("Software\\Classes")
             .map_err(|e| e.to_string())?;
 
+        let icon_value = format!("{},0", exe_str);
         let compress_entries = [
             ("*\\shell\\Zinnia", "Compress with Zinnia"),
             ("Directory\\shell\\Zinnia", "Compress folder with Zinnia"),
@@ -707,7 +708,7 @@ fn register_windows_context_menu() -> Result<(), String> {
         for (key_path, verb) in compress_entries {
             let (key, _) = classes.create_subkey(key_path).map_err(|e| e.to_string())?;
             key.set_value("MUIVerb", &verb).map_err(|e| e.to_string())?;
-            key.set_value("Icon", &format!("\"{}\",0", exe_str))
+            key.set_value("Icon", &icon_value)
                 .map_err(|e| e.to_string())?;
             let (cmd_key, _) = key.create_subkey("command").map_err(|e| e.to_string())?;
             cmd_key
@@ -720,7 +721,7 @@ fn register_windows_context_menu() -> Result<(), String> {
             let (key, _) = classes.create_subkey(&key_path).map_err(|e| e.to_string())?;
             key.set_value("MUIVerb", &"Extract with Zinnia")
                 .map_err(|e| e.to_string())?;
-            key.set_value("Icon", &format!("\"{}\",0", exe_str))
+            key.set_value("Icon", &icon_value)
                 .map_err(|e| e.to_string())?;
             let (cmd_key, _) = key.create_subkey("command").map_err(|e| e.to_string())?;
             cmd_key
@@ -740,7 +741,7 @@ fn register_windows_context_menu() -> Result<(), String> {
                 .create_subkey("DefaultIcon")
                 .map_err(|e| e.to_string())?;
             icon_key
-                .set_value("", &format!("\"{}\",0", exe_str))
+                .set_value("", &icon_value)
                 .map_err(|e| e.to_string())?;
             let (cmd_key, _) = key
                 .create_subkey("shell\\open\\command")
@@ -827,20 +828,75 @@ fn get_windows_context_menu_status() -> Result<bool, String> {
             .open_subkey_with_flags("Software\\Classes", KEY_READ)
             .map_err(|e| e.to_string())?;
 
-        for required in [
-            "*\\shell\\Zinnia\\command",
-            "Directory\\shell\\Zinnia\\command",
-            "Zinnia.Archive\\DefaultIcon",
-            "Zinnia.Archive\\shell\\open\\command",
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let exe_str = exe.to_string_lossy().to_string();
+        let icon_value = format!("{},0", exe_str);
+        let compress_cmd = format!("\"{}\" \"%1\"", exe_str);
+        let extract_cmd = format!("\"{}\" --extract \"%1\"", exe_str);
+
+        let normalize = |value: &str| value.replace('"', "").replace(' ', "").to_ascii_lowercase();
+        let icon_matches = |actual: &str| {
+            let actual_norm = normalize(actual);
+            actual_norm == normalize(&icon_value) || actual_norm == normalize(&exe_str)
+        };
+
+        for (path, expected_command) in [
+            ("*\\shell\\Zinnia\\command", compress_cmd.as_str()),
+            ("Directory\\shell\\Zinnia\\command", compress_cmd.as_str()),
+            ("Zinnia.Archive\\shell\\open\\command", extract_cmd.as_str()),
         ] {
-            if classes.open_subkey(required).is_err() {
+            let key = match classes.open_subkey(path) {
+                Ok(key) => key,
+                Err(_) => return Ok(false),
+            };
+            let command: String = match key.get_value("") {
+                Ok(value) => value,
+                Err(_) => return Ok(false),
+            };
+            if command.trim() != expected_command {
+                return Ok(false);
+            }
+        }
+
+        for path in ["*\\shell\\Zinnia", "Directory\\shell\\Zinnia", "Zinnia.Archive\\DefaultIcon"] {
+            let key = match classes.open_subkey(path) {
+                Ok(key) => key,
+                Err(_) => return Ok(false),
+            };
+            let value_name = if path == "Zinnia.Archive\\DefaultIcon" { "" } else { "Icon" };
+            let icon: String = match key.get_value(value_name) {
+                Ok(value) => value,
+                Err(_) => return Ok(false),
+            };
+            if !icon_matches(&icon) {
                 return Ok(false);
             }
         }
 
         for ext in ARCHIVE_EXTENSIONS {
-            let extract_key = format!("SystemFileAssociations\\{}\\shell\\Zinnia.Extract\\command", ext);
-            if classes.open_subkey(&extract_key).is_err() {
+            let extract_base = format!("SystemFileAssociations\\{}\\shell\\Zinnia.Extract", ext);
+            let extract_key = format!("{}\\command", extract_base);
+            let command_key = match classes.open_subkey(&extract_key) {
+                Ok(key) => key,
+                Err(_) => return Ok(false),
+            };
+            let command: String = match command_key.get_value("") {
+                Ok(value) => value,
+                Err(_) => return Ok(false),
+            };
+            if command.trim() != extract_cmd {
+                return Ok(false);
+            }
+
+            let icon_key = match classes.open_subkey(&extract_base) {
+                Ok(key) => key,
+                Err(_) => return Ok(false),
+            };
+            let icon: String = match icon_key.get_value("Icon") {
+                Ok(value) => value,
+                Err(_) => return Ok(false),
+            };
+            if !icon_matches(&icon) {
                 return Ok(false);
             }
 

@@ -330,7 +330,10 @@ async function init() {
     const title = document.getElementById("os-integration-title");
     const desc = document.getElementById("os-integration-desc");
     if (title) title.textContent = "Windows Explorer integration";
-    if (desc) desc.textContent = "Add \"Compress with Zinnia\" and \"Extract with Zinnia\" to right-click menus.";
+    if (desc) {
+      desc.textContent =
+        "Add \"Compress with Zinnia\" and \"Extract with Zinnia\" to Explorer context menus (use \"Show more options\" on Windows 11).";
+    }
   } else if (platform === "linux") {
     document.body.classList.add("platform-linux");
     const title = document.getElementById("os-integration-title");
@@ -346,13 +349,19 @@ async function init() {
     if (!isEnabled) {
       const userDisabled = state.settingsExtras._integrationUserDisabled === true;
       const autoEnabled = state.settingsExtras._integrationAutoEnabled === true;
-      if (!userDisabled && !autoEnabled) {
+      if (!userDisabled) {
         if (await enableOsIntegration()) {
           setOsIntegrationToggle(true);
           state.settingsExtras._integrationUserDisabled = false;
-          devLog("File manager integration auto-enabled on first run.");
+          if (autoEnabled) {
+            devLog("File manager integration repaired.");
+          } else {
+            devLog("File manager integration auto-enabled on first run.");
+          }
         }
-        state.settingsExtras._integrationAutoEnabled = true;
+        if (!autoEnabled) {
+          state.settingsExtras._integrationAutoEnabled = true;
+        }
         try {
           await saveSettings(state.currentSettings, state.settingsExtras);
           state.lastPersistedSettings = { ...state.currentSettings };
