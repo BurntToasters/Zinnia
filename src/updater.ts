@@ -1,6 +1,6 @@
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { message, ask, confirm } from "@tauri-apps/plugin-dialog";
+import { message, ask } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { log, devLog, setStatus } from "./ui";
 
@@ -15,6 +15,22 @@ export async function notify(title: string, body: string) {
   }
 }
 
+async function promptInstallAndRestart(version: string, install: () => Promise<void>) {
+  setStatus("Update ready");
+  const restart = await ask(
+    `Version ${version} has been downloaded and is ready to install.\n\nRestart now to apply the update?`,
+    { title: "Update ready", kind: "info", okLabel: "Restart now", cancelLabel: "Later" }
+  );
+  if (restart) {
+    setStatus("Installing update");
+    await install();
+    await relaunch();
+  } else {
+    await notify("Zinnia", "Update downloaded. Install it later from Check now.");
+    setStatus("Idle");
+  }
+}
+
 export async function checkUpdates() {
   try {
     setStatus("Checking updates");
@@ -26,18 +42,10 @@ export async function checkUpdates() {
       return;
     }
     log(`Update available: ${update.version}`);
-    const confirmed = await confirm(
-      `Version ${update.version} is available. Download and install now?\n\nThe app will restart after installation.`,
-      { title: "Update available", kind: "info", okLabel: "Install" }
-    );
-    if (!confirmed) {
-      setStatus("Idle");
-      return;
-    }
     setStatus("Downloading update");
-    await update.downloadAndInstall();
-    log("Update installed. Relaunching...");
-    await relaunch();
+    await update.download();
+    log(`Update ${update.version} downloaded and ready to install.`);
+    await promptInstallAndRestart(update.version, () => update.install());
   } catch (err) {
     const messageText = err instanceof Error ? err.message : String(err);
     log(`Updater error: ${messageText}`);
@@ -56,19 +64,9 @@ export async function autoCheckUpdates() {
     log(`Update available: ${update.version}`);
     await notify("Zinnia Update Available", `Version ${update.version} is available. Downloading in the background...`);
     setStatus("Downloading update");
-    await update.downloadAndInstall();
-    setStatus("Update ready");
+    await update.download();
     log(`Update ${update.version} downloaded and ready to install.`);
-    const restart = await ask(
-      `Version ${update.version} has been downloaded and is ready to install.\n\nRestart now to apply the update?`,
-      { title: "Update ready", kind: "info", okLabel: "Restart now", cancelLabel: "Later" }
-    );
-    if (restart) {
-      await relaunch();
-    } else {
-      await notify("Zinnia", "Update will be applied next time you restart.");
-      setStatus("Idle");
-    }
+    await promptInstallAndRestart(update.version, () => update.install());
   } catch (err) {
     const messageText = err instanceof Error ? err.message : String(err);
     devLog(`Auto-update error: ${messageText}`);

@@ -680,6 +680,31 @@ fn cancel_7z(state: tauri::State<'_, RunningProcess>) -> Result<(), String> {
 #[cfg(windows)]
 const ARCHIVE_EXTENSIONS: &[&str] = SUPPORTED_ARCHIVE_EXTENSIONS;
 
+#[cfg(windows)]
+fn notify_shell_association_changed() {
+    #[allow(non_snake_case)]
+    unsafe extern "system" {
+        fn SHChangeNotify(
+            wEventId: u32,
+            uFlags: u32,
+            dwItem1: *const std::ffi::c_void,
+            dwItem2: *const std::ffi::c_void,
+        );
+    }
+
+    const SHCNE_ASSOCCHANGED: u32 = 0x0800_0000;
+    const SHCNF_IDLIST: u32 = 0x0000;
+
+    unsafe {
+        SHChangeNotify(
+            SHCNE_ASSOCCHANGED,
+            SHCNF_IDLIST,
+            std::ptr::null(),
+            std::ptr::null(),
+        );
+    }
+}
+
 #[tauri::command]
 fn register_windows_context_menu() -> Result<(), String> {
     #[cfg(windows)]
@@ -699,7 +724,7 @@ fn register_windows_context_menu() -> Result<(), String> {
             .create_subkey("Software\\Classes")
             .map_err(|e| e.to_string())?;
 
-        let icon_value = format!("{},0", exe_str);
+        let icon_value = format!("\"{}\",0", exe_str);
         let compress_entries = [
             ("*\\shell\\Zinnia", "Compress with Zinnia"),
             ("Directory\\shell\\Zinnia", "Compress folder with Zinnia"),
@@ -758,6 +783,7 @@ fn register_windows_context_menu() -> Result<(), String> {
                 .map_err(|e| e.to_string())?;
         }
 
+        notify_shell_association_changed();
         Ok(())
     }
 
@@ -807,6 +833,7 @@ fn unregister_windows_context_menu() -> Result<(), String> {
             Err(e) => return Err(format!("Failed to remove Zinnia.Archive: {}", e)),
         }
 
+        notify_shell_association_changed();
         Ok(())
     }
 
