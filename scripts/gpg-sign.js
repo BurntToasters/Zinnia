@@ -231,6 +231,29 @@ function releaseAssetUrl(fileName) {
   return `${RELEASE_DOWNLOAD_BASE_URL}/${encodeURIComponent(fileName)}`;
 }
 
+function normalizeUpdaterSignature(sigPath) {
+  const trimmed = fs.readFileSync(sigPath, "utf8").trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+
+  // Tauri v2 `.sig` files are base64-encoded minisign payloads.
+  try {
+    const decoded = Buffer.from(trimmed, "base64").toString("utf8");
+    if (decoded.includes("untrusted comment:")) {
+      return trimmed;
+    }
+  } catch {
+  }
+
+  // Older formats may store plain minisign text; encode once for updater manifests.
+  if (trimmed.includes("untrusted comment:")) {
+    return Buffer.from(trimmed, "utf8").toString("base64");
+  }
+
+  return trimmed;
+}
+
 function generateUpdaterManifests(files) {
   const byName = new Map();
   for (const filePath of files) {
@@ -256,7 +279,7 @@ function generateUpdaterManifests(files) {
       continue;
     }
 
-    const signature = fs.readFileSync(sigPath).toString("base64");
+    const signature = normalizeUpdaterSignature(sigPath);
     const url = releaseAssetUrl(name);
     for (const target of targets) {
       const manifestName = `latest-${target.os}-${target.arch}.json`;
