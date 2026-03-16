@@ -237,7 +237,7 @@ function normalizeUpdaterSignature(sigPath) {
     return trimmed;
   }
 
-  // Tauri v2 `.sig` files are base64-encoded minisign payloads.
+  // Tauri v2 `.sig` files are base64
   try {
     const decoded = Buffer.from(trimmed, "base64").toString("utf8");
     if (decoded.includes("untrusted comment:")) {
@@ -246,7 +246,6 @@ function normalizeUpdaterSignature(sigPath) {
   } catch {
   }
 
-  // Older formats may store plain minisign text; encode once for updater manifests.
   if (trimmed.includes("untrusted comment:")) {
     return Buffer.from(trimmed, "utf8").toString("base64");
   }
