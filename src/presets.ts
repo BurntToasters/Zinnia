@@ -1,4 +1,5 @@
 import { $ } from "./utils";
+import { getCompressionSecuritySupport } from "./compression-security";
 
 export interface PresetConfig {
   format: string;
@@ -16,6 +17,40 @@ export const PRESETS: Record<string, PresetConfig> = {
   high: { format: "7z", level: "7", method: "lzma2", dict: "128m", wordSize: "64", solid: "16g" },
   ultra: { format: "7z", level: "9", method: "lzma2", dict: "512m", wordSize: "128", solid: "solid" },
 };
+
+const PASSWORD_PLACEHOLDER_DEFAULT = "Leave blank for none";
+const PASSWORD_PLACEHOLDER_UNSUPPORTED = "Not supported for this format";
+
+function updateSecurityControlsForFormat(format: string) {
+  const support = getCompressionSecuritySupport(format);
+  const passwordInput = $<HTMLInputElement>("password");
+  const passwordToggle = $<HTMLButtonElement>("toggle-password");
+  const encryptHeadersCheckbox = $<HTMLInputElement>("encrypt-headers");
+
+  passwordInput.disabled = !support.password;
+  passwordToggle.disabled = !support.password;
+
+  if (support.password) {
+    passwordInput.placeholder = PASSWORD_PLACEHOLDER_DEFAULT;
+    passwordInput.title = "";
+  } else {
+    passwordInput.placeholder = PASSWORD_PLACEHOLDER_UNSUPPORTED;
+    passwordInput.title = `${format.toUpperCase()} archives do not support password protection in this app.`;
+    passwordInput.type = "password";
+    passwordToggle.textContent = "Show";
+  }
+
+  if (!support.encryptHeaders) {
+    encryptHeadersCheckbox.checked = false;
+  }
+  encryptHeadersCheckbox.disabled = !support.encryptHeaders;
+  const encryptHeadersLabel = encryptHeadersCheckbox.closest("label");
+  if (encryptHeadersLabel) {
+    encryptHeadersLabel.title = support.encryptHeaders
+      ? ""
+      : `${format.toUpperCase()} archives do not support file-name encryption.`;
+  }
+}
 
 export function updateCompressionOptionsForFormat(format: string) {
   const methodSelect = $<HTMLSelectElement>("method");
@@ -83,6 +118,8 @@ export function updateCompressionOptionsForFormat(format: string) {
       levelSelect.value = "5";
     }
   }
+
+  updateSecurityControlsForFormat(format);
 }
 
 export function applyPreset(name: string) {

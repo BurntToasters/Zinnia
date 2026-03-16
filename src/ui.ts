@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { $, MAX_LOG_LINES, redactSensitiveText } from "./utils";
 import { state, dom } from "./state";
 import { LogVerbosity } from "./settings-model";
+import { resolveExtractDestinationAutofill } from "./extract-path";
 
 type LogLevel = "info" | "debug" | "error";
 
@@ -154,6 +155,21 @@ export function setMode(mode: "add" | "extract" | "browse") {
 
 export function renderInputs() {
   const mode = getMode();
+  if (mode === "extract") {
+    const extractPathInput = document.getElementById("extract-path") as HTMLInputElement | null;
+    if (extractPathInput) {
+      const nextExtractPath = resolveExtractDestinationAutofill(
+        extractPathInput.value,
+        state.lastAutoExtractDestination,
+        state.inputs[0] ?? null
+      );
+      if (nextExtractPath) {
+        extractPathInput.value = nextExtractPath;
+        state.lastAutoExtractDestination = nextExtractPath;
+      }
+    }
+  }
+
   if (mode !== "browse" || state.inputs.length === 0) {
     setBrowsePasswordFieldVisible(false);
   }

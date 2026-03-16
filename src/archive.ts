@@ -5,6 +5,10 @@ import { SETTING_DEFAULTS, state } from "./state";
 import { log, devLog, setStatus, setProgress, hideProgress, setRunning, getMode, setBrowsePasswordFieldVisible } from "./ui";
 import { ensureArchivePaths, validateExtraArgs } from "./archive-rules";
 import { formatCommandOutputForLogs } from "./output-logging";
+import {
+  normalizeCompressionSecurityOptions,
+  validateCompressionSecurityOptions,
+} from "./compression-security";
 
 function truncateForDialog(text: string, maxChars = 4000): string {
   if (text.length <= maxChars) return text;
@@ -139,10 +143,20 @@ export function buildArgs() {
   const threadsRaw = $<HTMLInputElement>("threads").value;
   const threads = parseThreads(threadsRaw, SETTING_DEFAULTS.threads);
   const pathMode = $<HTMLSelectElement>("path-mode").value;
-  const password = $<HTMLInputElement>("password").value.trim();
-  const encryptHeaders = $<HTMLInputElement>("encrypt-headers").checked;
+  const rawPassword = $<HTMLInputElement>("password").value;
+  const rawEncryptHeaders = $<HTMLInputElement>("encrypt-headers").checked;
   const sfx = $<HTMLInputElement>("sfx").checked;
   const deleteAfter = $<HTMLInputElement>("delete-after").checked;
+
+  const validationError = validateCompressionSecurityOptions(format, rawPassword, rawEncryptHeaders);
+  if (validationError) {
+    throw new Error(validationError);
+  }
+
+  const {
+    password,
+    encryptHeaders,
+  } = normalizeCompressionSecurityOptions(format, rawPassword, rawEncryptHeaders);
 
   const switches: string[] = [];
   switches.push(`-t${format}`);

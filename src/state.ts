@@ -17,6 +17,7 @@ export const state = {
   platformName: "",
   appIsPackaged: false,
   logDirectory: "",
+  lastAutoExtractDestination: null as string | null,
 };
 
 export const dom = {

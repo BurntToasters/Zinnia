@@ -8,6 +8,7 @@ import {
   mergeSettingsPayload,
   parseSettingsRaw,
 } from "./settings-model";
+import { getCompressionSecuritySupport } from "./compression-security";
 
 export function applyTheme(pref: string) {
   const resolved = pref === "system"
@@ -70,6 +71,7 @@ export function populateSettingsModal() {
   $<HTMLInputElement>("s-auto-check-updates").checked = state.currentSettings.autoCheckUpdates;
   $<HTMLInputElement>("s-local-logging").checked = state.currentSettings.localLoggingEnabled;
   $<HTMLSelectElement>("s-log-verbosity").value = state.currentSettings.logVerbosity;
+  syncSettingsSecurityControlsForFormat(state.currentSettings.format);
 
   const logDir = document.getElementById("s-log-dir");
   if (logDir) {
@@ -77,10 +79,21 @@ export function populateSettingsModal() {
   }
 }
 
+export function syncSettingsSecurityControlsForFormat(format: UserSettings["format"]) {
+  const support = getCompressionSecuritySupport(format);
+  const encryptHeadersCheckbox = $<HTMLInputElement>("s-encrypt-headers");
+  if (!support.encryptHeaders) {
+    encryptHeadersCheckbox.checked = false;
+  }
+  encryptHeadersCheckbox.disabled = !support.encryptHeaders;
+}
+
 export function readSettingsModal(): UserSettings {
+  const format = $<HTMLSelectElement>("s-format").value as UserSettings["format"];
+  const securitySupport = getCompressionSecuritySupport(format);
   return {
     theme: $<HTMLSelectElement>("s-theme").value as UserSettings["theme"],
-    format: $<HTMLSelectElement>("s-format").value as UserSettings["format"],
+    format,
     level: $<HTMLSelectElement>("s-level").value,
     method: $<HTMLSelectElement>("s-method").value,
     dict: $<HTMLSelectElement>("s-dict").value,
@@ -89,7 +102,7 @@ export function readSettingsModal(): UserSettings {
     threads: parseThreads($<HTMLInputElement>("s-threads").value, SETTING_DEFAULTS.threads),
     pathMode: $<HTMLSelectElement>("s-path-mode").value as UserSettings["pathMode"],
     sfx: $<HTMLInputElement>("s-sfx").checked,
-    encryptHeaders: $<HTMLInputElement>("s-encrypt-headers").checked,
+    encryptHeaders: securitySupport.encryptHeaders && $<HTMLInputElement>("s-encrypt-headers").checked,
     deleteAfter: $<HTMLInputElement>("s-delete-after").checked,
     autoCheckUpdates: $<HTMLInputElement>("s-auto-check-updates").checked,
     localLoggingEnabled: $<HTMLInputElement>("s-local-logging").checked,

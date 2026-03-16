@@ -33,6 +33,7 @@ export async function chooseExtract() {
   });
   if (output && typeof output === "string") {
     $<HTMLInputElement>("extract-path").value = output;
+    state.lastAutoExtractDestination = null;
   }
 }
 

@@ -6,7 +6,17 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 import { $ } from "./utils";
 import { SETTING_DEFAULTS, state, dom } from "./state";
-import { applyTheme, loadSettingsWithMetadata, saveSettings, readSettingsModal, applySettingsToForm, openSettingsModal, closeSettingsModal, populateSettingsModal } from "./settings";
+import {
+  applyTheme,
+  loadSettingsWithMetadata,
+  saveSettings,
+  readSettingsModal,
+  applySettingsToForm,
+  openSettingsModal,
+  closeSettingsModal,
+  populateSettingsModal,
+  syncSettingsSecurityControlsForFormat,
+} from "./settings";
 import { log, devLog, toggleActivity, renderInputs, setMode, getMode, setBrowsePasswordFieldVisible } from "./ui";
 import { runAction, cancelAction, testArchive, browseArchive, previewCommand } from "./archive";
 import { validateArchivePaths } from "./archive-rules";
@@ -148,6 +158,10 @@ function wireEvents() {
     applyPreset($<HTMLSelectElement>("preset").value);
   });
 
+  $<HTMLSelectElement>("s-format").addEventListener("change", () => {
+    syncSettingsSecurityControlsForFormat($<HTMLSelectElement>("s-format").value as typeof state.currentSettings.format);
+  });
+
   $<HTMLSelectElement>("format").addEventListener("change", () => {
     updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
     onCompressionOptionChange();
@@ -178,6 +192,13 @@ function wireEvents() {
     } else {
       input.type = "password";
       btn.textContent = "Show";
+    }
+  });
+
+  $("extract-path").addEventListener("input", () => {
+    const value = $<HTMLInputElement>("extract-path").value.trim();
+    if (value && value !== state.lastAutoExtractDestination) {
+      state.lastAutoExtractDestination = null;
     }
   });
 

@@ -1,4 +1,6 @@
 import { runArchiveRulesTests } from "../src/tests/archive-rules.test.ts";
+import { runCompressionSecurityTests } from "../src/tests/compression-security.test.ts";
+import { runExtractPathTests } from "../src/tests/extract-path.test.ts";
 import { runOutputLoggingTests } from "../src/tests/output-logging.test.ts";
 import { runSettingsModelTests } from "../src/tests/settings-model.test.ts";
 import { runUtilsTests } from "../src/tests/utils.test.ts";
@@ -10,6 +12,8 @@ type Suite = {
 
 const suites: Suite[] = [
   { name: "archive-rules", run: runArchiveRulesTests },
+  { name: "compression-security", run: runCompressionSecurityTests },
+  { name: "extract-path", run: runExtractPathTests },
   { name: "output-logging", run: runOutputLoggingTests },
   { name: "settings-model", run: runSettingsModelTests },
   { name: "utils", run: runUtilsTests },

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Zinnia",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "run.rosie.zinnia",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -24,7 +24,14 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["dmg", "app", "nsis", "appimage", "deb", "rpm"],
+    "targets": [
+      "dmg",
+      "app",
+      "nsis",
+      "appimage",
+      "deb",
+      "rpm"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -33,40 +40,59 @@
       "icons/icon.ico",
       "icons/icon.icns"
     ],
-    "externalBin": ["binaries/7z"],
+    "externalBin": [
+      "binaries/7z"
+    ],
     "fileAssociations": [
       {
-        "ext": ["7z"],
+        "ext": [
+          "7z"
+        ],
         "mimeType": "application/x-7z-compressed",
         "description": "7-Zip Archive"
       },
       {
-        "ext": ["zip"],
+        "ext": [
+          "zip"
+        ],
         "mimeType": "application/zip",
         "description": "ZIP Archive"
       },
       {
-        "ext": ["tar"],
+        "ext": [
+          "tar"
+        ],
         "mimeType": "application/x-tar",
         "description": "TAR Archive"
       },
       {
-        "ext": ["gz", "tgz"],
+        "ext": [
+          "gz",
+          "tgz"
+        ],
         "mimeType": "application/gzip",
         "description": "Gzip Archive"
       },
       {
-        "ext": ["bz2", "tbz2"],
+        "ext": [
+          "bz2",
+          "tbz2"
+        ],
         "mimeType": "application/x-bzip2",
         "description": "Bzip2 Archive"
       },
       {
-        "ext": ["xz", "txz"],
+        "ext": [
+          "xz",
+          "txz"
+        ],
         "mimeType": "application/x-xz",
         "description": "XZ Archive"
       },
       {
-        "ext": ["rar"],
+        "ext": [
+          "rar"
+        ],
         "mimeType": "application/vnd.rar",
         "description": "RAR Archive"
       }
