@@ -13,7 +13,7 @@ const MAX_PENDING_LOCAL_LOG_WRITES = 250;
 let pendingLocalLogWrites = 0;
 let droppedLocalLogWrites = 0;
 
-function buildLogFragments(input: string): string[] {
+export function buildLogFragments(input: string): string[] {
   if (input.length <= MAX_LOG_ENTRY_CHARS) return [input];
 
   const capped = input.slice(0, MAX_LOG_ENTRY_CHARS);
@@ -25,7 +25,10 @@ function buildLogFragments(input: string): string[] {
   return chunks;
 }
 
-function shouldPersistLevel(level: LogLevel, verbosity: LogVerbosity): boolean {
+export function shouldPersistLevel(
+  level: LogLevel,
+  verbosity: LogVerbosity,
+): boolean {
   if (level === "debug") return verbosity === "debug";
   return true;
 }
@@ -55,7 +58,7 @@ function persistLocalLog(level: LogLevel, line: string): void {
     const dropped = droppedLocalLogWrites;
     droppedLocalLogWrites = 0;
     enqueueLocalLogLine(
-      `${new Date().toISOString()} [error] Local log queue overloaded; dropped ${dropped} log entr${dropped === 1 ? "y" : "ies"}.`
+      `${new Date().toISOString()} [error] Local log queue overloaded; dropped ${dropped} log entr${dropped === 1 ? "y" : "ies"}.`,
     );
   }
 
@@ -67,7 +70,9 @@ function trimLog() {
   const text = dom.logEl.textContent || "";
   const lines = text.split("\n");
   if (lines.length > MAX_LOG_LINES) {
-    dom.logEl.textContent = lines.slice(lines.length - MAX_LOG_LINES).join("\n");
+    dom.logEl.textContent = lines
+      .slice(lines.length - MAX_LOG_LINES)
+      .join("\n");
   }
 }
 
@@ -77,7 +82,8 @@ export function log(line: string, level: LogLevel = "info") {
 
   for (const [index, fragment] of fragments.entries()) {
     const stamp = new Date().toLocaleTimeString();
-    const marker = fragments.length > 1 ? ` (${index + 1}/${fragments.length})` : "";
+    const marker =
+      fragments.length > 1 ? ` (${index + 1}/${fragments.length})` : "";
     const rendered = `${fragment}${marker}`;
     dom.logEl.textContent += `[${stamp}] ${rendered}\n`;
     persistLocalLog(level, rendered);
@@ -129,9 +135,15 @@ export function getMode(): "add" | "extract" | "browse" {
 }
 
 export function setBrowsePasswordFieldVisible(visible: boolean) {
-  const field = document.getElementById("browse-password-field") as HTMLElement | null;
-  const input = document.getElementById("browse-password") as HTMLInputElement | null;
-  const toggle = document.getElementById("toggle-browse-password") as HTMLButtonElement | null;
+  const field = document.getElementById(
+    "browse-password-field",
+  ) as HTMLElement | null;
+  const input = document.getElementById(
+    "browse-password",
+  ) as HTMLInputElement | null;
+  const toggle = document.getElementById(
+    "toggle-browse-password",
+  ) as HTMLButtonElement | null;
   if (!field || !input || !toggle) return;
   field.hidden = !visible;
   if (!visible) {
@@ -141,7 +153,24 @@ export function setBrowsePasswordFieldVisible(visible: boolean) {
   }
 }
 
+function clearBrowsePickerSessionState() {
+  state.browseArchiveInfoByPath.clear();
+  state.browseSelectionsByArchive.clear();
+  state.selectiveSearchQuery = "";
+  state.selectiveActiveArchive = null;
+  state.selectiveVisiblePaths = [];
+  const overlay = document.getElementById(
+    "selective-overlay",
+  ) as HTMLElement | null;
+  if (overlay) overlay.hidden = true;
+}
+
 export function setMode(mode: "add" | "extract" | "browse") {
+  const previousMode = getMode();
+  if (previousMode !== mode) {
+    clearBrowsePickerSessionState();
+  }
+
   dom.appEl.dataset.mode = mode;
   document.querySelectorAll("[data-mode-btn]").forEach((btn) => {
     const el = btn as HTMLButtonElement;
@@ -155,13 +184,21 @@ export function setMode(mode: "add" | "extract" | "browse") {
 
 export function renderInputs() {
   const mode = getMode();
+  const signature = state.inputs.join("\n");
+  if (signature !== state.lastInputsSignature) {
+    clearBrowsePickerSessionState();
+    state.lastInputsSignature = signature;
+  }
+
   if (mode === "extract") {
-    const extractPathInput = document.getElementById("extract-path") as HTMLInputElement | null;
+    const extractPathInput = document.getElementById(
+      "extract-path",
+    ) as HTMLInputElement | null;
     if (extractPathInput) {
       const nextExtractPath = resolveExtractDestinationAutofill(
         extractPathInput.value,
         state.lastAutoExtractDestination,
-        state.inputs[0] ?? null
+        state.inputs[0] ?? null,
       );
       if (nextExtractPath) {
         extractPathInput.value = nextExtractPath;
@@ -177,11 +214,12 @@ export function renderInputs() {
   dom.inputList.innerHTML = "";
   if (state.inputs.length === 0) {
     const empty = document.createElement("div");
-    empty.textContent = mode === "extract"
-      ? "Select an archive file to extract."
-      : mode === "browse"
-      ? "Select an archive to preview its contents."
-      : "Drop files here or use the buttons above.";
+    empty.textContent =
+      mode === "extract"
+        ? "Select an archive file to extract."
+        : mode === "browse"
+          ? "Select an archive to preview its contents."
+          : "Drop files here or use the buttons above.";
     empty.className = "list__empty";
     dom.inputList.appendChild(empty);
     return;
@@ -198,7 +236,10 @@ export function renderInputs() {
     remove.addEventListener("click", () => {
       const removedPrimary = index === 0;
       state.inputs.splice(index, 1);
-      if (getMode() === "browse" && (removedPrimary || state.inputs.length === 0)) {
+      if (
+        getMode() === "browse" &&
+        (removedPrimary || state.inputs.length === 0)
+      ) {
         setBrowsePasswordFieldVisible(false);
       }
       renderInputs();
@@ -226,16 +267,32 @@ export function setRunning(active: boolean) {
     $<HTMLButtonElement>("browse-list").disabled = active;
     $<HTMLButtonElement>("browse-test").disabled = active;
     $<HTMLButtonElement>("browse-extract").disabled = active;
+    $<HTMLButtonElement>("browse-selective").disabled = active;
   }
 
-  for (const id of ["add-files", "add-folder", "clear-inputs", "choose-output", "choose-extract", "open-settings"]) {
+  for (const id of [
+    "add-files",
+    "add-folder",
+    "clear-inputs",
+    "choose-output",
+    "choose-extract",
+    "open-settings",
+    "selective-select-all",
+    "selective-clear",
+    "selective-cancel",
+    "selective-confirm",
+    "selective-browse-dest",
+    "close-selective",
+  ]) {
     const el = document.getElementById(id) as HTMLButtonElement | null;
     if (el) el.disabled = active;
   }
 
-  document.querySelectorAll<HTMLButtonElement>("[data-mode-btn]").forEach((btn) => {
-    btn.disabled = active;
-  });
+  document
+    .querySelectorAll<HTMLButtonElement>("[data-mode-btn]")
+    .forEach((btn) => {
+      btn.disabled = active;
+    });
 
   renderInputs();
 }

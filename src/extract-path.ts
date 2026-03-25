@@ -82,7 +82,10 @@ export function deriveExtractDestinationPath(archivePath: string): string {
   return joinPath(parent, folderName, separator);
 }
 
-export function shouldAutofillExtractDestination(currentValue: string, lastAutoValue: string | null): boolean {
+export function shouldAutofillExtractDestination(
+  currentValue: string,
+  lastAutoValue: string | null,
+): boolean {
   const current = currentValue.trim();
   if (!current) return true;
   if (!lastAutoValue) return false;
@@ -92,11 +95,12 @@ export function shouldAutofillExtractDestination(currentValue: string, lastAutoV
 export function resolveExtractDestinationAutofill(
   currentValue: string,
   lastAutoValue: string | null,
-  primaryArchivePath: string | null | undefined
+  primaryArchivePath: string | null | undefined,
 ): string | null {
   const archive = primaryArchivePath?.trim() ?? "";
   if (!archive) return null;
-  if (!shouldAutofillExtractDestination(currentValue, lastAutoValue)) return null;
+  if (!shouldAutofillExtractDestination(currentValue, lastAutoValue))
+    return null;
 
   const next = deriveExtractDestinationPath(archive);
   return next || null;

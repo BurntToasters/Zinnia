@@ -2,6 +2,7 @@ import { runArchiveRulesTests } from "../src/tests/archive-rules.test.ts";
 import { runCompressionSecurityTests } from "../src/tests/compression-security.test.ts";
 import { runExtractPathTests } from "../src/tests/extract-path.test.ts";
 import { runOutputLoggingTests } from "../src/tests/output-logging.test.ts";
+import { runSelectiveExtractTests } from "../src/tests/selective-extract.test.ts";
 import { runSettingsModelTests } from "../src/tests/settings-model.test.ts";
 import { runUtilsTests } from "../src/tests/utils.test.ts";
 
@@ -15,6 +16,7 @@ const suites: Suite[] = [
   { name: "compression-security", run: runCompressionSecurityTests },
   { name: "extract-path", run: runExtractPathTests },
   { name: "output-logging", run: runOutputLoggingTests },
+  { name: "selective-extract", run: runSelectiveExtractTests },
   { name: "settings-model", run: runSettingsModelTests },
   { name: "utils", run: runUtilsTests },
 ];
@@ -27,7 +29,7 @@ for (const suite of suites) {
     console.log(`PASS ${suite.name}`);
   } catch (err) {
     failed += 1;
-    const msg = err instanceof Error ? err.stack ?? err.message : String(err);
+    const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
     console.error(`FAIL ${suite.name}\n${msg}`);
   }
 }

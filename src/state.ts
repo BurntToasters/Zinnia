@@ -1,8 +1,29 @@
 import { $ } from "./utils";
 import { SETTING_DEFAULTS, UserSettings } from "./settings-model";
+import type { ArchiveInfo } from "./browse-model";
 
 export { SETTING_DEFAULTS };
 export type { UserSettings };
+
+const MAX_CACHED_ARCHIVES = 10;
+
+function evictOldest<K, V>(map: Map<K, V>, max: number): void {
+  while (map.size >= max) {
+    const oldest = map.keys().next().value;
+    if (oldest === undefined) break;
+    map.delete(oldest);
+  }
+}
+
+export function cacheBrowseInfo(archive: string, info: ArchiveInfo): void {
+  evictOldest(state.browseArchiveInfoByPath, MAX_CACHED_ARCHIVES);
+  state.browseArchiveInfoByPath.set(archive, info);
+}
+
+export function cacheSelection(archive: string, set: Set<string>): void {
+  evictOldest(state.browseSelectionsByArchive, MAX_CACHED_ARCHIVES);
+  state.browseSelectionsByArchive.set(archive, set);
+}
 
 export const state = {
   currentSettings: { ...SETTING_DEFAULTS } as UserSettings,
@@ -18,6 +39,12 @@ export const state = {
   appIsPackaged: false,
   logDirectory: "",
   lastAutoExtractDestination: null as string | null,
+  browseArchiveInfoByPath: new Map<string, ArchiveInfo>(),
+  browseSelectionsByArchive: new Map<string, Set<string>>(),
+  selectiveSearchQuery: "",
+  selectiveActiveArchive: null as string | null,
+  selectiveVisiblePaths: [] as string[],
+  lastInputsSignature: "",
 };
 
 export const dom = {

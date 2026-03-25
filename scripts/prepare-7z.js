@@ -13,7 +13,7 @@ const mappings = [
   { source: "mac/7zz", target: "7z-aarch64-apple-darwin" },
   { source: "mac/7zz", target: "7z-universal-apple-darwin" },
   { source: "linux/x64/7zzs", target: "7z-x86_64-unknown-linux-gnu" },
-  { source: "linux/arm64/7zzs", target: "7z-aarch64-unknown-linux-gnu" }
+  { source: "linux/arm64/7zzs", target: "7z-aarch64-unknown-linux-gnu" },
 ];
 
 function runTool(command, args) {
@@ -26,7 +26,8 @@ function runTool(command, args) {
     const stdout = result.stdout?.toString().trim();
     return {
       ok: false,
-      message: stderr || stdout || `${command} exited with code ${result.status}`,
+      message:
+        stderr || stdout || `${command} exited with code ${result.status}`,
     };
   }
   return { ok: true, message: "" };
@@ -35,18 +36,24 @@ function runTool(command, args) {
 function sanitizeMacSidecar(targetPath) {
   const xattr = runTool("xattr", ["-cr", targetPath]);
   if (!xattr.ok) {
-    const ignorable = /No such xattr|No such file|not found/i.test(xattr.message);
+    const ignorable = /No such xattr|No such file|not found/i.test(
+      xattr.message,
+    );
     if (!ignorable) {
-      console.warn(`xattr cleanup failed for ${path.basename(targetPath)}: ${xattr.message}`);
+      console.warn(
+        `xattr cleanup failed for ${path.basename(targetPath)}: ${xattr.message}`,
+      );
     }
   }
 
   const removeSig = runTool("codesign", ["--remove-signature", targetPath]);
   if (!removeSig.ok) {
-    const ignorable = /is not signed at all|code object is not signed/i.test(removeSig.message);
+    const ignorable = /is not signed at all|code object is not signed/i.test(
+      removeSig.message,
+    );
     if (!ignorable) {
       console.warn(
-        `codesign signature cleanup failed for ${path.basename(targetPath)}: ${removeSig.message}`
+        `codesign signature cleanup failed for ${path.basename(targetPath)}: ${removeSig.message}`,
       );
     }
   }
@@ -54,13 +61,15 @@ function sanitizeMacSidecar(targetPath) {
   const adHocSign = runTool("codesign", ["--force", "--sign", "-", targetPath]);
   if (!adHocSign.ok) {
     throw new Error(
-      `codesign ad-hoc signing failed for ${path.basename(targetPath)}: ${adHocSign.message}`
+      `codesign ad-hoc signing failed for ${path.basename(targetPath)}: ${adHocSign.message}`,
     );
   }
 
   const verify = runTool("codesign", ["--verify", "--verbose=2", targetPath]);
   if (!verify.ok) {
-    throw new Error(`codesign verify failed for ${path.basename(targetPath)}: ${verify.message}`);
+    throw new Error(
+      `codesign verify failed for ${path.basename(targetPath)}: ${verify.message}`,
+    );
   }
 }
 
@@ -81,10 +90,12 @@ for (const mapping of mappings) {
   if (process.platform !== "win32") {
     try {
       fs.chmodSync(targetPath, 0o755);
-    } catch {
-    }
+    } catch {}
   }
-  if (process.platform === "darwin" && mapping.target.includes("apple-darwin")) {
+  if (
+    process.platform === "darwin" &&
+    mapping.target.includes("apple-darwin")
+  ) {
     sanitizeMacSidecar(targetPath);
   }
   copied += 1;

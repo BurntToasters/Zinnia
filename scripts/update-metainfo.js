@@ -32,8 +32,10 @@ function run({ now = new Date() } = {}) {
   } catch (error) {
     throw new Error(
       `Failed to parse package.json: ${
-        error && typeof error === "object" && "message" in error ? String(error.message) : String(error)
-      }`
+        error && typeof error === "object" && "message" in error
+          ? String(error.message)
+          : String(error)
+      }`,
     );
   }
 
@@ -81,11 +83,17 @@ function run({ now = new Date() } = {}) {
 
   let updatedSection = releasesSectionMatch[0];
   if (releaseSelfClosingRegex.test(updatedSection)) {
-    updatedSection = updatedSection.replace(releaseSelfClosingRegex, newReleaseTag);
+    updatedSection = updatedSection.replace(
+      releaseSelfClosingRegex,
+      newReleaseTag,
+    );
   } else if (releasePairedRegex.test(updatedSection)) {
     updatedSection = updatedSection.replace(releasePairedRegex, newReleaseTag);
   } else {
-    updatedSection = updatedSection.replace(/<releases>\s*/, `<releases>\n${newReleaseTag}\n${baseIndent}`);
+    updatedSection = updatedSection.replace(
+      /<releases>\s*/,
+      `<releases>\n${newReleaseTag}\n${baseIndent}`,
+    );
   }
 
   if (updatedSection === releasesSectionMatch[0]) {
@@ -101,13 +109,17 @@ if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
   try {
     const result = run();
     if (result.updated) {
-      console.log(`Updated AppStream release to ${result.version} (${result.date})`);
+      console.log(
+        `Updated AppStream release to ${result.version} (${result.date})`,
+      );
     } else {
       console.log("AppStream metadata already up to date");
     }
   } catch (error) {
     const message =
-      error && typeof error === "object" && "message" in error ? String(error.message) : String(error);
+      error && typeof error === "object" && "message" in error
+        ? String(error.message)
+        : String(error);
     console.error(`Failed to update AppStream metadata: ${message}`);
     process.exit(1);
   }

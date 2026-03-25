@@ -17,13 +17,39 @@ import {
   populateSettingsModal,
   syncSettingsSecurityControlsForFormat,
 } from "./settings";
-import { log, devLog, toggleActivity, renderInputs, setMode, getMode, setBrowsePasswordFieldVisible } from "./ui";
-import { runAction, cancelAction, testArchive, browseArchive, previewCommand } from "./archive";
+import {
+  log,
+  devLog,
+  toggleActivity,
+  renderInputs,
+  setMode,
+  getMode,
+  setBrowsePasswordFieldVisible,
+} from "./ui";
+import {
+  runAction,
+  cancelAction,
+  testArchive,
+  browseArchive,
+  previewCommand,
+  openSelectiveExtractModal,
+  closeSelectiveExtractModal,
+  setSelectiveExtractSearch,
+  selectAllVisibleInPicker,
+  clearPickerSelection,
+  runSelectiveExtractFromModal,
+  syncSelectiveDestinationAfterBrowseChoice,
+  syncDestinationWhilePickerOpen,
+} from "./archive";
 import { validateArchivePaths } from "./archive-rules";
-import { updateCompressionOptionsForFormat, applyPreset, onCompressionOptionChange } from "./presets";
+import {
+  updateCompressionOptionsForFormat,
+  applyPreset,
+  onCompressionOptionChange,
+} from "./presets";
 import { checkUpdates, autoCheckUpdates } from "./updater";
 import { openLicensesModal, closeLicensesModal } from "./licenses";
-import { chooseOutput, chooseExtract, addFiles, addFolder, toggleOsIntegration, setOsIntegrationToggle, enableOsIntegration, probeOsIntegrationStatus } from "./files";
+import { chooseOutput, chooseExtract, addFiles, addFolder } from "./files";
 
 async function exportLocalLogs() {
   const suggestedName = `zinnia-logs-${new Date().toISOString().slice(0, 10)}.txt`;
@@ -38,11 +64,16 @@ async function exportLocalLogs() {
   try {
     await invoke("export_logs", { destinationPath: destination });
     log(`Logs exported to ${destination}`);
-    await message(`Logs exported successfully.\n\n${destination}`, { title: "Logs exported" });
+    await message(`Logs exported successfully.\n\n${destination}`, {
+      title: "Logs exported",
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Failed to export logs: ${msg}`, "error");
-    await message(`Failed to export logs.\n\n${msg}`, { title: "Export failed", kind: "error" });
+    await message(`Failed to export logs.\n\n${msg}`, {
+      title: "Export failed",
+      kind: "error",
+    });
   }
 }
 
@@ -53,27 +84,38 @@ async function openLogsFolder() {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Failed to open logs folder: ${msg}`, "error");
-    await message(`Failed to open logs folder.\n\n${msg}`, { title: "Open folder failed", kind: "error" });
+    await message(`Failed to open logs folder.\n\n${msg}`, {
+      title: "Open folder failed",
+      kind: "error",
+    });
   }
 }
 
 async function clearLocalLogs() {
-  const confirmed = await ask("Clear local diagnostics logs? This cannot be undone.", {
-    title: "Clear logs",
-    kind: "warning",
-    okLabel: "Clear logs",
-    cancelLabel: "Cancel",
-  });
+  const confirmed = await ask(
+    "Clear local diagnostics logs? This cannot be undone.",
+    {
+      title: "Clear logs",
+      kind: "warning",
+      okLabel: "Clear logs",
+      cancelLabel: "Cancel",
+    },
+  );
   if (!confirmed) return;
 
   try {
     await invoke("clear_logs");
     log("Local diagnostics logs cleared.");
-    await message("Local diagnostics logs were cleared.", { title: "Logs cleared" });
+    await message("Local diagnostics logs were cleared.", {
+      title: "Logs cleared",
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Failed to clear logs: ${msg}`, "error");
-    await message(`Failed to clear logs.\n\n${msg}`, { title: "Clear logs failed", kind: "error" });
+    await message(`Failed to clear logs.\n\n${msg}`, {
+      title: "Clear logs failed",
+      kind: "error",
+    });
   }
 }
 
@@ -81,7 +123,9 @@ async function allPathsAreArchives(paths: string[]): Promise<boolean> {
   if (paths.length === 0) return false;
   try {
     const results = await validateArchivePaths(paths);
-    return results.length === paths.length && results.every(result => result.valid);
+    return (
+      results.length === paths.length && results.every((result) => result.valid)
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     devLog(`Archive probe failed for auto-detect: ${msg}`);
@@ -89,10 +133,15 @@ async function allPathsAreArchives(paths: string[]): Promise<boolean> {
   }
 }
 
-async function applyIncomingPaths(paths: string[], mode: string, source: string): Promise<void> {
+async function applyIncomingPaths(
+  paths: string[],
+  mode: string,
+  source: string,
+): Promise<void> {
   if (!paths.length) return;
 
-  const shouldAutoBrowse = mode !== "extract" && await allPathsAreArchives(paths);
+  const shouldAutoBrowse =
+    mode !== "extract" && (await allPathsAreArchives(paths));
   if (mode === "extract") {
     setMode("extract");
     state.inputs.length = 0;
@@ -141,6 +190,30 @@ function wireEvents() {
   $("browse-list").addEventListener("click", browseArchive);
   $("browse-test").addEventListener("click", testArchive);
   $("browse-extract").addEventListener("click", () => setMode("extract"));
+  $("browse-selective").addEventListener("click", () => {
+    void openSelectiveExtractModal();
+  });
+
+  $("close-selective").addEventListener("click", closeSelectiveExtractModal);
+  $("selective-cancel").addEventListener("click", closeSelectiveExtractModal);
+  $("selective-search").addEventListener("input", () => {
+    setSelectiveExtractSearch($<HTMLInputElement>("selective-search").value);
+  });
+  $("selective-select-all").addEventListener("click", selectAllVisibleInPicker);
+  $("selective-clear").addEventListener("click", clearPickerSelection);
+  $("selective-confirm").addEventListener("click", () => {
+    void runSelectiveExtractFromModal();
+  });
+  $("selective-overlay").addEventListener("click", (e) => {
+    if (e.target === e.currentTarget) closeSelectiveExtractModal();
+  });
+  $("selective-browse-dest").addEventListener("click", async () => {
+    await chooseExtract();
+    syncSelectiveDestinationAfterBrowseChoice();
+  });
+  $("selective-dest").addEventListener("input", () => {
+    syncDestinationWhilePickerOpen($<HTMLInputElement>("selective-dest").value);
+  });
 
   $("toggle-browse-password").addEventListener("click", () => {
     const input = $<HTMLInputElement>("browse-password");
@@ -148,9 +221,11 @@ function wireEvents() {
     if (input.type === "password") {
       input.type = "text";
       btn.textContent = "Hide";
+      btn.setAttribute("aria-pressed", "true");
     } else {
       input.type = "password";
       btn.textContent = "Show";
+      btn.setAttribute("aria-pressed", "false");
     }
   });
 
@@ -159,7 +234,10 @@ function wireEvents() {
   });
 
   $<HTMLSelectElement>("s-format").addEventListener("change", () => {
-    syncSettingsSecurityControlsForFormat($<HTMLSelectElement>("s-format").value as typeof state.currentSettings.format);
+    syncSettingsSecurityControlsForFormat(
+      $<HTMLSelectElement>("s-format")
+        .value as typeof state.currentSettings.format,
+    );
   });
 
   $<HTMLSelectElement>("format").addEventListener("change", () => {
@@ -177,9 +255,11 @@ function wireEvents() {
     if (input.type === "password") {
       input.type = "text";
       btn.textContent = "Hide";
+      btn.setAttribute("aria-pressed", "true");
     } else {
       input.type = "password";
       btn.textContent = "Show";
+      btn.setAttribute("aria-pressed", "false");
     }
   });
 
@@ -189,9 +269,11 @@ function wireEvents() {
     if (input.type === "password") {
       input.type = "text";
       btn.textContent = "Hide";
+      btn.setAttribute("aria-pressed", "true");
     } else {
       input.type = "password";
       btn.textContent = "Show";
+      btn.setAttribute("aria-pressed", "false");
     }
   });
 
@@ -232,25 +314,37 @@ function wireEvents() {
 
       const msg = err instanceof Error ? err.message : String(err);
       log(`Failed to save settings: ${msg}`, "error");
-      await message(`Failed to save settings.\n\n${msg}`, { title: "Settings error", kind: "error" });
+      await message(`Failed to save settings.\n\n${msg}`, {
+        title: "Settings error",
+        kind: "error",
+      });
     }
   });
 
-  document.querySelectorAll<HTMLButtonElement>(".settings-tab").forEach((tab) => {
-    tab.addEventListener("click", () => {
-      document.querySelectorAll(".settings-tab").forEach(t => t.classList.remove("is-active"));
-      document.querySelectorAll(".settings-panel").forEach(p => p.classList.remove("is-active"));
-      tab.classList.add("is-active");
-      const panel = document.querySelector(`[data-panel="${tab.dataset.tab}"]`);
-      if (panel) panel.classList.add("is-active");
+  document
+    .querySelectorAll<HTMLButtonElement>(".settings-tab")
+    .forEach((tab) => {
+      tab.addEventListener("click", () => {
+        document.querySelectorAll(".settings-tab").forEach((t) => {
+          t.classList.remove("is-active");
+          t.setAttribute("aria-selected", "false");
+        });
+        document
+          .querySelectorAll(".settings-panel")
+          .forEach((p) => p.classList.remove("is-active"));
+        tab.classList.add("is-active");
+        tab.setAttribute("aria-selected", "true");
+        const panel = document.querySelector(
+          `[data-panel="${tab.dataset.tab}"]`,
+        );
+        if (panel) panel.classList.add("is-active");
+      });
     });
-  });
 
   $("check-updates").addEventListener("click", checkUpdates);
   $("export-logs").addEventListener("click", exportLocalLogs);
   $("open-logs-folder").addEventListener("click", openLogsFolder);
   $("clear-logs").addEventListener("click", clearLocalLogs);
-  $("s-os-integration").addEventListener("change", toggleOsIntegration);
   $("show-licenses").addEventListener("click", openLicensesModal);
   $("about-show-licenses").addEventListener("click", openLicensesModal);
 
@@ -270,11 +364,26 @@ function wireEvents() {
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
-      if (!$("settings-overlay").hidden) { closeSettingsModal(); return; }
-      if (!$("licenses-overlay").hidden) { closeLicensesModal(); return; }
+      if (!$("settings-overlay").hidden) {
+        closeSettingsModal();
+        return;
+      }
+      if (!$("selective-overlay").hidden) {
+        closeSelectiveExtractModal();
+        return;
+      }
+      if (!$("licenses-overlay").hidden) {
+        closeLicensesModal();
+        return;
+      }
     }
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-      if (!$("settings-overlay").hidden || !$("licenses-overlay").hidden) return;
+      if (
+        !$("settings-overlay").hidden ||
+        !$("licenses-overlay").hidden ||
+        !$("selective-overlay").hidden
+      )
+        return;
       e.preventDefault();
       if (getMode() === "browse") void browseArchive();
       else void runAction();
@@ -287,10 +396,10 @@ async function init() {
     await invoke("probe_7z");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    await message(
-      `The bundled 7-Zip binary could not be started.\n\n${msg}`,
-      { title: "Missing runtime dependency", kind: "error" }
-    );
+    await message(`The bundled 7-Zip binary could not be started.\n\n${msg}`, {
+      title: "Missing runtime dependency",
+      kind: "error",
+    });
     throw err;
   }
 
@@ -313,9 +422,11 @@ async function init() {
     devLog(`Unable to resolve log directory: ${msg}`);
   }
 
-  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-    if (state.currentSettings.theme === "system") applyTheme("system");
-  });
+  window
+    .matchMedia("(prefers-color-scheme: dark)")
+    .addEventListener("change", () => {
+      if (state.currentSettings.theme === "system") applyTheme("system");
+    });
 
   renderInputs();
   wireEvents();
@@ -327,9 +438,14 @@ async function init() {
   const platform = await invoke<string>("get_platform_info");
   state.platformName = platform;
   state.appIsPackaged = await invoke<boolean>("is_packaged");
-  const platformDisplay = platform === "windows" ? "Windows" :
-                          platform === "macos" ? "macOS" :
-                          platform === "linux" ? "Linux" : platform;
+  const platformDisplay =
+    platform === "windows"
+      ? "Windows"
+      : platform === "macos"
+        ? "macOS"
+        : platform === "linux"
+          ? "Linux"
+          : platform;
   dom.versionLabel.textContent = version;
   dom.platformLabel.textContent = platformDisplay;
   $("s-version-label").textContent = version;
@@ -340,65 +456,10 @@ async function init() {
     document.body.classList.add("platform-flatpak");
   }
 
-  const osRow = document.getElementById("os-integration-row");
-  const hasOsIntegration = platform === "windows" || (platform === "linux" && !flatpak);
-  if (osRow) {
-    osRow.style.display = hasOsIntegration ? "" : "none";
-  }
-
   if (platform === "windows") {
     document.body.classList.add("platform-windows");
-    const title = document.getElementById("os-integration-title");
-    const desc = document.getElementById("os-integration-desc");
-    if (title) title.textContent = "Windows Explorer integration";
-    if (desc) {
-      desc.textContent =
-        "Add \"Compress with Zinnia\" and \"Extract with Zinnia\" to Explorer context menus (use \"Show more options\" on Windows 11).";
-    }
   } else if (platform === "linux") {
     document.body.classList.add("platform-linux");
-    const title = document.getElementById("os-integration-title");
-    const desc = document.getElementById("os-integration-desc");
-    if (title) title.textContent = "File manager integration";
-    if (desc) desc.textContent = "Register Zinnia as a handler for archive files in your desktop environment.";
-  }
-
-  if (hasOsIntegration && state.appIsPackaged) {
-    const isEnabled = await probeOsIntegrationStatus();
-    setOsIntegrationToggle(isEnabled);
-
-    if (!isEnabled) {
-      const userDisabled = state.settingsExtras._integrationUserDisabled === true;
-      const autoEnabled = state.settingsExtras._integrationAutoEnabled === true;
-      if (!userDisabled) {
-        if (await enableOsIntegration()) {
-          setOsIntegrationToggle(true);
-          state.settingsExtras._integrationUserDisabled = false;
-          if (autoEnabled) {
-            devLog("File manager integration repaired.");
-          } else {
-            devLog("File manager integration auto-enabled on first run.");
-          }
-        }
-        if (!autoEnabled) {
-          state.settingsExtras._integrationAutoEnabled = true;
-        }
-        try {
-          await saveSettings(state.currentSettings, state.settingsExtras);
-          state.lastPersistedSettings = { ...state.currentSettings };
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          log(`Failed to persist integration metadata: ${msg}`, "error");
-        }
-      }
-    }
-  } else if (!state.appIsPackaged) {
-    const input = document.getElementById("s-os-integration") as HTMLInputElement | null;
-    if (input) {
-      input.disabled = true;
-    }
-    const desc = document.getElementById("os-integration-desc");
-    if (desc) desc.textContent = "Disabled in development builds. Only packaged installations can register.";
   }
 
   let openPathsQueue = Promise.resolve();
@@ -423,7 +484,7 @@ async function init() {
   await openPathsQueue;
 
   if (state.currentSettings.autoCheckUpdates && !flatpak) {
-    autoCheckUpdates();
+    void autoCheckUpdates();
   }
 
   const appWindow = getCurrentWebviewWindow();
@@ -442,11 +503,18 @@ async function init() {
             state.inputs.push(path);
           }
         }
-        if (getMode() === "browse" && (state.inputs[0] ?? null) !== previousPrimary) {
+        if (
+          getMode() === "browse" &&
+          (state.inputs[0] ?? null) !== previousPrimary
+        ) {
           setBrowsePasswordFieldVisible(false);
         }
         renderInputs();
-        if (getMode() === "browse" && state.inputs.length > 0 && await allPathsAreArchives([state.inputs[0]])) {
+        if (
+          getMode() === "browse" &&
+          state.inputs.length > 0 &&
+          (await allPathsAreArchives([state.inputs[0]]))
+        ) {
           void browseArchive();
         }
       }

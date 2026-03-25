@@ -9,12 +9,12 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       input: {
-        main: resolve(__dirname, "src/index.html")
-      }
-    }
+        main: resolve(__dirname, "src/index.html"),
+      },
+    },
   },
   server: {
     port: 5173,
-    strictPort: true
-  }
+    strictPort: true,
+  },
 });

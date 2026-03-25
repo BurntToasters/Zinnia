@@ -1,4 +1,4 @@
-import { $, escapeHtml, safeHref } from "./utils";
+import { $, escapeHtml, safeHref, trapFocus, releaseFocusTrap } from "./utils";
 
 export interface LicenseEntry {
   licenses: string;
@@ -8,12 +8,18 @@ export interface LicenseEntry {
 }
 
 export function openLicensesModal() {
-  $("licenses-overlay").hidden = false;
-  renderLicenses();
+  const overlay = $("licenses-overlay");
+  overlay.hidden = false;
+  const modal = overlay.querySelector<HTMLElement>(".modal");
+  if (modal) trapFocus(modal);
+  void renderLicenses();
 }
 
 export function closeLicensesModal() {
-  $("licenses-overlay").hidden = true;
+  const overlay = $("licenses-overlay");
+  overlay.hidden = true;
+  const modal = overlay.querySelector<HTMLElement>(".modal");
+  if (modal) releaseFocusTrap(modal);
 }
 
 async function renderLicenses() {
@@ -58,9 +64,10 @@ async function renderLicenses() {
       card.className = "license-card";
 
       const href = entry.repository ? safeHref(entry.repository) : "";
-      const repoLink = href && href !== "#"
-        ? `<a href="${href}" target="_blank" rel="noopener">${escapeHtml(entry.repository!)}</a>`
-        : "N/A";
+      const repoLink =
+        href && href !== "#"
+          ? `<a href="${href}" target="_blank" rel="noopener">${escapeHtml(entry.repository!)}</a>`
+          : "N/A";
 
       card.innerHTML =
         `<summary class="license-card__header">` +

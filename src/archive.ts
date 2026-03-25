@@ -1,23 +1,58 @@
 import { invoke } from "@tauri-apps/api/core";
 import { message, confirm } from "@tauri-apps/plugin-dialog";
-import { $, parseThreads, escapeHtml, formatSize, splitArgs } from "./utils";
-import { SETTING_DEFAULTS, state } from "./state";
-import { log, devLog, setStatus, setProgress, hideProgress, setRunning, getMode, setBrowsePasswordFieldVisible } from "./ui";
+import {
+  $,
+  parseThreads,
+  escapeHtml,
+  formatSize,
+  splitArgs,
+  trapFocus,
+  releaseFocusTrap,
+} from "./utils";
+import {
+  SETTING_DEFAULTS,
+  state,
+  cacheBrowseInfo,
+  cacheSelection,
+} from "./state";
+import {
+  log,
+  devLog,
+  setStatus,
+  setProgress,
+  hideProgress,
+  setRunning,
+  getMode,
+  setBrowsePasswordFieldVisible,
+} from "./ui";
 import { ensureArchivePaths, validateExtraArgs } from "./archive-rules";
 import { formatCommandOutputForLogs } from "./output-logging";
 import {
   normalizeCompressionSecurityOptions,
   validateCompressionSecurityOptions,
 } from "./compression-security";
+import type { ArchiveInfo, BrowseEntry } from "./browse-model";
+import { resolveExtractDestinationAutofill } from "./extract-path";
+import {
+  buildSelectiveExtractArgs,
+  clearPathSelection,
+  filterBrowseEntriesByQuery,
+  selectEntries,
+  toggleEntrySelection,
+} from "./selective-extract";
 
-function truncateForDialog(text: string, maxChars = 4000): string {
+export function truncateForDialog(text: string, maxChars = 4000): string {
   if (text.length <= maxChars) return text;
   const omitted = text.length - maxChars;
   return `${text.slice(0, maxChars)}\n\n[truncated ${omitted} chars]`;
 }
 
 function logCommandResult(stdout: string, stderr: string) {
-  const entries = formatCommandOutputForLogs(stdout, stderr, state.currentSettings.logVerbosity);
+  const entries = formatCommandOutputForLogs(
+    stdout,
+    stderr,
+    state.currentSettings.logVerbosity,
+  );
   for (const entry of entries) {
     log(entry.text, entry.level === "error" ? "error" : "info");
   }
@@ -37,7 +72,10 @@ function logTruncationNotice(result: Run7zResult) {
   const streams: string[] = [];
   if (result.stdout_truncated) streams.push("stdout");
   if (result.stderr_truncated) streams.push("stderr");
-  log(`7z ${streams.join(" and ")} output exceeded 50 MiB and was truncated.`, "error");
+  log(
+    `7z ${streams.join(" and ")} output exceeded 50 MiB and was truncated.`,
+    "error",
+  );
 }
 
 async function ensureRuntimeReady(): Promise<boolean> {
@@ -49,67 +87,76 @@ async function ensureRuntimeReady(): Promise<boolean> {
     log(`7-Zip runtime check failed: ${msg}`, "error");
     setStatus("Missing runtime dependency", 3000);
     hideProgress();
-    await message(
-      `The bundled 7-Zip binary could not be started.\n\n${msg}`,
-      { title: "Missing runtime dependency", kind: "error" }
-    );
+    await message(`The bundled 7-Zip binary could not be started.\n\n${msg}`, {
+      title: "Missing runtime dependency",
+      kind: "error",
+    });
     return false;
   }
 }
 
-export interface BrowseEntry {
-  path: string;
-  size: number;
-  packedSize: number;
-  modified: string;
-  isFolder: boolean;
-}
-
-export interface ArchiveInfo {
-  type: string;
-  physicalSize: number;
-  method: string;
-  solid: boolean;
-  encrypted: boolean;
-  entries: BrowseEntry[];
-}
-
-function isEncryptedFlag(value: string): boolean {
+export function isEncryptedFlag(value: string): boolean {
   const normalized = value.trim().toLowerCase();
-  return normalized === "+" || normalized === "yes" || normalized === "true" || normalized === "1";
+  return (
+    normalized === "+" ||
+    normalized === "yes" ||
+    normalized === "true" ||
+    normalized === "1"
+  );
 }
 
-function methodLooksEncrypted(value: string): boolean {
+export function methodLooksEncrypted(value: string): boolean {
   const normalized = value.trim().toLowerCase();
   if (!normalized) return false;
-  return normalized.includes("7zaes")
-    || normalized.includes("aes")
-    || normalized.includes("zipcrypto");
+  return (
+    normalized.includes("7zaes") ||
+    normalized.includes("aes") ||
+    normalized.includes("zipcrypto")
+  );
 }
 
-function looksLikePasswordRequiredError(stdout: string, stderr: string): boolean {
+export function looksLikePasswordRequiredError(
+  stdout: string,
+  stderr: string,
+): boolean {
   const combined = `${stdout}\n${stderr}`.toLowerCase();
-  return combined.includes("wrong password")
-    || combined.includes("can not open encrypted archive")
-    || combined.includes("can't open encrypted archive")
-    || combined.includes("data error in encrypted file")
-    || combined.includes("encrypted headers")
-    || combined.includes("enter password")
-    || combined.includes("is encrypted");
+  return (
+    combined.includes("wrong password") ||
+    combined.includes("can not open encrypted archive") ||
+    combined.includes("can't open encrypted archive") ||
+    combined.includes("data error in encrypted file") ||
+    combined.includes("encrypted headers") ||
+    combined.includes("enter password") ||
+    combined.includes("is encrypted")
+  );
 }
 
-export function buildExtractArgsFor(archive: string): string[] {
-  const dest = $<HTMLInputElement>("extract-path").value.trim();
-  const password = $<HTMLInputElement>("extract-password").value.trim();
-  const extraArgs = splitArgs($<HTMLInputElement>("extract-extra-args").value.trim());
+export function buildExtractArgsFor(
+  archive: string,
+  selectedPaths: string[] = [],
+  passwordOverride?: string,
+  destinationOverride?: string,
+): string[] {
+  const dest =
+    destinationOverride?.trim() ??
+    $<HTMLInputElement>("extract-path").value.trim();
+  const password = (
+    passwordOverride ?? $<HTMLInputElement>("extract-password").value
+  ).trim();
+  const extraArgs = splitArgs(
+    $<HTMLInputElement>("extract-extra-args").value.trim(),
+  );
   if (extraArgs.length > 0) validateExtraArgs(extraArgs);
 
   if (!dest) throw new Error("Choose a destination folder.");
 
-  const args = ["x", archive, `-o${dest}`, "-y"];
-  if (password) args.push(`-p${password}`);
-  args.push(...extraArgs);
-  return args;
+  return buildSelectiveExtractArgs(
+    archive,
+    dest,
+    password,
+    extraArgs,
+    selectedPaths,
+  );
 }
 
 export function buildArgs() {
@@ -148,15 +195,20 @@ export function buildArgs() {
   const sfx = $<HTMLInputElement>("sfx").checked;
   const deleteAfter = $<HTMLInputElement>("delete-after").checked;
 
-  const validationError = validateCompressionSecurityOptions(format, rawPassword, rawEncryptHeaders);
+  const validationError = validateCompressionSecurityOptions(
+    format,
+    rawPassword,
+    rawEncryptHeaders,
+  );
   if (validationError) {
     throw new Error(validationError);
   }
 
-  const {
-    password,
-    encryptHeaders,
-  } = normalizeCompressionSecurityOptions(format, rawPassword, rawEncryptHeaders);
+  const { password, encryptHeaders } = normalizeCompressionSecurityOptions(
+    format,
+    rawPassword,
+    rawEncryptHeaders,
+  );
 
   const switches: string[] = [];
   switches.push(`-t${format}`);
@@ -182,7 +234,14 @@ export function buildArgs() {
 
 export function parseArchiveListing(stdout: string): ArchiveInfo {
   const lines = stdout.split("\n");
-  const info: ArchiveInfo = { type: "", physicalSize: 0, method: "", solid: false, encrypted: false, entries: [] };
+  const info: ArchiveInfo = {
+    type: "",
+    physicalSize: 0,
+    method: "",
+    solid: false,
+    encrypted: false,
+    entries: [],
+  };
   let inArchiveInfo = false;
   let inFiles = false;
   let current: Partial<BrowseEntry> = {};
@@ -219,21 +278,24 @@ export function parseArchiveListing(stdout: string): ArchiveInfo {
 
     if (inArchiveInfo) {
       if (key === "Type") info.type = value;
-      else if (key === "Physical Size") info.physicalSize = parseInt(value) || 0;
+      else if (key === "Physical Size")
+        info.physicalSize = parseInt(value) || 0;
       else if (key === "Method") {
         info.method = value;
         if (methodLooksEncrypted(value)) info.encrypted = true;
-      }
-      else if (key === "Solid") info.solid = value === "+";
-      else if (key === "Encrypted" && isEncryptedFlag(value)) info.encrypted = true;
+      } else if (key === "Solid") info.solid = value === "+";
+      else if (key === "Encrypted" && isEncryptedFlag(value))
+        info.encrypted = true;
     } else if (inFiles) {
       if (key === "Path") current.path = value;
       else if (key === "Size") current.size = parseInt(value) || 0;
       else if (key === "Packed Size") current.packedSize = parseInt(value) || 0;
       else if (key === "Modified") current.modified = value;
       else if (key === "Folder") current.isFolder = value === "+";
-      else if (key === "Encrypted" && isEncryptedFlag(value)) info.encrypted = true;
-      else if (key === "Method" && methodLooksEncrypted(value)) info.encrypted = true;
+      else if (key === "Encrypted" && isEncryptedFlag(value))
+        info.encrypted = true;
+      else if (key === "Method" && methodLooksEncrypted(value))
+        info.encrypted = true;
     }
   }
 
@@ -259,14 +321,16 @@ export function renderBrowseTable(info: ArchiveInfo) {
   if (summary) {
     const totalSize = info.entries.reduce((sum, e) => sum + e.size, 0);
     const totalPacked = info.entries.reduce((sum, e) => sum + e.packedSize, 0);
-    const fileCount = info.entries.filter(e => !e.isFolder).length;
-    const folderCount = info.entries.filter(e => e.isFolder).length;
+    const fileCount = info.entries.filter((e) => !e.isFolder).length;
+    const folderCount = info.entries.filter((e) => e.isFolder).length;
     const parts: string[] = [];
     parts.push(`<strong>${escapeHtml(info.type || "Archive")}</strong>`);
     if (info.method) parts.push(`Method: ${escapeHtml(info.method)}`);
     if (info.solid) parts.push("Solid");
     if (info.encrypted) parts.push("Encrypted");
-    parts.push(`${fileCount} file${fileCount !== 1 ? "s" : ""}${folderCount > 0 ? `, ${folderCount} folder${folderCount !== 1 ? "s" : ""}` : ""}`);
+    parts.push(
+      `${fileCount} file${fileCount !== 1 ? "s" : ""}${folderCount > 0 ? `, ${folderCount} folder${folderCount !== 1 ? "s" : ""}` : ""}`,
+    );
     parts.push(`${formatSize(totalSize)} \u2192 ${formatSize(totalPacked)}`);
     summary.innerHTML = parts.join(" &nbsp;\u00b7&nbsp; ");
   }
@@ -300,7 +364,9 @@ export function renderBrowseTable(info: ArchiveInfo) {
 
     const tdPacked = document.createElement("td");
     tdPacked.className = "size-col";
-    tdPacked.textContent = entry.isFolder ? "\u2014" : formatSize(entry.packedSize);
+    tdPacked.textContent = entry.isFolder
+      ? "\u2014"
+      : formatSize(entry.packedSize);
 
     const tdModified = document.createElement("td");
     tdModified.textContent = entry.modified;
@@ -313,6 +379,354 @@ export function renderBrowseTable(info: ArchiveInfo) {
   }
 }
 
+function getOrCreateSelection(archive: string): Set<string> {
+  const existing = state.browseSelectionsByArchive.get(archive);
+  if (existing) return existing;
+  const created = new Set<string>();
+  cacheSelection(archive, created);
+  return created;
+}
+
+function getCachedArchiveInfo(archive: string): ArchiveInfo | null {
+  return state.browseArchiveInfoByPath.get(archive) ?? null;
+}
+
+function getCurrentArchiveSelectionPaths(
+  archive: string,
+  info: ArchiveInfo,
+): string[] {
+  const selected = state.browseSelectionsByArchive.get(archive);
+  if (!selected || selected.size === 0) return [];
+  return info.entries
+    .filter((entry) => selected.has(entry.path))
+    .map((entry) => entry.path);
+}
+
+function renderSelectiveEntryList(
+  archive: string,
+  entries: BrowseEntry[],
+  allEntries: BrowseEntry[],
+): void {
+  const list = document.getElementById("selective-list");
+  if (!list) return;
+  list.innerHTML = "";
+
+  if (entries.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "selective-empty";
+    empty.textContent = "No archive entries match this search.";
+    list.appendChild(empty);
+    return;
+  }
+
+  const selected = getOrCreateSelection(archive);
+  for (const entry of entries) {
+    const row = document.createElement("label");
+    row.className = "selective-row";
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = selected.has(entry.path);
+    checkbox.disabled = state.running;
+    checkbox.addEventListener("change", () => {
+      const current = getOrCreateSelection(archive);
+      const next = toggleEntrySelection(current, entry, allEntries);
+      cacheSelection(archive, next);
+      renderSelectiveExtractModal();
+    });
+
+    const path = document.createElement("span");
+    path.className = "selective-row__path";
+    path.textContent = entry.path;
+    path.title = entry.path;
+
+    const meta = document.createElement("span");
+    meta.className = "selective-row__meta";
+    const kind = entry.isFolder ? "Folder" : "File";
+    const size = entry.isFolder ? "\u2014" : formatSize(entry.size);
+    meta.textContent = `${kind} \u00b7 ${size}`;
+
+    row.appendChild(checkbox);
+    row.appendChild(path);
+    row.appendChild(meta);
+    list.appendChild(row);
+  }
+}
+
+export function renderSelectiveExtractModal(): void {
+  const archive = state.selectiveActiveArchive;
+  if (!archive) return;
+  const info = getCachedArchiveInfo(archive);
+  if (!info) return;
+
+  const filteredEntries = filterBrowseEntriesByQuery(
+    info.entries,
+    state.selectiveSearchQuery,
+  );
+  state.selectiveVisiblePaths = filteredEntries.map((entry) => entry.path);
+
+  renderSelectiveEntryList(archive, filteredEntries, info.entries);
+
+  const summary = document.getElementById("selective-summary");
+  if (summary) {
+    const selectedCount = getOrCreateSelection(archive).size;
+    const shownCount = filteredEntries.length;
+    summary.textContent = `${selectedCount} selected \u00b7 ${shownCount} shown \u00b7 ${info.entries.length} total`;
+  }
+}
+
+function ensureExtractDestinationDefaultFromArchive(archive: string): void {
+  const extractPath = $<HTMLInputElement>("extract-path");
+  const next = resolveExtractDestinationAutofill(
+    extractPath.value,
+    state.lastAutoExtractDestination,
+    archive,
+  );
+  if (!next) return;
+  extractPath.value = next;
+  state.lastAutoExtractDestination = next;
+}
+
+function syncSelectiveDestinationWithExtractInput(): void {
+  const selectiveDest = document.getElementById(
+    "selective-dest",
+  ) as HTMLInputElement | null;
+  const extractPath = document.getElementById(
+    "extract-path",
+  ) as HTMLInputElement | null;
+  if (!selectiveDest || !extractPath) return;
+  selectiveDest.value = extractPath.value.trim();
+}
+
+async function ensureArchiveInfoForPicker(
+  archive: string,
+): Promise<ArchiveInfo | null> {
+  const cached = getCachedArchiveInfo(archive);
+  if (cached) return cached;
+  return await browseArchive();
+}
+
+export function closeSelectiveExtractModal(): void {
+  const overlay = document.getElementById("selective-overlay");
+  if (overlay) {
+    (overlay as HTMLElement).hidden = true;
+    const modal = overlay.querySelector<HTMLElement>(".modal");
+    if (modal) releaseFocusTrap(modal);
+  }
+  state.selectiveSearchQuery = "";
+  state.selectiveActiveArchive = null;
+  state.selectiveVisiblePaths = [];
+}
+
+export function setSelectiveExtractSearch(query: string): void {
+  state.selectiveSearchQuery = query;
+  renderSelectiveExtractModal();
+}
+
+export function selectAllVisibleInPicker(): void {
+  const archive = state.selectiveActiveArchive;
+  if (!archive) return;
+  const info = getCachedArchiveInfo(archive);
+  if (!info) return;
+  const visibleEntries = filterBrowseEntriesByQuery(
+    info.entries,
+    state.selectiveSearchQuery,
+  );
+  const current = getOrCreateSelection(archive);
+  const next = selectEntries(current, visibleEntries, info.entries);
+  cacheSelection(archive, next);
+  renderSelectiveExtractModal();
+}
+
+export function clearPickerSelection(): void {
+  const archive = state.selectiveActiveArchive;
+  if (!archive) return;
+  cacheSelection(archive, clearPathSelection());
+  renderSelectiveExtractModal();
+}
+
+export async function openSelectiveExtractModal(): Promise<void> {
+  if (state.running) return;
+
+  const archive = state.inputs[0];
+  if (!archive) {
+    await message("Select an archive to browse first.", {
+      title: "No archive selected",
+    });
+    return;
+  }
+
+  try {
+    await ensureArchivePaths([archive], "browse");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await message(msg, { title: "Invalid input", kind: "error" });
+    return;
+  }
+
+  const info = await ensureArchiveInfoForPicker(archive);
+  if (!info) return;
+
+  ensureExtractDestinationDefaultFromArchive(archive);
+  syncSelectiveDestinationWithExtractInput();
+
+  state.selectiveActiveArchive = archive;
+  state.selectiveSearchQuery = "";
+  getOrCreateSelection(archive);
+
+  const search = document.getElementById(
+    "selective-search",
+  ) as HTMLInputElement | null;
+  if (search) search.value = "";
+
+  const overlay = document.getElementById(
+    "selective-overlay",
+  ) as HTMLElement | null;
+  if (overlay) {
+    overlay.hidden = false;
+    const modal = overlay.querySelector<HTMLElement>(".modal");
+    if (modal) trapFocus(modal);
+  }
+
+  renderSelectiveExtractModal();
+}
+
+export async function runSelectiveExtractFromModal(): Promise<void> {
+  if (state.running) return;
+  state.running = true;
+  try {
+    const archive = state.selectiveActiveArchive ?? state.inputs[0] ?? null;
+    if (!archive) {
+      await message("Select an archive to extract.", {
+        title: "No archive selected",
+      });
+      return;
+    }
+
+    if (!(await ensureRuntimeReady())) return;
+    await ensureArchivePaths([archive], "extract");
+
+    const info = getCachedArchiveInfo(archive);
+    if (!info) {
+      throw new Error(
+        "Browse archive contents first before selective extraction.",
+      );
+    }
+
+    const destinationInput = document.getElementById(
+      "selective-dest",
+    ) as HTMLInputElement | null;
+    const destination = destinationInput?.value.trim() ?? "";
+    if (!destination) throw new Error("Choose a destination folder.");
+
+    const extractPathInput = $<HTMLInputElement>("extract-path");
+    extractPathInput.value = destination;
+    if (destination !== state.lastAutoExtractDestination) {
+      state.lastAutoExtractDestination = null;
+    }
+
+    const browsePassword = $<HTMLInputElement>("browse-password").value.trim();
+    const extractPassword =
+      $<HTMLInputElement>("extract-password").value.trim();
+    const password = extractPassword || browsePassword;
+
+    const selectedPaths = getCurrentArchiveSelectionPaths(archive, info);
+    if (selectedPaths.length === 0) {
+      log("No entries selected in picker. Falling back to extract all.");
+    }
+    const args = buildExtractArgsFor(
+      archive,
+      selectedPaths,
+      password,
+      destination,
+    );
+    const logSafe = args.map((a) => (a.startsWith("-p") ? "-p***" : a));
+    devLog(`7z ${logSafe.join(" ")}`);
+
+    closeSelectiveExtractModal();
+
+    setRunning(true);
+    setStatus(
+      selectedPaths.length > 0
+        ? "Extracting selected entries"
+        : "Extracting archive",
+    );
+
+    const result = await invoke<Run7zResult>("run_7z", { args });
+    if (state.cancelRequested) {
+      hideProgress();
+      setStatus("Cancelled", 2000);
+      log("Operation cancelled by user");
+      return;
+    }
+
+    const outputLines = result.stdout.split("\n");
+    for (const line of outputLines) {
+      const percentMatch = line.match(/(\d+)%/);
+      if (percentMatch) setProgress(`${percentMatch[1]}%`);
+    }
+
+    logCommandResult(result.stdout, result.stderr);
+    logTruncationNotice(result);
+    devLog(`Exit code: ${result.code}`);
+
+    if (result.code > 1) {
+      log(`7z exited with code ${result.code}`);
+      setStatus("Error", 3000);
+      hideProgress();
+      const errorDetails = result.stderr
+        ? `\n\n${truncateForDialog(result.stderr.trim())}`
+        : "";
+      await message(
+        `Operation failed with exit code ${result.code}.${errorDetails}`,
+        { title: "Operation failed", kind: "error" },
+      );
+    } else {
+      if (result.code === 1) {
+        log("Operation completed with warnings.");
+      }
+      setStatus("Done", 2000);
+      hideProgress();
+      await message(
+        selectedPaths.length > 0
+          ? "Selected entries extracted successfully."
+          : "Extraction completed successfully.",
+        { title: "Done" },
+      );
+    }
+  } catch (err) {
+    if (state.cancelRequested) {
+      setStatus("Cancelled", 2000);
+      hideProgress();
+      log("Operation cancelled by user");
+      return;
+    }
+
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Error: ${msg}`);
+    setStatus("Error", 3000);
+    hideProgress();
+    await message(msg, { title: "Error", kind: "error" });
+  } finally {
+    setRunning(false);
+  }
+}
+
+export function syncSelectiveDestinationAfterBrowseChoice(): void {
+  syncSelectiveDestinationWithExtractInput();
+}
+
+export function syncDestinationWhilePickerOpen(value: string): void {
+  const extractPath = document.getElementById(
+    "extract-path",
+  ) as HTMLInputElement | null;
+  if (!extractPath) return;
+  extractPath.value = value;
+  if (value.trim() && value.trim() !== state.lastAutoExtractDestination) {
+    state.lastAutoExtractDestination = null;
+  }
+}
+
 export async function runAction() {
   if (state.running) return;
 
@@ -322,9 +736,10 @@ export async function runAction() {
     return runBatchExtract();
   }
 
-  if (!(await ensureRuntimeReady())) return;
-
+  state.running = true;
   try {
+    if (!(await ensureRuntimeReady())) return;
+
     state.batchCancelled = false;
     state.cancelRequested = false;
 
@@ -333,7 +748,11 @@ export async function runAction() {
       if (deleteAfter) {
         const confirmed = await confirm(
           "This will permanently delete source files after compression. Continue?",
-          { title: "Confirm deletion", kind: "warning", okLabel: "Delete files" }
+          {
+            title: "Confirm deletion",
+            kind: "warning",
+            okLabel: "Delete files",
+          },
         );
         if (!confirmed) return;
       }
@@ -348,7 +767,7 @@ export async function runAction() {
       args = buildArgs();
     }
 
-    const logSafe = args.map(a => a.startsWith("-p") ? "-p***" : a);
+    const logSafe = args.map((a) => (a.startsWith("-p") ? "-p***" : a));
     devLog(`7z ${logSafe.join(" ")}`);
 
     setRunning(true);
@@ -362,7 +781,7 @@ export async function runAction() {
       return;
     }
 
-    const outputLines = result.stdout.split('\n');
+    const outputLines = result.stdout.split("\n");
     for (const line of outputLines) {
       const percentMatch = line.match(/(\d+)%/);
       if (percentMatch) {
@@ -374,16 +793,29 @@ export async function runAction() {
     logTruncationNotice(result);
     devLog(`Exit code: ${result.code}`);
 
-    if (result.code !== 0) {
+    if (result.code > 1) {
       log(`7z exited with code ${result.code}`);
       setStatus("Error", 3000);
       hideProgress();
-      const errorDetails = result.stderr ? `\n\n${truncateForDialog(result.stderr.trim())}` : "";
-      await message(`Operation failed with exit code ${result.code}.${errorDetails}`, { title: "Operation failed", kind: "error" });
+      const errorDetails = result.stderr
+        ? `\n\n${truncateForDialog(result.stderr.trim())}`
+        : "";
+      await message(
+        `Operation failed with exit code ${result.code}.${errorDetails}`,
+        { title: "Operation failed", kind: "error" },
+      );
     } else {
+      if (result.code === 1) {
+        log("Operation completed with warnings.");
+      }
       setStatus("Done", 2000);
       hideProgress();
-      await message(mode === "extract" ? "Extraction completed successfully." : "Archive created successfully.", { title: "Done" });
+      await message(
+        mode === "extract"
+          ? "Extraction completed successfully."
+          : "Archive created successfully.",
+        { title: "Done" },
+      );
     }
   } catch (err) {
     if (state.cancelRequested) {
@@ -404,6 +836,8 @@ export async function runAction() {
 }
 
 export async function runBatchExtract() {
+  if (state.running) return;
+  state.running = true;
   try {
     if (!(await ensureRuntimeReady())) return;
 
@@ -415,7 +849,9 @@ export async function runBatchExtract() {
     const dest = $<HTMLInputElement>("extract-path").value.trim();
     if (!dest) throw new Error("Choose a destination folder.");
     const password = $<HTMLInputElement>("extract-password").value.trim();
-    const extraArgs = splitArgs($<HTMLInputElement>("extract-extra-args").value.trim());
+    const extraArgs = splitArgs(
+      $<HTMLInputElement>("extract-extra-args").value.trim(),
+    );
     if (extraArgs.length > 0) validateExtraArgs(extraArgs);
 
     setRunning(true);
@@ -432,21 +868,25 @@ export async function runBatchExtract() {
         const args = ["x", archive, `-o${dest}`, "-y"];
         if (password) args.push(`-p${password}`);
         args.push(...extraArgs);
-        const logSafe = args.map(a => a.startsWith("-p") ? "-p***" : a);
+        const logSafe = args.map((a) => (a.startsWith("-p") ? "-p***" : a));
         devLog(`7z ${logSafe.join(" ")}`);
 
         const result = await invoke<Run7zResult>("run_7z", { args });
 
-        const outputLines = result.stdout.split('\n');
+        const outputLines = result.stdout.split("\n");
         for (const line of outputLines) {
           const percentMatch = line.match(/(\d+)%/);
-          if (percentMatch) setProgress(`${percentMatch[1]}% (${i + 1}/${archives.length})`);
+          if (percentMatch)
+            setProgress(`${percentMatch[1]}% (${i + 1}/${archives.length})`);
         }
 
         logCommandResult(result.stdout, result.stderr);
         logTruncationNotice(result);
 
-        if (result.code === 0) {
+        if (result.code === 0 || result.code === 1) {
+          if (result.code === 1) {
+            log(`Warnings: ${archive}`);
+          }
           succeeded++;
         } else {
           failed++;
@@ -466,10 +906,16 @@ export async function runBatchExtract() {
       await message("Batch extraction was cancelled.", { title: "Cancelled" });
     } else if (failed === 0) {
       setStatus(`Done \u2014 ${succeeded} archive(s) extracted`, 3000);
-      await message(`Successfully extracted ${succeeded} archive${succeeded !== 1 ? "s" : ""}.`, { title: "Batch extraction complete" });
+      await message(
+        `Successfully extracted ${succeeded} archive${succeeded !== 1 ? "s" : ""}.`,
+        { title: "Batch extraction complete" },
+      );
     } else {
       setStatus(`Done \u2014 ${succeeded} succeeded, ${failed} failed`, 4000);
-      await message(`${succeeded} succeeded, ${failed} failed.`, { title: "Batch extraction complete", kind: "warning" });
+      await message(`${succeeded} succeeded, ${failed} failed.`, {
+        title: "Batch extraction complete",
+        kind: "warning",
+      });
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -497,32 +943,36 @@ export async function cancelAction() {
 
 export async function testArchive() {
   if (state.running) return;
-  const archive = state.inputs[0];
-  if (!archive) {
-    await message("Select an archive to test.", { title: "No archive selected" });
-    return;
-  }
+  state.running = true;
   try {
-    await ensureArchivePaths([archive], "test");
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    await message(msg, { title: "Invalid input", kind: "error" });
-    return;
-  }
+    const archive = state.inputs[0];
+    if (!archive) {
+      await message("Select an archive to test.", {
+        title: "No archive selected",
+      });
+      return;
+    }
+    try {
+      await ensureArchivePaths([archive], "test");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await message(msg, { title: "Invalid input", kind: "error" });
+      return;
+    }
 
-  const mode = getMode();
-  const passwordField = mode === "browse" ? "browse-password" : "extract-password";
-  const password = $<HTMLInputElement>(passwordField).value.trim();
+    const mode = getMode();
+    const passwordField =
+      mode === "browse" ? "browse-password" : "extract-password";
+    const password = $<HTMLInputElement>(passwordField).value.trim();
 
-  const args = ["t", archive];
-  if (password) args.push(`-p${password}`);
+    const args = ["t", archive];
+    if (password) args.push(`-p${password}`);
 
-  if (!(await ensureRuntimeReady())) return;
+    if (!(await ensureRuntimeReady())) return;
 
-  setRunning(true);
-  setStatus("Testing archive integrity");
+    setRunning(true);
+    setStatus("Testing archive integrity");
 
-  try {
     const result = await invoke<Run7zResult>("run_7z", { args });
 
     logCommandResult(result.stdout, result.stderr);
@@ -531,12 +981,26 @@ export async function testArchive() {
     if (result.code === 0) {
       setStatus("Integrity test passed", 3000);
       log("Archive integrity test: OK");
-      await message("Archive integrity test passed. No errors found.", { title: "Test passed" });
+      await message("Archive integrity test passed. No errors found.", {
+        title: "Test passed",
+      });
+    } else if (result.code === 1) {
+      setStatus("Integrity test passed with warnings", 3000);
+      log("Archive integrity test: OK (with warnings)");
+      await message(
+        "Archive integrity test passed with warnings. Check the log for details.",
+        { title: "Test passed" },
+      );
     } else {
       setStatus("Integrity test failed", 3000);
       log(`Archive integrity test: FAILED (exit code ${result.code})`);
-      const errorDetails = result.stderr ? `\n\n${truncateForDialog(result.stderr.trim())}` : "";
-      await message(`Archive integrity test failed (exit code ${result.code}).${errorDetails}`, { title: "Test failed", kind: "error" });
+      const errorDetails = result.stderr
+        ? `\n\n${truncateForDialog(result.stderr.trim())}`
+        : "";
+      await message(
+        `Archive integrity test failed (exit code ${result.code}).${errorDetails}`,
+        { title: "Test failed", kind: "error" },
+      );
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -548,57 +1012,73 @@ export async function testArchive() {
   }
 }
 
-export async function browseArchive() {
-  if (state.running) return;
-  const archive = state.inputs[0];
-  if (!archive) {
-    await message("Select an archive to browse.", { title: "No archive selected" });
-    return;
-  }
+export async function browseArchive(): Promise<ArchiveInfo | null> {
+  if (state.running) return null;
+  state.running = true;
   try {
-    await ensureArchivePaths([archive], "browse");
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    await message(msg, { title: "Invalid input", kind: "error" });
-    return;
-  }
+    const archive = state.inputs[0];
+    if (!archive) {
+      await message("Select an archive to browse.", {
+        title: "No archive selected",
+      });
+      return null;
+    }
+    try {
+      await ensureArchivePaths([archive], "browse");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await message(msg, { title: "Invalid input", kind: "error" });
+      return null;
+    }
 
-  const password = $<HTMLInputElement>("browse-password").value.trim();
-  const args = ["l", "-slt", archive];
-  if (password) args.push(`-p${password}`);
+    const password = $<HTMLInputElement>("browse-password").value.trim();
+    const args = ["l", "-slt", archive];
+    if (password) args.push(`-p${password}`);
 
-  if (!(await ensureRuntimeReady())) return;
+    if (!(await ensureRuntimeReady())) return null;
 
-  setRunning(true);
-  setStatus("Listing archive contents");
+    setRunning(true);
+    setStatus("Listing archive contents");
 
-  try {
     const result = await invoke<Run7zResult>("run_7z", { args });
     logTruncationNotice(result);
 
-    if (result.code !== 0) {
-      const needsPassword = looksLikePasswordRequiredError(result.stdout, result.stderr);
+    if (result.code > 1) {
+      const needsPassword = looksLikePasswordRequiredError(
+        result.stdout,
+        result.stderr,
+      );
       setBrowsePasswordFieldVisible(needsPassword);
       logCommandResult(result.stdout, result.stderr);
       setStatus("Failed to list archive", 3000);
       if (needsPassword) {
         log("Archive appears to be encrypted. Enter a password and try again.");
       }
-      const passwordHint = needsPassword ? "\n\nThis archive appears to be encrypted. Enter the archive password and try again." : "";
-      const errorDetails = result.stderr ? `\n\n${truncateForDialog(result.stderr.trim())}` : "";
-      await message(`Failed to list archive contents (exit code ${result.code}).${passwordHint}${errorDetails}`, { title: "Browse failed", kind: "error" });
-      return;
+      const passwordHint = needsPassword
+        ? "\n\nThis archive appears to be encrypted. Enter the archive password and try again."
+        : "";
+      const errorDetails = result.stderr
+        ? `\n\n${truncateForDialog(result.stderr.trim())}`
+        : "";
+      await message(
+        `Failed to list archive contents (exit code ${result.code}).${passwordHint}${errorDetails}`,
+        { title: "Browse failed", kind: "error" },
+      );
+      return null;
     }
 
     const info = parseArchiveListing(result.stdout);
+    cacheBrowseInfo(archive, info);
     setBrowsePasswordFieldVisible(info.encrypted);
     renderBrowseTable(info);
     setStatus(`${info.entries.length} entries listed`, 3000);
+    return info;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Browse error: ${msg}`);
     setStatus("Error", 3000);
     await message(msg, { title: "Browse error", kind: "error" });
+    return null;
   } finally {
     setRunning(false);
   }
@@ -607,7 +1087,7 @@ export async function browseArchive() {
 export async function previewCommand() {
   try {
     const args = buildArgs();
-    const sanitized = args.map(arg => {
+    const sanitized = args.map((arg) => {
       if (arg.startsWith("-p")) return "-p***";
       return arg;
     });

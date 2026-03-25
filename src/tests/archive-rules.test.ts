@@ -1,49 +1,61 @@
-import assert from "node:assert/strict";
+import { describe, it, expect } from "vitest";
+import { ensureArchivePaths, validateExtraArgs } from "../archive-rules";
 
-import { ensureArchivePaths, validateExtraArgs } from "../archive-rules.ts";
+describe("validateExtraArgs", () => {
+  it("accepts valid known args", () => {
+    expect(() => validateExtraArgs(["-mx=9", "-r", "-bb3"])).not.toThrow();
+  });
 
-export async function runArchiveRulesTests() {
-  assert.doesNotThrow(() => validateExtraArgs(["-mx=9", "-r", "-bb3"]));
+  it("rejects password args", () => {
+    expect(() => validateExtraArgs(["-psecret"])).toThrow();
+  });
 
-  assert.throws(() => validateExtraArgs(["-psecret"]));
-  assert.throws(() => validateExtraArgs(["--totally-unknown"]));
+  it("rejects unknown double-dash args", () => {
+    expect(() => validateExtraArgs(["--totally-unknown"])).toThrow();
+  });
+});
 
-  await assert.rejects(
-    ensureArchivePaths(
-      ["C:/tmp/notes.txt"],
-      "extract",
-      async () => [{ path: "C:/tmp/notes.txt", valid: false, reason: "File does not exist." }]
-    ),
-    /File does not exist/
-  );
+describe("ensureArchivePaths", () => {
+  it("rejects invalid paths", async () => {
+    await expect(
+      ensureArchivePaths(["C:/tmp/notes.txt"], "extract", async () => [
+        {
+          path: "C:/tmp/notes.txt",
+          valid: false,
+          reason: "File does not exist.",
+        },
+      ]),
+    ).rejects.toThrow(/File does not exist/);
+  });
 
-  await assert.doesNotReject(
-    ensureArchivePaths(
-      ["C:/tmp/archive.7z", "C:/tmp/data.zip"],
-      "extract",
-      async () => [
-        { path: "C:/tmp/archive.7z", valid: true },
-        { path: "C:/tmp/data.zip", valid: true },
-      ]
-    )
-  );
+  it("accepts valid paths", async () => {
+    await expect(
+      ensureArchivePaths(
+        ["C:/tmp/archive.7z", "C:/tmp/data.zip"],
+        "extract",
+        async () => [
+          { path: "C:/tmp/archive.7z", valid: true },
+          { path: "C:/tmp/data.zip", valid: true },
+        ],
+      ),
+    ).resolves.not.toThrow();
+  });
 
-  await assert.doesNotReject(
-    ensureArchivePaths(
-      ["C:/tmp/extensionless-archive"],
-      "extract",
-      async () => [{ path: "C:/tmp/extensionless-archive", valid: true }]
-    )
-  );
+  it("accepts extensionless archives when backend validates them", async () => {
+    await expect(
+      ensureArchivePaths(
+        ["C:/tmp/extensionless-archive"],
+        "extract",
+        async () => [{ path: "C:/tmp/extensionless-archive", valid: true }],
+      ),
+    ).resolves.not.toThrow();
+  });
 
-  await assert.rejects(
-    ensureArchivePaths(
-      ["C:/tmp/archive.7z"],
-      "extract",
-      async () => {
+  it("wraps backend errors gracefully", async () => {
+    await expect(
+      ensureArchivePaths(["C:/tmp/archive.7z"], "extract", async () => {
         throw new Error("backend unavailable");
-      }
-    ),
-    /Unable to validate selected inputs/
-  );
-}
+      }),
+    ).rejects.toThrow(/Unable to validate selected inputs/);
+  });
+});

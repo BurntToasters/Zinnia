@@ -1,9 +1,25 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export const ALLOWED_EXTRA_PREFIXES = [
-  "-m", "-x", "-i", "-ao", "-bb", "-bs", "-bt",
-  "-scs", "-slt", "-sns", "-snl", "-sni", "-stl",
-  "-slp", "-ssp", "-ssw", "-y", "-r", "-w",
+  "-m",
+  "-x",
+  "-i",
+  "-ao",
+  "-bb",
+  "-bs",
+  "-bt",
+  "-scs",
+  "-slt",
+  "-sns",
+  "-snl",
+  "-sni",
+  "-stl",
+  "-slp",
+  "-ssp",
+  "-ssw",
+  "-y",
+  "-r",
+  "-w",
 ];
 
 export interface ArchivePathValidation {
@@ -12,7 +28,9 @@ export interface ArchivePathValidation {
   reason?: string;
 }
 
-export type ProbeArchivePaths = (paths: string[]) => Promise<ArchivePathValidation[]>;
+export type ProbeArchivePaths = (
+  paths: string[],
+) => Promise<ArchivePathValidation[]>;
 
 interface ArchiveValidationCacheEntry {
   result: ArchivePathValidation;
@@ -37,7 +55,10 @@ function getCachedValidation(path: string): ArchivePathValidation | null {
   return cached.result;
 }
 
-function setCachedValidation(path: string, result: ArchivePathValidation): void {
+function setCachedValidation(
+  path: string,
+  result: ArchivePathValidation,
+): void {
   archiveValidationCache.delete(path);
   archiveValidationCache.set(path, {
     result,
@@ -50,7 +71,9 @@ function setCachedValidation(path: string, result: ArchivePathValidation): void 
   }
 }
 
-export async function validateArchivePaths(paths: string[]): Promise<ArchivePathValidation[]> {
+export async function validateArchivePaths(
+  paths: string[],
+): Promise<ArchivePathValidation[]> {
   const normalized = paths.map(normalizePath);
   const byPath = new Map<string, ArchivePathValidation>();
   const toProbe = new Set<string>();
@@ -70,7 +93,10 @@ export async function validateArchivePaths(paths: string[]): Promise<ArchivePath
 
   if (toProbe.size > 0) {
     const probeList = [...toProbe];
-    const probed = await invoke<ArchivePathValidation[]>("validate_archive_paths", { paths: probeList });
+    const probed = await invoke<ArchivePathValidation[]>(
+      "validate_archive_paths",
+      { paths: probeList },
+    );
     for (const result of probed) {
       const normalizedPath = normalizePath(result.path);
       const normalizedResult: ArchivePathValidation = {
@@ -110,15 +136,15 @@ export function validateExtraArgs(args: string[]): void {
     }
 
     const lower = arg.toLowerCase();
-    if (blocked.some(b => lower.startsWith(b))) {
+    if (blocked.some((b) => lower.startsWith(b))) {
       throw new Error(
-        `"${arg}" is not allowed in extra args. Use the dedicated fields instead.`
+        `"${arg}" is not allowed in extra args. Use the dedicated fields instead.`,
       );
     }
 
-    if (!ALLOWED_EXTRA_PREFIXES.some(p => lower.startsWith(p))) {
+    if (!ALLOWED_EXTRA_PREFIXES.some((p) => lower.startsWith(p))) {
       throw new Error(
-        `Unknown argument "${arg}". Only recognized 7z switches are allowed.`
+        `Unknown argument "${arg}". Only recognized 7z switches are allowed.`,
       );
     }
   }
@@ -127,29 +153,31 @@ export function validateExtraArgs(args: string[]): void {
 export async function ensureArchivePaths(
   paths: string[],
   context: "browse" | "extract" | "test",
-  probe: ProbeArchivePaths = validateArchivePaths
+  probe: ProbeArchivePaths = validateArchivePaths,
 ): Promise<void> {
-  const normalized = paths
-    .map(normalizePath)
-    .filter(path => path.length > 0);
+  const normalized = paths.map(normalizePath).filter((path) => path.length > 0);
   if (normalized.length === 0) return;
 
   let invalid: ArchivePathValidation[];
   try {
-    invalid = (await probe(normalized)).filter(result => !result.valid);
+    invalid = (await probe(normalized)).filter((result) => !result.valid);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`Unable to validate selected inputs for ${context}: ${msg}`);
+    throw new Error(
+      `Unable to validate selected inputs for ${context}: ${msg}`,
+    );
   }
   if (invalid.length === 0) return;
 
   const sample = invalid
     .slice(0, 3)
-    .map(result => `${result.path}${result.reason ? ` (${result.reason})` : ""}`)
+    .map(
+      (result) => `${result.path}${result.reason ? ` (${result.reason})` : ""}`,
+    )
     .join(", ");
   const more = invalid.length > 3 ? ` (+${invalid.length - 3} more)` : "";
   const noun = invalid.length === 1 ? "input is" : "inputs are";
   throw new Error(
-    `Only supported archive files can be used for ${context}. ${invalid.length} ${noun} invalid: ${sample}${more}`
+    `Only supported archive files can be used for ${context}. ${invalid.length} ${noun} invalid: ${sample}${more}`,
   );
 }

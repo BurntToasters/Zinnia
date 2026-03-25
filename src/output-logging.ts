@@ -15,15 +15,19 @@ function summarizeStream(label: string, text: string): string {
   if (!normalized) return "";
 
   const lines = normalized.split("\n");
-  const preview = lines.slice(0, PREVIEW_LINE_COUNT).map(line => line.trim()).filter(Boolean);
-  const previewText = preview.length > 0 ? ` Preview: ${preview.join(" | ")}` : "";
+  const preview = lines
+    .slice(0, PREVIEW_LINE_COUNT)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const previewText =
+    preview.length > 0 ? ` Preview: ${preview.join(" | ")}` : "";
   return `${label}: ${lines.length} line(s), ${normalized.length} chars.${previewText}`;
 }
 
 export function formatCommandOutputForLogs(
   stdout: string,
   stderr: string,
-  verbosity: OutputLogVerbosity
+  verbosity: OutputLogVerbosity,
 ): OutputLogEntry[] {
   const entries: OutputLogEntry[] = [];
   const stdoutTrimmed = stdout.trim();
@@ -46,10 +50,16 @@ export function formatCommandOutputForLogs(
   }
 
   if (stdoutTrimmed) {
-    entries.push({ level: "info", text: summarizeStream("stdout", stdoutTrimmed) });
+    entries.push({
+      level: "info",
+      text: summarizeStream("stdout", stdoutTrimmed),
+    });
   }
   if (stderrTrimmed) {
-    entries.push({ level: "error", text: summarizeStream("stderr", stderrTrimmed) });
+    entries.push({
+      level: "error",
+      text: summarizeStream("stderr", stderrTrimmed),
+    });
   }
   return entries;
 }

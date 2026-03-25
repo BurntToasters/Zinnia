@@ -1,5 +1,4 @@
-import assert from "node:assert/strict";
-
+import { describe, it, expect } from "vitest";
 import {
   SETTING_DEFAULTS,
   mergeSettingsPayload,
@@ -7,61 +6,97 @@ import {
   parseSettingsJson,
   parseSettingsRaw,
   splitSettingsPayload,
-} from "../settings-model.ts";
+} from "../settings-model";
 
-export function runSettingsModelTests() {
-  const settings = parseSettingsJson("{broken json");
-  assert.deepEqual(settings, SETTING_DEFAULTS);
-
-  const malformed = parseSettingsRaw("{broken json");
-  assert.equal(malformed.malformed, true);
-  assert.equal(typeof malformed.warning, "string");
-  assert.deepEqual(malformed.settings, SETTING_DEFAULTS);
-
-  const normalized = normalizeUserSettings({
-    theme: "invalid",
-    format: "zip",
-    pathMode: "absolute",
-    threads: 999,
-    autoCheckUpdates: false,
-    localLoggingEnabled: false,
-    logVerbosity: "debug",
+describe("parseSettingsJson", () => {
+  it("returns defaults for broken JSON", () => {
+    expect(parseSettingsJson("{broken json")).toEqual(SETTING_DEFAULTS);
   });
 
-  assert.equal(normalized.theme, SETTING_DEFAULTS.theme);
-  assert.equal(normalized.format, "zip");
-  assert.equal(normalized.pathMode, "absolute");
-  assert.equal(normalized.threads, 128);
-  assert.equal(normalized.autoCheckUpdates, false);
-  assert.equal(normalized.localLoggingEnabled, false);
-  assert.equal(normalized.logVerbosity, "debug");
+  it("parses valid JSON and merges with defaults", () => {
+    const result = parseSettingsJson(JSON.stringify({ theme: "dark" }));
+    expect(result.theme).toBe("dark");
+    expect(result.format).toBe(SETTING_DEFAULTS.format);
+  });
+});
 
-  const normalizedFallback = normalizeUserSettings({
-    sfx: "true",
-    deleteAfter: 1,
-    localLoggingEnabled: "yes",
+describe("parseSettingsRaw", () => {
+  it("marks malformed JSON and returns defaults", () => {
+    const result = parseSettingsRaw("{broken json");
+    expect(result.malformed).toBe(true);
+    expect(typeof result.warning).toBe("string");
+    expect(result.settings).toEqual(SETTING_DEFAULTS);
+  });
+});
+
+describe("normalizeUserSettings", () => {
+  it("clamps threads to 128", () => {
+    const result = normalizeUserSettings({ threads: 999 });
+    expect(result.threads).toBe(128);
   });
 
-  assert.equal(normalizedFallback.sfx, SETTING_DEFAULTS.sfx);
-  assert.equal(normalizedFallback.deleteAfter, SETTING_DEFAULTS.deleteAfter);
-  assert.equal(normalizedFallback.localLoggingEnabled, SETTING_DEFAULTS.localLoggingEnabled);
-
-  const split = splitSettingsPayload({
-    ...SETTING_DEFAULTS,
-    _integrationAutoEnabled: true,
-    _integrationUserDisabled: false,
-    customInternal: "x",
+  it("rejects invalid theme and uses default", () => {
+    const result = normalizeUserSettings({ theme: "invalid" });
+    expect(result.theme).toBe(SETTING_DEFAULTS.theme);
   });
-  assert.equal(split.settings.theme, SETTING_DEFAULTS.theme);
-  assert.equal(split.extras._integrationAutoEnabled, true);
-  assert.equal(split.extras._integrationUserDisabled, false);
-  assert.equal(split.extras.customInternal, "x");
 
-  const merged = mergeSettingsPayload(SETTING_DEFAULTS, {
-    _integrationAutoEnabled: true,
-    customInternal: "x",
+  it("accepts valid format and pathMode", () => {
+    const result = normalizeUserSettings({
+      format: "zip",
+      pathMode: "absolute",
+    });
+    expect(result.format).toBe("zip");
+    expect(result.pathMode).toBe("absolute");
   });
-  assert.equal(merged._integrationAutoEnabled, true);
-  assert.equal(merged.customInternal, "x");
-  assert.equal(merged.theme, SETTING_DEFAULTS.theme);
-}
+
+  it("rejects wrong types for boolean fields", () => {
+    const result = normalizeUserSettings({
+      sfx: "true",
+      deleteAfter: 1,
+      localLoggingEnabled: "yes",
+    });
+    expect(result.sfx).toBe(SETTING_DEFAULTS.sfx);
+    expect(result.deleteAfter).toBe(SETTING_DEFAULTS.deleteAfter);
+    expect(result.localLoggingEnabled).toBe(
+      SETTING_DEFAULTS.localLoggingEnabled,
+    );
+  });
+
+  it("accepts valid logVerbosity and booleans", () => {
+    const result = normalizeUserSettings({
+      autoCheckUpdates: false,
+      localLoggingEnabled: false,
+      logVerbosity: "debug",
+    });
+    expect(result.autoCheckUpdates).toBe(false);
+    expect(result.localLoggingEnabled).toBe(false);
+    expect(result.logVerbosity).toBe("debug");
+  });
+});
+
+describe("splitSettingsPayload", () => {
+  it("separates known settings from extras", () => {
+    const split = splitSettingsPayload({
+      ...SETTING_DEFAULTS,
+      _integrationAutoEnabled: true,
+      _integrationUserDisabled: false,
+      customInternal: "x",
+    });
+    expect(split.settings.theme).toBe(SETTING_DEFAULTS.theme);
+    expect(split.extras._integrationAutoEnabled).toBe(true);
+    expect(split.extras._integrationUserDisabled).toBe(false);
+    expect(split.extras.customInternal).toBe("x");
+  });
+});
+
+describe("mergeSettingsPayload", () => {
+  it("merges extras back into settings", () => {
+    const merged = mergeSettingsPayload(SETTING_DEFAULTS, {
+      _integrationAutoEnabled: true,
+      customInternal: "x",
+    });
+    expect(merged._integrationAutoEnabled).toBe(true);
+    expect(merged.customInternal).toBe("x");
+    expect(merged.theme).toBe(SETTING_DEFAULTS.theme);
+  });
+});

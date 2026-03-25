@@ -5,13 +5,16 @@ export interface CompressionSecuritySupport {
   encryptHeaders: boolean;
 }
 
-const SECURITY_SUPPORT_BY_FORMAT: Record<ArchiveFormat, CompressionSecuritySupport> = {
+const SECURITY_SUPPORT_BY_FORMAT: Record<
+  ArchiveFormat,
+  CompressionSecuritySupport
+> = {
   "7z": { password: true, encryptHeaders: true },
-  "zip": { password: true, encryptHeaders: false },
-  "tar": { password: false, encryptHeaders: false },
-  "gzip": { password: false, encryptHeaders: false },
-  "bzip2": { password: false, encryptHeaders: false },
-  "xz": { password: false, encryptHeaders: false },
+  zip: { password: true, encryptHeaders: false },
+  tar: { password: false, encryptHeaders: false },
+  gzip: { password: false, encryptHeaders: false },
+  bzip2: { password: false, encryptHeaders: false },
+  xz: { password: false, encryptHeaders: false },
 };
 
 const DEFAULT_SECURITY_SUPPORT: CompressionSecuritySupport = {
@@ -19,14 +22,19 @@ const DEFAULT_SECURITY_SUPPORT: CompressionSecuritySupport = {
   encryptHeaders: false,
 };
 
-export function getCompressionSecuritySupport(format: string): CompressionSecuritySupport {
-  return SECURITY_SUPPORT_BY_FORMAT[format as ArchiveFormat] ?? DEFAULT_SECURITY_SUPPORT;
+export function getCompressionSecuritySupport(
+  format: string,
+): CompressionSecuritySupport {
+  return (
+    SECURITY_SUPPORT_BY_FORMAT[format as ArchiveFormat] ??
+    DEFAULT_SECURITY_SUPPORT
+  );
 }
 
 export function normalizeCompressionSecurityOptions(
   format: string,
   password: string,
-  encryptHeaders: boolean
+  encryptHeaders: boolean,
 ): { password: string; encryptHeaders: boolean } {
   const support = getCompressionSecuritySupport(format);
   return {
@@ -38,7 +46,7 @@ export function normalizeCompressionSecurityOptions(
 export function validateCompressionSecurityOptions(
   format: string,
   password: string,
-  encryptHeaders: boolean
+  encryptHeaders: boolean,
 ): string | null {
   const support = getCompressionSecuritySupport(format);
   if (!support.encryptHeaders) return null;

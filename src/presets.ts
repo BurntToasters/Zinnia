@@ -11,11 +11,46 @@ export interface PresetConfig {
 }
 
 export const PRESETS: Record<string, PresetConfig> = {
-  store: { format: "zip", level: "0", method: "deflate", dict: "16m", wordSize: "16", solid: "off" },
-  quick: { format: "zip", level: "1", method: "deflate", dict: "16m", wordSize: "32", solid: "off" },
-  balanced: { format: "7z", level: "5", method: "lzma2", dict: "64m", wordSize: "64", solid: "4g" },
-  high: { format: "7z", level: "7", method: "lzma2", dict: "128m", wordSize: "64", solid: "16g" },
-  ultra: { format: "7z", level: "9", method: "lzma2", dict: "512m", wordSize: "128", solid: "solid" },
+  store: {
+    format: "zip",
+    level: "0",
+    method: "deflate",
+    dict: "16m",
+    wordSize: "16",
+    solid: "off",
+  },
+  quick: {
+    format: "zip",
+    level: "1",
+    method: "deflate",
+    dict: "16m",
+    wordSize: "32",
+    solid: "off",
+  },
+  balanced: {
+    format: "7z",
+    level: "5",
+    method: "lzma2",
+    dict: "64m",
+    wordSize: "64",
+    solid: "4g",
+  },
+  high: {
+    format: "7z",
+    level: "7",
+    method: "lzma2",
+    dict: "128m",
+    wordSize: "64",
+    solid: "16g",
+  },
+  ultra: {
+    format: "7z",
+    level: "9",
+    method: "lzma2",
+    dict: "512m",
+    wordSize: "128",
+    solid: "solid",
+  },
 };
 
 const PASSWORD_PLACEHOLDER_DEFAULT = "Leave blank for none";
@@ -67,26 +102,34 @@ export function updateCompressionOptionsForFormat(format: string) {
 
   const validMethods: Record<string, string[]> = {
     "7z": ["lzma2", "lzma", "ppmd", "bzip2"],
-    "zip": ["deflate", "bzip2", "lzma"],
-    "tar": [],
-    "gzip": [],
-    "bzip2": [],
-    "xz": []
+    zip: ["deflate", "bzip2", "lzma"],
+    tar: [],
+    gzip: [],
+    bzip2: [],
+    xz: [],
   };
 
   const methods = validMethods[format] || [];
 
   methodSelect.innerHTML = "";
   if (methods.length > 0) {
-    methods.forEach(m => {
+    methods.forEach((m) => {
       const opt = document.createElement("option");
       opt.value = m;
-      opt.textContent = m === "lzma2" ? "LZMA2" :
-                        m === "lzma" ? "LZMA" :
-                        m === "ppmd" ? "PPMd" :
-                        m === "bzip2" ? "BZip2" :
-                        m === "deflate" ? "Deflate" :
-                        m === "zstd" ? "Zstandard" : m;
+      opt.textContent =
+        m === "lzma2"
+          ? "LZMA2"
+          : m === "lzma"
+            ? "LZMA"
+            : m === "ppmd"
+              ? "PPMd"
+              : m === "bzip2"
+                ? "BZip2"
+                : m === "deflate"
+                  ? "Deflate"
+                  : m === "zstd"
+                    ? "Zstandard"
+                    : m;
       methodSelect.appendChild(opt);
     });
     if (methods.includes(currentMethod)) {
@@ -113,7 +156,12 @@ export function updateCompressionOptionsForFormat(format: string) {
     solidSelect.value = currentSolid;
   }
 
-  if (format === "tar" || format === "gzip" || format === "bzip2" || format === "xz") {
+  if (
+    format === "tar" ||
+    format === "gzip" ||
+    format === "bzip2" ||
+    format === "xz"
+  ) {
     if (currentLevel === "0") {
       levelSelect.value = "5";
     }
@@ -145,8 +193,14 @@ export function detectPreset(): string {
   const solid = $<HTMLSelectElement>("solid").value;
 
   for (const [name, p] of Object.entries(PRESETS)) {
-    if (p.format === format && p.level === level && p.method === method &&
-        p.dict === dict && p.wordSize === wordSize && p.solid === solid) {
+    if (
+      p.format === format &&
+      p.level === level &&
+      p.method === method &&
+      p.dict === dict &&
+      p.wordSize === wordSize &&
+      p.solid === solid
+    ) {
       return name;
     }
   }

@@ -49,7 +49,14 @@ export const SETTING_DEFAULTS: UserSettings = {
 };
 
 const THEMES = new Set<ThemePreference>(["system", "light", "dark"]);
-const FORMATS = new Set<ArchiveFormat>(["7z", "zip", "tar", "gzip", "bzip2", "xz"]);
+const FORMATS = new Set<ArchiveFormat>([
+  "7z",
+  "zip",
+  "tar",
+  "gzip",
+  "bzip2",
+  "xz",
+]);
 const PATH_MODES = new Set<PathMode>(["relative", "absolute"]);
 const LOG_VERBOSITY = new Set<LogVerbosity>(["info", "debug"]);
 const USER_SETTING_KEYS = new Set<keyof UserSettings>([
@@ -83,13 +90,19 @@ function asString(value: unknown, fallback: string): string {
   return typeof value === "string" ? value : fallback;
 }
 
-function asSetValue<T extends string>(value: unknown, valid: Set<T>, fallback: T): T {
-  return typeof value === "string" && valid.has(value as T) ? (value as T) : fallback;
+function asSetValue<T extends string>(
+  value: unknown,
+  valid: Set<T>,
+  fallback: T,
+): T {
+  return typeof value === "string" && valid.has(value as T)
+    ? (value as T)
+    : fallback;
 }
 
 export function normalizeUserSettings(
   input: unknown,
-  fallback: UserSettings = SETTING_DEFAULTS
+  fallback: UserSettings = SETTING_DEFAULTS,
 ): UserSettings {
   const settings = asRecord(input);
   return {
@@ -100,18 +113,34 @@ export function normalizeUserSettings(
     dict: asString(settings.dict, fallback.dict),
     wordSize: asString(settings.wordSize, fallback.wordSize),
     solid: asString(settings.solid, fallback.solid),
-    threads: parseThreads(String(settings.threads ?? fallback.threads), fallback.threads),
+    threads: parseThreads(
+      String(settings.threads ?? fallback.threads),
+      fallback.threads,
+    ),
     pathMode: asSetValue(settings.pathMode, PATH_MODES, fallback.pathMode),
     sfx: asBoolean(settings.sfx, fallback.sfx),
     encryptHeaders: asBoolean(settings.encryptHeaders, fallback.encryptHeaders),
     deleteAfter: asBoolean(settings.deleteAfter, fallback.deleteAfter),
-    autoCheckUpdates: asBoolean(settings.autoCheckUpdates, fallback.autoCheckUpdates),
-    localLoggingEnabled: asBoolean(settings.localLoggingEnabled, fallback.localLoggingEnabled),
-    logVerbosity: asSetValue(settings.logVerbosity, LOG_VERBOSITY, fallback.logVerbosity),
+    autoCheckUpdates: asBoolean(
+      settings.autoCheckUpdates,
+      fallback.autoCheckUpdates,
+    ),
+    localLoggingEnabled: asBoolean(
+      settings.localLoggingEnabled,
+      fallback.localLoggingEnabled,
+    ),
+    logVerbosity: asSetValue(
+      settings.logVerbosity,
+      LOG_VERBOSITY,
+      fallback.logVerbosity,
+    ),
   };
 }
 
-export function parseSettingsJson(raw: string, fallback: UserSettings = SETTING_DEFAULTS): UserSettings {
+export function parseSettingsJson(
+  raw: string,
+  fallback: UserSettings = SETTING_DEFAULTS,
+): UserSettings {
   try {
     const parsed = JSON.parse(raw);
     return normalizeUserSettings(parsed, fallback);
@@ -148,7 +177,8 @@ export function parseSettingsRaw(raw: string): LoadSettingsResult {
         settings: { ...SETTING_DEFAULTS },
         extras: {},
         malformed: true,
-        warning: "Settings file did not contain an object. Defaults were loaded.",
+        warning:
+          "Settings file did not contain an object. Defaults were loaded.",
       };
     }
     return splitSettingsPayload(parsed);
@@ -165,7 +195,7 @@ export function parseSettingsRaw(raw: string): LoadSettingsResult {
 
 export function mergeSettingsPayload(
   settings: UserSettings,
-  extras: Record<string, unknown> = {}
+  extras: Record<string, unknown> = {},
 ): Record<string, unknown> {
   return { ...extras, ...settings };
 }

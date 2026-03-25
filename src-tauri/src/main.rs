@@ -12,9 +12,6 @@ const MAX_LOG_FILE_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_LOG_ENTRY_BYTES: usize = 16 * 1024;
 const LOG_FILE_NAME: &str = "zinnia.log";
 const ARCHIVE_SIGNATURE_SCAN_BYTES: usize = 512;
-const SUPPORTED_ARCHIVE_EXTENSIONS: &[&str] = &[
-    ".7z", ".zip", ".tar", ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz", ".rar",
-];
 
 #[derive(serde::Serialize)]
 struct RunResult {
@@ -601,7 +598,7 @@ async fn run_7z(app: tauri::AppHandle, args: Vec<String>, state: tauri::State<'_
 
     let mut rx = {
         let mut process = lock_process(&state)?;
-        ensure_idle(&*process)?;
+        ensure_idle(&process)?;
 
         let (rx, child) = command.spawn().map_err(|e| e.to_string())?;
         process.child = Some(child);
@@ -677,275 +674,6 @@ fn cancel_7z(state: tauri::State<'_, RunningProcess>) -> Result<(), String> {
     }
 }
 
-#[cfg(windows)]
-const ARCHIVE_EXTENSIONS: &[&str] = SUPPORTED_ARCHIVE_EXTENSIONS;
-
-#[cfg(windows)]
-fn notify_shell_association_changed() {
-    #[allow(non_snake_case)]
-    unsafe extern "system" {
-        fn SHChangeNotify(
-            wEventId: u32,
-            uFlags: u32,
-            dwItem1: *const std::ffi::c_void,
-            dwItem2: *const std::ffi::c_void,
-        );
-    }
-
-    const SHCNE_ASSOCCHANGED: u32 = 0x0800_0000;
-    const SHCNF_IDLIST: u32 = 0x0000;
-
-    unsafe {
-        SHChangeNotify(
-            SHCNE_ASSOCCHANGED,
-            SHCNF_IDLIST,
-            std::ptr::null(),
-            std::ptr::null(),
-        );
-    }
-}
-
-#[tauri::command]
-fn register_windows_context_menu() -> Result<(), String> {
-    #[cfg(windows)]
-    {
-        use winreg::enums::*;
-        use winreg::RegKey;
-
-        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-        let exe_str = exe.to_string_lossy().to_string();
-
-        if exe_str.contains('"') {
-            return Err("Installation path contains invalid characters for registry integration.".to_string());
-        }
-
-        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-        let (classes, _) = hkcu
-            .create_subkey("Software\\Classes")
-            .map_err(|e| e.to_string())?;
-
-        let icon_value = format!("\"{}\",0", exe_str);
-        let compress_entries = [
-            ("*\\shell\\Zinnia", "Compress with Zinnia"),
-            ("Directory\\shell\\Zinnia", "Compress folder with Zinnia"),
-        ];
-
-        for (key_path, verb) in compress_entries {
-            let (key, _) = classes.create_subkey(key_path).map_err(|e| e.to_string())?;
-            key.set_value("MUIVerb", &verb).map_err(|e| e.to_string())?;
-            key.set_value("Icon", &icon_value)
-                .map_err(|e| e.to_string())?;
-            let (cmd_key, _) = key.create_subkey("command").map_err(|e| e.to_string())?;
-            cmd_key
-                .set_value("", &format!("\"{}\" \"%1\"", exe_str))
-                .map_err(|e| e.to_string())?;
-        }
-
-        for ext in ARCHIVE_EXTENSIONS {
-            let key_path = format!("SystemFileAssociations\\{}\\shell\\Zinnia.Extract", ext);
-            let (key, _) = classes.create_subkey(&key_path).map_err(|e| e.to_string())?;
-            key.set_value("MUIVerb", &"Extract with Zinnia")
-                .map_err(|e| e.to_string())?;
-            key.set_value("Icon", &icon_value)
-                .map_err(|e| e.to_string())?;
-            let (cmd_key, _) = key.create_subkey("command").map_err(|e| e.to_string())?;
-            cmd_key
-                .set_value("", &format!("\"{}\" --extract \"%1\"", exe_str))
-                .map_err(|e| e.to_string())?;
-        }
-
-        {
-            let (key, _) = classes
-                .create_subkey("Zinnia.Archive")
-                .map_err(|e| e.to_string())?;
-            key.set_value("", &"Archive File")
-                .map_err(|e| e.to_string())?;
-            key.set_value("FriendlyTypeName", &"Archive File (Zinnia)")
-                .map_err(|e| e.to_string())?;
-            let (icon_key, _) = key
-                .create_subkey("DefaultIcon")
-                .map_err(|e| e.to_string())?;
-            icon_key
-                .set_value("", &icon_value)
-                .map_err(|e| e.to_string())?;
-            let (cmd_key, _) = key
-                .create_subkey("shell\\open\\command")
-                .map_err(|e| e.to_string())?;
-            cmd_key
-                .set_value("", &format!("\"{}\" --extract \"%1\"", exe_str))
-                .map_err(|e| e.to_string())?;
-        }
-
-        for ext in ARCHIVE_EXTENSIONS {
-            let key_path = format!("{}\\OpenWithProgids", ext);
-            let (key, _) = classes.create_subkey(&key_path).map_err(|e| e.to_string())?;
-            key.set_value("Zinnia.Archive", &"")
-                .map_err(|e| e.to_string())?;
-        }
-
-        notify_shell_association_changed();
-        Ok(())
-    }
-
-    #[cfg(not(windows))]
-    {
-        Err("Explorer integration is only available on Windows.".to_string())
-    }
-}
-
-#[tauri::command]
-fn unregister_windows_context_menu() -> Result<(), String> {
-    #[cfg(windows)]
-    {
-        use winreg::enums::*;
-        use winreg::RegKey;
-
-        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-        let classes = hkcu
-            .open_subkey_with_flags("Software\\Classes", KEY_READ | KEY_WRITE)
-            .map_err(|e| e.to_string())?;
-
-        for path in ["*\\shell\\Zinnia", "Directory\\shell\\Zinnia"] {
-            match classes.delete_subkey_all(path) {
-                Ok(()) => {}
-                Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(format!("Failed to remove {}: {}", path, e)),
-            }
-        }
-
-        for ext in ARCHIVE_EXTENSIONS {
-            let key_path = format!("SystemFileAssociations\\{}\\shell\\Zinnia.Extract", ext);
-            match classes.delete_subkey_all(&key_path) {
-                Ok(()) => {}
-                Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(format!("Failed to remove {}: {}", key_path, e)),
-            }
-
-            let owp_path = format!("{}\\OpenWithProgids", ext);
-            if let Ok(key) = classes.open_subkey_with_flags(&owp_path, KEY_SET_VALUE) {
-                let _ = key.delete_value("Zinnia.Archive");
-            }
-        }
-
-        match classes.delete_subkey_all("Zinnia.Archive") {
-            Ok(()) => {}
-            Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(format!("Failed to remove Zinnia.Archive: {}", e)),
-        }
-
-        notify_shell_association_changed();
-        Ok(())
-    }
-
-    #[cfg(not(windows))]
-    {
-        Err("Explorer integration is only available on Windows.".to_string())
-    }
-}
-
-#[tauri::command]
-fn get_windows_context_menu_status() -> Result<bool, String> {
-    #[cfg(windows)]
-    {
-        use winreg::enums::*;
-        use winreg::RegKey;
-
-        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-        let classes = hkcu
-            .open_subkey_with_flags("Software\\Classes", KEY_READ)
-            .map_err(|e| e.to_string())?;
-
-        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-        let exe_str = exe.to_string_lossy().to_string();
-        let icon_value = format!("{},0", exe_str);
-        let compress_cmd = format!("\"{}\" \"%1\"", exe_str);
-        let extract_cmd = format!("\"{}\" --extract \"%1\"", exe_str);
-
-        let normalize = |value: &str| value.replace('"', "").replace(' ', "").to_ascii_lowercase();
-        let icon_matches = |actual: &str| {
-            let actual_norm = normalize(actual);
-            actual_norm == normalize(&icon_value) || actual_norm == normalize(&exe_str)
-        };
-
-        for (path, expected_command) in [
-            ("*\\shell\\Zinnia\\command", compress_cmd.as_str()),
-            ("Directory\\shell\\Zinnia\\command", compress_cmd.as_str()),
-            ("Zinnia.Archive\\shell\\open\\command", extract_cmd.as_str()),
-        ] {
-            let key = match classes.open_subkey(path) {
-                Ok(key) => key,
-                Err(_) => return Ok(false),
-            };
-            let command: String = match key.get_value("") {
-                Ok(value) => value,
-                Err(_) => return Ok(false),
-            };
-            if command.trim() != expected_command {
-                return Ok(false);
-            }
-        }
-
-        for path in ["*\\shell\\Zinnia", "Directory\\shell\\Zinnia", "Zinnia.Archive\\DefaultIcon"] {
-            let key = match classes.open_subkey(path) {
-                Ok(key) => key,
-                Err(_) => return Ok(false),
-            };
-            let value_name = if path == "Zinnia.Archive\\DefaultIcon" { "" } else { "Icon" };
-            let icon: String = match key.get_value(value_name) {
-                Ok(value) => value,
-                Err(_) => return Ok(false),
-            };
-            if !icon_matches(&icon) {
-                return Ok(false);
-            }
-        }
-
-        for ext in ARCHIVE_EXTENSIONS {
-            let extract_base = format!("SystemFileAssociations\\{}\\shell\\Zinnia.Extract", ext);
-            let extract_key = format!("{}\\command", extract_base);
-            let command_key = match classes.open_subkey(&extract_key) {
-                Ok(key) => key,
-                Err(_) => return Ok(false),
-            };
-            let command: String = match command_key.get_value("") {
-                Ok(value) => value,
-                Err(_) => return Ok(false),
-            };
-            if command.trim() != extract_cmd {
-                return Ok(false);
-            }
-
-            let icon_key = match classes.open_subkey(&extract_base) {
-                Ok(key) => key,
-                Err(_) => return Ok(false),
-            };
-            let icon: String = match icon_key.get_value("Icon") {
-                Ok(value) => value,
-                Err(_) => return Ok(false),
-            };
-            if !icon_matches(&icon) {
-                return Ok(false);
-            }
-
-            let open_with = format!("{}\\OpenWithProgids", ext);
-            let open_with_key = match classes.open_subkey(&open_with) {
-                Ok(key) => key,
-                Err(_) => return Ok(false),
-            };
-
-            if open_with_key.get_raw_value("Zinnia.Archive").is_err() {
-                return Ok(false);
-            }
-        }
-
-        Ok(true)
-    }
-
-    #[cfg(not(windows))]
-    {
-        Ok(false)
-    }
-}
 
 #[tauri::command]
 fn get_initial_paths(state: tauri::State<'_, InitialPaths>) -> Result<Vec<String>, String> {
@@ -1004,112 +732,6 @@ fn get_cpu_count() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(8)
-}
-
-#[cfg(target_os = "linux")]
-fn linux_desktop_file_path() -> Option<std::path::PathBuf> {
-    let home = std::env::var("HOME").ok()?;
-    Some(std::path::PathBuf::from(home)
-        .join(".local/share/applications/run.rosie.zinnia.desktop"))
-}
-
-#[cfg(target_os = "linux")]
-fn escape_desktop_exec_arg(arg: &str) -> String {
-    let mut escaped = String::with_capacity(arg.len());
-    for ch in arg.chars() {
-        match ch {
-            ' ' | '\t' | '\n' | '"' | '\'' | '\\' | '>' | '<' | '~' | '|'
-            | '&' | ';' | '$' | '*' | '?' | '#' | '(' | ')' | '`' => {
-                escaped.push('\\');
-                escaped.push(ch);
-            }
-            _ => escaped.push(ch),
-        }
-    }
-    escaped
-}
-
-#[cfg(target_os = "linux")]
-const LINUX_DESKTOP_ENTRY: &str = r#"[Desktop Entry]
-Type=Application
-Name=Zinnia
-Exec={exe} %F
-Icon=run.rosie.zinnia
-Categories=Utility;Archiving;
-Terminal=false
-MimeType=application/x-7z-compressed;application/zip;application/x-tar;application/gzip;application/x-bzip2;application/x-xz;application/vnd.rar;application/x-compressed-tar;application/x-bzip2-compressed-tar;application/x-xz-compressed-tar;
-"#;
-
-#[tauri::command]
-fn register_linux_desktop_integration() -> Result<(), String> {
-    #[cfg(target_os = "linux")]
-    {
-        let path = linux_desktop_file_path()
-            .ok_or_else(|| "Could not determine HOME directory.".to_string())?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-        let exe_escaped = escape_desktop_exec_arg(&exe.to_string_lossy());
-        let contents = LINUX_DESKTOP_ENTRY.replace("{exe}", &exe_escaped);
-        std::fs::write(&path, contents).map_err(|e| e.to_string())?;
-        let _ = std::process::Command::new("update-desktop-database")
-            .arg(path.parent().unwrap())
-            .status();
-        Ok(())
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        Err("Desktop integration is only available on Linux.".to_string())
-    }
-}
-
-#[tauri::command]
-fn unregister_linux_desktop_integration() -> Result<(), String> {
-    #[cfg(target_os = "linux")]
-    {
-        let path = linux_desktop_file_path()
-            .ok_or_else(|| "Could not determine HOME directory.".to_string())?;
-        match std::fs::remove_file(&path) {
-            Ok(()) => {}
-            Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e.to_string()),
-        }
-        let _ = std::process::Command::new("update-desktop-database")
-            .arg(path.parent().unwrap())
-            .status();
-        Ok(())
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        Err("Desktop integration is only available on Linux.".to_string())
-    }
-}
-
-#[tauri::command]
-fn get_linux_desktop_integration_status() -> Result<bool, String> {
-    #[cfg(target_os = "linux")]
-    {
-        let path = linux_desktop_file_path()
-            .ok_or_else(|| "Could not determine HOME directory.".to_string())?;
-        if !path.exists() {
-            return Ok(false);
-        }
-
-        let contents = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-        let looks_valid = contents.contains("Name=Zinnia")
-            && contents.contains("Exec=")
-            && contents.contains("%F")
-            && contents.contains("MimeType=");
-        Ok(looks_valid)
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        Ok(false)
-    }
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -1341,6 +963,18 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
+    fn escape_desktop_exec_arg(arg: &str) -> String {
+        arg.chars()
+            .fold(String::with_capacity(arg.len()), |mut out, c| {
+                if matches!(c, ' ' | '"' | '\'' | '\\' | '`' | '$' | '>' | '<' | '~' | '|' | '&' | ';') {
+                    out.push('\\');
+                }
+                out.push(c);
+                out
+            })
+    }
+
+    #[cfg(target_os = "linux")]
     #[test]
     fn desktop_exec_escaping_quotes_spaces() {
         let escaped = escape_desktop_exec_arg("/tmp/My App/zinnia");
@@ -1375,12 +1009,6 @@ fn main() {
             cancel_7z,
             probe_7z,
             validate_archive_paths,
-            register_windows_context_menu,
-            unregister_windows_context_menu,
-            get_windows_context_menu_status,
-            register_linux_desktop_integration,
-            unregister_linux_desktop_integration,
-            get_linux_desktop_integration_status,
             load_settings,
             save_settings,
             append_local_log,

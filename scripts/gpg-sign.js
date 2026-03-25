@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
@@ -8,12 +7,12 @@ import { execSync, spawnSync } from "child_process";
 import https from "https";
 import { fileURLToPath } from "url";
 
-
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
 const releaseDir = path.join(root, "release");
-const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf-8"));
+const pkg = JSON.parse(
+  fs.readFileSync(path.join(root, "package.json"), "utf-8"),
+);
 
 const VERSION = pkg.version;
 const TAG = `v${VERSION}`;
@@ -28,22 +27,25 @@ const RELEASE_DOWNLOAD_BASE_URL = (
   `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest/download`
 ).replace(/\/+$/, "");
 const RELEASE_NOTES = process.env.RELEASE_NOTES || "";
-const RELEASE_PUB_DATE = process.env.RELEASE_PUB_DATE || new Date().toISOString();
-
-
+const RELEASE_PUB_DATE =
+  process.env.RELEASE_PUB_DATE || new Date().toISOString();
 
 const ext = (e) => (n) => n.toLowerCase().endsWith(e);
 const rx = (r) => (n) => r.test(n);
 const exact = (f) => (n) => n === f;
 const isPerTargetManifest = rx(/^latest-[a-z0-9]+-[a-z0-9_]+\.json$/i);
-const isChecksumTextName = rx(/^SHA256SUMS(?:-[a-z0-9_]+(?:-[a-z0-9_]+)?)?\.txt$/i);
-
+const isChecksumTextName = rx(
+  /^SHA256SUMS(?:-[a-z0-9_]+(?:-[a-z0-9_]+)?)?\.txt$/i,
+);
 
 const ARTIFACT_RULES = [
-
   rx(/-setup\.exe$/i),
   rx(/^Zinnia-Windows-(?:x64|arm64)\.exe$/i),
-  ext(".msi"), ext(".dmg"), ext(".deb"), ext(".rpm"), ext(".flatpak"),
+  ext(".msi"),
+  ext(".dmg"),
+  ext(".deb"),
+  ext(".rpm"),
+  ext(".flatpak"),
   rx(/\.appimage$/i),
 
   rx(/\.zip$/i),
@@ -59,9 +61,13 @@ const ARTIFACT_RULES = [
   isPerTargetManifest,
 ];
 
-
 const SIGN_RULES = [
-  ext(".exe"), ext(".msi"), ext(".dmg"), ext(".deb"), ext(".rpm"), ext(".flatpak"),
+  ext(".exe"),
+  ext(".msi"),
+  ext(".dmg"),
+  ext(".deb"),
+  ext(".rpm"),
+  ext(".flatpak"),
   rx(/\.appimage$/i),
   rx(/\.zip$/i),
   rx(/\.nsis\.zip$/i),
@@ -79,7 +85,9 @@ const SEARCH_DIRS = [
 
 function artifactMatchesVersion(name) {
   if (name === "latest.json" || isPerTargetManifest(name)) return true;
-  const versions = name.match(/\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?/g);
+  const versions = name.match(
+    /\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?/g,
+  );
   if (!versions || versions.length === 0) return true;
   return versions.includes(VERSION);
 }
@@ -118,8 +126,6 @@ function pickNewestByBasename(paths) {
   }
   return Array.from(latest.values()).map((entry) => entry.filePath);
 }
-
-
 
 function walk(dir, results = []) {
   if (!fs.existsSync(dir)) return results;
@@ -243,8 +249,7 @@ function normalizeUpdaterSignature(sigPath) {
     if (decoded.includes("untrusted comment:")) {
       return trimmed;
     }
-  } catch {
-  }
+  } catch {}
 
   if (trimmed.includes("untrusted comment:")) {
     return Buffer.from(trimmed, "utf8").toString("base64");
@@ -274,7 +279,9 @@ function generateUpdaterManifests(files) {
 
     const sigPath = signatureByBaseName.get(name);
     if (!sigPath) {
-      console.log(`  ~ Skipped updater manifest entry for ${name} (missing ${name}.sig)`);
+      console.log(
+        `  ~ Skipped updater manifest entry for ${name} (missing ${name}.sig)`,
+      );
       continue;
     }
 
@@ -297,8 +304,12 @@ function generateUpdaterManifests(files) {
       const fallbackKey = `${target.os}-${target.arch}`;
       manifest.platforms[installerKey] = { url, signature };
 
-      const priority = FALLBACK_INSTALLER_PRIORITY[target.os]?.[target.installer] ?? 0;
-      if (!manifest.platforms[fallbackKey] || priority > manifest.fallbackPriority) {
+      const priority =
+        FALLBACK_INSTALLER_PRIORITY[target.os]?.[target.installer] ?? 0;
+      if (
+        !manifest.platforms[fallbackKey] ||
+        priority > manifest.fallbackPriority
+      ) {
         manifest.platforms[fallbackKey] = { url, signature };
         manifest.fallbackPriority = priority;
       }
@@ -318,7 +329,9 @@ function generateUpdaterManifests(files) {
     }
     const dest = path.join(releaseDir, manifestName);
     fs.writeFileSync(dest, JSON.stringify(output, null, 2) + "\n");
-    console.log(`  + ${manifestName} (${Object.keys(output.platforms).length} platform entries)`);
+    console.log(
+      `  + ${manifestName} (${Object.keys(output.platforms).length} platform entries)`,
+    );
     generated.push(dest);
   }
 
@@ -337,20 +350,23 @@ function targetKeysForArtifactName(name) {
 
   const baseName = name.endsWith(".sig") ? name.slice(0, -4) : name;
   return Array.from(
-    new Set(resolveUpdaterTargets(baseName).map((t) => `${t.os}-${t.arch}`))
+    new Set(resolveUpdaterTargets(baseName).map((t) => `${t.os}-${t.arch}`)),
   );
 }
 
 function collectArtifacts() {
   fs.mkdirSync(releaseDir, { recursive: true });
 
-  
   const discovered = SEARCH_DIRS.flatMap((d) => walk(d));
-  const found = discovered.filter((filePath) => artifactMatchesVersion(path.basename(filePath)));
+  const found = discovered.filter((filePath) =>
+    artifactMatchesVersion(path.basename(filePath)),
+  );
   if (found.length > 0) {
     clearReleaseStaging();
     if (found.length < discovered.length) {
-      console.log(`  ~ Skipped ${discovered.length - found.length} artifact(s) not matching ${VERSION}`);
+      console.log(
+        `  ~ Skipped ${discovered.length - found.length} artifact(s) not matching ${VERSION}`,
+      );
     }
 
     const selected = pickNewestByBasename(found);
@@ -371,13 +387,22 @@ function collectArtifacts() {
     return [...collected, ...manifests];
   }
 
-  
-  const staged = fs.readdirSync(releaseDir)
-    .filter((n) => isArtifact(n) && artifactMatchesVersion(n) && !n.endsWith(".asc") && !isChecksumTextName(n))
+  const staged = fs
+    .readdirSync(releaseDir)
+    .filter(
+      (n) =>
+        isArtifact(n) &&
+        artifactMatchesVersion(n) &&
+        !n.endsWith(".asc") &&
+        !isChecksumTextName(n),
+    )
     .map((n) => path.join(releaseDir, n));
 
   if (staged.length === 0) {
-    console.error("No build artifacts found in:", [...SEARCH_DIRS, releaseDir].join(", "));
+    console.error(
+      "No build artifacts found in:",
+      [...SEARCH_DIRS, releaseDir].join(", "),
+    );
     process.exit(1);
   }
 
@@ -386,10 +411,11 @@ function collectArtifacts() {
   return Array.from(new Set([...staged, ...manifests]));
 }
 
-
-
 function sha256(filePath) {
-  return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+  return crypto
+    .createHash("sha256")
+    .update(fs.readFileSync(filePath))
+    .digest("hex");
 }
 
 function generateChecksums(files) {
@@ -399,7 +425,11 @@ function generateChecksums(files) {
   });
 
   const manifestTargetKeys = Array.from(
-    new Set(candidates.map((f) => parseManifestTargetKey(path.basename(f))).filter(Boolean))
+    new Set(
+      candidates
+        .map((f) => parseManifestTargetKey(path.basename(f)))
+        .filter(Boolean),
+    ),
   );
 
   const buckets = new Map();
@@ -439,8 +469,6 @@ function generateChecksums(files) {
   return outputs;
 }
 
-
-
 function signFile(filePath) {
   const asc = `${filePath}.asc`;
   const args = ["--batch", "--yes", "--armor", "--detach-sign"];
@@ -455,7 +483,9 @@ function signFile(filePath) {
   const result = spawnSync("gpg", args, { stdio: "pipe" });
   if (result.error) throw result.error;
   if (result.status !== 0) {
-    throw new Error(`GPG signing failed: ${result.stderr?.toString() || "unknown error"}`);
+    throw new Error(
+      `GPG signing failed: ${result.stderr?.toString() || "unknown error"}`,
+    );
   }
   return asc;
 }
@@ -470,8 +500,6 @@ function signArtifacts(files) {
   }
   return ascFiles;
 }
-
-
 
 function ghRequest(method, endpoint, body) {
   return new Promise((resolve, reject) => {
@@ -497,7 +525,9 @@ function ghRequest(method, endpoint, body) {
           if (res.statusCode >= 200 && res.statusCode < 300) {
             resolve(json);
           } else {
-            reject(new Error(`GitHub ${res.statusCode}: ${json.message || data}`));
+            reject(
+              new Error(`GitHub ${res.statusCode}: ${json.message || data}`),
+            );
           }
         } catch {
           resolve(data);
@@ -511,23 +541,22 @@ function ghRequest(method, endpoint, body) {
 }
 
 async function getOrCreateRelease() {
-  
   try {
-    return await ghRequest("GET", `/repos/${REPO_OWNER}/${REPO_NAME}/releases/tags/${TAG}`);
-  } catch {
-    
-  }
+    return await ghRequest(
+      "GET",
+      `/repos/${REPO_OWNER}/${REPO_NAME}/releases/tags/${TAG}`,
+    );
+  } catch {}
 
-  
   try {
-    const releases = await ghRequest("GET", `/repos/${REPO_OWNER}/${REPO_NAME}/releases?per_page=30`);
+    const releases = await ghRequest(
+      "GET",
+      `/repos/${REPO_OWNER}/${REPO_NAME}/releases?per_page=30`,
+    );
     const draft = releases.find((r) => r.draft && r.tag_name === TAG);
     if (draft) return draft;
-  } catch {
-    
-  }
+  } catch {}
 
-  
   return await ghRequest("POST", `/repos/${REPO_OWNER}/${REPO_NAME}/releases`, {
     tag_name: TAG,
     name: `Zinnia ${VERSION}`,
@@ -565,11 +594,12 @@ async function uploadAsset(uploadUrl, filePath) {
           if (res.statusCode < 300) {
             resolve(true);
           } else if (res.statusCode === 422) {
-            
             console.log(`  ~ ${fileName} (already uploaded)`);
             resolve(true);
           } else {
-            reject(new Error(`Upload ${fileName} failed ${res.statusCode}: ${data}`));
+            reject(
+              new Error(`Upload ${fileName} failed ${res.statusCode}: ${data}`),
+            );
           }
         });
       },
@@ -580,12 +610,9 @@ async function uploadAsset(uploadUrl, filePath) {
   });
 }
 
-
-
 async function main() {
   console.log(`\nZinnia ${VERSION} — release pipeline\n`);
 
-  
   console.log("[1/5] Checking GPG...");
   try {
     execSync("gpg --version", { stdio: "pipe" });
@@ -594,15 +621,12 @@ async function main() {
     process.exit(1);
   }
 
-  
   console.log("[2/5] Collecting artifacts...");
   const artifacts = collectArtifacts();
 
-  
   console.log("[3/5] Generating checksums...");
   const checksumFiles = generateChecksums(artifacts);
 
-  
   console.log("[4/5] Signing...");
   const ascFiles = signArtifacts(artifacts);
   for (const checksumFile of checksumFiles) {
@@ -610,7 +634,6 @@ async function main() {
     console.log(`  + ${path.basename(checksumFile)}.asc`);
   }
 
-  
   if (!GH_TOKEN) {
     console.log("\n[5/5] GH_TOKEN not set — skipping GitHub upload.");
     console.log(`Artifacts staged in: ${releaseDir}\n`);
@@ -621,13 +644,17 @@ async function main() {
   const release = await getOrCreateRelease();
   console.log(`  Release: ${release.html_url || TAG}`);
 
-  const everything = fs.readdirSync(releaseDir).map((n) => path.join(releaseDir, n));
+  const everything = fs
+    .readdirSync(releaseDir)
+    .map((n) => path.join(releaseDir, n));
   for (const f of everything) {
     await uploadAsset(release.upload_url, f);
     console.log(`  ^ ${path.basename(f)}`);
   }
 
-  console.log(`\nDone — ${TAG} uploaded as ${release.draft ? "draft" : "published"}.\n`);
+  console.log(
+    `\nDone — ${TAG} uploaded as ${release.draft ? "draft" : "published"}.\n`,
+  );
 }
 
 main().catch((err) => {
