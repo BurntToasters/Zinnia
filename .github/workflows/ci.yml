@@ -41,5 +41,5 @@ jobs:
             librsvg2-dev \
             patchelf
       - run: npm ci
-      - run: npm run test:ts
+      - run: npm test
       - run: npm run test:rust
