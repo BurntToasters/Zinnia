@@ -24,6 +24,7 @@ struct RunResult {
 
 struct InitialPaths(Mutex<Vec<String>>);
 struct InitialMode(Mutex<String>);
+struct ExtractQueue(Mutex<Vec<Vec<String>>>);
 struct ProcessState {
     child: Option<CommandChild>,
     cancelling: bool,
@@ -688,6 +689,47 @@ fn get_initial_mode(state: tauri::State<'_, InitialMode>) -> Result<String, Stri
 }
 
 #[tauri::command]
+fn get_extract_paths(state: tauri::State<'_, ExtractQueue>) -> Result<Vec<String>, String> {
+    let mut queue = state.0.lock().map_err(|_| "Lock poisoned".to_string())?;
+    if queue.is_empty() {
+        Ok(vec![])
+    } else {
+        Ok(queue.remove(0))
+    }
+}
+
+fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Result<(), String> {
+    {
+        let queue = app.state::<ExtractQueue>();
+        let mut q = queue.0.lock().map_err(|_| "Lock poisoned".to_string())?;
+        q.push(paths);
+    }
+
+    let label = format!(
+        "extract-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    );
+
+    tauri::WebviewWindowBuilder::new(
+        app,
+        &label,
+        tauri::WebviewUrl::App("extract.html".into()),
+    )
+    .title("Zinnia \u{2014} Extracting")
+    .inner_size(440.0, 320.0)
+    .resizable(false)
+    .minimizable(true)
+    .maximizable(false)
+    .build()
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
 fn get_platform_info() -> String {
     std::env::consts::OS.to_string()
 }
@@ -756,6 +798,11 @@ fn emit_open_paths(app: &tauri::AppHandle, argv: Vec<String>) {
         .collect();
 
     if paths.is_empty() {
+        return;
+    }
+
+    if mode == "extract" {
+        let _ = spawn_extract_window(app, paths);
         return;
     }
 
@@ -983,6 +1030,10 @@ mod tests {
 }
 
 fn main() {
+    let ctx = collect_cli_context();
+    let initial_paths = ctx.0;
+    let initial_mode = ctx.1;
+
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, _| {
             emit_open_paths(app, argv);
@@ -992,18 +1043,24 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
-        .manage({
-            let ctx = collect_cli_context();
-            InitialPaths(Mutex::new(ctx.0))
-        })
-        .manage({
-            let ctx = collect_cli_context();
-            InitialMode(Mutex::new(ctx.1))
-        })
+        .manage(InitialPaths(Mutex::new(initial_paths.clone())))
+        .manage(InitialMode(Mutex::new(initial_mode.clone())))
+        .manage(ExtractQueue(Mutex::new(Vec::new())))
         .manage(RunningProcess(Mutex::new(ProcessState {
             child: None,
             cancelling: false,
         })))
+        .setup(move |app| {
+            if initial_mode == "extract" && !initial_paths.is_empty() {
+                spawn_extract_window(app.handle(), initial_paths.clone())
+                    .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+
+                if let Some(main_window) = app.get_webview_window("main") {
+                    main_window.close()?;
+                }
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             run_7z,
             cancel_7z,
@@ -1018,6 +1075,7 @@ fn main() {
             open_log_dir,
             get_initial_paths,
             get_initial_mode,
+            get_extract_paths,
             get_platform_info,
             get_cpu_count,
             is_flatpak,

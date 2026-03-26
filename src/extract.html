@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Zinnia — Extracting</title>
+    <link rel="stylesheet" href="/extract.css" />
+  </head>
+  <body>
+    <div id="extract-app" class="extract-app">
+      <div class="extract-header">
+        <img
+          src="/zinnia_default-logo.png"
+          width="28"
+          height="28"
+          alt="Zinnia"
+          class="extract-logo"
+          draggable="false"
+        />
+        <h1>Extracting</h1>
+      </div>
+
+      <div class="extract-body">
+        <div class="extract-info">
+          <div class="extract-field">
+            <span class="extract-label">Archive</span>
+            <span class="extract-value extract-value--path" id="archive-name">—</span>
+          </div>
+          <div class="extract-field">
+            <span class="extract-label">Destination</span>
+            <span class="extract-value extract-value--path" id="extract-dest">—</span>
+          </div>
+        </div>
+
+        <div class="extract-progress-area">
+          <div class="extract-progress-bar">
+            <div class="extract-progress-fill" id="progress-fill"></div>
+          </div>
+          <div class="extract-status" id="extract-status">Preparing...</div>
+        </div>
+
+        <div class="extract-error" id="extract-error" hidden>
+          <div class="extract-error-title">Extraction failed</div>
+          <pre class="extract-error-detail" id="error-detail"></pre>
+        </div>
+      </div>
+
+      <div class="extract-footer">
+        <button class="btn" id="cancel-btn">Cancel</button>
+        <button class="btn btn--close" id="close-btn" hidden>Close</button>
+      </div>
+    </div>
+
+    <script type="module" src="/extract-window.ts"></script>
+  </body>
+</html>
