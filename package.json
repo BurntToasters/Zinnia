@@ -1,6 +1,6 @@
 {
   "name": "zinnia",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Cross-platform 7z GUI built with Tauri.",
   "type": "module",
@@ -46,8 +46,8 @@
     "flatpak:bundle": "flatpak-builder --repo=flatpak-repo --force-clean flatpak-build run.rosie.zinnia.yml && flatpak build-bundle flatpak-repo dist/Zinnia-Linux.flatpak run.rosie.zinnia",
     "flatpak:clean": "rm -rf flatpak-build flatpak-repo",
     "release:prepare": "npm i && npm run sync-version && cargo check --manifest-path src-tauri/Cargo.toml -q && npm run dist:clean-release-artifacts && node scripts/update-metainfo.js",
-    "prerelease:prepare": "node scripts/release-warning.js && git fetch origin && git reset --hard @{u} && git clean -fd",
-    "release:finalize": "dotenv -e .env -- node scripts/post-release-assets.js",
+    "prerelease:prepare": "node scripts/release-warning.js",
+    "release:finalize": "dotenv -e .env -- node scripts/post-release-assets.js && git fetch origin && git reset --hard @{u} && git clean -fd",
     "release:win": "npm run release:prepare && npm run build:win && npm run release:sign:gpg && npm run release:finalize",
     "release:mac": "npm run release:prepare && npm run build:mac:universal && npm run build:mac:zip && npm run release:sign:gpg && npm run release:finalize",
     "release:mac:ssh": "npm run mac:ssh:keychain && npm run release:mac",
