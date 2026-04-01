@@ -52,5 +52,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
       - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - run: npm run prepare:7z
       - run: cargo check --manifest-path src-tauri/Cargo.toml
