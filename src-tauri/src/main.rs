@@ -819,6 +819,7 @@ fn emit_open_paths(app: &tauri::AppHandle, argv: Vec<String>) {
     let _ = app.emit("open-paths", OpenPathsPayload { paths, mode });
 
     if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
         let _ = window.set_focus();
     }
 }
@@ -1061,13 +1062,18 @@ fn main() {
             cancelling: false,
         })))
         .setup(move |app| {
-            if initial_mode == "extract" && !initial_paths.is_empty() {
+            let launch_extract_window = initial_mode == "extract" && !initial_paths.is_empty();
+
+            if launch_extract_window {
                 spawn_extract_window(app.handle(), initial_paths.clone())
                     .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
                 if let Some(main_window) = app.get_webview_window("main") {
                     let _ = main_window.close();
                 }
+            } else if let Some(main_window) = app.get_webview_window("main") {
+                let _ = main_window.show();
+                let _ = main_window.set_focus();
             }
             Ok(())
         })
