@@ -60,7 +60,9 @@ async function run() {
   try {
     await invoke("probe_7z");
   } catch (err) {
-    showError(`7-Zip binary not found.\n\n${err instanceof Error ? err.message : String(err)}`);
+    showError(
+      `7-Zip binary not found.\n\n${err instanceof Error ? err.message : String(err)}`,
+    );
     return;
   }
 
