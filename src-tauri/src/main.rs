@@ -1,7 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::io::{Read, Write};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+
+static EXTRACT_WINDOW_COUNTER: AtomicU64 = AtomicU64::new(0);
 use tauri::Emitter;
 use tauri::Manager;
 use tauri_plugin_shell::process::{CommandEvent, CommandChild};
@@ -702,18 +705,18 @@ fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Result<()
     {
         let queue = app.state::<ExtractQueue>();
         let mut q = queue.0.lock().map_err(|_| "Lock poisoned".to_string())?;
+        if q.len() >= 20 {
+            return Err("Extract queue is full".to_string());
+        }
         q.push(paths);
     }
 
     let label = format!(
         "extract-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis()
+        EXTRACT_WINDOW_COUNTER.fetch_add(1, Ordering::Relaxed)
     );
 
-    tauri::WebviewWindowBuilder::new(
+    let result = tauri::WebviewWindowBuilder::new(
         app,
         &label,
         tauri::WebviewUrl::App("extract.html".into()),
@@ -724,9 +727,16 @@ fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Result<()
     .minimizable(true)
     .maximizable(false)
     .build()
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| e.to_string());
 
-    Ok(())
+    if result.is_err() {
+        let queue = app.state::<ExtractQueue>();
+        if let Ok(mut q) = queue.0.lock() {
+            q.pop();
+        };
+    }
+
+    result.map(|_| ())
 }
 
 #[tauri::command]
@@ -1056,7 +1066,7 @@ fn main() {
                     .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
                 if let Some(main_window) = app.get_webview_window("main") {
-                    main_window.close()?;
+                    let _ = main_window.close();
                 }
             }
             Ok(())

@@ -489,36 +489,38 @@ async function init() {
 
   const appWindow = getCurrentWebviewWindow();
   await appWindow.onDragDropEvent(async (event) => {
-    if (event.payload.type === "enter" || event.payload.type === "over") {
-      dom.inputList.classList.add("list--dragover");
-    } else if (event.payload.type === "leave") {
-      dom.inputList.classList.remove("list--dragover");
-    } else if (event.payload.type === "drop") {
-      dom.inputList.classList.remove("list--dragover");
-      const paths = event.payload.paths;
-      if (paths.length) {
-        const previousPrimary = state.inputs[0] ?? null;
-        for (const path of paths) {
-          if (!state.inputs.includes(path)) {
-            state.inputs.push(path);
+    try {
+      if (event.payload.type === "enter" || event.payload.type === "over") {
+        dom.inputList.classList.add("list--dragover");
+      } else if (event.payload.type === "leave") {
+        dom.inputList.classList.remove("list--dragover");
+      } else if (event.payload.type === "drop") {
+        dom.inputList.classList.remove("list--dragover");
+        const paths = event.payload.paths;
+        if (paths.length) {
+          const previousPrimary = state.inputs[0] ?? null;
+          for (const path of paths) {
+            if (!state.inputs.includes(path)) {
+              state.inputs.push(path);
+            }
+          }
+          if (
+            getMode() === "browse" &&
+            (state.inputs[0] ?? null) !== previousPrimary
+          ) {
+            setBrowsePasswordFieldVisible(false);
+          }
+          renderInputs();
+          if (
+            getMode() === "browse" &&
+            state.inputs.length > 0 &&
+            (await allPathsAreArchives([state.inputs[0]]))
+          ) {
+            void browseArchive();
           }
         }
-        if (
-          getMode() === "browse" &&
-          (state.inputs[0] ?? null) !== previousPrimary
-        ) {
-          setBrowsePasswordFieldVisible(false);
-        }
-        renderInputs();
-        if (
-          getMode() === "browse" &&
-          state.inputs.length > 0 &&
-          (await allPathsAreArchives([state.inputs[0]]))
-        ) {
-          void browseArchive();
-        }
       }
-    }
+    } catch {}
   });
 }
 

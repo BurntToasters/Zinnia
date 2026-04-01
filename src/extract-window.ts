@@ -49,7 +49,7 @@ async function run() {
   $("cancel-btn").addEventListener("click", async () => {
     try {
       await invoke("cancel_7z");
-    } catch (_) {}
+    } catch {}
     await appWindow.close();
   });
 
@@ -85,8 +85,8 @@ async function run() {
     fill.style.width = "100%";
     $("extract-status").textContent = "Done";
 
-    setTimeout(async () => {
-      await appWindow.close();
+    setTimeout(() => {
+      appWindow.close().catch(() => {});
     }, 800);
   } catch (err) {
     showError(err instanceof Error ? err.message : String(err));
