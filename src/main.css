@@ -816,6 +816,25 @@ input[type="number"] {
   background: var(--accent-bg);
 }
 
+.btn--accent-outline {
+  background: transparent;
+  color: var(--accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.btn--accent-outline:hover {
+  background: var(--accent-bg);
+  border-color: var(--accent-hover);
+  color: var(--accent-hover);
+}
+
+.btn--accent-outline:active {
+  background: var(--accent-bg);
+  border-color: var(--accent-pressed);
+  color: var(--accent-pressed);
+}
+
 .btn--sm {
   padding: 3px 8px;
   font-size: 10px;
@@ -943,6 +962,18 @@ input[type="number"] {
 
 .actions--session {
   margin-top: 2px;
+}
+
+.actions__divider {
+  width: 1px;
+  height: 18px;
+  background: var(--border-strong);
+  flex-shrink: 0;
+}
+
+.actions--browse .btn--accent-outline {
+  padding: 5px 12px;
+  font-size: 11px;
 }
 
 .btn--shortcut {

@@ -1,0 +1,258 @@
+:root {
+  --radius: 6px;
+  --radius-sm: 4px;
+  --transition: 150ms ease;
+}
+
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #202020;
+  --surface: #2d2d2d;
+  --surface-alt: #383838;
+  --accent: #60cdff;
+  --accent-hover: #7dd8ff;
+  --accent-pressed: #4db8e8;
+  --text: #f5f5f5;
+  --text-secondary: #a0a0a0;
+  --text-on-accent: #111;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --danger: #ff6b6b;
+  --danger-bg: rgba(255, 107, 107, 0.1);
+  --shadow: rgba(0, 0, 0, 0.2);
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f3f3f3;
+  --surface: #ffffff;
+  --surface-alt: #e8e8e8;
+  --accent: #0078d4;
+  --accent-hover: #106ebe;
+  --accent-pressed: #005a9e;
+  --text: #1a1a1a;
+  --text-secondary: #5c5c5c;
+  --text-on-accent: #ffffff;
+  --border: rgba(0, 0, 0, 0.06);
+  --border-strong: rgba(0, 0, 0, 0.12);
+  --danger: #d13438;
+  --danger-bg: rgba(209, 52, 56, 0.08);
+  --shadow: rgba(0, 0, 0, 0.08);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  overscroll-behavior: none;
+}
+
+body {
+  margin: 0;
+  font-family:
+    "Segoe UI Variable",
+    "Segoe UI",
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Helvetica Neue",
+    Arial,
+    sans-serif;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+.extract-app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  padding: 20px 24px;
+  gap: 16px;
+}
+
+.extract-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.extract-header h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.extract-logo {
+  flex-shrink: 0;
+}
+
+.extract-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.extract-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.extract-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.extract-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.extract-value {
+  font-size: 12px;
+  color: var(--text);
+}
+
+.extract-value--path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  direction: rtl;
+  text-align: left;
+}
+
+.extract-progress-area {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.extract-progress-bar {
+  height: 6px;
+  background: var(--surface-alt);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.extract-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  width: 0%;
+  transition: width 200ms ease;
+  animation: indeterminate 1.8s ease-in-out infinite;
+}
+
+.extract-progress-fill--error {
+  background: var(--danger);
+  animation: none;
+  width: 100%;
+}
+
+@keyframes indeterminate {
+  0% {
+    width: 0%;
+    margin-left: 0%;
+  }
+  50% {
+    width: 60%;
+    margin-left: 20%;
+  }
+  100% {
+    width: 0%;
+    margin-left: 100%;
+  }
+}
+
+.extract-status {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.extract-error {
+  background: var(--danger-bg);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.extract-error[hidden] {
+  display: none;
+}
+
+.extract-error-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.extract-error-detail {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow-y: auto;
+  font-family: "Cascadia Code", "Consolas", monospace;
+}
+
+.extract-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    background var(--transition),
+    border-color var(--transition);
+}
+
+.btn:hover {
+  background: var(--surface-alt);
+  border-color: var(--border-strong);
+}
+
+.btn--close {
+  background: var(--accent);
+  color: var(--text-on-accent);
+  border-color: var(--accent);
+}
+
+.btn--close:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
