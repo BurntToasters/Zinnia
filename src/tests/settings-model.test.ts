@@ -72,6 +72,20 @@ describe("normalizeUserSettings", () => {
     expect(result.localLoggingEnabled).toBe(false);
     expect(result.logVerbosity).toBe("debug");
   });
+
+  it("accepts valid updateChannel", () => {
+    const result = normalizeUserSettings({
+      updateChannel: "beta",
+    });
+    expect(result.updateChannel).toBe("beta");
+  });
+
+  it("rejects invalid updateChannel and uses default", () => {
+    const result = normalizeUserSettings({
+      updateChannel: "nightly",
+    });
+    expect(result.updateChannel).toBe(SETTING_DEFAULTS.updateChannel);
+  });
 });
 
 describe("splitSettingsPayload", () => {

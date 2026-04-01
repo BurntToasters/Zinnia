@@ -16,24 +16,37 @@ const pkg = JSON.parse(
 
 const VERSION = pkg.version;
 const TAG = `v${VERSION}`;
+const IS_PRERELEASE = /-(?:beta|alpha|rc)(?:[.-]?\d+)?/i.test(VERSION);
 
 const GPG_KEY_ID = process.env.GPG_KEY_ID;
 const GPG_PASSPHRASE = process.env.GPG_PASSPHRASE;
 const GH_TOKEN = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
 const REPO_OWNER = process.env.GH_REPO_OWNER || "BurntToasters";
 const REPO_NAME = process.env.GH_REPO_NAME || "zinnia";
+const TAG_DOWNLOAD_BASE_URL = `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${encodeURIComponent(TAG)}`;
 const RELEASE_DOWNLOAD_BASE_URL = (
-  process.env.RELEASE_DOWNLOAD_BASE_URL ||
-  `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest/download`
+  process.env.RELEASE_DOWNLOAD_BASE_URL || TAG_DOWNLOAD_BASE_URL
 ).replace(/\/+$/, "");
 const RELEASE_NOTES = process.env.RELEASE_NOTES || "";
 const RELEASE_PUB_DATE =
   process.env.RELEASE_PUB_DATE || new Date().toISOString();
+const ALLOW_ASSET_REPLACE = !/^(0|false|no|off)$/i.test(
+  String(process.env.ALLOW_ASSET_REPLACE || "true").trim(),
+);
+const REQUIRED_LINUX_TARGETS = (
+  process.env.REQUIRED_LINUX_TARGETS || ""
+).trim();
+const REQUIRE_LINUX_AARCH64 = /^(1|true|yes|on)$/i.test(
+  String(process.env.REQUIRE_LINUX_AARCH64 || "").trim(),
+);
+const ENFORCE_LINUX_X64_PACKAGE_SET = !/^(0|false|no|off)$/i.test(
+  String(process.env.ENFORCE_LINUX_X64_PACKAGE_SET || "true").trim(),
+);
 
 const ext = (e) => (n) => n.toLowerCase().endsWith(e);
 const rx = (r) => (n) => r.test(n);
 const exact = (f) => (n) => n === f;
-const isPerTargetManifest = rx(/^latest-[a-z0-9]+-[a-z0-9_]+\.json$/i);
+const isPerTargetManifest = rx(/^latest-[a-z0-9-]+-[a-z0-9_]+\.json$/i);
 const isChecksumTextName = rx(
   /^SHA256SUMS(?:-[a-z0-9_]+(?:-[a-z0-9_]+)?)?\.txt$/i,
 );
@@ -77,6 +90,8 @@ const SIGN_RULES = [
 
 const isArtifact = (name) => ARTIFACT_RULES.some((r) => r(name));
 const isSignable = (name) => SIGN_RULES.some((r) => r(name));
+const shouldUploadReleaseEntry = (name) =>
+  isArtifact(name) || name.endsWith(".asc") || isChecksumTextName(name);
 
 const SEARCH_DIRS = [
   path.join(root, "src-tauri", "target"),
@@ -106,6 +121,29 @@ function clearReleaseStaging() {
     if (isArtifact(name) || name.endsWith(".asc") || isChecksumTextName(name)) {
       fs.rmSync(fullPath, { force: true });
     }
+  }
+}
+
+function clearPreStagedUpdaterManifests() {
+  if (!fs.existsSync(releaseDir)) return;
+  const removed = [];
+  for (const name of fs.readdirSync(releaseDir)) {
+    if (!isPerTargetManifest(name)) continue;
+    const fullPath = path.join(releaseDir, name);
+    let isFile = false;
+    try {
+      isFile = fs.statSync(fullPath).isFile();
+    } catch {
+      continue;
+    }
+    if (!isFile) continue;
+    fs.rmSync(fullPath, { force: true });
+    removed.push(name);
+  }
+  if (removed.length > 0) {
+    console.log(
+      `  ~ Removed ${removed.length} stale updater manifest(s) from release/`,
+    );
   }
 }
 
@@ -184,6 +222,71 @@ function inferArchFromName(name) {
   return null;
 }
 
+function normalizeArchToken(token) {
+  const normalized = token.toLowerCase();
+  if (normalized === "aarch64" || normalized === "arm64") return "aarch64";
+  if (normalized === "x86_64" || normalized === "amd64" || normalized === "x64")
+    return "x86_64";
+  if (normalized === "i686" || normalized === "x86") return "i686";
+  return null;
+}
+
+function requiredLinuxTargetKeys(channelVariants) {
+  const tokens = REQUIRED_LINUX_TARGETS.split(/[,\s]+/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+  if (REQUIRE_LINUX_AARCH64) tokens.push("aarch64");
+  const targetKeys = new Set();
+  for (const token of tokens) {
+    const explicitMatch = token
+      .toLowerCase()
+      .match(/^(linux(?:-beta)?)-([a-z0-9_]+)$/);
+    if (explicitMatch) {
+      const targetName = explicitMatch[1];
+      const arch = normalizeArchToken(explicitMatch[2]);
+      if (!arch) {
+        throw new Error(`Invalid REQUIRED_LINUX_TARGETS entry "${token}".`);
+      }
+      targetKeys.add(`${targetName}-${arch}`);
+      continue;
+    }
+    const arch = normalizeArchToken(token);
+    if (!arch) {
+      throw new Error(`Invalid REQUIRED_LINUX_TARGETS entry "${token}".`);
+    }
+    for (const channel of channelVariants) {
+      targetKeys.add(`linux${channel.targetSuffix}-${arch}`);
+    }
+  }
+  return targetKeys;
+}
+
+function canPopulateFallbackTarget(_target) {
+  return true;
+}
+
+function assertLinuxX64PackageSet(byName) {
+  if (!ENFORCE_LINUX_X64_PACKAGE_SET) return;
+  const installers = new Set();
+  for (const [name] of byName) {
+    if (name.endsWith(".sig")) continue;
+    const targets = resolveUpdaterTargets(name);
+    for (const target of targets) {
+      if (target.os === "linux" && target.arch === "x86_64") {
+        installers.add(target.installer);
+      }
+    }
+  }
+  if (installers.size === 0) return;
+  const requiredInstallers = ["appimage", "deb", "rpm"];
+  const missing = requiredInstallers.filter((i) => !installers.has(i));
+  if (missing.length > 0) {
+    throw new Error(
+      `Incomplete Linux x86_64 bundle set: missing ${missing.join(", ")} artifact(s).`,
+    );
+  }
+}
+
 function resolveUpdaterTargets(name) {
   const targets = [];
   if (/\.app\.tar\.gz$/i.test(name)) {
@@ -233,8 +336,8 @@ function resolveUpdaterTargets(name) {
   return targets;
 }
 
-function releaseAssetUrl(fileName) {
-  return `${RELEASE_DOWNLOAD_BASE_URL}/${encodeURIComponent(fileName)}`;
+function releaseAssetUrl(fileName, baseUrl = RELEASE_DOWNLOAD_BASE_URL) {
+  return `${baseUrl}/${encodeURIComponent(fileName)}`;
 }
 
 function normalizeUpdaterSignature(sigPath) {
@@ -263,6 +366,7 @@ function generateUpdaterManifests(files) {
   for (const filePath of files) {
     byName.set(path.basename(filePath), filePath);
   }
+  assertLinuxX64PackageSet(byName);
 
   const signatureByBaseName = new Map();
   for (const [name, filePath] of byName) {
@@ -272,51 +376,100 @@ function generateUpdaterManifests(files) {
   }
 
   const manifests = new Map();
+  const requiredTargetKeys = new Set();
+  const channelVariants = [
+    { targetSuffix: "", baseUrl: RELEASE_DOWNLOAD_BASE_URL },
+  ];
+  if (IS_PRERELEASE) {
+    channelVariants.push({
+      targetSuffix: "-beta",
+      baseUrl: TAG_DOWNLOAD_BASE_URL,
+    });
+  }
+  const expectedLinuxTargetKeys = requiredLinuxTargetKeys(channelVariants);
+  const generatedLinuxAppImageTargets = new Set();
+  const missingSignatures = [];
+
   for (const [name] of byName) {
     if (name.endsWith(".sig")) continue;
     const targets = resolveUpdaterTargets(name);
     if (targets.length === 0) continue;
+    for (const target of targets) {
+      for (const channel of channelVariants) {
+        requiredTargetKeys.add(
+          `${target.os}${channel.targetSuffix}-${target.arch}`,
+        );
+      }
+    }
 
     const sigPath = signatureByBaseName.get(name);
     if (!sigPath) {
-      console.log(
-        `  ~ Skipped updater manifest entry for ${name} (missing ${name}.sig)`,
-      );
+      missingSignatures.push(`${name}.sig`);
       continue;
     }
 
     const signature = normalizeUpdaterSignature(sigPath);
-    const url = releaseAssetUrl(name);
     for (const target of targets) {
-      const manifestName = `latest-${target.os}-${target.arch}.json`;
-      if (!manifests.has(manifestName)) {
-        manifests.set(manifestName, {
-          version: VERSION,
-          notes: RELEASE_NOTES,
-          pub_date: RELEASE_PUB_DATE,
-          platforms: {},
-          fallbackPriority: -1,
-        });
-      }
+      for (const channel of channelVariants) {
+        const targetName = `${target.os}${channel.targetSuffix}`;
+        const manifestName = `latest-${targetName}-${target.arch}.json`;
+        if (!manifests.has(manifestName)) {
+          manifests.set(manifestName, {
+            version: VERSION,
+            notes: RELEASE_NOTES,
+            pub_date: RELEASE_PUB_DATE,
+            platforms: {},
+            fallbackPriority: -1,
+          });
+        }
 
-      const manifest = manifests.get(manifestName);
-      const installerKey = `${target.os}-${target.arch}-${target.installer}`;
-      const fallbackKey = `${target.os}-${target.arch}`;
-      manifest.platforms[installerKey] = { url, signature };
+        const manifest = manifests.get(manifestName);
+        const url = releaseAssetUrl(name, channel.baseUrl);
+        const installerKey = `${targetName}-${target.arch}-${target.installer}`;
+        const fallbackKey = `${targetName}-${target.arch}`;
+        manifest.platforms[installerKey] = { url, signature };
+        if (target.os === "linux" && target.installer === "appimage") {
+          generatedLinuxAppImageTargets.add(fallbackKey);
+        }
 
-      const priority =
-        FALLBACK_INSTALLER_PRIORITY[target.os]?.[target.installer] ?? 0;
-      if (
-        !manifest.platforms[fallbackKey] ||
-        priority > manifest.fallbackPriority
-      ) {
-        manifest.platforms[fallbackKey] = { url, signature };
-        manifest.fallbackPriority = priority;
+        const priority =
+          FALLBACK_INSTALLER_PRIORITY[target.os]?.[target.installer] ?? 0;
+        if (
+          priority > 0 &&
+          canPopulateFallbackTarget(target) &&
+          (!manifest.platforms[fallbackKey] ||
+            priority > manifest.fallbackPriority)
+        ) {
+          manifest.platforms[fallbackKey] = { url, signature };
+          manifest.fallbackPriority = priority;
+        }
+
+        if (
+          channel.targetSuffix &&
+          priority > 0 &&
+          canPopulateFallbackTarget(target) &&
+          (!manifest.platforms[targetName] ||
+            priority > (manifest._bareKeyPriority ?? -1))
+        ) {
+          manifest.platforms[targetName] = { url, signature };
+          manifest._bareKeyPriority = priority;
+        }
       }
     }
   }
 
+  if (missingSignatures.length > 0) {
+    throw new Error(
+      `Missing updater signature file(s): ${Array.from(
+        new Set(missingSignatures),
+      )
+        .sort()
+        .join(", ")}.`,
+    );
+  }
+
   const generated = [];
+  const generatedTargetKeys = new Set();
   for (const manifestName of Array.from(manifests.keys()).sort()) {
     const manifest = manifests.get(manifestName);
     const output = {
@@ -333,13 +486,33 @@ function generateUpdaterManifests(files) {
       `  + ${manifestName} (${Object.keys(output.platforms).length} platform entries)`,
     );
     generated.push(dest);
+    const targetKey = parseManifestTargetKey(manifestName);
+    if (targetKey) generatedTargetKeys.add(targetKey);
+  }
+
+  const missingTargets = Array.from(requiredTargetKeys)
+    .filter((k) => !generatedTargetKeys.has(k))
+    .sort();
+  if (missingTargets.length > 0) {
+    throw new Error(
+      `Updater manifest generation incomplete: ${missingTargets.join(", ")}.`,
+    );
+  }
+
+  const missingLinuxTargets = Array.from(expectedLinuxTargetKeys)
+    .filter((k) => !generatedLinuxAppImageTargets.has(k))
+    .sort();
+  if (missingLinuxTargets.length > 0) {
+    throw new Error(
+      `Missing required Linux AppImage updater target(s): ${missingLinuxTargets.join(", ")}.`,
+    );
   }
 
   return generated;
 }
 
 function parseManifestTargetKey(name) {
-  const m = name.match(/^latest-([a-z0-9]+)-([a-z0-9_]+)\.json$/i);
+  const m = name.match(/^latest-([a-z0-9-]+)-([a-z0-9_]+)\.json$/i);
   if (!m) return null;
   return `${m[1].toLowerCase()}-${m[2].toLowerCase()}`;
 }
@@ -352,6 +525,45 @@ function targetKeysForArtifactName(name) {
   return Array.from(
     new Set(resolveUpdaterTargets(baseName).map((t) => `${t.os}-${t.arch}`)),
   );
+}
+
+function normalizePreStagedArtifacts(staged) {
+  const selected = new Map();
+  for (const filePath of staged) {
+    const originalName = path.basename(filePath);
+    const cleanName = cleanArtifactName(originalName);
+    let stat;
+    try {
+      stat = fs.statSync(filePath);
+    } catch {
+      continue;
+    }
+    const current = selected.get(cleanName);
+    if (!current || stat.mtimeMs > current.mtimeMs) {
+      selected.set(cleanName, {
+        filePath,
+        mtimeMs: stat.mtimeMs,
+        originalName,
+      });
+    }
+  }
+  const canonicalPaths = new Set();
+  for (const [cleanName, entry] of selected) {
+    const dest = path.join(releaseDir, cleanName);
+    canonicalPaths.add(path.resolve(dest));
+    if (path.resolve(entry.filePath) !== path.resolve(dest)) {
+      fs.copyFileSync(entry.filePath, dest);
+      console.log(`  + ${entry.originalName} → ${cleanName}`);
+    }
+  }
+  for (const filePath of staged) {
+    if (!canonicalPaths.has(path.resolve(filePath))) {
+      fs.rmSync(filePath, { force: true });
+    }
+  }
+  return Array.from(selected.keys())
+    .sort()
+    .map((name) => path.join(releaseDir, name));
 }
 
 function collectArtifacts() {
@@ -387,12 +599,14 @@ function collectArtifacts() {
     return [...collected, ...manifests];
   }
 
+  clearPreStagedUpdaterManifests();
   const staged = fs
     .readdirSync(releaseDir)
     .filter(
       (n) =>
         isArtifact(n) &&
         artifactMatchesVersion(n) &&
+        !isPerTargetManifest(n) &&
         !n.endsWith(".asc") &&
         !isChecksumTextName(n),
     )
@@ -407,8 +621,9 @@ function collectArtifacts() {
   }
 
   console.log(`  Found ${staged.length} pre-staged artifact(s) in release/`);
-  const manifests = generateUpdaterManifests(staged);
-  return Array.from(new Set([...staged, ...manifests]));
+  const normalizedStaged = normalizePreStagedArtifacts(staged);
+  const manifests = generateUpdaterManifests(normalizedStaged);
+  return Array.from(new Set([...normalizedStaged, ...manifests]));
 }
 
 function sha256(filePath) {
@@ -449,6 +664,19 @@ function generateChecksums(files) {
     if (targetKeys.length === 0) {
       targetKeys = ["generic"];
     }
+    if (IS_PRERELEASE) {
+      const betaKeys = [];
+      for (const key of targetKeys) {
+        if (key.includes("-beta-")) continue;
+        const dashIdx = key.indexOf("-");
+        if (dashIdx > 0) {
+          betaKeys.push(
+            `${key.slice(0, dashIdx)}-beta-${key.slice(dashIdx + 1)}`,
+          );
+        }
+      }
+      targetKeys = [...targetKeys, ...betaKeys];
+    }
     for (const targetKey of targetKeys) {
       addToBucket(targetKey, filePath);
     }
@@ -475,12 +703,16 @@ function signFile(filePath) {
   if (GPG_KEY_ID) {
     args.push("--local-user", GPG_KEY_ID);
   }
-  if (GPG_PASSPHRASE) {
-    args.push("--pinentry-mode", "loopback", "--passphrase", GPG_PASSPHRASE);
+  const usePassphraseStdin = Boolean(GPG_PASSPHRASE);
+  if (usePassphraseStdin) {
+    args.push("--pinentry-mode", "loopback", "--passphrase-fd", "0");
   }
   args.push("--output", asc, filePath);
 
-  const result = spawnSync("gpg", args, { stdio: "pipe" });
+  const result = spawnSync("gpg", args, {
+    stdio: "pipe",
+    input: usePassphraseStdin ? `${GPG_PASSPHRASE}\n` : undefined,
+  });
   if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error(
@@ -530,7 +762,15 @@ function ghRequest(method, endpoint, body) {
             );
           }
         } catch {
-          resolve(data);
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            resolve(data);
+          } else {
+            reject(
+              new Error(
+                `GitHub ${res.statusCode}: ${data || "Non-JSON error response"}`,
+              ),
+            );
+          }
         }
       });
     });
@@ -561,7 +801,7 @@ async function getOrCreateRelease() {
     tag_name: TAG,
     name: `Zinnia ${VERSION}`,
     draft: true,
-    prerelease: VERSION.includes("beta") || VERSION.includes("alpha"),
+    prerelease: IS_PRERELEASE,
   });
 }
 
@@ -594,8 +834,12 @@ async function uploadAsset(uploadUrl, filePath) {
           if (res.statusCode < 300) {
             resolve(true);
           } else if (res.statusCode === 422) {
-            console.log(`  ~ ${fileName} (already uploaded)`);
-            resolve(true);
+            let detail = data;
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed?.message) detail = parsed.message;
+            } catch {}
+            reject(new Error(`Upload ${fileName} rejected (422): ${detail}.`));
           } else {
             reject(
               new Error(`Upload ${fileName} failed ${res.statusCode}: ${data}`),
@@ -610,10 +854,85 @@ async function uploadAsset(uploadUrl, filePath) {
   });
 }
 
+async function listReleaseAssets(releaseId) {
+  const assets = await ghRequest(
+    "GET",
+    `/repos/${REPO_OWNER}/${REPO_NAME}/releases/${releaseId}/assets?per_page=100`,
+  );
+  return Array.isArray(assets) ? assets : [];
+}
+
+async function uploadAssetWithReplace(release, filePath) {
+  try {
+    await uploadAsset(release.upload_url, filePath);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!message.includes("(422)")) throw err;
+
+    const fileName = path.basename(filePath);
+    const assets = await listReleaseAssets(release.id);
+    const existing = assets.find(
+      (asset) => asset?.name === fileName && typeof asset.id === "number",
+    );
+    if (!existing) throw err;
+    if (!release.draft && !ALLOW_ASSET_REPLACE) {
+      throw new Error(
+        `Refusing to replace existing asset "${fileName}" on published release ${TAG}. Set ALLOW_ASSET_REPLACE=true to override.`,
+      );
+    }
+
+    await ghRequest(
+      "DELETE",
+      `/repos/${REPO_OWNER}/${REPO_NAME}/releases/assets/${existing.id}`,
+    );
+    await uploadAsset(release.upload_url, filePath);
+  }
+}
+
+async function syncBetaManifestsToLatestStable(
+  uploadedFiles,
+  currentReleaseId,
+) {
+  const betaManifests = uploadedFiles.filter((filePath) =>
+    /^latest-[a-z0-9]+-beta-[a-z0-9_]+\.json$/i.test(path.basename(filePath)),
+  );
+  if (betaManifests.length === 0) return;
+
+  let latestStable;
+  try {
+    latestStable = await ghRequest(
+      "GET",
+      `/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`,
+    );
+  } catch (err) {
+    throw new Error(
+      `Could not load latest stable release for beta manifest sync: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  if (!latestStable?.id || !latestStable?.upload_url) return;
+  if (latestStable.id === currentReleaseId) return;
+
+  for (const filePath of betaManifests) {
+    await uploadAssetWithReplace(latestStable, filePath);
+    console.log(
+      `  ~ synced ${path.basename(filePath)} to latest stable release`,
+    );
+  }
+}
+
 async function main() {
   console.log(`\nZinnia ${VERSION} — release pipeline\n`);
 
   console.log("[1/5] Checking GPG...");
+  if (!GPG_KEY_ID) {
+    console.error("GPG_KEY_ID is required.");
+    process.exit(1);
+  }
+  if (!GPG_PASSPHRASE) {
+    console.error("GPG_PASSPHRASE is required.");
+    process.exit(1);
+  }
   try {
     execSync("gpg --version", { stdio: "pipe" });
   } catch {
@@ -642,14 +961,23 @@ async function main() {
 
   console.log("[5/5] Uploading to GitHub...");
   const release = await getOrCreateRelease();
+  if (!release?.draft && !ALLOW_ASSET_REPLACE) {
+    throw new Error(
+      `Release ${TAG} already exists as published. Refusing to mutate it without ALLOW_ASSET_REPLACE=true.`,
+    );
+  }
   console.log(`  Release: ${release.html_url || TAG}`);
 
   const everything = fs
     .readdirSync(releaseDir)
+    .filter((name) => shouldUploadReleaseEntry(name))
     .map((n) => path.join(releaseDir, n));
   for (const f of everything) {
-    await uploadAsset(release.upload_url, f);
+    await uploadAssetWithReplace(release, f);
     console.log(`  ^ ${path.basename(f)}`);
+  }
+  if (IS_PRERELEASE) {
+    await syncBetaManifestsToLatestStable(everything, release.id);
   }
 
   console.log(

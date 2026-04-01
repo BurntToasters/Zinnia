@@ -131,6 +131,7 @@ describe("populateSettingsModal", () => {
       encryptHeaders: false,
       deleteAfter: true,
       autoCheckUpdates: false,
+      updateChannel: "beta",
       localLoggingEnabled: true,
       logVerbosity: "debug",
     };
@@ -151,6 +152,7 @@ describe("populateSettingsModal", () => {
     expect(getChecked("s-encrypt-headers")).toBe(false);
     expect(getChecked("s-delete-after")).toBe(true);
     expect(getChecked("s-auto-check-updates")).toBe(false);
+    expect(getSelectValue("s-update-channel")).toBe("beta");
     expect(getChecked("s-local-logging")).toBe(true);
     expect(getSelectValue("s-log-verbosity")).toBe("debug");
   });
@@ -185,6 +187,7 @@ describe("readSettingsModal", () => {
     setChecked("s-encrypt-headers", true);
     setChecked("s-delete-after", false);
     setChecked("s-auto-check-updates", true);
+    setSelectValue("s-update-channel", "beta");
     setChecked("s-local-logging", true);
     setSelectValue("s-log-verbosity", "debug");
 
@@ -202,6 +205,7 @@ describe("readSettingsModal", () => {
     expect(settings.encryptHeaders).toBe(true);
     expect(settings.deleteAfter).toBe(false);
     expect(settings.autoCheckUpdates).toBe(true);
+    expect(settings.updateChannel).toBe("beta");
     expect(settings.localLoggingEnabled).toBe(true);
     expect(settings.logVerbosity).toBe("debug");
   });
@@ -230,6 +234,7 @@ describe("readSettingsModal", () => {
       encryptHeaders: true,
       deleteAfter: false,
       autoCheckUpdates: true,
+      updateChannel: "stable" as const,
       localLoggingEnabled: false,
       logVerbosity: "info" as const,
     };
@@ -244,6 +249,7 @@ describe("readSettingsModal", () => {
     expect(result.sfx).toBe(original.sfx);
     expect(result.encryptHeaders).toBe(original.encryptHeaders);
     expect(result.autoCheckUpdates).toBe(original.autoCheckUpdates);
+    expect(result.updateChannel).toBe(original.updateChannel);
   });
 });
 
