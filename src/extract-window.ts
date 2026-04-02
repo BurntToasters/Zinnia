@@ -143,12 +143,11 @@ async function run() {
       return;
     }
 
-    let status = "Done";
     if (result.code === 1) {
-      status = "Done (with warnings)";
+      finish("Done (with warnings)", 100);
+    } else {
+      await closeWindowSafely(appWindow);
     }
-
-    finish(status, 100);
   } catch (err) {
     if (cancelRequested) {
       finish("Cancelled", 100);
