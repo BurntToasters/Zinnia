@@ -2,15 +2,18 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { $ } from "./utils";
 import { state } from "./state";
 import { getMode, renderInputs, setBrowsePasswordFieldVisible } from "./ui";
+import { deriveOutputArchivePath } from "./extract-path";
 
 export async function chooseOutput() {
   const format = $<HTMLSelectElement>("format").value;
+  const derived = deriveOutputArchivePath(state.inputs, format);
   const output = await save({
     title: "Choose output archive",
-    defaultPath: `zinnia.${format}`,
+    defaultPath: derived ?? `zinnia.${format}`,
   });
   if (output) {
     $<HTMLInputElement>("output-path").value = output;
+    state.lastAutoOutputPath = null;
   }
 }
 

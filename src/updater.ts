@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { message, ask } from "@tauri-apps/plugin-dialog";
@@ -28,9 +29,18 @@ async function getUpdaterTargetBase(): Promise<string> {
 }
 
 async function getUpdateCheckTarget(): Promise<string | undefined> {
-  if (state.currentSettings.updateChannel !== "beta") {
+  const channel = state.currentSettings.updateChannel;
+  if (channel === "stable") {
     return undefined;
   }
+  if (channel === "beta") {
+    const base = await getUpdaterTargetBase();
+    return `${base}-beta`;
+  }
+  // auto: follow the installed version — beta if version contains a pre-release tag
+  const version = await getVersion();
+  const isBeta = /-(beta|alpha|rc)/i.test(version);
+  if (!isBeta) return undefined;
   const base = await getUpdaterTargetBase();
   return `${base}-beta`;
 }

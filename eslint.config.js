@@ -34,6 +34,6 @@ export default [
     },
   },
   {
-    ignores: ["dist/**", "node_modules/**", "src-tauri/**", "scripts/**"],
+    ignores: ["dist/**", "node_modules/**", "src-tauri/**"],
   },
 ];

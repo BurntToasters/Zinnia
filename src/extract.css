@@ -256,3 +256,13 @@ body {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
 }
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --transition: 0ms;
+  }
+
+  .extract-progress-fill {
+    animation: none;
+  }
+}

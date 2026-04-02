@@ -2,7 +2,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { $, MAX_LOG_LINES, redactSensitiveText } from "./utils";
 import { state, dom } from "./state";
 import { LogVerbosity } from "./settings-model";
-import { resolveExtractDestinationAutofill } from "./extract-path";
+import {
+  resolveExtractDestinationAutofill,
+  resolveOutputArchiveAutofill,
+} from "./extract-path";
 
 type LogLevel = "info" | "debug" | "error";
 
@@ -203,6 +206,32 @@ export function renderInputs() {
       if (nextExtractPath) {
         extractPathInput.value = nextExtractPath;
         state.lastAutoExtractDestination = nextExtractPath;
+      }
+    }
+  }
+
+  if (mode === "add") {
+    const outputPathInput = document.getElementById(
+      "output-path",
+    ) as HTMLInputElement | null;
+    if (outputPathInput) {
+      const archiveNameInput = document.getElementById(
+        "archive-name",
+      ) as HTMLInputElement | null;
+      const format =
+        (document.getElementById("format") as HTMLSelectElement | null)
+          ?.value ?? "7z";
+      const customName = archiveNameInput?.value.trim() || undefined;
+      const next = resolveOutputArchiveAutofill(
+        outputPathInput.value,
+        state.lastAutoOutputPath,
+        state.inputs,
+        format,
+        customName,
+      );
+      if (next) {
+        outputPathInput.value = next;
+        state.lastAutoOutputPath = next;
       }
     }
   }

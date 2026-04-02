@@ -50,6 +50,10 @@ import {
 import { checkUpdates, autoCheckUpdates } from "./updater";
 import { openLicensesModal, closeLicensesModal } from "./licenses";
 import { chooseOutput, chooseExtract, addFiles, addFolder } from "./files";
+import {
+  deriveOutputArchivePath,
+  resolveOutputArchiveAutofill,
+} from "./extract-path";
 
 async function exportLocalLogs() {
   const suggestedName = `zinnia-logs-${new Date().toISOString().slice(0, 10)}.txt`;
@@ -167,11 +171,39 @@ async function applyIncomingPaths(
 }
 
 function wireEvents() {
+  // Sync the output-path field when format changes so the extension updates
+  // automatically even if inputs were already present.
+  function syncOutputPath(): void {
+    const outputPathInput = document.getElementById(
+      "output-path",
+    ) as HTMLInputElement | null;
+    const archiveNameInput = document.getElementById(
+      "archive-name",
+    ) as HTMLInputElement | null;
+    if (!outputPathInput) return;
+    const format = $<HTMLSelectElement>("format").value;
+    const customName = archiveNameInput?.value.trim() || undefined;
+    const next = resolveOutputArchiveAutofill(
+      outputPathInput.value,
+      state.lastAutoOutputPath,
+      state.inputs,
+      format,
+      customName,
+    );
+    if (next) {
+      outputPathInput.value = next;
+      state.lastAutoOutputPath = next;
+    }
+  }
+
   $("add-files").addEventListener("click", addFiles);
   $("add-folder").addEventListener("click", addFolder);
   $("clear-inputs").addEventListener("click", () => {
     state.inputs.length = 0;
+    state.lastAutoOutputPath = null;
     renderInputs();
+    $<HTMLInputElement>("output-path").value = "";
+    $<HTMLInputElement>("archive-name").value = "";
     const bc = document.getElementById("browse-contents");
     if (bc) bc.hidden = true;
   });
@@ -240,9 +272,30 @@ function wireEvents() {
     );
   });
 
+  $("output-path").addEventListener("input", () => {
+    const value = $<HTMLInputElement>("output-path").value.trim();
+    if (value !== (state.lastAutoOutputPath ?? "").trim()) {
+      state.lastAutoOutputPath = null;
+    }
+  });
+
+  $("archive-name").addEventListener("input", () => {
+    // Archive name field always drives the output path (force-update).
+    const outputPathInput = $<HTMLInputElement>("output-path");
+    const archiveNameInput = $<HTMLInputElement>("archive-name");
+    const format = $<HTMLSelectElement>("format").value;
+    const customName = archiveNameInput.value.trim() || undefined;
+    const next = deriveOutputArchivePath(state.inputs, format, customName);
+    if (next) {
+      outputPathInput.value = next;
+      state.lastAutoOutputPath = next;
+    }
+  });
+
   $<HTMLSelectElement>("format").addEventListener("change", () => {
     updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
     onCompressionOptionChange();
+    syncOutputPath();
   });
 
   for (const id of ["level", "method", "dict", "word-size", "solid"]) {
@@ -520,7 +573,10 @@ async function init() {
           }
         }
       }
-    } catch {}
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      devLog(`Drag-drop handler error: ${msg}`);
+    }
   });
 }
 

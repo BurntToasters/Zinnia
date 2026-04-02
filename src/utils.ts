@@ -35,6 +35,9 @@ const FOCUSABLE =
 const activeFocusTraps = new Map<HTMLElement, (e: KeyboardEvent) => void>();
 
 export function trapFocus(container: HTMLElement): void {
+  if (activeFocusTraps.has(container)) {
+    releaseFocusTrap(container);
+  }
   const handler = (e: KeyboardEvent) => {
     if (e.key !== "Tab") return;
     const focusable = Array.from(
