@@ -104,7 +104,7 @@ function artifactMatchesVersion(name) {
     /\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?/g,
   );
   if (!versions || versions.length === 0) return true;
-  return versions.includes(VERSION);
+  return versions.some((v) => v === VERSION || v.startsWith(VERSION + "-"));
 }
 
 function clearReleaseStaging() {
@@ -911,7 +911,12 @@ async function syncBetaManifestsToLatestStable(
   }
 
   if (!latestStable?.id || !latestStable?.upload_url) return;
-  if (latestStable.id === currentReleaseId) return;
+  if (latestStable.id === currentReleaseId) {
+    console.warn(
+      "  ! syncBetaManifests: latest stable is the current release — sync skipped. Publish a stable release before running beta builds.",
+    );
+    return;
+  }
 
   for (const filePath of betaManifests) {
     await uploadAssetWithReplace(latestStable, filePath);
