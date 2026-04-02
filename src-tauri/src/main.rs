@@ -501,10 +501,18 @@ fn export_logs(app: tauri::AppHandle, destination_path: String) -> Result<(), St
     if destination_path.trim().is_empty() {
         return Err("Destination path is required.".to_string());
     }
+    if destination_path.contains('\0') {
+        return Err("Destination path contains invalid characters.".to_string());
+    }
 
-    let destination = std::path::PathBuf::from(destination_path);
+    let destination = std::path::PathBuf::from(&destination_path);
+    if destination.is_dir() {
+        return Err("Destination path must be a file, not a directory.".to_string());
+    }
     if let Some(parent) = destination.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            return Err("Destination parent directory does not exist.".to_string());
+        }
     }
 
     let source = log_file_path(&app)?;
@@ -702,14 +710,15 @@ fn get_extract_paths(state: tauri::State<'_, ExtractQueue>) -> Result<Vec<String
 }
 
 fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Result<(), String> {
-    {
+    let expected_len = {
         let queue = app.state::<ExtractQueue>();
         let mut q = queue.0.lock().map_err(|_| "Lock poisoned".to_string())?;
         if q.len() >= 20 {
             return Err("Extract queue is full".to_string());
         }
         q.push(paths);
-    }
+        q.len()
+    };
 
     let label = format!(
         "extract-{}",
@@ -732,7 +741,9 @@ fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Result<()
     if result.is_err() {
         let queue = app.state::<ExtractQueue>();
         if let Ok(mut q) = queue.0.lock() {
-            q.pop();
+            if q.len() == expected_len {
+                q.pop();
+            }
         };
     }
 

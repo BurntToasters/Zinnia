@@ -86,6 +86,13 @@ describe("normalizeUserSettings", () => {
     });
     expect(result.updateChannel).toBe(SETTING_DEFAULTS.updateChannel);
   });
+
+  it("accepts 'auto' updateChannel", () => {
+    const result = normalizeUserSettings({
+      updateChannel: "auto",
+    });
+    expect(result.updateChannel).toBe("auto");
+  });
 });
 
 describe("splitSettingsPayload", () => {

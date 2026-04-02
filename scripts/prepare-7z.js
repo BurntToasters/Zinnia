@@ -1,4 +1,5 @@
 import fs from "fs";
+import crypto from "crypto";
 import path from "path";
 import { spawnSync } from "child_process";
 
@@ -87,6 +88,11 @@ for (const mapping of mappings) {
   }
 
   fs.copyFileSync(sourcePath, targetPath);
+  const hash = crypto
+    .createHash("sha256")
+    .update(fs.readFileSync(targetPath))
+    .digest("hex");
+  console.log(`  ${mapping.target}: sha256=${hash}`);
   if (process.platform !== "win32") {
     try {
       fs.chmodSync(targetPath, 0o755);

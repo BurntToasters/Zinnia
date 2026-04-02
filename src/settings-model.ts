@@ -4,7 +4,7 @@ export type ThemePreference = "system" | "light" | "dark";
 export type ArchiveFormat = "7z" | "zip" | "tar" | "gzip" | "bzip2" | "xz";
 export type PathMode = "relative" | "absolute";
 export type LogVerbosity = "info" | "debug";
-export type UpdateChannel = "stable" | "beta";
+export type UpdateChannel = "auto" | "stable" | "beta";
 
 export interface UserSettings {
   theme: ThemePreference;
@@ -46,7 +46,7 @@ export const SETTING_DEFAULTS: UserSettings = {
   encryptHeaders: false,
   deleteAfter: false,
   autoCheckUpdates: true,
-  updateChannel: "stable",
+  updateChannel: "auto",
   localLoggingEnabled: true,
   logVerbosity: "info",
 };
@@ -62,7 +62,7 @@ const FORMATS = new Set<ArchiveFormat>([
 ]);
 const PATH_MODES = new Set<PathMode>(["relative", "absolute"]);
 const LOG_VERBOSITY = new Set<LogVerbosity>(["info", "debug"]);
-const UPDATE_CHANNELS = new Set<UpdateChannel>(["stable", "beta"]);
+const UPDATE_CHANNELS = new Set<UpdateChannel>(["auto", "stable", "beta"]);
 const USER_SETTING_KEYS = new Set<keyof UserSettings>([
   "theme",
   "format",

@@ -39,6 +39,7 @@ export const state = {
   appIsPackaged: false,
   logDirectory: "",
   lastAutoExtractDestination: null as string | null,
+  lastAutoOutputPath: null as string | null,
   browseArchiveInfoByPath: new Map<string, ArchiveInfo>(),
   browseSelectionsByArchive: new Map<string, Set<string>>(),
   selectiveSearchQuery: "",

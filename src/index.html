@@ -52,24 +52,30 @@
             <button
               class="settings-tab is-active"
               role="tab"
+              id="tab-general"
               data-tab="general"
               aria-selected="true"
+              aria-controls="panel-general"
             >
               General
             </button>
             <button
               class="settings-tab"
               role="tab"
+              id="tab-compression"
               data-tab="compression"
               aria-selected="false"
+              aria-controls="panel-compression"
             >
               Compression
             </button>
             <button
               class="settings-tab"
               role="tab"
+              id="tab-about"
               data-tab="about"
               aria-selected="false"
+              aria-controls="panel-about"
             >
               About
             </button>
@@ -77,7 +83,13 @@
 
           <div class="modal__body">
             <!-- General tab -->
-            <div class="settings-panel is-active" data-panel="general">
+            <div
+              class="settings-panel is-active"
+              data-panel="general"
+              id="panel-general"
+              role="tabpanel"
+              aria-labelledby="tab-general"
+            >
               <div class="setting-item">
                 <div class="setting-info">
                   <span class="setting-title">Theme</span>
@@ -131,6 +143,7 @@
                   >
                 </div>
                 <select id="s-update-channel" class="setting-select">
+                  <option value="auto">Auto (follow version)</option>
                   <option value="stable">Stable</option>
                   <option value="beta">Beta</option>
                 </select>
@@ -197,7 +210,13 @@
             </div>
 
             <!-- Compression tab -->
-            <div class="settings-panel" data-panel="compression">
+            <div
+              class="settings-panel"
+              data-panel="compression"
+              id="panel-compression"
+              role="tabpanel"
+              aria-labelledby="tab-compression"
+            >
               <p class="settings-hint">
                 Default values applied when creating new archives.
               </p>
@@ -331,7 +350,13 @@
             </div>
 
             <!-- About tab -->
-            <div class="settings-panel" data-panel="about">
+            <div
+              class="settings-panel"
+              data-panel="about"
+              id="panel-about"
+              role="tabpanel"
+              aria-labelledby="tab-about"
+            >
               <div class="about-header">
                 <img
                   src="/zinnia_default-logo.png"
@@ -452,7 +477,9 @@
             </button>
           </div>
           <div class="modal__body">
-            <div id="licenses-list" class="licenses-list">Loading…</div>
+            <div id="licenses-list" class="licenses-list" aria-live="polite">
+              Loading…
+            </div>
           </div>
         </div>
       </div>
@@ -557,7 +584,11 @@
                   </button>
                 </div>
               </div>
-              <div class="list" id="input-list"></div>
+              <div
+                class="list"
+                id="input-list"
+                aria-label="File inputs — drop files here or use buttons above"
+              ></div>
             </section>
 
             <section
@@ -605,6 +636,15 @@
                     <option value="9">9 - Ultra</option>
                   </select>
                 </div>
+              </div>
+
+              <div class="field">
+                <label for="archive-name">Archive name (optional)</label>
+                <input
+                  type="text"
+                  id="archive-name"
+                  placeholder="Leave blank to use source name"
+                />
               </div>
 
               <div class="field">
@@ -668,6 +708,7 @@
                         type="password"
                         id="extract-password"
                         placeholder="Only if needed"
+                        autocomplete="off"
                       />
                       <button
                         type="button"
@@ -726,6 +767,7 @@
                     type="password"
                     id="browse-password"
                     placeholder="Only if needed"
+                    autocomplete="off"
                   />
                   <button
                     type="button"
@@ -871,6 +913,7 @@
                         type="password"
                         id="password"
                         placeholder="Leave blank for none"
+                        autocomplete="off"
                       />
                       <button
                         type="button"
@@ -903,7 +946,7 @@
             <button class="btn btn--ghost btn--sm" id="clear-log">Clear</button>
           </div>
           <div class="panel__body">
-            <div class="log" id="log"></div>
+            <div class="log" id="log" aria-live="polite" role="log"></div>
           </div>
         </section>
       </main>
