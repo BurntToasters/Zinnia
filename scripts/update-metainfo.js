@@ -62,7 +62,7 @@ function run({ now = new Date() } = {}) {
     throw new Error("Could not locate releases section");
   }
 
-  const releaseSelfClosingRegex = /<release\b[^>]*\/>/;
+  const releaseSelfClosingRegex = /[^\S\n]*<release\b[^>]*\/>/;
   const releasePairedRegex = /<release\b[^>]*>[\s\S]*?<\/release>/;
 
   const currentReleaseMatch =

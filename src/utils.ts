@@ -30,7 +30,7 @@ export function $<T extends HTMLElement>(id: string): T {
 }
 
 const FOCUSABLE =
-  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
 
 const activeFocusTraps = new Map<HTMLElement, (e: KeyboardEvent) => void>();
 
@@ -106,7 +106,7 @@ const JWT_LIKE_PATTERN =
   /\beyJ[a-zA-Z0-9_-]{6,}\.[a-zA-Z0-9_-]{6,}\.[a-zA-Z0-9_-]{6,}\b/g;
 const OPENAI_KEY_PATTERN = /\bsk-[A-Za-z0-9]{20,}\b/g;
 const KEY_VALUE_SECRET_PATTERN =
-  /\b(password|passphrase|token|private[_-]?key)\s*[:=]\s*\S+/gi;
+  /\b(password|passphrase|token|private[_-]?key)\s*([:=])\s*\S+/gi;
 const ARG_PASSWORD_PATTERN = /-p\S*/gi;
 
 export function redactSensitiveText(input: string): string {
@@ -115,7 +115,7 @@ export function redactSensitiveText(input: string): string {
     .replace(JWT_LIKE_PATTERN, "***")
     .replace(OPENAI_KEY_PATTERN, "***")
     .replace(ARG_PASSWORD_PATTERN, "-p***")
-    .replace(KEY_VALUE_SECRET_PATTERN, (_match, key: string) => `${key}=***`)
+    .replace(KEY_VALUE_SECRET_PATTERN, (_match, key: string, sep: string) => `${key}${sep}***`)
     .replace(TOKEN_LIKE_PATTERN, "***");
 }
 

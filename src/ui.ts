@@ -104,7 +104,9 @@ export function devLog(line: string) {
 
 export function toggleActivity() {
   const isVisible = dom.gridEl.classList.toggle("show-activity");
-  $("toggle-activity").classList.toggle("is-active", isVisible);
+  const btn = $("toggle-activity");
+  btn.classList.toggle("is-active", isVisible);
+  btn.setAttribute("aria-pressed", String(isVisible));
 }
 
 export function setStatus(text: string, autoResetMs?: number) {
@@ -177,7 +179,9 @@ export function setMode(mode: "add" | "extract" | "browse") {
   dom.appEl.dataset.mode = mode;
   document.querySelectorAll("[data-mode-btn]").forEach((btn) => {
     const el = btn as HTMLButtonElement;
-    el.classList.toggle("is-active", el.dataset.modeBtn === mode);
+    const isActive = el.dataset.modeBtn === mode;
+    el.classList.toggle("is-active", isActive);
+    el.setAttribute("aria-pressed", String(isActive));
   });
   if (mode !== "browse") {
     setBrowsePasswordFieldVisible(false);
@@ -260,6 +264,8 @@ export function renderInputs() {
     const span = document.createElement("span");
     span.textContent = path;
     const remove = document.createElement("button");
+    remove.className = "btn btn--ghost btn--sm";
+    remove.setAttribute("aria-label", `Remove ${path}`);
     remove.textContent = "Remove";
     remove.disabled = state.running;
     remove.addEventListener("click", () => {

@@ -7,6 +7,7 @@ export default defineConfig({
   build: {
     outDir: "../dist",
     emptyOutDir: true,
+    target: "es2022",
     rollupOptions: {
       input: {
         main: resolve(__dirname, "src/index.html"),
@@ -17,5 +18,6 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    clearScreen: false,
   },
 });

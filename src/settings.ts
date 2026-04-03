@@ -146,7 +146,11 @@ export function openSettingsModal() {
   const overlay = $("settings-overlay");
   overlay.hidden = false;
   const modal = overlay.querySelector<HTMLElement>(".modal");
-  if (modal) trapFocus(modal);
+  if (modal) {
+    trapFocus(modal);
+    const activeTab = modal.querySelector<HTMLElement>(".settings-tab.is-active");
+    activeTab?.focus();
+  }
 }
 
 export function closeSettingsModal() {
@@ -154,4 +158,6 @@ export function closeSettingsModal() {
   overlay.hidden = true;
   const modal = overlay.querySelector<HTMLElement>(".modal");
   if (modal) releaseFocusTrap(modal);
+  const trigger = document.getElementById("open-settings");
+  trigger?.focus();
 }

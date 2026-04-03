@@ -10,11 +10,8 @@
     "core:default",
     "core:window:allow-close",
     "core:window:allow-destroy",
-    "dialog:allow-open",
-    "dialog:allow-save",
-    "dialog:allow-message",
-    "updater:default",
     "dialog:default",
+    "updater:default",
     "process:default",
     "shell:allow-open",
     "notification:default"

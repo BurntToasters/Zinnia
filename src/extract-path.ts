@@ -2,7 +2,6 @@ const KNOWN_ARCHIVE_SUFFIXES = [
   ".tar.gz",
   ".tar.bz2",
   ".tar.xz",
-  ".tar.zst",
   ".tbz2",
   ".tgz",
   ".txz",

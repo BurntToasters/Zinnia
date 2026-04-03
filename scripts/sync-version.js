@@ -24,7 +24,10 @@ if (conf.version !== version) {
 
 const cargoPath = path.join(root, "src-tauri", "Cargo.toml");
 let cargo = fs.readFileSync(cargoPath, "utf-8");
-const updated = cargo.replace(/^(version\s*=\s*)"[^"]*"/m, `$1"${version}"`);
+const updated = cargo.replace(
+  /(\[package\][^[]*?\nversion\s*=\s*)"[^"]*"/s,
+  `$1"${version}"`,
+);
 if (updated !== cargo) {
   fs.writeFileSync(cargoPath, updated);
   const cargoVerify = fs.readFileSync(cargoPath, "utf-8");

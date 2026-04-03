@@ -111,11 +111,13 @@ export function buildSelectiveExtractArgs(
   extraArgs: string[],
   selectedPaths: string[],
 ): string[] {
-  const args = ["x", archive, `-o${destination}`, "-y"];
+  const args = ["x", `-o${destination}`, "-y"];
   if (password) args.push(`-p${password}`);
   args.push(...extraArgs);
   if (selectedPaths.length > 0) {
-    args.push("-spd", "--", ...selectedPaths);
+    args.push("-spd", "--", archive, ...selectedPaths);
+  } else {
+    args.push("--", archive);
   }
   return args;
 }
