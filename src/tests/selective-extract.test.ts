@@ -169,13 +169,13 @@ describe("buildSelectiveExtractArgs", () => {
       ),
     ).toEqual([
       "x",
-      "/tmp/archive.7z",
       "-o/tmp/output",
       "-y",
       "-psecret",
       "-aos",
       "-spd",
       "--",
+      "/tmp/archive.7z",
       "docs/readme.md",
       "src/main.ts",
     ]);
@@ -192,11 +192,11 @@ describe("buildSelectiveExtractArgs", () => {
       ),
     ).toEqual([
       "x",
-      "/tmp/archive.7z",
       "-o/tmp/output",
       "-y",
       "-spd",
       "--",
+      "/tmp/archive.7z",
       "-leading-switch-name.txt",
     ]);
   });
@@ -204,7 +204,7 @@ describe("buildSelectiveExtractArgs", () => {
   it("extracts everything when no paths selected", () => {
     expect(
       buildSelectiveExtractArgs("/tmp/archive.7z", "/tmp/output", "", [], []),
-    ).toEqual(["x", "/tmp/archive.7z", "-o/tmp/output", "-y"]);
+    ).toEqual(["x", "-o/tmp/output", "-y", "--", "/tmp/archive.7z"]);
   });
 });
 

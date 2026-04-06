@@ -50,6 +50,10 @@ import {
 import { checkUpdates, autoCheckUpdates } from "./updater";
 import { openLicensesModal, closeLicensesModal } from "./licenses";
 import { chooseOutput, chooseExtract, addFiles, addFolder } from "./files";
+import {
+  deriveOutputArchivePath,
+  resolveOutputArchiveAutofill,
+} from "./extract-path";
 
 async function exportLocalLogs() {
   const suggestedName = `zinnia-logs-${new Date().toISOString().slice(0, 10)}.txt`;
@@ -141,7 +145,7 @@ async function applyIncomingPaths(
   if (!paths.length) return;
 
   const shouldAutoBrowse =
-    mode !== "extract" && (await allPathsAreArchives(paths));
+    mode !== "extract" && paths.length === 1 && (await allPathsAreArchives(paths));
   if (mode === "extract") {
     setMode("extract");
     state.inputs.length = 0;
@@ -167,11 +171,39 @@ async function applyIncomingPaths(
 }
 
 function wireEvents() {
+  // Sync the output-path field when format changes so the extension updates
+  // automatically even if inputs were already present.
+  function syncOutputPath(): void {
+    const outputPathInput = document.getElementById(
+      "output-path",
+    ) as HTMLInputElement | null;
+    const archiveNameInput = document.getElementById(
+      "archive-name",
+    ) as HTMLInputElement | null;
+    if (!outputPathInput) return;
+    const format = $<HTMLSelectElement>("format").value;
+    const customName = archiveNameInput?.value.trim() || undefined;
+    const next = resolveOutputArchiveAutofill(
+      outputPathInput.value,
+      state.lastAutoOutputPath,
+      state.inputs,
+      format,
+      customName,
+    );
+    if (next) {
+      outputPathInput.value = next;
+      state.lastAutoOutputPath = next;
+    }
+  }
+
   $("add-files").addEventListener("click", addFiles);
   $("add-folder").addEventListener("click", addFolder);
   $("clear-inputs").addEventListener("click", () => {
     state.inputs.length = 0;
+    state.lastAutoOutputPath = null;
     renderInputs();
+    $<HTMLInputElement>("output-path").value = "";
+    $<HTMLInputElement>("archive-name").value = "";
     const bc = document.getElementById("browse-contents");
     if (bc) bc.hidden = true;
   });
@@ -240,9 +272,30 @@ function wireEvents() {
     );
   });
 
+  $("output-path").addEventListener("input", () => {
+    const value = $<HTMLInputElement>("output-path").value.trim();
+    if (value !== (state.lastAutoOutputPath ?? "").trim()) {
+      state.lastAutoOutputPath = null;
+    }
+  });
+
+  $("archive-name").addEventListener("input", () => {
+    // Archive name field always drives the output path (force-update).
+    const outputPathInput = $<HTMLInputElement>("output-path");
+    const archiveNameInput = $<HTMLInputElement>("archive-name");
+    const format = $<HTMLSelectElement>("format").value;
+    const customName = archiveNameInput.value.trim() || undefined;
+    const next = deriveOutputArchivePath(state.inputs, format, customName);
+    if (next) {
+      outputPathInput.value = next;
+      state.lastAutoOutputPath = next;
+    }
+  });
+
   $<HTMLSelectElement>("format").addEventListener("change", () => {
     updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
     onCompressionOptionChange();
+    syncOutputPath();
   });
 
   for (const id of ["level", "method", "dict", "word-size", "solid"]) {
@@ -321,32 +374,54 @@ function wireEvents() {
     }
   });
 
-  document
-    .querySelectorAll<HTMLButtonElement>(".settings-tab")
-    .forEach((tab) => {
-      tab.addEventListener("click", () => {
-        document.querySelectorAll(".settings-tab").forEach((t) => {
-          t.classList.remove("is-active");
-          t.setAttribute("aria-selected", "false");
-        });
-        document
-          .querySelectorAll(".settings-panel")
-          .forEach((p) => p.classList.remove("is-active"));
-        tab.classList.add("is-active");
-        tab.setAttribute("aria-selected", "true");
-        const panel = document.querySelector(
-          `[data-panel="${tab.dataset.tab}"]`,
-        );
-        if (panel) panel.classList.add("is-active");
+  const settingsTabs = Array.from(
+    document.querySelectorAll<HTMLButtonElement>(".settings-tab"),
+  );
+  settingsTabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      settingsTabs.forEach((t) => {
+        t.classList.remove("is-active");
+        t.setAttribute("aria-selected", "false");
+        t.setAttribute("tabindex", "-1");
       });
+      document
+        .querySelectorAll(".settings-panel")
+        .forEach((p) => p.classList.remove("is-active"));
+      tab.classList.add("is-active");
+      tab.setAttribute("aria-selected", "true");
+      tab.setAttribute("tabindex", "0");
+      const panel = document.querySelector(
+        `[data-panel="${tab.dataset.tab}"]`,
+      );
+      if (panel) panel.classList.add("is-active");
     });
+
+    tab.addEventListener("keydown", (e) => {
+      const idx = settingsTabs.indexOf(tab);
+      let next: HTMLButtonElement | null = null;
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        next = settingsTabs[(idx + 1) % settingsTabs.length];
+      } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        next = settingsTabs[(idx - 1 + settingsTabs.length) % settingsTabs.length];
+      } else if (e.key === "Home") {
+        next = settingsTabs[0];
+      } else if (e.key === "End") {
+        next = settingsTabs[settingsTabs.length - 1];
+      }
+      if (next) {
+        e.preventDefault();
+        next.focus();
+        next.click();
+      }
+    });
+  });
 
   $("check-updates").addEventListener("click", checkUpdates);
   $("export-logs").addEventListener("click", exportLocalLogs);
   $("open-logs-folder").addEventListener("click", openLogsFolder);
   $("clear-logs").addEventListener("click", clearLocalLogs);
-  $("show-licenses").addEventListener("click", openLicensesModal);
-  $("about-show-licenses").addEventListener("click", openLicensesModal);
+  $("show-licenses").addEventListener("click", (e) => openLicensesModal(e.currentTarget as HTMLElement));
+  $("about-show-licenses").addEventListener("click", (e) => openLicensesModal(e.currentTarget as HTMLElement));
 
   $("close-licenses").addEventListener("click", closeLicensesModal);
   $("licenses-overlay").addEventListener("click", (e) => {
@@ -463,10 +538,19 @@ async function init() {
   }
 
   let openPathsQueue = Promise.resolve();
-  await listen<{ paths: string[]; mode: string }>("open-paths", (event) => {
-    const { paths, mode } = event.payload;
+
+  async function drainPendingPaths(): Promise<void> {
+    const batches = await invoke<{ paths: string[]; mode: string }[]>("drain_pending_paths");
+    for (const batch of batches) {
+      if (batch.paths.length > 0) {
+        await applyIncomingPaths(batch.paths, batch.mode, "Explorer");
+      }
+    }
+  }
+
+  await listen("pending-paths-changed", () => {
     openPathsQueue = openPathsQueue
-      .then(() => applyIncomingPaths(paths, mode, "Explorer"))
+      .then(drainPendingPaths)
       .catch((err) => {
         const msg = err instanceof Error ? err.message : String(err);
         log(`Failed to process incoming Explorer paths: ${msg}`, "error");
@@ -482,6 +566,9 @@ async function init() {
       log(`Failed to process launch paths: ${msg}`, "error");
     });
   await openPathsQueue;
+
+  // Drain any paths that queued up while we were initializing
+  await drainPendingPaths();
 
   if (state.currentSettings.autoCheckUpdates && !flatpak) {
     void autoCheckUpdates();
@@ -520,7 +607,10 @@ async function init() {
           }
         }
       }
-    } catch {}
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      devLog(`Drag-drop handler error: ${msg}`);
+    }
   });
 }
 

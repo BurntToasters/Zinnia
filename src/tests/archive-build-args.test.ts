@@ -77,13 +77,13 @@ describe("buildArgs (add mode)", () => {
     expect(args).toContain("-ms=4g");
   });
 
-  it("omits solid switch when off", () => {
+  it("includes -ms=off when solid is off", () => {
     state.inputs = ["a.txt"];
     setInputValue("output-path", "out.7z");
     setSelectValue("solid", "off");
 
     const args = buildArgs();
-    expect(args.some((a) => a.startsWith("-ms="))).toBe(false);
+    expect(args).toContain("-ms=off");
   });
 
   it("includes threads switch", () => {

@@ -7,7 +7,10 @@ export interface LicenseEntry {
   parents?: string;
 }
 
-export function openLicensesModal() {
+let licensesTrigger: HTMLElement | null = null;
+
+export function openLicensesModal(trigger?: HTMLElement) {
+  licensesTrigger = trigger ?? null;
   const overlay = $("licenses-overlay");
   overlay.hidden = false;
   const modal = overlay.querySelector<HTMLElement>(".modal");
@@ -20,6 +23,12 @@ export function closeLicensesModal() {
   overlay.hidden = true;
   const modal = overlay.querySelector<HTMLElement>(".modal");
   if (modal) releaseFocusTrap(modal);
+  if (licensesTrigger) {
+    licensesTrigger.focus();
+    licensesTrigger = null;
+  } else {
+    document.getElementById("show-licenses")?.focus();
+  }
 }
 
 async function renderLicenses() {

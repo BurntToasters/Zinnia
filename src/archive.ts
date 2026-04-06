@@ -216,10 +216,14 @@ export function buildArgs() {
   if (method) switches.push(`-m0=${method}`);
   if (dict) switches.push(`-md=${dict}`);
   if (wordSize) switches.push(`-mfb=${wordSize}`);
-  if (solid === "solid") {
-    switches.push("-ms=on");
-  } else if (solid !== "off") {
-    switches.push(`-ms=${solid}`);
+  if (format === "7z") {
+    if (solid === "solid") {
+      switches.push("-ms=on");
+    } else if (solid === "off") {
+      switches.push("-ms=off");
+    } else {
+      switches.push(`-ms=${solid}`);
+    }
   }
   if (threads) switches.push(`-mmt=${threads}`);
   if (pathMode === "absolute") switches.push("-spf");
@@ -228,12 +232,12 @@ export function buildArgs() {
   if (sfx) switches.push("-sfx");
   if (deleteAfter) switches.push("-sdel");
 
-  const args = ["a", ...switches, outputPath, ...state.inputs, ...extraArgs];
+  const args = ["a", ...switches, ...extraArgs, outputPath, "--", ...state.inputs];
   return args;
 }
 
 export function parseArchiveListing(stdout: string): ArchiveInfo {
-  const lines = stdout.split("\n");
+  const lines = stdout.split(/\r?\n/);
   const info: ArchiveInfo = {
     type: "",
     physicalSize: 0,
@@ -503,6 +507,9 @@ async function ensureArchiveInfoForPicker(
 ): Promise<ArchiveInfo | null> {
   const cached = getCachedArchiveInfo(archive);
   if (cached) return cached;
+  if (state.inputs[0] !== archive) {
+    state.inputs[0] = archive;
+  }
   return await browseArchive();
 }
 
@@ -594,6 +601,8 @@ export async function openSelectiveExtractModal(): Promise<void> {
 export async function runSelectiveExtractFromModal(): Promise<void> {
   if (state.running) return;
   state.running = true;
+  state.batchCancelled = false;
+  state.cancelRequested = false;
   try {
     const archive = state.selectiveActiveArchive ?? state.inputs[0] ?? null;
     if (!archive) {
@@ -660,7 +669,7 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
       return;
     }
 
-    const outputLines = result.stdout.split("\n");
+    const outputLines = result.stdout.split(/\r?\n/);
     for (const line of outputLines) {
       const percentMatch = line.match(/(\d+)%/);
       if (percentMatch) setProgress(`${percentMatch[1]}%`);
@@ -781,7 +790,7 @@ export async function runAction() {
       return;
     }
 
-    const outputLines = result.stdout.split("\n");
+    const outputLines = result.stdout.split(/\r?\n/);
     for (const line of outputLines) {
       const percentMatch = line.match(/(\d+)%/);
       if (percentMatch) {
@@ -865,15 +874,16 @@ export async function runBatchExtract() {
       setStatus(`Extracting ${i + 1} of ${archives.length}`);
 
       try {
-        const args = ["x", archive, `-o${dest}`, "-y"];
+        const args = ["x", `-o${dest}`, "-y"];
         if (password) args.push(`-p${password}`);
         args.push(...extraArgs);
+        args.push("--", archive);
         const logSafe = args.map((a) => (a.startsWith("-p") ? "-p***" : a));
         devLog(`7z ${logSafe.join(" ")}`);
 
         const result = await invoke<Run7zResult>("run_7z", { args });
 
-        const outputLines = result.stdout.split("\n");
+        const outputLines = result.stdout.split(/\r?\n/);
         for (const line of outputLines) {
           const percentMatch = line.match(/(\d+)%/);
           if (percentMatch)
@@ -929,6 +939,7 @@ export async function runBatchExtract() {
 }
 
 export async function cancelAction() {
+  if (!state.running) return;
   state.batchCancelled = true;
   state.cancelRequested = true;
   setStatus("Cancelling...");
@@ -1006,6 +1017,7 @@ export async function testArchive() {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Test error: ${msg}`);
     setStatus("Error", 3000);
+    hideProgress();
     await message(msg, { title: "Test error", kind: "error" });
   } finally {
     setRunning(false);

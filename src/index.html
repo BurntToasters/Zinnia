@@ -26,7 +26,7 @@
               src="/twemoji/2699.svg"
               width="15"
               height="15"
-              alt="Settings"
+              alt=""
               class="twemoji"
               draggable="false"
             />
@@ -43,50 +43,65 @@
         >
           <div class="modal__header">
             <h2 id="settings-title">Settings</h2>
-            <button class="btn btn--ghost btn--sm" id="close-settings">
+            <button class="btn btn--ghost btn--sm" id="close-settings" aria-label="Close settings">
               &times;
             </button>
           </div>
 
-          <nav class="settings-tabs" role="tablist">
+          <div class="settings-tabs" role="tablist" aria-label="Settings sections">
             <button
               class="settings-tab is-active"
               role="tab"
+              id="tab-general"
               data-tab="general"
               aria-selected="true"
+              aria-controls="panel-general"
+              tabindex="0"
             >
               General
             </button>
             <button
               class="settings-tab"
               role="tab"
+              id="tab-compression"
               data-tab="compression"
               aria-selected="false"
+              aria-controls="panel-compression"
+              tabindex="-1"
             >
               Compression
             </button>
             <button
               class="settings-tab"
               role="tab"
+              id="tab-about"
               data-tab="about"
               aria-selected="false"
+              aria-controls="panel-about"
+              tabindex="-1"
             >
               About
             </button>
-          </nav>
+          </div>
 
           <div class="modal__body">
             <!-- General tab -->
-            <div class="settings-panel is-active" data-panel="general">
+            <div
+              class="settings-panel is-active"
+              data-panel="general"
+              id="panel-general"
+              role="tabpanel"
+              aria-labelledby="tab-general"
+            >
               <div class="setting-item">
                 <div class="setting-info">
-                  <span class="setting-title">Theme</span>
+                  <span class="setting-title" id="title-theme">Theme</span>
                   <span class="setting-desc"
                     >Choose between light and dark mode, or follow your system
                     preference.</span
                   >
                 </div>
-                <select id="s-theme" class="setting-select">
+                <select id="s-theme" class="setting-select" aria-labelledby="title-theme">
                   <option value="system">System</option>
                   <option value="light">Light</option>
                   <option value="dark">Dark</option>
@@ -97,7 +112,7 @@
 
               <div class="setting-item">
                 <div class="setting-info">
-                  <span class="setting-title"
+                  <span class="setting-title" id="title-auto-check-updates"
                     >Check and automatically download updates on startup</span
                   >
                   <span class="setting-desc"
@@ -105,7 +120,7 @@
                     downloads them in the background.</span
                   >
                 </div>
-                <label class="switch" data-update-ui>
+                <label class="switch" data-update-ui aria-labelledby="title-auto-check-updates">
                   <input type="checkbox" id="s-auto-check-updates" checked />
                   <span class="switch__track"></span>
                 </label>
@@ -123,17 +138,31 @@
                 </button>
               </div>
 
+              <div class="setting-item" data-update-ui>
+                <div class="setting-info">
+                  <span class="setting-title" id="title-update-channel">Update channel</span>
+                  <span class="setting-desc"
+                    >Choose between production updates and beta builds.</span
+                  >
+                </div>
+                <select id="s-update-channel" class="setting-select" aria-labelledby="title-update-channel">
+                  <option value="auto">Auto (follow version)</option>
+                  <option value="stable">Stable</option>
+                  <option value="beta">Beta</option>
+                </select>
+              </div>
+
               <hr class="setting-divider" />
 
               <div class="setting-item">
                 <div class="setting-info">
-                  <span class="setting-title">Local diagnostics logging</span>
+                  <span class="setting-title" id="title-local-logging">Local diagnostics logging</span>
                   <span class="setting-desc"
                     >Store privacy-preserving activity logs on this device
                     only.</span
                   >
                 </div>
-                <label class="switch">
+                <label class="switch" aria-labelledby="title-local-logging">
                   <input type="checkbox" id="s-local-logging" checked />
                   <span class="switch__track"></span>
                 </label>
@@ -141,12 +170,12 @@
 
               <div class="setting-item">
                 <div class="setting-info">
-                  <span class="setting-title">Log verbosity</span>
+                  <span class="setting-title" id="title-log-verbosity">Log verbosity</span>
                   <span class="setting-desc"
                     >Use Debug only when troubleshooting.</span
                   >
                 </div>
-                <select id="s-log-verbosity" class="setting-select">
+                <select id="s-log-verbosity" class="setting-select" aria-labelledby="title-log-verbosity">
                   <option value="info">Normal</option>
                   <option value="debug">Debug</option>
                 </select>
@@ -184,7 +213,13 @@
             </div>
 
             <!-- Compression tab -->
-            <div class="settings-panel" data-panel="compression">
+            <div
+              class="settings-panel"
+              data-panel="compression"
+              id="panel-compression"
+              role="tabpanel"
+              aria-labelledby="tab-compression"
+            >
               <p class="settings-hint">
                 Default values applied when creating new archives.
               </p>
@@ -282,27 +317,27 @@
 
               <div class="setting-item">
                 <div class="setting-info">
-                  <span class="setting-title"
+                  <span class="setting-title" id="title-sfx"
                     >Create self-extracting archive (SFX)</span
                   >
                 </div>
-                <label class="switch">
+                <label class="switch" aria-labelledby="title-sfx">
                   <input type="checkbox" id="s-sfx" />
                   <span class="switch__track"></span>
                 </label>
               </div>
               <div class="setting-item">
                 <div class="setting-info">
-                  <span class="setting-title">Encrypt file names</span>
+                  <span class="setting-title" id="title-encrypt-headers">Encrypt file names</span>
                 </div>
-                <label class="switch">
+                <label class="switch" aria-labelledby="title-encrypt-headers">
                   <input type="checkbox" id="s-encrypt-headers" />
                   <span class="switch__track"></span>
                 </label>
               </div>
               <div class="setting-item">
                 <div class="setting-info">
-                  <span class="setting-title"
+                  <span class="setting-title" id="title-delete-after"
                     >Delete files after compression</span
                   >
                   <span class="setting-desc"
@@ -310,7 +345,7 @@
                     archive.</span
                   >
                 </div>
-                <label class="switch">
+                <label class="switch" aria-labelledby="title-delete-after">
                   <input type="checkbox" id="s-delete-after" />
                   <span class="switch__track"></span>
                 </label>
@@ -318,7 +353,13 @@
             </div>
 
             <!-- About tab -->
-            <div class="settings-panel" data-panel="about">
+            <div
+              class="settings-panel"
+              data-panel="about"
+              id="panel-about"
+              role="tabpanel"
+              aria-labelledby="tab-about"
+            >
               <div class="about-header">
                 <img
                   src="/zinnia_default-logo.png"
@@ -337,7 +378,7 @@
                       src="/twemoji/2764.svg"
                       width="14"
                       height="14"
-                      alt="❤️"
+                      alt=""
                       class="about-heart"
                       draggable="false"
                     />
@@ -434,12 +475,14 @@
         >
           <div class="modal__header">
             <h2 id="licenses-title">Open-Source Licenses</h2>
-            <button class="btn btn--ghost btn--sm" id="close-licenses">
+            <button class="btn btn--ghost btn--sm" id="close-licenses" aria-label="Close licenses">
               &times;
             </button>
           </div>
           <div class="modal__body">
-            <div id="licenses-list" class="licenses-list">Loading…</div>
+            <div id="licenses-list" class="licenses-list" aria-live="polite">
+              Loading…
+            </div>
           </div>
         </div>
       </div>
@@ -453,7 +496,7 @@
         >
           <div class="modal__header">
             <h2 id="selective-title">Extract Selected Entries</h2>
-            <button class="btn btn--ghost btn--sm" id="close-selective">
+            <button class="btn btn--ghost btn--sm" id="close-selective" aria-label="Close Extract Selected Entries dialog">
               &times;
             </button>
           </div>
@@ -467,7 +510,7 @@
               />
             </div>
             <div class="selective-toolbar">
-              <div class="selective-summary" id="selective-summary">
+              <div class="selective-summary" id="selective-summary" aria-live="polite" aria-atomic="true">
                 0 selected · 0 shown · 0 total
               </div>
               <div class="selective-toolbar__actions">
@@ -512,14 +555,14 @@
         <section class="panel">
           <div class="panel__header">
             <h2>Archive Session</h2>
-            <div class="segmented">
-              <button class="segmented__btn is-active" data-mode-btn="add">
+            <div class="segmented" role="group" aria-label="Operation mode">
+              <button class="segmented__btn is-active" data-mode-btn="add" aria-pressed="true">
                 Add
               </button>
-              <button class="segmented__btn" data-mode-btn="extract">
+              <button class="segmented__btn" data-mode-btn="extract" aria-pressed="false">
                 Extract
               </button>
-              <button class="segmented__btn" data-mode-btn="browse">
+              <button class="segmented__btn" data-mode-btn="browse" aria-pressed="false">
                 Browse
               </button>
             </div>
@@ -544,7 +587,12 @@
                   </button>
                 </div>
               </div>
-              <div class="list" id="input-list"></div>
+              <div
+                class="list"
+                id="input-list"
+                role="list"
+                aria-label="File inputs — drop files here or use buttons above"
+              ></div>
             </section>
 
             <section
@@ -595,6 +643,15 @@
               </div>
 
               <div class="field">
+                <label for="archive-name">Archive name (optional)</label>
+                <input
+                  type="text"
+                  id="archive-name"
+                  placeholder="Leave blank to use source name"
+                />
+              </div>
+
+              <div class="field">
                 <label for="output-path">Archive destination</label>
                 <div class="input-row">
                   <input
@@ -611,6 +668,7 @@
                   class="btn btn--primary btn--shortcut"
                   id="run-action"
                   title="Run operation (Ctrl+Enter)"
+                  aria-keyshortcuts="Control+Return"
                 >
                   Run
                 </button>
@@ -655,6 +713,7 @@
                         type="password"
                         id="extract-password"
                         placeholder="Only if needed"
+                        autocomplete="off"
                       />
                       <button
                         type="button"
@@ -683,6 +742,7 @@
                   class="btn btn--primary btn--shortcut"
                   id="extract-run"
                   title="Extract archives (Ctrl+Enter)"
+                  aria-keyshortcuts="Control+Return"
                 >
                   Extract
                 </button>
@@ -713,6 +773,7 @@
                     type="password"
                     id="browse-password"
                     placeholder="Only if needed"
+                    autocomplete="off"
                   />
                   <button
                     type="button"
@@ -732,10 +793,10 @@
                   <table class="browse-table">
                     <thead>
                       <tr>
-                        <th>Name</th>
-                        <th>Size</th>
-                        <th>Compressed</th>
-                        <th>Modified</th>
+                        <th scope="col">Name</th>
+                        <th scope="col">Size</th>
+                        <th scope="col">Compressed</th>
+                        <th scope="col">Modified</th>
                       </tr>
                     </thead>
                     <tbody id="browse-tbody"></tbody>
@@ -858,6 +919,7 @@
                         type="password"
                         id="password"
                         placeholder="Leave blank for none"
+                        autocomplete="off"
                       />
                       <button
                         type="button"
@@ -890,7 +952,7 @@
             <button class="btn btn--ghost btn--sm" id="clear-log">Clear</button>
           </div>
           <div class="panel__body">
-            <div class="log" id="log"></div>
+            <div class="log" id="log" aria-live="polite" role="log"></div>
           </div>
         </section>
       </main>

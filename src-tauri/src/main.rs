@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 static EXTRACT_WINDOW_COUNTER: AtomicU64 = AtomicU64::new(0);
+static WRITE_SEQ: AtomicU64 = AtomicU64::new(0);
 use tauri::Emitter;
 use tauri::Manager;
 use tauri_plugin_shell::process::{CommandEvent, CommandChild};
@@ -28,6 +29,7 @@ struct RunResult {
 struct InitialPaths(Mutex<Vec<String>>);
 struct InitialMode(Mutex<String>);
 struct ExtractQueue(Mutex<Vec<Vec<String>>>);
+struct PendingPaths(Mutex<Vec<OpenPathsPayload>>);
 struct ProcessState {
     child: Option<CommandChild>,
     cancelling: bool,
@@ -45,12 +47,6 @@ fn settings_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
         .app_data_dir()
         .map_err(|e| e.to_string())?;
     Ok(dir.join("settings.json"))
-}
-
-fn validate_json(json: &str) -> Result<(), String> {
-    serde_json::from_str::<serde_json::Value>(json)
-        .map_err(|e| format!("Invalid JSON: {e}"))?;
-    Ok(())
 }
 
 fn parse_json_object(json: &str) -> Result<serde_json::Map<String, serde_json::Value>, String> {
@@ -119,7 +115,9 @@ fn atomic_write_text(path: &std::path::Path, contents: &str) -> Result<(), Strin
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
-    let tmp = path.with_extension("json.tmp");
+    let seq = WRITE_SEQ.fetch_add(1, Ordering::Relaxed);
+    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("tmp");
+    let tmp = path.with_file_name(format!(".{file_name}.{seq}.tmp"));
     std::fs::write(&tmp, contents).map_err(|e| e.to_string())?;
 
     #[cfg(windows)]
@@ -174,7 +172,7 @@ fn trim_log_file_if_needed(path: &std::path::Path) -> Result<(), String> {
     if let Some(pos) = clipped.find('\n') {
         clipped = clipped[pos + 1..].to_string();
     }
-    std::fs::write(path, clipped).map_err(|e| e.to_string())
+    atomic_write_text(path, &clipped)
 }
 
 fn ensure_idle(state: &ProcessState) -> Result<(), String> {
@@ -186,7 +184,10 @@ fn ensure_idle(state: &ProcessState) -> Result<(), String> {
 }
 
 fn is_non_running_kill_error(message: &str) -> bool {
-    message.contains("finished") || message.contains("not running")
+    message.contains("finished")
+        || message.contains("not running")
+        || message.contains("No such process")
+        || message.contains("Access is denied")
 }
 
 #[derive(serde::Serialize, Clone, Debug)]
@@ -226,7 +227,6 @@ fn detect_archive_signature(bytes: &[u8]) -> Option<&'static str> {
     }
     if starts_with_bytes(bytes, &[0x50, 0x4B, 0x03, 0x04])
         || starts_with_bytes(bytes, &[0x50, 0x4B, 0x05, 0x06])
-        || starts_with_bytes(bytes, &[0x50, 0x4B, 0x07, 0x08])
     {
         return Some("zip");
     }
@@ -448,15 +448,19 @@ fn validate_archive_paths(paths: Vec<String>) -> Result<Vec<ArchivePathValidatio
 #[tauri::command]
 fn load_settings(app: tauri::AppHandle) -> Result<String, String> {
     let path = settings_path(&app)?;
-    if !path.exists() {
-        return Ok("{}".to_string());
+    match std::fs::read_to_string(&path) {
+        Ok(contents) => Ok(contents),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok("{}".to_string()),
+        Err(err) => Err(err.to_string()),
     }
-    std::fs::read_to_string(&path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn save_settings(app: tauri::AppHandle, json: String) -> Result<(), String> {
-    validate_json(&json)?;
+    const MAX_SETTINGS_BYTES: usize = 512 * 1024;
+    if json.len() > MAX_SETTINGS_BYTES {
+        return Err("Settings payload exceeds maximum allowed size.".to_string());
+    }
     let path = settings_path(&app)?;
 
     let mut incoming = parse_json_object(&json)?;
@@ -478,6 +482,7 @@ fn append_local_log(app: tauri::AppHandle, line: String) -> Result<(), String> {
     let _ = ensure_logs_dir(&app)?;
     let path = log_file_path(&app)?;
     trim_log_file_if_needed(&path)?;
+    let line = line.replace('\r', "").replace('\n', " ");
     let line = truncate_for_bytes(&line, MAX_LOG_ENTRY_BYTES);
 
     let mut file = std::fs::OpenOptions::new()
@@ -501,10 +506,18 @@ fn export_logs(app: tauri::AppHandle, destination_path: String) -> Result<(), St
     if destination_path.trim().is_empty() {
         return Err("Destination path is required.".to_string());
     }
+    if destination_path.contains('\0') {
+        return Err("Destination path contains invalid characters.".to_string());
+    }
 
-    let destination = std::path::PathBuf::from(destination_path);
+    let destination = std::path::PathBuf::from(&destination_path);
+    if destination.is_dir() {
+        return Err("Destination path must be a file, not a directory.".to_string());
+    }
     if let Some(parent) = destination.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            return Err("Destination parent directory does not exist.".to_string());
+        }
     }
 
     let source = log_file_path(&app)?;
@@ -529,38 +542,13 @@ fn clear_logs(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+#[allow(deprecated)]
 fn open_log_dir(app: tauri::AppHandle) -> Result<(), String> {
     let dir = ensure_logs_dir(&app)?;
-
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("explorer")
-            .arg(&dir)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        return Ok(());
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open")
-            .arg(&dir)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        return Ok(());
-    }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        std::process::Command::new("xdg-open")
-            .arg(&dir)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        return Ok(());
-    }
-
-    #[allow(unreachable_code)]
-    Err("Opening log folder is not supported on this platform.".to_string())
+    let dir_str = dir.to_string_lossy().to_string();
+    app.shell()
+        .open(&dir_str, None)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -569,7 +557,7 @@ async fn probe_7z(app: tauri::AppHandle) -> Result<(), String> {
         .shell()
         .sidecar("7z")
         .map_err(|e| e.to_string())?
-        .args(["--help"]);
+        .args(["i"]);
 
     let (_rx, child) = command.spawn().map_err(|e| e.to_string())?;
     let _ = child.kill();
@@ -578,14 +566,27 @@ async fn probe_7z(app: tauri::AppHandle) -> Result<(), String> {
 
 fn sanitize_output(s: &str) -> String {
     s.chars()
-        .filter(|c| !c.is_control() || matches!(*c, '\n' | '\r' | '\t'))
+        .filter(|c| !c.is_control() || matches!(*c, '\n' | '\t'))
         .collect()
 }
+
+const ALLOWED_7Z_COMMANDS: &[&str] = &["a", "x", "l", "t"];
+const BLOCKED_7Z_ARGS: &[&str] = &["-sdel", "-si", "-so"];
 
 #[tauri::command]
 async fn run_7z(app: tauri::AppHandle, args: Vec<String>, state: tauri::State<'_, RunningProcess>) -> Result<RunResult, String> {
     if args.is_empty() {
         return Err("Missing 7z arguments".to_string());
+    }
+    let cmd = args[0].as_str();
+    if !ALLOWED_7Z_COMMANDS.contains(&cmd) {
+        return Err(format!("7z command '{}' is not permitted.", cmd));
+    }
+    for arg in &args[1..] {
+        let lower = arg.to_lowercase();
+        if BLOCKED_7Z_ARGS.iter().any(|b| lower == *b) {
+            return Err(format!("7z argument '{}' is not permitted.", arg));
+        }
     }
 
     let mut stdout = String::new();
@@ -692,6 +693,12 @@ fn get_initial_mode(state: tauri::State<'_, InitialMode>) -> Result<String, Stri
 }
 
 #[tauri::command]
+fn drain_pending_paths(state: tauri::State<'_, PendingPaths>) -> Result<Vec<OpenPathsPayload>, String> {
+    let mut q = state.0.lock().map_err(|_| "Lock poisoned".to_string())?;
+    Ok(std::mem::take(&mut *q))
+}
+
+#[tauri::command]
 fn get_extract_paths(state: tauri::State<'_, ExtractQueue>) -> Result<Vec<String>, String> {
     let mut queue = state.0.lock().map_err(|_| "Lock poisoned".to_string())?;
     if queue.is_empty() {
@@ -702,14 +709,16 @@ fn get_extract_paths(state: tauri::State<'_, ExtractQueue>) -> Result<Vec<String
 }
 
 fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Result<(), String> {
-    {
+    let push_index = {
         let queue = app.state::<ExtractQueue>();
         let mut q = queue.0.lock().map_err(|_| "Lock poisoned".to_string())?;
         if q.len() >= 20 {
             return Err("Extract queue is full".to_string());
         }
+        let index = q.len();
         q.push(paths);
-    }
+        index
+    };
 
     let label = format!(
         "extract-{}",
@@ -732,7 +741,9 @@ fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Result<()
     if result.is_err() {
         let queue = app.state::<ExtractQueue>();
         if let Ok(mut q) = queue.0.lock() {
-            q.pop();
+            if push_index < q.len() {
+                q.remove(push_index);
+            }
         };
     }
 
@@ -802,7 +813,7 @@ fn emit_open_paths(app: &tauri::AppHandle, argv: Vec<String>) {
                 mode = "extract".to_string();
                 false
             } else {
-                !arg.starts_with("--")
+                !arg.starts_with('-')
             }
         })
         .collect();
@@ -812,13 +823,23 @@ fn emit_open_paths(app: &tauri::AppHandle, argv: Vec<String>) {
     }
 
     if mode == "extract" {
-        let _ = spawn_extract_window(app, paths);
+        if let Err(e) = spawn_extract_window(app, paths) {
+            eprintln!("Failed to open extract window: {e}");
+        }
         return;
     }
 
-    let _ = app.emit("open-paths", OpenPathsPayload { paths, mode });
+    let pending = app.state::<PendingPaths>();
+    if let Ok(mut q) = pending.0.lock() {
+        if q.len() < 100 {
+            q.push(OpenPathsPayload { paths, mode });
+        }
+    }
+
+    let _ = app.emit("pending-paths-changed", ());
 
     if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
         let _ = window.set_focus();
     }
 }
@@ -829,7 +850,7 @@ fn collect_cli_context() -> (Vec<String>, String) {
     for arg in std::env::args().skip(1) {
         if arg == "--extract" {
             mode = "extract".to_string();
-        } else if !arg.starts_with("--") {
+        } else if !arg.starts_with('-') {
             paths.push(arg);
         }
     }
@@ -841,8 +862,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn validate_json_rejects_invalid_payload() {
-        let result = validate_json("{ not-valid-json }");
+    fn parse_json_object_rejects_invalid_payload() {
+        let result = parse_json_object("{ not-valid-json }");
         assert!(result.is_err());
     }
 
@@ -1056,18 +1077,24 @@ fn main() {
         .manage(InitialPaths(Mutex::new(initial_paths.clone())))
         .manage(InitialMode(Mutex::new(initial_mode.clone())))
         .manage(ExtractQueue(Mutex::new(Vec::new())))
+        .manage(PendingPaths(Mutex::new(Vec::new())))
         .manage(RunningProcess(Mutex::new(ProcessState {
             child: None,
             cancelling: false,
         })))
         .setup(move |app| {
-            if initial_mode == "extract" && !initial_paths.is_empty() {
+            let launch_extract_window = initial_mode == "extract" && !initial_paths.is_empty();
+
+            if launch_extract_window {
                 spawn_extract_window(app.handle(), initial_paths.clone())
                     .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
                 if let Some(main_window) = app.get_webview_window("main") {
                     let _ = main_window.close();
                 }
+            } else if let Some(main_window) = app.get_webview_window("main") {
+                let _ = main_window.show();
+                let _ = main_window.set_focus();
             }
             Ok(())
         })
@@ -1085,6 +1112,7 @@ fn main() {
             open_log_dir,
             get_initial_paths,
             get_initial_mode,
+            drain_pending_paths,
             get_extract_paths,
             get_platform_info,
             get_cpu_count,

@@ -156,6 +156,13 @@ export function updateCompressionOptionsForFormat(format: string) {
     solidSelect.value = currentSolid;
   }
 
+  // Solid mode is only supported for 7z archives
+  const solidSupported = format === "7z";
+  solidSelect.disabled = !solidSupported;
+  if (!solidSupported) {
+    solidSelect.value = "off";
+  }
+
   if (
     format === "tar" ||
     format === "gzip" ||

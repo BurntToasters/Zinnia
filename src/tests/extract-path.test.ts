@@ -2,8 +2,11 @@ import { describe, it, expect } from "vitest";
 import {
   deriveExtractDestinationPath,
   deriveExtractFolderName,
+  deriveOutputArchivePath,
   resolveExtractDestinationAutofill,
+  resolveOutputArchiveAutofill,
   shouldAutofillExtractDestination,
+  shouldAutofillOutputPath,
 } from "../extract-path";
 
 describe("deriveExtractDestinationPath", () => {
@@ -100,5 +103,89 @@ describe("resolveExtractDestinationAutofill", () => {
         "/downloads/new.zip",
       ),
     ).toBeNull();
+  });
+});
+
+describe("deriveOutputArchivePath", () => {
+  it("derives from a folder input", () => {
+    expect(deriveOutputArchivePath(["/home/user/folder"], "7z")).toBe(
+      "/home/user/folder.7z",
+    );
+  });
+
+  it("derives from a file input", () => {
+    expect(deriveOutputArchivePath(["C:\\docs\\readme.txt"], "zip")).toBe(
+      "C:\\docs\\readme.txt.zip",
+    );
+  });
+
+  it("strips trailing separators", () => {
+    expect(deriveOutputArchivePath(["/home/user/folder/"], "7z")).toBe(
+      "/home/user/folder.7z",
+    );
+  });
+
+  it("uses customName when provided", () => {
+    expect(deriveOutputArchivePath(["/home/user/folder"], "7z", "backup")).toBe(
+      "/home/user/backup.7z",
+    );
+  });
+
+  it("returns null for empty inputs", () => {
+    expect(deriveOutputArchivePath([], "7z")).toBeNull();
+  });
+
+  it("returns null when first input is whitespace", () => {
+    expect(deriveOutputArchivePath(["  "], "7z")).toBeNull();
+  });
+});
+
+describe("shouldAutofillOutputPath", () => {
+  it("returns true when output is empty", () => {
+    expect(shouldAutofillOutputPath("", null)).toBe(true);
+  });
+
+  it("returns true when output matches previous autofill", () => {
+    expect(shouldAutofillOutputPath("/out/test.7z", "/out/test.7z")).toBe(true);
+  });
+
+  it("returns false when user has customized output", () => {
+    expect(shouldAutofillOutputPath("/out/custom.7z", "/out/test.7z")).toBe(
+      false,
+    );
+  });
+});
+
+describe("resolveOutputArchiveAutofill", () => {
+  it("autofills from inputs and format", () => {
+    expect(
+      resolveOutputArchiveAutofill("", null, ["/home/user/folder"], "zip"),
+    ).toBe("/home/user/folder.zip");
+  });
+
+  it("updates when output matches previous autofill", () => {
+    expect(
+      resolveOutputArchiveAutofill(
+        "/home/user/folder.7z",
+        "/home/user/folder.7z",
+        ["/home/user/folder"],
+        "zip",
+      ),
+    ).toBe("/home/user/folder.zip");
+  });
+
+  it("returns null when user has customized output", () => {
+    expect(
+      resolveOutputArchiveAutofill(
+        "/out/custom.7z",
+        "/out/auto.7z",
+        ["/home/user/folder"],
+        "7z",
+      ),
+    ).toBeNull();
+  });
+
+  it("returns null for empty inputs", () => {
+    expect(resolveOutputArchiveAutofill("", null, [], "7z")).toBeNull();
   });
 });

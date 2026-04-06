@@ -22,7 +22,7 @@ export default [
       ],
       "@typescript-eslint/prefer-nullish-coalescing": "warn",
       "@typescript-eslint/prefer-optional-chain": "warn",
-      "@typescript-eslint/no-explicit-any": "warn",
+      "@typescript-eslint/no-explicit-any": "error",
       "@typescript-eslint/no-unused-vars": [
         "error",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
@@ -34,6 +34,6 @@ export default [
     },
   },
   {
-    ignores: ["dist/**", "node_modules/**", "src-tauri/**", "scripts/**"],
+    ignores: ["dist/**", "node_modules/**", "src-tauri/**"],
   },
 ];

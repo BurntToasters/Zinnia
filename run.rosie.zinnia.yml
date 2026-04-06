@@ -14,7 +14,10 @@ finish-args:
   - --socket=wayland
   - --share=network
   - --device=dri
-  - --filesystem=host
+  - --filesystem=home
+  - --filesystem=/tmp
+  - --filesystem=/media
+  - --filesystem=/run/media
 
 modules:
   - name: zinnia

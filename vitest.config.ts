@@ -6,7 +6,6 @@ export default defineConfig({
     include: ["src/tests/**/*.test.ts"],
     setupFiles: ["src/tests/setup-dom.ts"],
     restoreMocks: true,
-    clearMocks: true,
     mockReset: true,
     coverage: {
       provider: "v8",

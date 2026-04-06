@@ -68,7 +68,6 @@ body {
   background: var(--bg);
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
-  user-select: none;
 }
 
 .extract-app {
@@ -125,6 +124,7 @@ body {
 .extract-value {
   font-size: 12px;
   color: var(--text);
+  user-select: text;
 }
 
 .extract-value--path {
@@ -213,6 +213,7 @@ body {
   max-height: 120px;
   overflow-y: auto;
   font-family: "Cascadia Code", "Consolas", monospace;
+  user-select: text;
 }
 
 .extract-footer {
@@ -255,4 +256,14 @@ body {
 .btn--close:hover {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --transition: 0ms;
+  }
+
+  .extract-progress-fill {
+    animation: none;
+  }
 }

@@ -22,19 +22,102 @@ function basename(filePath: string): string {
 
 function parentDir(filePath: string): string {
   const sep = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
-  if (sep <= 0) return filePath;
-  return filePath.slice(0, sep);
+  if (sep < 0) return ".";
+  if (sep === 0) return "/";
+  const parent = filePath.slice(0, sep);
+  // Windows drive root: "C:" → "C:\\"
+  if (parent.length === 2 && parent[1] === ":") return parent + "\\";
+  return parent;
+}
+
+function setButtons(showCancel: boolean, showClose: boolean): void {
+  $("cancel-btn").hidden = !showCancel;
+  $("close-btn").hidden = !showClose;
+}
+
+function stopProgressAt(widthPercent: number, error: boolean): void {
+  const fill = $("progress-fill");
+  fill.classList.toggle("extract-progress-fill--error", error);
+  fill.style.animation = "none";
+  fill.style.marginLeft = "0";
+  fill.style.width = `${widthPercent}%`;
+  const bar = document.getElementById("extract-progress");
+  if (bar) {
+    bar.setAttribute("aria-valuenow", String(widthPercent));
+    bar.setAttribute("aria-valuemin", "0");
+    bar.setAttribute("aria-valuemax", "100");
+  }
+}
+
+function startIndeterminateProgress(): void {
+  const fill = $("progress-fill");
+  fill.classList.remove("extract-progress-fill--error");
+  fill.style.animation = "";
+  fill.style.marginLeft = "";
+  fill.style.width = "";
+}
+
+async function closeWindowSafely(
+  appWindow: ReturnType<typeof getCurrentWebviewWindow>,
+): Promise<void> {
+  try {
+    await appWindow.close();
+  } catch {
+    try {
+      await appWindow.destroy();
+    } catch {}
+  }
 }
 
 async function run() {
   const appWindow = getCurrentWebviewWindow();
+  const cancelBtn = $("cancel-btn") as HTMLButtonElement;
+  const closeBtn = $("close-btn") as HTMLButtonElement;
+  let cancelRequested = false;
+  let operationFinished = false;
+
+  const finish = (status: string, progressPercent: number, asError = false) => {
+    operationFinished = true;
+    $("extract-status").textContent = status;
+    const h1 = document.querySelector<HTMLHeadingElement>("h1");
+    if (h1) h1.textContent = asError ? "Extraction failed" : "Extraction complete";
+    document.title = asError ? "Zinnia — Failed" : "Zinnia — Done";
+    stopProgressAt(progressPercent, asError);
+    setButtons(false, true);
+    cancelBtn.disabled = false;
+    closeBtn.disabled = false;    closeBtn.focus();  };
+
+  const showError = (detail: string) => {
+    $("extract-error").hidden = false;
+    $("error-detail").textContent = detail;
+    finish("Failed", 100, true);
+  };
+
+  cancelBtn.addEventListener("click", async () => {
+    if (operationFinished) return;
+    cancelRequested = true;
+    cancelBtn.disabled = true;
+    closeBtn.disabled = true;
+    $("extract-status").textContent = "Cancelling...";
+    try {
+      await invoke("cancel_7z");
+    } catch {}
+  });
+
+  closeBtn.addEventListener("click", async () => {
+    await closeWindowSafely(appWindow);
+  });
+
+  startIndeterminateProgress();
+  setButtons(true, false);
   const paths = await invoke<string[]>("get_extract_paths");
   const archivePath = paths[0];
 
   if (!archivePath) {
     $("extract-status").textContent = "No archive specified.";
-    $("cancel-btn").hidden = true;
-    $("close-btn").hidden = false;
+    stopProgressAt(0, false);
+    setButtons(false, true);
+    operationFinished = true;
     return;
   }
 
@@ -45,17 +128,7 @@ async function run() {
   $("extract-dest").textContent = destination;
   $("extract-dest").title = destination;
   $("extract-status").textContent = "Extracting...";
-
-  $("cancel-btn").addEventListener("click", async () => {
-    try {
-      await invoke("cancel_7z");
-    } catch {}
-    await appWindow.close();
-  });
-
-  $("close-btn").addEventListener("click", async () => {
-    await appWindow.close();
-  });
+  $("extract-error").hidden = true;
 
   try {
     await invoke("probe_7z");
@@ -66,41 +139,39 @@ async function run() {
     return;
   }
 
-  const args = ["x", `-o${destination}`, "-aoa", archivePath];
+  const args = ["x", `-o${destination}`, "-aoa", "-y", "--", archivePath];
 
   try {
     const result = await invoke<Run7zResult>("run_7z", { args });
 
-    if (result.code > 1) {
+    if (cancelRequested) {
+      finish("Cancelled", 100);
+      return;
+    }
+
+    if (result.code !== 0 && result.code !== 1) {
       const detail = result.stderr?.trim() || `Exit code ${result.code}`;
       showError(detail);
       return;
     }
 
     if (result.code === 1) {
-      $("extract-status").textContent = "Done (with warnings)";
+      const detail = result.stderr?.trim() || result.stdout?.trim() || "Exit code 1 (no detail available).";
+      const titleEl = $('extract-error').querySelector<HTMLElement>('.extract-error-title');
+      if (titleEl) titleEl.textContent = 'Warnings';
+      $('error-detail').textContent = detail;
+      $('extract-error').hidden = false;
+      finish('Done (with warnings)', 100);
+    } else {
+      await closeWindowSafely(appWindow);
     }
-
-    const fill = $("progress-fill");
-    fill.style.width = "100%";
-    $("extract-status").textContent = "Done";
-
-    setTimeout(() => {
-      appWindow.close().catch(() => {});
-    }, 800);
   } catch (err) {
+    if (cancelRequested) {
+      finish("Cancelled", 100);
+      return;
+    }
     showError(err instanceof Error ? err.message : String(err));
   }
-}
-
-function showError(detail: string) {
-  $("extract-status").textContent = "Failed";
-  $("extract-error").hidden = false;
-  $("error-detail").textContent = detail;
-  $("cancel-btn").hidden = true;
-  $("close-btn").hidden = false;
-  const fill = $("progress-fill");
-  fill.classList.add("extract-progress-fill--error");
 }
 
 run().catch((err) => {

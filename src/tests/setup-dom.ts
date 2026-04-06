@@ -167,6 +167,7 @@ addSelect("s-dict", DICT_OPTIONS);
 addSelect("s-word-size", WORD_SIZE_OPTIONS);
 addSelect("s-solid", SOLID_OPTIONS);
 addSelect("s-path-mode", PATH_MODE_OPTIONS);
+addSelect("s-update-channel", ["stable", "beta"]);
 addSelect("s-log-verbosity", ["info", "debug"]);
 
 // Settings modal inputs
