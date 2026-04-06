@@ -43,12 +43,20 @@
         >
           <div class="modal__header">
             <h2 id="settings-title">Settings</h2>
-            <button class="btn btn--ghost btn--sm" id="close-settings" aria-label="Close settings">
+            <button
+              class="btn btn--ghost btn--sm"
+              id="close-settings"
+              aria-label="Close settings"
+            >
               &times;
             </button>
           </div>
 
-          <div class="settings-tabs" role="tablist" aria-label="Settings sections">
+          <div
+            class="settings-tabs"
+            role="tablist"
+            aria-label="Settings sections"
+          >
             <button
               class="settings-tab is-active"
               role="tab"
@@ -101,7 +109,11 @@
                     preference.</span
                   >
                 </div>
-                <select id="s-theme" class="setting-select" aria-labelledby="title-theme">
+                <select
+                  id="s-theme"
+                  class="setting-select"
+                  aria-labelledby="title-theme"
+                >
                   <option value="system">System</option>
                   <option value="light">Light</option>
                   <option value="dark">Dark</option>
@@ -120,7 +132,11 @@
                     downloads them in the background.</span
                   >
                 </div>
-                <label class="switch" data-update-ui aria-labelledby="title-auto-check-updates">
+                <label
+                  class="switch"
+                  data-update-ui
+                  aria-labelledby="title-auto-check-updates"
+                >
                   <input type="checkbox" id="s-auto-check-updates" checked />
                   <span class="switch__track"></span>
                 </label>
@@ -140,12 +156,18 @@
 
               <div class="setting-item" data-update-ui>
                 <div class="setting-info">
-                  <span class="setting-title" id="title-update-channel">Update channel</span>
+                  <span class="setting-title" id="title-update-channel"
+                    >Update channel</span
+                  >
                   <span class="setting-desc"
                     >Choose between production updates and beta builds.</span
                   >
                 </div>
-                <select id="s-update-channel" class="setting-select" aria-labelledby="title-update-channel">
+                <select
+                  id="s-update-channel"
+                  class="setting-select"
+                  aria-labelledby="title-update-channel"
+                >
                   <option value="auto">Auto (follow version)</option>
                   <option value="stable">Stable</option>
                   <option value="beta">Beta</option>
@@ -156,7 +178,9 @@
 
               <div class="setting-item">
                 <div class="setting-info">
-                  <span class="setting-title" id="title-local-logging">Local diagnostics logging</span>
+                  <span class="setting-title" id="title-local-logging"
+                    >Local diagnostics logging</span
+                  >
                   <span class="setting-desc"
                     >Store privacy-preserving activity logs on this device
                     only.</span
@@ -170,12 +194,18 @@
 
               <div class="setting-item">
                 <div class="setting-info">
-                  <span class="setting-title" id="title-log-verbosity">Log verbosity</span>
+                  <span class="setting-title" id="title-log-verbosity"
+                    >Log verbosity</span
+                  >
                   <span class="setting-desc"
                     >Use Debug only when troubleshooting.</span
                   >
                 </div>
-                <select id="s-log-verbosity" class="setting-select" aria-labelledby="title-log-verbosity">
+                <select
+                  id="s-log-verbosity"
+                  class="setting-select"
+                  aria-labelledby="title-log-verbosity"
+                >
                   <option value="info">Normal</option>
                   <option value="debug">Debug</option>
                 </select>
@@ -328,7 +358,9 @@
               </div>
               <div class="setting-item">
                 <div class="setting-info">
-                  <span class="setting-title" id="title-encrypt-headers">Encrypt file names</span>
+                  <span class="setting-title" id="title-encrypt-headers"
+                    >Encrypt file names</span
+                  >
                 </div>
                 <label class="switch" aria-labelledby="title-encrypt-headers">
                   <input type="checkbox" id="s-encrypt-headers" />
@@ -475,7 +507,11 @@
         >
           <div class="modal__header">
             <h2 id="licenses-title">Open-Source Licenses</h2>
-            <button class="btn btn--ghost btn--sm" id="close-licenses" aria-label="Close licenses">
+            <button
+              class="btn btn--ghost btn--sm"
+              id="close-licenses"
+              aria-label="Close licenses"
+            >
               &times;
             </button>
           </div>
@@ -496,7 +532,11 @@
         >
           <div class="modal__header">
             <h2 id="selective-title">Extract Selected Entries</h2>
-            <button class="btn btn--ghost btn--sm" id="close-selective" aria-label="Close Extract Selected Entries dialog">
+            <button
+              class="btn btn--ghost btn--sm"
+              id="close-selective"
+              aria-label="Close Extract Selected Entries dialog"
+            >
               &times;
             </button>
           </div>
@@ -510,7 +550,12 @@
               />
             </div>
             <div class="selective-toolbar">
-              <div class="selective-summary" id="selective-summary" aria-live="polite" aria-atomic="true">
+              <div
+                class="selective-summary"
+                id="selective-summary"
+                aria-live="polite"
+                aria-atomic="true"
+              >
                 0 selected · 0 shown · 0 total
               </div>
               <div class="selective-toolbar__actions">
@@ -556,13 +601,25 @@
           <div class="panel__header">
             <h2>Archive Session</h2>
             <div class="segmented" role="group" aria-label="Operation mode">
-              <button class="segmented__btn is-active" data-mode-btn="add" aria-pressed="true">
+              <button
+                class="segmented__btn is-active"
+                data-mode-btn="add"
+                aria-pressed="true"
+              >
                 Add
               </button>
-              <button class="segmented__btn" data-mode-btn="extract" aria-pressed="false">
+              <button
+                class="segmented__btn"
+                data-mode-btn="extract"
+                aria-pressed="false"
+              >
                 Extract
               </button>
-              <button class="segmented__btn" data-mode-btn="browse" aria-pressed="false">
+              <button
+                class="segmented__btn"
+                data-mode-btn="browse"
+                aria-pressed="false"
+              >
                 Browse
               </button>
             </div>

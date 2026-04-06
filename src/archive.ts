@@ -232,7 +232,14 @@ export function buildArgs() {
   if (sfx) switches.push("-sfx");
   if (deleteAfter) switches.push("-sdel");
 
-  const args = ["a", ...switches, ...extraArgs, outputPath, "--", ...state.inputs];
+  const args = [
+    "a",
+    ...switches,
+    ...extraArgs,
+    outputPath,
+    "--",
+    ...state.inputs,
+  ];
   return args;
 }
 

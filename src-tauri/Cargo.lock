@@ -5625,7 +5625,7 @@ dependencies = [
 
 [[package]]
 name = "zinnia"
-version = "0.3.0-beta.5"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
