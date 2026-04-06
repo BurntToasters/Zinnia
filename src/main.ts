@@ -145,7 +145,9 @@ async function applyIncomingPaths(
   if (!paths.length) return;
 
   const shouldAutoBrowse =
-    mode !== "extract" && paths.length === 1 && (await allPathsAreArchives(paths));
+    mode !== "extract" &&
+    paths.length === 1 &&
+    (await allPathsAreArchives(paths));
   if (mode === "extract") {
     setMode("extract");
     state.inputs.length = 0;
@@ -390,9 +392,7 @@ function wireEvents() {
       tab.classList.add("is-active");
       tab.setAttribute("aria-selected", "true");
       tab.setAttribute("tabindex", "0");
-      const panel = document.querySelector(
-        `[data-panel="${tab.dataset.tab}"]`,
-      );
+      const panel = document.querySelector(`[data-panel="${tab.dataset.tab}"]`);
       if (panel) panel.classList.add("is-active");
     });
 
@@ -402,7 +402,8 @@ function wireEvents() {
       if (e.key === "ArrowRight" || e.key === "ArrowDown") {
         next = settingsTabs[(idx + 1) % settingsTabs.length];
       } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
-        next = settingsTabs[(idx - 1 + settingsTabs.length) % settingsTabs.length];
+        next =
+          settingsTabs[(idx - 1 + settingsTabs.length) % settingsTabs.length];
       } else if (e.key === "Home") {
         next = settingsTabs[0];
       } else if (e.key === "End") {
@@ -420,8 +421,12 @@ function wireEvents() {
   $("export-logs").addEventListener("click", exportLocalLogs);
   $("open-logs-folder").addEventListener("click", openLogsFolder);
   $("clear-logs").addEventListener("click", clearLocalLogs);
-  $("show-licenses").addEventListener("click", (e) => openLicensesModal(e.currentTarget as HTMLElement));
-  $("about-show-licenses").addEventListener("click", (e) => openLicensesModal(e.currentTarget as HTMLElement));
+  $("show-licenses").addEventListener("click", (e) =>
+    openLicensesModal(e.currentTarget as HTMLElement),
+  );
+  $("about-show-licenses").addEventListener("click", (e) =>
+    openLicensesModal(e.currentTarget as HTMLElement),
+  );
 
   $("close-licenses").addEventListener("click", closeLicensesModal);
   $("licenses-overlay").addEventListener("click", (e) => {
@@ -540,7 +545,9 @@ async function init() {
   let openPathsQueue = Promise.resolve();
 
   async function drainPendingPaths(): Promise<void> {
-    const batches = await invoke<{ paths: string[]; mode: string }[]>("drain_pending_paths");
+    const batches = await invoke<{ paths: string[]; mode: string }[]>(
+      "drain_pending_paths",
+    );
     for (const batch of batches) {
       if (batch.paths.length > 0) {
         await applyIncomingPaths(batch.paths, batch.mode, "Explorer");
@@ -549,12 +556,10 @@ async function init() {
   }
 
   await listen("pending-paths-changed", () => {
-    openPathsQueue = openPathsQueue
-      .then(drainPendingPaths)
-      .catch((err) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        log(`Failed to process incoming Explorer paths: ${msg}`, "error");
-      });
+    openPathsQueue = openPathsQueue.then(drainPendingPaths).catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`Failed to process incoming Explorer paths: ${msg}`, "error");
+    });
   });
 
   const initialMode = await invoke<string>("get_initial_mode");

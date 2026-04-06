@@ -148,7 +148,9 @@ export function openSettingsModal() {
   const modal = overlay.querySelector<HTMLElement>(".modal");
   if (modal) {
     trapFocus(modal);
-    const activeTab = modal.querySelector<HTMLElement>(".settings-tab.is-active");
+    const activeTab = modal.querySelector<HTMLElement>(
+      ".settings-tab.is-active",
+    );
     activeTab?.focus();
   }
 }

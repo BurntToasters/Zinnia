@@ -115,7 +115,10 @@ export function redactSensitiveText(input: string): string {
     .replace(JWT_LIKE_PATTERN, "***")
     .replace(OPENAI_KEY_PATTERN, "***")
     .replace(ARG_PASSWORD_PATTERN, "-p***")
-    .replace(KEY_VALUE_SECRET_PATTERN, (_match, key: string, sep: string) => `${key}${sep}***`)
+    .replace(
+      KEY_VALUE_SECRET_PATTERN,
+      (_match, key: string, sep: string) => `${key}${sep}***`,
+    )
     .replace(TOKEN_LIKE_PATTERN, "***");
 }
 

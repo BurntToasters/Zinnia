@@ -80,12 +80,15 @@ async function run() {
     operationFinished = true;
     $("extract-status").textContent = status;
     const h1 = document.querySelector<HTMLHeadingElement>("h1");
-    if (h1) h1.textContent = asError ? "Extraction failed" : "Extraction complete";
+    if (h1)
+      h1.textContent = asError ? "Extraction failed" : "Extraction complete";
     document.title = asError ? "Zinnia — Failed" : "Zinnia — Done";
     stopProgressAt(progressPercent, asError);
     setButtons(false, true);
     cancelBtn.disabled = false;
-    closeBtn.disabled = false;    closeBtn.focus();  };
+    closeBtn.disabled = false;
+    closeBtn.focus();
+  };
 
   const showError = (detail: string) => {
     $("extract-error").hidden = false;
@@ -156,12 +159,17 @@ async function run() {
     }
 
     if (result.code === 1) {
-      const detail = result.stderr?.trim() || result.stdout?.trim() || "Exit code 1 (no detail available).";
-      const titleEl = $('extract-error').querySelector<HTMLElement>('.extract-error-title');
-      if (titleEl) titleEl.textContent = 'Warnings';
-      $('error-detail').textContent = detail;
-      $('extract-error').hidden = false;
-      finish('Done (with warnings)', 100);
+      const detail =
+        result.stderr?.trim() ||
+        result.stdout?.trim() ||
+        "Exit code 1 (no detail available).";
+      const titleEl = $("extract-error").querySelector<HTMLElement>(
+        ".extract-error-title",
+      );
+      if (titleEl) titleEl.textContent = "Warnings";
+      $("error-detail").textContent = detail;
+      $("extract-error").hidden = false;
+      finish("Done (with warnings)", 100);
     } else {
       await closeWindowSafely(appWindow);
     }
