@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { deriveExtractDestinationPath } from "./extract-path";
 
 interface Run7zResult {
   stdout: string;
@@ -124,7 +125,8 @@ async function run() {
     return;
   }
 
-  const destination = parentDir(archivePath);
+  const destination =
+    deriveExtractDestinationPath(archivePath) || parentDir(archivePath);
 
   $("archive-name").textContent = basename(archivePath);
   $("archive-name").title = archivePath;

@@ -8,7 +8,7 @@ static EXTRACT_WINDOW_COUNTER: AtomicU64 = AtomicU64::new(0);
 static WRITE_SEQ: AtomicU64 = AtomicU64::new(0);
 use tauri::Emitter;
 use tauri::Manager;
-use tauri_plugin_shell::process::{CommandEvent, CommandChild};
+use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
 const MAX_OUTPUT_BYTES: usize = 50 * 1024 * 1024;
@@ -38,14 +38,14 @@ struct ProcessState {
 struct RunningProcess(Mutex<ProcessState>);
 
 fn lock_process(state: &RunningProcess) -> Result<std::sync::MutexGuard<'_, ProcessState>, String> {
-    state.0.lock().map_err(|_| "Process lock poisoned".to_string())
+    state
+        .0
+        .lock()
+        .map_err(|_| "Process lock poisoned".to_string())
 }
 
 fn settings_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?;
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     Ok(dir.join("settings.json"))
 }
 
@@ -132,10 +132,7 @@ fn atomic_write_text(path: &std::path::Path, contents: &str) -> Result<(), Strin
 }
 
 fn logs_dir_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?;
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     Ok(dir.join("logs"))
 }
 
@@ -259,8 +256,7 @@ fn parse_tar_octal_field(field: &[u8]) -> Option<u64> {
 fn is_valid_tar_typeflag(flag: u8) -> bool {
     matches!(
         flag,
-        0
-            | b'0'
+        0 | b'0'
             | b'1'
             | b'2'
             | b'3'
@@ -343,9 +339,7 @@ fn extension_mismatch_reason(expected: &str, detected: Option<&str>, tar: bool) 
     }
 
     match detected {
-        Some(kind) => format!(
-            "Extension indicates {expected} but header appears to be {kind}."
-        ),
+        Some(kind) => format!("Extension indicates {expected} but header appears to be {kind}."),
         None => format!("Extension indicates {expected} but the archive header is unrecognized."),
     }
 }
@@ -546,9 +540,7 @@ fn clear_logs(app: tauri::AppHandle) -> Result<(), String> {
 fn open_log_dir(app: tauri::AppHandle) -> Result<(), String> {
     let dir = ensure_logs_dir(&app)?;
     let dir_str = dir.to_string_lossy().to_string();
-    app.shell()
-        .open(&dir_str, None)
-        .map_err(|e| e.to_string())
+    app.shell().open(&dir_str, None).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -574,7 +566,11 @@ const ALLOWED_7Z_COMMANDS: &[&str] = &["a", "x", "l", "t"];
 const BLOCKED_7Z_ARGS: &[&str] = &["-sdel", "-si", "-so"];
 
 #[tauri::command]
-async fn run_7z(app: tauri::AppHandle, args: Vec<String>, state: tauri::State<'_, RunningProcess>) -> Result<RunResult, String> {
+async fn run_7z(
+    app: tauri::AppHandle,
+    args: Vec<String>,
+    state: tauri::State<'_, RunningProcess>,
+) -> Result<RunResult, String> {
     if args.is_empty() {
         return Err("Missing 7z arguments".to_string());
     }
@@ -679,7 +675,6 @@ fn cancel_7z(state: tauri::State<'_, RunningProcess>) -> Result<(), String> {
     }
 }
 
-
 #[tauri::command]
 fn get_initial_paths(state: tauri::State<'_, InitialPaths>) -> Result<Vec<String>, String> {
     let mut paths = state.0.lock().map_err(|_| "Lock poisoned".to_string())?;
@@ -693,7 +688,9 @@ fn get_initial_mode(state: tauri::State<'_, InitialMode>) -> Result<String, Stri
 }
 
 #[tauri::command]
-fn drain_pending_paths(state: tauri::State<'_, PendingPaths>) -> Result<Vec<OpenPathsPayload>, String> {
+fn drain_pending_paths(
+    state: tauri::State<'_, PendingPaths>,
+) -> Result<Vec<OpenPathsPayload>, String> {
     let mut q = state.0.lock().map_err(|_| "Lock poisoned".to_string())?;
     Ok(std::mem::take(&mut *q))
 }
@@ -803,6 +800,17 @@ struct OpenPathsPayload {
     mode: String,
 }
 
+fn should_use_extract_window(paths: &[String], mode: &str) -> bool {
+    if mode == "extract" {
+        return true;
+    }
+    if paths.len() != 1 {
+        return false;
+    }
+
+    validate_archive_path(&paths[0]).valid
+}
+
 fn emit_open_paths(app: &tauri::AppHandle, argv: Vec<String>) {
     let mut mode = String::new();
     let paths: Vec<String> = argv
@@ -822,7 +830,7 @@ fn emit_open_paths(app: &tauri::AppHandle, argv: Vec<String>) {
         return;
     }
 
-    if mode == "extract" {
+    if should_use_extract_window(&paths, &mode) {
         if let Err(e) = spawn_extract_window(app, paths) {
             eprintln!("Failed to open extract window: {e}");
         }
@@ -853,6 +861,9 @@ fn collect_cli_context() -> (Vec<String>, String) {
         } else if !arg.starts_with('-') {
             paths.push(arg);
         }
+    }
+    if should_use_extract_window(&paths, &mode) {
+        mode = "extract".to_string();
     }
     (paths, mode)
 }
@@ -912,16 +923,27 @@ mod tests {
 
     #[test]
     fn merge_reserved_settings_preserves_internal_keys() {
-        let existing = parse_json_object(r#"{"theme":"dark","_integrationAutoEnabled":true,"_integrationUserDisabled":true}"#)
-            .expect("existing object should parse");
-        let mut incoming = parse_json_object(r#"{"theme":"light"}"#)
-            .expect("incoming object should parse");
+        let existing = parse_json_object(
+            r#"{"theme":"dark","_integrationAutoEnabled":true,"_integrationUserDisabled":true}"#,
+        )
+        .expect("existing object should parse");
+        let mut incoming =
+            parse_json_object(r#"{"theme":"light"}"#).expect("incoming object should parse");
 
         merge_reserved_settings(&existing, &mut incoming);
 
-        assert_eq!(incoming.get("theme"), Some(&serde_json::Value::String("light".to_string())));
-        assert_eq!(incoming.get("_integrationAutoEnabled"), Some(&serde_json::Value::Bool(true)));
-        assert_eq!(incoming.get("_integrationUserDisabled"), Some(&serde_json::Value::Bool(true)));
+        assert_eq!(
+            incoming.get("theme"),
+            Some(&serde_json::Value::String("light".to_string()))
+        );
+        assert_eq!(
+            incoming.get("_integrationAutoEnabled"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        assert_eq!(
+            incoming.get("_integrationUserDisabled"),
+            Some(&serde_json::Value::Bool(true))
+        );
     }
 
     #[test]
@@ -956,7 +978,10 @@ mod tests {
 
     #[test]
     fn detect_archive_signature_recognizes_known_headers() {
-        assert_eq!(detect_archive_signature(&[0x50, 0x4B, 0x03, 0x04]), Some("zip"));
+        assert_eq!(
+            detect_archive_signature(&[0x50, 0x4B, 0x03, 0x04]),
+            Some("zip")
+        );
         assert_eq!(detect_archive_signature(&[0x1F, 0x8B, 0x08]), Some("gzip"));
         assert_eq!(
             detect_archive_signature(&[0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x01, 0x00]),
@@ -1035,7 +1060,81 @@ mod tests {
         let path = file_path.to_string_lossy().to_string();
         let result = validate_archive_path(&path);
         assert!(!result.valid);
-        assert!(result.reason.unwrap_or_default().contains("Extension indicates zip"));
+        assert!(result
+            .reason
+            .unwrap_or_default()
+            .contains("Extension indicates zip"));
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn should_use_extract_window_honors_explicit_extract_mode() {
+        let paths = vec!["/tmp/not-an-archive.txt".to_string()];
+        assert!(should_use_extract_window(&paths, "extract"));
+    }
+
+    #[test]
+    fn should_use_extract_window_accepts_single_archive_path() {
+        let base = std::env::temp_dir().join(format!(
+            "zinnia-extract-mode-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time should work")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).expect("temp directory should be created");
+        let file_path = base.join("archive.zip");
+        std::fs::write(&file_path, [0x50, 0x4B, 0x03, 0x04, 0x14, 0x00])
+            .expect("probe file should be written");
+
+        let path = file_path.to_string_lossy().to_string();
+        assert!(should_use_extract_window(&[path], ""));
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn should_use_extract_window_rejects_non_archive_path() {
+        let base = std::env::temp_dir().join(format!(
+            "zinnia-extract-mode-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time should work")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).expect("temp directory should be created");
+        let file_path = base.join("plain.txt");
+        std::fs::write(&file_path, b"this is plain text").expect("probe file should be written");
+
+        let path = file_path.to_string_lossy().to_string();
+        assert!(!should_use_extract_window(&[path], ""));
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn should_use_extract_window_rejects_multiple_paths_without_explicit_mode() {
+        let base = std::env::temp_dir().join(format!(
+            "zinnia-extract-mode-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time should work")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).expect("temp directory should be created");
+        let one = base.join("one.zip");
+        let two = base.join("two.zip");
+        std::fs::write(&one, [0x50, 0x4B, 0x03, 0x04, 0x14, 0x00])
+            .expect("first probe file should be written");
+        std::fs::write(&two, [0x50, 0x4B, 0x03, 0x04, 0x14, 0x00])
+            .expect("second probe file should be written");
+
+        let paths = vec![
+            one.to_string_lossy().to_string(),
+            two.to_string_lossy().to_string(),
+        ];
+        assert!(!should_use_extract_window(&paths, ""));
 
         let _ = std::fs::remove_dir_all(base);
     }
@@ -1044,7 +1143,10 @@ mod tests {
     fn escape_desktop_exec_arg(arg: &str) -> String {
         arg.chars()
             .fold(String::with_capacity(arg.len()), |mut out, c| {
-                if matches!(c, ' ' | '"' | '\'' | '\\' | '`' | '$' | '>' | '<' | '~' | '|' | '&' | ';') {
+                if matches!(
+                    c,
+                    ' ' | '"' | '\'' | '\\' | '`' | '$' | '>' | '<' | '~' | '|' | '&' | ';'
+                ) {
                     out.push('\\');
                 }
                 out.push(c);
