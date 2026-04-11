@@ -138,6 +138,8 @@ export function readSettingsModal(): UserSettings {
     localLoggingEnabled: $<HTMLInputElement>("s-local-logging").checked,
     logVerbosity: $<HTMLSelectElement>("s-log-verbosity")
       .value as UserSettings["logVerbosity"],
+    lastMode: state.currentSettings.lastMode,
+    showActivityPanel: state.currentSettings.showActivityPanel,
   };
 }
 

@@ -13,9 +13,13 @@
   --accent: #60cdff;
   --accent-hover: #7dd8ff;
   --accent-bg: rgba(96, 205, 255, 0.08);
+  --accent-bg-strong: rgba(96, 205, 255, 0.14);
   --accent-pressed: #4db8e8;
   --accent-shadow: rgba(96, 205, 255, 0.15);
   --accent-shadow-hover: rgba(96, 205, 255, 0.25);
+  --success: #22c55e;
+  --success-bg: rgba(34, 197, 94, 0.16);
+  --success-border: rgba(34, 197, 94, 0.36);
   --text: #f5f5f5;
   --text-secondary: #a5a5a5;
   --text-on-accent: #111;
@@ -24,9 +28,11 @@
   --border-hover: rgba(255, 255, 255, 0.2);
   --danger: #ff6b6b;
   --danger-bg: rgba(255, 107, 107, 0.1);
+  --danger-border: rgba(255, 107, 107, 0.35);
   --hover-overlay: rgba(255, 255, 255, 0.04);
   --scrollbar-thumb: rgba(255, 255, 255, 0.12);
   --scrollbar-thumb-hover: rgba(255, 255, 255, 0.22);
+  --input-inset-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
   --shadow: rgba(0, 0, 0, 0.2);
   --shadow-heavy: rgba(0, 0, 0, 0.4);
   --overlay: rgba(0, 0, 0, 0.5);
@@ -47,9 +53,13 @@
   --accent: #0078d4;
   --accent-hover: #106ebe;
   --accent-bg: rgba(0, 120, 212, 0.06);
+  --accent-bg-strong: rgba(0, 120, 212, 0.14);
   --accent-pressed: #005a9e;
   --accent-shadow: rgba(0, 120, 212, 0.12);
   --accent-shadow-hover: rgba(0, 120, 212, 0.22);
+  --success: #15803d;
+  --success-bg: rgba(21, 128, 61, 0.12);
+  --success-border: rgba(21, 128, 61, 0.3);
   --text: #1a1a1a;
   --text-secondary: #5c5c5c;
   --text-on-accent: #ffffff;
@@ -58,9 +68,11 @@
   --border-hover: rgba(0, 0, 0, 0.2);
   --danger: #b5191d;
   --danger-bg: rgba(209, 52, 56, 0.08);
+  --danger-border: rgba(181, 25, 29, 0.35);
   --hover-overlay: rgba(0, 0, 0, 0.03);
   --scrollbar-thumb: rgba(0, 0, 0, 0.15);
   --scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);
+  --input-inset-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
   --shadow: rgba(0, 0, 0, 0.08);
   --shadow-heavy: rgba(0, 0, 0, 0.16);
   --overlay: rgba(0, 0, 0, 0.3);
@@ -666,7 +678,7 @@ select {
   font-size: 12px;
   font-family: inherit;
   flex: 1;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  box-shadow: var(--input-inset-shadow);
   transition:
     border-color var(--transition),
     box-shadow var(--transition),
@@ -927,7 +939,7 @@ input[type="number"] {
 .list__item {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   padding: 3px 6px;
   border-radius: var(--radius-sm);
@@ -938,11 +950,61 @@ input[type="number"] {
   background: var(--hover-overlay);
 }
 
-.list__item span {
+.list__item-main {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  column-gap: 8px;
+  row-gap: 2px;
+  min-width: 0;
+}
+
+.list__item-path {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+}
+
+.list__item-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.list__item-badge--unknown {
+  color: var(--text-secondary);
+  background: var(--surface);
+}
+
+.list__item-badge--valid {
+  color: var(--success);
+  background: var(--success-bg);
+  border-color: var(--success-border);
+}
+
+.list__item-badge--invalid {
+  color: var(--danger);
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+}
+
+.list__item-reason {
+  flex-basis: 100%;
+  font-size: 10px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .list__item button {
@@ -1153,6 +1215,23 @@ input[type="number"] {
   gap: 8px;
   padding: 12px 18px;
   border-top: 1px solid var(--border);
+}
+
+.command-preview-code {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  min-height: 70px;
+  max-height: 340px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: "Cascadia Code", "SF Mono", "Fira Code", "Consolas", monospace;
+  user-select: text;
 }
 
 .settings-group {

@@ -7,6 +7,14 @@ export type { UserSettings };
 
 const MAX_CACHED_ARCHIVES = 10;
 
+export type InputValidationState = "unknown" | "valid" | "invalid";
+
+export interface InputValidationInfo {
+  state: InputValidationState;
+  reason?: string;
+  reasonShort?: string;
+}
+
 function evictOldest<K, V>(map: Map<K, V>, max: number): void {
   while (map.size >= max) {
     const oldest = map.keys().next().value;
@@ -45,6 +53,9 @@ export const state = {
   selectiveSearchQuery: "",
   selectiveActiveArchive: null as string | null,
   selectiveVisiblePaths: [] as string[],
+  inputValidationByPath: new Map<string, InputValidationInfo>(),
+  inputValidationRequestId: 0,
+  lastInputValidationMode: "add" as "add" | "extract" | "browse",
   lastInputsSignature: "",
 };
 

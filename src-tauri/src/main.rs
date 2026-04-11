@@ -545,6 +545,26 @@ fn open_log_dir(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+#[allow(deprecated)]
+fn open_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let Some(raw_path) = normalize_open_path_arg(&path) else {
+        return Err("Path is required.".to_string());
+    };
+
+    if raw_path.contains('\0') {
+        return Err("Path contains invalid characters.".to_string());
+    }
+
+    let resolved = std::path::PathBuf::from(&raw_path);
+    if !resolved.exists() {
+        return Err("Path does not exist.".to_string());
+    }
+
+    let path_str = resolved.to_string_lossy().to_string();
+    app.shell().open(&path_str, None).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn probe_7z(app: tauri::AppHandle) -> Result<(), String> {
     let command = app
         .shell()
@@ -1302,6 +1322,7 @@ fn main() {
             export_logs,
             clear_logs,
             open_log_dir,
+            open_path,
             get_initial_paths,
             get_initial_mode,
             drain_pending_paths,

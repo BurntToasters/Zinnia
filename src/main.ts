@@ -23,6 +23,7 @@ import {
   toggleActivity,
   renderInputs,
   setMode,
+  setActivityPanelVisible,
   getMode,
   setBrowsePasswordFieldVisible,
 } from "./ui";
@@ -32,6 +33,8 @@ import {
   testArchive,
   browseArchive,
   previewCommand,
+  copyCommandPreview,
+  closeCommandPreviewModal,
   openSelectiveExtractModal,
   closeSelectiveExtractModal,
   setSelectiveExtractSearch,
@@ -213,12 +216,33 @@ function wireEvents() {
   $("choose-extract").addEventListener("click", chooseExtract);
   $("run-action").addEventListener("click", runAction);
   $("cancel-action").addEventListener("click", cancelAction);
-  $("show-command").addEventListener("click", previewCommand);
+  $("show-command").addEventListener(
+    "click",
+    (e) => void previewCommand(e.currentTarget as HTMLElement),
+  );
   $("clear-log").addEventListener("click", () => (dom.logEl.textContent = ""));
 
   $("extract-run").addEventListener("click", runAction);
   $("extract-cancel").addEventListener("click", cancelAction);
-  $("extract-preview").addEventListener("click", previewCommand);
+  $("extract-preview").addEventListener(
+    "click",
+    (e) => void previewCommand(e.currentTarget as HTMLElement),
+  );
+
+  $("copy-command-preview").addEventListener("click", () => {
+    void copyCommandPreview();
+  });
+  $("close-command-preview").addEventListener(
+    "click",
+    closeCommandPreviewModal,
+  );
+  $("close-command-preview-footer").addEventListener(
+    "click",
+    closeCommandPreviewModal,
+  );
+  $("command-preview-overlay").addEventListener("click", (e) => {
+    if (e.target === e.currentTarget) closeCommandPreviewModal();
+  });
   $("test-integrity").addEventListener("click", testArchive);
 
   $("browse-list").addEventListener("click", browseArchive);
@@ -452,6 +476,10 @@ function wireEvents() {
         closeSelectiveExtractModal();
         return;
       }
+      if (!$("command-preview-overlay").hidden) {
+        closeCommandPreviewModal();
+        return;
+      }
       if (!$("licenses-overlay").hidden) {
         closeLicensesModal();
         return;
@@ -461,7 +489,8 @@ function wireEvents() {
       if (
         !$("settings-overlay").hidden ||
         !$("licenses-overlay").hidden ||
-        !$("selective-overlay").hidden
+        !$("selective-overlay").hidden ||
+        !$("command-preview-overlay").hidden
       )
         return;
       e.preventDefault();
@@ -508,6 +537,10 @@ async function init() {
       if (state.currentSettings.theme === "system") applyTheme("system");
     });
 
+  setMode(state.currentSettings.lastMode, { persist: false });
+  setActivityPanelVisible(state.currentSettings.showActivityPanel, {
+    persist: false,
+  });
   renderInputs();
   wireEvents();
   if (loadedSettings.malformed && loadedSettings.warning) {

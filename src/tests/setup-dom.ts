@@ -84,6 +84,10 @@ addEl("button", "run-action");
 addEl("button", "cancel-action");
 addEl("button", "extract-run");
 addEl("button", "extract-cancel");
+addEl("button", "show-command");
+addEl("button", "extract-preview");
+addEl("button", "test-integrity");
+addEl("button", "clear-log");
 addEl("button", "toggle-activity");
 addEl("button", "add-files");
 addEl("button", "add-folder");
@@ -157,6 +161,7 @@ addEl("button", "toggle-password");
 addEl("input", "extract-path");
 addEl("input", "extract-password");
 addEl("input", "extract-extra-args");
+addEl("button", "toggle-extract-password");
 
 // Settings modal selects
 addSelect("s-theme", ["system", "dark", "light"]);
@@ -188,3 +193,21 @@ addEl("div", "settings-overlay");
 // Licenses modal
 addEl("div", "licenses-overlay");
 addEl("div", "licenses-list");
+
+// Command preview modal
+const commandPreviewOverlay = addEl("div", "command-preview-overlay");
+const commandPreviewModal = document.createElement("div");
+commandPreviewModal.className = "modal";
+commandPreviewOverlay.appendChild(commandPreviewModal);
+const commandPreviewText = document.createElement("pre");
+commandPreviewText.id = "command-preview-text";
+commandPreviewModal.appendChild(commandPreviewText);
+const copyCommandPreviewButton = document.createElement("button");
+copyCommandPreviewButton.id = "copy-command-preview";
+commandPreviewModal.appendChild(copyCommandPreviewButton);
+const closeCommandPreviewButton = document.createElement("button");
+closeCommandPreviewButton.id = "close-command-preview";
+commandPreviewModal.appendChild(closeCommandPreviewButton);
+const closeCommandPreviewFooterButton = document.createElement("button");
+closeCommandPreviewFooterButton.id = "close-command-preview-footer";
+commandPreviewModal.appendChild(closeCommandPreviewFooterButton);

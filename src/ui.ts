@@ -1,7 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { $, MAX_LOG_LINES, redactSensitiveText } from "./utils";
 import { state, dom } from "./state";
+import type { InputValidationInfo } from "./state";
 import { LogVerbosity } from "./settings-model";
+import { saveSettings } from "./settings";
+import {
+  type ArchivePathValidation,
+  validateArchivePaths,
+} from "./archive-rules";
 import {
   resolveExtractDestinationAutofill,
   resolveOutputArchiveAutofill,
@@ -13,8 +19,11 @@ let logWriteQueue = Promise.resolve();
 const MAX_LOG_ENTRY_CHARS = 8_000;
 const LOG_CHUNK_CHARS = 2_000;
 const MAX_PENDING_LOCAL_LOG_WRITES = 250;
+const WORKING_CONTEXT_PERSIST_DEBOUNCE_MS = 140;
+const INPUT_VALIDATION_REASON_INLINE_MAX_CHARS = 92;
 let pendingLocalLogWrites = 0;
 let droppedLocalLogWrites = 0;
+let workingContextPersistTimer: number | undefined;
 
 export function buildLogFragments(input: string): string[] {
   if (input.length <= MAX_LOG_ENTRY_CHARS) return [input];
@@ -34,6 +43,47 @@ export function shouldPersistLevel(
 ): boolean {
   if (level === "debug") return verbosity === "debug";
   return true;
+}
+
+export function truncateValidationReason(
+  reason: string | undefined,
+  maxChars = INPUT_VALIDATION_REASON_INLINE_MAX_CHARS,
+): string {
+  const text = (reason ?? "").trim();
+  if (!text) return "Unsupported archive file.";
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars - 1).trimEnd()}\u2026`;
+}
+
+export function mapArchiveValidationResult(
+  result: ArchivePathValidation,
+): InputValidationInfo {
+  if (result.valid) {
+    return { state: "valid" };
+  }
+  const reason = (result.reason ?? "").trim() || "Unsupported archive file.";
+  return {
+    state: "invalid",
+    reason,
+    reasonShort: truncateValidationReason(reason),
+  };
+}
+
+function queuePersistWorkingContext(): void {
+  if (workingContextPersistTimer !== undefined) {
+    clearTimeout(workingContextPersistTimer);
+  }
+  const snapshot = { ...state.currentSettings };
+  workingContextPersistTimer = window.setTimeout(() => {
+    void saveSettings(snapshot, state.settingsExtras)
+      .then(() => {
+        state.lastPersistedSettings = { ...snapshot };
+      })
+      .catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        devLog(`Failed to persist working context: ${msg}`);
+      });
+  }, WORKING_CONTEXT_PERSIST_DEBOUNCE_MS);
 }
 
 function enqueueLocalLogLine(line: string): void {
@@ -102,11 +152,94 @@ export function devLog(line: string) {
   }
 }
 
-export function toggleActivity() {
-  const isVisible = dom.gridEl.classList.toggle("show-activity");
+function syncValidationMapForInputs(paths: string[]): void {
+  const normalized = paths
+    .map((path) => path.trim())
+    .filter((path) => path.length > 0);
+  const keep = new Set(normalized);
+
+  for (const existing of state.inputValidationByPath.keys()) {
+    if (!keep.has(existing)) {
+      state.inputValidationByPath.delete(existing);
+    }
+  }
+
+  for (const path of keep) {
+    if (!state.inputValidationByPath.has(path)) {
+      state.inputValidationByPath.set(path, { state: "unknown" });
+    }
+  }
+}
+
+function startInputValidation(paths: string[]): void {
+  if (paths.length === 0) {
+    state.inputValidationByPath.clear();
+    state.inputValidationRequestId += 1;
+    return;
+  }
+
+  syncValidationMapForInputs(paths);
+  const requestId = ++state.inputValidationRequestId;
+
+  void validateArchivePaths(paths)
+    .then((results) => {
+      if (requestId !== state.inputValidationRequestId) return;
+      const next = new Map<string, InputValidationInfo>();
+      for (const result of results) {
+        const key = result.path.trim();
+        if (!key) continue;
+        next.set(key, mapArchiveValidationResult(result));
+      }
+      for (const path of paths) {
+        const key = path.trim();
+        if (!key || next.has(key)) continue;
+        next.set(key, {
+          state: "invalid",
+          reason: "Validation unavailable.",
+          reasonShort: "Validation unavailable.",
+        });
+      }
+      state.inputValidationByPath = next;
+      renderInputs();
+    })
+    .catch((err) => {
+      if (requestId !== state.inputValidationRequestId) return;
+      const msg = err instanceof Error ? err.message : String(err);
+      devLog(`Background archive validation failed: ${msg}`);
+      for (const path of paths) {
+        const key = path.trim();
+        if (!key) continue;
+        const current = state.inputValidationByPath.get(key);
+        if (!current) {
+          state.inputValidationByPath.set(key, { state: "unknown" });
+        }
+      }
+      renderInputs();
+    });
+}
+
+interface ContextPersistOptions {
+  persist?: boolean;
+}
+
+export function setActivityPanelVisible(
+  visible: boolean,
+  options: ContextPersistOptions = {},
+): void {
+  dom.gridEl.classList.toggle("show-activity", visible);
   const btn = $("toggle-activity");
-  btn.classList.toggle("is-active", isVisible);
-  btn.setAttribute("aria-pressed", String(isVisible));
+  btn.classList.toggle("is-active", visible);
+  btn.setAttribute("aria-pressed", String(visible));
+
+  state.currentSettings.showActivityPanel = visible;
+  if (options.persist !== false) {
+    queuePersistWorkingContext();
+  }
+}
+
+export function toggleActivity() {
+  const isVisible = !dom.gridEl.classList.contains("show-activity");
+  setActivityPanelVisible(isVisible);
 }
 
 export function setStatus(text: string, autoResetMs?: number) {
@@ -170,7 +303,10 @@ function clearBrowsePickerSessionState() {
   if (overlay) overlay.hidden = true;
 }
 
-export function setMode(mode: "add" | "extract" | "browse") {
+export function setMode(
+  mode: "add" | "extract" | "browse",
+  options: ContextPersistOptions = {},
+) {
   const previousMode = getMode();
   if (previousMode !== mode) {
     clearBrowsePickerSessionState();
@@ -186,15 +322,38 @@ export function setMode(mode: "add" | "extract" | "browse") {
   if (mode !== "browse") {
     setBrowsePasswordFieldVisible(false);
   }
+
+  state.currentSettings.lastMode = mode;
+  if (options.persist !== false && previousMode !== mode) {
+    queuePersistWorkingContext();
+  }
+
   renderInputs();
 }
 
 export function renderInputs() {
   const mode = getMode();
   const signature = state.inputs.join("\n");
-  if (signature !== state.lastInputsSignature) {
+  const signatureChanged = signature !== state.lastInputsSignature;
+  if (signatureChanged) {
     clearBrowsePickerSessionState();
     state.lastInputsSignature = signature;
+  }
+
+  const modeChangedForValidation = state.lastInputValidationMode !== mode;
+  state.lastInputValidationMode = mode;
+  if (mode === "add") {
+    if (modeChangedForValidation || state.inputValidationByPath.size > 0) {
+      state.inputValidationRequestId += 1;
+      state.inputValidationByPath.clear();
+    }
+  } else if (signatureChanged || modeChangedForValidation) {
+    const normalized = state.inputs
+      .map((path) => path.trim())
+      .filter((path) => path.length > 0);
+    startInputValidation(normalized);
+  } else {
+    syncValidationMapForInputs(state.inputs);
   }
 
   if (mode === "extract") {
@@ -261,8 +420,41 @@ export function renderInputs() {
   state.inputs.forEach((path, index) => {
     const item = document.createElement("div");
     item.className = "list__item";
-    const span = document.createElement("span");
-    span.textContent = path;
+    const content = document.createElement("div");
+    content.className = "list__item-main";
+
+    const pathEl = document.createElement("span");
+    pathEl.className = "list__item-path";
+    pathEl.textContent = path;
+    content.appendChild(pathEl);
+
+    if (mode !== "add") {
+      const validation = state.inputValidationByPath.get(path.trim()) ?? {
+        state: "unknown" as const,
+      };
+      const badge = document.createElement("span");
+      badge.className = `list__item-badge list__item-badge--${validation.state}`;
+      badge.textContent =
+        validation.state === "valid"
+          ? "Valid"
+          : validation.state === "invalid"
+            ? "Invalid"
+            : "Checking\u2026";
+      content.appendChild(badge);
+
+      if (validation.state === "invalid") {
+        const reason = document.createElement("span");
+        reason.className = "list__item-reason";
+        reason.textContent =
+          validation.reasonShort ?? truncateValidationReason(validation.reason);
+        const fullReason = (validation.reason ?? "").trim();
+        if (fullReason) {
+          reason.title = fullReason;
+        }
+        content.appendChild(reason);
+      }
+    }
+
     const remove = document.createElement("button");
     remove.className = "btn btn--ghost btn--sm";
     remove.setAttribute("aria-label", `Remove ${path}`);
@@ -279,7 +471,7 @@ export function renderInputs() {
       }
       renderInputs();
     });
-    item.appendChild(span);
+    item.appendChild(content);
     item.appendChild(remove);
     dom.inputList.appendChild(item);
   });

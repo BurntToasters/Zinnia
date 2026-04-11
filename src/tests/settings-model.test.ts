@@ -80,6 +80,22 @@ describe("normalizeUserSettings", () => {
     expect(result.updateChannel).toBe("beta");
   });
 
+  it("accepts valid working context settings", () => {
+    const result = normalizeUserSettings({
+      lastMode: "browse",
+      showActivityPanel: true,
+    });
+    expect(result.lastMode).toBe("browse");
+    expect(result.showActivityPanel).toBe(true);
+  });
+
+  it("rejects invalid lastMode and uses default", () => {
+    const result = normalizeUserSettings({
+      lastMode: "invalid",
+    });
+    expect(result.lastMode).toBe(SETTING_DEFAULTS.lastMode);
+  });
+
   it("rejects invalid updateChannel and uses default", () => {
     const result = normalizeUserSettings({
       updateChannel: "nightly",
@@ -107,6 +123,18 @@ describe("splitSettingsPayload", () => {
     expect(split.extras._integrationAutoEnabled).toBe(true);
     expect(split.extras._integrationUserDisabled).toBe(false);
     expect(split.extras.customInternal).toBe("x");
+  });
+
+  it("keeps working context keys in the user settings payload", () => {
+    const split = splitSettingsPayload({
+      ...SETTING_DEFAULTS,
+      lastMode: "extract",
+      showActivityPanel: true,
+      _integrationAutoEnabled: true,
+    });
+    expect(split.settings.lastMode).toBe("extract");
+    expect(split.settings.showActivityPanel).toBe(true);
+    expect(split.extras._integrationAutoEnabled).toBe(true);
   });
 });
 

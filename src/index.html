@@ -596,6 +596,42 @@
         </div>
       </div>
 
+      <div class="modal-overlay" id="command-preview-overlay" hidden>
+        <div
+          class="modal modal--wide"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="command-preview-title"
+        >
+          <div class="modal__header">
+            <h2 id="command-preview-title">Command Preview</h2>
+            <button
+              class="btn btn--ghost btn--sm"
+              id="close-command-preview"
+              aria-label="Close command preview"
+            >
+              &times;
+            </button>
+          </div>
+          <div class="modal__body">
+            <pre
+              id="command-preview-text"
+              class="command-preview-code"
+              aria-live="polite"
+            ></pre>
+          </div>
+          <div class="modal__footer">
+            <button class="btn btn--sm" id="copy-command-preview">Copy</button>
+            <button
+              class="btn btn--ghost btn--sm"
+              id="close-command-preview-footer"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+
       <main class="grid">
         <section class="panel">
           <div class="panel__header">
