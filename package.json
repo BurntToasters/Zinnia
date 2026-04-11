@@ -1,6 +1,6 @@
 {
   "name": "zinnia",
-  "version": "0.3.0",
+  "version": "0.4.0-beta.1",
   "private": true,
   "description": "Cross-platform 7z GUI built with Tauri.",
   "type": "module",
@@ -25,7 +25,9 @@
     "tauri:build": "npm run sync-version && npm run licenses && npm run prepare:7z && tauri build",
     "prepare:7z": "node scripts/prepare-7z.js",
     "sync-version": "node scripts/sync-version.js",
-    "licenses": "npx npm-license-crawler --production --json public/licenses.json",
+    "licenses": "npm run licenses:npm && npm run licenses:cargo",
+    "licenses:npm": "npx npm-license-crawler --production --json public/licenses.json",
+    "licenses:cargo": "node scripts/generate-cargo-licenses.js",
     "dist:clean": "node scripts/dist-tools.js clean",
     "dist:clean-release": "node scripts/dist-tools.js clean-release",
     "dist:clean-release-artifacts": "node scripts/dist-tools.js clean-release-artifacts",
