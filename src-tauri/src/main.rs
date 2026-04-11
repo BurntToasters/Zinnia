@@ -8,6 +8,7 @@ static EXTRACT_WINDOW_COUNTER: AtomicU64 = AtomicU64::new(0);
 static WRITE_SEQ: AtomicU64 = AtomicU64::new(0);
 use tauri::Emitter;
 use tauri::Manager;
+use tauri::Url;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
@@ -811,21 +812,56 @@ fn should_use_extract_window(paths: &[String], mode: &str) -> bool {
     validate_archive_path(&paths[0]).valid
 }
 
-fn emit_open_paths(app: &tauri::AppHandle, argv: Vec<String>) {
-    let mut mode = String::new();
-    let paths: Vec<String> = argv
-        .into_iter()
-        .skip(1)
-        .filter(|arg| {
-            if arg == "--extract" {
-                mode = "extract".to_string();
-                false
-            } else {
-                !arg.starts_with('-')
-            }
-        })
-        .collect();
+fn normalize_open_path_arg(arg: &str) -> Option<String> {
+    let trimmed = arg.trim().trim_matches('"');
+    if trimmed.is_empty() || trimmed == "--" {
+        return None;
+    }
 
+    if trimmed.len() >= 7 && trimmed[..7].eq_ignore_ascii_case("file://") {
+        if let Ok(url) = Url::parse(trimmed) {
+            if let Ok(path) = url.to_file_path() {
+                return Some(path.to_string_lossy().to_string());
+            }
+            return None;
+        }
+    }
+
+    Some(trimmed.to_string())
+}
+
+fn parse_open_request_args<I>(args: I) -> (Vec<String>, String)
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut paths = Vec::new();
+    let mut mode = String::new();
+
+    for arg in args {
+        if arg == "--extract" {
+            mode = "extract".to_string();
+            continue;
+        }
+
+        let Some(path) = normalize_open_path_arg(&arg) else {
+            continue;
+        };
+
+        if path.starts_with('-') && !std::path::Path::new(&path).exists() {
+            continue;
+        }
+
+        paths.push(path);
+    }
+
+    if should_use_extract_window(&paths, &mode) {
+        mode = "extract".to_string();
+    }
+
+    (paths, mode)
+}
+
+fn route_open_request(app: &tauri::AppHandle, paths: Vec<String>, mode: String) {
     if paths.is_empty() {
         return;
     }
@@ -852,20 +888,23 @@ fn emit_open_paths(app: &tauri::AppHandle, argv: Vec<String>) {
     }
 }
 
+fn emit_open_urls(app: &tauri::AppHandle, urls: Vec<Url>) {
+    let paths: Vec<String> = urls
+        .into_iter()
+        .filter_map(|url| url.to_file_path().ok())
+        .map(|path| path.to_string_lossy().to_string())
+        .collect();
+
+    route_open_request(app, paths, String::new());
+}
+
+fn emit_open_paths(app: &tauri::AppHandle, argv: Vec<String>) {
+    let (paths, mode) = parse_open_request_args(argv.into_iter().skip(1));
+    route_open_request(app, paths, mode);
+}
+
 fn collect_cli_context() -> (Vec<String>, String) {
-    let mut paths = Vec::new();
-    let mut mode = String::new();
-    for arg in std::env::args().skip(1) {
-        if arg == "--extract" {
-            mode = "extract".to_string();
-        } else if !arg.starts_with('-') {
-            paths.push(arg);
-        }
-    }
-    if should_use_extract_window(&paths, &mode) {
-        mode = "extract".to_string();
-    }
-    (paths, mode)
+    parse_open_request_args(std::env::args().skip(1))
 }
 
 #[cfg(test)]
@@ -1139,6 +1178,57 @@ mod tests {
         let _ = std::fs::remove_dir_all(base);
     }
 
+    #[test]
+    fn parse_open_request_args_handles_file_urls() {
+        let base = std::env::temp_dir().join(format!(
+            "zinnia-open-args-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time should work")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).expect("temp directory should be created");
+        let file_path = base.join("archive.zip");
+        std::fs::write(&file_path, [0x50, 0x4B, 0x03, 0x04, 0x14, 0x00])
+            .expect("probe file should be written");
+
+        let file_url = Url::from_file_path(&file_path)
+            .expect("file URL should be generated")
+            .to_string();
+        let (paths, mode) = parse_open_request_args(vec![file_url]);
+
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0], file_path.to_string_lossy().to_string());
+        assert_eq!(mode, "extract");
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn parse_open_request_args_ignores_macos_process_serial_number_flag() {
+        let base = std::env::temp_dir().join(format!(
+            "zinnia-open-args-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time should work")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).expect("temp directory should be created");
+        let file_path = base.join("archive.zip");
+        std::fs::write(&file_path, [0x50, 0x4B, 0x03, 0x04, 0x14, 0x00])
+            .expect("probe file should be written");
+
+        let (paths, mode) = parse_open_request_args(vec![
+            "-psn_0_12345".to_string(),
+            file_path.to_string_lossy().to_string(),
+        ]);
+
+        assert_eq!(paths, vec![file_path.to_string_lossy().to_string()]);
+        assert_eq!(mode, "extract");
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
     #[cfg(target_os = "linux")]
     fn escape_desktop_exec_arg(arg: &str) -> String {
         arg.chars()
@@ -1167,7 +1257,7 @@ fn main() {
     let initial_paths = ctx.0;
     let initial_mode = ctx.1;
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, _| {
             emit_open_paths(app, argv);
         }))
@@ -1221,6 +1311,12 @@ fn main() {
             is_flatpak,
             is_packaged
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("failed to initialize Tauri application");
+
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::Opened { urls } = event {
+            emit_open_urls(app_handle, urls);
+        }
+    });
 }
