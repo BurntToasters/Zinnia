@@ -126,7 +126,11 @@ export function deriveOutputArchivePath(
   if (!first) return null;
   const { parent, name, separator } = splitPathParts(first);
   if (!name) return null;
-  const archiveStem = customName?.trim() || name;
+  const trimmedCustomName = customName?.trim();
+  const archiveStem =
+    trimmedCustomName && trimmedCustomName.length > 0
+      ? trimmedCustomName
+      : name;
   if (!archiveStem) return null;
   return joinPath(parent, `${archiveStem}.${format}`, separator);
 }

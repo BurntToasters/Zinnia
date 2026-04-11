@@ -15,6 +15,9 @@ export interface InputValidationInfo {
   reasonShort?: string;
 }
 
+export type QuickActionMode = "add" | "extract" | "browse";
+export type LastQuickActionByMode = Partial<Record<QuickActionMode, string>>;
+
 function evictOldest<K, V>(map: Map<K, V>, max: number): void {
   while (map.size >= max) {
     const oldest = map.keys().next().value;
@@ -57,6 +60,7 @@ export const state = {
   inputValidationRequestId: 0,
   lastInputValidationMode: "add" as "add" | "extract" | "browse",
   lastInputsSignature: "",
+  lastQuickActionByMode: {} as LastQuickActionByMode,
 };
 
 export const dom = {

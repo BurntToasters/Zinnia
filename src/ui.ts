@@ -2,7 +2,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { $, MAX_LOG_LINES, redactSensitiveText } from "./utils";
 import { state, dom } from "./state";
 import type { InputValidationInfo } from "./state";
-import { LogVerbosity } from "./settings-model";
+import {
+  type LogVerbosity,
+  type WorkspaceMode,
+  type UiDensity,
+} from "./settings-model";
 import { saveSettings } from "./settings";
 import {
   type ArchivePathValidation,
@@ -242,6 +246,55 @@ export function toggleActivity() {
   setActivityPanelVisible(isVisible);
 }
 
+export function getWorkspaceMode(): WorkspaceMode {
+  const mode = dom.appEl.dataset.workspaceMode;
+  return mode === "power" ? "power" : "basic";
+}
+
+export function setWorkspaceMode(
+  mode: WorkspaceMode,
+  options: ContextPersistOptions = {},
+): void {
+  const previousMode = getWorkspaceMode();
+  dom.appEl.dataset.workspaceMode = mode;
+  document.querySelectorAll("[data-workspace-mode-btn]").forEach((btn) => {
+    const el = btn as HTMLButtonElement;
+    const isActive = el.dataset.workspaceModeBtn === mode;
+    el.classList.toggle("is-active", isActive);
+    el.setAttribute("aria-pressed", String(isActive));
+  });
+  state.currentSettings.workspaceMode = mode;
+  if (options.persist !== false && previousMode !== mode) {
+    queuePersistWorkingContext();
+  }
+}
+
+export function getUiDensity(): UiDensity {
+  const density = dom.appEl.dataset.density;
+  return density === "compact" ? "compact" : "comfortable";
+}
+
+export function setUiDensity(
+  density: UiDensity,
+  options: ContextPersistOptions = {},
+): void {
+  const previousDensity = getUiDensity();
+  dom.appEl.dataset.density = density;
+  const compactEnabled = density === "compact";
+  const toggle = document.getElementById(
+    "toggle-density",
+  ) as HTMLButtonElement | null;
+  if (toggle) {
+    toggle.classList.toggle("is-active", compactEnabled);
+    toggle.setAttribute("aria-pressed", String(compactEnabled));
+    toggle.textContent = compactEnabled ? "Comfortable" : "Compact";
+  }
+  state.currentSettings.uiDensity = density;
+  if (options.persist !== false && previousDensity !== density) {
+    queuePersistWorkingContext();
+  }
+}
+
 export function setStatus(text: string, autoResetMs?: number) {
   if (state.statusTimeout !== undefined) {
     clearTimeout(state.statusTimeout);
@@ -329,6 +382,11 @@ export function setMode(
   }
 
   renderInputs();
+  if (previousMode !== mode) {
+    document.dispatchEvent(
+      new CustomEvent("zinnia:mode-changed", { detail: { mode } }),
+    );
+  }
 }
 
 export function renderInputs() {
@@ -384,7 +442,9 @@ export function renderInputs() {
       const format =
         (document.getElementById("format") as HTMLSelectElement | null)
           ?.value ?? "7z";
-      const customName = archiveNameInput?.value.trim() || undefined;
+      const trimmedName = archiveNameInput?.value.trim();
+      const customName =
+        trimmedName && trimmedName.length > 0 ? trimmedName : undefined;
       const next = resolveOutputArchiveAutofill(
         outputPathInput.value,
         state.lastAutoOutputPath,
@@ -510,10 +570,23 @@ export function setRunning(active: boolean) {
     "selective-confirm",
     "selective-browse-dest",
     "close-selective",
+    "toggle-density",
   ]) {
     const el = document.getElementById(id) as HTMLButtonElement | null;
     if (el) el.disabled = active;
   }
+
+  document
+    .querySelectorAll<HTMLButtonElement>("[data-quick-action-btn]")
+    .forEach((btn) => {
+      btn.disabled = active;
+    });
+
+  document
+    .querySelectorAll<HTMLButtonElement>("[data-workspace-mode-btn]")
+    .forEach((btn) => {
+      btn.disabled = active;
+    });
 
   document
     .querySelectorAll<HTMLButtonElement>("[data-mode-btn]")

@@ -84,16 +84,24 @@ describe("normalizeUserSettings", () => {
     const result = normalizeUserSettings({
       lastMode: "browse",
       showActivityPanel: true,
+      workspaceMode: "power",
+      uiDensity: "compact",
     });
     expect(result.lastMode).toBe("browse");
     expect(result.showActivityPanel).toBe(true);
+    expect(result.workspaceMode).toBe("power");
+    expect(result.uiDensity).toBe("compact");
   });
 
   it("rejects invalid lastMode and uses default", () => {
     const result = normalizeUserSettings({
       lastMode: "invalid",
+      workspaceMode: "unknown",
+      uiDensity: "dense",
     });
     expect(result.lastMode).toBe(SETTING_DEFAULTS.lastMode);
+    expect(result.workspaceMode).toBe(SETTING_DEFAULTS.workspaceMode);
+    expect(result.uiDensity).toBe(SETTING_DEFAULTS.uiDensity);
   });
 
   it("rejects invalid updateChannel and uses default", () => {
@@ -130,10 +138,14 @@ describe("splitSettingsPayload", () => {
       ...SETTING_DEFAULTS,
       lastMode: "extract",
       showActivityPanel: true,
+      workspaceMode: "power",
+      uiDensity: "compact",
       _integrationAutoEnabled: true,
     });
     expect(split.settings.lastMode).toBe("extract");
     expect(split.settings.showActivityPanel).toBe(true);
+    expect(split.settings.workspaceMode).toBe("power");
+    expect(split.settings.uiDensity).toBe("compact");
     expect(split.extras._integrationAutoEnabled).toBe(true);
   });
 });

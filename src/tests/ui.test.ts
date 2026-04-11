@@ -7,6 +7,10 @@ import {
   getMode,
   setMode,
   setActivityPanelVisible,
+  getWorkspaceMode,
+  setWorkspaceMode,
+  getUiDensity,
+  setUiDensity,
   setBrowsePasswordFieldVisible,
   setStatus,
   setProgress,
@@ -41,6 +45,8 @@ beforeEach(() => {
   dom.progressEl.textContent = "";
   dom.progressEl.hidden = true;
   dom.inputList.innerHTML = "";
+  dom.appEl.dataset.workspaceMode = "basic";
+  dom.appEl.dataset.density = "comfortable";
   dom.runBtn.disabled = false;
   dom.runBtn.removeAttribute("aria-busy");
   dom.cancelBtn.hidden = true;
@@ -186,6 +192,22 @@ describe("setMode", () => {
   it("persists current working mode in state settings", () => {
     setMode("browse", { persist: false });
     expect(state.currentSettings.lastMode).toBe("browse");
+  });
+});
+
+describe("workspace and density", () => {
+  it("gets and sets workspace mode", () => {
+    expect(getWorkspaceMode()).toBe("basic");
+    setWorkspaceMode("power", { persist: false });
+    expect(getWorkspaceMode()).toBe("power");
+    expect(state.currentSettings.workspaceMode).toBe("power");
+  });
+
+  it("gets and sets UI density", () => {
+    expect(getUiDensity()).toBe("comfortable");
+    setUiDensity("compact", { persist: false });
+    expect(getUiDensity()).toBe("compact");
+    expect(state.currentSettings.uiDensity).toBe("compact");
   });
 });
 
