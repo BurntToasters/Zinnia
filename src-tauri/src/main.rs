@@ -1314,9 +1314,13 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("failed to initialize Tauri application");
 
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     app.run(|app_handle, event| {
         if let tauri::RunEvent::Opened { urls } = event {
             emit_open_urls(app_handle, urls);
         }
     });
+
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    app.run(|_, _| {});
 }
