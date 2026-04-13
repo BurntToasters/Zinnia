@@ -90,6 +90,9 @@ export function populateSettingsModal() {
     state.currentSettings.localLoggingEnabled;
   $<HTMLSelectElement>("s-log-verbosity").value =
     state.currentSettings.logVerbosity;
+  $<HTMLSelectElement>("s-workspace-mode").value =
+    state.currentSettings.workspaceMode;
+  $<HTMLSelectElement>("s-ui-density").value = state.currentSettings.uiDensity;
   syncSettingsSecurityControlsForFormat(state.currentSettings.format);
 
   const logDir = document.getElementById("s-log-dir");
@@ -138,6 +141,12 @@ export function readSettingsModal(): UserSettings {
     localLoggingEnabled: $<HTMLInputElement>("s-local-logging").checked,
     logVerbosity: $<HTMLSelectElement>("s-log-verbosity")
       .value as UserSettings["logVerbosity"],
+    lastMode: state.currentSettings.lastMode,
+    showActivityPanel: state.currentSettings.showActivityPanel,
+    workspaceMode: $<HTMLSelectElement>("s-workspace-mode")
+      .value as UserSettings["workspaceMode"],
+    uiDensity: $<HTMLSelectElement>("s-ui-density")
+      .value as UserSettings["uiDensity"],
   };
 }
 

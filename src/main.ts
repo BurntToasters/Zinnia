@@ -23,6 +23,9 @@ import {
   toggleActivity,
   renderInputs,
   setMode,
+  setActivityPanelVisible,
+  setWorkspaceMode,
+  setUiDensity,
   getMode,
   setBrowsePasswordFieldVisible,
 } from "./ui";
@@ -32,6 +35,8 @@ import {
   testArchive,
   browseArchive,
   previewCommand,
+  copyCommandPreview,
+  closeCommandPreviewModal,
   openSelectiveExtractModal,
   closeSelectiveExtractModal,
   setSelectiveExtractSearch,
@@ -50,6 +55,15 @@ import {
 import { checkUpdates, autoCheckUpdates } from "./updater";
 import { openLicensesModal, closeLicensesModal } from "./licenses";
 import { chooseOutput, chooseExtract, addFiles, addFolder } from "./files";
+import {
+  wireQuickActionEvents,
+  refreshQuickActionRepeatState,
+} from "./quick-actions";
+import {
+  shouldShowSetupWizard,
+  showSetupWizard,
+  markSetupComplete,
+} from "./setup-wizard";
 import {
   deriveOutputArchivePath,
   resolveOutputArchiveAutofill,
@@ -172,6 +186,26 @@ async function applyIncomingPaths(
   }
 }
 
+async function runSetupWizardFlow(): Promise<void> {
+  const result = await showSetupWizard();
+  if (result) {
+    state.currentSettings.workspaceMode = result.workspaceMode;
+    state.currentSettings.theme = result.theme;
+    state.currentSettings.autoCheckUpdates = result.autoCheckUpdates;
+    state.currentSettings.updateChannel = result.updateChannel;
+  }
+
+  await markSetupComplete();
+  state.lastPersistedSettings = { ...state.currentSettings };
+
+  applyTheme(state.currentSettings.theme);
+  setWorkspaceMode(state.currentSettings.workspaceMode, { persist: false });
+  setUiDensity(state.currentSettings.uiDensity, { persist: false });
+  applySettingsToForm();
+  updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
+  onCompressionOptionChange();
+}
+
 function wireEvents() {
   // Sync the output-path field when format changes so the extension updates
   // automatically even if inputs were already present.
@@ -184,7 +218,9 @@ function wireEvents() {
     ) as HTMLInputElement | null;
     if (!outputPathInput) return;
     const format = $<HTMLSelectElement>("format").value;
-    const customName = archiveNameInput?.value.trim() || undefined;
+    const trimmedName = archiveNameInput?.value.trim();
+    const customName =
+      trimmedName && trimmedName.length > 0 ? trimmedName : undefined;
     const next = resolveOutputArchiveAutofill(
       outputPathInput.value,
       state.lastAutoOutputPath,
@@ -213,12 +249,33 @@ function wireEvents() {
   $("choose-extract").addEventListener("click", chooseExtract);
   $("run-action").addEventListener("click", runAction);
   $("cancel-action").addEventListener("click", cancelAction);
-  $("show-command").addEventListener("click", previewCommand);
+  $("show-command").addEventListener(
+    "click",
+    (e) => void previewCommand(e.currentTarget as HTMLElement),
+  );
   $("clear-log").addEventListener("click", () => (dom.logEl.textContent = ""));
 
   $("extract-run").addEventListener("click", runAction);
   $("extract-cancel").addEventListener("click", cancelAction);
-  $("extract-preview").addEventListener("click", previewCommand);
+  $("extract-preview").addEventListener(
+    "click",
+    (e) => void previewCommand(e.currentTarget as HTMLElement),
+  );
+
+  $("copy-command-preview").addEventListener("click", () => {
+    void copyCommandPreview();
+  });
+  $("close-command-preview").addEventListener(
+    "click",
+    closeCommandPreviewModal,
+  );
+  $("close-command-preview-footer").addEventListener(
+    "click",
+    closeCommandPreviewModal,
+  );
+  $("command-preview-overlay").addEventListener("click", (e) => {
+    if (e.target === e.currentTarget) closeCommandPreviewModal();
+  });
   $("test-integrity").addEventListener("click", testArchive);
 
   $("browse-list").addEventListener("click", browseArchive);
@@ -340,6 +397,24 @@ function wireEvents() {
   });
 
   $("toggle-activity").addEventListener("click", toggleActivity);
+  document
+    .querySelectorAll<HTMLButtonElement>("[data-workspace-mode-btn]")
+    .forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const mode =
+          btn.dataset.workspaceModeBtn === "power" ? "power" : "basic";
+        setWorkspaceMode(mode);
+        refreshQuickActionRepeatState();
+      });
+    });
+  $("toggle-density").addEventListener("click", () => {
+    const nextDensity =
+      state.currentSettings.uiDensity === "compact" ? "comfortable" : "compact";
+    setUiDensity(nextDensity);
+  });
+  document.addEventListener("zinnia:mode-changed", () => {
+    refreshQuickActionRepeatState();
+  });
 
   $("open-settings").addEventListener("click", openSettingsModal);
   $("close-settings").addEventListener("click", closeSettingsModal);
@@ -351,6 +426,8 @@ function wireEvents() {
     const previous = { ...state.lastPersistedSettings };
     state.currentSettings = readSettingsModal();
     applyTheme(state.currentSettings.theme);
+    setWorkspaceMode(state.currentSettings.workspaceMode, { persist: false });
+    setUiDensity(state.currentSettings.uiDensity, { persist: false });
     applySettingsToForm();
     updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
     onCompressionOptionChange();
@@ -362,6 +439,8 @@ function wireEvents() {
     } catch (err) {
       state.currentSettings = previous;
       applyTheme(state.currentSettings.theme);
+      setWorkspaceMode(state.currentSettings.workspaceMode, { persist: false });
+      setUiDensity(state.currentSettings.uiDensity, { persist: false });
       applySettingsToForm();
       populateSettingsModal();
       updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
@@ -371,6 +450,22 @@ function wireEvents() {
       log(`Failed to save settings: ${msg}`, "error");
       await message(`Failed to save settings.\n\n${msg}`, {
         title: "Settings error",
+        kind: "error",
+      });
+    }
+  });
+  $("rerun-setup-wizard").addEventListener("click", async () => {
+    closeSettingsModal();
+    try {
+      await runSetupWizardFlow();
+      renderInputs();
+      refreshQuickActionRepeatState();
+      log("Setup wizard completed.");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`Setup wizard failed: ${msg}`, "error");
+      await message(`Failed to run setup wizard.\n\n${msg}`, {
+        title: "Setup wizard error",
         kind: "error",
       });
     }
@@ -439,10 +534,19 @@ function wireEvents() {
       if (m === "extract") setMode("extract");
       else if (m === "browse") setMode("browse");
       else setMode("add");
+      refreshQuickActionRepeatState();
     });
   });
 
+  wireQuickActionEvents();
+
   document.addEventListener("keydown", (e) => {
+    if (!$("setup-wizard-overlay").hidden) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+      }
+      return;
+    }
     if (e.key === "Escape") {
       if (!$("settings-overlay").hidden) {
         closeSettingsModal();
@@ -452,6 +556,10 @@ function wireEvents() {
         closeSelectiveExtractModal();
         return;
       }
+      if (!$("command-preview-overlay").hidden) {
+        closeCommandPreviewModal();
+        return;
+      }
       if (!$("licenses-overlay").hidden) {
         closeLicensesModal();
         return;
@@ -459,9 +567,11 @@ function wireEvents() {
     }
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       if (
+        !$("setup-wizard-overlay").hidden ||
         !$("settings-overlay").hidden ||
         !$("licenses-overlay").hidden ||
-        !$("selective-overlay").hidden
+        !$("selective-overlay").hidden ||
+        !$("command-preview-overlay").hidden
       )
         return;
       e.preventDefault();
@@ -490,7 +600,23 @@ async function init() {
   state.currentSettings = loadedSettings.settings;
   state.lastPersistedSettings = { ...loadedSettings.settings };
   state.settingsExtras = { ...loadedSettings.extras };
+
+  if (shouldShowSetupWizard()) {
+    try {
+      await runSetupWizardFlow();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await message(`Setup wizard could not be completed.\n\n${msg}`, {
+        title: "Setup wizard error",
+        kind: "error",
+      });
+      throw err;
+    }
+  }
+
   applyTheme(state.currentSettings.theme);
+  setWorkspaceMode(state.currentSettings.workspaceMode, { persist: false });
+  setUiDensity(state.currentSettings.uiDensity, { persist: false });
   applySettingsToForm();
   updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
   onCompressionOptionChange();
@@ -508,8 +634,13 @@ async function init() {
       if (state.currentSettings.theme === "system") applyTheme("system");
     });
 
+  setMode(state.currentSettings.lastMode, { persist: false });
+  setActivityPanelVisible(state.currentSettings.showActivityPanel, {
+    persist: false,
+  });
   renderInputs();
   wireEvents();
+  refreshQuickActionRepeatState();
   if (loadedSettings.malformed && loadedSettings.warning) {
     log(loadedSettings.warning, "error");
   }

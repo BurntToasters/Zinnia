@@ -31,8 +31,13 @@ function parentDir(filePath: string): string {
   return parent;
 }
 
-function setButtons(showCancel: boolean, showClose: boolean): void {
+function setButtons(
+  showCancel: boolean,
+  showOpenDestination: boolean,
+  showClose: boolean,
+): void {
   $("cancel-btn").hidden = !showCancel;
+  $("open-destination-btn").hidden = !showOpenDestination;
   $("close-btn").hidden = !showClose;
 }
 
@@ -73,11 +78,18 @@ async function closeWindowSafely(
 async function run() {
   const appWindow = getCurrentWebviewWindow();
   const cancelBtn = $("cancel-btn") as HTMLButtonElement;
+  const openDestinationBtn = $("open-destination-btn") as HTMLButtonElement;
   const closeBtn = $("close-btn") as HTMLButtonElement;
   let cancelRequested = false;
   let operationFinished = false;
+  let destination = "";
 
-  const finish = (status: string, progressPercent: number, asError = false) => {
+  const finish = (
+    status: string,
+    progressPercent: number,
+    asError = false,
+    allowOpenDestination = true,
+  ) => {
     operationFinished = true;
     $("extract-status").textContent = status;
     const h1 = document.querySelector<HTMLHeadingElement>("h1");
@@ -85,22 +97,28 @@ async function run() {
       h1.textContent = asError ? "Extraction failed" : "Extraction complete";
     document.title = asError ? "Zinnia — Failed" : "Zinnia — Done";
     stopProgressAt(progressPercent, asError);
-    setButtons(false, true);
+    setButtons(false, !asError && allowOpenDestination, true);
     cancelBtn.disabled = false;
+    openDestinationBtn.disabled = false;
     closeBtn.disabled = false;
-    closeBtn.focus();
+    if (!asError && allowOpenDestination) {
+      openDestinationBtn.focus();
+    } else {
+      closeBtn.focus();
+    }
   };
 
   const showError = (detail: string) => {
     $("extract-error").hidden = false;
     $("error-detail").textContent = detail;
-    finish("Failed", 100, true);
+    finish("Failed", 100, true, false);
   };
 
   cancelBtn.addEventListener("click", async () => {
     if (operationFinished) return;
     cancelRequested = true;
     cancelBtn.disabled = true;
+    openDestinationBtn.disabled = true;
     closeBtn.disabled = true;
     $("extract-status").textContent = "Cancelling...";
     try {
@@ -112,20 +130,40 @@ async function run() {
     await closeWindowSafely(appWindow);
   });
 
+  openDestinationBtn.addEventListener("click", async () => {
+    if (!destination) return;
+    openDestinationBtn.disabled = true;
+    try {
+      await invoke("open_path", { path: destination });
+      $("extract-status").textContent = "Destination opened.";
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      $("extract-error").hidden = false;
+      const titleEl = $("extract-error").querySelector<HTMLElement>(
+        ".extract-error-title",
+      );
+      if (titleEl) titleEl.textContent = "Could not open destination";
+      $("error-detail").textContent = detail;
+      $("extract-status").textContent = "Done (open destination failed)";
+    } finally {
+      openDestinationBtn.disabled = false;
+    }
+  });
+
   startIndeterminateProgress();
-  setButtons(true, false);
+  setButtons(true, false, false);
   const paths = await invoke<string[]>("get_extract_paths");
   const archivePath = paths[0];
 
   if (!archivePath) {
     $("extract-status").textContent = "No archive specified.";
     stopProgressAt(0, false);
-    setButtons(false, true);
+    setButtons(false, false, true);
     operationFinished = true;
     return;
   }
 
-  const destination =
+  destination =
     deriveExtractDestinationPath(archivePath) || parentDir(archivePath);
 
   $("archive-name").textContent = basename(archivePath);
@@ -150,7 +188,7 @@ async function run() {
     const result = await invoke<Run7zResult>("run_7z", { args });
 
     if (cancelRequested) {
-      finish("Cancelled", 100);
+      finish("Cancelled", 100, false, false);
       return;
     }
 
@@ -173,11 +211,11 @@ async function run() {
       $("extract-error").hidden = false;
       finish("Done (with warnings)", 100);
     } else {
-      await closeWindowSafely(appWindow);
+      finish("Done", 100);
     }
   } catch (err) {
     if (cancelRequested) {
-      finish("Cancelled", 100);
+      finish("Cancelled", 100, false, false);
       return;
     }
     showError(err instanceof Error ? err.message : String(err));

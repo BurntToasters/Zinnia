@@ -7,13 +7,48 @@
     <link rel="stylesheet" href="/main.css" />
   </head>
   <body>
-    <div id="app" class="app" data-mode="add">
+    <div
+      id="app"
+      class="app"
+      data-mode="add"
+      data-workspace-mode="basic"
+      data-density="comfortable"
+    >
       <header class="header">
         <div class="header__brand">
           <h1>Zinnia</h1>
         </div>
         <div class="header__actions">
-          <button class="btn btn--ghost btn--sm" id="toggle-activity">
+          <div
+            class="segmented segmented--workspace"
+            role="group"
+            aria-label="Workspace mode"
+          >
+            <button
+              class="segmented__btn is-active"
+              id="workspace-mode-basic"
+              data-workspace-mode-btn="basic"
+              aria-pressed="true"
+            >
+              Basic
+            </button>
+            <button
+              class="segmented__btn"
+              id="workspace-mode-power"
+              data-workspace-mode-btn="power"
+              aria-pressed="false"
+            >
+              Power
+            </button>
+          </div>
+          <button class="btn btn--ghost btn--sm" id="toggle-density">
+            Compact
+          </button>
+          <button
+            class="btn btn--ghost btn--sm"
+            id="toggle-activity"
+            data-power-only
+          >
             Activity
           </button>
           <button
@@ -117,6 +152,46 @@
                   <option value="system">System</option>
                   <option value="light">Light</option>
                   <option value="dark">Dark</option>
+                </select>
+              </div>
+
+              <div class="setting-item">
+                <div class="setting-info">
+                  <span class="setting-title" id="title-workspace-mode"
+                    >Workspace mode</span
+                  >
+                  <span class="setting-desc"
+                    >Basic keeps the UI minimal. Power shows advanced tools and
+                    quick actions.</span
+                  >
+                </div>
+                <select
+                  id="s-workspace-mode"
+                  class="setting-select"
+                  aria-labelledby="title-workspace-mode"
+                >
+                  <option value="basic">Basic</option>
+                  <option value="power">Power</option>
+                </select>
+              </div>
+
+              <div class="setting-item">
+                <div class="setting-info">
+                  <span class="setting-title" id="title-ui-density"
+                    >UI density</span
+                  >
+                  <span class="setting-desc"
+                    >Comfortable is roomier. Compact fits more controls and
+                    data.</span
+                  >
+                </div>
+                <select
+                  id="s-ui-density"
+                  class="setting-select"
+                  aria-labelledby="title-ui-density"
+                >
+                  <option value="comfortable">Comfortable</option>
+                  <option value="compact">Compact</option>
                 </select>
               </div>
 
@@ -238,7 +313,15 @@
                     >View third-party libraries and their licenses.</span
                   >
                 </div>
-                <button class="btn btn--sm" id="show-licenses">View</button>
+                <div class="setting-actions">
+                  <button class="btn btn--sm" id="show-licenses">View</button>
+                  <button
+                    class="btn btn--ghost btn--sm"
+                    id="rerun-setup-wizard"
+                  >
+                    Run setup wizard again
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -596,6 +679,191 @@
         </div>
       </div>
 
+      <div class="modal-overlay" id="command-preview-overlay" hidden>
+        <div
+          class="modal modal--wide"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="command-preview-title"
+        >
+          <div class="modal__header">
+            <h2 id="command-preview-title">Command Preview</h2>
+            <button
+              class="btn btn--ghost btn--sm"
+              id="close-command-preview"
+              aria-label="Close command preview"
+            >
+              &times;
+            </button>
+          </div>
+          <div class="modal__body">
+            <pre
+              id="command-preview-text"
+              class="command-preview-code"
+              aria-live="polite"
+            ></pre>
+          </div>
+          <div class="modal__footer">
+            <button class="btn btn--sm" id="copy-command-preview">Copy</button>
+            <button
+              class="btn btn--ghost btn--sm"
+              id="close-command-preview-footer"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div
+        id="setup-wizard-overlay"
+        class="setup-wizard-overlay"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="setup-wizard-title"
+        hidden
+      >
+        <div class="setup-wizard-card">
+          <div class="setup-wizard-progress">
+            <div
+              class="setup-wizard-progress__bar"
+              id="setup-wizard-progress-bar"
+            ></div>
+          </div>
+
+          <div class="setup-wizard-step" data-step="0" id="setup-step-welcome">
+            <h2 class="setup-wizard-step__title" id="setup-wizard-title">
+              Welcome to Zinnia
+            </h2>
+            <p class="setup-wizard-step__desc">
+              Choose your workspace preferences. You can change these later in
+              Settings.
+            </p>
+            <div class="setup-wizard-step__actions">
+              <button class="btn btn--ghost" id="setup-welcome-skip">
+                Skip setup
+              </button>
+              <button class="btn btn--primary" id="setup-welcome-next">
+                Get started
+              </button>
+            </div>
+          </div>
+
+          <div class="setup-wizard-step" data-step="1" hidden>
+            <h2 class="setup-wizard-step__title">Workspace mode</h2>
+            <p class="setup-wizard-step__desc">
+              Basic keeps the UI simple. Power exposes advanced controls and
+              quick actions.
+            </p>
+            <div class="setup-wizard-choice-grid">
+              <button
+                class="setup-wizard-choice-btn setup-wizard-mode-btn"
+                data-workspace-value="basic"
+                aria-pressed="true"
+              >
+                <strong>Basic</strong>
+                <span>Focused everyday workflow</span>
+              </button>
+              <button
+                class="setup-wizard-choice-btn setup-wizard-mode-btn"
+                data-workspace-value="power"
+                aria-pressed="false"
+              >
+                <strong>Power</strong>
+                <span>Advanced controls and fast actions</span>
+              </button>
+            </div>
+            <div class="setup-wizard-step__actions">
+              <button class="btn btn--ghost" id="setup-workspace-back">
+                Back
+              </button>
+              <button class="btn btn--primary" id="setup-workspace-next">
+                Next
+              </button>
+            </div>
+          </div>
+
+          <div class="setup-wizard-step" data-step="2" hidden>
+            <h2 class="setup-wizard-step__title">Theme</h2>
+            <p class="setup-wizard-step__desc">Pick how Zinnia should look.</p>
+            <div
+              class="setup-wizard-choice-grid setup-wizard-choice-grid--theme"
+            >
+              <button
+                class="setup-wizard-choice-btn setup-wizard-theme-btn"
+                data-theme-value="light"
+                aria-pressed="false"
+              >
+                <strong>Light</strong>
+              </button>
+              <button
+                class="setup-wizard-choice-btn setup-wizard-theme-btn"
+                data-theme-value="dark"
+                aria-pressed="false"
+              >
+                <strong>Dark</strong>
+              </button>
+              <button
+                class="setup-wizard-choice-btn setup-wizard-theme-btn"
+                data-theme-value="system"
+                aria-pressed="true"
+              >
+                <strong>System</strong>
+              </button>
+            </div>
+            <div class="setup-wizard-step__actions">
+              <button class="btn btn--ghost" id="setup-theme-back">Back</button>
+              <button class="btn btn--primary" id="setup-theme-next">
+                Next
+              </button>
+            </div>
+          </div>
+
+          <div class="setup-wizard-step" data-step="3" hidden>
+            <h2 class="setup-wizard-step__title">Updates</h2>
+            <p class="setup-wizard-step__desc">
+              Control automatic update checks and update channel.
+            </p>
+            <div class="setup-wizard-updates">
+              <label class="setup-wizard-checkbox">
+                <input type="checkbox" id="setup-auto-updates" checked />
+                <span>Automatically check for updates</span>
+              </label>
+              <div class="setup-wizard-field">
+                <label for="setup-update-channel">Update channel</label>
+                <select id="setup-update-channel">
+                  <option value="stable">Stable</option>
+                  <option value="beta">Beta</option>
+                </select>
+              </div>
+            </div>
+            <div class="setup-wizard-step__actions">
+              <button class="btn btn--ghost" id="setup-updates-back">
+                Back
+              </button>
+              <button class="btn btn--primary" id="setup-updates-next">
+                Finish setup
+              </button>
+            </div>
+          </div>
+
+          <div class="setup-wizard-step" data-step="4" hidden>
+            <h2 class="setup-wizard-step__title">You're all set</h2>
+            <p class="setup-wizard-step__desc">
+              Zinnia is ready. You can rerun setup from Settings anytime.
+            </p>
+            <div class="setup-wizard-step__actions">
+              <button
+                class="btn btn--primary setup-wizard-btn-wide"
+                id="setup-done-btn"
+              >
+                Launch Zinnia
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <main class="grid">
         <section class="panel">
           <div class="panel__header">
@@ -621,6 +889,144 @@
                 aria-pressed="false"
               >
                 Browse
+              </button>
+            </div>
+          </div>
+
+          <div class="quick-actions" data-power-only>
+            <div class="quick-actions__head">
+              <span class="quick-actions__label">Quick actions</span>
+              <span
+                class="quick-actions__feedback"
+                id="quick-action-feedback"
+                aria-live="polite"
+                hidden
+              ></span>
+            </div>
+            <div class="quick-actions__row" data-mode-visible="add">
+              <button
+                class="btn btn--sm"
+                id="quick-add-balanced"
+                data-quick-action-btn
+                data-quick-action="add-run-balanced"
+              >
+                Run Balanced
+              </button>
+              <button
+                class="btn btn--sm"
+                id="quick-add-ultra"
+                data-quick-action-btn
+                data-quick-action="add-run-ultra"
+              >
+                Run Ultra
+              </button>
+              <button
+                class="btn btn--sm"
+                id="quick-add-encrypt-run"
+                data-quick-action-btn
+                data-quick-action="add-encrypt-run"
+              >
+                Encrypt + Run
+              </button>
+              <button
+                class="btn btn--ghost btn--sm"
+                id="quick-add-preview"
+                data-quick-action-btn
+                data-quick-action="add-preview"
+              >
+                Preview Command
+              </button>
+              <button
+                class="btn btn--ghost btn--sm"
+                id="quick-add-repeat"
+                data-quick-action-btn
+                data-quick-action="add-repeat"
+              >
+                Repeat Last
+              </button>
+            </div>
+            <div class="quick-actions__row" data-mode-visible="extract">
+              <button
+                class="btn btn--sm"
+                id="quick-extract-now"
+                data-quick-action-btn
+                data-quick-action="extract-now"
+              >
+                Extract Now
+              </button>
+              <button
+                class="btn btn--sm"
+                id="quick-extract-test-then-extract"
+                data-quick-action-btn
+                data-quick-action="extract-test-then-extract"
+              >
+                Test + Extract
+              </button>
+              <button
+                class="btn btn--sm"
+                id="quick-extract-selective"
+                data-quick-action-btn
+                data-quick-action="extract-selective"
+              >
+                Extract Selected
+              </button>
+              <button
+                class="btn btn--ghost btn--sm"
+                id="quick-extract-preview"
+                data-quick-action-btn
+                data-quick-action="extract-preview"
+              >
+                Preview Command
+              </button>
+              <button
+                class="btn btn--ghost btn--sm"
+                id="quick-extract-repeat"
+                data-quick-action-btn
+                data-quick-action="extract-repeat"
+              >
+                Repeat Last
+              </button>
+            </div>
+            <div class="quick-actions__row" data-mode-visible="browse">
+              <button
+                class="btn btn--sm"
+                id="quick-browse-list"
+                data-quick-action-btn
+                data-quick-action="browse-list"
+              >
+                List
+              </button>
+              <button
+                class="btn btn--sm"
+                id="quick-browse-test"
+                data-quick-action-btn
+                data-quick-action="browse-test"
+              >
+                Test
+              </button>
+              <button
+                class="btn btn--sm"
+                id="quick-browse-selective"
+                data-quick-action-btn
+                data-quick-action="browse-selective"
+              >
+                Selective Extract
+              </button>
+              <button
+                class="btn btn--ghost btn--sm"
+                id="quick-browse-switch-extract"
+                data-quick-action-btn
+                data-quick-action="browse-switch-extract"
+              >
+                Switch to Extract
+              </button>
+              <button
+                class="btn btn--ghost btn--sm"
+                id="quick-browse-repeat"
+                data-quick-action-btn
+                data-quick-action="browse-repeat"
+              >
+                Repeat Last
               </button>
             </div>
           </div>
@@ -732,7 +1138,11 @@
                 <button class="btn btn--ghost" id="cancel-action" hidden>
                   Cancel
                 </button>
-                <button class="btn btn--ghost" id="show-command">
+                <button
+                  class="btn btn--ghost"
+                  id="show-command"
+                  data-power-only
+                >
                   Preview command
                 </button>
               </div>
@@ -809,7 +1219,11 @@
                 <button class="btn btn--sm" id="test-integrity">
                   Test integrity
                 </button>
-                <button class="btn btn--ghost" id="extract-preview">
+                <button
+                  class="btn btn--ghost"
+                  id="extract-preview"
+                  data-power-only
+                >
                   Preview command
                 </button>
               </div>
@@ -869,7 +1283,11 @@
                 <button class="btn btn--accent-outline" id="browse-extract">
                   Extract all
                 </button>
-                <button class="btn btn--accent-outline" id="browse-selective">
+                <button
+                  class="btn btn--accent-outline"
+                  id="browse-selective"
+                  data-power-only
+                >
                   Select items...
                 </button>
                 <button class="btn btn--ghost" id="browse-test">
@@ -878,7 +1296,11 @@
               </div>
             </section>
 
-            <div class="session-advanced-grid" data-mode-visible="add">
+            <div
+              class="session-advanced-grid"
+              data-mode-visible="add"
+              data-power-only
+            >
               <details class="session-details">
                 <summary>Compression profile</summary>
                 <div class="session-details__body">

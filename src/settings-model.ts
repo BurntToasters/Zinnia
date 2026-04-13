@@ -5,6 +5,9 @@ export type ArchiveFormat = "7z" | "zip" | "tar" | "gzip" | "bzip2" | "xz";
 export type PathMode = "relative" | "absolute";
 export type LogVerbosity = "info" | "debug";
 export type UpdateChannel = "auto" | "stable" | "beta";
+export type WorkingMode = "add" | "extract" | "browse";
+export type WorkspaceMode = "basic" | "power";
+export type UiDensity = "comfortable" | "compact";
 
 export interface UserSettings {
   theme: ThemePreference;
@@ -23,6 +26,10 @@ export interface UserSettings {
   updateChannel: UpdateChannel;
   localLoggingEnabled: boolean;
   logVerbosity: LogVerbosity;
+  lastMode: WorkingMode;
+  showActivityPanel: boolean;
+  workspaceMode: WorkspaceMode;
+  uiDensity: UiDensity;
 }
 
 export interface LoadSettingsResult {
@@ -49,6 +56,10 @@ export const SETTING_DEFAULTS: UserSettings = {
   updateChannel: "auto",
   localLoggingEnabled: true,
   logVerbosity: "info",
+  lastMode: "add",
+  showActivityPanel: false,
+  workspaceMode: "basic",
+  uiDensity: "comfortable",
 };
 
 const THEMES = new Set<ThemePreference>(["system", "light", "dark"]);
@@ -63,6 +74,9 @@ const FORMATS = new Set<ArchiveFormat>([
 const PATH_MODES = new Set<PathMode>(["relative", "absolute"]);
 const LOG_VERBOSITY = new Set<LogVerbosity>(["info", "debug"]);
 const UPDATE_CHANNELS = new Set<UpdateChannel>(["auto", "stable", "beta"]);
+const WORKING_MODES = new Set<WorkingMode>(["add", "extract", "browse"]);
+const WORKSPACE_MODES = new Set<WorkspaceMode>(["basic", "power"]);
+const UI_DENSITIES = new Set<UiDensity>(["comfortable", "compact"]);
 const USER_SETTING_KEYS = new Set<keyof UserSettings>([
   "theme",
   "format",
@@ -80,6 +94,10 @@ const USER_SETTING_KEYS = new Set<keyof UserSettings>([
   "updateChannel",
   "localLoggingEnabled",
   "logVerbosity",
+  "lastMode",
+  "showActivityPanel",
+  "workspaceMode",
+  "uiDensity",
 ]);
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -144,6 +162,17 @@ export function normalizeUserSettings(
       LOG_VERBOSITY,
       fallback.logVerbosity,
     ),
+    lastMode: asSetValue(settings.lastMode, WORKING_MODES, fallback.lastMode),
+    showActivityPanel: asBoolean(
+      settings.showActivityPanel,
+      fallback.showActivityPanel,
+    ),
+    workspaceMode: asSetValue(
+      settings.workspaceMode,
+      WORKSPACE_MODES,
+      fallback.workspaceMode,
+    ),
+    uiDensity: asSetValue(settings.uiDensity, UI_DENSITIES, fallback.uiDensity),
   };
 }
 

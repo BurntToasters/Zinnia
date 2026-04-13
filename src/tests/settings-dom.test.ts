@@ -155,6 +155,8 @@ describe("populateSettingsModal", () => {
     expect(getSelectValue("s-update-channel")).toBe("beta");
     expect(getChecked("s-local-logging")).toBe(true);
     expect(getSelectValue("s-log-verbosity")).toBe("debug");
+    expect(getSelectValue("s-workspace-mode")).toBe("basic");
+    expect(getSelectValue("s-ui-density")).toBe("comfortable");
   });
 
   it("sets log directory text", () => {
@@ -190,6 +192,8 @@ describe("readSettingsModal", () => {
     setSelectValue("s-update-channel", "beta");
     setChecked("s-local-logging", true);
     setSelectValue("s-log-verbosity", "debug");
+    setSelectValue("s-workspace-mode", "power");
+    setSelectValue("s-ui-density", "compact");
 
     const settings = readSettingsModal();
     expect(settings.theme).toBe("dark");
@@ -208,6 +212,8 @@ describe("readSettingsModal", () => {
     expect(settings.updateChannel).toBe("beta");
     expect(settings.localLoggingEnabled).toBe(true);
     expect(settings.logVerbosity).toBe("debug");
+    expect(settings.workspaceMode).toBe("power");
+    expect(settings.uiDensity).toBe("compact");
   });
 
   it("disables encryptHeaders for formats that don't support it", () => {
@@ -216,6 +222,15 @@ describe("readSettingsModal", () => {
 
     const settings = readSettingsModal();
     expect(settings.encryptHeaders).toBe(false);
+  });
+
+  it("preserves working context settings from current state", () => {
+    state.currentSettings.lastMode = "extract";
+    state.currentSettings.showActivityPanel = true;
+
+    const settings = readSettingsModal();
+    expect(settings.lastMode).toBe("extract");
+    expect(settings.showActivityPanel).toBe(true);
   });
 
   it("round-trips settings through populate and read", () => {

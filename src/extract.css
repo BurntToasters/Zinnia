@@ -12,6 +12,7 @@
   --surface-alt: #383838;
   --accent: #60cdff;
   --accent-hover: #7dd8ff;
+  --accent-bg-strong: rgba(96, 205, 255, 0.14);
   --accent-pressed: #4db8e8;
   --text: #f5f5f5;
   --text-secondary: #a0a0a0;
@@ -30,6 +31,7 @@
   --surface-alt: #e8e8e8;
   --accent: #0078d4;
   --accent-hover: #106ebe;
+  --accent-bg-strong: rgba(0, 120, 212, 0.14);
   --accent-pressed: #005a9e;
   --text: #1a1a1a;
   --text-secondary: #5c5c5c;
@@ -251,6 +253,18 @@ body {
   background: var(--accent);
   color: var(--text-on-accent);
   border-color: var(--accent);
+}
+
+.btn--open {
+  background: transparent;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.btn--open:hover {
+  background: var(--accent-bg-strong);
+  border-color: var(--accent-hover);
+  color: var(--accent-hover);
 }
 
 .btn--close:hover {
