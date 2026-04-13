@@ -409,6 +409,44 @@ export function renderBrowseTable(info: ArchiveInfo) {
     tr.appendChild(tdModified);
     tbody.appendChild(tr);
   }
+
+  const basicTbody = document.getElementById("basic-browse-tbody");
+  if (basicTbody) {
+    basicTbody.innerHTML = "";
+    for (const entry of info.entries) {
+      const tr = document.createElement("tr");
+      if (entry.isFolder) tr.className = "browse-folder";
+
+      const tdName = document.createElement("td");
+      tdName.textContent = entry.path;
+      tdName.title = entry.path;
+      tdName.style.wordBreak = "break-all";
+
+      const tdSize = document.createElement("td");
+      tdSize.style.fontVariantNumeric = "tabular-nums";
+      tdSize.textContent = entry.isFolder ? "\u2014" : formatSize(entry.size);
+
+      const tdPacked = document.createElement("td");
+      tdPacked.style.fontVariantNumeric = "tabular-nums";
+      tdPacked.textContent = entry.isFolder
+        ? "\u2014"
+        : formatSize(entry.packedSize);
+
+      const tdModified = document.createElement("td");
+      tdModified.textContent = entry.modified;
+
+      tr.appendChild(tdName);
+      tr.appendChild(tdSize);
+      tr.appendChild(tdPacked);
+      tr.appendChild(tdModified);
+      basicTbody.appendChild(tr);
+    }
+  }
+
+  const basicSummary = document.getElementById("basic-browse-summary");
+  if (basicSummary && summary) {
+    basicSummary.innerHTML = summary.innerHTML;
+  }
 }
 
 function getOrCreateSelection(archive: string): Set<string> {

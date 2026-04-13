@@ -875,6 +875,414 @@
         </div>
       </div>
 
+      <div id="basic-workspace" class="basic-workspace">
+        <div id="basic-home" class="basic-view is-active">
+          <div class="basic-home__hero">
+            <h2 class="basic-home__title">What would you like to do?</h2>
+            <p class="basic-home__subtitle">
+              Drop files here or choose an action below
+            </p>
+          </div>
+          <div class="basic-dropzone" id="basic-dropzone">
+            <span class="basic-dropzone__icon">
+              <span class="basic-dropzone__icon-circle">
+                <img
+                  src="/twemoji/1f4c2.svg"
+                  width="36"
+                  height="36"
+                  alt=""
+                  draggable="false"
+                />
+              </span>
+            </span>
+            <span class="basic-dropzone__text">
+              <strong>Drop files or archives</strong> to get started
+            </span>
+          </div>
+          <div class="basic-action-cards">
+            <button class="basic-action-card" id="basic-action-compress">
+              <span class="basic-action-card__icon">
+                <img
+                  src="/twemoji/1f4e6.svg"
+                  width="28"
+                  height="28"
+                  alt=""
+                  draggable="false"
+                />
+              </span>
+              <span class="basic-action-card__label">Compress files</span>
+              <span class="basic-action-card__desc"
+                >Create a new archive from files or folders</span
+              >
+            </button>
+            <button class="basic-action-card" id="basic-action-open">
+              <span class="basic-action-card__icon">
+                <img
+                  src="/twemoji/1f4c1.svg"
+                  width="28"
+                  height="28"
+                  alt=""
+                  draggable="false"
+                />
+              </span>
+              <span class="basic-action-card__label">Open archive</span>
+              <span class="basic-action-card__desc"
+                >Extract or browse an existing archive</span
+              >
+            </button>
+          </div>
+        </div>
+
+        <div id="basic-compress" class="basic-view">
+          <button class="basic-back-link" id="basic-compress-back">
+            &larr; Back
+          </button>
+          <h2 class="basic-section-title">Compress files</h2>
+          <div class="basic-card">
+            <div class="basic-file-list" id="basic-input-list"></div>
+            <div class="basic-file-actions">
+              <button
+                class="basic-btn basic-btn--sm basic-btn--secondary"
+                id="basic-add-files"
+              >
+                Add files
+              </button>
+              <button
+                class="basic-btn basic-btn--sm basic-btn--secondary"
+                id="basic-add-folder"
+              >
+                Add folder
+              </button>
+              <button
+                class="basic-btn basic-btn--sm basic-btn--ghost basic-btn--danger"
+                id="basic-clear-inputs"
+              >
+                Clear all
+              </button>
+            </div>
+          </div>
+          <div class="basic-card">
+            <div class="basic-field-grid">
+              <div class="basic-field">
+                <label class="basic-field__label" for="basic-preset"
+                  >Preset</label
+                >
+                <select id="basic-preset">
+                  <option value="store">Store (no compression)</option>
+                  <option value="quick">Quick</option>
+                  <option value="balanced" selected>Balanced</option>
+                  <option value="high">High</option>
+                  <option value="ultra">Ultra</option>
+                </select>
+              </div>
+              <div class="basic-field">
+                <label class="basic-field__label" for="basic-format"
+                  >Format</label
+                >
+                <select id="basic-format">
+                  <option value="7z">7z</option>
+                  <option value="zip">zip</option>
+                  <option value="tar">tar</option>
+                  <option value="gzip">gzip</option>
+                  <option value="bzip2">bzip2</option>
+                  <option value="xz">xz</option>
+                </select>
+              </div>
+            </div>
+            <div class="basic-field">
+              <label class="basic-field__label" for="basic-archive-name"
+                >Archive name (optional)</label
+              >
+              <input
+                type="text"
+                id="basic-archive-name"
+                placeholder="Leave blank to use source name"
+              />
+            </div>
+            <div class="basic-field">
+              <label class="basic-field__label" for="basic-output-path"
+                >Save to</label
+              >
+              <div class="basic-input-row">
+                <input
+                  type="text"
+                  id="basic-output-path"
+                  placeholder="Choose where to save the archive"
+                />
+                <button
+                  class="basic-btn basic-btn--sm basic-btn--secondary"
+                  id="basic-choose-output"
+                >
+                  Browse
+                </button>
+              </div>
+            </div>
+            <div class="basic-field">
+              <label class="basic-field__label" for="basic-password"
+                >Password (optional)</label
+              >
+              <div class="basic-input-row">
+                <input
+                  type="password"
+                  id="basic-password"
+                  placeholder="Leave blank for none"
+                  autocomplete="off"
+                />
+                <button
+                  class="basic-password-toggle"
+                  id="basic-toggle-password"
+                  type="button"
+                >
+                  Show
+                </button>
+              </div>
+            </div>
+          </div>
+          <button
+            class="basic-btn basic-btn--primary basic-btn--full"
+            id="basic-run-compress"
+          >
+            Compress
+          </button>
+          <div class="basic-progress" id="basic-compress-progress">
+            <div class="basic-progress__bar-track">
+              <div
+                class="basic-progress__bar-fill is-indeterminate"
+                id="basic-compress-bar"
+              ></div>
+            </div>
+            <div class="basic-progress__status" id="basic-compress-status">
+              Compressing…
+            </div>
+            <div class="basic-progress__actions">
+              <button
+                class="basic-btn basic-btn--sm basic-btn--secondary"
+                id="basic-compress-cancel"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+          <div class="basic-completion" id="basic-compress-completion">
+            <span
+              class="basic-completion__icon"
+              id="basic-compress-completion-icon"
+            ></span>
+            <h3
+              class="basic-completion__title"
+              id="basic-compress-completion-title"
+            ></h3>
+            <p
+              class="basic-completion__message"
+              id="basic-compress-completion-msg"
+            ></p>
+            <div class="basic-completion__actions">
+              <button
+                class="basic-btn basic-btn--sm basic-btn--primary"
+                id="basic-compress-open-dest"
+              >
+                Open folder
+              </button>
+              <button
+                class="basic-btn basic-btn--sm basic-btn--secondary"
+                id="basic-compress-again"
+              >
+                Compress more
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div id="basic-extract" class="basic-view">
+          <button class="basic-back-link" id="basic-extract-back">
+            &larr; Back
+          </button>
+          <h2 class="basic-section-title">Extract archive</h2>
+          <div class="basic-card">
+            <div class="basic-archive-info" id="basic-extract-archive-info">
+              <span class="basic-archive-info__icon">
+                <img
+                  src="/twemoji/1f4e6.svg"
+                  width="28"
+                  height="28"
+                  alt=""
+                  draggable="false"
+                />
+              </span>
+              <div class="basic-archive-info__details">
+                <span
+                  class="basic-archive-info__name"
+                  id="basic-extract-archive-name"
+                  >archive.7z</span
+                >
+                <span
+                  class="basic-archive-info__meta"
+                  id="basic-extract-archive-meta"
+                ></span>
+              </div>
+            </div>
+            <div class="basic-field">
+              <label class="basic-field__label" for="basic-extract-path"
+                >Extract to</label
+              >
+              <div class="basic-input-row">
+                <input
+                  type="text"
+                  id="basic-extract-path"
+                  placeholder="Choose destination folder"
+                />
+                <button
+                  class="basic-btn basic-btn--sm basic-btn--secondary"
+                  id="basic-choose-extract"
+                >
+                  Browse
+                </button>
+              </div>
+            </div>
+            <div class="basic-field" id="basic-extract-password-field">
+              <label class="basic-field__label" for="basic-extract-password"
+                >Password</label
+              >
+              <div class="basic-input-row">
+                <input
+                  type="password"
+                  id="basic-extract-password"
+                  placeholder="Enter archive password"
+                  autocomplete="off"
+                />
+                <button
+                  class="basic-password-toggle"
+                  id="basic-toggle-extract-password"
+                  type="button"
+                >
+                  Show
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="basic-extract-actions">
+            <button
+              class="basic-btn basic-btn--primary basic-btn--flex"
+              id="basic-run-extract"
+            >
+              Extract
+            </button>
+            <button
+              class="basic-btn basic-btn--secondary"
+              id="basic-browse-contents"
+            >
+              Browse contents
+            </button>
+          </div>
+          <div class="basic-progress" id="basic-extract-progress">
+            <div class="basic-progress__bar-track">
+              <div
+                class="basic-progress__bar-fill is-indeterminate"
+                id="basic-extract-bar"
+              ></div>
+            </div>
+            <div class="basic-progress__status" id="basic-extract-status">
+              Extracting…
+            </div>
+            <div class="basic-progress__actions">
+              <button
+                class="basic-btn basic-btn--sm basic-btn--secondary"
+                id="basic-extract-cancel"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+          <div class="basic-completion" id="basic-extract-completion">
+            <span
+              class="basic-completion__icon"
+              id="basic-extract-completion-icon"
+            ></span>
+            <h3
+              class="basic-completion__title"
+              id="basic-extract-completion-title"
+            ></h3>
+            <p
+              class="basic-completion__message"
+              id="basic-extract-completion-msg"
+            ></p>
+            <div class="basic-completion__actions">
+              <button
+                class="basic-btn basic-btn--sm basic-btn--primary"
+                id="basic-extract-open-dest"
+              >
+                Open folder
+              </button>
+              <button
+                class="basic-btn basic-btn--sm basic-btn--secondary"
+                id="basic-extract-another"
+              >
+                Extract another
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div id="basic-browse" class="basic-view">
+          <button class="basic-back-link" id="basic-browse-back">
+            &larr; Back
+          </button>
+          <h2 class="basic-section-title">Browse archive</h2>
+          <div class="basic-card">
+            <div class="basic-archive-info" id="basic-browse-archive-info">
+              <span class="basic-archive-info__icon">
+                <img
+                  src="/twemoji/1f4e6.svg"
+                  width="28"
+                  height="28"
+                  alt=""
+                  draggable="false"
+                />
+              </span>
+              <div class="basic-archive-info__details">
+                <span
+                  class="basic-archive-info__name"
+                  id="basic-browse-archive-name"
+                  >archive.7z</span
+                >
+                <span
+                  class="basic-archive-info__meta"
+                  id="basic-browse-archive-meta"
+                ></span>
+              </div>
+            </div>
+            <div class="basic-browse-summary" id="basic-browse-summary"></div>
+            <div class="basic-browse-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Size</th>
+                    <th>Compressed</th>
+                    <th>Modified</th>
+                  </tr>
+                </thead>
+                <tbody id="basic-browse-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="basic-browse-actions">
+            <button
+              class="basic-btn basic-btn--primary"
+              id="basic-browse-extract-all"
+            >
+              Extract all
+            </button>
+            <button
+              class="basic-btn basic-btn--secondary"
+              id="basic-browse-test"
+            >
+              Test integrity
+            </button>
+          </div>
+        </div>
+      </div>
+
       <main id="main-content" class="grid">
         <section class="panel">
           <div class="panel__header">

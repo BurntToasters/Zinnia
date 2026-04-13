@@ -25,6 +25,7 @@ import {
   setMode,
   setActivityPanelVisible,
   setWorkspaceMode,
+  getWorkspaceMode,
   setUiDensity,
   getMode,
   setBrowsePasswordFieldVisible,
@@ -68,6 +69,12 @@ import {
   deriveOutputArchivePath,
   resolveOutputArchiveAutofill,
 } from "./extract-path";
+import {
+  initBasicWorkspace,
+  setBasicView,
+  handleBasicDragDrop,
+  syncBasicBeforeRun,
+} from "./basic-ui";
 
 async function exportLocalLogs() {
   const suggestedName = `zinnia-logs-${new Date().toISOString().slice(0, 10)}.txt`;
@@ -180,6 +187,14 @@ async function applyIncomingPaths(
   }
   renderInputs();
   devLog(`Received ${paths.length} path(s) from ${source}.`);
+
+  if (getWorkspaceMode() === "basic") {
+    if (mode === "extract" || shouldAutoBrowse) {
+      setBasicView(shouldAutoBrowse ? "browse" : "extract");
+    } else {
+      setBasicView("compress");
+    }
+  }
 
   if (shouldAutoBrowse) {
     void browseArchive();
@@ -404,6 +419,18 @@ function wireEvents() {
         const mode =
           btn.dataset.workspaceModeBtn === "power" ? "power" : "basic";
         setWorkspaceMode(mode);
+        if (mode === "basic") {
+          const currentMode = getMode();
+          if (currentMode === "add" && state.inputs.length > 0) {
+            setBasicView("compress");
+          } else if (currentMode === "extract") {
+            setBasicView("extract");
+          } else if (currentMode === "browse") {
+            setBasicView("browse");
+          } else {
+            setBasicView("home");
+          }
+        }
         refreshQuickActionRepeatState();
       });
     });
@@ -575,6 +602,7 @@ function wireEvents() {
       )
         return;
       e.preventDefault();
+      syncBasicBeforeRun();
       if (getMode() === "browse") void browseArchive();
       else void runAction();
     }
@@ -640,6 +668,7 @@ async function init() {
   });
   renderInputs();
   wireEvents();
+  initBasicWorkspace();
   refreshQuickActionRepeatState();
   if (loadedSettings.malformed && loadedSettings.warning) {
     log(loadedSettings.warning, "error");
@@ -713,6 +742,13 @@ async function init() {
   const appWindow = getCurrentWebviewWindow();
   await appWindow.onDragDropEvent(async (event) => {
     try {
+      if (getWorkspaceMode() === "basic") {
+        handleBasicDragDrop(
+          event.payload.type,
+          event.payload.type === "drop" ? event.payload.paths : undefined,
+        );
+        return;
+      }
       if (event.payload.type === "enter" || event.payload.type === "over") {
         dom.inputList.classList.add("list--dragover");
       } else if (event.payload.type === "leave") {
