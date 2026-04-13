@@ -211,7 +211,7 @@ export function renderBasicInputs(): void {
   if (state.inputs.length === 0) {
     const empty = document.createElement("div");
     empty.style.cssText =
-      "padding: 16px; text-align: center; color: var(--text-secondary); font-size: 0.8125rem;";
+      "padding: 12px; text-align: center; color: var(--text-secondary); font-size: 0.75rem;";
     empty.textContent =
       "No files added yet. Drop files above or use the buttons below.";
     list.appendChild(empty);

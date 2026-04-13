@@ -11,7 +11,7 @@
 }
 
 #app[data-workspace-mode="basic"] .header {
-  padding: 10px 16px;
+  padding: 8px 14px;
 }
 
 #app[data-workspace-mode="power"] .basic-workspace {
@@ -23,20 +23,20 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 32px 24px;
+  padding: 20px 20px;
   overflow-y: auto;
-  --basic-max-width: 640px;
+  --basic-max-width: 700px;
   --basic-radius: 12px;
   --basic-radius-btn: 10px;
   --basic-radius-input: 8px;
   --basic-radius-item: 8px;
-  --basic-btn-height: 48px;
+  --basic-btn-height: 42px;
   --basic-font: 0.875rem;
   --basic-label: 0.75rem;
   --basic-heading: 1.25rem;
   --basic-subheading: 0.9375rem;
-  --basic-spacing: 20px;
-  --basic-card-pad: 24px;
+  --basic-spacing: 14px;
+  --basic-card-pad: 18px;
 }
 
 .basic-view {
@@ -80,8 +80,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 28px 0 12px;
+  gap: 6px;
+  padding: 12px 0 4px;
 }
 
 .basic-home__title {
@@ -103,8 +103,8 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 16px;
-  padding: 48px 24px;
+  gap: 12px;
+  padding: 30px 20px;
   border: 2px dashed var(--border-strong);
   border-radius: var(--basic-radius);
   background: var(--surface);
@@ -158,8 +158,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 64px;
-  height: 64px;
+  width: 56px;
+  height: 56px;
   border-radius: 50%;
   background: var(--accent-bg);
   transition:
@@ -196,8 +196,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 28px 20px;
+  gap: 6px;
+  padding: 20px 16px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--basic-radius);
@@ -231,8 +231,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 48px;
-  height: 48px;
+  width: 42px;
+  height: 42px;
   border-radius: 50%;
   background: var(--accent-bg);
   transition: background var(--transition);
@@ -263,8 +263,8 @@
   background: none;
   border: none;
   cursor: pointer;
-  padding: 6px 10px;
-  margin-left: -10px;
+  padding: 4px 8px;
+  margin-left: -8px;
   border-radius: 8px;
   font-family: inherit;
   transition:
@@ -293,7 +293,7 @@
   padding: var(--basic-card-pad);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
   box-shadow: 0 1px 3px var(--shadow), 0 0 1px var(--shadow);
 }
 
@@ -301,7 +301,7 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-height: 180px;
+  max-height: 150px;
   overflow-y: auto;
   padding: 2px;
 }
@@ -311,7 +311,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 6px 10px;
   background: var(--surface-alt);
   border-radius: var(--basic-radius-item);
   font-size: var(--basic-label);
@@ -360,7 +360,7 @@
 .basic-field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .basic-field__label {
@@ -379,7 +379,7 @@
   background: var(--surface-alt);
   border: 1px solid var(--border);
   border-radius: var(--basic-radius-input);
-  padding: 10px 12px;
+  padding: 8px 10px;
   box-shadow: var(--input-inset-shadow);
   transition:
     border-color var(--transition),
@@ -397,8 +397,8 @@
   appearance: none;
   background-image: var(--select-arrow);
   background-repeat: no-repeat;
-  background-position: right 10px center;
-  padding-right: 28px;
+  background-position: right 9px center;
+  padding-right: 26px;
 }
 
 .basic-field .basic-input-row {
@@ -414,16 +414,16 @@
 .basic-field-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  gap: 10px;
 }
 
 .basic-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
   height: var(--basic-btn-height);
-  padding: 0 24px;
+  padding: 0 20px;
   font-family: inherit;
   font-size: var(--basic-font);
   font-weight: 600;
@@ -482,7 +482,7 @@
   background: transparent;
   color: var(--text-secondary);
   height: auto;
-  padding: 8px 12px;
+  padding: 6px 10px;
   font-weight: 500;
 }
 
@@ -492,8 +492,8 @@
 }
 
 .basic-btn--sm {
-  height: 36px;
-  padding: 0 14px;
+  height: 32px;
+  padding: 0 12px;
   font-size: var(--basic-label);
   border-radius: var(--basic-radius-input);
 }
@@ -527,8 +527,8 @@
 .basic-progress {
   display: none;
   flex-direction: column;
-  gap: 10px;
-  padding: 20px;
+  gap: 8px;
+  padding: 14px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--basic-radius);
@@ -601,8 +601,8 @@
   display: none;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  padding: 24px;
+  gap: 10px;
+  padding: 16px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--basic-radius);
@@ -656,8 +656,8 @@
 .basic-archive-info {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 16px;
+  gap: 10px;
+  padding: 12px;
   background: var(--surface-alt);
   border-radius: var(--basic-radius-btn);
 }
@@ -670,8 +670,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   background: var(--accent-bg);
 }
@@ -698,7 +698,7 @@
 }
 
 .basic-browse-table-wrap {
-  max-height: calc(100vh - 420px);
+  max-height: calc(100vh - 390px);
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: var(--basic-radius-input);
@@ -718,7 +718,7 @@
 
 .basic-browse-table-wrap th {
   background: var(--surface-alt);
-  padding: 10px 12px;
+  padding: 8px 10px;
   text-align: left;
   font-weight: 600;
   color: var(--text-secondary);
@@ -730,7 +730,7 @@
 }
 
 .basic-browse-table-wrap td {
-  padding: 8px 12px;
+  padding: 6px 10px;
   border-bottom: 1px solid var(--border);
   color: var(--text);
 }
@@ -774,7 +774,7 @@
   background: none;
   border: none;
   cursor: pointer;
-  padding: 4px 8px;
+  padding: 3px 6px;
   border-radius: 6px;
   transition:
     color var(--transition),
@@ -788,7 +788,7 @@
 
 @media (max-width: 560px) {
   #app[data-workspace-mode="basic"] .basic-workspace {
-    padding: 20px 16px;
+    padding: 16px 14px;
   }
 
   .basic-action-cards {
@@ -800,6 +800,6 @@
   }
 
   .basic-dropzone {
-    padding: 36px 16px;
+    padding: 26px 14px;
   }
 }
