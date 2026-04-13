@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 static EXTRACT_WINDOW_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -37,6 +37,8 @@ struct ProcessState {
 }
 
 struct RunningProcess(Mutex<ProcessState>);
+
+static AWAITING_FILE_OPEN: AtomicBool = AtomicBool::new(false);
 
 fn lock_process(state: &RunningProcess) -> Result<std::sync::MutexGuard<'_, ProcessState>, String> {
     state
@@ -887,11 +889,18 @@ fn route_open_request(app: &tauri::AppHandle, paths: Vec<String>, mode: String) 
     }
 
     if should_use_extract_window(&paths, &mode) {
+        if AWAITING_FILE_OPEN.swap(false, Ordering::SeqCst) {
+            if let Some(main_window) = app.get_webview_window("main") {
+                let _ = main_window.close();
+            }
+        }
         if let Err(e) = spawn_extract_window(app, paths) {
             eprintln!("Failed to open extract window: {e}");
         }
         return;
     }
+
+    AWAITING_FILE_OPEN.store(false, Ordering::SeqCst);
 
     let pending = app.state::<PendingPaths>();
     if let Ok(mut q) = pending.0.lock() {
@@ -1304,6 +1313,18 @@ fn main() {
                 if let Some(main_window) = app.get_webview_window("main") {
                     let _ = main_window.close();
                 }
+            } else if cfg!(target_os = "macos") && initial_paths.is_empty() {
+                AWAITING_FILE_OPEN.store(true, Ordering::SeqCst);
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    if AWAITING_FILE_OPEN.swap(false, Ordering::SeqCst) {
+                        if let Some(main_window) = handle.get_webview_window("main") {
+                            let _ = main_window.show();
+                            let _ = main_window.set_focus();
+                        }
+                    }
+                });
             } else if let Some(main_window) = app.get_webview_window("main") {
                 let _ = main_window.show();
                 let _ = main_window.set_focus();
