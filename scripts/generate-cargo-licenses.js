@@ -17,7 +17,6 @@ function runCargoMetadata() {
     cargoManifestPath,
     "--format-version",
     "1",
-    "--locked",
   ];
   const result = spawnSync("cargo", args, {
     cwd: repoRoot,
