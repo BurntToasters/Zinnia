@@ -17,6 +17,17 @@ import {
   resolveOutputArchiveAutofill,
 } from "./extract-path";
 
+type BasicHooks = {
+  onRenderInputs: () => void;
+  onSetRunning: (active: boolean) => void;
+  onSetStatus: (text: string) => void;
+};
+let basicHooks: BasicHooks | null = null;
+
+export function registerBasicHooks(hooks: BasicHooks): void {
+  basicHooks = hooks;
+}
+
 type LogLevel = "info" | "debug" | "error";
 
 let logWriteQueue = Promise.resolve();
@@ -301,6 +312,7 @@ export function setStatus(text: string, autoResetMs?: number) {
     state.statusTimeout = undefined;
   }
   dom.statusEl.textContent = text;
+  basicHooks?.onSetStatus(text);
   if (autoResetMs) {
     state.statusTimeout = window.setTimeout(() => {
       setStatus("Idle");
@@ -535,6 +547,8 @@ export function renderInputs() {
     item.appendChild(remove);
     dom.inputList.appendChild(item);
   });
+
+  basicHooks?.onRenderInputs();
 }
 
 export function setRunning(active: boolean) {
@@ -594,5 +608,6 @@ export function setRunning(active: boolean) {
       btn.disabled = active;
     });
 
+  basicHooks?.onSetRunning(active);
   renderInputs();
 }

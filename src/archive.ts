@@ -409,6 +409,44 @@ export function renderBrowseTable(info: ArchiveInfo) {
     tr.appendChild(tdModified);
     tbody.appendChild(tr);
   }
+
+  const basicTbody = document.getElementById("basic-browse-tbody");
+  if (basicTbody) {
+    basicTbody.innerHTML = "";
+    for (const entry of info.entries) {
+      const tr = document.createElement("tr");
+      if (entry.isFolder) tr.className = "browse-folder";
+
+      const tdName = document.createElement("td");
+      tdName.textContent = entry.path;
+      tdName.title = entry.path;
+      tdName.style.wordBreak = "break-all";
+
+      const tdSize = document.createElement("td");
+      tdSize.style.fontVariantNumeric = "tabular-nums";
+      tdSize.textContent = entry.isFolder ? "\u2014" : formatSize(entry.size);
+
+      const tdPacked = document.createElement("td");
+      tdPacked.style.fontVariantNumeric = "tabular-nums";
+      tdPacked.textContent = entry.isFolder
+        ? "\u2014"
+        : formatSize(entry.packedSize);
+
+      const tdModified = document.createElement("td");
+      tdModified.textContent = entry.modified;
+
+      tr.appendChild(tdName);
+      tr.appendChild(tdSize);
+      tr.appendChild(tdPacked);
+      tr.appendChild(tdModified);
+      basicTbody.appendChild(tr);
+    }
+  }
+
+  const basicSummary = document.getElementById("basic-browse-summary");
+  if (basicSummary && summary) {
+    basicSummary.innerHTML = summary.innerHTML;
+  }
 }
 
 function getOrCreateSelection(archive: string): Set<string> {
@@ -628,7 +666,7 @@ export async function openSelectiveExtractModal(): Promise<void> {
 
 export async function runSelectiveExtractFromModal(): Promise<void> {
   if (state.running) return;
-  state.running = true;
+  setRunning(true);
   state.batchCancelled = false;
   state.cancelRequested = false;
   try {
@@ -682,7 +720,6 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
 
     closeSelectiveExtractModal();
 
-    setRunning(true);
     setStatus(
       selectedPaths.length > 0
         ? "Extracting selected entries"
@@ -773,7 +810,7 @@ export async function runAction() {
     return runBatchExtract();
   }
 
-  state.running = true;
+  setRunning(true);
   try {
     if (!(await ensureRuntimeReady())) return;
 
@@ -807,7 +844,6 @@ export async function runAction() {
     const logSafe = args.map((a) => (a.startsWith("-p") ? "-p***" : a));
     devLog(`7z ${logSafe.join(" ")}`);
 
-    setRunning(true);
     setStatus("Running");
 
     const result = await invoke<Run7zResult>("run_7z", { args });
@@ -874,7 +910,7 @@ export async function runAction() {
 
 export async function runBatchExtract() {
   if (state.running) return;
-  state.running = true;
+  setRunning(true);
   try {
     if (!(await ensureRuntimeReady())) return;
 
@@ -891,7 +927,6 @@ export async function runBatchExtract() {
     );
     if (extraArgs.length > 0) validateExtraArgs(extraArgs);
 
-    setRunning(true);
     let succeeded = 0;
     let failed = 0;
 
@@ -982,7 +1017,7 @@ export async function cancelAction() {
 
 export async function testArchive() {
   if (state.running) return;
-  state.running = true;
+  setRunning(true);
   try {
     const archive = state.inputs[0];
     if (!archive) {
@@ -1009,7 +1044,6 @@ export async function testArchive() {
 
     if (!(await ensureRuntimeReady())) return;
 
-    setRunning(true);
     setStatus("Testing archive integrity");
 
     const result = await invoke<Run7zResult>("run_7z", { args });
@@ -1054,7 +1088,7 @@ export async function testArchive() {
 
 export async function browseArchive(): Promise<ArchiveInfo | null> {
   if (state.running) return null;
-  state.running = true;
+  setRunning(true);
   try {
     const archive = state.inputs[0];
     if (!archive) {
@@ -1077,7 +1111,6 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
 
     if (!(await ensureRuntimeReady())) return null;
 
-    setRunning(true);
     setStatus("Listing archive contents");
 
     const result = await invoke<Run7zResult>("run_7z", { args });

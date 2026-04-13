@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -12,7 +13,7 @@ use tauri::Url;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
-const MAX_OUTPUT_BYTES: usize = 50 * 1024 * 1024;
+const MAX_OUTPUT_BYTES: usize = 10 * 1024 * 1024;
 const MAX_LOG_FILE_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_LOG_ENTRY_BYTES: usize = 16 * 1024;
 const LOG_FILE_NAME: &str = "zinnia.log";
@@ -29,7 +30,7 @@ struct RunResult {
 
 struct InitialPaths(Mutex<Vec<String>>);
 struct InitialMode(Mutex<String>);
-struct ExtractQueue(Mutex<Vec<Vec<String>>>);
+struct ExtractQueue(Mutex<HashMap<String, Vec<String>>>);
 struct PendingPaths(Mutex<Vec<OpenPathsPayload>>);
 struct ProcessState {
     child: Option<CommandChild>,
@@ -37,6 +38,8 @@ struct ProcessState {
 }
 
 struct RunningProcess(Mutex<ProcessState>);
+
+static FILE_OPEN_SIGNAL: Mutex<Option<std::sync::mpsc::Sender<()>>> = Mutex::new(None);
 
 fn lock_process(state: &RunningProcess) -> Result<std::sync::MutexGuard<'_, ProcessState>, String> {
     state
@@ -116,18 +119,27 @@ fn atomic_write_text(path: &std::path::Path, contents: &str) -> Result<(), Strin
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
-    let seq = WRITE_SEQ.fetch_add(1, Ordering::Relaxed);
-    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("tmp");
+    let seq = WRITE_SEQ.fetch_add(1, Ordering::SeqCst);
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "Invalid file name in path".to_string())?;
     let tmp = path.with_file_name(format!(".{file_name}.{seq}.tmp"));
     std::fs::write(&tmp, contents).map_err(|e| e.to_string())?;
 
     #[cfg(windows)]
     {
-        let _ = std::fs::remove_file(path);
+        if let Err(e) = std::fs::remove_file(path) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                eprintln!("Warning: could not remove existing file before rename: {e}");
+            }
+        }
     }
 
     std::fs::rename(&tmp, path).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
+        if let Err(cleanup_err) = std::fs::remove_file(&tmp) {
+            eprintln!("Warning: could not clean up temp file {}: {cleanup_err}", tmp.display());
+        }
         e.to_string()
     })
 }
@@ -347,17 +359,27 @@ fn extension_mismatch_reason(expected: &str, detected: Option<&str>, tar: bool) 
 
 fn validate_archive_path(path: &str) -> ArchivePathValidation {
     let trimmed = path.trim();
+
+    let invalid = |reason: &str| ArchivePathValidation {
+        path: trimmed.to_string(),
+        valid: false,
+        reason: Some(reason.to_string()),
+    };
+
     if trimmed.is_empty() {
-        return ArchivePathValidation {
-            path: path.to_string(),
-            valid: false,
-            reason: Some("Path is empty.".to_string()),
-        };
+        return invalid("Path is empty.");
+    }
+    if trimmed.contains('\0') {
+        return invalid("Path contains invalid characters.");
+    }
+    if trimmed.len() > 4096 {
+        return invalid("Path exceeds maximum length.");
     }
 
     let lower = trimmed.to_lowercase();
     let fs_path = std::path::Path::new(trimmed);
-    let meta = match std::fs::metadata(fs_path) {
+
+    let meta = match std::fs::symlink_metadata(fs_path) {
         Ok(meta) => meta,
         Err(err) => {
             let reason = if err.kind() == std::io::ErrorKind::NotFound {
@@ -372,12 +394,11 @@ fn validate_archive_path(path: &str) -> ArchivePathValidation {
             };
         }
     };
+    if meta.is_symlink() {
+        return invalid("Path is a symbolic link.");
+    }
     if !meta.is_file() {
-        return ArchivePathValidation {
-            path: trimmed.to_string(),
-            valid: false,
-            reason: Some("Path is not a file.".to_string()),
-        };
+        return invalid("Path is not a file.");
     }
 
     let bytes = match read_probe_bytes(fs_path, ARCHIVE_SIGNATURE_SCAN_BYTES) {
@@ -514,12 +535,27 @@ fn export_logs(app: tauri::AppHandle, destination_path: String) -> Result<(), St
             return Err("Destination parent directory does not exist.".to_string());
         }
     }
+    if let Ok(meta) = std::fs::symlink_metadata(&destination) {
+        if meta.is_symlink() {
+            return Err("Destination path is a symbolic link.".to_string());
+        }
+    }
+    let canonical_dest = if let Some(parent) = destination.parent() {
+        if !parent.as_os_str().is_empty() {
+            let canon_parent = parent.canonicalize().map_err(|e| e.to_string())?;
+            canon_parent.join(destination.file_name().unwrap_or_default())
+        } else {
+            destination.clone()
+        }
+    } else {
+        destination.clone()
+    };
 
     let source = log_file_path(&app)?;
     if source.exists() {
-        std::fs::copy(source, destination).map_err(|e| e.to_string())?;
+        std::fs::copy(source, &canonical_dest).map_err(|e| e.to_string())?;
     } else {
-        std::fs::write(destination, "No local logs have been recorded yet.\n")
+        std::fs::write(&canonical_dest, "No local logs have been recorded yet.\n")
             .map_err(|e| e.to_string())?;
     }
 
@@ -556,11 +592,17 @@ fn open_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
     }
 
     let resolved = std::path::PathBuf::from(&raw_path);
-    if !resolved.exists() {
-        return Err("Path does not exist.".to_string());
+
+    let meta =
+        std::fs::symlink_metadata(&resolved).map_err(|_| "Path does not exist.".to_string())?;
+    if meta.is_symlink() {
+        return Err("Symbolic links cannot be opened directly.".to_string());
     }
 
-    let path_str = resolved.to_string_lossy().to_string();
+    let canonical = resolved
+        .canonicalize()
+        .map_err(|_| "Path does not exist.".to_string())?;
+    let path_str = canonical.to_string_lossy().to_string();
     app.shell().open(&path_str, None).map_err(|e| e.to_string())
 }
 
@@ -572,8 +614,17 @@ async fn probe_7z(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())?
         .args(["i"]);
 
-    let (_rx, child) = command.spawn().map_err(|e| e.to_string())?;
-    let _ = child.kill();
+    let (mut rx, child) = command.spawn().map_err(|e| e.to_string())?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while let Some(event) = rx.recv().await {
+        if matches!(event, CommandEvent::Terminated(_)) {
+            break;
+        }
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            break;
+        }
+    }
     Ok(())
 }
 
@@ -601,7 +652,7 @@ async fn run_7z(
     }
     for arg in &args[1..] {
         let lower = arg.to_lowercase();
-        if BLOCKED_7Z_ARGS.iter().any(|b| lower == *b) {
+        if BLOCKED_7Z_ARGS.iter().any(|b| lower.starts_with(b)) {
             return Err(format!("7z argument '{}' is not permitted.", arg));
         }
     }
@@ -687,6 +738,7 @@ fn cancel_7z(state: tauri::State<'_, RunningProcess>) -> Result<(), String> {
                 if is_non_running_kill_error(&msg) {
                     Ok(())
                 } else {
+                    eprintln!("Failed to kill 7z process: {msg}");
                     Err(msg)
                 }
             }
@@ -717,31 +769,30 @@ fn drain_pending_paths(
 }
 
 #[tauri::command]
-fn get_extract_paths(state: tauri::State<'_, ExtractQueue>) -> Result<Vec<String>, String> {
+fn get_extract_paths(window: tauri::Window, state: tauri::State<'_, ExtractQueue>) -> Result<Vec<String>, String> {
     let mut queue = state.0.lock().map_err(|_| "Lock poisoned".to_string())?;
-    if queue.is_empty() {
-        Ok(vec![])
-    } else {
-        Ok(queue.remove(0))
-    }
+    let label = window.label().to_string();
+    Ok(queue.remove(&label).unwrap_or_default())
 }
 
 fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Result<(), String> {
-    let push_index = {
+    if paths.len() > 100 {
+        return Err("Too many paths in a single extract batch.".to_string());
+    }
+
+    let label = format!(
+        "extract-{}",
+        EXTRACT_WINDOW_COUNTER.fetch_add(1, Ordering::SeqCst)
+    );
+
+    {
         let queue = app.state::<ExtractQueue>();
         let mut q = queue.0.lock().map_err(|_| "Lock poisoned".to_string())?;
         if q.len() >= 20 {
             return Err("Extract queue is full".to_string());
         }
-        let index = q.len();
-        q.push(paths);
-        index
-    };
-
-    let label = format!(
-        "extract-{}",
-        EXTRACT_WINDOW_COUNTER.fetch_add(1, Ordering::Relaxed)
-    );
+        q.insert(label.clone(), paths);
+    }
 
     let result = tauri::WebviewWindowBuilder::new(
         app,
@@ -759,9 +810,7 @@ fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Result<()
     if result.is_err() {
         let queue = app.state::<ExtractQueue>();
         if let Ok(mut q) = queue.0.lock() {
-            if push_index < q.len() {
-                q.remove(push_index);
-            }
+            q.remove(&label);
         };
     }
 
@@ -837,11 +886,18 @@ fn normalize_open_path_arg(arg: &str) -> Option<String> {
     if trimmed.is_empty() || trimmed == "--" {
         return None;
     }
+    if trimmed.contains('\0') {
+        return None;
+    }
 
     if trimmed.len() >= 7 && trimmed[..7].eq_ignore_ascii_case("file://") {
         if let Ok(url) = Url::parse(trimmed) {
             if let Ok(path) = url.to_file_path() {
-                return Some(path.to_string_lossy().to_string());
+                let s = path.to_string_lossy().to_string();
+                if s.contains("..") {
+                    return None;
+                }
+                return Some(s);
             }
             return None;
         }
@@ -887,20 +943,40 @@ fn route_open_request(app: &tauri::AppHandle, paths: Vec<String>, mode: String) 
     }
 
     if should_use_extract_window(&paths, &mode) {
+        if let Ok(mut guard) = FILE_OPEN_SIGNAL.lock() {
+            if let Some(tx) = guard.take() {
+                let _ = tx.send(());
+                if let Some(main_window) = app.get_webview_window("main") {
+                    let _ = main_window.close();
+                }
+            }
+        }
         if let Err(e) = spawn_extract_window(app, paths) {
             eprintln!("Failed to open extract window: {e}");
         }
         return;
     }
 
-    let pending = app.state::<PendingPaths>();
-    if let Ok(mut q) = pending.0.lock() {
-        if q.len() < 100 {
-            q.push(OpenPathsPayload { paths, mode });
-        }
+    if let Ok(mut guard) = FILE_OPEN_SIGNAL.lock() {
+        guard.take();
     }
 
-    let _ = app.emit("pending-paths-changed", ());
+    let pending = app.state::<PendingPaths>();
+    match pending.0.lock() {
+        Ok(mut q) => {
+            let total_paths: usize = q.iter().map(|p| p.paths.len()).sum();
+            if q.len() < 100 && total_paths + paths.len() <= 1000 {
+                q.push(OpenPathsPayload { paths, mode });
+            } else {
+                eprintln!("Pending paths queue full, dropping open request");
+            }
+        }
+        Err(e) => eprintln!("Failed to acquire pending paths lock: {e}"),
+    }
+
+    if let Err(e) = app.emit("pending-paths-changed", ()) {
+        eprintln!("Failed to emit pending-paths-changed: {e}");
+    }
 
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -1288,7 +1364,7 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .manage(InitialPaths(Mutex::new(initial_paths.clone())))
         .manage(InitialMode(Mutex::new(initial_mode.clone())))
-        .manage(ExtractQueue(Mutex::new(Vec::new())))
+        .manage(ExtractQueue(Mutex::new(HashMap::new())))
         .manage(PendingPaths(Mutex::new(Vec::new())))
         .manage(RunningProcess(Mutex::new(ProcessState {
             child: None,
@@ -1304,6 +1380,23 @@ fn main() {
                 if let Some(main_window) = app.get_webview_window("main") {
                     let _ = main_window.close();
                 }
+            } else if cfg!(target_os = "macos") && initial_paths.is_empty() {
+                let (tx, rx) = std::sync::mpsc::channel::<()>();
+                if let Ok(mut guard) = FILE_OPEN_SIGNAL.lock() {
+                    *guard = Some(tx);
+                }
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    match rx.recv_timeout(std::time::Duration::from_millis(500)) {
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                            if let Some(main_window) = handle.get_webview_window("main") {
+                                let _ = main_window.show();
+                                let _ = main_window.set_focus();
+                            }
+                        }
+                        _ => {}
+                    }
+                });
             } else if let Some(main_window) = app.get_webview_window("main") {
                 let _ = main_window.show();
                 let _ = main_window.set_focus();

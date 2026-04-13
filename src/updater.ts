@@ -131,7 +131,7 @@ export async function autoCheckUpdates() {
     await promptInstallAndRestart(update.version, () => update.install());
   } catch (err) {
     const messageText = err instanceof Error ? err.message : String(err);
-    devLog(`Auto-update error: ${messageText}`);
+    log(`Update check failed: ${messageText}`);
     setStatus("Idle");
   }
 }
