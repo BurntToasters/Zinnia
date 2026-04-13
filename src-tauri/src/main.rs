@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -29,7 +30,7 @@ struct RunResult {
 
 struct InitialPaths(Mutex<Vec<String>>);
 struct InitialMode(Mutex<String>);
-struct ExtractQueue(Mutex<Vec<Vec<String>>>);
+struct ExtractQueue(Mutex<HashMap<String, Vec<String>>>);
 struct PendingPaths(Mutex<Vec<OpenPathsPayload>>);
 struct ProcessState {
     child: Option<CommandChild>,
@@ -651,7 +652,7 @@ async fn run_7z(
     }
     for arg in &args[1..] {
         let lower = arg.to_lowercase();
-        if BLOCKED_7Z_ARGS.iter().any(|b| lower == *b) {
+        if BLOCKED_7Z_ARGS.iter().any(|b| lower.starts_with(b)) {
             return Err(format!("7z argument '{}' is not permitted.", arg));
         }
     }
@@ -768,34 +769,30 @@ fn drain_pending_paths(
 }
 
 #[tauri::command]
-fn get_extract_paths(state: tauri::State<'_, ExtractQueue>) -> Result<Vec<String>, String> {
+fn get_extract_paths(window: tauri::Window, state: tauri::State<'_, ExtractQueue>) -> Result<Vec<String>, String> {
     let mut queue = state.0.lock().map_err(|_| "Lock poisoned".to_string())?;
-    if queue.is_empty() {
-        Ok(vec![])
-    } else {
-        Ok(queue.remove(0))
-    }
+    let label = window.label().to_string();
+    Ok(queue.remove(&label).unwrap_or_default())
 }
 
 fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Result<(), String> {
     if paths.len() > 100 {
         return Err("Too many paths in a single extract batch.".to_string());
     }
-    let push_index = {
-        let queue = app.state::<ExtractQueue>();
-        let mut q = queue.0.lock().map_err(|_| "Lock poisoned".to_string())?;
-        if q.len() >= 20 {
-            return Err("Extract queue is full".to_string());
-        }
-        let index = q.len();
-        q.push(paths);
-        index
-    };
 
     let label = format!(
         "extract-{}",
         EXTRACT_WINDOW_COUNTER.fetch_add(1, Ordering::SeqCst)
     );
+
+    {
+        let queue = app.state::<ExtractQueue>();
+        let mut q = queue.0.lock().map_err(|_| "Lock poisoned".to_string())?;
+        if q.len() >= 20 {
+            return Err("Extract queue is full".to_string());
+        }
+        q.insert(label.clone(), paths);
+    }
 
     let result = tauri::WebviewWindowBuilder::new(
         app,
@@ -813,9 +810,7 @@ fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Result<()
     if result.is_err() {
         let queue = app.state::<ExtractQueue>();
         if let Ok(mut q) = queue.0.lock() {
-            if push_index < q.len() {
-                q.remove(push_index);
-            }
+            q.remove(&label);
         };
     }
 
@@ -1369,7 +1364,7 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .manage(InitialPaths(Mutex::new(initial_paths.clone())))
         .manage(InitialMode(Mutex::new(initial_mode.clone())))
-        .manage(ExtractQueue(Mutex::new(Vec::new())))
+        .manage(ExtractQueue(Mutex::new(HashMap::new())))
         .manage(PendingPaths(Mutex::new(Vec::new())))
         .manage(RunningProcess(Mutex::new(ProcessState {
             child: None,

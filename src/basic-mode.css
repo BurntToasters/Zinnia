@@ -27,6 +27,9 @@
   overflow-y: auto;
   --basic-max-width: 640px;
   --basic-radius: 12px;
+  --basic-radius-btn: 10px;
+  --basic-radius-input: 8px;
+  --basic-radius-item: 8px;
   --basic-btn-height: 48px;
   --basic-font: 0.875rem;
   --basic-label: 0.75rem;
@@ -310,7 +313,7 @@
   gap: 8px;
   padding: 8px 12px;
   background: var(--surface-alt);
-  border-radius: 8px;
+  border-radius: var(--basic-radius-item);
   font-size: var(--basic-label);
   color: var(--text);
   min-width: 0;
@@ -375,7 +378,7 @@
   color: var(--text);
   background: var(--surface-alt);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--basic-radius-input);
   padding: 10px 12px;
   box-shadow: var(--input-inset-shadow);
   transition:
@@ -424,7 +427,7 @@
   font-family: inherit;
   font-size: var(--basic-font);
   font-weight: 600;
-  border-radius: 10px;
+  border-radius: var(--basic-radius-btn);
   border: none;
   cursor: pointer;
   transition:
@@ -492,7 +495,7 @@
   height: 36px;
   padding: 0 14px;
   font-size: var(--basic-label);
-  border-radius: 8px;
+  border-radius: var(--basic-radius-input);
 }
 
 .basic-btn--danger {
@@ -656,7 +659,7 @@
   gap: 12px;
   padding: 16px;
   background: var(--surface-alt);
-  border-radius: 10px;
+  border-radius: var(--basic-radius-btn);
 }
 
 .basic-archive-info__icon {
@@ -698,7 +701,7 @@
   max-height: calc(100vh - 420px);
   overflow: auto;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--basic-radius-input);
 }
 
 .basic-browse-table-wrap table {

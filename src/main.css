@@ -1873,4 +1873,11 @@ img.twemoji:hover {
   .modal {
     animation: none;
   }
+  .setup-wizard-overlay {
+    animation: none;
+    backdrop-filter: none;
+  }
+  .setup-wizard-card {
+    animation: none;
+  }
 }
