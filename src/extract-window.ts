@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { deriveExtractDestinationPath } from "./extract-path";
 
@@ -61,6 +62,33 @@ function startIndeterminateProgress(): void {
   fill.style.animation = "";
   fill.style.marginLeft = "";
   fill.style.width = "";
+}
+
+function setDeterminateProgress(widthPercent: number): void {
+  const clamped = Math.max(0, Math.min(100, widthPercent));
+  const fill = $("progress-fill");
+  fill.classList.remove("extract-progress-fill--error");
+  fill.style.animation = "none";
+  fill.style.marginLeft = "0";
+  fill.style.width = `${clamped}%`;
+  const bar = document.getElementById("extract-progress");
+  if (bar) {
+    bar.setAttribute("aria-valuenow", String(clamped));
+    bar.setAttribute("aria-valuemin", "0");
+    bar.setAttribute("aria-valuemax", "100");
+  }
+}
+
+async function countArchiveEntries(archivePath: string): Promise<number> {
+  try {
+    const result = await invoke<Run7zResult>("run_7z", {
+      args: ["l", "-ba", "--", archivePath],
+    });
+    if (result.code !== 0) return 0;
+    return result.stdout.split("\n").filter((l) => l.trim().length > 0).length;
+  } catch {
+    return 0;
+  }
 }
 
 async function closeWindowSafely(
@@ -170,7 +198,7 @@ async function run() {
   $("archive-name").title = archivePath;
   $("extract-dest").textContent = destination;
   $("extract-dest").title = destination;
-  $("extract-status").textContent = "Extracting...";
+  $("extract-status").textContent = "Scanning archive...";
   $("extract-error").hidden = true;
 
   try {
@@ -182,10 +210,47 @@ async function run() {
     return;
   }
 
-  const args = ["x", `-o${destination}`, "-aoa", "-y", "--", archivePath];
+  const totalEntries = await countArchiveEntries(archivePath);
+  let processedEntries = 0;
+
+  const unlistenProgress = await listen<string>("7z-progress", (event) => {
+    const chunk = typeof event.payload === "string" ? event.payload : "";
+    if (!chunk) return;
+    const lines = chunk.split(/\r?\n/);
+    let changed = false;
+    for (const line of lines) {
+      if (/^- \S/.test(line)) {
+        processedEntries++;
+        changed = true;
+      }
+    }
+    if (changed && totalEntries > 0) {
+      const pct = Math.min(
+        99,
+        Math.floor((processedEntries / totalEntries) * 100),
+      );
+      setDeterminateProgress(pct);
+    }
+  });
+
+  $("extract-status").textContent = "Extracting...";
+  if (totalEntries > 0) {
+    setDeterminateProgress(0);
+  }
+
+  const args = [
+    "x",
+    `-o${destination}`,
+    "-aoa",
+    "-y",
+    "-bb1",
+    "--",
+    archivePath,
+  ];
 
   try {
     const result = await invoke<Run7zResult>("run_7z", { args });
+    unlistenProgress();
 
     if (cancelRequested) {
       finish("Cancelled", 100, false, false);
@@ -212,8 +277,14 @@ async function run() {
       finish("Done (with warnings)", 100);
     } else {
       finish("Done", 100);
+      setTimeout(() => {
+        if (!cancelRequested) {
+          void closeWindowSafely(appWindow);
+        }
+      }, 1200);
     }
   } catch (err) {
+    unlistenProgress();
     if (cancelRequested) {
       finish("Cancelled", 100, false, false);
       return;
