@@ -876,636 +876,111 @@
       </div>
 
       <main id="main-content">
-      <div id="basic-workspace" class="basic-workspace">
-        <div id="basic-home" class="basic-view is-active">
-          <div class="basic-home__hero">
-            <h2 class="basic-home__title">What would you like to do?</h2>
-            <p class="basic-home__subtitle">
-              Drop files here or choose an action below
-            </p>
-          </div>
-          <div class="basic-dropzone" id="basic-dropzone">
-            <span class="basic-dropzone__icon">
-              <span class="basic-dropzone__icon-circle">
-                <img
-                  src="/twemoji/1f4c2.svg"
-                  width="36"
-                  height="36"
-                  alt=""
-                  draggable="false"
-                />
+        <div id="basic-workspace" class="basic-workspace">
+          <div id="basic-home" class="basic-view is-active">
+            <div class="basic-home__hero">
+              <h2 class="basic-home__title">What would you like to do?</h2>
+              <p class="basic-home__subtitle">
+                Drop files here or choose an action below
+              </p>
+            </div>
+            <div class="basic-dropzone" id="basic-dropzone">
+              <span class="basic-dropzone__icon">
+                <span class="basic-dropzone__icon-circle">
+                  <img
+                    src="/twemoji/1f4c2.svg"
+                    width="36"
+                    height="36"
+                    alt=""
+                    draggable="false"
+                  />
+                </span>
               </span>
-            </span>
-            <span class="basic-dropzone__text">
-              <strong>Drop files or archives</strong> to get started
-            </span>
-          </div>
-          <div class="basic-action-cards">
-            <button class="basic-action-card" id="basic-action-compress">
-              <span class="basic-action-card__icon">
-                <img
-                  src="/twemoji/1f4e6.svg"
-                  width="28"
-                  height="28"
-                  alt=""
-                  draggable="false"
-                />
+              <span class="basic-dropzone__text">
+                <strong>Drop files or archives</strong> to get started
               </span>
-              <span class="basic-action-card__label">Compress files</span>
-              <span class="basic-action-card__desc"
-                >Create a new archive from files or folders</span
-              >
-            </button>
-            <button class="basic-action-card" id="basic-action-open">
-              <span class="basic-action-card__icon">
-                <img
-                  src="/twemoji/1f4c1.svg"
-                  width="28"
-                  height="28"
-                  alt=""
-                  draggable="false"
-                />
-              </span>
-              <span class="basic-action-card__label">Open archive</span>
-              <span class="basic-action-card__desc"
-                >Extract or browse an existing archive</span
-              >
-            </button>
+            </div>
+            <div class="basic-action-cards">
+              <button class="basic-action-card" id="basic-action-compress">
+                <span class="basic-action-card__icon">
+                  <img
+                    src="/twemoji/1f4e6.svg"
+                    width="28"
+                    height="28"
+                    alt=""
+                    draggable="false"
+                  />
+                </span>
+                <span class="basic-action-card__label">Compress files</span>
+                <span class="basic-action-card__desc"
+                  >Create a new archive from files or folders</span
+                >
+              </button>
+              <button class="basic-action-card" id="basic-action-open">
+                <span class="basic-action-card__icon">
+                  <img
+                    src="/twemoji/1f4c1.svg"
+                    width="28"
+                    height="28"
+                    alt=""
+                    draggable="false"
+                  />
+                </span>
+                <span class="basic-action-card__label">Open archive</span>
+                <span class="basic-action-card__desc"
+                  >Extract or browse an existing archive</span
+                >
+              </button>
+            </div>
           </div>
-        </div>
 
-        <div id="basic-compress" class="basic-view">
-          <button class="basic-back-link" id="basic-compress-back">
-            &larr; Back
-          </button>
-          <h2 class="basic-section-title">Compress files</h2>
-          <div class="basic-card">
-            <div class="basic-file-list" id="basic-input-list"></div>
-            <div class="basic-file-actions">
-              <button
-                class="basic-btn basic-btn--sm basic-btn--secondary"
-                id="basic-add-files"
-              >
-                Add files
-              </button>
-              <button
-                class="basic-btn basic-btn--sm basic-btn--secondary"
-                id="basic-add-folder"
-              >
-                Add folder
-              </button>
-              <button
-                class="basic-btn basic-btn--sm basic-btn--ghost basic-btn--danger"
-                id="basic-clear-inputs"
-              >
-                Clear all
-              </button>
-            </div>
-          </div>
-          <div class="basic-card">
-            <div class="basic-field-grid">
-              <div class="basic-field">
-                <label class="basic-field__label" for="basic-preset"
-                  >Preset</label
-                >
-                <select id="basic-preset">
-                  <option value="store">Store (no compression)</option>
-                  <option value="quick">Quick</option>
-                  <option value="balanced" selected>Balanced</option>
-                  <option value="high">High</option>
-                  <option value="ultra">Ultra</option>
-                </select>
-              </div>
-              <div class="basic-field">
-                <label class="basic-field__label" for="basic-format"
-                  >Format</label
-                >
-                <select id="basic-format">
-                  <option value="7z">7z</option>
-                  <option value="zip">zip</option>
-                  <option value="tar">tar</option>
-                  <option value="gzip">gzip</option>
-                  <option value="bzip2">bzip2</option>
-                  <option value="xz">xz</option>
-                </select>
-              </div>
-            </div>
-            <div class="basic-field">
-              <label class="basic-field__label" for="basic-archive-name"
-                >Archive name (optional)</label
-              >
-              <input
-                type="text"
-                id="basic-archive-name"
-                placeholder="Leave blank to use source name"
-              />
-            </div>
-            <div class="basic-field">
-              <label class="basic-field__label" for="basic-output-path"
-                >Save to</label
-              >
-              <div class="basic-input-row">
-                <input
-                  type="text"
-                  id="basic-output-path"
-                  placeholder="Choose where to save the archive"
-                />
+          <div id="basic-compress" class="basic-view">
+            <button class="basic-back-link" id="basic-compress-back">
+              &larr; Back
+            </button>
+            <h2 class="basic-section-title">Compress files</h2>
+            <div class="basic-card">
+              <div class="basic-file-list" id="basic-input-list"></div>
+              <div class="basic-file-actions">
                 <button
                   class="basic-btn basic-btn--sm basic-btn--secondary"
-                  id="basic-choose-output"
+                  id="basic-add-files"
                 >
-                  Browse
+                  Add files
                 </button>
-              </div>
-            </div>
-            <div class="basic-field">
-              <label class="basic-field__label" for="basic-password"
-                >Password (optional)</label
-              >
-              <div class="basic-input-row">
-                <input
-                  type="password"
-                  id="basic-password"
-                  placeholder="Leave blank for none"
-                  autocomplete="off"
-                />
-                <button
-                  class="basic-password-toggle"
-                  id="basic-toggle-password"
-                  type="button"
-                  aria-label="Toggle password visibility"
-                >
-                  Show
-                </button>
-              </div>
-            </div>
-          </div>
-          <button
-            class="basic-btn basic-btn--primary basic-btn--full"
-            id="basic-run-compress"
-          >
-            Compress
-          </button>
-          <div class="basic-progress" id="basic-compress-progress">
-            <div class="basic-progress__bar-track">
-              <div
-                class="basic-progress__bar-fill is-indeterminate"
-                id="basic-compress-bar"
-              ></div>
-            </div>
-            <div class="basic-progress__status" id="basic-compress-status">
-              Compressing…
-            </div>
-            <div class="basic-progress__actions">
-              <button
-                class="basic-btn basic-btn--sm basic-btn--secondary"
-                id="basic-compress-cancel"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-          <div class="basic-completion" id="basic-compress-completion">
-            <span
-              class="basic-completion__icon"
-              id="basic-compress-completion-icon"
-            ></span>
-            <h3
-              class="basic-completion__title"
-              id="basic-compress-completion-title"
-            ></h3>
-            <p
-              class="basic-completion__message"
-              id="basic-compress-completion-msg"
-            ></p>
-            <div class="basic-completion__actions">
-              <button
-                class="basic-btn basic-btn--sm basic-btn--primary"
-                id="basic-compress-open-dest"
-              >
-                Open folder
-              </button>
-              <button
-                class="basic-btn basic-btn--sm basic-btn--secondary"
-                id="basic-compress-again"
-              >
-                Compress more
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div id="basic-extract" class="basic-view">
-          <button class="basic-back-link" id="basic-extract-back">
-            &larr; Back
-          </button>
-          <h2 class="basic-section-title">Extract archive</h2>
-          <div class="basic-card">
-            <div class="basic-archive-info" id="basic-extract-archive-info">
-              <span class="basic-archive-info__icon">
-                <img
-                  src="/twemoji/1f4e6.svg"
-                  width="28"
-                  height="28"
-                  alt=""
-                  draggable="false"
-                />
-              </span>
-              <div class="basic-archive-info__details">
-                <span
-                  class="basic-archive-info__name"
-                  id="basic-extract-archive-name"
-                  >archive.7z</span
-                >
-                <span
-                  class="basic-archive-info__meta"
-                  id="basic-extract-archive-meta"
-                ></span>
-              </div>
-            </div>
-            <div class="basic-field">
-              <label class="basic-field__label" for="basic-extract-path"
-                >Extract to</label
-              >
-              <div class="basic-input-row">
-                <input
-                  type="text"
-                  id="basic-extract-path"
-                  placeholder="Choose destination folder"
-                />
                 <button
                   class="basic-btn basic-btn--sm basic-btn--secondary"
-                  id="basic-choose-extract"
+                  id="basic-add-folder"
                 >
-                  Browse
+                  Add folder
                 </button>
-              </div>
-            </div>
-            <div class="basic-field" id="basic-extract-password-field">
-              <label class="basic-field__label" for="basic-extract-password"
-                >Password</label
-              >
-              <div class="basic-input-row">
-                <input
-                  type="password"
-                  id="basic-extract-password"
-                  placeholder="Enter archive password"
-                  autocomplete="off"
-                />
                 <button
-                  class="basic-password-toggle"
-                  id="basic-toggle-extract-password"
-                  type="button"
-                  aria-label="Toggle password visibility"
+                  class="basic-btn basic-btn--sm basic-btn--ghost basic-btn--danger"
+                  id="basic-clear-inputs"
                 >
-                  Show
+                  Clear all
                 </button>
               </div>
             </div>
-          </div>
-          <div class="basic-extract-actions">
-            <button
-              class="basic-btn basic-btn--primary basic-btn--flex"
-              id="basic-run-extract"
-            >
-              Extract
-            </button>
-            <button
-              class="basic-btn basic-btn--secondary"
-              id="basic-browse-contents"
-            >
-              Browse contents
-            </button>
-          </div>
-          <div class="basic-progress" id="basic-extract-progress">
-            <div class="basic-progress__bar-track">
-              <div
-                class="basic-progress__bar-fill is-indeterminate"
-                id="basic-extract-bar"
-              ></div>
-            </div>
-            <div class="basic-progress__status" id="basic-extract-status">
-              Extracting…
-            </div>
-            <div class="basic-progress__actions">
-              <button
-                class="basic-btn basic-btn--sm basic-btn--secondary"
-                id="basic-extract-cancel"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-          <div class="basic-completion" id="basic-extract-completion">
-            <span
-              class="basic-completion__icon"
-              id="basic-extract-completion-icon"
-            ></span>
-            <h3
-              class="basic-completion__title"
-              id="basic-extract-completion-title"
-            ></h3>
-            <p
-              class="basic-completion__message"
-              id="basic-extract-completion-msg"
-            ></p>
-            <div class="basic-completion__actions">
-              <button
-                class="basic-btn basic-btn--sm basic-btn--primary"
-                id="basic-extract-open-dest"
-              >
-                Open folder
-              </button>
-              <button
-                class="basic-btn basic-btn--sm basic-btn--secondary"
-                id="basic-extract-another"
-              >
-                Extract another
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div id="basic-browse" class="basic-view">
-          <button class="basic-back-link" id="basic-browse-back">
-            &larr; Back
-          </button>
-          <h2 class="basic-section-title">Browse archive</h2>
-          <div class="basic-card">
-            <div class="basic-archive-info" id="basic-browse-archive-info">
-              <span class="basic-archive-info__icon">
-                <img
-                  src="/twemoji/1f4e6.svg"
-                  width="28"
-                  height="28"
-                  alt=""
-                  draggable="false"
-                />
-              </span>
-              <div class="basic-archive-info__details">
-                <span
-                  class="basic-archive-info__name"
-                  id="basic-browse-archive-name"
-                  >archive.7z</span
-                >
-                <span
-                  class="basic-archive-info__meta"
-                  id="basic-browse-archive-meta"
-                ></span>
-              </div>
-            </div>
-            <div class="basic-browse-summary" id="basic-browse-summary"></div>
-            <div class="basic-browse-table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Size</th>
-                    <th>Compressed</th>
-                    <th>Modified</th>
-                  </tr>
-                </thead>
-                <tbody id="basic-browse-tbody"></tbody>
-              </table>
-            </div>
-          </div>
-          <div class="basic-browse-actions">
-            <button
-              class="basic-btn basic-btn--primary"
-              id="basic-browse-extract-all"
-            >
-              Extract all
-            </button>
-            <button
-              class="basic-btn basic-btn--secondary"
-              id="basic-browse-test"
-            >
-              Test integrity
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div class="grid">
-        <section class="panel">
-          <div class="panel__header">
-            <h2>Archive Session</h2>
-            <div class="segmented" role="group" aria-label="Operation mode">
-              <button
-                class="segmented__btn is-active"
-                data-mode-btn="add"
-                aria-pressed="true"
-              >
-                Add
-              </button>
-              <button
-                class="segmented__btn"
-                data-mode-btn="extract"
-                aria-pressed="false"
-              >
-                Extract
-              </button>
-              <button
-                class="segmented__btn"
-                data-mode-btn="browse"
-                aria-pressed="false"
-              >
-                Browse
-              </button>
-            </div>
-          </div>
-
-          <div class="quick-actions" data-power-only>
-            <div class="quick-actions__head">
-              <span class="quick-actions__label">Quick actions</span>
-              <span
-                class="quick-actions__feedback"
-                id="quick-action-feedback"
-                aria-live="polite"
-                hidden
-              ></span>
-            </div>
-            <div class="quick-actions__row" data-mode-visible="add">
-              <button
-                class="btn btn--sm"
-                id="quick-add-balanced"
-                data-quick-action-btn
-                data-quick-action="add-run-balanced"
-              >
-                Run Balanced
-              </button>
-              <button
-                class="btn btn--sm"
-                id="quick-add-ultra"
-                data-quick-action-btn
-                data-quick-action="add-run-ultra"
-              >
-                Run Ultra
-              </button>
-              <button
-                class="btn btn--sm"
-                id="quick-add-encrypt-run"
-                data-quick-action-btn
-                data-quick-action="add-encrypt-run"
-              >
-                Encrypt + Run
-              </button>
-              <button
-                class="btn btn--ghost btn--sm"
-                id="quick-add-preview"
-                data-quick-action-btn
-                data-quick-action="add-preview"
-              >
-                Preview Command
-              </button>
-              <button
-                class="btn btn--ghost btn--sm"
-                id="quick-add-repeat"
-                data-quick-action-btn
-                data-quick-action="add-repeat"
-              >
-                Repeat Last
-              </button>
-            </div>
-            <div class="quick-actions__row" data-mode-visible="extract">
-              <button
-                class="btn btn--sm"
-                id="quick-extract-now"
-                data-quick-action-btn
-                data-quick-action="extract-now"
-              >
-                Extract Now
-              </button>
-              <button
-                class="btn btn--sm"
-                id="quick-extract-test-then-extract"
-                data-quick-action-btn
-                data-quick-action="extract-test-then-extract"
-              >
-                Test + Extract
-              </button>
-              <button
-                class="btn btn--sm"
-                id="quick-extract-selective"
-                data-quick-action-btn
-                data-quick-action="extract-selective"
-              >
-                Extract Selected
-              </button>
-              <button
-                class="btn btn--ghost btn--sm"
-                id="quick-extract-preview"
-                data-quick-action-btn
-                data-quick-action="extract-preview"
-              >
-                Preview Command
-              </button>
-              <button
-                class="btn btn--ghost btn--sm"
-                id="quick-extract-repeat"
-                data-quick-action-btn
-                data-quick-action="extract-repeat"
-              >
-                Repeat Last
-              </button>
-            </div>
-            <div class="quick-actions__row" data-mode-visible="browse">
-              <button
-                class="btn btn--sm"
-                id="quick-browse-list"
-                data-quick-action-btn
-                data-quick-action="browse-list"
-              >
-                List
-              </button>
-              <button
-                class="btn btn--sm"
-                id="quick-browse-test"
-                data-quick-action-btn
-                data-quick-action="browse-test"
-              >
-                Test
-              </button>
-              <button
-                class="btn btn--sm"
-                id="quick-browse-selective"
-                data-quick-action-btn
-                data-quick-action="browse-selective"
-              >
-                Selective Extract
-              </button>
-              <button
-                class="btn btn--ghost btn--sm"
-                id="quick-browse-switch-extract"
-                data-quick-action-btn
-                data-quick-action="browse-switch-extract"
-              >
-                Switch to Extract
-              </button>
-              <button
-                class="btn btn--ghost btn--sm"
-                id="quick-browse-repeat"
-                data-quick-action-btn
-                data-quick-action="browse-repeat"
-              >
-                Repeat Last
-              </button>
-            </div>
-          </div>
-
-          <div class="panel__body panel__body--session">
-            <section class="session-card session-card--inputs">
-              <div class="session-card__header">
-                <div class="session-card__title">
-                  <h3>Inputs</h3>
-                  <p>Drop files or folders here, or add them manually.</p>
-                </div>
-                <div class="session-inline-actions">
-                  <button class="btn btn--primary btn--sm" id="add-files">
-                    Add files
-                  </button>
-                  <button class="btn btn--sm" id="add-folder">
-                    Add folder
-                  </button>
-                  <button class="btn btn--ghost btn--sm" id="clear-inputs">
-                    Clear
-                  </button>
-                </div>
-              </div>
-              <div
-                class="list"
-                id="input-list"
-                role="list"
-                aria-label="File inputs — drop files here or use buttons above"
-              ></div>
-            </section>
-
-            <section
-              class="session-card session-card--quick"
-              data-mode-visible="add"
-            >
-              <div class="session-card__header">
-                <div class="session-card__title">
-                  <h3>Quick setup</h3>
-                  <p>Set essentials first, then tune deeper options below.</p>
-                </div>
-              </div>
-
-              <div class="field-grid field-grid--triple">
-                <div class="field">
-                  <label for="preset">Preset</label>
-                  <select id="preset">
-                    <option value="store">Store</option>
+            <div class="basic-card">
+              <div class="basic-field-grid">
+                <div class="basic-field">
+                  <label class="basic-field__label" for="basic-preset"
+                    >Preset</label
+                  >
+                  <select id="basic-preset">
+                    <option value="store">Store (no compression)</option>
                     <option value="quick">Quick</option>
                     <option value="balanced" selected>Balanced</option>
                     <option value="high">High</option>
                     <option value="ultra">Ultra</option>
-                    <option value="custom">Custom</option>
                   </select>
                 </div>
-                <div class="field">
-                  <label for="format">Format</label>
-                  <select id="format">
+                <div class="basic-field">
+                  <label class="basic-field__label" for="basic-format"
+                    >Format</label
+                  >
+                  <select id="basic-format">
                     <option value="7z">7z</option>
                     <option value="zip">zip</option>
                     <option value="tar">tar</option>
@@ -1514,349 +989,878 @@
                     <option value="xz">xz</option>
                   </select>
                 </div>
-                <div class="field">
-                  <label for="level">Compression level</label>
-                  <select id="level">
-                    <option value="0">0 - Store</option>
-                    <option value="1">1 - Fastest</option>
-                    <option value="3">3 - Fast</option>
-                    <option value="5" selected>5 - Normal</option>
-                    <option value="7">7 - Maximum</option>
-                    <option value="9">9 - Ultra</option>
-                  </select>
-                </div>
               </div>
-
-              <div class="field">
-                <label for="archive-name">Archive name (optional)</label>
+              <div class="basic-field">
+                <label class="basic-field__label" for="basic-archive-name"
+                  >Archive name (optional)</label
+                >
                 <input
                   type="text"
-                  id="archive-name"
+                  id="basic-archive-name"
                   placeholder="Leave blank to use source name"
                 />
               </div>
-
-              <div class="field">
-                <label for="output-path">Archive destination</label>
-                <div class="input-row">
+              <div class="basic-field">
+                <label class="basic-field__label" for="basic-output-path"
+                  >Save to</label
+                >
+                <div class="basic-input-row">
                   <input
                     type="text"
-                    id="output-path"
-                    placeholder="Select output archive"
+                    id="basic-output-path"
+                    placeholder="Choose where to save the archive"
                   />
-                  <button class="btn btn--sm" id="choose-output">Browse</button>
-                </div>
-              </div>
-
-              <div class="actions actions--session">
-                <button
-                  class="btn btn--primary btn--shortcut"
-                  id="run-action"
-                  title="Run operation (Ctrl+Enter)"
-                  aria-keyshortcuts="Control+Return"
-                >
-                  Run
-                </button>
-                <button class="btn btn--ghost" id="cancel-action" hidden>
-                  Cancel
-                </button>
-                <button
-                  class="btn btn--ghost"
-                  id="show-command"
-                  data-power-only
-                >
-                  Preview command
-                </button>
-              </div>
-            </section>
-
-            <section class="session-card" data-mode-visible="extract">
-              <div class="session-card__header">
-                <div class="session-card__title">
-                  <h3>Extract</h3>
-                  <p>Destination auto-fills from the selected archive.</p>
-                </div>
-              </div>
-
-              <div class="field">
-                <label for="extract-path">Extract to</label>
-                <div class="input-row">
-                  <input
-                    type="text"
-                    id="extract-path"
-                    placeholder="Select destination folder"
-                  />
-                  <button class="btn btn--sm" id="choose-extract">
+                  <button
+                    class="basic-btn basic-btn--sm basic-btn--secondary"
+                    id="basic-choose-output"
+                  >
                     Browse
                   </button>
                 </div>
               </div>
-
-              <details class="session-details">
-                <summary>Security and arguments</summary>
-                <div class="session-details__body">
-                  <div class="field">
-                    <label for="extract-password">Archive password</label>
-                    <div class="input-row">
-                      <input
-                        type="password"
-                        id="extract-password"
-                        placeholder="Only if needed"
-                        autocomplete="off"
-                      />
-                      <button
-                        type="button"
-                        class="btn btn--ghost btn--sm"
-                        id="toggle-extract-password"
-                        aria-label="Toggle password visibility"
-                        aria-pressed="false"
-                      >
-                        Show
-                      </button>
-                    </div>
-                  </div>
-                  <div class="field">
-                    <label for="extract-extra-args">Extra arguments</label>
-                    <input
-                      type="text"
-                      id="extract-extra-args"
-                      placeholder="-r -aos"
-                    />
-                  </div>
-                </div>
-              </details>
-
-              <div class="actions actions--session">
-                <button
-                  class="btn btn--primary btn--shortcut"
-                  id="extract-run"
-                  title="Extract archives (Ctrl+Enter)"
-                  aria-keyshortcuts="Control+Return"
+              <div class="basic-field">
+                <label class="basic-field__label" for="basic-password"
+                  >Password (optional)</label
                 >
-                  Extract
-                </button>
-                <button class="btn btn--ghost" id="extract-cancel" hidden>
-                  Cancel
-                </button>
-                <button class="btn btn--sm" id="test-integrity">
-                  Test integrity
-                </button>
-                <button
-                  class="btn btn--ghost"
-                  id="extract-preview"
-                  data-power-only
-                >
-                  Preview command
-                </button>
-              </div>
-            </section>
-
-            <section class="session-card" data-mode-visible="browse">
-              <div class="session-card__header">
-                <div class="session-card__title">
-                  <h3>Browse archive</h3>
-                  <p>Inspect files before extraction.</p>
-                </div>
-              </div>
-
-              <div class="field" id="browse-password-field" hidden>
-                <label for="browse-password">Archive password</label>
-                <div class="input-row">
+                <div class="basic-input-row">
                   <input
                     type="password"
-                    id="browse-password"
-                    placeholder="Only if needed"
+                    id="basic-password"
+                    placeholder="Leave blank for none"
                     autocomplete="off"
                   />
                   <button
+                    class="basic-password-toggle"
+                    id="basic-toggle-password"
                     type="button"
-                    class="btn btn--ghost btn--sm"
-                    id="toggle-browse-password"
                     aria-label="Toggle password visibility"
-                    aria-pressed="false"
                   >
                     Show
                   </button>
                 </div>
               </div>
-
-              <div id="browse-contents" class="browse-contents" hidden>
-                <div class="browse-summary" id="browse-summary"></div>
-                <div class="browse-table-wrap">
-                  <table class="browse-table">
-                    <thead>
-                      <tr>
-                        <th scope="col">Name</th>
-                        <th scope="col">Size</th>
-                        <th scope="col">Compressed</th>
-                        <th scope="col">Modified</th>
-                      </tr>
-                    </thead>
-                    <tbody id="browse-tbody"></tbody>
-                  </table>
-                </div>
+            </div>
+            <button
+              class="basic-btn basic-btn--primary basic-btn--full"
+              id="basic-run-compress"
+            >
+              Compress
+            </button>
+            <div class="basic-progress" id="basic-compress-progress">
+              <div class="basic-progress__bar-track">
+                <div
+                  class="basic-progress__bar-fill is-indeterminate"
+                  id="basic-compress-bar"
+                ></div>
               </div>
-
-              <div class="actions actions--session actions--browse">
-                <button class="btn btn--primary" id="browse-list">
-                  List contents
+              <div class="basic-progress__status" id="basic-compress-status">
+                Compressing…
+              </div>
+              <div class="basic-progress__actions">
+                <button
+                  class="basic-btn basic-btn--sm basic-btn--secondary"
+                  id="basic-compress-cancel"
+                >
+                  Cancel
                 </button>
-                <span class="actions__divider"></span>
-                <button class="btn btn--accent-outline" id="browse-extract">
-                  Extract all
+              </div>
+            </div>
+            <div class="basic-completion" id="basic-compress-completion">
+              <span
+                class="basic-completion__icon"
+                id="basic-compress-completion-icon"
+              ></span>
+              <h3
+                class="basic-completion__title"
+                id="basic-compress-completion-title"
+              ></h3>
+              <p
+                class="basic-completion__message"
+                id="basic-compress-completion-msg"
+              ></p>
+              <div class="basic-completion__actions">
+                <button
+                  class="basic-btn basic-btn--sm basic-btn--primary"
+                  id="basic-compress-open-dest"
+                >
+                  Open folder
                 </button>
                 <button
-                  class="btn btn--accent-outline"
-                  id="browse-selective"
-                  data-power-only
+                  class="basic-btn basic-btn--sm basic-btn--secondary"
+                  id="basic-compress-again"
                 >
-                  Select items...
-                </button>
-                <button class="btn btn--ghost" id="browse-test">
-                  Test integrity
+                  Compress more
                 </button>
               </div>
-            </section>
-
-            <div
-              class="session-advanced-grid"
-              data-mode-visible="add"
-              data-power-only
-            >
-              <details class="session-details">
-                <summary>Compression profile</summary>
-                <div class="session-details__body">
-                  <div class="grid-split">
-                    <div class="field">
-                      <label for="method">Method</label>
-                      <select id="method">
-                        <option value="lzma2" selected>LZMA2</option>
-                        <option value="lzma">LZMA</option>
-                        <option value="ppmd">PPMd</option>
-                        <option value="bzip2">BZip2</option>
-                        <option value="deflate">Deflate</option>
-                        <option value="zstd">Zstandard</option>
-                      </select>
-                    </div>
-                    <div class="field">
-                      <label for="dict">Dictionary size</label>
-                      <select id="dict">
-                        <option value="16m">16 MB</option>
-                        <option value="32m">32 MB</option>
-                        <option value="64m">64 MB</option>
-                        <option value="128m">128 MB</option>
-                        <option value="256m" selected>256 MB</option>
-                        <option value="512m">512 MB</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div class="grid-split">
-                    <div class="field">
-                      <label for="word-size">Word size</label>
-                      <select id="word-size">
-                        <option value="16">16</option>
-                        <option value="32">32</option>
-                        <option value="64" selected>64</option>
-                        <option value="96">96</option>
-                        <option value="128">128</option>
-                      </select>
-                    </div>
-                    <div class="field">
-                      <label for="solid">Solid block size</label>
-                      <select id="solid">
-                        <option value="off">Off</option>
-                        <option value="1g">1 GB</option>
-                        <option value="4g">4 GB</option>
-                        <option value="16g" selected>16 GB</option>
-                        <option value="solid">Solid</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div class="grid-split">
-                    <div class="field">
-                      <label for="threads">Threads</label>
-                      <input
-                        type="number"
-                        id="threads"
-                        min="1"
-                        max="128"
-                        value="8"
-                      />
-                    </div>
-                    <div class="field">
-                      <label for="path-mode">Path mode</label>
-                      <select id="path-mode">
-                        <option value="relative" selected>Relative</option>
-                        <option value="absolute">Absolute</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-              </details>
-
-              <details class="session-details">
-                <summary>Security and extras</summary>
-                <div class="session-details__body">
-                  <div class="field">
-                    <label>Options</label>
-                    <div class="toggle-row">
-                      <label class="toggle"
-                        ><input type="checkbox" id="sfx" />Create SFX</label
-                      >
-                      <label class="toggle"
-                        ><input type="checkbox" id="encrypt-headers" />Encrypt
-                        file names</label
-                      >
-                      <label class="toggle"
-                        ><input type="checkbox" id="delete-after" />Delete files
-                        after compression</label
-                      >
-                    </div>
-                  </div>
-                  <div class="field">
-                    <label for="password">Password</label>
-                    <div class="input-row">
-                      <input
-                        type="password"
-                        id="password"
-                        placeholder="Leave blank for none"
-                        autocomplete="off"
-                      />
-                      <button
-                        type="button"
-                        class="btn btn--ghost btn--sm"
-                        id="toggle-password"
-                        aria-label="Toggle password visibility"
-                        aria-pressed="false"
-                      >
-                        Show
-                      </button>
-                    </div>
-                  </div>
-                  <div class="field">
-                    <label for="extra-args">Extra arguments</label>
-                    <input
-                      type="text"
-                      id="extra-args"
-                      placeholder="-mx=9 -mmt=on"
-                    />
-                  </div>
-                </div>
-              </details>
             </div>
           </div>
-        </section>
 
-        <section class="panel panel--log">
-          <div class="panel__header">
-            <h2>Activity</h2>
-            <button class="btn btn--ghost btn--sm" id="clear-log">Clear</button>
+          <div id="basic-extract" class="basic-view">
+            <button class="basic-back-link" id="basic-extract-back">
+              &larr; Back
+            </button>
+            <h2 class="basic-section-title">Extract archive</h2>
+            <div class="basic-card">
+              <div class="basic-archive-info" id="basic-extract-archive-info">
+                <span class="basic-archive-info__icon">
+                  <img
+                    src="/twemoji/1f4e6.svg"
+                    width="28"
+                    height="28"
+                    alt=""
+                    draggable="false"
+                  />
+                </span>
+                <div class="basic-archive-info__details">
+                  <span
+                    class="basic-archive-info__name"
+                    id="basic-extract-archive-name"
+                    >archive.7z</span
+                  >
+                  <span
+                    class="basic-archive-info__meta"
+                    id="basic-extract-archive-meta"
+                  ></span>
+                </div>
+              </div>
+              <div class="basic-field">
+                <label class="basic-field__label" for="basic-extract-path"
+                  >Extract to</label
+                >
+                <div class="basic-input-row">
+                  <input
+                    type="text"
+                    id="basic-extract-path"
+                    placeholder="Choose destination folder"
+                  />
+                  <button
+                    class="basic-btn basic-btn--sm basic-btn--secondary"
+                    id="basic-choose-extract"
+                  >
+                    Browse
+                  </button>
+                </div>
+              </div>
+              <div class="basic-field" id="basic-extract-password-field">
+                <label class="basic-field__label" for="basic-extract-password"
+                  >Password</label
+                >
+                <div class="basic-input-row">
+                  <input
+                    type="password"
+                    id="basic-extract-password"
+                    placeholder="Enter archive password"
+                    autocomplete="off"
+                  />
+                  <button
+                    class="basic-password-toggle"
+                    id="basic-toggle-extract-password"
+                    type="button"
+                    aria-label="Toggle password visibility"
+                  >
+                    Show
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="basic-extract-actions">
+              <button
+                class="basic-btn basic-btn--primary basic-btn--flex"
+                id="basic-run-extract"
+              >
+                Extract
+              </button>
+              <button
+                class="basic-btn basic-btn--secondary"
+                id="basic-browse-contents"
+              >
+                Browse contents
+              </button>
+            </div>
+            <div class="basic-progress" id="basic-extract-progress">
+              <div class="basic-progress__bar-track">
+                <div
+                  class="basic-progress__bar-fill is-indeterminate"
+                  id="basic-extract-bar"
+                ></div>
+              </div>
+              <div class="basic-progress__status" id="basic-extract-status">
+                Extracting…
+              </div>
+              <div class="basic-progress__actions">
+                <button
+                  class="basic-btn basic-btn--sm basic-btn--secondary"
+                  id="basic-extract-cancel"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+            <div class="basic-completion" id="basic-extract-completion">
+              <span
+                class="basic-completion__icon"
+                id="basic-extract-completion-icon"
+              ></span>
+              <h3
+                class="basic-completion__title"
+                id="basic-extract-completion-title"
+              ></h3>
+              <p
+                class="basic-completion__message"
+                id="basic-extract-completion-msg"
+              ></p>
+              <div class="basic-completion__actions">
+                <button
+                  class="basic-btn basic-btn--sm basic-btn--primary"
+                  id="basic-extract-open-dest"
+                >
+                  Open folder
+                </button>
+                <button
+                  class="basic-btn basic-btn--sm basic-btn--secondary"
+                  id="basic-extract-another"
+                >
+                  Extract another
+                </button>
+              </div>
+            </div>
           </div>
-          <div class="panel__body">
-            <div class="log" id="log" aria-live="polite" role="log"></div>
+
+          <div id="basic-browse" class="basic-view">
+            <button class="basic-back-link" id="basic-browse-back">
+              &larr; Back
+            </button>
+            <h2 class="basic-section-title">Browse archive</h2>
+            <div class="basic-card">
+              <div class="basic-archive-info" id="basic-browse-archive-info">
+                <span class="basic-archive-info__icon">
+                  <img
+                    src="/twemoji/1f4e6.svg"
+                    width="28"
+                    height="28"
+                    alt=""
+                    draggable="false"
+                  />
+                </span>
+                <div class="basic-archive-info__details">
+                  <span
+                    class="basic-archive-info__name"
+                    id="basic-browse-archive-name"
+                    >archive.7z</span
+                  >
+                  <span
+                    class="basic-archive-info__meta"
+                    id="basic-browse-archive-meta"
+                  ></span>
+                </div>
+              </div>
+              <div class="basic-browse-summary" id="basic-browse-summary"></div>
+              <div class="basic-browse-table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Size</th>
+                      <th>Compressed</th>
+                      <th>Modified</th>
+                    </tr>
+                  </thead>
+                  <tbody id="basic-browse-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="basic-browse-actions">
+              <button
+                class="basic-btn basic-btn--primary"
+                id="basic-browse-extract-all"
+              >
+                Extract all
+              </button>
+              <button
+                class="basic-btn basic-btn--secondary"
+                id="basic-browse-test"
+              >
+                Test integrity
+              </button>
+            </div>
           </div>
-        </section>
-      </div>
+        </div>
+
+        <div class="grid">
+          <section class="panel">
+            <div class="panel__header">
+              <h2>Archive Session</h2>
+              <div class="segmented" role="group" aria-label="Operation mode">
+                <button
+                  class="segmented__btn is-active"
+                  data-mode-btn="add"
+                  aria-pressed="true"
+                >
+                  Add
+                </button>
+                <button
+                  class="segmented__btn"
+                  data-mode-btn="extract"
+                  aria-pressed="false"
+                >
+                  Extract
+                </button>
+                <button
+                  class="segmented__btn"
+                  data-mode-btn="browse"
+                  aria-pressed="false"
+                >
+                  Browse
+                </button>
+              </div>
+            </div>
+
+            <div class="quick-actions" data-power-only>
+              <div class="quick-actions__head">
+                <span class="quick-actions__label">Quick actions</span>
+                <span
+                  class="quick-actions__feedback"
+                  id="quick-action-feedback"
+                  aria-live="polite"
+                  hidden
+                ></span>
+              </div>
+              <div class="quick-actions__row" data-mode-visible="add">
+                <button
+                  class="btn btn--sm"
+                  id="quick-add-balanced"
+                  data-quick-action-btn
+                  data-quick-action="add-run-balanced"
+                >
+                  Run Balanced
+                </button>
+                <button
+                  class="btn btn--sm"
+                  id="quick-add-ultra"
+                  data-quick-action-btn
+                  data-quick-action="add-run-ultra"
+                >
+                  Run Ultra
+                </button>
+                <button
+                  class="btn btn--sm"
+                  id="quick-add-encrypt-run"
+                  data-quick-action-btn
+                  data-quick-action="add-encrypt-run"
+                >
+                  Encrypt + Run
+                </button>
+                <button
+                  class="btn btn--ghost btn--sm"
+                  id="quick-add-preview"
+                  data-quick-action-btn
+                  data-quick-action="add-preview"
+                >
+                  Preview Command
+                </button>
+                <button
+                  class="btn btn--ghost btn--sm"
+                  id="quick-add-repeat"
+                  data-quick-action-btn
+                  data-quick-action="add-repeat"
+                >
+                  Repeat Last
+                </button>
+              </div>
+              <div class="quick-actions__row" data-mode-visible="extract">
+                <button
+                  class="btn btn--sm"
+                  id="quick-extract-now"
+                  data-quick-action-btn
+                  data-quick-action="extract-now"
+                >
+                  Extract Now
+                </button>
+                <button
+                  class="btn btn--sm"
+                  id="quick-extract-test-then-extract"
+                  data-quick-action-btn
+                  data-quick-action="extract-test-then-extract"
+                >
+                  Test + Extract
+                </button>
+                <button
+                  class="btn btn--sm"
+                  id="quick-extract-selective"
+                  data-quick-action-btn
+                  data-quick-action="extract-selective"
+                >
+                  Extract Selected
+                </button>
+                <button
+                  class="btn btn--ghost btn--sm"
+                  id="quick-extract-preview"
+                  data-quick-action-btn
+                  data-quick-action="extract-preview"
+                >
+                  Preview Command
+                </button>
+                <button
+                  class="btn btn--ghost btn--sm"
+                  id="quick-extract-repeat"
+                  data-quick-action-btn
+                  data-quick-action="extract-repeat"
+                >
+                  Repeat Last
+                </button>
+              </div>
+              <div class="quick-actions__row" data-mode-visible="browse">
+                <button
+                  class="btn btn--sm"
+                  id="quick-browse-list"
+                  data-quick-action-btn
+                  data-quick-action="browse-list"
+                >
+                  List
+                </button>
+                <button
+                  class="btn btn--sm"
+                  id="quick-browse-test"
+                  data-quick-action-btn
+                  data-quick-action="browse-test"
+                >
+                  Test
+                </button>
+                <button
+                  class="btn btn--sm"
+                  id="quick-browse-selective"
+                  data-quick-action-btn
+                  data-quick-action="browse-selective"
+                >
+                  Selective Extract
+                </button>
+                <button
+                  class="btn btn--ghost btn--sm"
+                  id="quick-browse-switch-extract"
+                  data-quick-action-btn
+                  data-quick-action="browse-switch-extract"
+                >
+                  Switch to Extract
+                </button>
+                <button
+                  class="btn btn--ghost btn--sm"
+                  id="quick-browse-repeat"
+                  data-quick-action-btn
+                  data-quick-action="browse-repeat"
+                >
+                  Repeat Last
+                </button>
+              </div>
+            </div>
+
+            <div class="panel__body panel__body--session">
+              <section class="session-card session-card--inputs">
+                <div class="session-card__header">
+                  <div class="session-card__title">
+                    <h3>Inputs</h3>
+                    <p>Drop files or folders here, or add them manually.</p>
+                  </div>
+                  <div class="session-inline-actions">
+                    <button class="btn btn--primary btn--sm" id="add-files">
+                      Add files
+                    </button>
+                    <button class="btn btn--sm" id="add-folder">
+                      Add folder
+                    </button>
+                    <button class="btn btn--ghost btn--sm" id="clear-inputs">
+                      Clear
+                    </button>
+                  </div>
+                </div>
+                <div
+                  class="list"
+                  id="input-list"
+                  role="list"
+                  aria-label="File inputs — drop files here or use buttons above"
+                ></div>
+              </section>
+
+              <section
+                class="session-card session-card--quick"
+                data-mode-visible="add"
+              >
+                <div class="session-card__header">
+                  <div class="session-card__title">
+                    <h3>Quick setup</h3>
+                    <p>Set essentials first, then tune deeper options below.</p>
+                  </div>
+                </div>
+
+                <div class="field-grid field-grid--triple">
+                  <div class="field">
+                    <label for="preset">Preset</label>
+                    <select id="preset">
+                      <option value="store">Store</option>
+                      <option value="quick">Quick</option>
+                      <option value="balanced" selected>Balanced</option>
+                      <option value="high">High</option>
+                      <option value="ultra">Ultra</option>
+                      <option value="custom">Custom</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="format">Format</label>
+                    <select id="format">
+                      <option value="7z">7z</option>
+                      <option value="zip">zip</option>
+                      <option value="tar">tar</option>
+                      <option value="gzip">gzip</option>
+                      <option value="bzip2">bzip2</option>
+                      <option value="xz">xz</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="level">Compression level</label>
+                    <select id="level">
+                      <option value="0">0 - Store</option>
+                      <option value="1">1 - Fastest</option>
+                      <option value="3">3 - Fast</option>
+                      <option value="5" selected>5 - Normal</option>
+                      <option value="7">7 - Maximum</option>
+                      <option value="9">9 - Ultra</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="field">
+                  <label for="archive-name">Archive name (optional)</label>
+                  <input
+                    type="text"
+                    id="archive-name"
+                    placeholder="Leave blank to use source name"
+                  />
+                </div>
+
+                <div class="field">
+                  <label for="output-path">Archive destination</label>
+                  <div class="input-row">
+                    <input
+                      type="text"
+                      id="output-path"
+                      placeholder="Select output archive"
+                    />
+                    <button class="btn btn--sm" id="choose-output">
+                      Browse
+                    </button>
+                  </div>
+                </div>
+
+                <div class="actions actions--session">
+                  <button
+                    class="btn btn--primary btn--shortcut"
+                    id="run-action"
+                    title="Run operation (Ctrl+Enter)"
+                    aria-keyshortcuts="Control+Return"
+                  >
+                    Run
+                  </button>
+                  <button class="btn btn--ghost" id="cancel-action" hidden>
+                    Cancel
+                  </button>
+                  <button
+                    class="btn btn--ghost"
+                    id="show-command"
+                    data-power-only
+                  >
+                    Preview command
+                  </button>
+                </div>
+              </section>
+
+              <section class="session-card" data-mode-visible="extract">
+                <div class="session-card__header">
+                  <div class="session-card__title">
+                    <h3>Extract</h3>
+                    <p>Destination auto-fills from the selected archive.</p>
+                  </div>
+                </div>
+
+                <div class="field">
+                  <label for="extract-path">Extract to</label>
+                  <div class="input-row">
+                    <input
+                      type="text"
+                      id="extract-path"
+                      placeholder="Select destination folder"
+                    />
+                    <button class="btn btn--sm" id="choose-extract">
+                      Browse
+                    </button>
+                  </div>
+                </div>
+
+                <details class="session-details">
+                  <summary>Security and arguments</summary>
+                  <div class="session-details__body">
+                    <div class="field">
+                      <label for="extract-password">Archive password</label>
+                      <div class="input-row">
+                        <input
+                          type="password"
+                          id="extract-password"
+                          placeholder="Only if needed"
+                          autocomplete="off"
+                        />
+                        <button
+                          type="button"
+                          class="btn btn--ghost btn--sm"
+                          id="toggle-extract-password"
+                          aria-label="Toggle password visibility"
+                          aria-pressed="false"
+                        >
+                          Show
+                        </button>
+                      </div>
+                    </div>
+                    <div class="field">
+                      <label for="extract-extra-args">Extra arguments</label>
+                      <input
+                        type="text"
+                        id="extract-extra-args"
+                        placeholder="-r -aos"
+                      />
+                    </div>
+                  </div>
+                </details>
+
+                <div class="actions actions--session">
+                  <button
+                    class="btn btn--primary btn--shortcut"
+                    id="extract-run"
+                    title="Extract archives (Ctrl+Enter)"
+                    aria-keyshortcuts="Control+Return"
+                  >
+                    Extract
+                  </button>
+                  <button class="btn btn--ghost" id="extract-cancel" hidden>
+                    Cancel
+                  </button>
+                  <button class="btn btn--sm" id="test-integrity">
+                    Test integrity
+                  </button>
+                  <button
+                    class="btn btn--ghost"
+                    id="extract-preview"
+                    data-power-only
+                  >
+                    Preview command
+                  </button>
+                </div>
+              </section>
+
+              <section class="session-card" data-mode-visible="browse">
+                <div class="session-card__header">
+                  <div class="session-card__title">
+                    <h3>Browse archive</h3>
+                    <p>Inspect files before extraction.</p>
+                  </div>
+                </div>
+
+                <div class="field" id="browse-password-field" hidden>
+                  <label for="browse-password">Archive password</label>
+                  <div class="input-row">
+                    <input
+                      type="password"
+                      id="browse-password"
+                      placeholder="Only if needed"
+                      autocomplete="off"
+                    />
+                    <button
+                      type="button"
+                      class="btn btn--ghost btn--sm"
+                      id="toggle-browse-password"
+                      aria-label="Toggle password visibility"
+                      aria-pressed="false"
+                    >
+                      Show
+                    </button>
+                  </div>
+                </div>
+
+                <div id="browse-contents" class="browse-contents" hidden>
+                  <div class="browse-summary" id="browse-summary"></div>
+                  <div class="browse-table-wrap">
+                    <table class="browse-table">
+                      <thead>
+                        <tr>
+                          <th scope="col">Name</th>
+                          <th scope="col">Size</th>
+                          <th scope="col">Compressed</th>
+                          <th scope="col">Modified</th>
+                        </tr>
+                      </thead>
+                      <tbody id="browse-tbody"></tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div class="actions actions--session actions--browse">
+                  <button class="btn btn--primary" id="browse-list">
+                    List contents
+                  </button>
+                  <span class="actions__divider"></span>
+                  <button class="btn btn--accent-outline" id="browse-extract">
+                    Extract all
+                  </button>
+                  <button
+                    class="btn btn--accent-outline"
+                    id="browse-selective"
+                    data-power-only
+                  >
+                    Select items...
+                  </button>
+                  <button class="btn btn--ghost" id="browse-test">
+                    Test integrity
+                  </button>
+                </div>
+              </section>
+
+              <div
+                class="session-advanced-grid"
+                data-mode-visible="add"
+                data-power-only
+              >
+                <details class="session-details">
+                  <summary>Compression profile</summary>
+                  <div class="session-details__body">
+                    <div class="grid-split">
+                      <div class="field">
+                        <label for="method">Method</label>
+                        <select id="method">
+                          <option value="lzma2" selected>LZMA2</option>
+                          <option value="lzma">LZMA</option>
+                          <option value="ppmd">PPMd</option>
+                          <option value="bzip2">BZip2</option>
+                          <option value="deflate">Deflate</option>
+                          <option value="zstd">Zstandard</option>
+                        </select>
+                      </div>
+                      <div class="field">
+                        <label for="dict">Dictionary size</label>
+                        <select id="dict">
+                          <option value="16m">16 MB</option>
+                          <option value="32m">32 MB</option>
+                          <option value="64m">64 MB</option>
+                          <option value="128m">128 MB</option>
+                          <option value="256m" selected>256 MB</option>
+                          <option value="512m">512 MB</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="grid-split">
+                      <div class="field">
+                        <label for="word-size">Word size</label>
+                        <select id="word-size">
+                          <option value="16">16</option>
+                          <option value="32">32</option>
+                          <option value="64" selected>64</option>
+                          <option value="96">96</option>
+                          <option value="128">128</option>
+                        </select>
+                      </div>
+                      <div class="field">
+                        <label for="solid">Solid block size</label>
+                        <select id="solid">
+                          <option value="off">Off</option>
+                          <option value="1g">1 GB</option>
+                          <option value="4g">4 GB</option>
+                          <option value="16g" selected>16 GB</option>
+                          <option value="solid">Solid</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="grid-split">
+                      <div class="field">
+                        <label for="threads">Threads</label>
+                        <input
+                          type="number"
+                          id="threads"
+                          min="1"
+                          max="128"
+                          value="8"
+                        />
+                      </div>
+                      <div class="field">
+                        <label for="path-mode">Path mode</label>
+                        <select id="path-mode">
+                          <option value="relative" selected>Relative</option>
+                          <option value="absolute">Absolute</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                </details>
+
+                <details class="session-details">
+                  <summary>Security and extras</summary>
+                  <div class="session-details__body">
+                    <div class="field">
+                      <label>Options</label>
+                      <div class="toggle-row">
+                        <label class="toggle"
+                          ><input type="checkbox" id="sfx" />Create SFX</label
+                        >
+                        <label class="toggle"
+                          ><input type="checkbox" id="encrypt-headers" />Encrypt
+                          file names</label
+                        >
+                        <label class="toggle"
+                          ><input type="checkbox" id="delete-after" />Delete
+                          files after compression</label
+                        >
+                      </div>
+                    </div>
+                    <div class="field">
+                      <label for="password">Password</label>
+                      <div class="input-row">
+                        <input
+                          type="password"
+                          id="password"
+                          placeholder="Leave blank for none"
+                          autocomplete="off"
+                        />
+                        <button
+                          type="button"
+                          class="btn btn--ghost btn--sm"
+                          id="toggle-password"
+                          aria-label="Toggle password visibility"
+                          aria-pressed="false"
+                        >
+                          Show
+                        </button>
+                      </div>
+                    </div>
+                    <div class="field">
+                      <label for="extra-args">Extra arguments</label>
+                      <input
+                        type="text"
+                        id="extra-args"
+                        placeholder="-mx=9 -mmt=on"
+                      />
+                    </div>
+                  </div>
+                </details>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel panel--log">
+            <div class="panel__header">
+              <h2>Activity</h2>
+              <button class="btn btn--ghost btn--sm" id="clear-log">
+                Clear
+              </button>
+            </div>
+            <div class="panel__body">
+              <div class="log" id="log" aria-live="polite" role="log"></div>
+            </div>
+          </section>
+        </div>
       </main>
 
       <footer class="statusbar">

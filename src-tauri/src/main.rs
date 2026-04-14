@@ -640,6 +640,7 @@ const BLOCKED_7Z_ARGS: &[&str] = &["-sdel", "-si", "-so"];
 #[tauri::command]
 async fn run_7z(
     app: tauri::AppHandle,
+    window: tauri::Window,
     args: Vec<String>,
     state: tauri::State<'_, RunningProcess>,
 ) -> Result<RunResult, String> {
@@ -683,6 +684,7 @@ async fn run_7z(
         match event {
             CommandEvent::Stdout(line) => {
                 let chunk = String::from_utf8_lossy(&line);
+                let _ = window.emit("7z-progress", chunk.to_string());
                 append_limited_output(&mut stdout, &chunk, MAX_OUTPUT_BYTES, &mut stdout_truncated);
             }
             CommandEvent::Stderr(line) => {
@@ -946,10 +948,10 @@ fn route_open_request(app: &tauri::AppHandle, paths: Vec<String>, mode: String) 
         if let Ok(mut guard) = FILE_OPEN_SIGNAL.lock() {
             if let Some(tx) = guard.take() {
                 let _ = tx.send(());
-                if let Some(main_window) = app.get_webview_window("main") {
-                    let _ = main_window.close();
-                }
             }
+        }
+        if let Some(main_window) = app.get_webview_window("main") {
+            let _ = main_window.close();
         }
         if let Err(e) = spawn_extract_window(app, paths) {
             eprintln!("Failed to open extract window: {e}");
