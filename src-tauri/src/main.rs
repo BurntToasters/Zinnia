@@ -2,11 +2,12 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 static EXTRACT_WINDOW_COUNTER: AtomicU64 = AtomicU64::new(0);
 static WRITE_SEQ: AtomicU64 = AtomicU64::new(0);
+static EXTRACT_ONLY_LAUNCH: AtomicBool = AtomicBool::new(false);
 use tauri::Emitter;
 use tauri::Manager;
 use tauri::Url;
@@ -951,8 +952,9 @@ fn route_open_request(app: &tauri::AppHandle, paths: Vec<String>, mode: String) 
             }
         }
         if let Some(main_window) = app.get_webview_window("main") {
-            let _ = main_window.close();
+            let _ = main_window.destroy();
         }
+        EXTRACT_ONLY_LAUNCH.store(true, Ordering::SeqCst);
         if let Err(e) = spawn_extract_window(app, paths) {
             eprintln!("Failed to open extract window: {e}");
         }
@@ -1380,8 +1382,9 @@ fn main() {
                     .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
                 if let Some(main_window) = app.get_webview_window("main") {
-                    let _ = main_window.close();
+                    let _ = main_window.destroy();
                 }
+                EXTRACT_ONLY_LAUNCH.store(true, Ordering::SeqCst);
             } else if cfg!(target_os = "macos") && initial_paths.is_empty() {
                 let (tx, rx) = std::sync::mpsc::channel::<()>();
                 if let Ok(mut guard) = FILE_OPEN_SIGNAL.lock() {
@@ -1431,12 +1434,40 @@ fn main() {
         .expect("failed to initialize Tauri application");
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
-    app.run(|app_handle, event| {
-        if let tauri::RunEvent::Opened { urls } = event {
+    app.run(|app_handle, event| match event {
+        tauri::RunEvent::Opened { urls } => {
             emit_open_urls(app_handle, urls);
         }
+        tauri::RunEvent::Reopen { .. } => {
+            if EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst) {
+                app_handle.exit(0);
+            }
+        }
+        tauri::RunEvent::WindowEvent {
+            event: tauri::WindowEvent::Destroyed,
+            ..
+        } => {
+            if EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst)
+                && app_handle.webview_windows().is_empty()
+            {
+                app_handle.exit(0);
+            }
+        }
+        _ => {}
     });
 
     #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-    app.run(|_, _| {});
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::WindowEvent {
+            event: tauri::WindowEvent::Destroyed,
+            ..
+        } = event
+        {
+            if EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst)
+                && app_handle.webview_windows().is_empty()
+            {
+                app_handle.exit(0);
+            }
+        }
+    });
 }
