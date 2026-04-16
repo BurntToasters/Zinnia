@@ -66,8 +66,35 @@ interface Run7zResult {
   stderr_truncated?: boolean;
 }
 
+export type ArchiveTestResult =
+  | "passed"
+  | "passed_with_warnings"
+  | "failed"
+  | "cancelled"
+  | "error";
+
 let commandPreviewTrigger: HTMLElement | null = null;
 let commandPreviewCopyTimer: number | undefined;
+const OUTPUT_TRUNCATION_LIMIT_MIB = 10;
+const RUNTIME_PROBE_TIMEOUT_MS = 7000;
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutMessage: string,
+): Promise<T> {
+  let timer: number | undefined;
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timer = window.setTimeout(() => {
+      reject(new Error(timeoutMessage));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 
 function setCommandPreviewCopyButton(copied: boolean): void {
   const btn = document.getElementById(
@@ -94,14 +121,18 @@ function logTruncationNotice(result: Run7zResult) {
   if (result.stdout_truncated) streams.push("stdout");
   if (result.stderr_truncated) streams.push("stderr");
   log(
-    `7z ${streams.join(" and ")} output exceeded 50 MiB and was truncated.`,
+    `7z ${streams.join(" and ")} output exceeded ${OUTPUT_TRUNCATION_LIMIT_MIB} MiB and was truncated.`,
     "error",
   );
 }
 
 async function ensureRuntimeReady(): Promise<boolean> {
   try {
-    await invoke("probe_7z");
+    await withTimeout(
+      invoke("probe_7z"),
+      RUNTIME_PROBE_TIMEOUT_MS,
+      `7-Zip runtime probe timed out after ${RUNTIME_PROBE_TIMEOUT_MS / 1000} seconds.`,
+    );
     return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -1015,8 +1046,8 @@ export async function cancelAction() {
   }
 }
 
-export async function testArchive() {
-  if (state.running) return;
+export async function testArchive(): Promise<ArchiveTestResult> {
+  if (state.running) return "cancelled";
   setRunning(true);
   try {
     const archive = state.inputs[0];
@@ -1024,14 +1055,14 @@ export async function testArchive() {
       await message("Select an archive to test.", {
         title: "No archive selected",
       });
-      return;
+      return "failed";
     }
     try {
       await ensureArchivePaths([archive], "test");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       await message(msg, { title: "Invalid input", kind: "error" });
-      return;
+      return "failed";
     }
 
     const mode = getMode();
@@ -1042,7 +1073,7 @@ export async function testArchive() {
     const args = ["t", archive];
     if (password) args.push(`-p${password}`);
 
-    if (!(await ensureRuntimeReady())) return;
+    if (!(await ensureRuntimeReady())) return "error";
 
     setStatus("Testing archive integrity");
 
@@ -1057,6 +1088,7 @@ export async function testArchive() {
       await message("Archive integrity test passed. No errors found.", {
         title: "Test passed",
       });
+      return "passed";
     } else if (result.code === 1) {
       setStatus("Integrity test passed with warnings", 3000);
       log("Archive integrity test: OK (with warnings)");
@@ -1064,6 +1096,7 @@ export async function testArchive() {
         "Archive integrity test passed with warnings. Check the log for details.",
         { title: "Test passed" },
       );
+      return "passed_with_warnings";
     } else {
       setStatus("Integrity test failed", 3000);
       log(`Archive integrity test: FAILED (exit code ${result.code})`);
@@ -1074,6 +1107,7 @@ export async function testArchive() {
         `Archive integrity test failed (exit code ${result.code}).${errorDetails}`,
         { title: "Test failed", kind: "error" },
       );
+      return "failed";
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -1081,6 +1115,7 @@ export async function testArchive() {
     setStatus("Error", 3000);
     hideProgress();
     await message(msg, { title: "Test error", kind: "error" });
+    return "error";
   } finally {
     setRunning(false);
   }

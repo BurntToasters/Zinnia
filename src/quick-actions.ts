@@ -120,11 +120,8 @@ async function runQuickAction(
       await runAction();
       return true;
     case "extract-test-then-extract": {
-      await testArchive();
-      const status = (document.getElementById("status")?.textContent ?? "")
-        .trim()
-        .toLowerCase();
-      if (!status.startsWith("integrity test passed")) {
+      const result = await testArchive();
+      if (result !== "passed" && result !== "passed_with_warnings") {
         setQuickActionFeedback(
           "Extraction skipped because integrity test did not pass.",
         );

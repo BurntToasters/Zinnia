@@ -39,6 +39,7 @@ modules:
       - npm run build
       - npx tauri build --no-bundle
       - install -Dm755 src-tauri/target/release/zinnia /app/bin/zinnia
+      - install -Dm755 src-tauri/binaries/7z-aarch64-unknown-linux-gnu /app/bin/7z-aarch64-unknown-linux-gnu
       - install -Dm755 src-tauri/binaries/7z-x86_64-unknown-linux-gnu /app/bin/7z-x86_64-unknown-linux-gnu
       - install -Dm644 run.rosie.zinnia.desktop /app/share/applications/run.rosie.zinnia.desktop
       - install -Dm644 run.rosie.zinnia.metainfo.xml /app/share/metainfo/run.rosie.zinnia.metainfo.xml

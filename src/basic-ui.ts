@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { $ } from "./utils";
 import { state } from "./state";
 import {
+  log,
   getWorkspaceMode,
   getMode,
   setMode,
@@ -39,6 +40,25 @@ function extension(path: string): string {
   const name = basename(path);
   const dot = name.lastIndexOf(".");
   return dot > 0 ? name.slice(dot).toLowerCase() : "";
+}
+
+function parentDirForPath(path: string): string {
+  const sep = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  if (sep < 0) return path;
+  if (sep === 0) return "/";
+  const parent = path.slice(0, sep);
+  if (/^[A-Za-z]:$/.test(parent)) return `${parent}\\`;
+  return parent;
+}
+
+async function openPathWithFeedback(path: string): Promise<void> {
+  if (!path.trim()) return;
+  try {
+    await invoke("open_path", { path });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Failed to open path: ${msg}`, "error");
+  }
 }
 
 export function getBasicView(): BasicView {
@@ -260,7 +280,7 @@ function syncBasicOutputAutofill(): void {
   if (!basicOutputPath || !basicFormat) return;
 
   const format = basicFormat.value;
-  const customName = basicArchiveName?.value.trim() || undefined;
+  const customName = basicArchiveName?.value.trim() ?? undefined;
   const next = resolveOutputArchiveAutofill(
     basicOutputPath.value,
     state.lastAutoOutputPath,
@@ -585,9 +605,17 @@ export function initBasicWorkspace(): void {
         for (const p of paths) {
           if (!state.inputs.includes(p)) state.inputs.push(p);
         }
-        setMode("extract");
-        renderInputs();
-        setBasicView("extract");
+        if (paths.length === 1) {
+          setMode("browse");
+          setBrowsePasswordFieldVisible(false);
+          renderInputs();
+          setBasicView("browse");
+          await browseArchive();
+        } else {
+          setMode("extract");
+          renderInputs();
+          setBasicView("extract");
+        }
       }
     });
   }
@@ -720,12 +748,8 @@ function wireBasicCompressEvents(): void {
           ) as HTMLInputElement | null
         )?.value ?? "";
       if (outputPath) {
-        const sep = Math.max(
-          outputPath.lastIndexOf("/"),
-          outputPath.lastIndexOf("\\"),
-        );
-        const folder = sep >= 0 ? outputPath.slice(0, sep) : outputPath;
-        void invoke("open_path", { path: folder });
+        const folder = parentDirForPath(outputPath);
+        void openPathWithFeedback(folder);
       }
     });
   }
@@ -807,7 +831,7 @@ function wireBasicExtractEvents(): void {
           ) as HTMLInputElement | null
         )?.value ?? "";
       if (extractPath) {
-        void invoke("open_path", { path: extractPath });
+        void openPathWithFeedback(extractPath);
       }
     });
   }

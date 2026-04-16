@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   buildLogFragments,
   shouldPersistLevel,
@@ -19,6 +19,7 @@ import {
   renderInputs,
   setRunning,
   toggleActivity,
+  registerBasicHooks,
 } from "../ui";
 import { state, dom } from "../state";
 import { SETTING_DEFAULTS } from "../settings-model";
@@ -54,6 +55,11 @@ beforeEach(() => {
   dom.extractRunBtn.removeAttribute("aria-busy");
   dom.extractCancelBtn.hidden = true;
   dom.gridEl.classList.remove("show-activity");
+  registerBasicHooks({
+    onRenderInputs: () => {},
+    onSetRunning: () => {},
+    onSetStatus: () => {},
+  });
 });
 
 describe("validation helpers", () => {
@@ -312,6 +318,20 @@ describe("renderInputs", () => {
     expect(dom.inputList.textContent).toContain(
       "Drop files here or use the buttons above.",
     );
+  });
+
+  it("notifies basic hooks for empty input render", () => {
+    const onRenderInputs = vi.fn();
+    registerBasicHooks({
+      onRenderInputs,
+      onSetRunning: () => {},
+      onSetStatus: () => {},
+    });
+
+    state.inputs = [];
+    renderInputs();
+
+    expect(onRenderInputs).toHaveBeenCalledOnce();
   });
 
   it("shows extract empty state message in extract mode", () => {

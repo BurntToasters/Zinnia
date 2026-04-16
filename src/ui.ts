@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import { $, MAX_LOG_LINES, redactSensitiveText } from "./utils";
+import {
+  $,
+  MAX_LOG_LINES,
+  redactSensitiveText,
+  releaseFocusTrap,
+} from "./utils";
 import { state, dom } from "./state";
 import type { InputValidationInfo } from "./state";
 import {
@@ -39,6 +44,8 @@ const INPUT_VALIDATION_REASON_INLINE_MAX_CHARS = 92;
 let pendingLocalLogWrites = 0;
 let droppedLocalLogWrites = 0;
 let workingContextPersistTimer: number | undefined;
+let settingsPersistQueue: Promise<void> = Promise.resolve();
+let settingsPersistGeneration = 0;
 
 export function buildLogFragments(input: string): string[] {
   if (input.length <= MAX_LOG_ENTRY_CHARS) return [input];
@@ -84,20 +91,46 @@ export function mapArchiveValidationResult(
   };
 }
 
+function enqueueSettingsPersist(
+  snapshot: typeof state.currentSettings,
+  extras: typeof state.settingsExtras,
+  generation: number,
+): Promise<void> {
+  settingsPersistQueue = settingsPersistQueue.then(async () => {
+    if (generation < settingsPersistGeneration) return;
+    await saveSettings(snapshot, extras);
+    if (generation === settingsPersistGeneration) {
+      state.lastPersistedSettings = { ...snapshot };
+    }
+  });
+  return settingsPersistQueue;
+}
+
+export async function persistSettingsImmediately(
+  snapshot: typeof state.currentSettings,
+  extras: typeof state.settingsExtras,
+): Promise<void> {
+  if (workingContextPersistTimer !== undefined) {
+    clearTimeout(workingContextPersistTimer);
+    workingContextPersistTimer = undefined;
+  }
+  const generation = ++settingsPersistGeneration;
+  await enqueueSettingsPersist({ ...snapshot }, { ...extras }, generation);
+}
+
 function queuePersistWorkingContext(): void {
   if (workingContextPersistTimer !== undefined) {
     clearTimeout(workingContextPersistTimer);
   }
   const snapshot = { ...state.currentSettings };
+  const extras = { ...state.settingsExtras };
+  const generation = ++settingsPersistGeneration;
   workingContextPersistTimer = window.setTimeout(() => {
-    void saveSettings(snapshot, state.settingsExtras)
-      .then(() => {
-        state.lastPersistedSettings = { ...snapshot };
-      })
-      .catch((err) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        devLog(`Failed to persist working context: ${msg}`);
-      });
+    workingContextPersistTimer = undefined;
+    void enqueueSettingsPersist(snapshot, extras, generation).catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      devLog(`Failed to persist working context: ${msg}`);
+    });
   }, WORKING_CONTEXT_PERSIST_DEBOUNCE_MS);
 }
 
@@ -365,7 +398,11 @@ function clearBrowsePickerSessionState() {
   const overlay = document.getElementById(
     "selective-overlay",
   ) as HTMLElement | null;
-  if (overlay) overlay.hidden = true;
+  if (overlay) {
+    const modal = overlay.querySelector<HTMLElement>(".modal");
+    if (modal) releaseFocusTrap(modal);
+    overlay.hidden = true;
+  }
 }
 
 export function setMode(
@@ -486,6 +523,7 @@ export function renderInputs() {
           : "Drop files here or use the buttons above.";
     empty.className = "list__empty";
     dom.inputList.appendChild(empty);
+    basicHooks?.onRenderInputs();
     return;
   }
 

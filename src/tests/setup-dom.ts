@@ -276,7 +276,7 @@ const setupAutoUpdates = addEl(
   "setup-auto-updates",
 ) as HTMLInputElement;
 setupAutoUpdates.type = "checkbox";
-addSelect("setup-update-channel", ["stable", "beta"]);
+addSelect("setup-update-channel", ["auto", "stable", "beta"]);
 
 for (const mode of ["basic", "power"]) {
   const btn = addEl("button", `setup-mode-${mode}`);

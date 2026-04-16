@@ -103,4 +103,24 @@ describe("showSetupWizard", () => {
     });
     expect(mockApplyTheme).toHaveBeenCalledWith("dark");
   });
+
+  it("preserves auto update channel when unchanged", async () => {
+    state.currentSettings.updateChannel = "auto";
+    const promise = showSetupWizard();
+
+    (
+      document.getElementById("setup-welcome-next") as HTMLButtonElement
+    ).click();
+    (
+      document.getElementById("setup-workspace-next") as HTMLButtonElement
+    ).click();
+    (document.getElementById("setup-theme-next") as HTMLButtonElement).click();
+    (
+      document.getElementById("setup-updates-next") as HTMLButtonElement
+    ).click();
+    (document.getElementById("setup-done-btn") as HTMLButtonElement).click();
+
+    const result = await promise;
+    expect(result?.updateChannel).toBe("auto");
+  });
 });

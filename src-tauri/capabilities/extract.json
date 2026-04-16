@@ -1,18 +1,15 @@
 {
   "$schema": "https://schema.tauri.app/capabilities/2",
-  "identifier": "default",
-  "description": "Default permissions",
+  "identifier": "extract-window",
+  "description": "Permissions for extract-only windows",
   "windows": [
-    "main"
+    "extract-*"
   ],
   "permissions": [
     "core:default",
     "core:window:allow-close",
     "core:window:allow-destroy",
-    "dialog:default",
-    "updater:default",
     "process:default",
-    "shell:allow-open",
-    "notification:default"
+    "shell:allow-open"
   ]
 }

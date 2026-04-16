@@ -73,8 +73,9 @@ export function releaseFocusTrap(container: HTMLElement): void {
 }
 
 export function parseThreads(raw: string, fallback: number): number {
+  const clampedFallback = Math.max(1, Math.min(128, fallback));
   const n = parseInt(raw, 10);
-  if (Number.isNaN(n)) return fallback;
+  if (Number.isNaN(n)) return clampedFallback;
   return Math.max(1, Math.min(128, n));
 }
 

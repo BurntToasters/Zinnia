@@ -63,7 +63,10 @@ export function showSetupWizard(): Promise<SetupWizardResult | null> {
     let selectedTheme: ThemePreference = state.currentSettings.theme;
     let selectedAutoUpdates = state.currentSettings.autoCheckUpdates;
     let selectedChannel: UpdateChannel =
-      state.currentSettings.updateChannel === "beta" ? "beta" : "stable";
+      state.currentSettings.updateChannel === "beta" ||
+      state.currentSettings.updateChannel === "auto"
+        ? state.currentSettings.updateChannel
+        : "stable";
 
     const welcomeNext = $("setup-welcome-next") as HTMLButtonElement;
     const welcomeSkip = $("setup-welcome-skip") as HTMLButtonElement;
@@ -148,7 +151,13 @@ export function showSetupWizard(): Promise<SetupWizardResult | null> {
     }
 
     function onUpdateChannelChange(): void {
-      selectedChannel = updateChannel.value === "beta" ? "beta" : "stable";
+      if (updateChannel.value === "beta") {
+        selectedChannel = "beta";
+      } else if (updateChannel.value === "auto") {
+        selectedChannel = "auto";
+      } else {
+        selectedChannel = "stable";
+      }
     }
 
     function onWelcomeNext(): void {

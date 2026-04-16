@@ -109,6 +109,8 @@ describe("parseThreads", () => {
   it("returns fallback for NaN", () => {
     expect(parseThreads("abc", 2)).toBe(2);
     expect(parseThreads("", 2)).toBe(2);
+    expect(parseThreads("abc", 0)).toBe(1);
+    expect(parseThreads("abc", 999)).toBe(128);
   });
 
   it("clamps to minimum 1", () => {

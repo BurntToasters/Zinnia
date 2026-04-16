@@ -5,7 +5,7 @@ import { executeQuickAction } from "../quick-actions";
 
 const mocks = vi.hoisted(() => ({
   runAction: vi.fn().mockResolvedValue(undefined),
-  testArchive: vi.fn().mockResolvedValue(undefined),
+  testArchive: vi.fn().mockResolvedValue("passed"),
   browseArchive: vi.fn().mockResolvedValue(null),
   previewCommand: vi.fn().mockResolvedValue(undefined),
   openSelectiveExtractModal: vi.fn().mockResolvedValue(undefined),
@@ -90,6 +90,28 @@ describe("executeQuickAction", () => {
     state.lastQuickActionByMode.add = "add-run-ultra";
     await executeQuickAction("add-repeat");
     expect(mocks.applyPreset).toHaveBeenCalledWith("ultra");
+    expect(mocks.runAction).toHaveBeenCalled();
+  });
+
+  it("skips extract-after-test when integrity test does not pass", async () => {
+    const app = document.getElementById("app") as HTMLElement;
+    app.dataset.mode = "extract";
+    mocks.testArchive.mockResolvedValueOnce("failed");
+
+    await executeQuickAction("extract-test-then-extract");
+
+    expect(mocks.runAction).not.toHaveBeenCalled();
+    const feedback = document.getElementById("quick-action-feedback");
+    expect(feedback?.textContent).toContain("did not pass");
+  });
+
+  it("runs extract-after-test when integrity test passes with warnings", async () => {
+    const app = document.getElementById("app") as HTMLElement;
+    app.dataset.mode = "extract";
+    mocks.testArchive.mockResolvedValueOnce("passed_with_warnings");
+
+    await executeQuickAction("extract-test-then-extract");
+
     expect(mocks.runAction).toHaveBeenCalled();
   });
 });

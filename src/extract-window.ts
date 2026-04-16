@@ -117,13 +117,23 @@ async function run() {
     progressPercent: number,
     asError = false,
     allowOpenDestination = true,
+    asCancelled = false,
   ) => {
     operationFinished = true;
     $("extract-status").textContent = status;
     const h1 = document.querySelector<HTMLHeadingElement>("h1");
-    if (h1)
-      h1.textContent = asError ? "Extraction failed" : "Extraction complete";
-    document.title = asError ? "Zinnia — Failed" : "Zinnia — Done";
+    if (h1) {
+      h1.textContent = asError
+        ? "Extraction failed"
+        : asCancelled
+          ? "Extraction cancelled"
+          : "Extraction complete";
+    }
+    document.title = asError
+      ? "Zinnia — Failed"
+      : asCancelled
+        ? "Zinnia — Cancelled"
+        : "Zinnia — Done";
     stopProgressAt(progressPercent, asError);
     setButtons(false, !asError && allowOpenDestination, true);
     cancelBtn.disabled = false;
@@ -253,7 +263,7 @@ async function run() {
     unlistenProgress();
 
     if (cancelRequested) {
-      finish("Cancelled", 100, false, false);
+      finish("Cancelled", 100, false, false, true);
       return;
     }
 
@@ -286,7 +296,7 @@ async function run() {
   } catch (err) {
     unlistenProgress();
     if (cancelRequested) {
-      finish("Cancelled", 100, false, false);
+      finish("Cancelled", 100, false, false, true);
       return;
     }
     showError(err instanceof Error ? err.message : String(err));

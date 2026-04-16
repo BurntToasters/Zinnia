@@ -1,4 +1,4 @@
-import { ask, message, save } from "@tauri-apps/plugin-dialog";
+import { ask, message } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
@@ -9,7 +9,6 @@ import { SETTING_DEFAULTS, state, dom } from "./state";
 import {
   applyTheme,
   loadSettingsWithMetadata,
-  saveSettings,
   readSettingsModal,
   applySettingsToForm,
   openSettingsModal,
@@ -29,6 +28,7 @@ import {
   setUiDensity,
   getMode,
   setBrowsePasswordFieldVisible,
+  persistSettingsImmediately,
 } from "./ui";
 import {
   runAction,
@@ -77,19 +77,11 @@ import {
 } from "./basic-ui";
 
 async function exportLocalLogs() {
-  const suggestedName = `zinnia-logs-${new Date().toISOString().slice(0, 10)}.txt`;
-  const destination = await save({
-    title: "Export local diagnostics log",
-    defaultPath: suggestedName,
-    filters: [{ name: "Text files", extensions: ["txt", "log"] }],
-  });
-
-  if (!destination || typeof destination !== "string") return;
-
   try {
-    await invoke("export_logs", { destinationPath: destination });
-    log(`Logs exported to ${destination}`);
-    await message(`Logs exported successfully.\n\n${destination}`, {
+    const exported = await invoke<boolean>("export_logs");
+    if (!exported) return;
+    log("Logs exported successfully.");
+    await message("Logs exported successfully.", {
       title: "Logs exported",
     });
   } catch (err) {
@@ -165,11 +157,13 @@ async function applyIncomingPaths(
 ): Promise<void> {
   if (!paths.length) return;
 
+  const allArchives = await allPathsAreArchives(paths);
   const shouldAutoBrowse =
-    mode !== "extract" &&
-    paths.length === 1 &&
-    (await allPathsAreArchives(paths));
-  if (mode === "extract") {
+    mode !== "extract" && paths.length === 1 && allArchives;
+  const shouldAutoExtract =
+    mode === "extract" ||
+    (mode !== "extract" && paths.length > 1 && allArchives);
+  if (shouldAutoExtract) {
     setMode("extract");
     state.inputs.length = 0;
   } else if (shouldAutoBrowse) {
@@ -189,7 +183,7 @@ async function applyIncomingPaths(
   devLog(`Received ${paths.length} path(s) from ${source}.`);
 
   if (getWorkspaceMode() === "basic") {
-    if (mode === "extract" || shouldAutoBrowse) {
+    if (shouldAutoExtract || shouldAutoBrowse) {
       setBasicView(shouldAutoBrowse ? "browse" : "extract");
     } else {
       setBasicView("compress");
@@ -459,8 +453,10 @@ function wireEvents() {
     updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
     onCompressionOptionChange();
     try {
-      await saveSettings(state.currentSettings, state.settingsExtras);
-      state.lastPersistedSettings = { ...state.currentSettings };
+      await persistSettingsImmediately(
+        state.currentSettings,
+        state.settingsExtras,
+      );
       log("Settings saved successfully.");
       closeSettingsModal();
     } catch (err) {
@@ -621,8 +617,13 @@ async function init() {
     throw err;
   }
 
-  const cpuCount = await invoke<number>("get_cpu_count");
-  SETTING_DEFAULTS.threads = cpuCount;
+  try {
+    const cpuCount = await invoke<number>("get_cpu_count");
+    SETTING_DEFAULTS.threads = cpuCount;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    devLog(`Unable to determine CPU count, using default: ${msg}`);
+  }
 
   const loadedSettings = await loadSettingsWithMetadata();
   state.currentSettings = loadedSettings.settings;
@@ -674,10 +675,29 @@ async function init() {
     log(loadedSettings.warning, "error");
   }
 
-  const version = `v${await getVersion()}`;
-  const platform = await invoke<string>("get_platform_info");
+  let version = "v?";
+  try {
+    version = `v${await getVersion()}`;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    devLog(`Unable to read app version: ${msg}`);
+  }
+
+  let platform = "unknown";
+  try {
+    platform = await invoke<string>("get_platform_info");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    devLog(`Unable to detect platform: ${msg}`);
+  }
   state.platformName = platform;
-  state.appIsPackaged = await invoke<boolean>("is_packaged");
+  try {
+    state.appIsPackaged = await invoke<boolean>("is_packaged");
+  } catch (err) {
+    state.appIsPackaged = false;
+    const msg = err instanceof Error ? err.message : String(err);
+    devLog(`Unable to determine package state: ${msg}`);
+  }
   const platformDisplay =
     platform === "windows"
       ? "Windows"
@@ -691,7 +711,13 @@ async function init() {
   $("s-version-label").textContent = version;
   $("s-platform-label").textContent = platformDisplay;
 
-  const flatpak = await invoke<boolean>("is_flatpak");
+  let flatpak = false;
+  try {
+    flatpak = await invoke<boolean>("is_flatpak");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    devLog(`Unable to detect Flatpak context: ${msg}`);
+  }
   if (flatpak) {
     document.body.classList.add("platform-flatpak");
   }
@@ -705,9 +731,16 @@ async function init() {
   let openPathsQueue = Promise.resolve();
 
   async function drainPendingPaths(): Promise<void> {
-    const batches = await invoke<{ paths: string[]; mode: string }[]>(
-      "drain_pending_paths",
-    );
+    let batches: { paths: string[]; mode: string }[] = [];
+    try {
+      batches = await invoke<{ paths: string[]; mode: string }[]>(
+        "drain_pending_paths",
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`Failed to read pending Explorer paths: ${msg}`, "error");
+      return;
+    }
     for (const batch of batches) {
       if (batch.paths.length > 0) {
         await applyIncomingPaths(batch.paths, batch.mode, "Explorer");
@@ -715,15 +748,32 @@ async function init() {
     }
   }
 
-  await listen("pending-paths-changed", () => {
-    openPathsQueue = openPathsQueue.then(drainPendingPaths).catch((err) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      log(`Failed to process incoming Explorer paths: ${msg}`, "error");
+  try {
+    await listen("pending-paths-changed", () => {
+      openPathsQueue = openPathsQueue.then(drainPendingPaths).catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        log(`Failed to process incoming Explorer paths: ${msg}`, "error");
+      });
     });
-  });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Failed to subscribe to Explorer open events: ${msg}`, "error");
+  }
 
-  const initialMode = await invoke<string>("get_initial_mode");
-  const initialPaths = await invoke<string[]>("get_initial_paths");
+  let initialMode = "";
+  let initialPaths: string[] = [];
+  try {
+    initialMode = await invoke<string>("get_initial_mode");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Failed to read initial mode: ${msg}`, "error");
+  }
+  try {
+    initialPaths = await invoke<string[]>("get_initial_paths");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Failed to read launch paths: ${msg}`, "error");
+  }
   openPathsQueue = openPathsQueue
     .then(() => applyIncomingPaths(initialPaths, initialMode, "launch args"))
     .catch((err) => {
