@@ -58,5 +58,6 @@ jobs:
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
       - run: npm ci
+      - run: npm test
       - run: npm run prepare:7z
       - run: cargo check --manifest-path src-tauri/Cargo.toml

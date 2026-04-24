@@ -66,6 +66,54 @@ interface Run7zResult {
   stderr_truncated?: boolean;
 }
 
+export type ArchiveTestResult =
+  | "passed"
+  | "passed_with_warnings"
+  | "failed"
+  | "cancelled"
+  | "error";
+
+let commandPreviewTrigger: HTMLElement | null = null;
+let commandPreviewCopyTimer: number | undefined;
+const OUTPUT_TRUNCATION_LIMIT_MIB = 10;
+const RUNTIME_PROBE_TIMEOUT_MS = 7000;
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutMessage: string,
+): Promise<T> {
+  let timer: number | undefined;
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timer = window.setTimeout(() => {
+      reject(new Error(timeoutMessage));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+function setCommandPreviewCopyButton(copied: boolean): void {
+  const btn = document.getElementById(
+    "copy-command-preview",
+  ) as HTMLButtonElement | null;
+  if (!btn) return;
+  btn.textContent = copied ? "Copied" : "Copy";
+  btn.setAttribute("aria-label", copied ? "Command copied" : "Copy command");
+}
+
+function resetCommandPreviewCopyStateSoon(): void {
+  if (commandPreviewCopyTimer !== undefined) {
+    clearTimeout(commandPreviewCopyTimer);
+  }
+  commandPreviewCopyTimer = window.setTimeout(() => {
+    setCommandPreviewCopyButton(false);
+  }, 1300);
+}
+
 function logTruncationNotice(result: Run7zResult) {
   if (!result.stdout_truncated && !result.stderr_truncated) return;
 
@@ -73,14 +121,18 @@ function logTruncationNotice(result: Run7zResult) {
   if (result.stdout_truncated) streams.push("stdout");
   if (result.stderr_truncated) streams.push("stderr");
   log(
-    `7z ${streams.join(" and ")} output exceeded 50 MiB and was truncated.`,
+    `7z ${streams.join(" and ")} output exceeded ${OUTPUT_TRUNCATION_LIMIT_MIB} MiB and was truncated.`,
     "error",
   );
 }
 
 async function ensureRuntimeReady(): Promise<boolean> {
   try {
-    await invoke("probe_7z");
+    await withTimeout(
+      invoke("probe_7z"),
+      RUNTIME_PROBE_TIMEOUT_MS,
+      `7-Zip runtime probe timed out after ${RUNTIME_PROBE_TIMEOUT_MS / 1000} seconds.`,
+    );
     return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -388,6 +440,44 @@ export function renderBrowseTable(info: ArchiveInfo) {
     tr.appendChild(tdModified);
     tbody.appendChild(tr);
   }
+
+  const basicTbody = document.getElementById("basic-browse-tbody");
+  if (basicTbody) {
+    basicTbody.innerHTML = "";
+    for (const entry of info.entries) {
+      const tr = document.createElement("tr");
+      if (entry.isFolder) tr.className = "browse-folder";
+
+      const tdName = document.createElement("td");
+      tdName.textContent = entry.path;
+      tdName.title = entry.path;
+      tdName.style.wordBreak = "break-all";
+
+      const tdSize = document.createElement("td");
+      tdSize.style.fontVariantNumeric = "tabular-nums";
+      tdSize.textContent = entry.isFolder ? "\u2014" : formatSize(entry.size);
+
+      const tdPacked = document.createElement("td");
+      tdPacked.style.fontVariantNumeric = "tabular-nums";
+      tdPacked.textContent = entry.isFolder
+        ? "\u2014"
+        : formatSize(entry.packedSize);
+
+      const tdModified = document.createElement("td");
+      tdModified.textContent = entry.modified;
+
+      tr.appendChild(tdName);
+      tr.appendChild(tdSize);
+      tr.appendChild(tdPacked);
+      tr.appendChild(tdModified);
+      basicTbody.appendChild(tr);
+    }
+  }
+
+  const basicSummary = document.getElementById("basic-browse-summary");
+  if (basicSummary && summary) {
+    basicSummary.innerHTML = summary.innerHTML;
+  }
 }
 
 function getOrCreateSelection(archive: string): Set<string> {
@@ -607,7 +697,7 @@ export async function openSelectiveExtractModal(): Promise<void> {
 
 export async function runSelectiveExtractFromModal(): Promise<void> {
   if (state.running) return;
-  state.running = true;
+  setRunning(true);
   state.batchCancelled = false;
   state.cancelRequested = false;
   try {
@@ -661,7 +751,6 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
 
     closeSelectiveExtractModal();
 
-    setRunning(true);
     setStatus(
       selectedPaths.length > 0
         ? "Extracting selected entries"
@@ -752,7 +841,7 @@ export async function runAction() {
     return runBatchExtract();
   }
 
-  state.running = true;
+  setRunning(true);
   try {
     if (!(await ensureRuntimeReady())) return;
 
@@ -786,7 +875,6 @@ export async function runAction() {
     const logSafe = args.map((a) => (a.startsWith("-p") ? "-p***" : a));
     devLog(`7z ${logSafe.join(" ")}`);
 
-    setRunning(true);
     setStatus("Running");
 
     const result = await invoke<Run7zResult>("run_7z", { args });
@@ -853,7 +941,7 @@ export async function runAction() {
 
 export async function runBatchExtract() {
   if (state.running) return;
-  state.running = true;
+  setRunning(true);
   try {
     if (!(await ensureRuntimeReady())) return;
 
@@ -870,7 +958,6 @@ export async function runBatchExtract() {
     );
     if (extraArgs.length > 0) validateExtraArgs(extraArgs);
 
-    setRunning(true);
     let succeeded = 0;
     let failed = 0;
 
@@ -959,23 +1046,23 @@ export async function cancelAction() {
   }
 }
 
-export async function testArchive() {
-  if (state.running) return;
-  state.running = true;
+export async function testArchive(): Promise<ArchiveTestResult> {
+  if (state.running) return "cancelled";
+  setRunning(true);
   try {
     const archive = state.inputs[0];
     if (!archive) {
       await message("Select an archive to test.", {
         title: "No archive selected",
       });
-      return;
+      return "failed";
     }
     try {
       await ensureArchivePaths([archive], "test");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       await message(msg, { title: "Invalid input", kind: "error" });
-      return;
+      return "failed";
     }
 
     const mode = getMode();
@@ -986,9 +1073,8 @@ export async function testArchive() {
     const args = ["t", archive];
     if (password) args.push(`-p${password}`);
 
-    if (!(await ensureRuntimeReady())) return;
+    if (!(await ensureRuntimeReady())) return "error";
 
-    setRunning(true);
     setStatus("Testing archive integrity");
 
     const result = await invoke<Run7zResult>("run_7z", { args });
@@ -1002,6 +1088,7 @@ export async function testArchive() {
       await message("Archive integrity test passed. No errors found.", {
         title: "Test passed",
       });
+      return "passed";
     } else if (result.code === 1) {
       setStatus("Integrity test passed with warnings", 3000);
       log("Archive integrity test: OK (with warnings)");
@@ -1009,6 +1096,7 @@ export async function testArchive() {
         "Archive integrity test passed with warnings. Check the log for details.",
         { title: "Test passed" },
       );
+      return "passed_with_warnings";
     } else {
       setStatus("Integrity test failed", 3000);
       log(`Archive integrity test: FAILED (exit code ${result.code})`);
@@ -1019,6 +1107,7 @@ export async function testArchive() {
         `Archive integrity test failed (exit code ${result.code}).${errorDetails}`,
         { title: "Test failed", kind: "error" },
       );
+      return "failed";
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -1026,6 +1115,7 @@ export async function testArchive() {
     setStatus("Error", 3000);
     hideProgress();
     await message(msg, { title: "Test error", kind: "error" });
+    return "error";
   } finally {
     setRunning(false);
   }
@@ -1033,7 +1123,7 @@ export async function testArchive() {
 
 export async function browseArchive(): Promise<ArchiveInfo | null> {
   if (state.running) return null;
-  state.running = true;
+  setRunning(true);
   try {
     const archive = state.inputs[0];
     if (!archive) {
@@ -1056,7 +1146,6 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
 
     if (!(await ensureRuntimeReady())) return null;
 
-    setRunning(true);
     setStatus("Listing archive contents");
 
     const result = await invoke<Run7zResult>("run_7z", { args });
@@ -1103,14 +1192,87 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
   }
 }
 
-export async function previewCommand() {
+export function sanitizeCommandArgsForPreview(args: string[]): string[] {
+  return args.map((arg) => {
+    if (arg.startsWith("-p")) return "-p***";
+    return arg;
+  });
+}
+
+export function buildCommandPreviewText(args: string[]): string {
+  return `7z ${sanitizeCommandArgsForPreview(args).join(" ")}`;
+}
+
+export function closeCommandPreviewModal() {
+  const overlay = document.getElementById(
+    "command-preview-overlay",
+  ) as HTMLElement | null;
+  if (!overlay) return;
+  overlay.hidden = true;
+  const modal = overlay.querySelector<HTMLElement>(".modal");
+  if (modal) releaseFocusTrap(modal);
+  if (commandPreviewTrigger) {
+    commandPreviewTrigger.focus();
+    commandPreviewTrigger = null;
+  } else {
+    document.getElementById("show-command")?.focus();
+  }
+}
+
+export async function copyCommandPreview(): Promise<void> {
+  const preview = document.getElementById(
+    "command-preview-text",
+  ) as HTMLElement | null;
+  const text = preview?.textContent?.trim() ?? "";
+  if (!text) return;
+
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.setAttribute("readonly", "true");
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      document.execCommand("copy");
+      textarea.remove();
+    }
+    setCommandPreviewCopyButton(true);
+    resetCommandPreviewCopyStateSoon();
+  } catch (err) {
+    const messageText = err instanceof Error ? err.message : String(err);
+    await message(`Could not copy command.\n\n${messageText}`, {
+      title: "Copy failed",
+      kind: "error",
+    });
+  }
+}
+
+export async function previewCommand(trigger?: HTMLElement) {
   try {
     const args = buildArgs();
-    const sanitized = args.map((arg) => {
-      if (arg.startsWith("-p")) return "-p***";
-      return arg;
-    });
-    await message(`7z ${sanitized.join(" ")}`, { title: "Command preview" });
+    const previewText = buildCommandPreviewText(args);
+    const overlay = document.getElementById(
+      "command-preview-overlay",
+    ) as HTMLElement | null;
+    const preview = document.getElementById(
+      "command-preview-text",
+    ) as HTMLElement | null;
+    if (!overlay || !preview) {
+      await message(previewText, { title: "Command preview" });
+      return;
+    }
+
+    commandPreviewTrigger = trigger ?? null;
+    setCommandPreviewCopyButton(false);
+    preview.textContent = previewText;
+    overlay.hidden = false;
+    const modal = overlay.querySelector<HTMLElement>(".modal");
+    if (modal) trapFocus(modal);
   } catch (err) {
     const messageText = err instanceof Error ? err.message : String(err);
     await message(messageText, { title: "Missing info" });

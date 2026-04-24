@@ -20,14 +20,26 @@ interface PathParts {
   separator: "/" | "\\";
 }
 
+function looksLikeWindowsPath(path: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\");
+}
+
 function splitPathParts(rawPath: string): PathParts {
   const archivePath = rawPath.trim();
   if (!archivePath) return { parent: "", name: "", separator: "/" };
 
+  const windowsLike = looksLikeWindowsPath(archivePath);
   const slashIndex = archivePath.lastIndexOf("/");
-  const backslashIndex = archivePath.lastIndexOf("\\");
+  const backslashIndex = windowsLike ? archivePath.lastIndexOf("\\") : -1;
   const splitIndex = Math.max(slashIndex, backslashIndex);
-  const separator: "/" | "\\" = backslashIndex > slashIndex ? "\\" : "/";
+  const separator: "/" | "\\" =
+    splitIndex < 0
+      ? windowsLike
+        ? "\\"
+        : "/"
+      : backslashIndex > slashIndex
+        ? "\\"
+        : "/";
 
   if (splitIndex < 0) {
     return { parent: "", name: archivePath, separator };
@@ -122,11 +134,21 @@ export function deriveOutputArchivePath(
   format: string,
   customName?: string,
 ): string | null {
-  const first = inputs[0]?.trim().replace(/[/\\]+$/, "");
+  const firstRaw = inputs[0]?.trim() ?? "";
+  const first = (() => {
+    if (!firstRaw) return "";
+    if (firstRaw === "/" || firstRaw === "\\") return firstRaw;
+    if (/^[A-Za-z]:[\\/]*$/.test(firstRaw)) return `${firstRaw.slice(0, 2)}\\`;
+    return firstRaw.replace(/[/\\]+$/, "");
+  })();
   if (!first) return null;
   const { parent, name, separator } = splitPathParts(first);
   if (!name) return null;
-  const archiveStem = customName?.trim() || name;
+  const trimmedCustomName = customName?.trim();
+  const archiveStem =
+    trimmedCustomName && trimmedCustomName.length > 0
+      ? trimmedCustomName
+      : name;
   if (!archiveStem) return null;
   return joinPath(parent, `${archiveStem}.${format}`, separator);
 }

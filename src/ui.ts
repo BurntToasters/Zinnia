@@ -1,11 +1,37 @@
 import { invoke } from "@tauri-apps/api/core";
-import { $, MAX_LOG_LINES, redactSensitiveText } from "./utils";
+import {
+  $,
+  MAX_LOG_LINES,
+  redactSensitiveText,
+  releaseFocusTrap,
+} from "./utils";
 import { state, dom } from "./state";
-import { LogVerbosity } from "./settings-model";
+import type { InputValidationInfo } from "./state";
+import {
+  type LogVerbosity,
+  type WorkspaceMode,
+  type UiDensity,
+} from "./settings-model";
+import { saveSettings } from "./settings";
+import {
+  type ArchivePathValidation,
+  validateArchivePaths,
+} from "./archive-rules";
 import {
   resolveExtractDestinationAutofill,
   resolveOutputArchiveAutofill,
 } from "./extract-path";
+
+type BasicHooks = {
+  onRenderInputs: () => void;
+  onSetRunning: (active: boolean) => void;
+  onSetStatus: (text: string) => void;
+};
+let basicHooks: BasicHooks | null = null;
+
+export function registerBasicHooks(hooks: BasicHooks): void {
+  basicHooks = hooks;
+}
 
 type LogLevel = "info" | "debug" | "error";
 
@@ -13,8 +39,13 @@ let logWriteQueue = Promise.resolve();
 const MAX_LOG_ENTRY_CHARS = 8_000;
 const LOG_CHUNK_CHARS = 2_000;
 const MAX_PENDING_LOCAL_LOG_WRITES = 250;
+const WORKING_CONTEXT_PERSIST_DEBOUNCE_MS = 140;
+const INPUT_VALIDATION_REASON_INLINE_MAX_CHARS = 92;
 let pendingLocalLogWrites = 0;
 let droppedLocalLogWrites = 0;
+let workingContextPersistTimer: number | undefined;
+let settingsPersistQueue: Promise<void> = Promise.resolve();
+let settingsPersistGeneration = 0;
 
 export function buildLogFragments(input: string): string[] {
   if (input.length <= MAX_LOG_ENTRY_CHARS) return [input];
@@ -34,6 +65,73 @@ export function shouldPersistLevel(
 ): boolean {
   if (level === "debug") return verbosity === "debug";
   return true;
+}
+
+export function truncateValidationReason(
+  reason: string | undefined,
+  maxChars = INPUT_VALIDATION_REASON_INLINE_MAX_CHARS,
+): string {
+  const text = (reason ?? "").trim();
+  if (!text) return "Unsupported archive file.";
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars - 1).trimEnd()}\u2026`;
+}
+
+export function mapArchiveValidationResult(
+  result: ArchivePathValidation,
+): InputValidationInfo {
+  if (result.valid) {
+    return { state: "valid" };
+  }
+  const reason = (result.reason ?? "").trim() || "Unsupported archive file.";
+  return {
+    state: "invalid",
+    reason,
+    reasonShort: truncateValidationReason(reason),
+  };
+}
+
+function enqueueSettingsPersist(
+  snapshot: typeof state.currentSettings,
+  extras: typeof state.settingsExtras,
+  generation: number,
+): Promise<void> {
+  settingsPersistQueue = settingsPersistQueue.then(async () => {
+    if (generation < settingsPersistGeneration) return;
+    await saveSettings(snapshot, extras);
+    if (generation === settingsPersistGeneration) {
+      state.lastPersistedSettings = { ...snapshot };
+    }
+  });
+  return settingsPersistQueue;
+}
+
+export async function persistSettingsImmediately(
+  snapshot: typeof state.currentSettings,
+  extras: typeof state.settingsExtras,
+): Promise<void> {
+  if (workingContextPersistTimer !== undefined) {
+    clearTimeout(workingContextPersistTimer);
+    workingContextPersistTimer = undefined;
+  }
+  const generation = ++settingsPersistGeneration;
+  await enqueueSettingsPersist({ ...snapshot }, { ...extras }, generation);
+}
+
+function queuePersistWorkingContext(): void {
+  if (workingContextPersistTimer !== undefined) {
+    clearTimeout(workingContextPersistTimer);
+  }
+  const snapshot = { ...state.currentSettings };
+  const extras = { ...state.settingsExtras };
+  const generation = ++settingsPersistGeneration;
+  workingContextPersistTimer = window.setTimeout(() => {
+    workingContextPersistTimer = undefined;
+    void enqueueSettingsPersist(snapshot, extras, generation).catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      devLog(`Failed to persist working context: ${msg}`);
+    });
+  }, WORKING_CONTEXT_PERSIST_DEBOUNCE_MS);
 }
 
 function enqueueLocalLogLine(line: string): void {
@@ -102,11 +200,143 @@ export function devLog(line: string) {
   }
 }
 
-export function toggleActivity() {
-  const isVisible = dom.gridEl.classList.toggle("show-activity");
+function syncValidationMapForInputs(paths: string[]): void {
+  const normalized = paths
+    .map((path) => path.trim())
+    .filter((path) => path.length > 0);
+  const keep = new Set(normalized);
+
+  for (const existing of state.inputValidationByPath.keys()) {
+    if (!keep.has(existing)) {
+      state.inputValidationByPath.delete(existing);
+    }
+  }
+
+  for (const path of keep) {
+    if (!state.inputValidationByPath.has(path)) {
+      state.inputValidationByPath.set(path, { state: "unknown" });
+    }
+  }
+}
+
+function startInputValidation(paths: string[]): void {
+  if (paths.length === 0) {
+    state.inputValidationByPath.clear();
+    state.inputValidationRequestId += 1;
+    return;
+  }
+
+  syncValidationMapForInputs(paths);
+  const requestId = ++state.inputValidationRequestId;
+
+  void validateArchivePaths(paths)
+    .then((results) => {
+      if (requestId !== state.inputValidationRequestId) return;
+      const next = new Map<string, InputValidationInfo>();
+      for (const result of results) {
+        const key = result.path.trim();
+        if (!key) continue;
+        next.set(key, mapArchiveValidationResult(result));
+      }
+      for (const path of paths) {
+        const key = path.trim();
+        if (!key || next.has(key)) continue;
+        next.set(key, {
+          state: "invalid",
+          reason: "Validation unavailable.",
+          reasonShort: "Validation unavailable.",
+        });
+      }
+      state.inputValidationByPath = next;
+      renderInputs();
+    })
+    .catch((err) => {
+      if (requestId !== state.inputValidationRequestId) return;
+      const msg = err instanceof Error ? err.message : String(err);
+      devLog(`Background archive validation failed: ${msg}`);
+      for (const path of paths) {
+        const key = path.trim();
+        if (!key) continue;
+        const current = state.inputValidationByPath.get(key);
+        if (!current) {
+          state.inputValidationByPath.set(key, { state: "unknown" });
+        }
+      }
+      renderInputs();
+    });
+}
+
+interface ContextPersistOptions {
+  persist?: boolean;
+}
+
+export function setActivityPanelVisible(
+  visible: boolean,
+  options: ContextPersistOptions = {},
+): void {
+  dom.gridEl.classList.toggle("show-activity", visible);
   const btn = $("toggle-activity");
-  btn.classList.toggle("is-active", isVisible);
-  btn.setAttribute("aria-pressed", String(isVisible));
+  btn.classList.toggle("is-active", visible);
+  btn.setAttribute("aria-pressed", String(visible));
+
+  state.currentSettings.showActivityPanel = visible;
+  if (options.persist !== false) {
+    queuePersistWorkingContext();
+  }
+}
+
+export function toggleActivity() {
+  const isVisible = !dom.gridEl.classList.contains("show-activity");
+  setActivityPanelVisible(isVisible);
+}
+
+export function getWorkspaceMode(): WorkspaceMode {
+  const mode = dom.appEl.dataset.workspaceMode;
+  return mode === "power" ? "power" : "basic";
+}
+
+export function setWorkspaceMode(
+  mode: WorkspaceMode,
+  options: ContextPersistOptions = {},
+): void {
+  const previousMode = getWorkspaceMode();
+  dom.appEl.dataset.workspaceMode = mode;
+  document.querySelectorAll("[data-workspace-mode-btn]").forEach((btn) => {
+    const el = btn as HTMLButtonElement;
+    const isActive = el.dataset.workspaceModeBtn === mode;
+    el.classList.toggle("is-active", isActive);
+    el.setAttribute("aria-pressed", String(isActive));
+  });
+  state.currentSettings.workspaceMode = mode;
+  if (options.persist !== false && previousMode !== mode) {
+    queuePersistWorkingContext();
+  }
+}
+
+export function getUiDensity(): UiDensity {
+  const density = dom.appEl.dataset.density;
+  return density === "compact" ? "compact" : "comfortable";
+}
+
+export function setUiDensity(
+  density: UiDensity,
+  options: ContextPersistOptions = {},
+): void {
+  const previousDensity = getUiDensity();
+  dom.appEl.dataset.density = density;
+  const compactEnabled = density === "compact";
+  const toggle = document.getElementById(
+    "toggle-density",
+  ) as HTMLButtonElement | null;
+  if (toggle) {
+    toggle.classList.toggle("is-active", compactEnabled);
+    toggle.setAttribute("aria-pressed", String(compactEnabled));
+    toggle.textContent = compactEnabled ? "Comfortable" : "Compact";
+  }
+  state.currentSettings.uiDensity = density;
+  if (options.persist !== false && previousDensity !== density) {
+    queuePersistWorkingContext();
+  }
 }
 
 export function setStatus(text: string, autoResetMs?: number) {
@@ -115,6 +345,7 @@ export function setStatus(text: string, autoResetMs?: number) {
     state.statusTimeout = undefined;
   }
   dom.statusEl.textContent = text;
+  basicHooks?.onSetStatus(text);
   if (autoResetMs) {
     state.statusTimeout = window.setTimeout(() => {
       setStatus("Idle");
@@ -167,10 +398,17 @@ function clearBrowsePickerSessionState() {
   const overlay = document.getElementById(
     "selective-overlay",
   ) as HTMLElement | null;
-  if (overlay) overlay.hidden = true;
+  if (overlay) {
+    const modal = overlay.querySelector<HTMLElement>(".modal");
+    if (modal) releaseFocusTrap(modal);
+    overlay.hidden = true;
+  }
 }
 
-export function setMode(mode: "add" | "extract" | "browse") {
+export function setMode(
+  mode: "add" | "extract" | "browse",
+  options: ContextPersistOptions = {},
+) {
   const previousMode = getMode();
   if (previousMode !== mode) {
     clearBrowsePickerSessionState();
@@ -186,15 +424,43 @@ export function setMode(mode: "add" | "extract" | "browse") {
   if (mode !== "browse") {
     setBrowsePasswordFieldVisible(false);
   }
+
+  state.currentSettings.lastMode = mode;
+  if (options.persist !== false && previousMode !== mode) {
+    queuePersistWorkingContext();
+  }
+
   renderInputs();
+  if (previousMode !== mode) {
+    document.dispatchEvent(
+      new CustomEvent("zinnia:mode-changed", { detail: { mode } }),
+    );
+  }
 }
 
 export function renderInputs() {
   const mode = getMode();
   const signature = state.inputs.join("\n");
-  if (signature !== state.lastInputsSignature) {
+  const signatureChanged = signature !== state.lastInputsSignature;
+  if (signatureChanged) {
     clearBrowsePickerSessionState();
     state.lastInputsSignature = signature;
+  }
+
+  const modeChangedForValidation = state.lastInputValidationMode !== mode;
+  state.lastInputValidationMode = mode;
+  if (mode === "add") {
+    if (modeChangedForValidation || state.inputValidationByPath.size > 0) {
+      state.inputValidationRequestId += 1;
+      state.inputValidationByPath.clear();
+    }
+  } else if (signatureChanged || modeChangedForValidation) {
+    const normalized = state.inputs
+      .map((path) => path.trim())
+      .filter((path) => path.length > 0);
+    startInputValidation(normalized);
+  } else {
+    syncValidationMapForInputs(state.inputs);
   }
 
   if (mode === "extract") {
@@ -225,7 +491,9 @@ export function renderInputs() {
       const format =
         (document.getElementById("format") as HTMLSelectElement | null)
           ?.value ?? "7z";
-      const customName = archiveNameInput?.value.trim() || undefined;
+      const trimmedName = archiveNameInput?.value.trim();
+      const customName =
+        trimmedName && trimmedName.length > 0 ? trimmedName : undefined;
       const next = resolveOutputArchiveAutofill(
         outputPathInput.value,
         state.lastAutoOutputPath,
@@ -255,14 +523,48 @@ export function renderInputs() {
           : "Drop files here or use the buttons above.";
     empty.className = "list__empty";
     dom.inputList.appendChild(empty);
+    basicHooks?.onRenderInputs();
     return;
   }
 
   state.inputs.forEach((path, index) => {
     const item = document.createElement("div");
     item.className = "list__item";
-    const span = document.createElement("span");
-    span.textContent = path;
+    const content = document.createElement("div");
+    content.className = "list__item-main";
+
+    const pathEl = document.createElement("span");
+    pathEl.className = "list__item-path";
+    pathEl.textContent = path;
+    content.appendChild(pathEl);
+
+    if (mode !== "add") {
+      const validation = state.inputValidationByPath.get(path.trim()) ?? {
+        state: "unknown" as const,
+      };
+      const badge = document.createElement("span");
+      badge.className = `list__item-badge list__item-badge--${validation.state}`;
+      badge.textContent =
+        validation.state === "valid"
+          ? "Valid"
+          : validation.state === "invalid"
+            ? "Invalid"
+            : "Checking\u2026";
+      content.appendChild(badge);
+
+      if (validation.state === "invalid") {
+        const reason = document.createElement("span");
+        reason.className = "list__item-reason";
+        reason.textContent =
+          validation.reasonShort ?? truncateValidationReason(validation.reason);
+        const fullReason = (validation.reason ?? "").trim();
+        if (fullReason) {
+          reason.title = fullReason;
+        }
+        content.appendChild(reason);
+      }
+    }
+
     const remove = document.createElement("button");
     remove.className = "btn btn--ghost btn--sm";
     remove.setAttribute("aria-label", `Remove ${path}`);
@@ -279,10 +581,12 @@ export function renderInputs() {
       }
       renderInputs();
     });
-    item.appendChild(span);
+    item.appendChild(content);
     item.appendChild(remove);
     dom.inputList.appendChild(item);
   });
+
+  basicHooks?.onRenderInputs();
 }
 
 export function setRunning(active: boolean) {
@@ -318,10 +622,23 @@ export function setRunning(active: boolean) {
     "selective-confirm",
     "selective-browse-dest",
     "close-selective",
+    "toggle-density",
   ]) {
     const el = document.getElementById(id) as HTMLButtonElement | null;
     if (el) el.disabled = active;
   }
+
+  document
+    .querySelectorAll<HTMLButtonElement>("[data-quick-action-btn]")
+    .forEach((btn) => {
+      btn.disabled = active;
+    });
+
+  document
+    .querySelectorAll<HTMLButtonElement>("[data-workspace-mode-btn]")
+    .forEach((btn) => {
+      btn.disabled = active;
+    });
 
   document
     .querySelectorAll<HTMLButtonElement>("[data-mode-btn]")
@@ -329,5 +646,6 @@ export function setRunning(active: boolean) {
       btn.disabled = active;
     });
 
+  basicHooks?.onSetRunning(active);
   renderInputs();
 }

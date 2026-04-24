@@ -1,9 +1,16 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   buildLogFragments,
   shouldPersistLevel,
+  truncateValidationReason,
+  mapArchiveValidationResult,
   getMode,
   setMode,
+  setActivityPanelVisible,
+  getWorkspaceMode,
+  setWorkspaceMode,
+  getUiDensity,
+  setUiDensity,
   setBrowsePasswordFieldVisible,
   setStatus,
   setProgress,
@@ -12,8 +19,10 @@ import {
   renderInputs,
   setRunning,
   toggleActivity,
+  registerBasicHooks,
 } from "../ui";
 import { state, dom } from "../state";
+import { SETTING_DEFAULTS } from "../settings-model";
 
 beforeEach(() => {
   state.inputs = [];
@@ -26,6 +35,10 @@ beforeEach(() => {
   state.selectiveActiveArchive = null;
   state.selectiveVisiblePaths = [];
   state.statusTimeout = undefined;
+  state.currentSettings = { ...SETTING_DEFAULTS };
+  state.inputValidationByPath.clear();
+  state.inputValidationRequestId = 0;
+  state.lastInputValidationMode = "add";
 
   dom.appEl.dataset.mode = "add";
   dom.logEl.textContent = "";
@@ -33,6 +46,8 @@ beforeEach(() => {
   dom.progressEl.textContent = "";
   dom.progressEl.hidden = true;
   dom.inputList.innerHTML = "";
+  dom.appEl.dataset.workspaceMode = "basic";
+  dom.appEl.dataset.density = "comfortable";
   dom.runBtn.disabled = false;
   dom.runBtn.removeAttribute("aria-busy");
   dom.cancelBtn.hidden = true;
@@ -40,6 +55,39 @@ beforeEach(() => {
   dom.extractRunBtn.removeAttribute("aria-busy");
   dom.extractCancelBtn.hidden = true;
   dom.gridEl.classList.remove("show-activity");
+  registerBasicHooks({
+    onRenderInputs: () => {},
+    onSetRunning: () => {},
+    onSetStatus: () => {},
+  });
+});
+
+describe("validation helpers", () => {
+  it("truncates long validation reason with ellipsis", () => {
+    const result = truncateValidationReason("x".repeat(100), 10);
+    expect(result).toBe("xxxxxxxxx…");
+  });
+
+  it("uses fallback text for empty validation reason", () => {
+    expect(truncateValidationReason("")).toBe("Unsupported archive file.");
+  });
+
+  it("maps valid archive result", () => {
+    expect(
+      mapArchiveValidationResult({ path: "/tmp/a.7z", valid: true }),
+    ).toEqual({ state: "valid" });
+  });
+
+  it("maps invalid archive result with reason and short reason", () => {
+    const mapped = mapArchiveValidationResult({
+      path: "/tmp/a.txt",
+      valid: false,
+      reason: "Not a supported archive",
+    });
+    expect(mapped.state).toBe("invalid");
+    expect(mapped.reason).toBe("Not a supported archive");
+    expect(mapped.reasonShort).toBe("Not a supported archive");
+  });
 });
 
 describe("buildLogFragments", () => {
@@ -146,6 +194,27 @@ describe("setMode", () => {
     setMode("extract");
     expect(state.selectiveSearchQuery).toBe("keep");
   });
+
+  it("persists current working mode in state settings", () => {
+    setMode("browse", { persist: false });
+    expect(state.currentSettings.lastMode).toBe("browse");
+  });
+});
+
+describe("workspace and density", () => {
+  it("gets and sets workspace mode", () => {
+    expect(getWorkspaceMode()).toBe("basic");
+    setWorkspaceMode("power", { persist: false });
+    expect(getWorkspaceMode()).toBe("power");
+    expect(state.currentSettings.workspaceMode).toBe("power");
+  });
+
+  it("gets and sets UI density", () => {
+    expect(getUiDensity()).toBe("comfortable");
+    setUiDensity("compact", { persist: false });
+    expect(getUiDensity()).toBe("compact");
+    expect(state.currentSettings.uiDensity).toBe("compact");
+  });
 });
 
 describe("setBrowsePasswordFieldVisible", () => {
@@ -215,6 +284,18 @@ describe("toggleActivity", () => {
   });
 });
 
+describe("setActivityPanelVisible", () => {
+  it("applies visibility and updates setting value", () => {
+    setActivityPanelVisible(true, { persist: false });
+    expect(dom.gridEl.classList.contains("show-activity")).toBe(true);
+    expect(state.currentSettings.showActivityPanel).toBe(true);
+
+    setActivityPanelVisible(false, { persist: false });
+    expect(dom.gridEl.classList.contains("show-activity")).toBe(false);
+    expect(state.currentSettings.showActivityPanel).toBe(false);
+  });
+});
+
 describe("log", () => {
   it("appends timestamped line to log element", () => {
     log("Test message");
@@ -237,6 +318,20 @@ describe("renderInputs", () => {
     expect(dom.inputList.textContent).toContain(
       "Drop files here or use the buttons above.",
     );
+  });
+
+  it("notifies basic hooks for empty input render", () => {
+    const onRenderInputs = vi.fn();
+    registerBasicHooks({
+      onRenderInputs,
+      onSetRunning: () => {},
+      onSetStatus: () => {},
+    });
+
+    state.inputs = [];
+    renderInputs();
+
+    expect(onRenderInputs).toHaveBeenCalledOnce();
   });
 
   it("shows extract empty state message in extract mode", () => {

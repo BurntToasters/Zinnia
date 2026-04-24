@@ -36,9 +36,11 @@ async function renderLicenses() {
   container.textContent = "Loading\u2026";
 
   try {
-    const resp = await fetch("/licenses.json");
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const data = (await resp.json()) as Record<string, LicenseEntry>;
+    const [npmLicenses, cargoLicenses] = await Promise.all([
+      loadLicenseFile("/licenses.json"),
+      loadLicenseFile("/licenses-cargo.json"),
+    ]);
+    const data = { ...(npmLicenses ?? {}), ...(cargoLicenses ?? {}) };
     container.innerHTML = "";
 
     const twemojiCard = document.createElement("details");
@@ -88,4 +90,17 @@ async function renderLicenses() {
   } catch {
     container.textContent = "Failed to load licenses.";
   }
+}
+
+async function loadLicenseFile(
+  path: string,
+): Promise<Record<string, LicenseEntry> | null> {
+  const resp = await fetch(path);
+  if (resp.status === 404) return null;
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const data = await resp.json();
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new Error(`Invalid payload in ${path}`);
+  }
+  return data as Record<string, LicenseEntry>;
 }

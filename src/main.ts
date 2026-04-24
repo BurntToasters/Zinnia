@@ -1,4 +1,4 @@
-import { ask, message, save } from "@tauri-apps/plugin-dialog";
+import { ask, message } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
@@ -9,7 +9,6 @@ import { SETTING_DEFAULTS, state, dom } from "./state";
 import {
   applyTheme,
   loadSettingsWithMetadata,
-  saveSettings,
   readSettingsModal,
   applySettingsToForm,
   openSettingsModal,
@@ -23,8 +22,13 @@ import {
   toggleActivity,
   renderInputs,
   setMode,
+  setActivityPanelVisible,
+  setWorkspaceMode,
+  getWorkspaceMode,
+  setUiDensity,
   getMode,
   setBrowsePasswordFieldVisible,
+  persistSettingsImmediately,
 } from "./ui";
 import {
   runAction,
@@ -32,6 +36,8 @@ import {
   testArchive,
   browseArchive,
   previewCommand,
+  copyCommandPreview,
+  closeCommandPreviewModal,
   openSelectiveExtractModal,
   closeSelectiveExtractModal,
   setSelectiveExtractSearch,
@@ -51,24 +57,31 @@ import { checkUpdates, autoCheckUpdates } from "./updater";
 import { openLicensesModal, closeLicensesModal } from "./licenses";
 import { chooseOutput, chooseExtract, addFiles, addFolder } from "./files";
 import {
+  wireQuickActionEvents,
+  refreshQuickActionRepeatState,
+} from "./quick-actions";
+import {
+  shouldShowSetupWizard,
+  showSetupWizard,
+  markSetupComplete,
+} from "./setup-wizard";
+import {
   deriveOutputArchivePath,
   resolveOutputArchiveAutofill,
 } from "./extract-path";
+import {
+  initBasicWorkspace,
+  setBasicView,
+  handleBasicDragDrop,
+  syncBasicBeforeRun,
+} from "./basic-ui";
 
 async function exportLocalLogs() {
-  const suggestedName = `zinnia-logs-${new Date().toISOString().slice(0, 10)}.txt`;
-  const destination = await save({
-    title: "Export local diagnostics log",
-    defaultPath: suggestedName,
-    filters: [{ name: "Text files", extensions: ["txt", "log"] }],
-  });
-
-  if (!destination || typeof destination !== "string") return;
-
   try {
-    await invoke("export_logs", { destinationPath: destination });
-    log(`Logs exported to ${destination}`);
-    await message(`Logs exported successfully.\n\n${destination}`, {
+    const exported = await invoke<boolean>("export_logs");
+    if (!exported) return;
+    log("Logs exported successfully.");
+    await message("Logs exported successfully.", {
       title: "Logs exported",
     });
   } catch (err) {
@@ -144,11 +157,13 @@ async function applyIncomingPaths(
 ): Promise<void> {
   if (!paths.length) return;
 
+  const allArchives = await allPathsAreArchives(paths);
   const shouldAutoBrowse =
-    mode !== "extract" &&
-    paths.length === 1 &&
-    (await allPathsAreArchives(paths));
-  if (mode === "extract") {
+    mode !== "extract" && paths.length === 1 && allArchives;
+  const shouldAutoExtract =
+    mode === "extract" ||
+    (mode !== "extract" && paths.length > 1 && allArchives);
+  if (shouldAutoExtract) {
     setMode("extract");
     state.inputs.length = 0;
   } else if (shouldAutoBrowse) {
@@ -167,9 +182,37 @@ async function applyIncomingPaths(
   renderInputs();
   devLog(`Received ${paths.length} path(s) from ${source}.`);
 
+  if (getWorkspaceMode() === "basic") {
+    if (shouldAutoExtract || shouldAutoBrowse) {
+      setBasicView(shouldAutoBrowse ? "browse" : "extract");
+    } else {
+      setBasicView("compress");
+    }
+  }
+
   if (shouldAutoBrowse) {
     void browseArchive();
   }
+}
+
+async function runSetupWizardFlow(): Promise<void> {
+  const result = await showSetupWizard();
+  if (result) {
+    state.currentSettings.workspaceMode = result.workspaceMode;
+    state.currentSettings.theme = result.theme;
+    state.currentSettings.autoCheckUpdates = result.autoCheckUpdates;
+    state.currentSettings.updateChannel = result.updateChannel;
+  }
+
+  await markSetupComplete();
+  state.lastPersistedSettings = { ...state.currentSettings };
+
+  applyTheme(state.currentSettings.theme);
+  setWorkspaceMode(state.currentSettings.workspaceMode, { persist: false });
+  setUiDensity(state.currentSettings.uiDensity, { persist: false });
+  applySettingsToForm();
+  updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
+  onCompressionOptionChange();
 }
 
 function wireEvents() {
@@ -184,7 +227,9 @@ function wireEvents() {
     ) as HTMLInputElement | null;
     if (!outputPathInput) return;
     const format = $<HTMLSelectElement>("format").value;
-    const customName = archiveNameInput?.value.trim() || undefined;
+    const trimmedName = archiveNameInput?.value.trim();
+    const customName =
+      trimmedName && trimmedName.length > 0 ? trimmedName : undefined;
     const next = resolveOutputArchiveAutofill(
       outputPathInput.value,
       state.lastAutoOutputPath,
@@ -213,12 +258,33 @@ function wireEvents() {
   $("choose-extract").addEventListener("click", chooseExtract);
   $("run-action").addEventListener("click", runAction);
   $("cancel-action").addEventListener("click", cancelAction);
-  $("show-command").addEventListener("click", previewCommand);
+  $("show-command").addEventListener(
+    "click",
+    (e) => void previewCommand(e.currentTarget as HTMLElement),
+  );
   $("clear-log").addEventListener("click", () => (dom.logEl.textContent = ""));
 
   $("extract-run").addEventListener("click", runAction);
   $("extract-cancel").addEventListener("click", cancelAction);
-  $("extract-preview").addEventListener("click", previewCommand);
+  $("extract-preview").addEventListener(
+    "click",
+    (e) => void previewCommand(e.currentTarget as HTMLElement),
+  );
+
+  $("copy-command-preview").addEventListener("click", () => {
+    void copyCommandPreview();
+  });
+  $("close-command-preview").addEventListener(
+    "click",
+    closeCommandPreviewModal,
+  );
+  $("close-command-preview-footer").addEventListener(
+    "click",
+    closeCommandPreviewModal,
+  );
+  $("command-preview-overlay").addEventListener("click", (e) => {
+    if (e.target === e.currentTarget) closeCommandPreviewModal();
+  });
   $("test-integrity").addEventListener("click", testArchive);
 
   $("browse-list").addEventListener("click", browseArchive);
@@ -340,6 +406,36 @@ function wireEvents() {
   });
 
   $("toggle-activity").addEventListener("click", toggleActivity);
+  document
+    .querySelectorAll<HTMLButtonElement>("[data-workspace-mode-btn]")
+    .forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const mode =
+          btn.dataset.workspaceModeBtn === "power" ? "power" : "basic";
+        setWorkspaceMode(mode);
+        if (mode === "basic") {
+          const currentMode = getMode();
+          if (currentMode === "add" && state.inputs.length > 0) {
+            setBasicView("compress");
+          } else if (currentMode === "extract") {
+            setBasicView("extract");
+          } else if (currentMode === "browse") {
+            setBasicView("browse");
+          } else {
+            setBasicView("home");
+          }
+        }
+        refreshQuickActionRepeatState();
+      });
+    });
+  $("toggle-density").addEventListener("click", () => {
+    const nextDensity =
+      state.currentSettings.uiDensity === "compact" ? "comfortable" : "compact";
+    setUiDensity(nextDensity);
+  });
+  document.addEventListener("zinnia:mode-changed", () => {
+    refreshQuickActionRepeatState();
+  });
 
   $("open-settings").addEventListener("click", openSettingsModal);
   $("close-settings").addEventListener("click", closeSettingsModal);
@@ -351,17 +447,23 @@ function wireEvents() {
     const previous = { ...state.lastPersistedSettings };
     state.currentSettings = readSettingsModal();
     applyTheme(state.currentSettings.theme);
+    setWorkspaceMode(state.currentSettings.workspaceMode, { persist: false });
+    setUiDensity(state.currentSettings.uiDensity, { persist: false });
     applySettingsToForm();
     updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
     onCompressionOptionChange();
     try {
-      await saveSettings(state.currentSettings, state.settingsExtras);
-      state.lastPersistedSettings = { ...state.currentSettings };
+      await persistSettingsImmediately(
+        state.currentSettings,
+        state.settingsExtras,
+      );
       log("Settings saved successfully.");
       closeSettingsModal();
     } catch (err) {
       state.currentSettings = previous;
       applyTheme(state.currentSettings.theme);
+      setWorkspaceMode(state.currentSettings.workspaceMode, { persist: false });
+      setUiDensity(state.currentSettings.uiDensity, { persist: false });
       applySettingsToForm();
       populateSettingsModal();
       updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
@@ -371,6 +473,22 @@ function wireEvents() {
       log(`Failed to save settings: ${msg}`, "error");
       await message(`Failed to save settings.\n\n${msg}`, {
         title: "Settings error",
+        kind: "error",
+      });
+    }
+  });
+  $("rerun-setup-wizard").addEventListener("click", async () => {
+    closeSettingsModal();
+    try {
+      await runSetupWizardFlow();
+      renderInputs();
+      refreshQuickActionRepeatState();
+      log("Setup wizard completed.");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`Setup wizard failed: ${msg}`, "error");
+      await message(`Failed to run setup wizard.\n\n${msg}`, {
+        title: "Setup wizard error",
         kind: "error",
       });
     }
@@ -439,10 +557,19 @@ function wireEvents() {
       if (m === "extract") setMode("extract");
       else if (m === "browse") setMode("browse");
       else setMode("add");
+      refreshQuickActionRepeatState();
     });
   });
 
+  wireQuickActionEvents();
+
   document.addEventListener("keydown", (e) => {
+    if (!$("setup-wizard-overlay").hidden) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+      }
+      return;
+    }
     if (e.key === "Escape") {
       if (!$("settings-overlay").hidden) {
         closeSettingsModal();
@@ -452,6 +579,10 @@ function wireEvents() {
         closeSelectiveExtractModal();
         return;
       }
+      if (!$("command-preview-overlay").hidden) {
+        closeCommandPreviewModal();
+        return;
+      }
       if (!$("licenses-overlay").hidden) {
         closeLicensesModal();
         return;
@@ -459,12 +590,15 @@ function wireEvents() {
     }
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       if (
+        !$("setup-wizard-overlay").hidden ||
         !$("settings-overlay").hidden ||
         !$("licenses-overlay").hidden ||
-        !$("selective-overlay").hidden
+        !$("selective-overlay").hidden ||
+        !$("command-preview-overlay").hidden
       )
         return;
       e.preventDefault();
+      syncBasicBeforeRun();
       if (getMode() === "browse") void browseArchive();
       else void runAction();
     }
@@ -483,14 +617,35 @@ async function init() {
     throw err;
   }
 
-  const cpuCount = await invoke<number>("get_cpu_count");
-  SETTING_DEFAULTS.threads = cpuCount;
+  try {
+    const cpuCount = await invoke<number>("get_cpu_count");
+    SETTING_DEFAULTS.threads = cpuCount;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    devLog(`Unable to determine CPU count, using default: ${msg}`);
+  }
 
   const loadedSettings = await loadSettingsWithMetadata();
   state.currentSettings = loadedSettings.settings;
   state.lastPersistedSettings = { ...loadedSettings.settings };
   state.settingsExtras = { ...loadedSettings.extras };
+
+  if (shouldShowSetupWizard()) {
+    try {
+      await runSetupWizardFlow();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await message(`Setup wizard could not be completed.\n\n${msg}`, {
+        title: "Setup wizard error",
+        kind: "error",
+      });
+      throw err;
+    }
+  }
+
   applyTheme(state.currentSettings.theme);
+  setWorkspaceMode(state.currentSettings.workspaceMode, { persist: false });
+  setUiDensity(state.currentSettings.uiDensity, { persist: false });
   applySettingsToForm();
   updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
   onCompressionOptionChange();
@@ -508,16 +663,41 @@ async function init() {
       if (state.currentSettings.theme === "system") applyTheme("system");
     });
 
+  setMode(state.currentSettings.lastMode, { persist: false });
+  setActivityPanelVisible(state.currentSettings.showActivityPanel, {
+    persist: false,
+  });
   renderInputs();
   wireEvents();
+  initBasicWorkspace();
+  refreshQuickActionRepeatState();
   if (loadedSettings.malformed && loadedSettings.warning) {
     log(loadedSettings.warning, "error");
   }
 
-  const version = `v${await getVersion()}`;
-  const platform = await invoke<string>("get_platform_info");
+  let version = "v?";
+  try {
+    version = `v${await getVersion()}`;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    devLog(`Unable to read app version: ${msg}`);
+  }
+
+  let platform = "unknown";
+  try {
+    platform = await invoke<string>("get_platform_info");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    devLog(`Unable to detect platform: ${msg}`);
+  }
   state.platformName = platform;
-  state.appIsPackaged = await invoke<boolean>("is_packaged");
+  try {
+    state.appIsPackaged = await invoke<boolean>("is_packaged");
+  } catch (err) {
+    state.appIsPackaged = false;
+    const msg = err instanceof Error ? err.message : String(err);
+    devLog(`Unable to determine package state: ${msg}`);
+  }
   const platformDisplay =
     platform === "windows"
       ? "Windows"
@@ -531,7 +711,13 @@ async function init() {
   $("s-version-label").textContent = version;
   $("s-platform-label").textContent = platformDisplay;
 
-  const flatpak = await invoke<boolean>("is_flatpak");
+  let flatpak = false;
+  try {
+    flatpak = await invoke<boolean>("is_flatpak");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    devLog(`Unable to detect Flatpak context: ${msg}`);
+  }
   if (flatpak) {
     document.body.classList.add("platform-flatpak");
   }
@@ -545,9 +731,16 @@ async function init() {
   let openPathsQueue = Promise.resolve();
 
   async function drainPendingPaths(): Promise<void> {
-    const batches = await invoke<{ paths: string[]; mode: string }[]>(
-      "drain_pending_paths",
-    );
+    let batches: { paths: string[]; mode: string }[] = [];
+    try {
+      batches = await invoke<{ paths: string[]; mode: string }[]>(
+        "drain_pending_paths",
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`Failed to read pending Explorer paths: ${msg}`, "error");
+      return;
+    }
     for (const batch of batches) {
       if (batch.paths.length > 0) {
         await applyIncomingPaths(batch.paths, batch.mode, "Explorer");
@@ -555,15 +748,32 @@ async function init() {
     }
   }
 
-  await listen("pending-paths-changed", () => {
-    openPathsQueue = openPathsQueue.then(drainPendingPaths).catch((err) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      log(`Failed to process incoming Explorer paths: ${msg}`, "error");
+  try {
+    await listen("pending-paths-changed", () => {
+      openPathsQueue = openPathsQueue.then(drainPendingPaths).catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        log(`Failed to process incoming Explorer paths: ${msg}`, "error");
+      });
     });
-  });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Failed to subscribe to Explorer open events: ${msg}`, "error");
+  }
 
-  const initialMode = await invoke<string>("get_initial_mode");
-  const initialPaths = await invoke<string[]>("get_initial_paths");
+  let initialMode = "";
+  let initialPaths: string[] = [];
+  try {
+    initialMode = await invoke<string>("get_initial_mode");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Failed to read initial mode: ${msg}`, "error");
+  }
+  try {
+    initialPaths = await invoke<string[]>("get_initial_paths");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Failed to read launch paths: ${msg}`, "error");
+  }
   openPathsQueue = openPathsQueue
     .then(() => applyIncomingPaths(initialPaths, initialMode, "launch args"))
     .catch((err) => {
@@ -582,6 +792,13 @@ async function init() {
   const appWindow = getCurrentWebviewWindow();
   await appWindow.onDragDropEvent(async (event) => {
     try {
+      if (getWorkspaceMode() === "basic") {
+        handleBasicDragDrop(
+          event.payload.type,
+          event.payload.type === "drop" ? event.payload.paths : undefined,
+        );
+        return;
+      }
       if (event.payload.type === "enter" || event.payload.type === "over") {
         dom.inputList.classList.add("list--dragover");
       } else if (event.payload.type === "leave") {

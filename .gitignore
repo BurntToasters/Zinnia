@@ -45,3 +45,4 @@ flatpak-repo/
 
 # Generated files
 public/licenses.json
+public/licenses-cargo.json
