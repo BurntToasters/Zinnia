@@ -610,7 +610,7 @@ async function init() {
     await invoke("probe_7z");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    await message(`The bundled 7-Zip binary could not be started.\n\n${msg}`, {
+    await message(`The bundled 7-Zip runtime check failed.\n\n${msg}`, {
       title: "Missing runtime dependency",
       kind: "error",
     });

@@ -651,6 +651,9 @@ fn open_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
 
 #[tauri::command]
 async fn probe_7z(app: tauri::AppHandle) -> Result<(), String> {
+    const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+    const PROBE_OUTPUT_LIMIT: usize = 4096;
+
     let command = app
         .shell()
         .sidecar("7z")
@@ -658,22 +661,58 @@ async fn probe_7z(app: tauri::AppHandle) -> Result<(), String> {
         .args(["i"]);
 
     let (mut rx, child) = command.spawn().map_err(|e| e.to_string())?;
-    let timeout = std::time::Duration::from_secs(5);
-    let event = tokio::time::timeout(timeout, rx.recv()).await;
-    match event {
-        Ok(Some(CommandEvent::Terminated(payload))) => {
-            let code = payload.code.unwrap_or(-1);
-            if code == 0 || code == 1 {
-                Ok(())
-            } else {
-                Err(format!("7z probe exited with code {code}."))
+
+    let probe = async {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut stdout_truncated = false;
+        let mut stderr_truncated = false;
+
+        while let Some(event) = rx.recv().await {
+            match event {
+                CommandEvent::Stdout(line) => {
+                    let chunk = String::from_utf8_lossy(&line);
+                    append_limited_output(
+                        &mut stdout,
+                        &chunk,
+                        PROBE_OUTPUT_LIMIT,
+                        &mut stdout_truncated,
+                    );
+                }
+                CommandEvent::Stderr(line) => {
+                    let chunk = String::from_utf8_lossy(&line);
+                    append_limited_output(
+                        &mut stderr,
+                        &chunk,
+                        PROBE_OUTPUT_LIMIT,
+                        &mut stderr_truncated,
+                    );
+                }
+                CommandEvent::Terminated(payload) => {
+                    let code = payload.code.unwrap_or(-1);
+                    if code == 0 || code == 1 {
+                        return Ok(());
+                    }
+
+                    let mut message = format!("7z probe exited with code {code}.");
+                    let clean_stderr = sanitize_output(stderr.trim());
+                    let clean_stdout = sanitize_output(stdout.trim());
+                    if !clean_stderr.is_empty() {
+                        message.push_str(&format!(" stderr: {clean_stderr}"));
+                    } else if !clean_stdout.is_empty() {
+                        message.push_str(&format!(" output: {clean_stdout}"));
+                    }
+                    return Err(message);
+                }
+                _ => {}
             }
         }
-        Ok(Some(_)) => {
-            let _ = child.kill();
-            Err("7z probe did not terminate cleanly.".to_string())
-        }
-        Ok(None) => Err("7z probe exited before reporting status.".to_string()),
+
+        Err("7z probe exited before reporting status.".to_string())
+    };
+
+    match tokio::time::timeout(PROBE_TIMEOUT, probe).await {
+        Ok(result) => result,
         Err(_) => {
             let _ = child.kill();
             Err("7z runtime probe timed out.".to_string())

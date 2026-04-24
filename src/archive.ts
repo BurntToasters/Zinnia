@@ -139,7 +139,7 @@ async function ensureRuntimeReady(): Promise<boolean> {
     log(`7-Zip runtime check failed: ${msg}`, "error");
     setStatus("Missing runtime dependency", 3000);
     hideProgress();
-    await message(`The bundled 7-Zip binary could not be started.\n\n${msg}`, {
+    await message(`The bundled 7-Zip runtime check failed.\n\n${msg}`, {
       title: "Missing runtime dependency",
       kind: "error",
     });
