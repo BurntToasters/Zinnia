@@ -95,11 +95,15 @@ async function closeWindowSafely(
   appWindow: ReturnType<typeof getCurrentWebviewWindow>,
 ): Promise<void> {
   try {
-    await appWindow.close();
+    await invoke("close_extract_window");
   } catch {
     try {
-      await appWindow.destroy();
-    } catch {}
+      await appWindow.close();
+    } catch {
+      try {
+        await appWindow.destroy();
+      } catch {}
+    }
   }
 }
 

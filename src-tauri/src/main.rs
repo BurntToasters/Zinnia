@@ -970,6 +970,16 @@ fn get_extract_paths(
     Ok(queue.remove(&label).unwrap_or_default())
 }
 
+#[tauri::command]
+fn close_extract_window(window: tauri::Window, app: tauri::AppHandle) -> Result<(), String> {
+    if EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst) {
+        app.exit(0);
+        return Ok(());
+    }
+
+    window.destroy().map_err(|e| e.to_string())
+}
+
 fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Result<(), String> {
     if paths.len() > 100 {
         return Err("Too many paths in a single extract batch.".to_string());
@@ -1719,6 +1729,7 @@ fn main() {
             get_initial_mode,
             drain_pending_paths,
             get_extract_paths,
+            close_extract_window,
             get_platform_info,
             get_cpu_count,
             is_flatpak,
