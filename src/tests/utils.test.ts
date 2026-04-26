@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  $,
   escapeHtml,
   parseThreads,
   formatSize,
@@ -7,7 +8,16 @@ import {
   redactSensitiveText,
   safeHref,
   isArchiveFile,
+  trapFocus,
+  releaseFocusTrap,
 } from "../utils";
+
+function setVisibleForFocus(el: HTMLElement, parent: HTMLElement): void {
+  Object.defineProperty(el, "offsetParent", {
+    configurable: true,
+    get: () => parent,
+  });
+}
 
 describe("splitArgs", () => {
   it("splits quoted and unquoted arguments", () => {
@@ -160,5 +170,66 @@ describe("safeHref", () => {
 
   it("blocks empty strings", () => {
     expect(safeHref("")).toBe("#");
+  });
+});
+
+describe("$ helper", () => {
+  it("returns element when it exists", () => {
+    const el = document.createElement("div");
+    el.id = "custom-test-id";
+    document.body.appendChild(el);
+
+    expect($("custom-test-id")).toBe(el);
+
+    el.remove();
+  });
+
+  it("throws when element is missing", () => {
+    expect(() => $("totally-missing-id")).toThrow(
+      /Element #totally-missing-id not found/,
+    );
+  });
+});
+
+describe("focus trap helpers", () => {
+  it("cycles focus on Tab and Shift+Tab", () => {
+    const container = document.createElement("div");
+    const first = document.createElement("button");
+    const second = document.createElement("button");
+    container.append(first, second);
+    document.body.appendChild(container);
+
+    setVisibleForFocus(first, container);
+    setVisibleForFocus(second, container);
+
+    trapFocus(container);
+    expect(document.activeElement).toBe(first);
+
+    second.focus();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab" }));
+    expect(document.activeElement).toBe(first);
+
+    first.focus();
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Tab", shiftKey: true }),
+    );
+    expect(document.activeElement).toBe(second);
+
+    releaseFocusTrap(container);
+    container.remove();
+  });
+
+  it("supports re-trapping same container without throwing", () => {
+    const container = document.createElement("div");
+    const button = document.createElement("button");
+    container.appendChild(button);
+    document.body.appendChild(container);
+    setVisibleForFocus(button, container);
+
+    trapFocus(container);
+    trapFocus(container);
+    releaseFocusTrap(container);
+
+    container.remove();
   });
 });

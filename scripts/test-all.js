@@ -6,9 +6,15 @@ import { dirname, resolve } from "node:path";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const packageJsonPath = resolve(__dirname, "..", "package.json");
+const coverageSummaryPath = resolve(
+  __dirname,
+  "..",
+  "coverage",
+  "coverage-summary.json",
+);
 const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
 const appVersion = packageJson.version ?? "unknown";
-const scriptVersion = "1.0.0";
+const scriptVersion = "1.1.0";
 
 const colors = {
   reset: "\x1b[0m",
@@ -26,6 +32,13 @@ function createInitialResults() {
     lint: { status: "pending" },
     format: { status: "pending" },
     test: { status: "pending", passed: null, failed: null, files: null },
+    coverage: {
+      status: "pending",
+      lines: null,
+      statements: null,
+      functions: null,
+      branches: null,
+    },
     rust: { status: "pending" },
   };
 }
@@ -59,6 +72,26 @@ function parseTest(output, results) {
 
   if (filesMatch) {
     results.test.files = parseInt(filesMatch[1], 10);
+  }
+}
+
+function parseCoverage(results) {
+  try {
+    const summary = JSON.parse(readFileSync(coverageSummaryPath, "utf8"));
+    const total = summary?.total;
+    if (!total) throw new Error("Missing total coverage block");
+
+    results.coverage.status = "passed";
+    results.coverage.lines = total.lines?.pct ?? null;
+    results.coverage.statements = total.statements?.pct ?? null;
+    results.coverage.functions = total.functions?.pct ?? null;
+    results.coverage.branches = total.branches?.pct ?? null;
+  } catch (err) {
+    results.coverage.status = "failed";
+    const reason = err instanceof Error ? err.message : String(err);
+    console.log(
+      `${colors.red}✗ coverage parsing failed (${reason})${colors.reset}\n`,
+    );
   }
 }
 
@@ -149,6 +182,13 @@ ${colors.reset}`);
     }${results.test.files ? `, ${results.test.files} files` : ""})`,
   );
   console.log(
+    `${colors.bold}Coverage:${colors.reset}   ${
+      results.coverage.status === "passed"
+        ? `${colors.green}✓ PASS`
+        : `${colors.red}✗ FAIL`
+    }${colors.reset} (lines ${results.coverage.lines ?? "n/a"}%, statements ${results.coverage.statements ?? "n/a"}%, functions ${results.coverage.functions ?? "n/a"}%, branches ${results.coverage.branches ?? "n/a"}%)`,
+  );
+  console.log(
     `${colors.bold}Rust Check:${colors.reset} ${
       results.rust.status === "passed"
         ? `${colors.green}✓ PASS`
@@ -178,7 +218,18 @@ function main() {
   runCommand("typecheck", npm, ["run", "typecheck"], null, results);
   runCommand("lint", npm, ["run", "lint"], null, results);
   runCommand("format", npm, ["run", "format:check"], null, results);
-  runCommand("test", npm, ["run", "test"], parseTest, results);
+  const testPassed = runCommand(
+    "test",
+    npm,
+    ["run", "test:cov"],
+    parseTest,
+    results,
+  );
+  if (testPassed) {
+    parseCoverage(results);
+  } else {
+    results.coverage.status = "failed";
+  }
   runCommand(
     "rust",
     "cargo",
