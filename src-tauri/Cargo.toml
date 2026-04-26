@@ -1,6 +1,6 @@
 [package]
 name = "zinnia"
-version = "0.4.1-beta.1"
+version = "0.4.1-beta.2"
 description = "Cross-platform 7z GUI built with Tauri."
 authors = ["BurntToasters <code@rosie.run>"]
 edition = "2021"

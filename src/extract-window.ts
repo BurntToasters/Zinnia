@@ -115,6 +115,14 @@ async function run() {
   let cancelRequested = false;
   let operationFinished = false;
   let destination = "";
+  let autoCloseTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const clearAutoCloseTimer = () => {
+    if (autoCloseTimer !== null) {
+      clearTimeout(autoCloseTimer);
+      autoCloseTimer = null;
+    }
+  };
 
   const finish = (
     status: string,
@@ -169,11 +177,13 @@ async function run() {
   });
 
   closeBtn.addEventListener("click", async () => {
+    clearAutoCloseTimer();
     await closeWindowSafely(appWindow);
   });
 
   openDestinationBtn.addEventListener("click", async () => {
     if (!destination) return;
+    clearAutoCloseTimer();
     openDestinationBtn.disabled = true;
     try {
       await invoke("open_path", { path: destination });
@@ -291,7 +301,9 @@ async function run() {
       finish("Done (with warnings)", 100);
     } else {
       finish("Done", 100);
-      setTimeout(() => {
+      clearAutoCloseTimer();
+      autoCloseTimer = setTimeout(() => {
+        autoCloseTimer = null;
         if (!cancelRequested) {
           void closeWindowSafely(appWindow);
         }
