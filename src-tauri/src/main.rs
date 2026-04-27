@@ -970,6 +970,38 @@ fn get_extract_paths(
     Ok(queue.remove(&label).unwrap_or_default())
 }
 
+fn is_extract_window_label(label: &str) -> bool {
+    label.starts_with("extract-")
+}
+
+fn has_extract_windows(app: &tauri::AppHandle) -> bool {
+    app.webview_windows()
+        .keys()
+        .any(|label| is_extract_window_label(label))
+}
+
+fn first_extract_window(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
+    app.webview_windows().into_iter().find_map(|(label, window)| {
+        if is_extract_window_label(&label) {
+            Some(window)
+        } else {
+            None
+        }
+    })
+}
+
+#[tauri::command]
+fn close_extract_window(window: tauri::Window, app: tauri::AppHandle) -> Result<(), String> {
+    if EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst) {
+        if let Some(main_window) = app.get_webview_window("main") {
+            let _ = main_window.destroy();
+        }
+        return window.destroy().map_err(|e| e.to_string());
+    }
+
+    window.destroy().map_err(|e| e.to_string())
+}
+
 fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Result<(), String> {
     if paths.len() > 100 {
         return Err("Too many paths in a single extract batch.".to_string());
@@ -1163,6 +1195,8 @@ fn route_open_request(app: &tauri::AppHandle, paths: Vec<String>, mode: String) 
         }
         return;
     }
+
+    EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);
 
     if let Ok(mut guard) = FILE_OPEN_SIGNAL.lock() {
         guard.take();
@@ -1686,11 +1720,15 @@ fn main() {
                 }
                 let handle = app.handle().clone();
                 std::thread::spawn(move || {
-                    match rx.recv_timeout(std::time::Duration::from_millis(500)) {
+                    match rx.recv_timeout(std::time::Duration::from_millis(750)) {
                         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                            if let Some(main_window) = handle.get_webview_window("main") {
-                                let _ = main_window.show();
-                                let _ = main_window.set_focus();
+                            if !EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst)
+                                && !has_extract_windows(&handle)
+                            {
+                                if let Some(main_window) = handle.get_webview_window("main") {
+                                    let _ = main_window.show();
+                                    let _ = main_window.set_focus();
+                                }
                             }
                         }
                         _ => {}
@@ -1719,6 +1757,7 @@ fn main() {
             get_initial_mode,
             drain_pending_paths,
             get_extract_paths,
+            close_extract_window,
             get_platform_info,
             get_cpu_count,
             is_flatpak,
@@ -1734,15 +1773,25 @@ fn main() {
         }
         tauri::RunEvent::Reopen { .. } => {
             if EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst) {
-                app_handle.exit(0);
+                if let Some(main_window) = app_handle.get_webview_window("main") {
+                    let _ = main_window.destroy();
+                }
+                if let Some(extract_window) = first_extract_window(app_handle) {
+                    let _ = extract_window.show();
+                    let _ = extract_window.set_focus();
+                } else {
+                    app_handle.exit(0);
+                }
             }
         }
         tauri::RunEvent::WindowEvent {
             event: tauri::WindowEvent::Destroyed,
             ..
         } => {
-            if EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst) && app_handle.webview_windows().is_empty()
-            {
+            if EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst) && !has_extract_windows(app_handle) {
+                if let Some(main_window) = app_handle.get_webview_window("main") {
+                    let _ = main_window.destroy();
+                }
                 app_handle.exit(0);
             }
         }
@@ -1756,8 +1805,10 @@ fn main() {
             ..
         } = event
         {
-            if EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst) && app_handle.webview_windows().is_empty()
-            {
+            if EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst) && !has_extract_windows(app_handle) {
+                if let Some(main_window) = app_handle.get_webview_window("main") {
+                    let _ = main_window.destroy();
+                }
                 app_handle.exit(0);
             }
         }
