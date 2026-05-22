@@ -128,6 +128,17 @@
             <button
               class="settings-tab"
               role="tab"
+              id="tab-os"
+              data-tab="os"
+              aria-selected="false"
+              aria-controls="panel-os"
+              tabindex="-1"
+            >
+              OS Integration
+            </button>
+            <button
+              class="settings-tab"
+              role="tab"
               id="tab-about"
               data-tab="about"
               aria-selected="false"
@@ -204,6 +215,28 @@
                   <option value="comfortable">Comfortable</option>
                   <option value="compact">Compact</option>
                 </select>
+              </div>
+
+              <hr class="setting-divider" />
+
+              <div class="setting-item">
+                <div class="setting-info">
+                  <span
+                    class="setting-title"
+                    id="title-os-integration-dismissed"
+                    >Hide OS integration setup reminder</span
+                  >
+                  <span class="setting-desc"
+                    >Keep the OS integration page available in Settings.</span
+                  >
+                </div>
+                <label
+                  class="switch"
+                  aria-labelledby="title-os-integration-dismissed"
+                >
+                  <input type="checkbox" id="s-os-integration-dismissed" />
+                  <span class="switch__track"></span>
+                </label>
               </div>
 
               <hr class="setting-divider" />
@@ -475,6 +508,59 @@
                   <input type="checkbox" id="s-delete-after" />
                   <span class="switch__track"></span>
                 </label>
+              </div>
+            </div>
+
+            <!-- OS Integration tab -->
+            <div
+              class="settings-panel"
+              data-panel="os"
+              id="panel-os"
+              role="tabpanel"
+              aria-labelledby="tab-os"
+            >
+              <p class="settings-hint" id="os-integration-help">
+                Checking OS integration status…
+              </p>
+              <div class="os-status-grid">
+                <div class="os-status-card">
+                  <span class="settings-label">Platform</span>
+                  <strong id="os-platform-label">Unknown</strong>
+                  <span class="settings-value" id="os-package-label"
+                    >Checking…</span
+                  >
+                </div>
+                <div class="os-status-card">
+                  <span class="settings-label">Archive file types</span>
+                  <span
+                    class="status-pill status-pill--warn"
+                    id="os-file-assoc-status"
+                    >Checking…</span
+                  >
+                </div>
+                <div class="os-status-card">
+                  <span class="settings-label">Open/extract actions</span>
+                  <span
+                    class="status-pill status-pill--warn"
+                    id="os-context-status"
+                    >Checking…</span
+                  >
+                </div>
+              </div>
+              <div class="setting-actions settings-actions--left">
+                <button class="btn btn--sm" id="open-os-integration-settings">
+                  Open OS settings
+                </button>
+                <button
+                  class="btn btn--ghost btn--sm"
+                  id="refresh-os-integration-status"
+                >
+                  Refresh
+                </button>
+              </div>
+              <div class="settings-note">
+                Zinnia never changes default apps automatically. Pick Zinnia in
+                your OS settings for ZIP, 7z, TAR, Gzip, Bzip2, XZ, and RAR.
               </div>
             </div>
 
@@ -860,6 +946,27 @@
           </div>
 
           <div class="setup-wizard-step" data-step="4" hidden>
+            <h2 class="setup-wizard-step__title">OS integration</h2>
+            <p class="setup-wizard-step__desc">
+              Make Zinnia your archive app from your OS settings. Zinnia can
+              open archives directly and expose quick open/extract actions after
+              install.
+            </p>
+            <div class="setup-wizard-os-box">
+              <span>Supported types: ZIP, 7z, TAR, Gzip, Bzip2, XZ, RAR</span>
+            </div>
+            <div class="setup-wizard-step__actions">
+              <button class="btn btn--ghost" id="setup-os-back">Back</button>
+              <button class="btn btn--ghost" id="setup-os-open">
+                Open OS settings
+              </button>
+              <button class="btn btn--primary" id="setup-os-next">
+                Continue
+              </button>
+            </div>
+          </div>
+
+          <div class="setup-wizard-step" data-step="5" hidden>
             <h2 class="setup-wizard-step__title">You're all set</h2>
             <p class="setup-wizard-step__desc">
               Zinnia is ready. You can rerun setup from Settings anytime.
@@ -880,9 +987,9 @@
         <div id="basic-workspace" class="basic-workspace">
           <div id="basic-home" class="basic-view is-active">
             <div class="basic-home__hero">
-              <h2 class="basic-home__title">What would you like to do?</h2>
+              <h2 class="basic-home__title">Drop something here</h2>
               <p class="basic-home__subtitle">
-                Drop files here or choose an action below
+                Zinnia will open archives or compress regular files.
               </p>
             </div>
             <div class="basic-dropzone" id="basic-dropzone">
@@ -898,10 +1005,26 @@
                 </span>
               </span>
               <span class="basic-dropzone__text">
-                <strong>Drop files or archives</strong> to get started
+                <strong id="basic-dropzone-title">Drop files or archives</strong>
+                <span id="basic-dropzone-subtitle">or click to choose</span>
               </span>
             </div>
             <div class="basic-action-cards">
+              <button class="basic-action-card" id="basic-action-open">
+                <span class="basic-action-card__icon">
+                  <img
+                    src="/twemoji/1f4c1.svg"
+                    width="28"
+                    height="28"
+                    alt=""
+                    draggable="false"
+                  />
+                </span>
+                <span class="basic-action-card__label">Open archive</span>
+                <span class="basic-action-card__desc"
+                  >Browse contents or extract all</span
+                >
+              </button>
               <button class="basic-action-card" id="basic-action-compress">
                 <span class="basic-action-card__icon">
                   <img
@@ -917,30 +1040,33 @@
                   >Create a new archive from files or folders</span
                 >
               </button>
-              <button class="basic-action-card" id="basic-action-open">
-                <span class="basic-action-card__icon">
-                  <img
-                    src="/twemoji/1f4c1.svg"
-                    width="28"
-                    height="28"
-                    alt=""
-                    draggable="false"
-                  />
-                </span>
-                <span class="basic-action-card__label">Open archive</span>
-                <span class="basic-action-card__desc"
-                  >Extract or browse an existing archive</span
-                >
-              </button>
+            </div>
+            <div class="basic-recent" id="basic-recent" hidden>
+              <div class="basic-recent__header">Recent</div>
+              <div class="basic-recent__list" id="basic-recent-list"></div>
             </div>
           </div>
 
           <div id="basic-compress" class="basic-view">
-            <button class="basic-back-link" id="basic-compress-back">
-              &larr; Back
-            </button>
-            <h2 class="basic-section-title">Compress files</h2>
-            <div class="basic-card">
+            <div class="basic-view-header">
+              <button class="basic-back-link" id="basic-compress-back">
+                &larr; Back
+              </button>
+              <div>
+                <h2 class="basic-section-title">Compress files</h2>
+                <p class="basic-section-subtitle">
+                  Pick sources, confirm save location, then compress.
+                </p>
+              </div>
+            </div>
+            <div class="basic-card basic-step-card">
+              <div class="basic-step-head">
+                <span class="basic-step-number">1</span>
+                <div>
+                  <h3>Sources</h3>
+                  <p>Files and folders going into the archive.</p>
+                </div>
+              </div>
               <div class="basic-file-list" id="basic-input-list"></div>
               <div class="basic-file-actions">
                 <button
@@ -963,20 +1089,92 @@
                 </button>
               </div>
             </div>
-            <div class="basic-card">
-              <div class="basic-field-grid">
-                <div class="basic-field">
-                  <label class="basic-field__label" for="basic-preset"
-                    >Preset</label
-                  >
-                  <select id="basic-preset">
-                    <option value="store">Store (no compression)</option>
-                    <option value="quick">Quick</option>
-                    <option value="balanced" selected>Balanced</option>
-                    <option value="high">High</option>
-                    <option value="ultra">Ultra</option>
-                  </select>
+            <div class="basic-card basic-step-card">
+              <div class="basic-step-head">
+                <span class="basic-step-number">2</span>
+                <div>
+                  <h3>Name and location</h3>
+                  <p>Default saves next to the source.</p>
                 </div>
+              </div>
+              <div class="basic-output-summary">
+                <span class="basic-output-summary__label">Save to</span>
+                <strong id="basic-output-summary">Choose files first</strong>
+              </div>
+              <div class="basic-field">
+                <label class="basic-field__label" for="basic-archive-name"
+                  >Archive name</label
+                >
+                <input
+                  type="text"
+                  id="basic-archive-name"
+                  placeholder="Use source name"
+                />
+              </div>
+              <div class="basic-field basic-field--path">
+                <label class="basic-field__label" for="basic-output-path"
+                  >Output path</label
+                >
+                <div class="basic-input-row">
+                  <input
+                    type="text"
+                    id="basic-output-path"
+                    placeholder="Choose where to save the archive"
+                  />
+                  <button
+                    class="basic-btn basic-btn--sm basic-btn--secondary"
+                    id="basic-choose-output"
+                  >
+                    Choose folder
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="basic-card basic-step-card">
+              <div class="basic-step-head">
+                <span class="basic-step-number">3</span>
+                <div>
+                  <h3>Options</h3>
+                  <p>Balanced is best for most archives.</p>
+                </div>
+              </div>
+              <select id="basic-preset" class="basic-hidden-select">
+                <option value="quick">Fast</option>
+                <option value="balanced" selected>Balanced</option>
+                <option value="ultra">Smallest</option>
+              </select>
+              <div
+                class="basic-preset-pills"
+                role="group"
+                aria-label="Compression preset"
+              >
+                <button
+                  class="basic-preset-pill"
+                  type="button"
+                  data-basic-preset="quick"
+                  aria-pressed="false"
+                >
+                  Fast
+                </button>
+                <button
+                  class="basic-preset-pill is-active"
+                  type="button"
+                  data-basic-preset="balanced"
+                  aria-pressed="true"
+                >
+                  Balanced
+                </button>
+                <button
+                  class="basic-preset-pill"
+                  type="button"
+                  data-basic-preset="ultra"
+                  aria-pressed="false"
+                >
+                  Smallest
+                </button>
+              </div>
+              <details class="basic-more-options">
+                <summary>More options</summary>
                 <div class="basic-field">
                   <label class="basic-field__label" for="basic-format"
                     >Format</label
@@ -990,38 +1188,9 @@
                     <option value="xz">xz</option>
                   </select>
                 </div>
-              </div>
-              <div class="basic-field">
-                <label class="basic-field__label" for="basic-archive-name"
-                  >Archive name (optional)</label
-                >
-                <input
-                  type="text"
-                  id="basic-archive-name"
-                  placeholder="Leave blank to use source name"
-                />
-              </div>
-              <div class="basic-field">
-                <label class="basic-field__label" for="basic-output-path"
-                  >Save to</label
-                >
-                <div class="basic-input-row">
-                  <input
-                    type="text"
-                    id="basic-output-path"
-                    placeholder="Choose where to save the archive"
-                  />
-                  <button
-                    class="basic-btn basic-btn--sm basic-btn--secondary"
-                    id="basic-choose-output"
-                  >
-                    Browse
-                  </button>
-                </div>
-              </div>
-              <div class="basic-field">
+                <div class="basic-field">
                 <label class="basic-field__label" for="basic-password"
-                  >Password (optional)</label
+                  >Password</label
                 >
                 <div class="basic-input-row">
                   <input
@@ -1040,6 +1209,7 @@
                   </button>
                 </div>
               </div>
+              </details>
             </div>
             <button
               class="basic-btn basic-btn--primary basic-btn--full"
@@ -1079,6 +1249,10 @@
                 class="basic-completion__message"
                 id="basic-compress-completion-msg"
               ></p>
+              <p
+                class="basic-completion__path"
+                id="basic-compress-completion-path"
+              ></p>
               <div class="basic-completion__actions">
                 <button
                   class="basic-btn basic-btn--sm basic-btn--primary"
@@ -1092,16 +1266,29 @@
                 >
                   Compress more
                 </button>
+                <button
+                  class="basic-btn basic-btn--sm basic-btn--ghost"
+                  id="basic-compress-home"
+                >
+                  Back home
+                </button>
               </div>
             </div>
           </div>
 
           <div id="basic-extract" class="basic-view">
-            <button class="basic-back-link" id="basic-extract-back">
-              &larr; Back
-            </button>
-            <h2 class="basic-section-title">Extract archive</h2>
-            <div class="basic-card">
+            <div class="basic-view-header">
+              <button class="basic-back-link" id="basic-extract-back">
+                &larr; Back
+              </button>
+              <div>
+                <h2 class="basic-section-title">Open archive</h2>
+                <p class="basic-section-subtitle">
+                  Browse contents or extract everything.
+                </p>
+              </div>
+            </div>
+            <div class="basic-card basic-step-card">
               <div class="basic-archive-info" id="basic-extract-archive-info">
                 <span class="basic-archive-info__icon">
                   <img
@@ -1124,6 +1311,12 @@
                   ></span>
                 </div>
               </div>
+              <div class="basic-output-summary">
+                <span class="basic-output-summary__label">Destination</span>
+                <strong id="basic-extract-summary"
+                  >Extract to a folder named after the archive</strong
+                >
+              </div>
               <div class="basic-field">
                 <label class="basic-field__label" for="basic-extract-path"
                   >Extract to</label
@@ -1138,31 +1331,39 @@
                     class="basic-btn basic-btn--sm basic-btn--secondary"
                     id="basic-choose-extract"
                   >
-                    Browse
+                    Choose folder
                   </button>
                 </div>
               </div>
-              <div class="basic-field" id="basic-extract-password-field">
-                <label class="basic-field__label" for="basic-extract-password"
-                  >Password</label
-                >
-                <div class="basic-input-row">
-                  <input
-                    type="password"
-                    id="basic-extract-password"
-                    placeholder="Enter archive password"
-                    autocomplete="off"
-                  />
-                  <button
-                    class="basic-password-toggle"
-                    id="basic-toggle-extract-password"
-                    type="button"
-                    aria-label="Toggle password visibility"
+              <details
+                class="basic-more-options"
+                id="basic-extract-password-field"
+              >
+                <summary>Password</summary>
+                <div class="basic-field">
+                  <label
+                    class="basic-field__label"
+                    for="basic-extract-password"
+                    >Password</label
                   >
-                    Show
-                  </button>
+                  <div class="basic-input-row">
+                    <input
+                      type="password"
+                      id="basic-extract-password"
+                      placeholder="Enter archive password"
+                      autocomplete="off"
+                    />
+                    <button
+                      class="basic-password-toggle"
+                      id="basic-toggle-extract-password"
+                      type="button"
+                      aria-label="Toggle password visibility"
+                    >
+                      Show
+                    </button>
+                  </div>
                 </div>
-              </div>
+              </details>
             </div>
             <div class="basic-extract-actions">
               <button
@@ -1210,6 +1411,10 @@
                 class="basic-completion__message"
                 id="basic-extract-completion-msg"
               ></p>
+              <p
+                class="basic-completion__path"
+                id="basic-extract-completion-path"
+              ></p>
               <div class="basic-completion__actions">
                 <button
                   class="basic-btn basic-btn--sm basic-btn--primary"
@@ -1223,15 +1428,28 @@
                 >
                   Extract another
                 </button>
+                <button
+                  class="basic-btn basic-btn--sm basic-btn--ghost"
+                  id="basic-extract-home"
+                >
+                  Back home
+                </button>
               </div>
             </div>
           </div>
 
           <div id="basic-browse" class="basic-view">
-            <button class="basic-back-link" id="basic-browse-back">
-              &larr; Back
-            </button>
-            <h2 class="basic-section-title">Browse archive</h2>
+            <div class="basic-view-header">
+              <button class="basic-back-link" id="basic-browse-back">
+                &larr; Back
+              </button>
+              <div>
+                <h2 class="basic-section-title">Browse archive</h2>
+                <p class="basic-section-subtitle">
+                  Preview contents before extracting.
+                </p>
+              </div>
+            </div>
             <div class="basic-card">
               <div class="basic-archive-info" id="basic-browse-archive-info">
                 <span class="basic-archive-info__icon">

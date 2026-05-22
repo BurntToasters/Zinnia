@@ -30,6 +30,7 @@ export interface UserSettings {
   showActivityPanel: boolean;
   workspaceMode: WorkspaceMode;
   uiDensity: UiDensity;
+  osIntegrationDismissed: boolean;
 }
 
 export interface LoadSettingsResult {
@@ -60,6 +61,7 @@ export const SETTING_DEFAULTS: UserSettings = {
   showActivityPanel: false,
   workspaceMode: "basic",
   uiDensity: "comfortable",
+  osIntegrationDismissed: false,
 };
 
 const THEMES = new Set<ThemePreference>(["system", "light", "dark"]);
@@ -98,6 +100,7 @@ const USER_SETTING_KEYS = new Set<keyof UserSettings>([
   "showActivityPanel",
   "workspaceMode",
   "uiDensity",
+  "osIntegrationDismissed",
 ]);
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -173,6 +176,10 @@ export function normalizeUserSettings(
       fallback.workspaceMode,
     ),
     uiDensity: asSetValue(settings.uiDensity, UI_DENSITIES, fallback.uiDensity),
+    osIntegrationDismissed: asBoolean(
+      settings.osIntegrationDismissed,
+      fallback.osIntegrationDismissed,
+    ),
   };
 }
 

@@ -25,7 +25,7 @@ import {
 type BasicHooks = {
   onRenderInputs: () => void;
   onSetRunning: (active: boolean) => void;
-  onSetStatus: (text: string) => void;
+  onSetStatus: (text: string, errorDetail?: string) => void;
 };
 let basicHooks: BasicHooks | null = null;
 
@@ -339,13 +339,13 @@ export function setUiDensity(
   }
 }
 
-export function setStatus(text: string, autoResetMs?: number) {
+export function setStatus(text: string, autoResetMs?: number, errorDetail?: string) {
   if (state.statusTimeout !== undefined) {
     clearTimeout(state.statusTimeout);
     state.statusTimeout = undefined;
   }
   dom.statusEl.textContent = text;
-  basicHooks?.onSetStatus(text);
+  basicHooks?.onSetStatus(text, errorDetail);
   if (autoResetMs) {
     state.statusTimeout = window.setTimeout(() => {
       setStatus("Idle");

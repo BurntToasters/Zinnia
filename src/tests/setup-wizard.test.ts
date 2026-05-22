@@ -34,7 +34,7 @@ describe("setup wizard state", () => {
 
   it("does not show wizard when setup is complete for current version", () => {
     state.settingsExtras._setupComplete = true;
-    state.settingsExtras._setupWizardVersion = 1;
+    state.settingsExtras._setupWizardVersion = 2;
     expect(shouldShowSetupWizard()).toBe(false);
   });
 
@@ -47,7 +47,7 @@ describe("setup wizard state", () => {
   it("marks setup complete and persists settings", async () => {
     await markSetupComplete();
     expect(state.settingsExtras._setupComplete).toBe(true);
-    expect(state.settingsExtras._setupWizardVersion).toBe(1);
+    expect(state.settingsExtras._setupWizardVersion).toBe(2);
     expect(mockSaveSettings).toHaveBeenCalledOnce();
   });
 });
@@ -92,6 +92,7 @@ describe("showSetupWizard", () => {
     (
       document.getElementById("setup-updates-next") as HTMLButtonElement
     ).click();
+    (document.getElementById("setup-os-next") as HTMLButtonElement).click();
     (document.getElementById("setup-done-btn") as HTMLButtonElement).click();
 
     const result = await promise;
@@ -100,6 +101,7 @@ describe("showSetupWizard", () => {
       theme: "dark",
       autoCheckUpdates: false,
       updateChannel: "beta",
+      osIntegrationDismissed: true,
     });
     expect(mockApplyTheme).toHaveBeenCalledWith("dark");
   });
@@ -118,6 +120,7 @@ describe("showSetupWizard", () => {
     (
       document.getElementById("setup-updates-next") as HTMLButtonElement
     ).click();
+    (document.getElementById("setup-os-next") as HTMLButtonElement).click();
     (document.getElementById("setup-done-btn") as HTMLButtonElement).click();
 
     const result = await promise;

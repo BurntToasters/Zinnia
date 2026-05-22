@@ -777,7 +777,7 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
 
     if (result.code > 1) {
       log(`7z exited with code ${result.code}`);
-      setStatus("Error", 3000);
+      setStatus("Error", 3000, result.stderr || "Operation failed.");
       hideProgress();
       const errorDetails = result.stderr
         ? `\n\n${truncateForDialog(result.stderr.trim())}`
@@ -809,7 +809,7 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
 
     const msg = err instanceof Error ? err.message : String(err);
     log(`Error: ${msg}`);
-    setStatus("Error", 3000);
+    setStatus("Error", 3000, msg);
     hideProgress();
     await message(msg, { title: "Error", kind: "error" });
   } finally {
@@ -899,7 +899,7 @@ export async function runAction() {
 
     if (result.code > 1) {
       log(`7z exited with code ${result.code}`);
-      setStatus("Error", 3000);
+      setStatus("Error", 3000, result.stderr || "Operation failed.");
       hideProgress();
       const errorDetails = result.stderr
         ? `\n\n${truncateForDialog(result.stderr.trim())}`
@@ -931,7 +931,7 @@ export async function runAction() {
 
     const messageText = err instanceof Error ? err.message : String(err);
     log(`Error: ${messageText}`);
-    setStatus("Error", 3000);
+    setStatus("Error", 3000, messageText);
     hideProgress();
     await message(messageText, { title: "Error", kind: "error" });
   } finally {
@@ -1024,7 +1024,7 @@ export async function runBatchExtract() {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Error: ${msg}`);
-    setStatus("Error", 3000);
+    setStatus("Error", 3000, msg);
     hideProgress();
     await message(msg, { title: "Extraction error", kind: "error" });
   } finally {
@@ -1112,7 +1112,7 @@ export async function testArchive(): Promise<ArchiveTestResult> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Test error: ${msg}`);
-    setStatus("Error", 3000);
+    setStatus("Error", 3000, msg);
     hideProgress();
     await message(msg, { title: "Test error", kind: "error" });
     return "error";
@@ -1184,7 +1184,7 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Browse error: ${msg}`);
-    setStatus("Error", 3000);
+    setStatus("Error", 3000, msg);
     await message(msg, { title: "Browse error", kind: "error" });
     return null;
   } finally {

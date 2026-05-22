@@ -1,5 +1,6 @@
 import { saveSettings, applyTheme } from "./settings";
 import { state } from "./state";
+import { openOsIntegrationSettings } from "./os-integration";
 import type {
   ThemePreference,
   WorkspaceMode,
@@ -7,14 +8,15 @@ import type {
 } from "./settings-model";
 import { trapFocus, releaseFocusTrap } from "./utils";
 
-const SETUP_WIZARD_VERSION = 1;
-const LAST_STEP = 4;
+const SETUP_WIZARD_VERSION = 2;
+const LAST_STEP = 5;
 
 interface SetupWizardResult {
   workspaceMode: WorkspaceMode;
   theme: ThemePreference;
   autoCheckUpdates: boolean;
   updateChannel: UpdateChannel;
+  osIntegrationDismissed: boolean;
 }
 
 function $(id: string): HTMLElement {
@@ -76,6 +78,9 @@ export function showSetupWizard(): Promise<SetupWizardResult | null> {
     const themeNext = $("setup-theme-next") as HTMLButtonElement;
     const updatesBack = $("setup-updates-back") as HTMLButtonElement;
     const updatesNext = $("setup-updates-next") as HTMLButtonElement;
+    const osBack = $("setup-os-back") as HTMLButtonElement;
+    const osOpen = $("setup-os-open") as HTMLButtonElement;
+    const osNext = $("setup-os-next") as HTMLButtonElement;
     const doneBtn = $("setup-done-btn") as HTMLButtonElement;
     const autoUpdates = $("setup-auto-updates") as HTMLInputElement;
     const updateChannel = $("setup-update-channel") as HTMLSelectElement;
@@ -120,6 +125,9 @@ export function showSetupWizard(): Promise<SetupWizardResult | null> {
       themeNext.removeEventListener("click", onThemeNext);
       updatesBack.removeEventListener("click", onUpdatesBack);
       updatesNext.removeEventListener("click", onUpdatesNext);
+      osBack.removeEventListener("click", onOsBack);
+      osOpen.removeEventListener("click", onOsOpen);
+      osNext.removeEventListener("click", onOsNext);
       doneBtn.removeEventListener("click", onDone);
       autoUpdates.removeEventListener("change", onAutoUpdatesChange);
       updateChannel.removeEventListener("change", onUpdateChannelChange);
@@ -193,12 +201,25 @@ export function showSetupWizard(): Promise<SetupWizardResult | null> {
       goTo(4);
     }
 
+    function onOsBack(): void {
+      goTo(3);
+    }
+
+    function onOsOpen(): void {
+      void openOsIntegrationSettings();
+    }
+
+    function onOsNext(): void {
+      goTo(5);
+    }
+
     function onDone(): void {
       const result: SetupWizardResult = {
         workspaceMode: selectedWorkspace,
         theme: selectedTheme,
         autoCheckUpdates: selectedAutoUpdates,
         updateChannel: selectedChannel,
+        osIntegrationDismissed: true,
       };
       cleanup();
       resolve(result);
@@ -218,6 +239,9 @@ export function showSetupWizard(): Promise<SetupWizardResult | null> {
     themeNext.addEventListener("click", onThemeNext);
     updatesBack.addEventListener("click", onUpdatesBack);
     updatesNext.addEventListener("click", onUpdatesNext);
+    osBack.addEventListener("click", onOsBack);
+    osOpen.addEventListener("click", onOsOpen);
+    osNext.addEventListener("click", onOsNext);
     doneBtn.addEventListener("click", onDone);
     autoUpdates.addEventListener("change", onAutoUpdatesChange);
     updateChannel.addEventListener("change", onUpdateChannelChange);
