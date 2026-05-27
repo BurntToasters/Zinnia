@@ -19,6 +19,9 @@ The `.sig` files in this repo are NOT normal gpg signatures they are for Tauri V
 The `.asc` files are my normal GPG signatures which you can verify using my GPG Public Key: https://tuxedo.rosie.run/GPG/BurntToasters_0xF2FBC20F_public.asc.
 ⚠️ Arm64 Linux Binaries are *NOT* available at the moment. Its something I may get around to in the future but its not a priority. However, I do have the logic setup in the repo in-case people would like to build their own :)
 
+## Changes in `v0.5.0-beta.2:`
+* **UI Modes:** Added experimental save states between basic <-> advanced.
+
 ## Changes in `v0.5.0:`
 * **UI:** Reworked Basic mode into a task-first launcher for opening, extracting, and compressing archives.
 * **OS Integration:** Added Settings and setup wizard guidance for default archive app setup.
