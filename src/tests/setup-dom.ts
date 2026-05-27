@@ -217,7 +217,16 @@ const sacu = addEl("input", "s-auto-check-updates") as HTMLInputElement;
 sacu.type = "checkbox";
 const sll = addEl("input", "s-local-logging") as HTMLInputElement;
 sll.type = "checkbox";
+const soid = addEl("input", "s-os-integration-dismissed") as HTMLInputElement;
+soid.type = "checkbox";
 addEl("div", "s-log-dir");
+addEl("div", "os-integration-help");
+addEl("div", "os-platform-label");
+addEl("div", "os-package-label");
+addEl("div", "os-file-assoc-status");
+addEl("div", "os-context-status");
+addEl("button", "open-os-integration-settings");
+addEl("button", "refresh-os-integration-status");
 addEl("div", "settings-overlay");
 addEl("button", "rerun-setup-wizard");
 
@@ -253,7 +262,7 @@ const setupProgress = document.createElement("div");
 setupProgress.id = "setup-wizard-progress-bar";
 setupCard.appendChild(setupProgress);
 
-for (const step of ["0", "1", "2", "3", "4"]) {
+for (const step of ["0", "1", "2", "3", "4", "5"]) {
   const section = document.createElement("div");
   section.className = "setup-wizard-step";
   section.dataset.step = step;
@@ -269,6 +278,9 @@ addEl("button", "setup-theme-back");
 addEl("button", "setup-theme-next");
 addEl("button", "setup-updates-back");
 addEl("button", "setup-updates-next");
+addEl("button", "setup-os-back");
+addEl("button", "setup-os-open");
+addEl("button", "setup-os-next");
 addEl("button", "setup-done-btn");
 
 const setupAutoUpdates = addEl(

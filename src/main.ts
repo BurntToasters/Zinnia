@@ -75,6 +75,10 @@ import {
   handleBasicDragDrop,
   syncBasicBeforeRun,
 } from "./basic-ui";
+import {
+  refreshOsIntegrationStatus,
+  wireOsIntegrationEvents,
+} from "./os-integration";
 
 async function exportLocalLogs() {
   try {
@@ -202,6 +206,10 @@ async function runSetupWizardFlow(): Promise<void> {
     state.currentSettings.theme = result.theme;
     state.currentSettings.autoCheckUpdates = result.autoCheckUpdates;
     state.currentSettings.updateChannel = result.updateChannel;
+    if (typeof result.osIntegrationDismissed === "boolean") {
+      state.currentSettings.osIntegrationDismissed =
+        result.osIntegrationDismissed;
+    }
   }
 
   await markSetupComplete();
@@ -545,6 +553,7 @@ function wireEvents() {
   $("about-show-licenses").addEventListener("click", (e) =>
     openLicensesModal(e.currentTarget as HTMLElement),
   );
+  wireOsIntegrationEvents();
 
   $("close-licenses").addEventListener("click", closeLicensesModal);
   $("licenses-overlay").addEventListener("click", (e) => {
@@ -710,6 +719,10 @@ async function init() {
   dom.platformLabel.textContent = platformDisplay;
   $("s-version-label").textContent = version;
   $("s-platform-label").textContent = platformDisplay;
+  await refreshOsIntegrationStatus().catch((err) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    devLog(`Unable to read OS integration status: ${msg}`);
+  });
 
   let flatpak = false;
   try {

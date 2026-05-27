@@ -981,13 +981,15 @@ fn has_extract_windows(app: &tauri::AppHandle) -> bool {
 }
 
 fn first_extract_window(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
-    app.webview_windows().into_iter().find_map(|(label, window)| {
-        if is_extract_window_label(&label) {
-            Some(window)
-        } else {
-            None
-        }
-    })
+    app.webview_windows()
+        .into_iter()
+        .find_map(|(label, window)| {
+            if is_extract_window_label(&label) {
+                Some(window)
+            } else {
+                None
+            }
+        })
 }
 
 #[tauri::command]
@@ -1047,6 +1049,67 @@ fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Result<()
 #[tauri::command]
 fn get_platform_info() -> String {
     std::env::consts::OS.to_string()
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OsIntegrationStatus {
+    platform: String,
+    packaged: bool,
+    file_associations_known: bool,
+    context_actions_known: bool,
+    default_app_help_available: bool,
+}
+
+fn os_integration_status_for(platform: &str, packaged: bool) -> OsIntegrationStatus {
+    let supported_platform = matches!(platform, "macos" | "windows" | "linux");
+    OsIntegrationStatus {
+        platform: platform.to_string(),
+        packaged,
+        file_associations_known: packaged && supported_platform,
+        context_actions_known: packaged && supported_platform,
+        default_app_help_available: matches!(platform, "macos" | "windows"),
+    }
+}
+
+#[tauri::command]
+fn get_os_integration_status() -> OsIntegrationStatus {
+    os_integration_status_for(std::env::consts::OS, is_packaged())
+}
+
+#[tauri::command]
+#[allow(deprecated)]
+fn open_os_integration_settings(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        return app
+            .shell()
+            .open("ms-settings:defaultapps", None)
+            .map_err(|e| e.to_string());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        return app
+            .shell()
+            .open(
+                "x-apple.systempreferences:com.apple.ExtensionsPreferences",
+                None,
+            )
+            .map_err(|e| e.to_string());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let _ = app;
+        Err("Open your desktop's Default Applications settings, or run xdg-mime default run.rosie.zinnia.desktop for archive MIME types.".to_string())
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        let _ = app;
+        Err("Default app settings are not available for this platform.".to_string())
+    }
 }
 
 #[tauri::command]
@@ -1297,6 +1360,19 @@ mod tests {
         assert!(is_non_running_kill_error("process already finished"));
         assert!(is_non_running_kill_error("child process is not running"));
         assert!(!is_non_running_kill_error("permission denied"));
+    }
+
+    #[test]
+    fn os_integration_status_reflects_packaged_support() {
+        let packaged = os_integration_status_for("windows", true);
+        assert!(packaged.file_associations_known);
+        assert!(packaged.context_actions_known);
+        assert!(packaged.default_app_help_available);
+
+        let dev = os_integration_status_for("linux", false);
+        assert!(!dev.file_associations_known);
+        assert!(!dev.context_actions_known);
+        assert!(!dev.default_app_help_available);
     }
 
     #[test]
@@ -1759,6 +1835,8 @@ fn main() {
             get_extract_paths,
             close_extract_window,
             get_platform_info,
+            get_os_integration_status,
+            open_os_integration_settings,
             get_cpu_count,
             is_flatpak,
             is_packaged

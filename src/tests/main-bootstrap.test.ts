@@ -90,6 +90,10 @@ const mocks = vi.hoisted(() => {
       showSetupWizard: vi.fn().mockResolvedValue(null),
       markSetupComplete: vi.fn().mockResolvedValue(undefined),
     },
+    osIntegration: {
+      refreshOsIntegrationStatus: vi.fn().mockResolvedValue(undefined),
+      wireOsIntegrationEvents: vi.fn(),
+    },
     extractPath: {
       deriveOutputArchivePath: vi.fn().mockReturnValue("/tmp/out.7z"),
       resolveOutputArchiveAutofill: vi.fn().mockReturnValue(null),
@@ -187,6 +191,11 @@ vi.mock("../setup-wizard", () => ({
   shouldShowSetupWizard: mocks.setupWizard.shouldShowSetupWizard,
   showSetupWizard: mocks.setupWizard.showSetupWizard,
   markSetupComplete: mocks.setupWizard.markSetupComplete,
+}));
+
+vi.mock("../os-integration", () => ({
+  refreshOsIntegrationStatus: mocks.osIntegration.refreshOsIntegrationStatus,
+  wireOsIntegrationEvents: mocks.osIntegration.wireOsIntegrationEvents,
 }));
 
 vi.mock("../extract-path", () => ({
@@ -505,6 +514,10 @@ beforeEach(async () => {
   mocks.setupWizard.showSetupWizard.mockResolvedValue(null);
   mocks.setupWizard.markSetupComplete.mockReset();
   mocks.setupWizard.markSetupComplete.mockResolvedValue(undefined);
+
+  mocks.osIntegration.refreshOsIntegrationStatus.mockReset();
+  mocks.osIntegration.refreshOsIntegrationStatus.mockResolvedValue(undefined);
+  mocks.osIntegration.wireOsIntegrationEvents.mockReset();
 
   mocks.extractPath.deriveOutputArchivePath.mockReset();
   mocks.extractPath.deriveOutputArchivePath.mockReturnValue("/tmp/out.7z");

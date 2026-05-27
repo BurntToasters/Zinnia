@@ -1438,6 +1438,74 @@ input[type="number"] {
   color: var(--text-secondary);
 }
 
+.setup-wizard-os-box {
+  width: 100%;
+  max-width: 390px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.os-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.os-status-card {
+  min-height: 86px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  justify-content: center;
+}
+
+.os-status-card strong {
+  font-size: 0.9375rem;
+}
+
+.status-pill {
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.status-pill--ok {
+  color: var(--success);
+  background: var(--success-bg);
+}
+
+.status-pill--warn {
+  color: var(--warning);
+  background: var(--warning-bg);
+}
+
+.settings-actions--left {
+  justify-content: flex-start;
+}
+
+.settings-note {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-bg);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
 .settings-group {
   border: 1px solid var(--border);
   border-radius: var(--radius);

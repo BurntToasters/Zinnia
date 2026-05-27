@@ -93,6 +93,8 @@ export function populateSettingsModal() {
   $<HTMLSelectElement>("s-workspace-mode").value =
     state.currentSettings.workspaceMode;
   $<HTMLSelectElement>("s-ui-density").value = state.currentSettings.uiDensity;
+  $<HTMLInputElement>("s-os-integration-dismissed").checked =
+    state.currentSettings.osIntegrationDismissed;
   syncSettingsSecurityControlsForFormat(state.currentSettings.format);
 
   const logDir = document.getElementById("s-log-dir");
@@ -147,6 +149,8 @@ export function readSettingsModal(): UserSettings {
       .value as UserSettings["workspaceMode"],
     uiDensity: $<HTMLSelectElement>("s-ui-density")
       .value as UserSettings["uiDensity"],
+    osIntegrationDismissed: $<HTMLInputElement>("s-os-integration-dismissed")
+      .checked,
   };
 }
 

@@ -1,0 +1,19 @@
+[Desktop Entry]
+Type=Application
+Name={{name}}
+Exec={{exec}} %F
+Icon={{icon}}
+Categories={{categories}}
+Terminal=false
+{{#if comment}}
+Comment={{comment}}
+{{/if}}
+Actions=Open;Extract;
+
+[Desktop Action Open]
+Name=Open with Zinnia
+Exec={{exec}} %F
+
+[Desktop Action Extract]
+Name=Extract with Zinnia
+Exec={{exec}} --extract %F

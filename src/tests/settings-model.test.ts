@@ -66,10 +66,12 @@ describe("normalizeUserSettings", () => {
     const result = normalizeUserSettings({
       autoCheckUpdates: false,
       localLoggingEnabled: false,
+      osIntegrationDismissed: true,
       logVerbosity: "debug",
     });
     expect(result.autoCheckUpdates).toBe(false);
     expect(result.localLoggingEnabled).toBe(false);
+    expect(result.osIntegrationDismissed).toBe(true);
     expect(result.logVerbosity).toBe("debug");
   });
 
