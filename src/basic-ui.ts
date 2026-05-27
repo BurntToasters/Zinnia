@@ -620,38 +620,6 @@ export function initBasicWorkspace(): void {
     });
   }
 
-  const actionOpen = document.getElementById("basic-action-open");
-  if (actionOpen) {
-    actionOpen.addEventListener("click", async () => {
-      const selection = await open({
-        title: "Open archive",
-        multiple: true,
-        filters: [{ name: "Archives", extensions: ["7z", "zip", "tar", "gz", "tgz", "bz2", "tbz2", "xz", "txz", "rar"] }]
-      });
-      if (!selection) return;
-      const paths = Array.isArray(selection) ? selection : [selection];
-      if (paths.length > 0) {
-        state.inputs.length = 0;
-        for (const p of paths) {
-          if (!state.inputs.includes(p)) state.inputs.push(p);
-        }
-        setMode("extract");
-        renderInputs();
-        setBasicView("extract");
-      }
-    });
-  }
-
-  const actionCompress = document.getElementById("basic-action-compress");
-  if (actionCompress) {
-    actionCompress.addEventListener("click", () => {
-      state.inputs.length = 0;
-      renderInputs();
-      setMode("add");
-      setBasicView("compress");
-    });
-  }
-
   wireBasicCompressEvents();
   wireBasicExtractEvents();
   wireBasicBrowseEvents();
@@ -869,23 +837,27 @@ function wireBasicExtractEvents(): void {
     });
   }
 
-  document.querySelectorAll<HTMLButtonElement>(".basic-preset-pill").forEach((pill) => {
-    pill.addEventListener("click", () => {
-      document.querySelectorAll(".basic-preset-pill").forEach(p => {
-        p.classList.remove("is-active");
-        p.setAttribute("aria-pressed", "false");
+  document
+    .querySelectorAll<HTMLButtonElement>(".basic-preset-pill")
+    .forEach((pill) => {
+      pill.addEventListener("click", () => {
+        document.querySelectorAll(".basic-preset-pill").forEach((p) => {
+          p.classList.remove("is-active");
+          p.setAttribute("aria-pressed", "false");
+        });
+        pill.classList.add("is-active");
+        pill.setAttribute("aria-pressed", "true");
+
+        const preset = pill.dataset.basicPreset;
+        const select = document.getElementById(
+          "basic-preset",
+        ) as HTMLSelectElement | null;
+        if (select && preset) {
+          select.value = preset;
+          applyPreset(preset);
+        }
       });
-      pill.classList.add("is-active");
-      pill.setAttribute("aria-pressed", "true");
-      
-      const preset = pill.dataset.basicPreset;
-      const select = document.getElementById("basic-preset") as HTMLSelectElement | null;
-      if (select && preset) {
-        select.value = preset;
-        applyPreset(preset);
-      }
     });
-  });
 
   const compressAnotherBtn = document.getElementById("basic-compress-another");
   if (compressAnotherBtn) {
@@ -984,30 +956,51 @@ function wireBasicKeyboardEvents(): void {
   document.addEventListener("keydown", (e) => {
     if (getWorkspaceMode() !== "basic") return;
     if (document.querySelector(".modal:not([hidden])")) return;
-    
+
     if (e.key === "Escape") {
       const activeElement = document.activeElement as HTMLElement;
-      if (activeElement && ["INPUT", "TEXTAREA", "SELECT"].includes(activeElement.tagName)) {
+      if (
+        activeElement &&
+        ["INPUT", "TEXTAREA", "SELECT"].includes(activeElement.tagName)
+      ) {
         activeElement.blur();
         return;
       }
-      if (document.getElementById("basic-compress")?.classList.contains("is-active")) {
+      if (
+        document
+          .getElementById("basic-compress")
+          ?.classList.contains("is-active")
+      ) {
         document.getElementById("basic-compress-back")?.click();
-      } else if (document.getElementById("basic-extract")?.classList.contains("is-active")) {
+      } else if (
+        document
+          .getElementById("basic-extract")
+          ?.classList.contains("is-active")
+      ) {
         document.getElementById("basic-extract-back")?.click();
-      } else if (document.getElementById("basic-browse")?.classList.contains("is-active")) {
+      } else if (
+        document.getElementById("basic-browse")?.classList.contains("is-active")
+      ) {
         document.getElementById("basic-browse-back")?.click();
       }
     } else if (e.key === "Enter") {
       const activeElement = document.activeElement as HTMLElement;
-      if (activeElement && ["BUTTON", "A"].includes(activeElement.tagName)) return;
-      
-      if (document.getElementById("basic-compress")?.classList.contains("is-active")) {
+      if (activeElement && ["BUTTON", "A"].includes(activeElement.tagName))
+        return;
+
+      if (
+        document
+          .getElementById("basic-compress")
+          ?.classList.contains("is-active")
+      ) {
         document.getElementById("basic-run-compress")?.click();
-      } else if (document.getElementById("basic-extract")?.classList.contains("is-active")) {
+      } else if (
+        document
+          .getElementById("basic-extract")
+          ?.classList.contains("is-active")
+      ) {
         document.getElementById("basic-run-extract")?.click();
       }
     }
   });
 }
-

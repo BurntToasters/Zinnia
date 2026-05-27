@@ -11,19 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: npx tsc --noEmit
-
-  tests:
-    needs: lint
+  quality-gate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,11 +29,10 @@ jobs:
             librsvg2-dev \
             patchelf
       - run: npm ci
-      - run: npm test
-      - run: npm run test:rust
+      - run: npm run test:all
 
   rust-check:
-    needs: lint
+    needs: quality-gate
     strategy:
       matrix:
         os: [windows-latest, macos-latest]
@@ -58,6 +45,6 @@ jobs:
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
       - run: npm ci
-      - run: npm test
+      - run: npm run test:cov
       - run: npm run prepare:7z
-      - run: cargo check --manifest-path src-tauri/Cargo.toml
+      - run: cargo test --manifest-path src-tauri/Cargo.toml

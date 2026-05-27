@@ -1,5 +1,5 @@
-<!-- > [!NOTE]
-> 🅱️ This is a BETA build. -->
+> [!NOTE]
+> 🅱️ This is a BETA build.
 
 ### ℹ️ Enjoying Zinnia? Consider [❤️ Supporting Me! ❤️](https://rosie.run/support)
 
@@ -9,10 +9,10 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
 | <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> MacOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux |
 | :--- | :--- | :--- |
-| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.4.2/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.4.2/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.4.2/Zinnia-macOS.dmg)** | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.4.2/Zinnia-Linux-x64.AppImage) <!--/  [arm64](https://github.com/BurntToasters/IYERIS/releases/download/v1.0.4/IYERIS-Linux-arm64.AppImage) --> |
-| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>--> | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.4.2/Zinnia-macOS.zip)** | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.4.2/Zinnia-Linux-x64.deb) <!--/ [arm64](https://github.com/BurntToasters/IYERIS/releases/download/v1.0.4/IYERIS-Linux-arm64.deb)--> |
-| <!--*See MSI note below*--> | | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.4.2/Zinnia-Linux-x64.rpm) <!--/ [arm64](https://github.com/BurntToasters/IYERIS/releases/download/v1.0.4/IYERIS-Linux-aarch64.rpm)--> |
-| | | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.4.2/Zinnia-Linux-x64.flatpak) <!--/ [arm64](https://github.com/BurntToasters/IYERIS/releases/download/v1.0.4/IYERIS-Linux-aarch64.flatpak)--> |
+| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.0-beta.1/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.0-beta.1/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.0-beta.1/Zinnia-macOS.dmg)** | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.0-beta.1/Zinnia-Linux-x64.AppImage) <!--/  [arm64](https://github.com/BurntToasters/IYERIS/releases/download/v1.0.4/IYERIS-Linux-arm64.AppImage) --> |
+| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>--> | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.0-beta.1/Zinnia-macOS.zip)** | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.0-beta.1/Zinnia-Linux-x64.deb) <!--/ [arm64](https://github.com/BurntToasters/IYERIS/releases/download/v1.0.4/IYERIS-Linux-arm64.deb)--> |
+| <!--*See MSI note below*--> | | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.0-beta.1/Zinnia-Linux-x64.rpm) <!--/ [arm64](https://github.com/BurntToasters/IYERIS/releases/download/v1.0.4/IYERIS-Linux-aarch64.rpm)--> |
+| | | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.0-beta.1/Zinnia-Linux-x64.flatpak) <!--/ [arm64](https://github.com/BurntToasters/IYERIS/releases/download/v1.0.4/IYERIS-Linux-aarch64.flatpak)--> |
 
 > [!IMPORTANT]
 The `.sig` files in this repo are NOT normal gpg signatures they are for Tauri V2's updater to verify the integrity of updates before downloading and installing.
@@ -47,6 +47,8 @@ The `.asc` files are my normal GPG signatures which you can verify using my GPG 
 <details>
 <summary>Full changelog</summary>
 
-Nothing yet!
+v0.5.0 introduces a rebuilt task-first Basic mode, expanded OS integration setup guidance, and platform launcher/context integration improvements.
 
 </details>
+
+[i] This changelog is made using the BCLS Standard: https://github.com/BurntToasters/BCLS

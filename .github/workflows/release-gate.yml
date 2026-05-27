@@ -13,6 +13,11 @@ on:
         required: false
         type: boolean
         default: false
+      release_notes:
+        description: Release notes text for updater manifests and GitHub draft body
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -346,3 +351,4 @@ jobs:
           GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
           REQUIRED_LINUX_TARGETS: x86_64
+          RELEASE_NOTES: ${{ inputs.release_notes }}

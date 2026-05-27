@@ -339,7 +339,11 @@ export function setUiDensity(
   }
 }
 
-export function setStatus(text: string, autoResetMs?: number, errorDetail?: string) {
+export function setStatus(
+  text: string,
+  autoResetMs?: number,
+  errorDetail?: string,
+) {
   if (state.statusTimeout !== undefined) {
     clearTimeout(state.statusTimeout);
     state.statusTimeout = undefined;
