@@ -74,6 +74,7 @@ import {
   setBasicView,
   handleBasicDragDrop,
   syncBasicBeforeRun,
+  syncBasicWorkspaceFromPower,
 } from "./basic-ui";
 import {
   refreshOsIntegrationStatus,
@@ -420,8 +421,12 @@ function wireEvents() {
       btn.addEventListener("click", () => {
         const mode =
           btn.dataset.workspaceModeBtn === "power" ? "power" : "basic";
+        if (mode === "power") {
+          syncBasicBeforeRun();
+        }
         setWorkspaceMode(mode);
         if (mode === "basic") {
+          syncBasicWorkspaceFromPower();
           const currentMode = getMode();
           if (currentMode === "add" && state.inputs.length > 0) {
             setBasicView("compress");

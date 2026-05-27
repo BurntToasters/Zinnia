@@ -103,6 +103,7 @@ const mocks = vi.hoisted(() => {
       setBasicView: vi.fn(),
       handleBasicDragDrop: vi.fn(),
       syncBasicBeforeRun: vi.fn(),
+      syncBasicWorkspaceFromPower: vi.fn(),
     },
   };
 });
@@ -208,6 +209,7 @@ vi.mock("../basic-ui", () => ({
   setBasicView: mocks.basicUi.setBasicView,
   handleBasicDragDrop: mocks.basicUi.handleBasicDragDrop,
   syncBasicBeforeRun: mocks.basicUi.syncBasicBeforeRun,
+  syncBasicWorkspaceFromPower: mocks.basicUi.syncBasicWorkspaceFromPower,
 }));
 
 const invokeMock = vi.mocked(invoke);
@@ -528,6 +530,7 @@ beforeEach(async () => {
   mocks.basicUi.setBasicView.mockReset();
   mocks.basicUi.handleBasicDragDrop.mockReset();
   mocks.basicUi.syncBasicBeforeRun.mockReset();
+  mocks.basicUi.syncBasicWorkspaceFromPower.mockReset();
 
   askMock.mockReset();
   askMock.mockResolvedValue(false);
@@ -920,6 +923,12 @@ describe("main bootstrap", () => {
     expect(extractPassword.type).toBe("text");
     extractToggle.click();
     expect(extractPassword.type).toBe("password");
+
+    (document.getElementById("workspace-mode-power") as HTMLButtonElement).click();
+    expect(mocks.basicUi.syncBasicBeforeRun).toHaveBeenCalled();
+
+    (document.getElementById("workspace-mode-basic") as HTMLButtonElement).click();
+    expect(mocks.basicUi.syncBasicWorkspaceFromPower).toHaveBeenCalled();
 
     state.lastAutoExtractDestination = "/tmp/auto";
     const extractPath = document.getElementById(

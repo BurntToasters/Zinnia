@@ -181,6 +181,12 @@ function syncPowerToBasicExtract(): void {
   }
 }
 
+export function syncBasicWorkspaceFromPower(): void {
+  syncPowerToBasicCompress();
+  syncPowerToBasicExtract();
+  updateBasicPasswordField();
+}
+
 function updateBasicExtractInfo(): void {
   const archivePath = state.inputs[0] ?? "";
   const name = basename(archivePath) || "archive";
@@ -456,13 +462,15 @@ async function handleBasicDrop(paths: string[]): Promise<void> {
   }
 
   if (allArchives) {
-    setMode("extract");
-    setBasicView("extract");
-    renderInputs();
     if (paths.length === 1) {
       setMode("browse");
       setBasicView("browse");
+      renderInputs();
       void browseArchive();
+    } else {
+      setMode("extract");
+      setBasicView("extract");
+      renderInputs();
     }
   } else {
     setMode("add");
