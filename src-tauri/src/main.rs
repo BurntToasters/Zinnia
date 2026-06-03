@@ -728,6 +728,11 @@ fn sanitize_output(s: &str) -> String {
 
 const ALLOWED_7Z_COMMANDS: &[&str] = &["a", "x", "l", "t"];
 const BLOCKED_7Z_ARGS: &[&str] = &["-si", "-so"];
+const ALLOWED_7Z_SWITCH_PREFIXES: &[&str] = &[
+    "-t", "-m", "-o", "-p", "-spf", "-sdel", "-spd", "-sfx", "-y", "-r", "-w", "-x", "-i", "-ao",
+    "-ba", "-bb", "-bs", "-bt", "-scs", "-slt", "-sns", "-snl", "-sni", "-stl", "-slp", "-ssp",
+    "-ssw",
+];
 
 fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
     if args.is_empty() {
@@ -773,7 +778,14 @@ fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
 
         if separator_index.is_some() {
             positional_after_separator += 1;
-        } else if !arg.starts_with('-') {
+        } else if arg.starts_with('-') {
+            if !ALLOWED_7Z_SWITCH_PREFIXES
+                .iter()
+                .any(|p| lower.starts_with(p))
+            {
+                return Err(format!("7z argument '{arg}' is not permitted."));
+            }
+        } else {
             positional_before_separator += 1;
         }
     }
@@ -1090,13 +1102,13 @@ fn open_os_integration_settings(app: tauri::AppHandle) -> Result<(), String> {
 
     #[cfg(target_os = "macos")]
     {
-        return app
+        app
             .shell()
             .open(
                 "x-apple.systempreferences:com.apple.ExtensionsPreferences",
                 None,
             )
-            .map_err(|e| e.to_string());
+            .map_err(|e| e.to_string())
     }
 
     #[cfg(target_os = "linux")]
@@ -1161,6 +1173,9 @@ struct OpenPathsPayload {
 }
 
 fn should_use_extract_window(paths: &[String], mode: &str) -> bool {
+    if mode == "compress" {
+        return false;
+    }
     if mode == "extract-explicit" && paths.len() == 1 {
         return true;
     }
@@ -1205,6 +1220,11 @@ where
             continue;
         }
 
+        if arg == "--compress" {
+            mode = "compress".to_string();
+            continue;
+        }
+
         let Some(path) = normalize_open_path_arg(&arg) else {
             continue;
         };
@@ -1216,6 +1236,10 @@ where
         paths.push(path);
     }
 
+    if mode == "compress" {
+        return (paths, mode);
+    }
+
     if mode != "extract"
         && !paths.is_empty()
         && paths.iter().all(|path| validate_archive_path(path).valid)
@@ -1223,9 +1247,7 @@ where
         mode = "extract".to_string();
     }
 
-    if should_use_extract_window(&paths, &mode) {
-        mode = "extract".to_string();
-    } else if mode == "extract-explicit" {
+    if should_use_extract_window(&paths, &mode) || mode == "extract-explicit" {
         mode = "extract".to_string();
     }
 
@@ -1308,6 +1330,7 @@ fn collect_cli_context() -> (Vec<String>, String) {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
 
@@ -1702,6 +1725,55 @@ mod tests {
     }
 
     #[test]
+    fn parse_open_request_args_keeps_compress_mode_for_archive_input() {
+        let base = std::env::temp_dir().join(format!(
+            "zinnia-compress-args-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time should work")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).expect("temp directory should be created");
+        let archive = base.join("input.zip");
+        std::fs::write(&archive, [0x50, 0x4B, 0x03, 0x04, 0x14, 0x00])
+            .expect("archive should be written");
+
+        let (paths, mode) = parse_open_request_args(vec![
+            "--compress".to_string(),
+            archive.to_string_lossy().to_string(),
+        ]);
+
+        assert_eq!(paths, vec![archive.to_string_lossy().to_string()]);
+        assert_eq!(mode, "compress");
+        assert!(!should_use_extract_window(&paths, &mode));
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn parse_open_request_args_keeps_compress_mode_for_folder_input() {
+        let base = std::env::temp_dir().join(format!(
+            "zinnia-compress-folder-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time should work")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).expect("temp directory should be created");
+
+        let (paths, mode) = parse_open_request_args(vec![
+            "--compress".to_string(),
+            base.to_string_lossy().to_string(),
+        ]);
+
+        assert_eq!(paths, vec![base.to_string_lossy().to_string()]);
+        assert_eq!(mode, "compress");
+        assert!(!should_use_extract_window(&paths, &mode));
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
     fn validate_run_7z_args_allows_internal_delete_after_for_compress() {
         let args = vec![
             "a".to_string(),
@@ -1722,6 +1794,93 @@ mod tests {
             "archive.7z".to_string(),
         ];
         assert!(validate_run_7z_args(&args).is_err());
+    }
+
+    #[test]
+    fn validate_run_7z_args_allows_typical_compress_switches() {
+        let args = vec![
+            "a".to_string(),
+            "-t7z".to_string(),
+            "-mx=9".to_string(),
+            "-md=64m".to_string(),
+            "-ms=on".to_string(),
+            "-mmt=4".to_string(),
+            "-mhe=on".to_string(),
+            "-p secret".to_string(),
+            "out.7z".to_string(),
+            "--".to_string(),
+            "input.txt".to_string(),
+        ];
+        assert!(validate_run_7z_args(&args).is_ok());
+    }
+
+    #[test]
+    fn validate_run_7z_args_allows_typical_extract_switches() {
+        let args = vec![
+            "x".to_string(),
+            "-o/tmp/out".to_string(),
+            "-y".to_string(),
+            "-spd".to_string(),
+            "--".to_string(),
+            "archive.7z".to_string(),
+        ];
+        assert!(validate_run_7z_args(&args).is_ok());
+    }
+
+    #[test]
+    fn validate_run_7z_args_rejects_stdin_stdout_switches() {
+        for bad in ["-si", "-so", "-si{name}", "-so2"] {
+            let args = vec![
+                "a".to_string(),
+                bad.to_string(),
+                "out.7z".to_string(),
+                "--".to_string(),
+                "input.txt".to_string(),
+            ];
+            assert!(
+                validate_run_7z_args(&args).is_err(),
+                "expected '{bad}' to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_run_7z_args_rejects_unknown_switches() {
+        for bad in ["-sao", "-foo", "-an", "-c"] {
+            let args = vec![
+                "a".to_string(),
+                bad.to_string(),
+                "out.7z".to_string(),
+                "--".to_string(),
+                "input.txt".to_string(),
+            ];
+            assert!(
+                validate_run_7z_args(&args).is_err(),
+                "expected '{bad}' to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_run_7z_args_rejects_dash_leading_output_path() {
+        let args = vec![
+            "a".to_string(),
+            "-evil.7z".to_string(),
+            "--".to_string(),
+            "input.txt".to_string(),
+        ];
+        assert!(validate_run_7z_args(&args).is_err());
+    }
+
+    #[test]
+    fn validate_run_7z_args_allows_dash_leading_paths_after_separator() {
+        let args = vec![
+            "a".to_string(),
+            "out.7z".to_string(),
+            "--".to_string(),
+            "-dash-leading-file.txt".to_string(),
+        ];
+        assert!(validate_run_7z_args(&args).is_ok());
     }
 
     #[cfg(target_os = "linux")]
@@ -1796,18 +1955,15 @@ fn main() {
                 }
                 let handle = app.handle().clone();
                 std::thread::spawn(move || {
-                    match rx.recv_timeout(std::time::Duration::from_millis(750)) {
-                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                            if !EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst)
-                                && !has_extract_windows(&handle)
-                            {
-                                if let Some(main_window) = handle.get_webview_window("main") {
-                                    let _ = main_window.show();
-                                    let _ = main_window.set_focus();
-                                }
+                    if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = rx.recv_timeout(std::time::Duration::from_millis(750)) {
+                        if !EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst)
+                            && !has_extract_windows(&handle)
+                        {
+                            if let Some(main_window) = handle.get_webview_window("main") {
+                                let _ = main_window.show();
+                                let _ = main_window.set_focus();
                             }
                         }
-                        _ => {}
                     }
                 });
             } else if let Some(main_window) = app.get_webview_window("main") {
@@ -1865,14 +2021,13 @@ fn main() {
         tauri::RunEvent::WindowEvent {
             event: tauri::WindowEvent::Destroyed,
             ..
-        } => {
-            if EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst) && !has_extract_windows(app_handle) {
+        }
+            if EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst) && !has_extract_windows(app_handle) => {
                 if let Some(main_window) = app_handle.get_webview_window("main") {
                     let _ = main_window.destroy();
                 }
                 app_handle.exit(0);
             }
-        }
         _ => {}
     });
 

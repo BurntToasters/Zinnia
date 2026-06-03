@@ -606,6 +606,33 @@ describe("main bootstrap", () => {
     expect(document.body.classList.contains("platform-linux")).toBe(true);
   });
 
+  it("opens the basic compress view for a --compress launch", async () => {
+    const { state } = await import("../state");
+    state.inputs = [];
+    setInvokeRouter((command) => {
+      if (command === "probe_7z") return undefined;
+      if (command === "get_cpu_count") return 12;
+      if (command === "get_log_dir") return "/tmp/logs";
+      if (command === "get_platform_info") return "linux";
+      if (command === "is_packaged") return true;
+      if (command === "is_flatpak") return false;
+      if (command === "get_initial_mode") return "compress";
+      if (command === "get_initial_paths") return ["/tmp/folder-to-zip"];
+      if (command === "drain_pending_paths") return [];
+      return undefined;
+    });
+
+    await loadMainModule();
+
+    expect(document.body.textContent ?? "").not.toContain("Failed to start:");
+    expect(mocks.ui.setMode).toHaveBeenCalledWith("add");
+    expect(state.inputs).toContain("/tmp/folder-to-zip");
+    expect(mocks.basicUi.setBasicView).toHaveBeenCalledWith("compress");
+    expect(mocks.basicUi.setBasicView).not.toHaveBeenCalledWith("extract");
+    expect(mocks.basicUi.setBasicView).not.toHaveBeenCalledWith("browse");
+    expect(mocks.archive.browseArchive).not.toHaveBeenCalled();
+  });
+
   it("shows startup failure details when runtime probe fails", async () => {
     setInvokeRouter((command) => {
       if (command === "probe_7z") {

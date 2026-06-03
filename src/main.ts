@@ -162,6 +162,21 @@ async function applyIncomingPaths(
 ): Promise<void> {
   if (!paths.length) return;
 
+  if (mode === "compress") {
+    setMode("add");
+    for (const path of paths) {
+      if (!state.inputs.includes(path)) {
+        state.inputs.push(path);
+      }
+    }
+    renderInputs();
+    devLog(`Received ${paths.length} path(s) from ${source}.`);
+    if (getWorkspaceMode() === "basic") {
+      setBasicView("compress");
+    }
+    return;
+  }
+
   const allArchives = await allPathsAreArchives(paths);
   const shouldAutoBrowse =
     mode !== "extract" && paths.length === 1 && allArchives;
