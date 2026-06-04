@@ -208,6 +208,27 @@ export function withPassword(args: string[], password: string): string[] {
   return [...filtered, ...tail];
 }
 
+// Attach a live progress listener for the duration of `fn`, updating the status
+// bar with percent + current file + ETA. Returns whatever `fn` resolves to.
+async function withLiveProgress<T>(fn: () => Promise<T>): Promise<T> {
+  const startedAt = Date.now();
+  const unlisten = await listen<ProgressUpdate>(
+    "7z-progress-structured",
+    (event) => {
+      const u = event.payload;
+      if (typeof u?.percent !== "number") return;
+      const eta = formatBatchEta(Date.now() - startedAt, u.percent);
+      const file = u.currentFile ? ` ${basename(u.currentFile)}` : "";
+      setProgress(`${u.percent}%${file}${eta ? ` · ${eta}` : ""}`);
+    },
+  );
+  try {
+    return await fn();
+  } finally {
+    if (typeof unlisten === "function") unlisten();
+  }
+}
+
 // Run 7z; if an extract fails because the archive is encrypted, prompt once for
 // a password and retry. Returns the final result.
 async function runWithPasswordRetry(
@@ -332,12 +353,8 @@ export async function convertArchive(): Promise<void> {
     }
 
     setStatus("Recompressing");
-    const threads = parseThreads(
-      $<HTMLInputElement>("threads").value,
-      SETTING_DEFAULTS.threads,
-    );
-    const compress = ["a", `-t${format}`];
-    if (threads) compress.push(`-mmt=${threads}`);
+    // Honor the full compression options (level/method/dict/solid/threads).
+    const compress = ["a", ...buildCompressionMethodSwitches(format)];
     // Compress the extracted contents (everything inside the temp dir).
     compress.push(dest, "--", `${tempDir}/*`);
 
@@ -411,6 +428,32 @@ export function buildExtractArgsFor(
   );
 }
 
+// Format/level/method/dict/word-size/solid/threads switches read from the
+// compression form. Shared by buildArgs and convertArchive so they stay in sync.
+export function buildCompressionMethodSwitches(format: string): string[] {
+  const level = $<HTMLSelectElement>("level").value;
+  const method = $<HTMLSelectElement>("method").value;
+  const dict = $<HTMLSelectElement>("dict").value;
+  const wordSize = $<HTMLSelectElement>("word-size").value;
+  const solid = $<HTMLSelectElement>("solid").value;
+  const threads = parseThreads(
+    $<HTMLInputElement>("threads").value,
+    SETTING_DEFAULTS.threads,
+  );
+
+  const switches = [`-t${format}`, `-mx=${level}`];
+  if (method) switches.push(`-m0=${method}`);
+  if (dict) switches.push(`-md=${dict}`);
+  if (wordSize) switches.push(`-mfb=${wordSize}`);
+  if (format === "7z") {
+    if (solid === "solid") switches.push("-ms=on");
+    else if (solid === "off") switches.push("-ms=off");
+    else switches.push(`-ms=${solid}`);
+  }
+  if (threads) switches.push(`-mmt=${threads}`);
+  return switches;
+}
+
 export function buildArgs() {
   const mode = getMode();
 
@@ -434,13 +477,6 @@ export function buildArgs() {
   }
 
   const format = $<HTMLSelectElement>("format").value;
-  const level = $<HTMLSelectElement>("level").value;
-  const method = $<HTMLSelectElement>("method").value;
-  const dict = $<HTMLSelectElement>("dict").value;
-  const wordSize = $<HTMLSelectElement>("word-size").value;
-  const solid = $<HTMLSelectElement>("solid").value;
-  const threadsRaw = $<HTMLInputElement>("threads").value;
-  const threads = parseThreads(threadsRaw, SETTING_DEFAULTS.threads);
   const pathMode = $<HTMLSelectElement>("path-mode").value;
   const rawPassword = $<HTMLInputElement>("password").value;
   const rawEncryptHeaders = $<HTMLInputElement>("encrypt-headers").checked;
@@ -464,22 +500,7 @@ export function buildArgs() {
     rawEncryptHeaders,
   );
 
-  const switches: string[] = [];
-  switches.push(`-t${format}`);
-  switches.push(`-mx=${level}`);
-  if (method) switches.push(`-m0=${method}`);
-  if (dict) switches.push(`-md=${dict}`);
-  if (wordSize) switches.push(`-mfb=${wordSize}`);
-  if (format === "7z") {
-    if (solid === "solid") {
-      switches.push("-ms=on");
-    } else if (solid === "off") {
-      switches.push("-ms=off");
-    } else {
-      switches.push(`-ms=${solid}`);
-    }
-  }
-  if (threads) switches.push(`-mmt=${threads}`);
+  const switches = buildCompressionMethodSwitches(format);
   if (pathMode === "absolute") switches.push("-spf");
   if (password) switches.push(`-p${password}`);
   // ZIP defaults to weak ZipCrypto; upgrade to AES-256 when a password is set.
@@ -779,9 +800,13 @@ function renderSelectiveTreeNode(
   const row = document.createElement("div");
   row.className = "selective-row selective-row--tree";
   row.style.paddingLeft = `${node.depth * 18 + 8}px`;
+  row.setAttribute("role", "treeitem");
+  row.setAttribute("aria-level", String(node.depth + 1));
 
   const expandable = node.isFolder && node.children.length > 0;
   const expanded = state.selectiveExpandedFolders.has(node.path);
+  if (expandable)
+    row.setAttribute("aria-expanded", expanded ? "true" : "false");
 
   const twisty = document.createElement("button");
   twisty.type = "button";
@@ -803,6 +828,10 @@ function renderSelectiveTreeNode(
   checkbox.checked = checkState === "checked";
   checkbox.indeterminate = checkState === "indeterminate";
   checkbox.disabled = state.running;
+  row.setAttribute(
+    "aria-selected",
+    checkState === "checked" ? "true" : "false",
+  );
   checkbox.addEventListener("change", () => {
     const current = getOrCreateSelection(archive);
     const entry: BrowseEntry = {
@@ -859,11 +888,14 @@ function renderSelectiveEntryList(
 
   // Searching shows a flat result list; otherwise a collapsible tree.
   if (searching) {
+    list.removeAttribute("role");
     for (const entry of entries) {
       list.appendChild(renderSelectiveFlatRow(archive, entry, allEntries));
     }
     return;
   }
+
+  list.setAttribute("role", "tree");
 
   for (const node of buildEntryTree(entries)) {
     renderSelectiveTreeNode(archive, node, allEntries, list);
@@ -1075,18 +1107,14 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
         : "Extracting archive",
     );
 
-    const result = await invoke<Run7zResult>("run_7z", { args });
+    const result = await withLiveProgress(() =>
+      invoke<Run7zResult>("run_7z", { args }),
+    );
     if (state.cancelRequested) {
       hideProgress();
       setStatus("Cancelled", 2000);
       log("Operation cancelled by user");
       return;
-    }
-
-    const outputLines = result.stdout.split(/\r?\n/);
-    for (const line of outputLines) {
-      const percentMatch = line.match(/(\d+)%/);
-      if (percentMatch) setProgress(`${percentMatch[1]}%`);
     }
 
     logCommandResult(result.stdout, result.stderr);
@@ -1188,20 +1216,14 @@ export async function runAction() {
 
     setStatus("Running");
 
-    const result = await runWithPasswordRetry(args, mode === "extract");
+    const result = await withLiveProgress(() =>
+      runWithPasswordRetry(args, mode === "extract"),
+    );
     if (state.cancelRequested) {
       hideProgress();
       setStatus("Cancelled", 2000);
       log("Operation cancelled by user");
       return;
-    }
-
-    const outputLines = result.stdout.split(/\r?\n/);
-    for (const line of outputLines) {
-      const percentMatch = line.match(/(\d+)%/);
-      if (percentMatch) {
-        setProgress(`${percentMatch[1]}%`);
-      }
     }
 
     logCommandResult(result.stdout, result.stderr);

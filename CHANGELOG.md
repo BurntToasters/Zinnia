@@ -19,6 +19,14 @@ The `.sig` files in this repo are NOT normal gpg signatures they are for Tauri V
 The `.asc` files are my normal GPG signatures which you can verify using my GPG Public Key: https://tuxedo.rosie.run/GPG/BurntToasters_0xF2FBC20F_public.asc.
 ⚠️ Arm64 Linux Binaries are *NOT* available at the moment. Its something I may get around to in the future but its not a priority. However, I do have the logic setup in the repo in-case people would like to build their own :)
 
+## Changes in `v0.5.0-beta.3:`
+* **Linux:** Fixed the password prompt and "Save preset" not working — they used a browser dialog that WebKitGTK silently blocks. Both now use an in-app dialog that works everywhere. 🐧
+* **UI:** Compress and extract now show live progress with the current file and an ETA, not just at the end of the operation. 📈
+* **UI:** Batch (multi-archive) extraction now shows live progress and an N-of-M counter for the whole run.
+* **UI:** The pick-files tree is now exposed to screen readers (tree / treeitem roles with expand and selection state).
+* **Convert:** "Convert archive" now honors your full compression options (level, method, dictionary, solid, threads) instead of using 7-Zip defaults.
+* **Codebase:** Consolidated the compression-switch building so create and convert always stay in sync, and hardened the progress listener cleanup.
+
 ## Changes in `v0.5.0-beta.2:`
 * **NEW - Split archives:** Added multi-volume archive creation. Pick a volume size (100 MB, 700 MB, 1/4 GB, or custom) in the advanced compression options.
 * **NEW - Custom presets:** You can now save the current compression options as a named preset, apply it later, and delete it. Presets persist between sessions.
