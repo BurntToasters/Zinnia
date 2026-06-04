@@ -46,7 +46,7 @@ The `.asc` files are my normal GPG signatures which you can verify using my GPG 
 * **Codebase:** Cancelling a compression now deletes the partial output instead of leaving a corrupt file behind.
 * **Testing:** Added Rust integration tests that exercise the real bundled 7-Zip end to end, raised the coverage gate, and added a pre-commit hook.
 * **DEV:** CI now runs `npm audit`, `cargo audit`, and Clippy (`-D warnings`) as a security gate.
-* **Misc:** Added Dependabot, a tag-triggered release workflow, and CONTRIBUTING / ARCHITECTURE / SECURITY docs.
+* **Misc:** Added Dependabot and CONTRIBUTING / ARCHITECTURE / SECURITY docs.
 
 ## Changes in `v0.5.0:`
 * **UI:** Reworked Basic mode into a task-first launcher for opening, extracting, and compressing archives.

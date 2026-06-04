@@ -349,6 +349,10 @@ function ensureMainDomElements(): void {
   ensureSelect("format", ["7z", "zip", "tar"]);
   ensureSelect("preset", ["balanced", "ultra", "custom"]);
   ensureElement("save-preset", "button");
+  ensureElement("input-modal-overlay", "div");
+  ensureElement("input-modal-field", "input");
+  ensureElement("input-modal-confirm", "button");
+  ensureElement("input-modal-cancel", "button");
   ensureElement("delete-preset", "button");
   ensureSelect("split-size", ["", "100m", "custom"]);
   ensureElement("split-custom-field", "div");

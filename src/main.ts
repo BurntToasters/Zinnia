@@ -5,6 +5,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 import { $, trapFocus, releaseFocusTrap } from "./utils";
+import { promptInput } from "./prompt-modal";
 import { SETTING_DEFAULTS, state, dom } from "./state";
 import {
   applyTheme,
@@ -453,24 +454,32 @@ function wireEvents() {
   });
 
   $("save-preset").addEventListener("click", () => {
-    const name = window.prompt("Save current options as preset:")?.trim();
-    if (!name) return;
-    try {
-      saveCustomPreset(name);
-      refreshPresetDropdown(`custom:${name}`);
-      updateDeletePresetButton();
-      void persistSettingsImmediately(
-        state.currentSettings,
-        state.settingsExtras,
-      );
-      setStatus(`Preset "${name}" saved`, 2000);
-    } catch (err) {
-      setStatus(
-        "Error",
-        3000,
-        err instanceof Error ? err.message : String(err),
-      );
-    }
+    void (async () => {
+      const raw = await promptInput({
+        title: "Save preset",
+        label: "Name this preset:",
+        placeholder: "e.g. My backup",
+        confirmLabel: "Save",
+      });
+      const name = raw?.trim();
+      if (!name) return;
+      try {
+        saveCustomPreset(name);
+        refreshPresetDropdown(`custom:${name}`);
+        updateDeletePresetButton();
+        void persistSettingsImmediately(
+          state.currentSettings,
+          state.settingsExtras,
+        );
+        setStatus(`Preset "${name}" saved`, 2000);
+      } catch (err) {
+        setStatus(
+          "Error",
+          3000,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    })();
   });
 
   $("delete-preset").addEventListener("click", () => {

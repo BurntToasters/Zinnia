@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { message, confirm, open, save } from "@tauri-apps/plugin-dialog";
 import {
   $,
@@ -36,6 +37,7 @@ import { resolveExtractDestinationAutofill } from "./extract-path";
 import { looksLikePasswordRequiredError, describe7zError } from "./error-hints";
 export { looksLikePasswordRequiredError, describe7zError };
 import { showToast } from "./toast";
+import { promptInput } from "./prompt-modal";
 import {
   buildSelectiveExtractArgs,
   buildEntryTree,
@@ -70,6 +72,29 @@ interface Run7zResult {
   code: number;
   stdout_truncated?: boolean;
   stderr_truncated?: boolean;
+}
+
+interface ProgressUpdate {
+  percent?: number;
+  filesDone?: number;
+  currentFile?: string;
+}
+
+function basename(filePath: string): string {
+  const sep = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
+  return sep >= 0 ? filePath.slice(sep + 1) : filePath;
+}
+
+// Estimate remaining time for the current archive from elapsed time and percent.
+export function formatBatchEta(elapsedMs: number, percent: number): string {
+  if (percent <= 0 || percent >= 100 || elapsedMs <= 0) return "";
+  const totalMs = elapsedMs / (percent / 100);
+  const remainingSec = Math.max(0, Math.round((totalMs - elapsedMs) / 1000));
+  if (remainingSec < 1) return "";
+  if (remainingSec < 60) return `~${remainingSec}s left`;
+  const min = Math.floor(remainingSec / 60);
+  const sec = remainingSec % 60;
+  return `~${min}m ${sec.toString().padStart(2, "0")}s left`;
 }
 
 export type ArchiveTestResult =
@@ -195,9 +220,12 @@ async function runWithPasswordRetry(
     result.code > 1 &&
     looksLikePasswordRequiredError(result.stdout, result.stderr)
   ) {
-    const password = window.prompt(
-      "This archive is encrypted. Enter password:",
-    );
+    const password = await promptInput({
+      title: "Password required",
+      label: "This archive is encrypted. Enter password:",
+      password: true,
+      confirmLabel: "Extract",
+    });
     if (password) {
       setStatus("Retrying with password");
       result = await invoke<Run7zResult>("run_7z", {
@@ -1217,6 +1245,7 @@ export async function runAction() {
 export async function runBatchExtract() {
   if (state.running) return;
   setRunning(true);
+  let unlistenProgress: (() => void) | null = null;
   try {
     if (!(await ensureRuntimeReady())) return;
 
@@ -1235,28 +1264,42 @@ export async function runBatchExtract() {
 
     let succeeded = 0;
     let failed = 0;
+    let current = 0;
+    let archiveStartedAt = Date.now();
+
+    // Live progress for the whole batch: show percent of the current archive,
+    // which file it's on, and an ETA, alongside the N-of-M counter.
+    unlistenProgress = await listen<ProgressUpdate>(
+      "7z-progress-structured",
+      (event) => {
+        const u = event.payload;
+        const counter = `(${current}/${archives.length})`;
+        if (typeof u?.percent === "number") {
+          const eta = formatBatchEta(Date.now() - archiveStartedAt, u.percent);
+          const file = u.currentFile ? ` ${basename(u.currentFile)}` : "";
+          setProgress(
+            `${u.percent}% ${counter}${file}${eta ? ` · ${eta}` : ""}`,
+          );
+        }
+      },
+    );
 
     for (let i = 0; i < archives.length; i++) {
       if (state.batchCancelled || state.cancelRequested) break;
 
       const archive = archives[i];
+      current = i + 1;
+      archiveStartedAt = Date.now();
       setStatus(`Extracting ${i + 1} of ${archives.length}`);
 
       try {
-        const args = ["x", `-o${dest}`, "-y"];
+        const args = ["x", `-o${dest}`, "-y", "-bb1"];
         if (password) args.push(`-p${password}`);
         args.push(...extraArgs);
         args.push("--", archive);
         devLog(`7z ${sanitizeCommandArgsForPreview(args).join(" ")}`);
 
         const result = await invoke<Run7zResult>("run_7z", { args });
-
-        const outputLines = result.stdout.split(/\r?\n/);
-        for (const line of outputLines) {
-          const percentMatch = line.match(/(\d+)%/);
-          if (percentMatch)
-            setProgress(`${percentMatch[1]}% (${i + 1}/${archives.length})`);
-        }
 
         logCommandResult(result.stdout, result.stderr);
         logTruncationNotice(result);
@@ -1302,6 +1345,7 @@ export async function runBatchExtract() {
     hideProgress();
     await message(msg, { title: "Extraction error", kind: "error" });
   } finally {
+    if (unlistenProgress) unlistenProgress();
     setRunning(false);
   }
 }

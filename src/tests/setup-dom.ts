@@ -259,6 +259,19 @@ shortcutsOverlay.appendChild(shortcutsModal);
 addEl("button", "close-shortcuts");
 addEl("button", "close-shortcuts-footer");
 
+// Input prompt modal
+const inputOverlay = addEl("div", "input-modal-overlay");
+inputOverlay.hidden = true;
+const inputModal = document.createElement("div");
+inputModal.className = "modal";
+inputOverlay.appendChild(inputModal);
+addEl("div", "input-modal-title");
+addEl("div", "input-modal-label");
+addEl("input", "input-modal-field");
+addEl("button", "input-modal-confirm");
+addEl("button", "input-modal-cancel");
+addEl("button", "input-modal-cancel-x");
+
 // Command preview modal
 const commandPreviewOverlay = addEl("div", "command-preview-overlay");
 const commandPreviewModal = document.createElement("div");

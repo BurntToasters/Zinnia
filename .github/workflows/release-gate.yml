@@ -1,9 +1,6 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
   workflow_dispatch:
     inputs:
       run_release_builds:
@@ -38,15 +35,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Guard release ref
+      - name: Guard release branch
         run: |
-          case "${GITHUB_REF}" in
-            refs/heads/main|refs/tags/v*) : ;;
-            *)
-              echo "Release workflow must run from refs/heads/main or a v*.*.* tag (current: ${GITHUB_REF})." >&2
-              exit 1
-              ;;
-          esac
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "Release workflow must be run from refs/heads/main (current: ${GITHUB_REF})." >&2
+            exit 1
+          fi
 
       - uses: actions/setup-node@v4
         with:
@@ -74,7 +68,7 @@ jobs:
       - run: npm run build
 
   build:
-    if: ${{ inputs.run_release_builds == true || startsWith(github.ref, 'refs/tags/v') }}
+    if: ${{ inputs.run_release_builds == true }}
     needs: verify
     strategy:
       fail-fast: false
@@ -237,7 +231,7 @@ jobs:
             src-tauri/target/**/bundle/**/*.rpm.sig
 
   flatpak:
-    if: ${{ inputs.run_release_builds == true || startsWith(github.ref, 'refs/tags/v') }}
+    if: ${{ inputs.run_release_builds == true }}
     needs: verify
     runs-on: ubuntu-22.04
     steps:
@@ -272,7 +266,7 @@ jobs:
           path: dist/*.flatpak
 
   sign-and-publish:
-    if: ${{ (inputs.run_release_builds == true && inputs.publish_release == true) || startsWith(github.ref, 'refs/tags/v') }}
+    if: ${{ inputs.run_release_builds == true && inputs.publish_release == true }}
     needs: [build, flatpak]
     runs-on: ubuntu-22.04
     permissions:
