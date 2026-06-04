@@ -12,7 +12,27 @@
   DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\${EXT}\shell\ZinniaExtract"
 !macroend
 
+!macro ZINNIA_REGISTER_COMPRESS_VERBS
+  DeleteRegKey HKCU "Software\Classes\*\shell\Zinnia"
+  DeleteRegKey HKCU "Software\Classes\Directory\shell\Zinnia"
+
+  WriteRegStr HKCU "Software\Classes\*\shell\ZinniaCompress" "MUIVerb" "Compress with Zinnia"
+  WriteRegStr HKCU "Software\Classes\*\shell\ZinniaCompress" "Icon" "$INSTDIR\zinnia.exe"
+  WriteRegStr HKCU "Software\Classes\*\shell\ZinniaCompress\command" "" '"$INSTDIR\zinnia.exe" --compress "%1"'
+  WriteRegStr HKCU "Software\Classes\Directory\shell\ZinniaCompress" "MUIVerb" "Compress folder with Zinnia"
+  WriteRegStr HKCU "Software\Classes\Directory\shell\ZinniaCompress" "Icon" "$INSTDIR\zinnia.exe"
+  WriteRegStr HKCU "Software\Classes\Directory\shell\ZinniaCompress\command" "" '"$INSTDIR\zinnia.exe" --compress "%1"'
+!macroend
+
+!macro ZINNIA_UNREGISTER_COMPRESS_VERBS
+  DeleteRegKey HKCU "Software\Classes\*\shell\ZinniaCompress"
+  DeleteRegKey HKCU "Software\Classes\Directory\shell\ZinniaCompress"
+  DeleteRegKey HKCU "Software\Classes\*\shell\Zinnia"
+  DeleteRegKey HKCU "Software\Classes\Directory\shell\Zinnia"
+!macroend
+
 !macro NSIS_HOOK_POSTINSTALL
+  !insertmacro ZINNIA_REGISTER_COMPRESS_VERBS
   !insertmacro ZINNIA_REGISTER_ARCHIVE_VERBS ".7z"
   !insertmacro ZINNIA_REGISTER_ARCHIVE_VERBS ".zip"
   !insertmacro ZINNIA_REGISTER_ARCHIVE_VERBS ".tar"
@@ -26,6 +46,7 @@
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
+  !insertmacro ZINNIA_UNREGISTER_COMPRESS_VERBS
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".7z"
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".zip"
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".tar"

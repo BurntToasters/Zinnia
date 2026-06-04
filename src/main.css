@@ -1278,6 +1278,110 @@ input[type="number"] {
   user-select: text;
 }
 
+.toast-region {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 600;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(360px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  cursor: pointer;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.8125rem;
+  box-shadow: var(--shadow);
+  animation: toast-in 0.18s ease-out;
+}
+
+.toast--leaving {
+  opacity: 0;
+  transform: translateY(6px);
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+}
+
+.toast--success {
+  border-color: var(--success-border);
+  color: var(--success);
+  background: var(--success-bg);
+}
+
+.toast--error {
+  border-color: var(--danger-border);
+  color: var(--danger);
+  background: var(--danger-bg);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+  .toast--leaving {
+    transition: none;
+  }
+}
+
+.shortcut-list {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.shortcut-list__row {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 12px;
+  align-items: center;
+  font-size: 0.8125rem;
+}
+
+.shortcut-list dt {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.shortcut-list dd {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.shortcut-list kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  font-family: "Cascadia Code", "SF Mono", "Consolas", monospace;
+  font-size: 0.6875rem;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+}
+
 .setup-wizard-overlay {
   position: fixed;
   inset: 0;
@@ -1731,6 +1835,26 @@ img.twemoji:hover {
 
 .selective-row:last-child {
   border-bottom: none;
+}
+
+.selective-row--tree {
+  grid-template-columns: 16px auto minmax(0, 1fr) auto;
+}
+
+.selective-twisty {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.7rem;
+  line-height: 1;
+  padding: 0;
+  width: 16px;
+}
+
+.selective-twisty:disabled {
+  cursor: default;
+  opacity: 0;
 }
 
 .selective-row:hover {

@@ -9,6 +9,16 @@ export type WorkingMode = "add" | "extract" | "browse";
 export type WorkspaceMode = "basic" | "power";
 export type UiDensity = "comfortable" | "compact";
 
+export interface CustomPreset {
+  name: string;
+  format: string;
+  level: string;
+  method: string;
+  dict: string;
+  wordSize: string;
+  solid: string;
+}
+
 export interface UserSettings {
   theme: ThemePreference;
   format: ArchiveFormat;
@@ -31,6 +41,7 @@ export interface UserSettings {
   workspaceMode: WorkspaceMode;
   uiDensity: UiDensity;
   osIntegrationDismissed: boolean;
+  customPresets: CustomPreset[];
 }
 
 export interface LoadSettingsResult {
@@ -62,6 +73,7 @@ export const SETTING_DEFAULTS: UserSettings = {
   workspaceMode: "basic",
   uiDensity: "comfortable",
   osIntegrationDismissed: false,
+  customPresets: [],
 };
 
 const THEMES = new Set<ThemePreference>(["system", "light", "dark"]);
@@ -101,7 +113,36 @@ const USER_SETTING_KEYS = new Set<keyof UserSettings>([
   "workspaceMode",
   "uiDensity",
   "osIntegrationDismissed",
+  "customPresets",
 ]);
+
+const MAX_CUSTOM_PRESETS = 50;
+
+function asCustomPresets(
+  value: unknown,
+  fallback: CustomPreset[],
+): CustomPreset[] {
+  if (!Array.isArray(value)) return [...fallback];
+  const presets: CustomPreset[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    const r = asRecord(item);
+    const name = asString(r.name, "").trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    presets.push({
+      name,
+      format: asString(r.format, "7z"),
+      level: asString(r.level, "5"),
+      method: asString(r.method, "lzma2"),
+      dict: asString(r.dict, "64m"),
+      wordSize: asString(r.wordSize, "64"),
+      solid: asString(r.solid, "off"),
+    });
+    if (presets.length >= MAX_CUSTOM_PRESETS) break;
+  }
+  return presets;
+}
 
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -179,6 +220,10 @@ export function normalizeUserSettings(
     osIntegrationDismissed: asBoolean(
       settings.osIntegrationDismissed,
       fallback.osIntegrationDismissed,
+    ),
+    customPresets: asCustomPresets(
+      settings.customPresets,
+      fallback.customPresets,
     ),
   };
 }

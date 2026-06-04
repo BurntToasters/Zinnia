@@ -8,7 +8,7 @@ Terminal=false
 {{#if comment}}
 Comment={{comment}}
 {{/if}}
-Actions=Open;Extract;
+Actions=Open;Extract;Compress;
 
 [Desktop Action Open]
 Name=Open with Zinnia
@@ -17,3 +17,7 @@ Exec={{exec}} %F
 [Desktop Action Extract]
 Name=Extract with Zinnia
 Exec={{exec}} --extract %F
+
+[Desktop Action Compress]
+Name=Compress with Zinnia
+Exec={{exec}} --compress %F

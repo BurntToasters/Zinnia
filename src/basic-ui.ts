@@ -1,4 +1,4 @@
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, confirm } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { $ } from "./utils";
 import { state } from "./state";
@@ -179,6 +179,12 @@ function syncPowerToBasicExtract(): void {
   if (basicExtractPath) {
     basicExtractPath.value = $<HTMLInputElement>("extract-path").value;
   }
+}
+
+export function syncBasicWorkspaceFromPower(): void {
+  syncPowerToBasicCompress();
+  syncPowerToBasicExtract();
+  updateBasicPasswordField();
 }
 
 function updateBasicExtractInfo(): void {
@@ -433,36 +439,74 @@ export function updateBasicStatus(text: string): void {
   }
 }
 
-async function allPathsAreArchives(paths: string[]): Promise<boolean> {
-  if (paths.length === 0) return false;
+async function partitionByArchive(
+  paths: string[],
+): Promise<{ archives: string[]; others: string[] }> {
   try {
     const results = await validateArchivePaths(paths);
-    return results.length === paths.length && results.every((r) => r.valid);
+    const validByPath = new Map(results.map((r) => [r.path.trim(), r.valid]));
+    const archives: string[] = [];
+    const others: string[] = [];
+    for (const p of paths) {
+      if (validByPath.get(p.trim())) archives.push(p);
+      else others.push(p);
+    }
+    return { archives, others };
   } catch {
-    return false;
+    return { archives: [], others: paths };
+  }
+}
+
+function loadInputs(paths: string[]): void {
+  state.inputs.length = 0;
+  for (const p of paths) {
+    if (!state.inputs.includes(p)) state.inputs.push(p);
   }
 }
 
 async function handleBasicDrop(paths: string[]): Promise<void> {
   if (paths.length === 0) return;
 
-  const allArchives = await allPathsAreArchives(paths);
+  const { archives, others } = await partitionByArchive(paths);
+  const allArchives = others.length === 0 && archives.length > 0;
+  const mixed = archives.length > 0 && others.length > 0;
 
-  state.inputs.length = 0;
-  for (const p of paths) {
-    if (!state.inputs.includes(p)) {
-      state.inputs.push(p);
+  // Mixed drop: let the user choose extract-the-archives vs compress-everything.
+  if (mixed) {
+    const extractThem = await confirm(
+      `You dropped ${archives.length} archive(s) and ${others.length} other file(s). Extract the archives, or compress everything into a new archive?`,
+      {
+        title: "Mixed selection",
+        okLabel: "Extract archives",
+        cancelLabel: "Compress all",
+      },
+    );
+    if (extractThem) {
+      loadInputs(archives);
+      setMode("extract");
+      setBasicView("extract");
+      renderInputs();
+    } else {
+      loadInputs(paths);
+      setMode("add");
+      setBasicView("compress");
+      renderInputs();
     }
+    return;
   }
 
+  loadInputs(paths);
+
   if (allArchives) {
-    setMode("extract");
-    setBasicView("extract");
-    renderInputs();
     if (paths.length === 1) {
       setMode("browse");
       setBasicView("browse");
+      renderInputs();
       void browseArchive();
+    } else {
+      setMode("extract");
+      setBasicView("extract");
+      renderInputs();
     }
   } else {
     setMode("add");
@@ -937,15 +981,21 @@ export function syncBasicBeforeRun(): void {
 export function handleBasicDragDrop(type: string, paths?: string[]): void {
   if (getWorkspaceMode() !== "basic") return;
 
+  // Highlight the home dropzone when it's showing, otherwise the whole
+  // workspace so drops are discoverable from every basic view.
   const dropzone = document.getElementById("basic-dropzone");
-  if (!dropzone) return;
+  const workspace = document.getElementById("basic-workspace");
+  const target = currentBasicView === "home" && dropzone ? dropzone : workspace;
+  if (!target) return;
 
   if (type === "enter" || type === "over") {
-    dropzone.classList.add("is-drag-over");
+    target.classList.add("is-drag-over");
   } else if (type === "leave") {
-    dropzone.classList.remove("is-drag-over");
+    dropzone?.classList.remove("is-drag-over");
+    workspace?.classList.remove("is-drag-over");
   } else if (type === "drop") {
-    dropzone.classList.remove("is-drag-over");
+    dropzone?.classList.remove("is-drag-over");
+    workspace?.classList.remove("is-drag-over");
     if (paths && paths.length > 0) {
       void handleBasicDrop(paths);
     }

@@ -399,6 +399,7 @@ function clearBrowsePickerSessionState() {
   state.selectiveSearchQuery = "";
   state.selectiveActiveArchive = null;
   state.selectiveVisiblePaths = [];
+  state.selectiveExpandedFolders.clear();
   const overlay = document.getElementById(
     "selective-overlay",
   ) as HTMLElement | null;
@@ -550,10 +551,10 @@ export function renderInputs() {
       badge.className = `list__item-badge list__item-badge--${validation.state}`;
       badge.textContent =
         validation.state === "valid"
-          ? "Valid"
+          ? "\u2713 Valid"
           : validation.state === "invalid"
-            ? "Invalid"
-            : "Checking\u2026";
+            ? "\u2717 Invalid"
+            : "\u22ef Checking";
       content.appendChild(badge);
 
       if (validation.state === "invalid") {

@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
-import { $ } from "./utils";
+import { $, trapFocus, releaseFocusTrap } from "./utils";
 import { SETTING_DEFAULTS, state, dom } from "./state";
 import {
   applyTheme,
@@ -29,12 +29,15 @@ import {
   getMode,
   setBrowsePasswordFieldVisible,
   persistSettingsImmediately,
+  setStatus,
 } from "./ui";
 import {
   runAction,
   cancelAction,
   testArchive,
   browseArchive,
+  addFilesToArchive,
+  convertArchive,
   previewCommand,
   copyCommandPreview,
   closeCommandPreviewModal,
@@ -52,6 +55,9 @@ import {
   updateCompressionOptionsForFormat,
   applyPreset,
   onCompressionOptionChange,
+  saveCustomPreset,
+  deleteCustomPreset,
+  refreshPresetDropdown,
 } from "./presets";
 import { checkUpdates, autoCheckUpdates } from "./updater";
 import { openLicensesModal, closeLicensesModal } from "./licenses";
@@ -74,11 +80,79 @@ import {
   setBasicView,
   handleBasicDragDrop,
   syncBasicBeforeRun,
+  syncBasicWorkspaceFromPower,
 } from "./basic-ui";
 import {
   refreshOsIntegrationStatus,
   wireOsIntegrationEvents,
 } from "./os-integration";
+
+let shortcutsTrigger: HTMLElement | null = null;
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  return (
+    tag === "INPUT" ||
+    tag === "TEXTAREA" ||
+    tag === "SELECT" ||
+    target.isContentEditable
+  );
+}
+
+function openShortcutsModal(): void {
+  shortcutsTrigger = document.activeElement as HTMLElement | null;
+  const overlay = $("shortcuts-overlay");
+  overlay.hidden = false;
+  const modal = overlay.querySelector<HTMLElement>(".modal");
+  if (modal) trapFocus(modal);
+  $("close-shortcuts").focus();
+}
+
+function closeShortcutsModal(): void {
+  const overlay = $("shortcuts-overlay");
+  if (overlay.hidden) return;
+  const modal = overlay.querySelector<HTMLElement>(".modal");
+  if (modal) releaseFocusTrap(modal);
+  overlay.hidden = true;
+  shortcutsTrigger?.focus();
+  shortcutsTrigger = null;
+}
+
+// Pull the overall rating from 7z benchmark output (the trailing "Tot:" line,
+// whose last column is the combined compress/decompress rating in KiB/s-ish units).
+export function parseBenchmarkSummary(stdout: string): string | null {
+  const lines = stdout.split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (line.startsWith("Tot:")) {
+      const nums = line.match(/\d+/g);
+      if (nums && nums.length > 0) {
+        return `Rating: ${nums[nums.length - 1]}`;
+      }
+    }
+  }
+  return null;
+}
+
+async function runBenchmark() {
+  const button = $("run-benchmark") as HTMLButtonElement;
+  const result = $("benchmark-result");
+  button.disabled = true;
+  result.textContent = "Running benchmark…";
+  try {
+    const res = await invoke<{ stdout: string; code: number }>("run_7z", {
+      args: ["b"],
+    });
+    const summary = parseBenchmarkSummary(res.stdout);
+    result.textContent = summary ?? "Benchmark finished (no rating reported).";
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    result.textContent = `Benchmark failed: ${msg}`;
+  } finally {
+    button.disabled = false;
+  }
+}
 
 async function exportLocalLogs() {
   try {
@@ -160,6 +234,21 @@ async function applyIncomingPaths(
   source: string,
 ): Promise<void> {
   if (!paths.length) return;
+
+  if (mode === "compress") {
+    setMode("add");
+    for (const path of paths) {
+      if (!state.inputs.includes(path)) {
+        state.inputs.push(path);
+      }
+    }
+    renderInputs();
+    devLog(`Received ${paths.length} path(s) from ${source}.`);
+    if (getWorkspaceMode() === "basic") {
+      setBasicView("compress");
+    }
+    return;
+  }
 
   const allArchives = await allPathsAreArchives(paths);
   const shouldAutoBrowse =
@@ -293,6 +382,13 @@ function wireEvents() {
   $("command-preview-overlay").addEventListener("click", (e) => {
     if (e.target === e.currentTarget) closeCommandPreviewModal();
   });
+
+  $("close-shortcuts").addEventListener("click", closeShortcutsModal);
+  $("close-shortcuts-footer").addEventListener("click", closeShortcutsModal);
+  $("shortcuts-overlay").addEventListener("click", (e) => {
+    if (e.target === e.currentTarget) closeShortcutsModal();
+  });
+
   $("test-integrity").addEventListener("click", testArchive);
 
   $("browse-list").addEventListener("click", browseArchive);
@@ -300,6 +396,12 @@ function wireEvents() {
   $("browse-extract").addEventListener("click", () => setMode("extract"));
   $("browse-selective").addEventListener("click", () => {
     void openSelectiveExtractModal();
+  });
+  $("browse-add-files").addEventListener("click", () => {
+    void addFilesToArchive();
+  });
+  $("browse-convert").addEventListener("click", () => {
+    void convertArchive();
   });
 
   $("close-selective").addEventListener("click", closeSelectiveExtractModal);
@@ -337,8 +439,52 @@ function wireEvents() {
     }
   });
 
+  const updateDeletePresetButton = () => {
+    const isCustom = $<HTMLSelectElement>("preset").value.startsWith("custom:");
+    $("delete-preset").hidden = !isCustom;
+  };
+
+  refreshPresetDropdown();
+  updateDeletePresetButton();
+
   $<HTMLSelectElement>("preset").addEventListener("change", () => {
     applyPreset($<HTMLSelectElement>("preset").value);
+    updateDeletePresetButton();
+  });
+
+  $("save-preset").addEventListener("click", () => {
+    const name = window.prompt("Save current options as preset:")?.trim();
+    if (!name) return;
+    try {
+      saveCustomPreset(name);
+      refreshPresetDropdown(`custom:${name}`);
+      updateDeletePresetButton();
+      void persistSettingsImmediately(
+        state.currentSettings,
+        state.settingsExtras,
+      );
+      setStatus(`Preset "${name}" saved`, 2000);
+    } catch (err) {
+      setStatus(
+        "Error",
+        3000,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  });
+
+  $("delete-preset").addEventListener("click", () => {
+    const value = $<HTMLSelectElement>("preset").value;
+    if (!value.startsWith("custom:")) return;
+    const name = value.slice("custom:".length);
+    deleteCustomPreset(name);
+    refreshPresetDropdown("custom");
+    updateDeletePresetButton();
+    void persistSettingsImmediately(
+      state.currentSettings,
+      state.settingsExtras,
+    );
+    setStatus(`Preset "${name}" deleted`, 2000);
   });
 
   $<HTMLSelectElement>("s-format").addEventListener("change", () => {
@@ -377,6 +523,12 @@ function wireEvents() {
   for (const id of ["level", "method", "dict", "word-size", "solid"]) {
     $(id).addEventListener("change", onCompressionOptionChange);
   }
+
+  $<HTMLSelectElement>("split-size").addEventListener("change", () => {
+    const isCustom = $<HTMLSelectElement>("split-size").value === "custom";
+    $("split-custom-field").hidden = !isCustom;
+    if (isCustom) $<HTMLInputElement>("split-custom").focus();
+  });
 
   $("toggle-password").addEventListener("click", () => {
     const input = $<HTMLInputElement>("password");
@@ -420,8 +572,12 @@ function wireEvents() {
       btn.addEventListener("click", () => {
         const mode =
           btn.dataset.workspaceModeBtn === "power" ? "power" : "basic";
+        if (mode === "power") {
+          syncBasicBeforeRun();
+        }
         setWorkspaceMode(mode);
         if (mode === "basic") {
+          syncBasicWorkspaceFromPower();
           const currentMode = getMode();
           if (currentMode === "add" && state.inputs.length > 0) {
             setBasicView("compress");
@@ -547,6 +703,7 @@ function wireEvents() {
   $("export-logs").addEventListener("click", exportLocalLogs);
   $("open-logs-folder").addEventListener("click", openLogsFolder);
   $("clear-logs").addEventListener("click", clearLocalLogs);
+  $("run-benchmark").addEventListener("click", runBenchmark);
   $("show-licenses").addEventListener("click", (e) =>
     openLicensesModal(e.currentTarget as HTMLElement),
   );
@@ -596,6 +753,23 @@ function wireEvents() {
         closeLicensesModal();
         return;
       }
+      if (!$("shortcuts-overlay").hidden) {
+        closeShortcutsModal();
+        return;
+      }
+    }
+    if (e.key === "?" && !isEditableTarget(e.target)) {
+      if (
+        !$("setup-wizard-overlay").hidden ||
+        !$("settings-overlay").hidden ||
+        !$("selective-overlay").hidden ||
+        !$("command-preview-overlay").hidden ||
+        !$("licenses-overlay").hidden
+      )
+        return;
+      e.preventDefault();
+      openShortcutsModal();
+      return;
     }
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       if (
@@ -603,7 +777,8 @@ function wireEvents() {
         !$("settings-overlay").hidden ||
         !$("licenses-overlay").hidden ||
         !$("selective-overlay").hidden ||
-        !$("command-preview-overlay").hidden
+        !$("command-preview-overlay").hidden ||
+        !$("shortcuts-overlay").hidden
       )
         return;
       e.preventDefault();

@@ -108,6 +108,7 @@ function setInvokeRouter(
 
 beforeEach(() => {
   ensureArchiveDom();
+  document.getElementById("toast-region")?.remove();
 
   state.inputs = [];
   state.running = false;
@@ -373,10 +374,8 @@ describe("archive test/browse/selective flows", () => {
     expect(
       (document.getElementById("selective-overlay") as HTMLElement).hidden,
     ).toBe(true);
-    expect(messageMock).toHaveBeenCalledWith(
-      "Selected entries extracted successfully.",
-      { title: "Done" },
-    );
+    const toast = document.querySelector("#toast-region .toast--success");
+    expect(toast?.textContent).toBe("Selected entries extracted.");
   });
 
   it("returns null immediately when browseArchive is invoked while running", async () => {
@@ -615,9 +614,8 @@ describe("archive test/browse/selective flows", () => {
     const runCall = invokeMock.mock.calls.find(([name]) => name === "run_7z");
     const args = (runCall?.[1] as { args?: string[] } | undefined)?.args ?? [];
     expect(args[0]).toBe("a");
-    expect(messageMock).toHaveBeenCalledWith("Archive created successfully.", {
-      title: "Done",
-    });
+    const toast = document.querySelector("#toast-region .toast--success");
+    expect(toast?.textContent).toBe("Archive created.");
   });
 
   it("delegates runAction to batch extraction for multiple archives", async () => {

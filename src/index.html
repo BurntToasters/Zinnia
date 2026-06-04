@@ -352,6 +352,21 @@
 
               <div class="setting-item">
                 <div class="setting-info">
+                  <span class="setting-title">CPU benchmark</span>
+                  <span class="setting-desc" id="benchmark-result"
+                    >Measure compression speed to help pick a thread
+                    count.</span
+                  >
+                </div>
+                <div class="setting-actions">
+                  <button class="btn btn--sm" id="run-benchmark">Run</button>
+                </div>
+              </div>
+
+              <hr class="setting-divider" />
+
+              <div class="setting-item">
+                <div class="setting-info">
                   <span class="setting-title">Open-source licenses</span>
                   <span class="setting-desc"
                     >View third-party libraries and their licenses.</span
@@ -806,6 +821,51 @@
               class="btn btn--ghost btn--sm"
               id="close-command-preview-footer"
             >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-overlay" id="shortcuts-overlay" hidden>
+        <div
+          class="modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="shortcuts-title"
+        >
+          <div class="modal__header">
+            <h2 id="shortcuts-title">Keyboard shortcuts</h2>
+            <button
+              class="btn btn--ghost btn--sm"
+              id="close-shortcuts"
+              aria-label="Close keyboard shortcuts"
+            >
+              &times;
+            </button>
+          </div>
+          <div class="modal__body">
+            <dl class="shortcut-list">
+              <div class="shortcut-list__row">
+                <dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd></dt>
+                <dd>Run the current operation</dd>
+              </div>
+              <div class="shortcut-list__row">
+                <dt><kbd>Esc</kbd></dt>
+                <dd>Close the open dialog</dd>
+              </div>
+              <div class="shortcut-list__row">
+                <dt><kbd>?</kbd></dt>
+                <dd>Show this help</dd>
+              </div>
+              <div class="shortcut-list__row">
+                <dt><kbd>←</kbd> <kbd>→</kbd> in settings tabs</dt>
+                <dd>Move between settings tabs</dd>
+              </div>
+            </dl>
+          </div>
+          <div class="modal__footer">
+            <button class="btn btn--ghost btn--sm" id="close-shortcuts-footer">
               Close
             </button>
           </div>
@@ -1713,14 +1773,33 @@
                 <div class="field-grid field-grid--triple">
                   <div class="field">
                     <label for="preset">Preset</label>
-                    <select id="preset">
-                      <option value="store">Store</option>
-                      <option value="quick">Quick</option>
-                      <option value="balanced" selected>Balanced</option>
-                      <option value="high">High</option>
-                      <option value="ultra">Ultra</option>
-                      <option value="custom">Custom</option>
-                    </select>
+                    <div class="input-row">
+                      <select id="preset">
+                        <option value="store">Store</option>
+                        <option value="quick">Quick</option>
+                        <option value="balanced" selected>Balanced</option>
+                        <option value="high">High</option>
+                        <option value="ultra">Ultra</option>
+                        <option value="custom">Custom</option>
+                      </select>
+                      <button
+                        type="button"
+                        class="btn btn--ghost btn--sm"
+                        id="save-preset"
+                        title="Save current options as a preset"
+                      >
+                        Save
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn--ghost btn--sm"
+                        id="delete-preset"
+                        title="Delete the selected custom preset"
+                        hidden
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </div>
                   <div class="field">
                     <label for="format">Format</label>
@@ -1933,6 +2012,21 @@
                   >
                     Select items...
                   </button>
+                  <button
+                    class="btn btn--accent-outline"
+                    id="browse-add-files"
+                    data-power-only
+                  >
+                    Add files...
+                  </button>
+                  <button
+                    class="btn btn--accent-outline"
+                    id="browse-convert"
+                    data-power-only
+                    title="Extract and recompress this archive using the current compression format"
+                  >
+                    Convert...
+                  </button>
                   <button class="btn btn--ghost" id="browse-test">
                     Test integrity
                   </button>
@@ -2012,6 +2106,28 @@
                         </select>
                       </div>
                     </div>
+                    <div class="grid-split">
+                      <div class="field">
+                        <label for="split-size">Split into volumes</label>
+                        <select id="split-size">
+                          <option value="" selected>Off (single file)</option>
+                          <option value="100m">100 MB</option>
+                          <option value="700m">700 MB (CD)</option>
+                          <option value="1g">1 GB</option>
+                          <option value="4g">4 GB (FAT32)</option>
+                          <option value="custom">Custom…</option>
+                        </select>
+                      </div>
+                      <div class="field" id="split-custom-field" hidden>
+                        <label for="split-custom">Custom size</label>
+                        <input
+                          type="text"
+                          id="split-custom"
+                          placeholder="e.g. 250m, 2g"
+                          autocomplete="off"
+                        />
+                      </div>
+                    </div>
                   </div>
                 </details>
 
@@ -2021,6 +2137,12 @@
                     <div class="field">
                       <label>Options</label>
                       <div class="toggle-row">
+                        <label
+                          class="toggle"
+                          title="Add or refresh files inside the existing archive at the output path instead of creating a new one"
+                          ><input type="checkbox" id="update-mode" />Update
+                          existing archive</label
+                        >
                         <label class="toggle"
                           ><input type="checkbox" id="sfx" />Create SFX</label
                         >
@@ -2031,6 +2153,12 @@
                         <label class="toggle"
                           ><input type="checkbox" id="delete-after" />Delete
                           files after compression</label
+                        >
+                        <label
+                          class="toggle"
+                          title="Preserve created and accessed timestamps in addition to modified time"
+                          ><input type="checkbox" id="store-timestamps" />Store
+                          all timestamps</label
                         >
                       </div>
                     </div>

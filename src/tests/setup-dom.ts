@@ -106,6 +106,8 @@ addEl("button", "browse-list");
 addEl("button", "browse-test");
 addEl("button", "browse-extract");
 addEl("button", "browse-selective");
+addEl("button", "browse-add-files");
+addEl("button", "browse-convert");
 for (const [quickActionId, quickAction] of [
   ["quick-add-balanced", "add-run-balanced"],
   ["quick-add-ultra", "add-run-ultra"],
@@ -171,6 +173,8 @@ addSelect("word-size", WORD_SIZE_OPTIONS);
 addSelect("solid", SOLID_OPTIONS);
 addSelect("path-mode", PATH_MODE_OPTIONS);
 addSelect("preset", ["store", "quick", "balanced", "high", "ultra", "custom"]);
+addEl("button", "save-preset");
+addEl("button", "delete-preset");
 
 // Compression form inputs
 addEl("input", "output-path");
@@ -181,9 +185,19 @@ const encryptHeaders = addEl("input", "encrypt-headers") as HTMLInputElement;
 encryptHeaders.type = "checkbox";
 const sfxInput = addEl("input", "sfx") as HTMLInputElement;
 sfxInput.type = "checkbox";
+const updateModeInput = addEl("input", "update-mode") as HTMLInputElement;
+updateModeInput.type = "checkbox";
+const storeTimestampsInput = addEl(
+  "input",
+  "store-timestamps",
+) as HTMLInputElement;
+storeTimestampsInput.type = "checkbox";
 const deleteAfter = addEl("input", "delete-after") as HTMLInputElement;
 deleteAfter.type = "checkbox";
 addEl("button", "toggle-password");
+addSelect("split-size", ["", "100m", "700m", "1g", "4g", "custom"]);
+addEl("div", "split-custom-field");
+addEl("input", "split-custom");
 
 // Extract form inputs
 addEl("input", "extract-path");
@@ -220,6 +234,8 @@ sll.type = "checkbox";
 const soid = addEl("input", "s-os-integration-dismissed") as HTMLInputElement;
 soid.type = "checkbox";
 addEl("div", "s-log-dir");
+addEl("button", "run-benchmark");
+addEl("div", "benchmark-result");
 addEl("div", "os-integration-help");
 addEl("div", "os-platform-label");
 addEl("div", "os-package-label");
@@ -233,6 +249,15 @@ addEl("button", "rerun-setup-wizard");
 // Licenses modal
 addEl("div", "licenses-overlay");
 addEl("div", "licenses-list");
+
+// Shortcuts modal
+const shortcutsOverlay = addEl("div", "shortcuts-overlay");
+shortcutsOverlay.hidden = true;
+const shortcutsModal = document.createElement("div");
+shortcutsModal.className = "modal";
+shortcutsOverlay.appendChild(shortcutsModal);
+addEl("button", "close-shortcuts");
+addEl("button", "close-shortcuts-footer");
 
 // Command preview modal
 const commandPreviewOverlay = addEl("div", "command-preview-overlay");

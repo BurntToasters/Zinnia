@@ -9,6 +9,8 @@ npm-debug.log*
 licenses.json
 **/.*/
 !.github/
+!src-tauri/.cargo/
+!src-tauri/.cargo/audit.toml
 
 # Runtime data
 pids
@@ -35,7 +37,8 @@ vite.config.ts.timestamp-*
 # Tauri
 src-tauri/target/
 src-tauri/binaries/
-src-tauri/.cargo/
+src-tauri/.cargo/*
+!src-tauri/.cargo/audit.toml
 
 # Build outputs
 dist/

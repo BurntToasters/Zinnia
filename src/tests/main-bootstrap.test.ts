@@ -66,6 +66,9 @@ const mocks = vi.hoisted(() => {
       updateCompressionOptionsForFormat: vi.fn(),
       applyPreset: vi.fn(),
       onCompressionOptionChange: vi.fn(),
+      saveCustomPreset: vi.fn(),
+      deleteCustomPreset: vi.fn(),
+      refreshPresetDropdown: vi.fn(),
     },
     updater: {
       checkUpdates: vi.fn().mockResolvedValue(undefined),
@@ -103,6 +106,7 @@ const mocks = vi.hoisted(() => {
       setBasicView: vi.fn(),
       handleBasicDragDrop: vi.fn(),
       syncBasicBeforeRun: vi.fn(),
+      syncBasicWorkspaceFromPower: vi.fn(),
     },
   };
 });
@@ -162,6 +166,9 @@ vi.mock("../presets", () => ({
     mocks.presets.updateCompressionOptionsForFormat,
   applyPreset: mocks.presets.applyPreset,
   onCompressionOptionChange: mocks.presets.onCompressionOptionChange,
+  saveCustomPreset: mocks.presets.saveCustomPreset,
+  deleteCustomPreset: mocks.presets.deleteCustomPreset,
+  refreshPresetDropdown: mocks.presets.refreshPresetDropdown,
 }));
 
 vi.mock("../updater", () => ({
@@ -208,6 +215,7 @@ vi.mock("../basic-ui", () => ({
   setBasicView: mocks.basicUi.setBasicView,
   handleBasicDragDrop: mocks.basicUi.handleBasicDragDrop,
   syncBasicBeforeRun: mocks.basicUi.syncBasicBeforeRun,
+  syncBasicWorkspaceFromPower: mocks.basicUi.syncBasicWorkspaceFromPower,
 }));
 
 const invokeMock = vi.mocked(invoke);
@@ -282,6 +290,8 @@ function ensureMainDomElements(): void {
     "browse-test",
     "browse-extract",
     "browse-selective",
+    "browse-add-files",
+    "browse-convert",
     "selective-select-all",
     "selective-clear",
     "selective-cancel",
@@ -337,7 +347,12 @@ function ensureMainDomElements(): void {
   }
 
   ensureSelect("format", ["7z", "zip", "tar"]);
-  ensureSelect("preset", ["balanced", "ultra"]);
+  ensureSelect("preset", ["balanced", "ultra", "custom"]);
+  ensureElement("save-preset", "button");
+  ensureElement("delete-preset", "button");
+  ensureSelect("split-size", ["", "100m", "custom"]);
+  ensureElement("split-custom-field", "div");
+  ensureElement("split-custom", "input");
   ensureSelect("s-format", ["7z", "zip", "tar"]);
   for (const id of ["level", "method", "dict", "word-size", "solid"]) {
     ensureSelect(id, [""]);
@@ -357,6 +372,8 @@ function ensureMainDomElements(): void {
   ensureElement("export-logs", "button");
   ensureElement("open-logs-folder", "button");
   ensureElement("clear-logs", "button");
+  ensureElement("run-benchmark", "button");
+  ensureElement("benchmark-result", "div");
   ensureElement("show-licenses", "button");
   ensureElement("about-show-licenses", "button");
   ensureElement("close-licenses", "button");
@@ -375,6 +392,9 @@ function ensureMainDomElements(): void {
   ensureElement("licenses-list", "div");
   ensureElement("selective-overlay", "div");
   ensureElement("command-preview-overlay", "div");
+  ensureElement("shortcuts-overlay", "div");
+  ensureElement("close-shortcuts", "button");
+  ensureElement("close-shortcuts-footer", "button");
   ensureElement("setup-wizard-overlay", "div");
 
   (document.getElementById("settings-overlay") as HTMLElement).hidden = true;
@@ -382,6 +402,7 @@ function ensureMainDomElements(): void {
   (document.getElementById("selective-overlay") as HTMLElement).hidden = true;
   (document.getElementById("command-preview-overlay") as HTMLElement).hidden =
     true;
+  (document.getElementById("shortcuts-overlay") as HTMLElement).hidden = true;
   (document.getElementById("setup-wizard-overlay") as HTMLElement).hidden =
     true;
 }
@@ -528,6 +549,7 @@ beforeEach(async () => {
   mocks.basicUi.setBasicView.mockReset();
   mocks.basicUi.handleBasicDragDrop.mockReset();
   mocks.basicUi.syncBasicBeforeRun.mockReset();
+  mocks.basicUi.syncBasicWorkspaceFromPower.mockReset();
 
   askMock.mockReset();
   askMock.mockResolvedValue(false);
@@ -601,6 +623,33 @@ describe("main bootstrap", () => {
       (document.getElementById("s-version-label") as HTMLElement).textContent,
     ).toBe("v1.2.3");
     expect(document.body.classList.contains("platform-linux")).toBe(true);
+  });
+
+  it("opens the basic compress view for a --compress launch", async () => {
+    const { state } = await import("../state");
+    state.inputs = [];
+    setInvokeRouter((command) => {
+      if (command === "probe_7z") return undefined;
+      if (command === "get_cpu_count") return 12;
+      if (command === "get_log_dir") return "/tmp/logs";
+      if (command === "get_platform_info") return "linux";
+      if (command === "is_packaged") return true;
+      if (command === "is_flatpak") return false;
+      if (command === "get_initial_mode") return "compress";
+      if (command === "get_initial_paths") return ["/tmp/folder-to-zip"];
+      if (command === "drain_pending_paths") return [];
+      return undefined;
+    });
+
+    await loadMainModule();
+
+    expect(document.body.textContent ?? "").not.toContain("Failed to start:");
+    expect(mocks.ui.setMode).toHaveBeenCalledWith("add");
+    expect(state.inputs).toContain("/tmp/folder-to-zip");
+    expect(mocks.basicUi.setBasicView).toHaveBeenCalledWith("compress");
+    expect(mocks.basicUi.setBasicView).not.toHaveBeenCalledWith("extract");
+    expect(mocks.basicUi.setBasicView).not.toHaveBeenCalledWith("browse");
+    expect(mocks.archive.browseArchive).not.toHaveBeenCalled();
   });
 
   it("shows startup failure details when runtime probe fails", async () => {
@@ -920,6 +969,16 @@ describe("main bootstrap", () => {
     expect(extractPassword.type).toBe("text");
     extractToggle.click();
     expect(extractPassword.type).toBe("password");
+
+    (
+      document.getElementById("workspace-mode-power") as HTMLButtonElement
+    ).click();
+    expect(mocks.basicUi.syncBasicBeforeRun).toHaveBeenCalled();
+
+    (
+      document.getElementById("workspace-mode-basic") as HTMLButtonElement
+    ).click();
+    expect(mocks.basicUi.syncBasicWorkspaceFromPower).toHaveBeenCalled();
 
     state.lastAutoExtractDestination = "/tmp/auto";
     const extractPath = document.getElementById(

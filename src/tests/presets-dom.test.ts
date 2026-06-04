@@ -4,8 +4,12 @@ import {
   detectPreset,
   onCompressionOptionChange,
   updateCompressionOptionsForFormat,
+  saveCustomPreset,
+  deleteCustomPreset,
+  refreshPresetDropdown,
   PRESETS,
 } from "../presets";
+import { state } from "../state";
 
 function getSelectValue(id: string): string {
   return (document.getElementById(id) as HTMLSelectElement).value;
@@ -23,6 +27,7 @@ beforeEach(() => {
   setSelectValue("word-size", "64");
   setSelectValue("solid", "off");
   setSelectValue("preset", "custom");
+  state.currentSettings.customPresets = [];
 });
 
 describe("applyPreset", () => {
@@ -110,6 +115,72 @@ describe("detectPreset", () => {
       applyPreset(name);
       expect(detectPreset()).toBe(name);
     }
+  });
+});
+
+describe("custom presets", () => {
+  it("saves the current config as a named custom preset", () => {
+    setSelectValue("format", "7z");
+    setSelectValue("level", "7");
+    setSelectValue("dict", "128m");
+    saveCustomPreset("My Backup");
+
+    const saved = state.currentSettings.customPresets;
+    expect(saved).toHaveLength(1);
+    expect(saved[0].name).toBe("My Backup");
+    expect(saved[0].level).toBe("7");
+    expect(saved[0].dict).toBe("128m");
+  });
+
+  it("rejects empty and built-in preset names", () => {
+    expect(() => saveCustomPreset("   ")).toThrow(/empty/);
+    expect(() => saveCustomPreset("ultra")).toThrow(/built-in/);
+  });
+
+  it("overwrites a preset with the same name", () => {
+    setSelectValue("level", "5");
+    saveCustomPreset("Dup");
+    setSelectValue("level", "9");
+    saveCustomPreset("Dup");
+    expect(state.currentSettings.customPresets).toHaveLength(1);
+    expect(state.currentSettings.customPresets[0].level).toBe("9");
+  });
+
+  it("applies a saved custom preset by prefixed value", () => {
+    setSelectValue("format", "zip");
+    setSelectValue("level", "1");
+    setSelectValue("method", "deflate");
+    saveCustomPreset("Fast Zip");
+
+    applyPreset("ultra");
+    applyPreset("custom:Fast Zip");
+    expect(getSelectValue("format")).toBe("zip");
+    expect(getSelectValue("level")).toBe("1");
+  });
+
+  it("detects a matching custom preset", () => {
+    setSelectValue("format", "7z");
+    setSelectValue("level", "6");
+    setSelectValue("dict", "32m");
+    saveCustomPreset("Mid");
+    expect(detectPreset()).toBe("custom:Mid");
+  });
+
+  it("deletes a custom preset", () => {
+    saveCustomPreset("Temp");
+    deleteCustomPreset("Temp");
+    expect(state.currentSettings.customPresets).toHaveLength(0);
+  });
+
+  it("refreshes the dropdown with custom options before the custom anchor", () => {
+    saveCustomPreset("Alpha");
+    refreshPresetDropdown();
+    const select = document.getElementById("preset") as HTMLSelectElement;
+    const values = [...select.options].map((o) => o.value);
+    expect(values).toContain("custom:Alpha");
+    expect(values.indexOf("custom:Alpha")).toBeLessThan(
+      values.indexOf("custom"),
+    );
   });
 });
 

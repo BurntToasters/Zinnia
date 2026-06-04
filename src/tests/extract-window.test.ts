@@ -252,3 +252,27 @@ describe("extract-window", () => {
     ).toContain("permission denied");
   });
 });
+
+describe("formatEta", () => {
+  it("returns empty before any progress", async () => {
+    mountExtractDom();
+    const { formatEta } = await import("../extract-window");
+    expect(formatEta(0, 0)).toBe("");
+    expect(formatEta(1000, 0)).toBe("");
+    expect(formatEta(1000, 100)).toBe("");
+  });
+
+  it("estimates seconds remaining", async () => {
+    mountExtractDom();
+    const { formatEta } = await import("../extract-window");
+    // 50% in 10s → ~10s left
+    expect(formatEta(10_000, 50)).toBe("~10s left");
+  });
+
+  it("formats minutes and seconds for longer waits", async () => {
+    mountExtractDom();
+    const { formatEta } = await import("../extract-window");
+    // 10% in 18s → total 180s, remaining 162s → 2m 42s
+    expect(formatEta(18_000, 10)).toBe("~2m 42s left");
+  });
+});

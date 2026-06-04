@@ -56,6 +56,7 @@ export const state = {
   selectiveSearchQuery: "",
   selectiveActiveArchive: null as string | null,
   selectiveVisiblePaths: [] as string[],
+  selectiveExpandedFolders: new Set<string>(),
   inputValidationByPath: new Map<string, InputValidationInfo>(),
   inputValidationRequestId: 0,
   lastInputValidationMode: "add" as "add" | "extract" | "browse",
