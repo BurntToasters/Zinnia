@@ -33,13 +33,18 @@ import {
 } from "./compression-security";
 import type { ArchiveInfo, BrowseEntry } from "./browse-model";
 import { resolveExtractDestinationAutofill } from "./extract-path";
+import { looksLikePasswordRequiredError, describe7zError } from "./error-hints";
+export { looksLikePasswordRequiredError, describe7zError };
 import {
   buildSelectiveExtractArgs,
+  buildEntryTree,
+  computeNodeCheckState,
   clearPathSelection,
   filterBrowseEntriesByQuery,
   selectEntries,
   toggleEntrySelection,
 } from "./selective-extract";
+import type { TreeNode } from "./selective-extract";
 
 export function truncateForDialog(text: string, maxChars = 4000): string {
   if (text.length <= maxChars) return text;
@@ -167,19 +172,17 @@ export function methodLooksEncrypted(value: string): boolean {
   );
 }
 
-export function looksLikePasswordRequiredError(
+async function showOperationError(
+  code: number,
   stdout: string,
   stderr: string,
-): boolean {
-  const combined = `${stdout}\n${stderr}`.toLowerCase();
-  return (
-    combined.includes("wrong password") ||
-    combined.includes("can not open encrypted archive") ||
-    combined.includes("can't open encrypted archive") ||
-    combined.includes("data error in encrypted file") ||
-    combined.includes("encrypted headers") ||
-    combined.includes("enter password") ||
-    combined.includes("is encrypted")
+): Promise<void> {
+  const hint = describe7zError(stdout, stderr);
+  const detail = stderr.trim() ? `\n\n${truncateForDialog(stderr.trim())}` : "";
+  const hintLine = hint ? `\n\n${hint}` : "";
+  await message(
+    `Operation failed with exit code ${code}.${hintLine}${detail}`,
+    { title: "Operation failed", kind: "error" },
   );
 }
 
@@ -284,6 +287,9 @@ export function buildArgs() {
   if (sfx) switches.push("-sfx");
   if (deleteAfter) switches.push("-sdel");
 
+  const splitSize = readSplitSize();
+  if (splitSize) switches.push(`-v${splitSize}`);
+
   const args = [
     "a",
     ...switches,
@@ -293,6 +299,25 @@ export function buildArgs() {
     ...state.inputs,
   ];
   return args;
+}
+
+const SPLIT_SIZE_PATTERN = /^\d+(?:b|k|m|g)?$/i;
+
+export function readSplitSize(): string {
+  const select = $<HTMLSelectElement>("split-size");
+  const choice = select.value;
+  if (!choice) return "";
+  const raw =
+    choice === "custom"
+      ? $<HTMLInputElement>("split-custom").value.trim().toLowerCase()
+      : choice;
+  if (!raw) return "";
+  if (!SPLIT_SIZE_PATTERN.test(raw)) {
+    throw new Error(
+      `Invalid split size "${raw}". Use a number with optional b/k/m/g, e.g. 100m.`,
+    );
+  }
+  return raw;
 }
 
 export function parseArchiveListing(stdout: string): ArchiveInfo {
@@ -503,10 +528,118 @@ function getCurrentArchiveSelectionPaths(
     .map((entry) => entry.path);
 }
 
+function renderSelectiveFlatRow(
+  archive: string,
+  entry: BrowseEntry,
+  allEntries: BrowseEntry[],
+): HTMLElement {
+  const selected = getOrCreateSelection(archive);
+  const row = document.createElement("label");
+  row.className = "selective-row";
+
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = selected.has(entry.path);
+  checkbox.disabled = state.running;
+  checkbox.addEventListener("change", () => {
+    const current = getOrCreateSelection(archive);
+    const next = toggleEntrySelection(current, entry, allEntries);
+    cacheSelection(archive, next);
+    renderSelectiveExtractModal();
+  });
+
+  const path = document.createElement("span");
+  path.className = "selective-row__path";
+  path.textContent = entry.path;
+  path.title = entry.path;
+
+  const meta = document.createElement("span");
+  meta.className = "selective-row__meta";
+  const kind = entry.isFolder ? "Folder" : "File";
+  const size = entry.isFolder ? "\u2014" : formatSize(entry.size);
+  meta.textContent = `${kind} \u00b7 ${size}`;
+
+  row.appendChild(checkbox);
+  row.appendChild(path);
+  row.appendChild(meta);
+  return row;
+}
+
+function renderSelectiveTreeNode(
+  archive: string,
+  node: TreeNode,
+  allEntries: BrowseEntry[],
+  list: HTMLElement,
+): void {
+  const selected = getOrCreateSelection(archive);
+  const row = document.createElement("div");
+  row.className = "selective-row selective-row--tree";
+  row.style.paddingLeft = `${node.depth * 18 + 8}px`;
+
+  const expandable = node.isFolder && node.children.length > 0;
+  const expanded = state.selectiveExpandedFolders.has(node.path);
+
+  const twisty = document.createElement("button");
+  twisty.type = "button";
+  twisty.className = "selective-twisty";
+  twisty.textContent = expandable ? (expanded ? "\u25be" : "\u25b8") : "";
+  twisty.disabled = !expandable;
+  twisty.setAttribute("aria-label", expanded ? "Collapse" : "Expand");
+  if (expandable) {
+    twisty.addEventListener("click", () => {
+      if (expanded) state.selectiveExpandedFolders.delete(node.path);
+      else state.selectiveExpandedFolders.add(node.path);
+      renderSelectiveExtractModal();
+    });
+  }
+
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  const checkState = computeNodeCheckState(node, selected);
+  checkbox.checked = checkState === "checked";
+  checkbox.indeterminate = checkState === "indeterminate";
+  checkbox.disabled = state.running;
+  checkbox.addEventListener("change", () => {
+    const current = getOrCreateSelection(archive);
+    const entry: BrowseEntry = {
+      path: node.path,
+      isFolder: node.isFolder,
+      size: node.size,
+      packedSize: 0,
+      modified: "",
+    };
+    const next = toggleEntrySelection(current, entry, allEntries);
+    cacheSelection(archive, next);
+    renderSelectiveExtractModal();
+  });
+
+  const name = document.createElement("span");
+  name.className = "selective-row__path";
+  name.textContent = node.isFolder ? `${node.name}/` : node.name;
+  name.title = node.path;
+
+  const meta = document.createElement("span");
+  meta.className = "selective-row__meta";
+  meta.textContent = node.isFolder ? "Folder" : formatSize(node.size);
+
+  row.appendChild(twisty);
+  row.appendChild(checkbox);
+  row.appendChild(name);
+  row.appendChild(meta);
+  list.appendChild(row);
+
+  if (expandable && expanded) {
+    for (const child of node.children) {
+      renderSelectiveTreeNode(archive, child, allEntries, list);
+    }
+  }
+}
+
 function renderSelectiveEntryList(
   archive: string,
   entries: BrowseEntry[],
   allEntries: BrowseEntry[],
+  searching: boolean,
 ): void {
   const list = document.getElementById("selective-list");
   if (!list) return;
@@ -520,37 +653,16 @@ function renderSelectiveEntryList(
     return;
   }
 
-  const selected = getOrCreateSelection(archive);
-  for (const entry of entries) {
-    const row = document.createElement("label");
-    row.className = "selective-row";
+  // Searching shows a flat result list; otherwise a collapsible tree.
+  if (searching) {
+    for (const entry of entries) {
+      list.appendChild(renderSelectiveFlatRow(archive, entry, allEntries));
+    }
+    return;
+  }
 
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.checked = selected.has(entry.path);
-    checkbox.disabled = state.running;
-    checkbox.addEventListener("change", () => {
-      const current = getOrCreateSelection(archive);
-      const next = toggleEntrySelection(current, entry, allEntries);
-      cacheSelection(archive, next);
-      renderSelectiveExtractModal();
-    });
-
-    const path = document.createElement("span");
-    path.className = "selective-row__path";
-    path.textContent = entry.path;
-    path.title = entry.path;
-
-    const meta = document.createElement("span");
-    meta.className = "selective-row__meta";
-    const kind = entry.isFolder ? "Folder" : "File";
-    const size = entry.isFolder ? "\u2014" : formatSize(entry.size);
-    meta.textContent = `${kind} \u00b7 ${size}`;
-
-    row.appendChild(checkbox);
-    row.appendChild(path);
-    row.appendChild(meta);
-    list.appendChild(row);
+  for (const node of buildEntryTree(entries)) {
+    renderSelectiveTreeNode(archive, node, allEntries, list);
   }
 }
 
@@ -560,13 +672,14 @@ export function renderSelectiveExtractModal(): void {
   const info = getCachedArchiveInfo(archive);
   if (!info) return;
 
+  const searching = state.selectiveSearchQuery.trim().length > 0;
   const filteredEntries = filterBrowseEntriesByQuery(
     info.entries,
     state.selectiveSearchQuery,
   );
   state.selectiveVisiblePaths = filteredEntries.map((entry) => entry.path);
 
-  renderSelectiveEntryList(archive, filteredEntries, info.entries);
+  renderSelectiveEntryList(archive, filteredEntries, info.entries, searching);
 
   const summary = document.getElementById("selective-summary");
   if (summary) {
@@ -620,6 +733,7 @@ export function closeSelectiveExtractModal(): void {
   state.selectiveSearchQuery = "";
   state.selectiveActiveArchive = null;
   state.selectiveVisiblePaths = [];
+  state.selectiveExpandedFolders.clear();
 }
 
 export function setSelectiveExtractSearch(query: string): void {
@@ -676,6 +790,7 @@ export async function openSelectiveExtractModal(): Promise<void> {
 
   state.selectiveActiveArchive = archive;
   state.selectiveSearchQuery = "";
+  state.selectiveExpandedFolders.clear();
   getOrCreateSelection(archive);
 
   const search = document.getElementById(
@@ -746,8 +861,7 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
       password,
       destination,
     );
-    const logSafe = args.map((a) => (a.startsWith("-p") ? "-p***" : a));
-    devLog(`7z ${logSafe.join(" ")}`);
+    devLog(`7z ${sanitizeCommandArgsForPreview(args).join(" ")}`);
 
     closeSelectiveExtractModal();
 
@@ -779,13 +893,7 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
       log(`7z exited with code ${result.code}`);
       setStatus("Error", 3000, result.stderr || "Operation failed.");
       hideProgress();
-      const errorDetails = result.stderr
-        ? `\n\n${truncateForDialog(result.stderr.trim())}`
-        : "";
-      await message(
-        `Operation failed with exit code ${result.code}.${errorDetails}`,
-        { title: "Operation failed", kind: "error" },
-      );
+      await showOperationError(result.code, result.stdout, result.stderr);
     } else {
       if (result.code === 1) {
         log("Operation completed with warnings.");
@@ -872,8 +980,7 @@ export async function runAction() {
       args = buildArgs();
     }
 
-    const logSafe = args.map((a) => (a.startsWith("-p") ? "-p***" : a));
-    devLog(`7z ${logSafe.join(" ")}`);
+    devLog(`7z ${sanitizeCommandArgsForPreview(args).join(" ")}`);
 
     setStatus("Running");
 
@@ -901,13 +1008,7 @@ export async function runAction() {
       log(`7z exited with code ${result.code}`);
       setStatus("Error", 3000, result.stderr || "Operation failed.");
       hideProgress();
-      const errorDetails = result.stderr
-        ? `\n\n${truncateForDialog(result.stderr.trim())}`
-        : "";
-      await message(
-        `Operation failed with exit code ${result.code}.${errorDetails}`,
-        { title: "Operation failed", kind: "error" },
-      );
+      await showOperationError(result.code, result.stdout, result.stderr);
     } else {
       if (result.code === 1) {
         log("Operation completed with warnings.");
@@ -972,8 +1073,7 @@ export async function runBatchExtract() {
         if (password) args.push(`-p${password}`);
         args.push(...extraArgs);
         args.push("--", archive);
-        const logSafe = args.map((a) => (a.startsWith("-p") ? "-p***" : a));
-        devLog(`7z ${logSafe.join(" ")}`);
+        devLog(`7z ${sanitizeCommandArgsForPreview(args).join(" ")}`);
 
         const result = await invoke<Run7zResult>("run_7z", { args });
 

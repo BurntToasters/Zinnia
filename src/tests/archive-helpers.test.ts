@@ -3,6 +3,7 @@ import {
   isEncryptedFlag,
   methodLooksEncrypted,
   looksLikePasswordRequiredError,
+  describe7zError,
   truncateForDialog,
 } from "../archive";
 
@@ -159,5 +160,33 @@ describe("truncateForDialog", () => {
 
   it("handles empty string", () => {
     expect(truncateForDialog("")).toBe("");
+  });
+});
+
+describe("describe7zError", () => {
+  it("hints for wrong password", () => {
+    expect(describe7zError("", "Wrong password")).toMatch(/password/i);
+  });
+
+  it("hints for disk full", () => {
+    expect(describe7zError("", "No space left on device")).toMatch(
+      /disk space/i,
+    );
+  });
+
+  it("hints for damaged archive", () => {
+    expect(describe7zError("", "CRC Failed")).toMatch(/damaged|CRC/i);
+  });
+
+  it("hints for permission denied", () => {
+    expect(describe7zError("", "Access is denied.")).toMatch(/permission/i);
+  });
+
+  it("hints for unsupported method", () => {
+    expect(describe7zError("", "Unsupported Method")).toMatch(/method/i);
+  });
+
+  it("returns empty string for unrecognized output", () => {
+    expect(describe7zError("Everything is Ok", "")).toBe("");
   });
 });

@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { deriveExtractDestinationPath } from "./extract-path";
+import { describe7zError } from "./error-hints";
 
 interface Run7zResult {
   stdout: string;
@@ -9,6 +10,12 @@ interface Run7zResult {
   code: number;
   stdout_truncated?: boolean;
   stderr_truncated?: boolean;
+}
+
+interface ProgressUpdate {
+  percent?: number;
+  filesDone?: number;
+  currentFile?: string;
 }
 
 function $(id: string): HTMLElement {
@@ -236,13 +243,30 @@ async function run() {
 
   const totalEntries = await countArchiveEntries(archivePath);
   let processedEntries = 0;
+  let sawStructuredPercent = false;
 
-  const unlistenProgress = await listen<string>("7z-progress", (event) => {
+  const unlistenStructured = await listen<ProgressUpdate>(
+    "7z-progress-structured",
+    (event) => {
+      const update = event.payload;
+      if (typeof update?.percent === "number") {
+        sawStructuredPercent = true;
+        setDeterminateProgress(Math.min(99, update.percent));
+      }
+      if (update?.currentFile) {
+        $("extract-status").textContent =
+          `Extracting ${basename(update.currentFile)}...`;
+      }
+    },
+  );
+
+  // Fallback for archives 7z extracts without emitting a percent: count entries.
+  const unlistenRaw = await listen<string>("7z-progress", (event) => {
+    if (sawStructuredPercent) return;
     const chunk = typeof event.payload === "string" ? event.payload : "";
     if (!chunk) return;
-    const lines = chunk.split(/\r?\n/);
     let changed = false;
-    for (const line of lines) {
+    for (const line of chunk.split(/\r?\n/)) {
       if (/^- \S/.test(line)) {
         processedEntries++;
         changed = true;
@@ -256,6 +280,11 @@ async function run() {
       setDeterminateProgress(pct);
     }
   });
+
+  const unlistenProgress = () => {
+    unlistenStructured();
+    unlistenRaw();
+  };
 
   $("extract-status").textContent = "Extracting...";
   if (totalEntries > 0) {
@@ -282,8 +311,9 @@ async function run() {
     }
 
     if (result.code !== 0 && result.code !== 1) {
-      const detail = result.stderr?.trim() || `Exit code ${result.code}`;
-      showError(detail);
+      const hint = describe7zError(result.stdout ?? "", result.stderr ?? "");
+      const base = result.stderr?.trim() || `Exit code ${result.code}`;
+      showError(hint ? `${hint}\n\n${base}` : base);
       return;
     }
 

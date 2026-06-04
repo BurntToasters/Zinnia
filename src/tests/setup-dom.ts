@@ -171,6 +171,8 @@ addSelect("word-size", WORD_SIZE_OPTIONS);
 addSelect("solid", SOLID_OPTIONS);
 addSelect("path-mode", PATH_MODE_OPTIONS);
 addSelect("preset", ["store", "quick", "balanced", "high", "ultra", "custom"]);
+addEl("button", "save-preset");
+addEl("button", "delete-preset");
 
 // Compression form inputs
 addEl("input", "output-path");
@@ -184,6 +186,9 @@ sfxInput.type = "checkbox";
 const deleteAfter = addEl("input", "delete-after") as HTMLInputElement;
 deleteAfter.type = "checkbox";
 addEl("button", "toggle-password");
+addSelect("split-size", ["", "100m", "700m", "1g", "4g", "custom"]);
+addEl("div", "split-custom-field");
+addEl("input", "split-custom");
 
 // Extract form inputs
 addEl("input", "extract-path");

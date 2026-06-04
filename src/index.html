@@ -1713,14 +1713,33 @@
                 <div class="field-grid field-grid--triple">
                   <div class="field">
                     <label for="preset">Preset</label>
-                    <select id="preset">
-                      <option value="store">Store</option>
-                      <option value="quick">Quick</option>
-                      <option value="balanced" selected>Balanced</option>
-                      <option value="high">High</option>
-                      <option value="ultra">Ultra</option>
-                      <option value="custom">Custom</option>
-                    </select>
+                    <div class="input-row">
+                      <select id="preset">
+                        <option value="store">Store</option>
+                        <option value="quick">Quick</option>
+                        <option value="balanced" selected>Balanced</option>
+                        <option value="high">High</option>
+                        <option value="ultra">Ultra</option>
+                        <option value="custom">Custom</option>
+                      </select>
+                      <button
+                        type="button"
+                        class="btn btn--ghost btn--sm"
+                        id="save-preset"
+                        title="Save current options as a preset"
+                      >
+                        Save
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn--ghost btn--sm"
+                        id="delete-preset"
+                        title="Delete the selected custom preset"
+                        hidden
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </div>
                   <div class="field">
                     <label for="format">Format</label>
@@ -2010,6 +2029,28 @@
                           <option value="relative" selected>Relative</option>
                           <option value="absolute">Absolute</option>
                         </select>
+                      </div>
+                    </div>
+                    <div class="grid-split">
+                      <div class="field">
+                        <label for="split-size">Split into volumes</label>
+                        <select id="split-size">
+                          <option value="" selected>Off (single file)</option>
+                          <option value="100m">100 MB</option>
+                          <option value="700m">700 MB (CD)</option>
+                          <option value="1g">1 GB</option>
+                          <option value="4g">4 GB (FAT32)</option>
+                          <option value="custom">Custom…</option>
+                        </select>
+                      </div>
+                      <div class="field" id="split-custom-field" hidden>
+                        <label for="split-custom">Custom size</label>
+                        <input
+                          type="text"
+                          id="split-custom"
+                          placeholder="e.g. 250m, 2g"
+                          autocomplete="off"
+                        />
                       </div>
                     </div>
                   </div>

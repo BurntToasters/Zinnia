@@ -29,6 +29,7 @@ import {
   getMode,
   setBrowsePasswordFieldVisible,
   persistSettingsImmediately,
+  setStatus,
 } from "./ui";
 import {
   runAction,
@@ -52,6 +53,9 @@ import {
   updateCompressionOptionsForFormat,
   applyPreset,
   onCompressionOptionChange,
+  saveCustomPreset,
+  deleteCustomPreset,
+  refreshPresetDropdown,
 } from "./presets";
 import { checkUpdates, autoCheckUpdates } from "./updater";
 import { openLicensesModal, closeLicensesModal } from "./licenses";
@@ -353,8 +357,52 @@ function wireEvents() {
     }
   });
 
+  const updateDeletePresetButton = () => {
+    const isCustom = $<HTMLSelectElement>("preset").value.startsWith("custom:");
+    $("delete-preset").hidden = !isCustom;
+  };
+
+  refreshPresetDropdown();
+  updateDeletePresetButton();
+
   $<HTMLSelectElement>("preset").addEventListener("change", () => {
     applyPreset($<HTMLSelectElement>("preset").value);
+    updateDeletePresetButton();
+  });
+
+  $("save-preset").addEventListener("click", () => {
+    const name = window.prompt("Save current options as preset:")?.trim();
+    if (!name) return;
+    try {
+      saveCustomPreset(name);
+      refreshPresetDropdown(`custom:${name}`);
+      updateDeletePresetButton();
+      void persistSettingsImmediately(
+        state.currentSettings,
+        state.settingsExtras,
+      );
+      setStatus(`Preset "${name}" saved`, 2000);
+    } catch (err) {
+      setStatus(
+        "Error",
+        3000,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  });
+
+  $("delete-preset").addEventListener("click", () => {
+    const value = $<HTMLSelectElement>("preset").value;
+    if (!value.startsWith("custom:")) return;
+    const name = value.slice("custom:".length);
+    deleteCustomPreset(name);
+    refreshPresetDropdown("custom");
+    updateDeletePresetButton();
+    void persistSettingsImmediately(
+      state.currentSettings,
+      state.settingsExtras,
+    );
+    setStatus(`Preset "${name}" deleted`, 2000);
   });
 
   $<HTMLSelectElement>("s-format").addEventListener("change", () => {
@@ -393,6 +441,12 @@ function wireEvents() {
   for (const id of ["level", "method", "dict", "word-size", "solid"]) {
     $(id).addEventListener("change", onCompressionOptionChange);
   }
+
+  $<HTMLSelectElement>("split-size").addEventListener("change", () => {
+    const isCustom = $<HTMLSelectElement>("split-size").value === "custom";
+    $("split-custom-field").hidden = !isCustom;
+    if (isCustom) $<HTMLInputElement>("split-custom").focus();
+  });
 
   $("toggle-password").addEventListener("click", () => {
     const input = $<HTMLInputElement>("password");

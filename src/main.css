@@ -1733,6 +1733,26 @@ img.twemoji:hover {
   border-bottom: none;
 }
 
+.selective-row--tree {
+  grid-template-columns: 16px auto minmax(0, 1fr) auto;
+}
+
+.selective-twisty {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.7rem;
+  line-height: 1;
+  padding: 0;
+  width: 16px;
+}
+
+.selective-twisty:disabled {
+  cursor: default;
+  opacity: 0;
+}
+
 .selective-row:hover {
   background: var(--hover-overlay);
 }

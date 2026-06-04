@@ -37,6 +37,8 @@ beforeEach(() => {
   setChecked("encrypt-headers", false);
   setChecked("sfx", false);
   setChecked("delete-after", false);
+  setSelectValue("split-size", "");
+  setInputValue("split-custom", "");
   setInputValue("extract-path", "");
   setInputValue("extract-password", "");
   setInputValue("extract-extra-args", "");
@@ -93,6 +95,42 @@ describe("buildArgs (add mode)", () => {
 
     const args = buildArgs();
     expect(args).toContain("-mmt=4");
+  });
+
+  it("omits -v when split is off", () => {
+    state.inputs = ["a.txt"];
+    setInputValue("output-path", "out.7z");
+
+    const args = buildArgs();
+    expect(args.some((a) => a.startsWith("-v"))).toBe(false);
+  });
+
+  it("adds -v switch for a preset split size", () => {
+    state.inputs = ["a.txt"];
+    setInputValue("output-path", "out.7z");
+    setSelectValue("split-size", "100m");
+
+    const args = buildArgs();
+    expect(args).toContain("-v100m");
+  });
+
+  it("adds -v switch for a custom split size", () => {
+    state.inputs = ["a.txt"];
+    setInputValue("output-path", "out.7z");
+    setSelectValue("split-size", "custom");
+    setInputValue("split-custom", "250M");
+
+    const args = buildArgs();
+    expect(args).toContain("-v250m");
+  });
+
+  it("throws on an invalid custom split size", () => {
+    state.inputs = ["a.txt"];
+    setInputValue("output-path", "out.7z");
+    setSelectValue("split-size", "custom");
+    setInputValue("split-custom", "lots");
+
+    expect(() => buildArgs()).toThrow(/Invalid split size/);
   });
 
   it("includes absolute path mode switch", () => {

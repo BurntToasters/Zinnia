@@ -104,6 +104,105 @@ export function selectEntries(
   return next;
 }
 
+export interface TreeNode {
+  name: string;
+  path: string;
+  isFolder: boolean;
+  size: number;
+  depth: number;
+  children: TreeNode[];
+}
+
+function splitPathSegments(path: string): string[] {
+  return path.split(/[\\/]+/).filter((s) => s.length > 0);
+}
+
+// Build a nested folder/file tree from flat archive entries. Intermediate
+// folders missing from the entry list are synthesized so the tree is complete.
+export function buildEntryTree(entries: BrowseEntry[]): TreeNode[] {
+  const root: TreeNode = {
+    name: "",
+    path: "",
+    isFolder: true,
+    size: 0,
+    depth: -1,
+    children: [],
+  };
+  const byPath = new Map<string, TreeNode>();
+  byPath.set("", root);
+
+  const ensureNode = (
+    path: string,
+    isFolder: boolean,
+    size: number,
+  ): TreeNode => {
+    const existing = byPath.get(path);
+    if (existing) {
+      if (isFolder) existing.isFolder = true;
+      else existing.size = size;
+      return existing;
+    }
+    const segments = splitPathSegments(path);
+    const name = segments[segments.length - 1] ?? path;
+    const parentPath = segments.slice(0, -1).join("/");
+    const parent = ensureNode(parentPath, true, 0);
+    const node: TreeNode = {
+      name,
+      path,
+      isFolder,
+      size,
+      depth: segments.length - 1,
+      children: [],
+    };
+    parent.children.push(node);
+    byPath.set(path, node);
+    return node;
+  };
+
+  for (const entry of entries) {
+    const normalized = splitPathSegments(entry.path).join("/");
+    ensureNode(normalized, entry.isFolder, entry.size);
+  }
+
+  sortTree(root);
+  return root.children;
+}
+
+function sortTree(node: TreeNode): void {
+  node.children.sort((a, b) => {
+    if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  for (const child of node.children) sortTree(child);
+}
+
+export type NodeCheckState = "checked" | "unchecked" | "indeterminate";
+
+// Tri-state for a node: checked if all descendant files are selected,
+// unchecked if none, indeterminate if mixed.
+export function computeNodeCheckState(
+  node: TreeNode,
+  selected: Set<string>,
+): NodeCheckState {
+  if (!node.isFolder) {
+    return selected.has(node.path) ? "checked" : "unchecked";
+  }
+  let hasChecked = false;
+  let hasUnchecked = false;
+  const visit = (n: TreeNode): void => {
+    if (!n.isFolder) {
+      if (selected.has(n.path)) hasChecked = true;
+      else hasUnchecked = true;
+      return;
+    }
+    for (const child of n.children) visit(child);
+  };
+  for (const child of node.children) visit(child);
+  if (hasChecked && hasUnchecked) return "indeterminate";
+  if (hasChecked) return "checked";
+  return "unchecked";
+}
+
 export function buildSelectiveExtractArgs(
   archive: string,
   destination: string,

@@ -151,6 +151,7 @@ export function readSettingsModal(): UserSettings {
       .value as UserSettings["uiDensity"],
     osIntegrationDismissed: $<HTMLInputElement>("s-os-integration-dismissed")
       .checked,
+    customPresets: state.currentSettings.customPresets,
   };
 }
 

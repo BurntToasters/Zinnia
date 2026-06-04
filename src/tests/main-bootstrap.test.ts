@@ -66,6 +66,9 @@ const mocks = vi.hoisted(() => {
       updateCompressionOptionsForFormat: vi.fn(),
       applyPreset: vi.fn(),
       onCompressionOptionChange: vi.fn(),
+      saveCustomPreset: vi.fn(),
+      deleteCustomPreset: vi.fn(),
+      refreshPresetDropdown: vi.fn(),
     },
     updater: {
       checkUpdates: vi.fn().mockResolvedValue(undefined),
@@ -163,6 +166,9 @@ vi.mock("../presets", () => ({
     mocks.presets.updateCompressionOptionsForFormat,
   applyPreset: mocks.presets.applyPreset,
   onCompressionOptionChange: mocks.presets.onCompressionOptionChange,
+  saveCustomPreset: mocks.presets.saveCustomPreset,
+  deleteCustomPreset: mocks.presets.deleteCustomPreset,
+  refreshPresetDropdown: mocks.presets.refreshPresetDropdown,
 }));
 
 vi.mock("../updater", () => ({
@@ -339,7 +345,12 @@ function ensureMainDomElements(): void {
   }
 
   ensureSelect("format", ["7z", "zip", "tar"]);
-  ensureSelect("preset", ["balanced", "ultra"]);
+  ensureSelect("preset", ["balanced", "ultra", "custom"]);
+  ensureElement("save-preset", "button");
+  ensureElement("delete-preset", "button");
+  ensureSelect("split-size", ["", "100m", "custom"]);
+  ensureElement("split-custom-field", "div");
+  ensureElement("split-custom", "input");
   ensureSelect("s-format", ["7z", "zip", "tar"]);
   for (const id of ["level", "method", "dict", "word-size", "solid"]) {
     ensureSelect(id, [""]);
@@ -951,10 +962,14 @@ describe("main bootstrap", () => {
     extractToggle.click();
     expect(extractPassword.type).toBe("password");
 
-    (document.getElementById("workspace-mode-power") as HTMLButtonElement).click();
+    (
+      document.getElementById("workspace-mode-power") as HTMLButtonElement
+    ).click();
     expect(mocks.basicUi.syncBasicBeforeRun).toHaveBeenCalled();
 
-    (document.getElementById("workspace-mode-basic") as HTMLButtonElement).click();
+    (
+      document.getElementById("workspace-mode-basic") as HTMLButtonElement
+    ).click();
     expect(mocks.basicUi.syncBasicWorkspaceFromPower).toHaveBeenCalled();
 
     state.lastAutoExtractDestination = "/tmp/auto";
