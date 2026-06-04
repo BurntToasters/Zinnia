@@ -107,6 +107,7 @@ addEl("button", "browse-test");
 addEl("button", "browse-extract");
 addEl("button", "browse-selective");
 addEl("button", "browse-add-files");
+addEl("button", "browse-convert");
 for (const [quickActionId, quickAction] of [
   ["quick-add-balanced", "add-run-balanced"],
   ["quick-add-ultra", "add-run-ultra"],

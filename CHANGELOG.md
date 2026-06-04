@@ -20,12 +20,33 @@ The `.asc` files are my normal GPG signatures which you can verify using my GPG 
 ⚠️ Arm64 Linux Binaries are *NOT* available at the moment. Its something I may get around to in the future but its not a priority. However, I do have the logic setup in the repo in-case people would like to build their own :)
 
 ## Changes in `v0.5.0-beta.2:`
+* **NEW - Split archives:** Added multi-volume archive creation. Pick a volume size (100 MB, 700 MB, 1/4 GB, or custom) in the advanced compression options.
+* **NEW - Custom presets:** You can now save the current compression options as a named preset, apply it later, and delete it. Presets persist between sessions.
+* **NEW - Archive update:** Added an "Update existing archive" mode that adds or refreshes files inside an existing archive instead of recreating it.
+* **NEW - Add files from browse:** While browsing an archive you can now add files straight into it.
+* **NEW - Convert archive:** Added "Convert..." in the browse view to recompress an archive into another format.
+* **NEW - CPU benchmark:** Added a benchmark in Settings to measure compression speed and help pick a thread count.
+* **NEW - Selective extract tree:** The pick-files dialog is now a collapsible folder tree with tri-state checkboxes instead of a flat list.
+* **NEW - Keyboard shortcuts help:** Press `?` to see the shortcut cheat sheet.
 * **UI Modes:** Added experimental save states between basic <-> advanced.
+* **UI:** Extraction now shows real progress and an ETA, plus the file currently being processed. 📈
+* **UI:** Added non-blocking toasts for successful operations instead of blocking dialogs.
+* **UI:** Inputs now show inline ✓ / ✗ validation badges with a reason on hover.
+* **UI:** Failed operations now include a plain-language hint (wrong password, disk full, damaged archive, permission denied, and more).
+* **UI:** Drag-and-drop now works from every Basic view, and a mixed drop of archives and files asks whether to extract or compress.
+* **UI:** Encrypted extracts now prompt for a password and retry automatically.
 * **OS Integration:** Fixed "Compress with Zinnia" from the right-click menu opening the wrong screen and failing with "Invalid parameters." It now always opens the compress view (in whichever mode you use) with your selection ready to go.
 * **OS Integration:** Right-clicking an existing archive and choosing "Compress with Zinnia" now adds it as input to a new archive instead of jumping into extract.
 * **OS Integration:** Installer now registers a proper "Compress with Zinnia" / "Compress folder with Zinnia" Windows entry and a Linux compress desktop action, and cleans up stale entries from older installs.
 * **Security:** Hardened the Rust-side 7-Zip argument validator with a strict switch allowlist so only known-safe switches can reach the sidecar, even if the UI is bypassed. 🔒
+* **Security:** ZIP archives with a password now use AES-256 instead of legacy ZipCrypto.
+* **Security:** The argument validator now also rejects `..` path segments as defense-in-depth, and passwords are kept out of logs and the command preview.
+* **Security:** Bundled 7-Zip binaries are now checksum-verified against a tracked manifest on every build; a mismatch fails the build.
+* **Codebase:** Split the Rust backend out of one file into focused modules and de-duplicated the 7-Zip spawn logic.
+* **Codebase:** Cancelling a compression now deletes the partial output instead of leaving a corrupt file behind.
+* **Testing:** Added Rust integration tests that exercise the real bundled 7-Zip end to end, raised the coverage gate, and added a pre-commit hook.
 * **DEV:** CI now runs `npm audit`, `cargo audit`, and Clippy (`-D warnings`) as a security gate.
+* **Misc:** Added Dependabot, a tag-triggered release workflow, and CONTRIBUTING / ARCHITECTURE / SECURITY docs.
 
 ## Changes in `v0.5.0:`
 * **UI:** Reworked Basic mode into a task-first launcher for opening, extracting, and compressing archives.

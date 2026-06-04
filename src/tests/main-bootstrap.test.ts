@@ -291,6 +291,7 @@ function ensureMainDomElements(): void {
     "browse-extract",
     "browse-selective",
     "browse-add-files",
+    "browse-convert",
     "selective-select-all",
     "selective-clear",
     "selective-cancel",

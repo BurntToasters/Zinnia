@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { message, confirm, open } from "@tauri-apps/plugin-dialog";
+import { message, confirm, open, save } from "@tauri-apps/plugin-dialog";
 import {
   $,
   parseThreads,
@@ -262,6 +262,81 @@ export async function addFilesToArchive(): Promise<void> {
     setStatus("Error", 3000, msg);
     await message(msg, { title: "Error", kind: "error" });
   } finally {
+    setRunning(false);
+  }
+}
+
+// Convert the browsed archive to another format: extract to a managed temp dir,
+// recompress its contents with the current compression options, then clean up.
+export async function convertArchive(): Promise<void> {
+  if (state.running) return;
+  const archive = state.inputs[0]?.trim();
+  if (!archive) {
+    await message("Open an archive first to convert it.", {
+      title: "No archive",
+      kind: "warning",
+    });
+    return;
+  }
+
+  const format = $<HTMLSelectElement>("format").value;
+  const dest = await save({
+    title: "Convert archive to",
+    defaultPath: `converted.${format === "gzip" ? "gz" : format}`,
+  });
+  if (!dest) return;
+
+  setRunning(true);
+  let tempDir: string | null = null;
+  try {
+    if (!(await ensureRuntimeReady())) return;
+
+    tempDir = await invoke<string>("create_temp_extract_dir");
+
+    setStatus("Extracting for conversion");
+    const extract = await invoke<Run7zResult>("run_7z", {
+      args: ["x", `-o${tempDir}`, "-y", "--", archive],
+    });
+    if (extract.code > 1) {
+      setStatus("Error", 3000, extract.stderr || "Extraction failed.");
+      await showOperationError(extract.code, extract.stdout, extract.stderr);
+      return;
+    }
+
+    setStatus("Recompressing");
+    const threads = parseThreads(
+      $<HTMLInputElement>("threads").value,
+      SETTING_DEFAULTS.threads,
+    );
+    const compress = ["a", `-t${format}`];
+    if (threads) compress.push(`-mmt=${threads}`);
+    // Compress the extracted contents (everything inside the temp dir).
+    compress.push(dest, "--", `${tempDir}/*`);
+
+    const result = await invoke<Run7zResult>("run_7z", { args: compress });
+    logCommandResult(result.stdout, result.stderr);
+    if (result.code > 1) {
+      setStatus("Error", 3000, result.stderr || "Conversion failed.");
+      await showOperationError(result.code, result.stdout, result.stderr);
+    } else {
+      setStatus("Done", 2000);
+      showToast(`Converted archive to ${format.toUpperCase()}.`, "success");
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Error: ${msg}`, "error");
+    setStatus("Error", 3000, msg);
+    await message(msg, { title: "Conversion error", kind: "error" });
+  } finally {
+    if (tempDir) {
+      try {
+        await invoke("remove_managed_temp_dir", { path: tempDir });
+      } catch (err) {
+        devLog(
+          `Failed to clean up temp dir: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
     setRunning(false);
   }
 }

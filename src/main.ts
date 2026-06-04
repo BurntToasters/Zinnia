@@ -37,6 +37,7 @@ import {
   testArchive,
   browseArchive,
   addFilesToArchive,
+  convertArchive,
   previewCommand,
   copyCommandPreview,
   closeCommandPreviewModal,
@@ -398,6 +399,9 @@ function wireEvents() {
   });
   $("browse-add-files").addEventListener("click", () => {
     void addFilesToArchive();
+  });
+  $("browse-convert").addEventListener("click", () => {
+    void convertArchive();
   });
 
   $("close-selective").addEventListener("click", closeSelectiveExtractModal);

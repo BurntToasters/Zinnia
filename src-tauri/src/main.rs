@@ -8,6 +8,7 @@ mod platform;
 mod process;
 mod progress;
 mod settings_store;
+mod tempdir;
 mod validation;
 
 use std::collections::HashMap;
@@ -108,7 +109,9 @@ fn main() {
             platform::open_os_integration_settings,
             platform::get_cpu_count,
             platform::is_flatpak,
-            platform::is_packaged
+            platform::is_packaged,
+            tempdir::create_temp_extract_dir,
+            tempdir::remove_managed_temp_dir
         ])
         .build(tauri::generate_context!())
         .expect("failed to initialize Tauri application");
