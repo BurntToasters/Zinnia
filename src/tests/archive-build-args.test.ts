@@ -37,6 +37,8 @@ beforeEach(() => {
   setChecked("encrypt-headers", false);
   setChecked("sfx", false);
   setChecked("delete-after", false);
+  setChecked("update-mode", false);
+  setChecked("store-timestamps", false);
   setSelectValue("split-size", "");
   setInputValue("split-custom", "");
   setInputValue("extract-path", "");
@@ -131,6 +133,68 @@ describe("buildArgs (add mode)", () => {
     setInputValue("split-custom", "lots");
 
     expect(() => buildArgs()).toThrow(/Invalid split size/);
+  });
+
+  it("uses 'u' command when update mode is on", () => {
+    state.inputs = ["new.txt"];
+    setInputValue("output-path", "existing.7z");
+    setChecked("update-mode", true);
+
+    const args = buildArgs();
+    expect(args[0]).toBe("u");
+    expect(args).toContain("existing.7z");
+    expect(args).toContain("new.txt");
+  });
+
+  it("omits SFX and split in update mode", () => {
+    state.inputs = ["new.txt"];
+    setInputValue("output-path", "existing.7z");
+    setChecked("update-mode", true);
+    setChecked("sfx", true);
+    setSelectValue("split-size", "100m");
+
+    const args = buildArgs();
+    expect(args).not.toContain("-sfx");
+    expect(args.some((a) => a.startsWith("-v"))).toBe(false);
+  });
+
+  it("upgrades zip encryption to AES-256 when a password is set", () => {
+    state.inputs = ["a.txt"];
+    setInputValue("output-path", "out.zip");
+    setSelectValue("format", "zip");
+    setInputValue("password", "secret");
+
+    const args = buildArgs();
+    expect(args).toContain("-mem=AES256");
+  });
+
+  it("does not add AES switch for zip without a password", () => {
+    state.inputs = ["a.txt"];
+    setInputValue("output-path", "out.zip");
+    setSelectValue("format", "zip");
+
+    const args = buildArgs();
+    expect(args).not.toContain("-mem=AES256");
+  });
+
+  it("does not add AES switch for 7z with a password", () => {
+    state.inputs = ["a.txt"];
+    setInputValue("output-path", "out.7z");
+    setSelectValue("format", "7z");
+    setInputValue("password", "secret");
+
+    const args = buildArgs();
+    expect(args).not.toContain("-mem=AES256");
+  });
+
+  it("stores all timestamps when toggled", () => {
+    state.inputs = ["a.txt"];
+    setInputValue("output-path", "out.7z");
+    setChecked("store-timestamps", true);
+
+    const args = buildArgs();
+    expect(args).toContain("-mtc=on");
+    expect(args).toContain("-mta=on");
   });
 
   it("includes absolute path mode switch", () => {

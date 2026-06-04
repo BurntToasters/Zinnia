@@ -812,6 +812,51 @@
         </div>
       </div>
 
+      <div class="modal-overlay" id="shortcuts-overlay" hidden>
+        <div
+          class="modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="shortcuts-title"
+        >
+          <div class="modal__header">
+            <h2 id="shortcuts-title">Keyboard shortcuts</h2>
+            <button
+              class="btn btn--ghost btn--sm"
+              id="close-shortcuts"
+              aria-label="Close keyboard shortcuts"
+            >
+              &times;
+            </button>
+          </div>
+          <div class="modal__body">
+            <dl class="shortcut-list">
+              <div class="shortcut-list__row">
+                <dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd></dt>
+                <dd>Run the current operation</dd>
+              </div>
+              <div class="shortcut-list__row">
+                <dt><kbd>Esc</kbd></dt>
+                <dd>Close the open dialog</dd>
+              </div>
+              <div class="shortcut-list__row">
+                <dt><kbd>?</kbd></dt>
+                <dd>Show this help</dd>
+              </div>
+              <div class="shortcut-list__row">
+                <dt><kbd>←</kbd> <kbd>→</kbd> in settings tabs</dt>
+                <dd>Move between settings tabs</dd>
+              </div>
+            </dl>
+          </div>
+          <div class="modal__footer">
+            <button class="btn btn--ghost btn--sm" id="close-shortcuts-footer">
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+
       <div
         id="setup-wizard-overlay"
         class="setup-wizard-overlay"
@@ -2062,6 +2107,12 @@
                     <div class="field">
                       <label>Options</label>
                       <div class="toggle-row">
+                        <label
+                          class="toggle"
+                          title="Add or refresh files inside the existing archive at the output path instead of creating a new one"
+                          ><input type="checkbox" id="update-mode" />Update
+                          existing archive</label
+                        >
                         <label class="toggle"
                           ><input type="checkbox" id="sfx" />Create SFX</label
                         >
@@ -2072,6 +2123,12 @@
                         <label class="toggle"
                           ><input type="checkbox" id="delete-after" />Delete
                           files after compression</label
+                        >
+                        <label
+                          class="toggle"
+                          title="Preserve created and accessed timestamps in addition to modified time"
+                          ><input type="checkbox" id="store-timestamps" />Store
+                          all timestamps</label
                         >
                       </div>
                     </div>

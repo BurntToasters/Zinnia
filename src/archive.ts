@@ -35,6 +35,7 @@ import type { ArchiveInfo, BrowseEntry } from "./browse-model";
 import { resolveExtractDestinationAutofill } from "./extract-path";
 import { looksLikePasswordRequiredError, describe7zError } from "./error-hints";
 export { looksLikePasswordRequiredError, describe7zError };
+import { showToast } from "./toast";
 import {
   buildSelectiveExtractArgs,
   buildEntryTree,
@@ -172,6 +173,41 @@ export function methodLooksEncrypted(value: string): boolean {
   );
 }
 
+// Inject or replace the -p password switch in a 7z arg list (before "--").
+export function withPassword(args: string[], password: string): string[] {
+  const sepIndex = args.indexOf("--");
+  const head = sepIndex === -1 ? args.slice() : args.slice(0, sepIndex);
+  const tail = sepIndex === -1 ? [] : args.slice(sepIndex);
+  const filtered = head.filter((a) => !a.startsWith("-p"));
+  filtered.push(`-p${password}`);
+  return [...filtered, ...tail];
+}
+
+// Run 7z; if an extract fails because the archive is encrypted, prompt once for
+// a password and retry. Returns the final result.
+async function runWithPasswordRetry(
+  args: string[],
+  isExtract: boolean,
+): Promise<Run7zResult> {
+  let result = await invoke<Run7zResult>("run_7z", { args });
+  if (
+    isExtract &&
+    result.code > 1 &&
+    looksLikePasswordRequiredError(result.stdout, result.stderr)
+  ) {
+    const password = window.prompt(
+      "This archive is encrypted. Enter password:",
+    );
+    if (password) {
+      setStatus("Retrying with password");
+      result = await invoke<Run7zResult>("run_7z", {
+        args: withPassword(args, password),
+      });
+    }
+  }
+  return result;
+}
+
 async function showOperationError(
   code: number,
   stdout: string,
@@ -247,8 +283,10 @@ export function buildArgs() {
   const pathMode = $<HTMLSelectElement>("path-mode").value;
   const rawPassword = $<HTMLInputElement>("password").value;
   const rawEncryptHeaders = $<HTMLInputElement>("encrypt-headers").checked;
-  const sfx = $<HTMLInputElement>("sfx").checked;
+  const updateMode = $<HTMLInputElement>("update-mode").checked;
+  const sfx = !updateMode && $<HTMLInputElement>("sfx").checked;
   const deleteAfter = $<HTMLInputElement>("delete-after").checked;
+  const storeTimestamps = $<HTMLInputElement>("store-timestamps").checked;
 
   const validationError = validateCompressionSecurityOptions(
     format,
@@ -283,15 +321,20 @@ export function buildArgs() {
   if (threads) switches.push(`-mmt=${threads}`);
   if (pathMode === "absolute") switches.push("-spf");
   if (password) switches.push(`-p${password}`);
+  // ZIP defaults to weak ZipCrypto; upgrade to AES-256 when a password is set.
+  if (password && format === "zip") switches.push("-mem=AES256");
   if (encryptHeaders) switches.push("-mhe=on");
+  if (storeTimestamps) switches.push("-mtc=on", "-mta=on");
   if (sfx) switches.push("-sfx");
   if (deleteAfter) switches.push("-sdel");
 
-  const splitSize = readSplitSize();
-  if (splitSize) switches.push(`-v${splitSize}`);
+  if (!updateMode) {
+    const splitSize = readSplitSize();
+    if (splitSize) switches.push(`-v${splitSize}`);
+  }
 
   const args = [
-    "a",
+    updateMode ? "u" : "a",
     ...switches,
     ...extraArgs,
     outputPath,
@@ -900,11 +943,11 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
       }
       setStatus("Done", 2000);
       hideProgress();
-      await message(
+      showToast(
         selectedPaths.length > 0
-          ? "Selected entries extracted successfully."
-          : "Extraction completed successfully.",
-        { title: "Done" },
+          ? "Selected entries extracted."
+          : "Extraction complete.",
+        "success",
       );
     }
   } catch (err) {
@@ -984,7 +1027,7 @@ export async function runAction() {
 
     setStatus("Running");
 
-    const result = await invoke<Run7zResult>("run_7z", { args });
+    const result = await runWithPasswordRetry(args, mode === "extract");
     if (state.cancelRequested) {
       hideProgress();
       setStatus("Cancelled", 2000);
@@ -1015,11 +1058,9 @@ export async function runAction() {
       }
       setStatus("Done", 2000);
       hideProgress();
-      await message(
-        mode === "extract"
-          ? "Extraction completed successfully."
-          : "Archive created successfully.",
-        { title: "Done" },
+      showToast(
+        mode === "extract" ? "Extraction complete." : "Archive created.",
+        "success",
       );
     }
   } catch (err) {

@@ -5,6 +5,7 @@ import {
   looksLikePasswordRequiredError,
   describe7zError,
   truncateForDialog,
+  withPassword,
 } from "../archive";
 
 describe("isEncryptedFlag", () => {
@@ -188,5 +189,37 @@ describe("describe7zError", () => {
 
   it("returns empty string for unrecognized output", () => {
     expect(describe7zError("Everything is Ok", "")).toBe("");
+  });
+});
+
+describe("withPassword", () => {
+  it("inserts -p before the -- separator", () => {
+    const args = ["x", "-o/tmp/out", "-y", "--", "archive.7z"];
+    expect(withPassword(args, "secret")).toEqual([
+      "x",
+      "-o/tmp/out",
+      "-y",
+      "-psecret",
+      "--",
+      "archive.7z",
+    ]);
+  });
+
+  it("replaces an existing -p switch", () => {
+    const args = ["x", "-pold", "--", "archive.7z"];
+    expect(withPassword(args, "new")).toEqual([
+      "x",
+      "-pnew",
+      "--",
+      "archive.7z",
+    ]);
+  });
+
+  it("appends -p when there is no separator", () => {
+    expect(withPassword(["l", "archive.7z"], "pw")).toEqual([
+      "l",
+      "archive.7z",
+      "-ppw",
+    ]);
   });
 });

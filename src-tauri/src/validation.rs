@@ -3,7 +3,7 @@
 const MAX_7Z_ARGS: usize = 256;
 const MAX_7Z_ARG_BYTES: usize = 8192;
 
-const ALLOWED_7Z_COMMANDS: &[&str] = &["a", "x", "l", "t"];
+const ALLOWED_7Z_COMMANDS: &[&str] = &["a", "u", "x", "l", "t"];
 const BLOCKED_7Z_ARGS: &[&str] = &["-si", "-so"];
 const ALLOWED_7Z_SWITCH_PREFIXES: &[&str] = &[
     "-t", "-m", "-o", "-p", "-spf", "-sdel", "-spd", "-sfx", "-v", "-y", "-r", "-w", "-x", "-i",
@@ -52,9 +52,14 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
         if BLOCKED_7Z_ARGS.iter().any(|b| lower.starts_with(b)) {
             return Err(format!("7z argument '{arg}' is not permitted."));
         }
-        if (lower.starts_with("-sdel") || lower.starts_with("-v")) && cmd != "a" {
+        if lower.starts_with("-sdel") && cmd != "a" && cmd != "u" {
             return Err(format!(
                 "7z argument '{arg}' is only permitted for compression."
+            ));
+        }
+        if lower.starts_with("-v") && cmd != "a" {
+            return Err(format!(
+                "7z argument '{arg}' is only permitted when creating an archive."
             ));
         }
 
@@ -89,7 +94,7 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
     }
 
     match cmd {
-        "a" => {
+        "a" | "u" => {
             let separator = separator_index
                 .ok_or_else(|| "Compression arguments must include '--'.".to_string())?;
             if separator + 1 >= args.len() {
@@ -127,7 +132,7 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
         _ => {}
     }
 
-    if (cmd == "a" || cmd == "x") && positional_after_separator == 0 {
+    if (cmd == "a" || cmd == "u" || cmd == "x") && positional_after_separator == 0 {
         return Err("Missing archive path(s) after '--'.".to_string());
     }
 
@@ -233,6 +238,42 @@ mod tests {
             "-evil.7z".to_string(),
             "--".to_string(),
             "input.txt".to_string(),
+        ];
+        assert!(validate_run_7z_args(&args).is_err());
+    }
+
+    #[test]
+    fn validate_run_7z_args_allows_update_command() {
+        let args = vec![
+            "u".to_string(),
+            "-t7z".to_string(),
+            "existing.7z".to_string(),
+            "--".to_string(),
+            "newfile.txt".to_string(),
+        ];
+        assert!(validate_run_7z_args(&args).is_ok());
+    }
+
+    #[test]
+    fn validate_run_7z_args_allows_delete_after_for_update() {
+        let args = vec![
+            "u".to_string(),
+            "-sdel".to_string(),
+            "existing.7z".to_string(),
+            "--".to_string(),
+            "newfile.txt".to_string(),
+        ];
+        assert!(validate_run_7z_args(&args).is_ok());
+    }
+
+    #[test]
+    fn validate_run_7z_args_rejects_volume_switch_for_update() {
+        let args = vec![
+            "u".to_string(),
+            "-v100m".to_string(),
+            "existing.7z".to_string(),
+            "--".to_string(),
+            "newfile.txt".to_string(),
         ];
         assert!(validate_run_7z_args(&args).is_err());
     }

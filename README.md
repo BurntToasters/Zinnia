@@ -1,6 +1,9 @@
 # Zinnia
 A cross-platform 7z GUI built with Tauri.
 
+See [ARCHITECTURE.md](ARCHITECTURE.md), [CONTRIBUTING.md](CONTRIBUTING.md), and
+[SECURITY.md](SECURITY.md).
+
 ## Dev
 - `npm install`
 - `npm run tauri:dev`

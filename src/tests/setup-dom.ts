@@ -183,6 +183,13 @@ const encryptHeaders = addEl("input", "encrypt-headers") as HTMLInputElement;
 encryptHeaders.type = "checkbox";
 const sfxInput = addEl("input", "sfx") as HTMLInputElement;
 sfxInput.type = "checkbox";
+const updateModeInput = addEl("input", "update-mode") as HTMLInputElement;
+updateModeInput.type = "checkbox";
+const storeTimestampsInput = addEl(
+  "input",
+  "store-timestamps",
+) as HTMLInputElement;
+storeTimestampsInput.type = "checkbox";
 const deleteAfter = addEl("input", "delete-after") as HTMLInputElement;
 deleteAfter.type = "checkbox";
 addEl("button", "toggle-password");
@@ -238,6 +245,15 @@ addEl("button", "rerun-setup-wizard");
 // Licenses modal
 addEl("div", "licenses-overlay");
 addEl("div", "licenses-list");
+
+// Shortcuts modal
+const shortcutsOverlay = addEl("div", "shortcuts-overlay");
+shortcutsOverlay.hidden = true;
+const shortcutsModal = document.createElement("div");
+shortcutsModal.className = "modal";
+shortcutsOverlay.appendChild(shortcutsModal);
+addEl("button", "close-shortcuts");
+addEl("button", "close-shortcuts-footer");
 
 // Command preview modal
 const commandPreviewOverlay = addEl("div", "command-preview-overlay");

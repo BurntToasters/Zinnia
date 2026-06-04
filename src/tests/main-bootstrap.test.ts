@@ -388,6 +388,9 @@ function ensureMainDomElements(): void {
   ensureElement("licenses-list", "div");
   ensureElement("selective-overlay", "div");
   ensureElement("command-preview-overlay", "div");
+  ensureElement("shortcuts-overlay", "div");
+  ensureElement("close-shortcuts", "button");
+  ensureElement("close-shortcuts-footer", "button");
   ensureElement("setup-wizard-overlay", "div");
 
   (document.getElementById("settings-overlay") as HTMLElement).hidden = true;
@@ -395,6 +398,7 @@ function ensureMainDomElements(): void {
   (document.getElementById("selective-overlay") as HTMLElement).hidden = true;
   (document.getElementById("command-preview-overlay") as HTMLElement).hidden =
     true;
+  (document.getElementById("shortcuts-overlay") as HTMLElement).hidden = true;
   (document.getElementById("setup-wizard-overlay") as HTMLElement).hidden =
     true;
 }

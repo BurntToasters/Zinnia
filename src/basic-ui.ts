@@ -945,15 +945,21 @@ export function syncBasicBeforeRun(): void {
 export function handleBasicDragDrop(type: string, paths?: string[]): void {
   if (getWorkspaceMode() !== "basic") return;
 
+  // Highlight the home dropzone when it's showing, otherwise the whole
+  // workspace so drops are discoverable from every basic view.
   const dropzone = document.getElementById("basic-dropzone");
-  if (!dropzone) return;
+  const workspace = document.getElementById("basic-workspace");
+  const target = currentBasicView === "home" && dropzone ? dropzone : workspace;
+  if (!target) return;
 
   if (type === "enter" || type === "over") {
-    dropzone.classList.add("is-drag-over");
+    target.classList.add("is-drag-over");
   } else if (type === "leave") {
-    dropzone.classList.remove("is-drag-over");
+    dropzone?.classList.remove("is-drag-over");
+    workspace?.classList.remove("is-drag-over");
   } else if (type === "drop") {
-    dropzone.classList.remove("is-drag-over");
+    dropzone?.classList.remove("is-drag-over");
+    workspace?.classList.remove("is-drag-over");
     if (paths && paths.length > 0) {
       void handleBasicDrop(paths);
     }

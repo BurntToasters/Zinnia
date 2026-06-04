@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
-import { $ } from "./utils";
+import { $, trapFocus, releaseFocusTrap } from "./utils";
 import { SETTING_DEFAULTS, state, dom } from "./state";
 import {
   applyTheme,
@@ -84,6 +84,38 @@ import {
   refreshOsIntegrationStatus,
   wireOsIntegrationEvents,
 } from "./os-integration";
+
+let shortcutsTrigger: HTMLElement | null = null;
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  return (
+    tag === "INPUT" ||
+    tag === "TEXTAREA" ||
+    tag === "SELECT" ||
+    target.isContentEditable
+  );
+}
+
+function openShortcutsModal(): void {
+  shortcutsTrigger = document.activeElement as HTMLElement | null;
+  const overlay = $("shortcuts-overlay");
+  overlay.hidden = false;
+  const modal = overlay.querySelector<HTMLElement>(".modal");
+  if (modal) trapFocus(modal);
+  $("close-shortcuts").focus();
+}
+
+function closeShortcutsModal(): void {
+  const overlay = $("shortcuts-overlay");
+  if (overlay.hidden) return;
+  const modal = overlay.querySelector<HTMLElement>(".modal");
+  if (modal) releaseFocusTrap(modal);
+  overlay.hidden = true;
+  shortcutsTrigger?.focus();
+  shortcutsTrigger = null;
+}
 
 async function exportLocalLogs() {
   try {
@@ -313,6 +345,13 @@ function wireEvents() {
   $("command-preview-overlay").addEventListener("click", (e) => {
     if (e.target === e.currentTarget) closeCommandPreviewModal();
   });
+
+  $("close-shortcuts").addEventListener("click", closeShortcutsModal);
+  $("close-shortcuts-footer").addEventListener("click", closeShortcutsModal);
+  $("shortcuts-overlay").addEventListener("click", (e) => {
+    if (e.target === e.currentTarget) closeShortcutsModal();
+  });
+
   $("test-integrity").addEventListener("click", testArchive);
 
   $("browse-list").addEventListener("click", browseArchive);
@@ -670,6 +709,23 @@ function wireEvents() {
         closeLicensesModal();
         return;
       }
+      if (!$("shortcuts-overlay").hidden) {
+        closeShortcutsModal();
+        return;
+      }
+    }
+    if (e.key === "?" && !isEditableTarget(e.target)) {
+      if (
+        !$("setup-wizard-overlay").hidden ||
+        !$("settings-overlay").hidden ||
+        !$("selective-overlay").hidden ||
+        !$("command-preview-overlay").hidden ||
+        !$("licenses-overlay").hidden
+      )
+        return;
+      e.preventDefault();
+      openShortcutsModal();
+      return;
     }
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       if (
@@ -677,7 +733,8 @@ function wireEvents() {
         !$("settings-overlay").hidden ||
         !$("licenses-overlay").hidden ||
         !$("selective-overlay").hidden ||
-        !$("command-preview-overlay").hidden
+        !$("command-preview-overlay").hidden ||
+        !$("shortcuts-overlay").hidden
       )
         return;
       e.preventDefault();

@@ -5,6 +5,7 @@
   "description": "Cross-platform 7z GUI built with Tauri.",
   "type": "module",
   "scripts": {
+    "prepare": "node scripts/install-git-hooks.js",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
