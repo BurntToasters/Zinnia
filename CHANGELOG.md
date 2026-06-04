@@ -49,7 +49,7 @@ The `.asc` files are my normal GPG signatures which you can verify using my GPG 
 * **Licenses:** Cargo licenses are now included.
 * **NEW - Basic / Advanced mode:** Added two new views for essential items only (Basic) and more for power users (Advanced).
   * Basic mode's UI is now a totally different UI from advanced with simple options and an easy/friendly UI!
-  * Advanced mode's spacing has been compressed for better space efficency.
+  * Advanced mode's spacing has been compressed for better space efficiency.
 * **PKG:** Updated packages.
 
 <details>

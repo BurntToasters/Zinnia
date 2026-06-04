@@ -290,6 +290,7 @@ function ensureMainDomElements(): void {
     "browse-test",
     "browse-extract",
     "browse-selective",
+    "browse-add-files",
     "selective-select-all",
     "selective-clear",
     "selective-cancel",
@@ -370,6 +371,8 @@ function ensureMainDomElements(): void {
   ensureElement("export-logs", "button");
   ensureElement("open-logs-folder", "button");
   ensureElement("clear-logs", "button");
+  ensureElement("run-benchmark", "button");
+  ensureElement("benchmark-result", "div");
   ensureElement("show-licenses", "button");
   ensureElement("about-show-licenses", "button");
   ensureElement("close-licenses", "button");

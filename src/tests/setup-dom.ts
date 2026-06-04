@@ -106,6 +106,7 @@ addEl("button", "browse-list");
 addEl("button", "browse-test");
 addEl("button", "browse-extract");
 addEl("button", "browse-selective");
+addEl("button", "browse-add-files");
 for (const [quickActionId, quickAction] of [
   ["quick-add-balanced", "add-run-balanced"],
   ["quick-add-ultra", "add-run-ultra"],
@@ -232,6 +233,8 @@ sll.type = "checkbox";
 const soid = addEl("input", "s-os-integration-dismissed") as HTMLInputElement;
 soid.type = "checkbox";
 addEl("div", "s-log-dir");
+addEl("button", "run-benchmark");
+addEl("div", "benchmark-result");
 addEl("div", "os-integration-help");
 addEl("div", "os-platform-label");
 addEl("div", "os-package-label");

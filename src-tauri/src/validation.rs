@@ -3,7 +3,7 @@
 const MAX_7Z_ARGS: usize = 256;
 const MAX_7Z_ARG_BYTES: usize = 8192;
 
-const ALLOWED_7Z_COMMANDS: &[&str] = &["a", "u", "x", "l", "t"];
+const ALLOWED_7Z_COMMANDS: &[&str] = &["a", "u", "x", "l", "t", "b"];
 const BLOCKED_7Z_ARGS: &[&str] = &["-si", "-so"];
 const ALLOWED_7Z_SWITCH_PREFIXES: &[&str] = &[
     "-t", "-m", "-o", "-p", "-spf", "-sdel", "-spd", "-sfx", "-v", "-y", "-r", "-w", "-x", "-i",
@@ -129,6 +129,12 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
                 return Err("Missing archive path.".to_string());
             }
         }
+        "b" if separator_index.is_some()
+            || positional_before_separator > 0
+            || positional_after_separator > 0 =>
+        {
+            return Err("Benchmark command does not take any paths.".to_string());
+        }
         _ => {}
     }
 
@@ -239,6 +245,18 @@ mod tests {
             "--".to_string(),
             "input.txt".to_string(),
         ];
+        assert!(validate_run_7z_args(&args).is_err());
+    }
+
+    #[test]
+    fn validate_run_7z_args_allows_benchmark_command() {
+        assert!(validate_run_7z_args(&["b".to_string()]).is_ok());
+        assert!(validate_run_7z_args(&["b".to_string(), "-mmt=4".to_string()]).is_ok());
+    }
+
+    #[test]
+    fn validate_run_7z_args_rejects_benchmark_with_paths() {
+        let args = vec!["b".to_string(), "--".to_string(), "file.txt".to_string()];
         assert!(validate_run_7z_args(&args).is_err());
     }
 

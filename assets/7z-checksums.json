@@ -1,0 +1,7 @@
+{
+  "win/x64/7za.exe": "5bea5af5215089d97749d438351d7288310d0b8a472616edbe1b34168ad1001c",
+  "win/arm64/7za.exe": "1d81501a5289d8866fff1b609496273244fa67e3d54c51cb4c9baf5b2165a2a5",
+  "mac/7zz": "4d1baeaa33a40e7d8189c746a46f1be2186cc125bfcabfb63989db4e1c319247",
+  "linux/x64/7zzs": "6284bb2d78474f586758dd30759ce40aefa3febca2dde1a5eb37fd647295eab3",
+  "linux/arm64/7zzs": "ddbba8baf6ea3b2c79c3dc1a676204f5bf64efefc251e60fe8fd36a9aa9e3ab0"
+}

@@ -29,6 +29,19 @@ function basename(filePath: string): string {
   return sep >= 0 ? filePath.slice(sep + 1) : filePath;
 }
 
+// Estimate remaining time from elapsed time and percent complete.
+// Returns "" when there isn't enough signal yet.
+export function formatEta(elapsedMs: number, percent: number): string {
+  if (percent <= 0 || percent >= 100 || elapsedMs <= 0) return "";
+  const totalMs = elapsedMs / (percent / 100);
+  const remainingSec = Math.max(0, Math.round((totalMs - elapsedMs) / 1000));
+  if (remainingSec < 1) return "";
+  if (remainingSec < 60) return `~${remainingSec}s left`;
+  const min = Math.floor(remainingSec / 60);
+  const sec = remainingSec % 60;
+  return `~${min}m ${sec.toString().padStart(2, "0")}s left`;
+}
+
 function parentDir(filePath: string): string {
   const sep = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
   if (sep < 0) return ".";
@@ -245,18 +258,24 @@ async function run() {
   let processedEntries = 0;
   let sawStructuredPercent = false;
 
+  const startedAt = Date.now();
+  let lastFile = "";
+
   const unlistenStructured = await listen<ProgressUpdate>(
     "7z-progress-structured",
     (event) => {
       const update = event.payload;
+      let eta = "";
       if (typeof update?.percent === "number") {
         sawStructuredPercent = true;
         setDeterminateProgress(Math.min(99, update.percent));
+        eta = formatEta(Date.now() - startedAt, update.percent);
       }
       if (update?.currentFile) {
-        $("extract-status").textContent =
-          `Extracting ${basename(update.currentFile)}...`;
+        lastFile = basename(update.currentFile);
       }
+      const label = lastFile ? `Extracting ${lastFile}...` : "Extracting...";
+      $("extract-status").textContent = eta ? `${label}  ${eta}` : label;
     },
   );
 

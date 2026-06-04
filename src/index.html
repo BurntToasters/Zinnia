@@ -352,6 +352,21 @@
 
               <div class="setting-item">
                 <div class="setting-info">
+                  <span class="setting-title">CPU benchmark</span>
+                  <span class="setting-desc" id="benchmark-result"
+                    >Measure compression speed to help pick a thread
+                    count.</span
+                  >
+                </div>
+                <div class="setting-actions">
+                  <button class="btn btn--sm" id="run-benchmark">Run</button>
+                </div>
+              </div>
+
+              <hr class="setting-divider" />
+
+              <div class="setting-item">
+                <div class="setting-info">
                   <span class="setting-title">Open-source licenses</span>
                   <span class="setting-desc"
                     >View third-party libraries and their licenses.</span
@@ -1996,6 +2011,13 @@
                     data-power-only
                   >
                     Select items...
+                  </button>
+                  <button
+                    class="btn btn--accent-outline"
+                    id="browse-add-files"
+                    data-power-only
+                  >
+                    Add files...
                   </button>
                   <button class="btn btn--ghost" id="browse-test">
                     Test integrity

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { message, confirm } from "@tauri-apps/plugin-dialog";
+import { message, confirm, open } from "@tauri-apps/plugin-dialog";
 import {
   $,
   parseThreads,
@@ -206,6 +206,64 @@ async function runWithPasswordRetry(
     }
   }
   return result;
+}
+
+// Add user-picked files into the currently browsed archive via the 7z update
+// command. Surfaces errors with hints and a success toast.
+export async function addFilesToArchive(): Promise<void> {
+  if (state.running) return;
+  const archive = state.inputs[0]?.trim();
+  if (!archive) {
+    await message("Open an archive first to add files to it.", {
+      title: "No archive",
+      kind: "warning",
+    });
+    return;
+  }
+
+  const selection = await open({ multiple: true, directory: false });
+  const files = Array.isArray(selection)
+    ? selection
+    : selection
+      ? [selection]
+      : [];
+  if (files.length === 0) return;
+
+  setRunning(true);
+  try {
+    if (!(await ensureRuntimeReady())) return;
+    const threads = parseThreads(
+      $<HTMLInputElement>("threads").value,
+      SETTING_DEFAULTS.threads,
+    );
+    const args = ["u"];
+    if (threads) args.push(`-mmt=${threads}`);
+    args.push(archive, "--", ...files);
+
+    setStatus("Adding files");
+    devLog(`7z ${sanitizeCommandArgsForPreview(args).join(" ")}`);
+    const result = await invoke<Run7zResult>("run_7z", { args });
+    logCommandResult(result.stdout, result.stderr);
+
+    if (result.code > 1) {
+      setStatus("Error", 3000, result.stderr || "Operation failed.");
+      await showOperationError(result.code, result.stdout, result.stderr);
+    } else {
+      setStatus("Done", 2000);
+      showToast(
+        `Added ${files.length} file${files.length === 1 ? "" : "s"} to the archive.`,
+        "success",
+      );
+      void browseArchive();
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Error: ${msg}`, "error");
+    setStatus("Error", 3000, msg);
+    await message(msg, { title: "Error", kind: "error" });
+  } finally {
+    setRunning(false);
+  }
 }
 
 async function showOperationError(
