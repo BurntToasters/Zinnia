@@ -31,6 +31,8 @@
   --danger: #f87171;
   --danger-bg: rgba(248, 113, 113, 0.1);
   --danger-border: rgba(248, 113, 113, 0.35);
+  --danger-hover: #fca5a5;
+  --danger-pressed: #ef4444;
   --hover-overlay: rgba(255, 255, 255, 0.04);
   --scrollbar-thumb: rgba(255, 255, 255, 0.12);
   --scrollbar-thumb-hover: rgba(255, 255, 255, 0.22);
@@ -71,6 +73,8 @@
   --danger: #b5191d;
   --danger-bg: rgba(209, 52, 56, 0.08);
   --danger-border: rgba(181, 25, 29, 0.35);
+  --danger-hover: #dc2626;
+  --danger-pressed: #991b1b;
   --hover-overlay: rgba(0, 0, 0, 0.03);
   --scrollbar-thumb: rgba(0, 0, 0, 0.15);
   --scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);
@@ -110,6 +114,8 @@
     --danger: #b5191d;
     --danger-bg: rgba(209, 52, 56, 0.08);
     --danger-border: rgba(181, 25, 29, 0.35);
+    --danger-hover: #dc2626;
+    --danger-pressed: #991b1b;
     --hover-overlay: rgba(0, 0, 0, 0.03);
     --scrollbar-thumb: rgba(0, 0, 0, 0.15);
     --scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);

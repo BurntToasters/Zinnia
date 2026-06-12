@@ -33,12 +33,21 @@ describe("setup wizard state", () => {
   });
 
   it("does not show wizard when setup is complete for current version", () => {
+    state.currentSettings.setupComplete = true;
     state.settingsExtras._setupComplete = true;
     state.settingsExtras._setupWizardVersion = 2;
     expect(shouldShowSetupWizard()).toBe(false);
   });
 
+  it("does not show wizard for legacy completed settings without new flag", () => {
+    state.currentSettings.setupComplete = false;
+    state.settingsExtras._setupComplete = true;
+    delete state.settingsExtras._setupWizardVersion;
+    expect(shouldShowSetupWizard()).toBe(false);
+  });
+
   it("shows wizard again when setup version is outdated", () => {
+    state.currentSettings.setupComplete = true;
     state.settingsExtras._setupComplete = true;
     state.settingsExtras._setupWizardVersion = 0;
     expect(shouldShowSetupWizard()).toBe(true);
@@ -46,6 +55,7 @@ describe("setup wizard state", () => {
 
   it("marks setup complete and persists settings", async () => {
     await markSetupComplete();
+    expect(state.currentSettings.setupComplete).toBe(true);
     expect(state.settingsExtras._setupComplete).toBe(true);
     expect(state.settingsExtras._setupWizardVersion).toBe(2);
     expect(mockSaveSettings).toHaveBeenCalledOnce();

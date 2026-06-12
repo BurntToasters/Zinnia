@@ -13,6 +13,7 @@ import {
   type LogVerbosity,
   type WorkspaceMode,
   type UiDensity,
+  sanitizePowerWindowSize,
 } from "./settings-model";
 import { saveSettings } from "./settings";
 import {
@@ -327,9 +328,15 @@ export function setWorkspaceMode(
   const appWindow = getCurrentWebviewWindow();
   if (appWindow && typeof appWindow.setSize === "function") {
     if (mode === "basic") {
-      void appWindow.setSize(new LogicalSize(480, 700));
+      void appWindow.setSize(new LogicalSize(500, 600));
     } else {
-      void appWindow.setSize(new LogicalSize(1100, 720));
+      const powerWindowSize = sanitizePowerWindowSize(
+        state.currentSettings.powerWindowWidth,
+        state.currentSettings.powerWindowHeight,
+      );
+      void appWindow.setSize(
+        new LogicalSize(powerWindowSize.width, powerWindowSize.height),
+      );
     }
   }
 }

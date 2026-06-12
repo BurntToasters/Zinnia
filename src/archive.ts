@@ -39,6 +39,7 @@ import { looksLikePasswordRequiredError, describe7zError } from "./error-hints";
 export { looksLikePasswordRequiredError, describe7zError };
 import { showToast } from "./toast";
 import { promptInput } from "./prompt-modal";
+import { SAFE_EXTRACT_OVERWRITE_MODE } from "./extract-policy";
 import {
   buildSelectiveExtractArgs,
   buildEntryTree,
@@ -1321,7 +1322,7 @@ export async function runBatchExtract() {
       setStatus(`Extracting ${i + 1} of ${archives.length}`);
 
       try {
-        const args = ["x", `-o${dest}`, "-y", "-bb1"];
+        const args = ["x", `-o${dest}`, SAFE_EXTRACT_OVERWRITE_MODE, "-bb1"];
         if (password) args.push(`-p${password}`);
         args.push(...extraArgs);
         args.push("--", archive);

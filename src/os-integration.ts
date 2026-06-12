@@ -41,8 +41,22 @@ export function renderOsIntegrationStatus(status: OsIntegrationStatus): void {
     "os-package-label",
     status.packaged ? "Installed app" : "Development build",
   );
-  setBadge("os-file-assoc-status", status.fileAssociationsKnown);
-  setBadge("os-context-status", status.contextActionsKnown);
+  setBadge(
+    "os-file-assoc-status",
+    status.fileAssociationsKnown,
+    "Ready",
+    status.platform === "linux" && status.packaged
+      ? "Verify manually"
+      : "Action needed",
+  );
+  setBadge(
+    "os-context-status",
+    status.contextActionsKnown,
+    "Ready",
+    status.platform === "linux" && status.packaged
+      ? "Verify manually"
+      : "Action needed",
+  );
 
   const help = document.getElementById("os-integration-help");
   if (help) {
@@ -57,7 +71,7 @@ export function renderOsIntegrationStatus(status: OsIntegrationStatus): void {
         "Use File Explorer or Default Apps to map archive extensions to Zinnia.";
     } else if (status.platform === "linux") {
       help.textContent =
-        "Use Files or your desktop's default-app settings to map archive MIME types to Zinnia.";
+        "Linux package installs can vary by desktop environment. Verify the Zinnia desktop entry registered archive MIME types after install.";
     } else {
       help.textContent =
         "Use your OS default-app settings to map archive files to Zinnia.";

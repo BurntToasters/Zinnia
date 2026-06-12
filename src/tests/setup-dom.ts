@@ -25,6 +25,7 @@ vi.mock("@tauri-apps/api/app", () => ({
 vi.mock("@tauri-apps/api/webviewWindow", () => ({
   getCurrentWebviewWindow: vi.fn().mockReturnValue({
     onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
+    setSize: vi.fn(),
   }),
 }));
 vi.mock("@tauri-apps/plugin-updater", () => ({
@@ -245,6 +246,7 @@ addEl("button", "open-os-integration-settings");
 addEl("button", "refresh-os-integration-status");
 addEl("div", "settings-overlay");
 addEl("button", "rerun-setup-wizard");
+addEl("button", "reset-settings");
 
 // Licenses modal
 addEl("div", "licenses-overlay");

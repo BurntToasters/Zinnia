@@ -173,7 +173,7 @@ describe("buildSelectiveExtractArgs", () => {
     ).toEqual([
       "x",
       "-o/tmp/output",
-      "-y",
+      "-aou",
       "-psecret",
       "-aos",
       "-spd",
@@ -196,7 +196,7 @@ describe("buildSelectiveExtractArgs", () => {
     ).toEqual([
       "x",
       "-o/tmp/output",
-      "-y",
+      "-aou",
       "-spd",
       "--",
       "/tmp/archive.7z",
@@ -207,7 +207,7 @@ describe("buildSelectiveExtractArgs", () => {
   it("extracts everything when no paths selected", () => {
     expect(
       buildSelectiveExtractArgs("/tmp/archive.7z", "/tmp/output", "", [], []),
-    ).toEqual(["x", "-o/tmp/output", "-y", "--", "/tmp/archive.7z"]);
+    ).toEqual(["x", "-o/tmp/output", "-aou", "--", "/tmp/archive.7z"]);
   });
 });
 

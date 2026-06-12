@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
   buildLogFragments,
   shouldPersistLevel,
@@ -207,6 +208,23 @@ describe("workspace and density", () => {
     setWorkspaceMode("power", { persist: false });
     expect(getWorkspaceMode()).toBe("power");
     expect(state.currentSettings.workspaceMode).toBe("power");
+  });
+
+  it("clamps restored power window size before resizing", () => {
+    const appWindow = {
+      onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
+      setSize: vi.fn(),
+    };
+    vi.mocked(getCurrentWebviewWindow).mockReturnValue(appWindow as never);
+    state.currentSettings.powerWindowWidth = -20;
+    state.currentSettings.powerWindowHeight = 99999;
+
+    setWorkspaceMode("power", { persist: false });
+
+    expect(appWindow.setSize).toHaveBeenCalledOnce();
+    const [size] = appWindow.setSize.mock.calls[0];
+    expect(size.width).toBe(800);
+    expect(size.height).toBe(2160);
   });
 
   it("gets and sets UI density", () => {

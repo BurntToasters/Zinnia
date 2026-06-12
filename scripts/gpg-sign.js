@@ -17,6 +17,7 @@ const pkg = JSON.parse(
 const VERSION = pkg.version;
 const TAG = `v${VERSION}`;
 const IS_PRERELEASE = /-(?:beta|alpha|rc)(?:[.-]?\d+)?/i.test(VERSION);
+const EXPECTED_TAG = (process.env.EXPECTED_TAG || "").trim();
 
 const GPG_KEY_ID = process.env.GPG_KEY_ID;
 const GPG_PASSPHRASE = process.env.GPG_PASSPHRASE;
@@ -31,7 +32,7 @@ const RELEASE_NOTES = process.env.RELEASE_NOTES || "";
 const RELEASE_PUB_DATE =
   process.env.RELEASE_PUB_DATE || new Date().toISOString();
 const ALLOW_ASSET_REPLACE = !/^(0|false|no|off)$/i.test(
-  String(process.env.ALLOW_ASSET_REPLACE || "true").trim(),
+  String(process.env.ALLOW_ASSET_REPLACE || "false").trim(),
 );
 const REQUIRED_LINUX_TARGETS = (
   process.env.REQUIRED_LINUX_TARGETS || ""
@@ -862,7 +863,11 @@ async function listReleaseAssets(releaseId) {
   return Array.isArray(assets) ? assets : [];
 }
 
-async function uploadAssetWithReplace(release, filePath) {
+async function uploadAssetWithReplace(
+  release,
+  filePath,
+  { allowPublishedReplace = false } = {},
+) {
   try {
     await uploadAsset(release.upload_url, filePath);
   } catch (err) {
@@ -875,7 +880,7 @@ async function uploadAssetWithReplace(release, filePath) {
       (asset) => asset?.name === fileName && typeof asset.id === "number",
     );
     if (!existing) throw err;
-    if (!release.draft && !ALLOW_ASSET_REPLACE) {
+    if (!release.draft && !allowPublishedReplace) {
       throw new Error(
         `Refusing to replace existing asset "${fileName}" on published release ${TAG}. Set ALLOW_ASSET_REPLACE=true to override.`,
       );
@@ -919,7 +924,9 @@ async function syncBetaManifestsToLatestStable(
   }
 
   for (const filePath of betaManifests) {
-    await uploadAssetWithReplace(latestStable, filePath);
+    await uploadAssetWithReplace(latestStable, filePath, {
+      allowPublishedReplace: true,
+    });
     console.log(
       `  ~ synced ${path.basename(filePath)} to latest stable release`,
     );
@@ -928,6 +935,12 @@ async function syncBetaManifestsToLatestStable(
 
 async function main() {
   console.log(`\nZinnia ${VERSION} — release pipeline\n`);
+
+  if (EXPECTED_TAG && EXPECTED_TAG !== TAG) {
+    throw new Error(
+      `Version/tag mismatch: package.json is ${TAG} but workflow ref is ${EXPECTED_TAG}.`,
+    );
+  }
 
   console.log("[1/5] Checking GPG...");
   if (!GPG_KEY_ID) {

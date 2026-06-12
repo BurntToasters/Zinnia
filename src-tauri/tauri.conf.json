@@ -13,8 +13,8 @@
     "windows": [
       {
         "title": "Zinnia",
-        "width": 480,
-        "height": 700,
+        "width": 500,
+        "height": 600,
         "resizable": true,
         "visible": false
       }

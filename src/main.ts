@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { relaunch } from "@tauri-apps/plugin-process";
 import {
   createIcons,
   Settings,
@@ -10,6 +11,7 @@ import {
   FolderOpen,
   Folder,
   Package,
+  File,
   ArrowLeft,
   Eye,
   ArchiveRestore,
@@ -18,6 +20,10 @@ import {
   FolderPlus,
   Check,
   AlertTriangle,
+  Sliders,
+  Monitor,
+  Info,
+  RotateCcw,
 } from "lucide";
 
 export function refreshIcons() {
@@ -28,6 +34,7 @@ export function refreshIcons() {
       FolderOpen,
       Folder,
       Package,
+      File,
       ArrowLeft,
       Eye,
       ArchiveRestore,
@@ -36,6 +43,10 @@ export function refreshIcons() {
       FolderPlus,
       Check,
       AlertTriangle,
+      Sliders,
+      Monitor,
+      Info,
+      RotateCcw,
     },
   });
 }
@@ -704,6 +715,37 @@ function wireEvents() {
     }
   });
 
+  $("reset-settings").addEventListener("click", async () => {
+    const confirmed = await ask(
+      "Are you sure you want to reset all settings to default and restart Zinnia?",
+      {
+        title: "Reset Settings",
+        kind: "warning",
+        okLabel: "Reset & Restart",
+        cancelLabel: "Cancel",
+      },
+    );
+    if (!confirmed) return;
+
+    try {
+      state.currentSettings = { ...SETTING_DEFAULTS };
+      state.settingsExtras = {};
+      await persistSettingsImmediately(
+        state.currentSettings,
+        state.settingsExtras,
+      );
+      log("Settings reset. Relaunching...");
+      await relaunch();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`Failed to reset settings: ${msg}`, "error");
+      await message(`Failed to reset settings.\n\n${msg}`, {
+        title: "Reset settings error",
+        kind: "error",
+      });
+    }
+  });
+
   const settingsTabs = Array.from(
     document.querySelectorAll<HTMLButtonElement>(".settings-tab"),
   );
@@ -782,6 +824,14 @@ function wireEvents() {
       }
       return;
     }
+    if (!$("input-modal-overlay").hidden) {
+      if (e.key === "Escape") {
+        return;
+      }
+      if (e.key === "?" || (e.key === "Enter" && (e.ctrlKey || e.metaKey))) {
+        return;
+      }
+    }
     if (e.key === "Escape") {
       if (!$("settings-overlay").hidden) {
         closeSettingsModal();
@@ -810,7 +860,8 @@ function wireEvents() {
         !$("settings-overlay").hidden ||
         !$("selective-overlay").hidden ||
         !$("command-preview-overlay").hidden ||
-        !$("licenses-overlay").hidden
+        !$("licenses-overlay").hidden ||
+        !$("input-modal-overlay").hidden
       )
         return;
       e.preventDefault();
@@ -821,6 +872,7 @@ function wireEvents() {
       if (
         !$("setup-wizard-overlay").hidden ||
         !$("settings-overlay").hidden ||
+        !$("input-modal-overlay").hidden ||
         !$("licenses-overlay").hidden ||
         !$("selective-overlay").hidden ||
         !$("command-preview-overlay").hidden ||

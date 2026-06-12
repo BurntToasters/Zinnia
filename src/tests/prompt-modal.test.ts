@@ -30,14 +30,30 @@ describe("promptInput", () => {
       "input-modal-field",
     ) as HTMLInputElement;
     field.value = "viaEnter";
-    field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+    field.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+    );
     expect(await p1).toBe("viaEnter");
 
     const p2 = promptInput({ title: "T", label: "L" });
     document
       .getElementById("input-modal-field")
-      ?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+      ?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
     expect(await p2).toBeNull();
+  });
+
+  it("cancels on Escape when focus moved off input", async () => {
+    const p = promptInput({ title: "T", label: "L" });
+    const cancelBtn = document.getElementById(
+      "input-modal-cancel",
+    ) as HTMLButtonElement;
+    cancelBtn.focus();
+    cancelBtn.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    );
+    expect(await p).toBeNull();
   });
 
   it("applies password type when requested", async () => {

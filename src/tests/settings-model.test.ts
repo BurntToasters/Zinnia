@@ -90,6 +90,7 @@ describe("normalizeUserSettings", () => {
       uiDensity: "compact",
       powerWindowWidth: 960,
       powerWindowHeight: 640,
+      setupComplete: true,
     });
     expect(result.lastMode).toBe("browse");
     expect(result.showActivityPanel).toBe(true);
@@ -97,6 +98,16 @@ describe("normalizeUserSettings", () => {
     expect(result.uiDensity).toBe("compact");
     expect(result.powerWindowWidth).toBe(960);
     expect(result.powerWindowHeight).toBe(640);
+    expect(result.setupComplete).toBe(true);
+  });
+
+  it("clamps invalid power window size values", () => {
+    const result = normalizeUserSettings({
+      powerWindowWidth: -10,
+      powerWindowHeight: 99999,
+    });
+    expect(result.powerWindowWidth).toBe(800);
+    expect(result.powerWindowHeight).toBe(2160);
   });
 
   it("rejects invalid lastMode and uses default", () => {

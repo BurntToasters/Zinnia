@@ -1,15 +1,13 @@
 name: Release
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       run_release_builds:
         description: Run cross-platform release builds
-        required: false
-        type: boolean
-        default: false
-      publish_release:
-        description: Publish release assets to GitHub
         required: false
         type: boolean
         default: false
@@ -35,11 +33,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Guard release branch
+      - name: Guard release ref
         run: |
-          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
-            echo "Release workflow must be run from refs/heads/main (current: ${GITHUB_REF})." >&2
-            exit 1
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            case "${GITHUB_REF}" in
+              refs/tags/v*) : ;;
+              *)
+                echo "Release push runs must come from a v* tag (current: ${GITHUB_REF})." >&2
+                exit 1
+                ;;
+            esac
+          else
+            case "${GITHUB_REF}" in
+              refs/heads/main|refs/heads/beta|refs/heads/next-0.5.0|refs/tags/v*)
+                :
+                ;;
+              *)
+                echo "Manual release runs must come from main, beta, next-0.5.0, or a v* tag (current: ${GITHUB_REF})." >&2
+                exit 1
+                ;;
+            esac
           fi
 
       - uses: actions/setup-node@v4
@@ -68,7 +81,7 @@ jobs:
       - run: npm run build
 
   build:
-    if: ${{ inputs.run_release_builds == true }}
+    if: ${{ github.event_name == 'push' || inputs.run_release_builds == true }}
     needs: verify
     strategy:
       fail-fast: false
@@ -76,26 +89,31 @@ jobs:
         include:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            rust_targets: x86_64-pc-windows-msvc
             bundles: nsis
             label: win-x64
             experimental: false
           - os: windows-latest
             target: aarch64-pc-windows-msvc
+            rust_targets: aarch64-pc-windows-msvc
             bundles: nsis
             label: win-arm64
             experimental: false
           - os: macos-latest
             target: universal-apple-darwin
+            rust_targets: x86_64-apple-darwin,aarch64-apple-darwin
             bundles: dmg,app
             label: mac-universal
             experimental: false
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
+            rust_targets: x86_64-unknown-linux-gnu
             bundles: appimage,deb,rpm
             label: linux-x64
             experimental: false
           - os: ubuntu-22.04
             target: aarch64-unknown-linux-gnu
+            rust_targets: aarch64-unknown-linux-gnu
             bundles: appimage,deb,rpm
             label: linux-arm64
             experimental: true
@@ -113,7 +131,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ env.RUST_VERSION }}
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.rust_targets }}
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -200,6 +218,23 @@ jobs:
           check_bundle "RPM package" "*.rpm"
           check_bundle "RPM signature" "*.rpm.sig"
 
+          deb_file="$(find src-tauri/target -type f -name '*.deb' | head -n 1)"
+          if [ -z "${deb_file}" ]; then
+            echo "Missing Linux .deb bundle for desktop metadata verification." >&2
+            exit 1
+          fi
+          tmpdir="$(mktemp -d)"
+          dpkg-deb -x "${deb_file}" "${tmpdir}"
+          desktop_file="$(find "${tmpdir}" -type f -name '*.desktop' | head -n 1)"
+          if [ -z "${desktop_file}" ]; then
+            echo "Missing desktop entry in Linux bundle." >&2
+            exit 1
+          fi
+          grep -q '^MimeType=.*application/x-7z-compressed' "${desktop_file}" || {
+            echo "Linux desktop entry is missing archive MimeType associations." >&2
+            exit 1
+          }
+
       - name: Create macOS zip
         if: runner.os == 'macOS'
         run: node scripts/zip-macos.js
@@ -231,7 +266,7 @@ jobs:
             src-tauri/target/**/bundle/**/*.rpm.sig
 
   flatpak:
-    if: ${{ inputs.run_release_builds == true }}
+    if: ${{ github.event_name == 'push' || inputs.run_release_builds == true }}
     needs: verify
     runs-on: ubuntu-22.04
     steps:
@@ -245,7 +280,16 @@ jobs:
       - name: Install Flatpak tooling
         run: |
           sudo apt-get update
-          sudo apt-get install -y flatpak flatpak-builder
+          sudo apt-get install -y \
+            flatpak \
+            flatpak-builder \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            rpm \
+            libgtk-3-dev \
+            libdbus-1-dev
           sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
           sudo flatpak install -y flathub \
             org.gnome.Platform//48 \
@@ -266,7 +310,7 @@ jobs:
           path: dist/*.flatpak
 
   sign-and-publish:
-    if: ${{ inputs.run_release_builds == true && inputs.publish_release == true }}
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
     needs: [build, flatpak]
     runs-on: ubuntu-22.04
     permissions:
@@ -351,4 +395,5 @@ jobs:
           GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
           REQUIRED_LINUX_TARGETS: x86_64
+          EXPECTED_TAG: ${{ github.ref_name }}
           RELEASE_NOTES: ${{ inputs.release_notes }}

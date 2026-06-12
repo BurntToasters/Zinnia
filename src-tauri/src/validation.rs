@@ -16,6 +16,21 @@ fn has_parent_dir_component(path: &str) -> bool {
     path.split(['/', '\\']).any(|component| component == "..")
 }
 
+fn switch_contains_parent_traversal(arg: &str) -> bool {
+    let lower = arg.to_lowercase();
+    if !(lower.starts_with("-i")
+        || lower.starts_with("-x")
+        || lower.starts_with("-w")
+        || lower.starts_with("-o"))
+    {
+        return false;
+    }
+
+    arg[2..]
+        .split(['!', ':', '@'])
+        .any(has_parent_dir_component)
+}
+
 pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
     if args.is_empty() {
         return Err("Missing 7z arguments".to_string());
@@ -81,6 +96,11 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
             if lower.starts_with("-o") && has_parent_dir_component(&arg[2..]) {
                 return Err(format!(
                     "7z output path '{arg}' must not contain a '..' parent-directory segment."
+                ));
+            }
+            if switch_contains_parent_traversal(arg) {
+                return Err(format!(
+                    "7z switch '{arg}' must not contain a '..' parent-directory segment."
                 ));
             }
         } else {
@@ -334,6 +354,28 @@ mod tests {
         let args = vec![
             "x".to_string(),
             "-o/tmp/../etc".to_string(),
+            "--".to_string(),
+            "archive.7z".to_string(),
+        ];
+        assert!(validate_run_7z_args(&args).is_err());
+    }
+
+    #[test]
+    fn validate_run_7z_args_rejects_parent_dir_in_include_switch() {
+        let args = vec![
+            "x".to_string(),
+            "-ir!../../secret".to_string(),
+            "--".to_string(),
+            "archive.7z".to_string(),
+        ];
+        assert!(validate_run_7z_args(&args).is_err());
+    }
+
+    #[test]
+    fn validate_run_7z_args_rejects_parent_dir_in_workdir_switch() {
+        let args = vec![
+            "x".to_string(),
+            "-w../../tmp".to_string(),
             "--".to_string(),
             "archive.7z".to_string(),
         ];

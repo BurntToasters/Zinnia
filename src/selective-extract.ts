@@ -1,4 +1,5 @@
 import type { BrowseEntry } from "./browse-model.ts";
+import { SAFE_EXTRACT_OVERWRITE_MODE } from "./extract-policy";
 
 export function normalizeSelectiveSearchQuery(query: string): string {
   return query.trim().toLowerCase();
@@ -210,7 +211,7 @@ export function buildSelectiveExtractArgs(
   extraArgs: string[],
   selectedPaths: string[],
 ): string[] {
-  const args = ["x", `-o${destination}`, "-y"];
+  const args = ["x", `-o${destination}`, SAFE_EXTRACT_OVERWRITE_MODE];
   if (password) args.push(`-p${password}`);
   args.push(...extraArgs);
   if (selectedPaths.length > 0) {

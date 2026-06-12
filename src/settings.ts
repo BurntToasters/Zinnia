@@ -154,6 +154,7 @@ export function readSettingsModal(): UserSettings {
     customPresets: state.currentSettings.customPresets,
     powerWindowWidth: state.currentSettings.powerWindowWidth,
     powerWindowHeight: state.currentSettings.powerWindowHeight,
+    setupComplete: state.currentSettings.setupComplete,
   };
 }
 

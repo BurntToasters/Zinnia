@@ -43,7 +43,7 @@ export function promptInput(options: PromptOptions): Promise<string | null> {
       confirmBtn.removeEventListener("click", onConfirm);
       cancelBtn.removeEventListener("click", onCancel);
       cancelX?.removeEventListener("click", onCancel);
-      field.removeEventListener("keydown", onKey);
+      document.removeEventListener("keydown", onKey);
       overlay.removeEventListener("click", onOverlayClick);
       if (modal) releaseFocusTrap(modal);
       overlay.hidden = true;
@@ -75,7 +75,7 @@ export function promptInput(options: PromptOptions): Promise<string | null> {
     confirmBtn.addEventListener("click", onConfirm);
     cancelBtn.addEventListener("click", onCancel);
     cancelX?.addEventListener("click", onCancel);
-    field.addEventListener("keydown", onKey);
+    document.addEventListener("keydown", onKey);
     overlay.addEventListener("click", onOverlayClick);
 
     overlay.hidden = false;
