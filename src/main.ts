@@ -3,6 +3,42 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import {
+  createIcons,
+  Settings,
+  Heart,
+  FolderOpen,
+  Folder,
+  Package,
+  ArrowLeft,
+  Eye,
+  ArchiveRestore,
+  Trash2,
+  FilePlus,
+  FolderPlus,
+  Check,
+  AlertTriangle,
+} from "lucide";
+
+export function refreshIcons() {
+  createIcons({
+    icons: {
+      Settings,
+      Heart,
+      FolderOpen,
+      Folder,
+      Package,
+      ArrowLeft,
+      Eye,
+      ArchiveRestore,
+      Trash2,
+      FilePlus,
+      FolderPlus,
+      Check,
+      AlertTriangle,
+    },
+  });
+}
 
 import { $, trapFocus, releaseFocusTrap } from "./utils";
 import { promptInput } from "./prompt-modal";
@@ -31,6 +67,7 @@ import {
   setBrowsePasswordFieldVisible,
   persistSettingsImmediately,
   setStatus,
+  registerIconRefreshHook,
 } from "./ui";
 import {
   runAction,
@@ -842,6 +879,8 @@ async function init() {
   applySettingsToForm();
   updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
   onCompressionOptionChange();
+  registerIconRefreshHook(refreshIcons);
+  refreshIcons();
 
   try {
     state.logDirectory = await invoke<string>("get_log_dir");

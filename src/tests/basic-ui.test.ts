@@ -47,6 +47,8 @@ vi.mock("../ui", () => ({
   renderInputs: uiMocks.renderInputs,
   setBrowsePasswordFieldVisible: uiMocks.setBrowsePasswordFieldVisible,
   registerBasicHooks: uiMocks.registerBasicHooks,
+  triggerIconRefresh: vi.fn(),
+  registerIconRefreshHook: vi.fn(),
 }));
 
 vi.mock("../presets", () => ({

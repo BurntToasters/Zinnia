@@ -42,6 +42,8 @@ export interface UserSettings {
   uiDensity: UiDensity;
   osIntegrationDismissed: boolean;
   customPresets: CustomPreset[];
+  powerWindowWidth: number;
+  powerWindowHeight: number;
 }
 
 export interface LoadSettingsResult {
@@ -74,6 +76,8 @@ export const SETTING_DEFAULTS: UserSettings = {
   uiDensity: "comfortable",
   osIntegrationDismissed: false,
   customPresets: [],
+  powerWindowWidth: 1100,
+  powerWindowHeight: 720,
 };
 
 const THEMES = new Set<ThemePreference>(["system", "light", "dark"]);
@@ -114,6 +118,8 @@ const USER_SETTING_KEYS = new Set<keyof UserSettings>([
   "uiDensity",
   "osIntegrationDismissed",
   "customPresets",
+  "powerWindowWidth",
+  "powerWindowHeight",
 ]);
 
 const MAX_CUSTOM_PRESETS = 50;
@@ -225,6 +231,14 @@ export function normalizeUserSettings(
       settings.customPresets,
       fallback.customPresets,
     ),
+    powerWindowWidth:
+      typeof settings.powerWindowWidth === "number"
+        ? settings.powerWindowWidth
+        : fallback.powerWindowWidth,
+    powerWindowHeight:
+      typeof settings.powerWindowHeight === "number"
+        ? settings.powerWindowHeight
+        : fallback.powerWindowHeight,
   };
 }
 

@@ -88,11 +88,15 @@ describe("normalizeUserSettings", () => {
       showActivityPanel: true,
       workspaceMode: "power",
       uiDensity: "compact",
+      powerWindowWidth: 960,
+      powerWindowHeight: 640,
     });
     expect(result.lastMode).toBe("browse");
     expect(result.showActivityPanel).toBe(true);
     expect(result.workspaceMode).toBe("power");
     expect(result.uiDensity).toBe("compact");
+    expect(result.powerWindowWidth).toBe(960);
+    expect(result.powerWindowHeight).toBe(640);
   });
 
   it("rejects invalid lastMode and uses default", () => {

@@ -1,4 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { LogicalSize } from "@tauri-apps/api/dpi";
 import {
   $,
   MAX_LOG_LINES,
@@ -21,6 +23,16 @@ import {
   resolveExtractDestinationAutofill,
   resolveOutputArchiveAutofill,
 } from "./extract-path";
+
+let iconRefreshHook: (() => void) | null = null;
+
+export function registerIconRefreshHook(hook: () => void): void {
+  iconRefreshHook = hook;
+}
+
+export function triggerIconRefresh(): void {
+  iconRefreshHook?.();
+}
 
 type BasicHooks = {
   onRenderInputs: () => void;
@@ -311,6 +323,15 @@ export function setWorkspaceMode(
   if (options.persist !== false && previousMode !== mode) {
     queuePersistWorkingContext();
   }
+
+  const appWindow = getCurrentWebviewWindow();
+  if (appWindow && typeof appWindow.setSize === "function") {
+    if (mode === "basic") {
+      void appWindow.setSize(new LogicalSize(480, 700));
+    } else {
+      void appWindow.setSize(new LogicalSize(1100, 720));
+    }
+  }
 }
 
 export function getUiDensity(): UiDensity {
@@ -573,7 +594,7 @@ export function renderInputs() {
     const remove = document.createElement("button");
     remove.className = "btn btn--ghost btn--sm";
     remove.setAttribute("aria-label", `Remove ${path}`);
-    remove.textContent = "Remove";
+    remove.innerHTML = '<i data-lucide="trash-2" class="lucide-icon"></i>';
     remove.disabled = state.running;
     remove.addEventListener("click", () => {
       const removedPrimary = index === 0;
@@ -592,6 +613,7 @@ export function renderInputs() {
   });
 
   basicHooks?.onRenderInputs();
+  triggerIconRefresh();
 }
 
 export function setRunning(active: boolean) {
@@ -653,4 +675,14 @@ export function setRunning(active: boolean) {
 
   basicHooks?.onSetRunning(active);
   renderInputs();
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("resize", () => {
+    if (getWorkspaceMode() === "power") {
+      state.currentSettings.powerWindowWidth = window.innerWidth;
+      state.currentSettings.powerWindowHeight = window.innerHeight;
+      queuePersistWorkingContext();
+    }
+  });
 }

@@ -68,14 +68,7 @@
             title="Settings"
             aria-label="Open settings"
           >
-            <img
-              src="/twemoji/2699.svg"
-              width="15"
-              height="15"
-              alt=""
-              class="twemoji"
-              draggable="false"
-            />
+            <i data-lucide="settings" class="lucide-icon"></i>
           </button>
         </div>
       </header>
@@ -601,14 +594,11 @@
                   <span class="about-tagline">A fast, focused 7z GUI</span>
                   <span class="about-credit"
                     >Made with
-                    <img
-                      src="/twemoji/2764.svg"
-                      width="14"
-                      height="14"
-                      alt=""
-                      class="about-heart"
-                      draggable="false"
-                    />
+                    <i
+                      data-lucide="heart"
+                      class="lucide-icon text-danger"
+                      style="color: var(--danger)"
+                    ></i>
                     by BurntToasters /
                     <a href="https://rosie.run" target="_blank" rel="noopener"
                       >rosie.run</a
@@ -657,26 +647,6 @@
                     LGPL, with portions under the BSD 3-clause, BSD 2-clause,
                     and unRAR licenses. Copyright &copy; 1999&ndash;2025 Igor
                     Pavlov.
-                  </p>
-                </div>
-                <div class="about-notice">
-                  <strong>Twemoji</strong>
-                  <p>
-                    Emoji graphics by
-                    <a
-                      href="https://github.com/jdecked/twemoji"
-                      target="_blank"
-                      rel="noopener"
-                      >jdecked/twemoji</a
-                    >. Graphics licensed under
-                    <a
-                      href="https://creativecommons.org/licenses/by/4.0/"
-                      target="_blank"
-                      rel="noopener"
-                      >CC-BY 4.0</a
-                    >. Copyright &copy; 2019 Twitter, Inc and other
-                    contributors. Copyright &copy; 2024 jdecked and other
-                    contributors.
                   </p>
                 </div>
               </div>
@@ -1077,6 +1047,44 @@
 
       <main id="main-content">
         <div id="basic-workspace" class="basic-workspace">
+          <div class="basic-toolbar" id="basic-toolbar" hidden>
+            <div class="basic-toolbar__nav">
+              <button
+                class="basic-toolbar__tab"
+                id="basic-tab-home"
+                title="Go home"
+              >
+                <i data-lucide="arrow-left" class="lucide-icon"></i>
+                <span>Back</span>
+              </button>
+              <span class="basic-toolbar__separator"></span>
+              <button
+                class="basic-toolbar__tab"
+                id="basic-tab-compress"
+                data-basic-tab="compress"
+              >
+                <i data-lucide="package" class="lucide-icon"></i>
+                <span>Compress</span>
+              </button>
+              <button
+                class="basic-toolbar__tab"
+                id="basic-tab-extract"
+                data-basic-tab="extract"
+              >
+                <i data-lucide="archive-restore" class="lucide-icon"></i>
+                <span>Extract</span>
+              </button>
+              <button
+                class="basic-toolbar__tab"
+                id="basic-tab-browse"
+                data-basic-tab="browse"
+              >
+                <i data-lucide="eye" class="lucide-icon"></i>
+                <span>Browse</span>
+              </button>
+            </div>
+          </div>
+
           <div id="basic-home" class="basic-view is-active">
             <div class="basic-home__hero">
               <h2 class="basic-home__title">Drop something here</h2>
@@ -1087,13 +1095,7 @@
             <div class="basic-dropzone" id="basic-dropzone">
               <span class="basic-dropzone__icon">
                 <span class="basic-dropzone__icon-circle">
-                  <img
-                    src="/twemoji/1f4c2.svg"
-                    width="36"
-                    height="36"
-                    alt=""
-                    draggable="false"
-                  />
+                  <i data-lucide="folder-open" class="lucide-icon"></i>
                 </span>
               </span>
               <span class="basic-dropzone__text">
@@ -1106,13 +1108,7 @@
             <div class="basic-action-cards">
               <button class="basic-action-card" id="basic-action-open">
                 <span class="basic-action-card__icon">
-                  <img
-                    src="/twemoji/1f4c1.svg"
-                    width="28"
-                    height="28"
-                    alt=""
-                    draggable="false"
-                  />
+                  <i data-lucide="folder" class="lucide-icon"></i>
                 </span>
                 <span class="basic-action-card__label">Open archive</span>
                 <span class="basic-action-card__desc"
@@ -1121,13 +1117,7 @@
               </button>
               <button class="basic-action-card" id="basic-action-compress">
                 <span class="basic-action-card__icon">
-                  <img
-                    src="/twemoji/1f4e6.svg"
-                    width="28"
-                    height="28"
-                    alt=""
-                    draggable="false"
-                  />
+                  <i data-lucide="package" class="lucide-icon"></i>
                 </span>
                 <span class="basic-action-card__label">Compress files</span>
                 <span class="basic-action-card__desc"
@@ -1143,9 +1133,6 @@
 
           <div id="basic-compress" class="basic-view">
             <div class="basic-view-header">
-              <button class="basic-back-link" id="basic-compress-back">
-                &larr; Back
-              </button>
               <div>
                 <h2 class="basic-section-title">Compress files</h2>
                 <p class="basic-section-subtitle">
@@ -1372,9 +1359,6 @@
 
           <div id="basic-extract" class="basic-view">
             <div class="basic-view-header">
-              <button class="basic-back-link" id="basic-extract-back">
-                &larr; Back
-              </button>
               <div>
                 <h2 class="basic-section-title">Open archive</h2>
                 <p class="basic-section-subtitle">
@@ -1385,13 +1369,7 @@
             <div class="basic-card basic-step-card">
               <div class="basic-archive-info" id="basic-extract-archive-info">
                 <span class="basic-archive-info__icon">
-                  <img
-                    src="/twemoji/1f4e6.svg"
-                    width="28"
-                    height="28"
-                    alt=""
-                    draggable="false"
-                  />
+                  <i data-lucide="package" class="lucide-icon"></i>
                 </span>
                 <div class="basic-archive-info__details">
                   <span
@@ -1532,9 +1510,6 @@
 
           <div id="basic-browse" class="basic-view">
             <div class="basic-view-header">
-              <button class="basic-back-link" id="basic-browse-back">
-                &larr; Back
-              </button>
               <div>
                 <h2 class="basic-section-title">Browse archive</h2>
                 <p class="basic-section-subtitle">
@@ -1545,13 +1520,7 @@
             <div class="basic-card">
               <div class="basic-archive-info" id="basic-browse-archive-info">
                 <span class="basic-archive-info__icon">
-                  <img
-                    src="/twemoji/1f4e6.svg"
-                    width="28"
-                    height="28"
-                    alt=""
-                    draggable="false"
-                  />
+                  <i data-lucide="package" class="lucide-icon"></i>
                 </span>
                 <div class="basic-archive-info__details">
                   <span

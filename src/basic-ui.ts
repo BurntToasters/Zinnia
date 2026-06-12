@@ -10,6 +10,7 @@ import {
   renderInputs,
   setBrowsePasswordFieldVisible,
   registerBasicHooks,
+  triggerIconRefresh,
 } from "./ui";
 import {
   applyPreset,
@@ -74,6 +75,17 @@ export function setBasicView(view: BasicView): void {
     el.classList.toggle("is-active", el.id === `basic-${view}`);
   });
 
+  const toolbar = document.getElementById("basic-toolbar");
+  if (toolbar) {
+    toolbar.hidden = view === "home";
+    const tabs = toolbar.querySelectorAll(".basic-toolbar__tab");
+    tabs.forEach((tab) => {
+      const el = tab as HTMLButtonElement;
+      const isActive = el.dataset.basicTab === view;
+      el.classList.toggle("is-active", isActive);
+    });
+  }
+
   if (view === "compress") {
     syncPowerToBasicCompress();
     renderBasicInputs();
@@ -89,6 +101,7 @@ export function setBasicView(view: BasicView): void {
   hideBasicProgress("extract");
   hideBasicCompletion("compress");
   hideBasicCompletion("extract");
+  triggerIconRefresh();
 }
 
 function syncBasicToPower(): void {
@@ -364,9 +377,14 @@ function showBasicCompletion(
   const titleEl = document.getElementById(`basic-${section}-completion-title`);
   const msgEl = document.getElementById(`basic-${section}-completion-msg`);
 
-  if (iconEl) iconEl.textContent = success ? "\u2705" : "\u274c";
+  if (iconEl) {
+    iconEl.innerHTML = success
+      ? '<i data-lucide="check" class="lucide-icon text-success" style="color: var(--success)"></i>'
+      : '<i data-lucide="alert-triangle" class="lucide-icon text-danger" style="color: var(--danger)"></i>';
+  }
   if (titleEl) titleEl.textContent = title;
   if (msgEl) msgEl.textContent = message;
+  triggerIconRefresh();
 
   const runBtn =
     section === "compress"
@@ -563,7 +581,9 @@ export function renderBasicBrowseTable(
     if (entry.isDir) tr.className = "browse-folder";
 
     const tdName = document.createElement("td");
-    tdName.textContent = entry.path;
+    const iconName = entry.isDir ? "folder" : "file";
+    tdName.innerHTML = `<i data-lucide="${iconName}" class="lucide-icon" style="margin-right: 6px; font-size: 0.9em; vertical-align: middle;"></i><span></span>`;
+    tdName.querySelector("span")!.textContent = entry.path;
     tdName.style.wordBreak = "break-all";
 
     const tdSize = document.createElement("td");
@@ -583,6 +603,7 @@ export function renderBasicBrowseTable(
     tr.appendChild(tdModified);
     tbody.appendChild(tr);
   }
+  triggerIconRefresh();
 }
 
 export function setBasicBrowseSummary(text: string): void {
@@ -669,6 +690,37 @@ export function initBasicWorkspace(): void {
   wireBasicBrowseEvents();
   wireBasicKeyboardEvents();
 
+  const tabHome = document.getElementById("basic-tab-home");
+  if (tabHome) {
+    tabHome.addEventListener("click", () => {
+      setBasicView("home");
+    });
+  }
+  const tabCompress = document.getElementById("basic-tab-compress");
+  if (tabCompress) {
+    tabCompress.addEventListener("click", () => {
+      setBasicView("compress");
+      setMode("add");
+      renderInputs();
+    });
+  }
+  const tabExtract = document.getElementById("basic-tab-extract");
+  if (tabExtract) {
+    tabExtract.addEventListener("click", () => {
+      setBasicView("extract");
+      setMode("extract");
+      renderInputs();
+    });
+  }
+  const tabBrowse = document.getElementById("basic-tab-browse");
+  if (tabBrowse) {
+    tabBrowse.addEventListener("click", () => {
+      setBasicView("browse");
+      setMode("browse");
+      renderInputs();
+    });
+  }
+
   registerBasicHooks({
     onRenderInputs: () => renderBasicInputs(),
     onSetRunning: (active) => updateBasicRunningState(active),
@@ -677,11 +729,6 @@ export function initBasicWorkspace(): void {
 }
 
 function wireBasicCompressEvents(): void {
-  const backBtn = document.getElementById("basic-compress-back");
-  if (backBtn) {
-    backBtn.addEventListener("click", () => setBasicView("home"));
-  }
-
   const addFilesBtn = document.getElementById("basic-add-files");
   if (addFilesBtn) {
     addFilesBtn.addEventListener("click", async () => {
@@ -819,11 +866,6 @@ function wireBasicCompressEvents(): void {
 }
 
 function wireBasicExtractEvents(): void {
-  const backBtn = document.getElementById("basic-extract-back");
-  if (backBtn) {
-    backBtn.addEventListener("click", () => setBasicView("home"));
-  }
-
   const chooseExtractBtn = document.getElementById("basic-choose-extract");
   if (chooseExtractBtn) {
     chooseExtractBtn.addEventListener("click", async () => {
@@ -949,11 +991,6 @@ function wireBasicExtractEvents(): void {
 }
 
 function wireBasicBrowseEvents(): void {
-  const backBtn = document.getElementById("basic-browse-back");
-  if (backBtn) {
-    backBtn.addEventListener("click", () => setBasicView("home"));
-  }
-
   const extractAllBtn = document.getElementById("basic-browse-extract-all");
   if (extractAllBtn) {
     extractAllBtn.addEventListener("click", () => {
@@ -1019,19 +1056,13 @@ function wireBasicKeyboardEvents(): void {
       if (
         document
           .getElementById("basic-compress")
-          ?.classList.contains("is-active")
-      ) {
-        document.getElementById("basic-compress-back")?.click();
-      } else if (
+          ?.classList.contains("is-active") ||
         document
           .getElementById("basic-extract")
-          ?.classList.contains("is-active")
-      ) {
-        document.getElementById("basic-extract-back")?.click();
-      } else if (
+          ?.classList.contains("is-active") ||
         document.getElementById("basic-browse")?.classList.contains("is-active")
       ) {
-        document.getElementById("basic-browse-back")?.click();
+        setBasicView("home");
       }
     } else if (e.key === "Enter") {
       const activeElement = document.activeElement as HTMLElement;

@@ -366,7 +366,7 @@ describe("renderInputs", () => {
     renderInputs();
     const buttons = dom.inputList.querySelectorAll("button");
     expect(buttons.length).toBe(2);
-    expect(buttons[0].textContent).toBe("Remove");
+    expect(buttons[0].innerHTML).toContain('data-lucide="trash-2"');
   });
 
   it("disables remove buttons when running", () => {

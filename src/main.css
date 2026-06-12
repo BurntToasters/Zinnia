@@ -559,7 +559,7 @@ body {
   gap: var(--quick-actions-gap);
   padding: var(--quick-actions-pad-y) var(--quick-actions-pad-x);
   border-bottom: 1px solid var(--border);
-  background: linear-gradient(180deg, var(--surface), var(--surface-alt));
+  background: var(--surface);
 }
 
 .quick-actions__head {
@@ -590,14 +590,14 @@ body {
 }
 
 .session-card {
-  background: linear-gradient(180deg, var(--surface), var(--surface-alt));
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: var(--session-card-pad-y) var(--session-card-pad-x);
   display: flex;
   flex-direction: column;
   gap: var(--session-card-gap);
-  box-shadow: 0 10px 20px -18px var(--shadow-heavy);
+  box-shadow: 0 1px 3px var(--shadow);
 }
 
 .session-card__header {
@@ -1769,19 +1769,18 @@ input[type="number"] {
   display: none;
 }
 
-img.twemoji {
-  height: 1em;
-  width: 1em;
-  vertical-align: -0.15em;
-  filter: var(--twemoji-saturate);
-  opacity: 0.75;
-  transition:
-    filter var(--transition),
-    opacity var(--transition);
+.lucide-icon {
+  width: 1.1em;
+  height: 1.1em;
+  vertical-align: middle;
+  stroke-width: 2px;
+  stroke: currentColor;
+  fill: none;
+  opacity: 0.85;
+  transition: opacity var(--transition);
 }
 
-img.twemoji:hover {
-  filter: var(--twemoji-saturate-hover);
+.lucide-icon:hover {
   opacity: 1;
 }
 

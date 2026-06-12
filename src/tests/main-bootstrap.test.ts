@@ -41,6 +41,8 @@ const mocks = vi.hoisted(() => {
       getMode: vi.fn(() => runtime.mode),
       setBrowsePasswordFieldVisible: vi.fn(),
       persistSettingsImmediately: vi.fn().mockResolvedValue(undefined),
+      triggerIconRefresh: vi.fn(),
+      registerIconRefreshHook: vi.fn(),
     },
     archive: {
       runAction: vi.fn().mockResolvedValue(undefined),
@@ -136,6 +138,8 @@ vi.mock("../ui", () => ({
   getMode: mocks.ui.getMode,
   setBrowsePasswordFieldVisible: mocks.ui.setBrowsePasswordFieldVisible,
   persistSettingsImmediately: mocks.ui.persistSettingsImmediately,
+  triggerIconRefresh: mocks.ui.triggerIconRefresh,
+  registerIconRefreshHook: mocks.ui.registerIconRefreshHook,
 }));
 
 vi.mock("../archive", () => ({

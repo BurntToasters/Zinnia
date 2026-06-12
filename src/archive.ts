@@ -25,6 +25,7 @@ import {
   setRunning,
   getMode,
   setBrowsePasswordFieldVisible,
+  triggerIconRefresh,
 } from "./ui";
 import { ensureArchivePaths, validateExtraArgs } from "./archive-rules";
 import { formatCommandOutputForLogs } from "./output-logging";
@@ -668,7 +669,9 @@ export function renderBrowseTable(info: ArchiveInfo) {
     if (entry.isFolder) tr.className = "is-folder";
 
     const tdName = document.createElement("td");
-    tdName.textContent = entry.path;
+    const iconName = entry.isFolder ? "folder" : "file";
+    tdName.innerHTML = `<i data-lucide="${iconName}" class="lucide-icon" style="margin-right: 6px; font-size: 0.9em; vertical-align: middle;"></i><span></span>`;
+    tdName.querySelector("span")!.textContent = entry.path;
     tdName.title = entry.path;
 
     const tdSize = document.createElement("td");
@@ -699,7 +702,9 @@ export function renderBrowseTable(info: ArchiveInfo) {
       if (entry.isFolder) tr.className = "browse-folder";
 
       const tdName = document.createElement("td");
-      tdName.textContent = entry.path;
+      const iconName = entry.isFolder ? "folder" : "file";
+      tdName.innerHTML = `<i data-lucide="${iconName}" class="lucide-icon" style="margin-right: 6px; font-size: 0.9em; vertical-align: middle;"></i><span></span>`;
+      tdName.querySelector("span")!.textContent = entry.path;
       tdName.title = entry.path;
       tdName.style.wordBreak = "break-all";
 
@@ -728,6 +733,7 @@ export function renderBrowseTable(info: ArchiveInfo) {
   if (basicSummary && summary) {
     basicSummary.innerHTML = summary.innerHTML;
   }
+  triggerIconRefresh();
 }
 
 function getOrCreateSelection(archive: string): Set<string> {
