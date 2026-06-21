@@ -42,6 +42,23 @@ describe("OS integration UI", () => {
     ).toBe(false);
   });
 
+  it("shows packaged Linux integrations as manual verification", () => {
+    renderOsIntegrationStatus({
+      platform: "linux",
+      packaged: true,
+      fileAssociationsKnown: false,
+      contextActionsKnown: false,
+      defaultAppHelpAvailable: false,
+    });
+
+    expect(document.getElementById("os-file-assoc-status")?.textContent).toBe(
+      "Verify manually",
+    );
+    expect(document.getElementById("os-context-status")?.textContent).toBe(
+      "Verify manually",
+    );
+  });
+
   it("loads status from backend", async () => {
     invokeMock.mockResolvedValueOnce({
       platform: "linux",

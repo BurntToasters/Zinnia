@@ -6,6 +6,7 @@ import {
   describe7zError,
   truncateForDialog,
   withPassword,
+  formatBatchEta,
 } from "../archive";
 
 describe("isEncryptedFlag", () => {
@@ -221,5 +222,17 @@ describe("withPassword", () => {
       "archive.7z",
       "-ppw",
     ]);
+  });
+});
+
+describe("formatBatchEta", () => {
+  it("returns empty before progress or at completion", () => {
+    expect(formatBatchEta(0, 0)).toBe("");
+    expect(formatBatchEta(1000, 100)).toBe("");
+  });
+
+  it("estimates seconds and minutes", () => {
+    expect(formatBatchEta(10_000, 50)).toBe("~10s left");
+    expect(formatBatchEta(18_000, 10)).toBe("~2m 42s left");
   });
 });

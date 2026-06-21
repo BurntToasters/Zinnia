@@ -152,6 +152,9 @@ export function readSettingsModal(): UserSettings {
     osIntegrationDismissed: $<HTMLInputElement>("s-os-integration-dismissed")
       .checked,
     customPresets: state.currentSettings.customPresets,
+    powerWindowWidth: state.currentSettings.powerWindowWidth,
+    powerWindowHeight: state.currentSettings.powerWindowHeight,
+    setupComplete: state.currentSettings.setupComplete,
   };
 }
 

@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { deriveExtractDestinationPath } from "./extract-path";
 import { describe7zError } from "./error-hints";
+import { SAFE_EXTRACT_OVERWRITE_MODE } from "./extract-policy";
 
 interface Run7zResult {
   stdout: string;
@@ -313,8 +314,7 @@ async function run() {
   const args = [
     "x",
     `-o${destination}`,
-    "-aoa",
-    "-y",
+    SAFE_EXTRACT_OVERWRITE_MODE,
     "-bb1",
     "--",
     archivePath,

@@ -16,12 +16,12 @@ pub struct OsIntegrationStatus {
 }
 
 pub fn os_integration_status_for(platform: &str, packaged: bool) -> OsIntegrationStatus {
-    let supported_platform = matches!(platform, "macos" | "windows" | "linux");
+    let verified_integration_platform = matches!(platform, "macos" | "windows");
     OsIntegrationStatus {
         platform: platform.to_string(),
         packaged,
-        file_associations_known: packaged && supported_platform,
-        context_actions_known: packaged && supported_platform,
+        file_associations_known: packaged && verified_integration_platform,
+        context_actions_known: packaged && verified_integration_platform,
         default_app_help_available: matches!(platform, "macos" | "windows"),
     }
 }

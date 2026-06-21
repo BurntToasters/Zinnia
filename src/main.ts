@@ -3,8 +3,56 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { relaunch } from "@tauri-apps/plugin-process";
+import {
+  createIcons,
+  Settings,
+  Heart,
+  FolderOpen,
+  Folder,
+  Package,
+  File,
+  ArrowLeft,
+  Eye,
+  ArchiveRestore,
+  Trash2,
+  FilePlus,
+  FolderPlus,
+  Check,
+  AlertTriangle,
+  Sliders,
+  Monitor,
+  Info,
+  RotateCcw,
+} from "lucide";
+
+export function refreshIcons() {
+  createIcons({
+    icons: {
+      Settings,
+      Heart,
+      FolderOpen,
+      Folder,
+      Package,
+      File,
+      ArrowLeft,
+      Eye,
+      ArchiveRestore,
+      Trash2,
+      FilePlus,
+      FolderPlus,
+      Check,
+      AlertTriangle,
+      Sliders,
+      Monitor,
+      Info,
+      RotateCcw,
+    },
+  });
+}
 
 import { $, trapFocus, releaseFocusTrap } from "./utils";
+import { promptInput } from "./prompt-modal";
 import { SETTING_DEFAULTS, state, dom } from "./state";
 import {
   applyTheme,
@@ -30,6 +78,7 @@ import {
   setBrowsePasswordFieldVisible,
   persistSettingsImmediately,
   setStatus,
+  registerIconRefreshHook,
 } from "./ui";
 import {
   runAction,
@@ -453,24 +502,32 @@ function wireEvents() {
   });
 
   $("save-preset").addEventListener("click", () => {
-    const name = window.prompt("Save current options as preset:")?.trim();
-    if (!name) return;
-    try {
-      saveCustomPreset(name);
-      refreshPresetDropdown(`custom:${name}`);
-      updateDeletePresetButton();
-      void persistSettingsImmediately(
-        state.currentSettings,
-        state.settingsExtras,
-      );
-      setStatus(`Preset "${name}" saved`, 2000);
-    } catch (err) {
-      setStatus(
-        "Error",
-        3000,
-        err instanceof Error ? err.message : String(err),
-      );
-    }
+    void (async () => {
+      const raw = await promptInput({
+        title: "Save preset",
+        label: "Name this preset:",
+        placeholder: "e.g. My backup",
+        confirmLabel: "Save",
+      });
+      const name = raw?.trim();
+      if (!name) return;
+      try {
+        saveCustomPreset(name);
+        refreshPresetDropdown(`custom:${name}`);
+        updateDeletePresetButton();
+        void persistSettingsImmediately(
+          state.currentSettings,
+          state.settingsExtras,
+        );
+        setStatus(`Preset "${name}" saved`, 2000);
+      } catch (err) {
+        setStatus(
+          "Error",
+          3000,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    })();
   });
 
   $("delete-preset").addEventListener("click", () => {
@@ -658,6 +715,37 @@ function wireEvents() {
     }
   });
 
+  $("reset-settings").addEventListener("click", async () => {
+    const confirmed = await ask(
+      "Are you sure you want to reset all settings to default and restart Zinnia?",
+      {
+        title: "Reset Settings",
+        kind: "warning",
+        okLabel: "Reset & Restart",
+        cancelLabel: "Cancel",
+      },
+    );
+    if (!confirmed) return;
+
+    try {
+      state.currentSettings = { ...SETTING_DEFAULTS };
+      state.settingsExtras = {};
+      await persistSettingsImmediately(
+        state.currentSettings,
+        state.settingsExtras,
+      );
+      log("Settings reset. Relaunching...");
+      await relaunch();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`Failed to reset settings: ${msg}`, "error");
+      await message(`Failed to reset settings.\n\n${msg}`, {
+        title: "Reset settings error",
+        kind: "error",
+      });
+    }
+  });
+
   const settingsTabs = Array.from(
     document.querySelectorAll<HTMLButtonElement>(".settings-tab"),
   );
@@ -736,6 +824,14 @@ function wireEvents() {
       }
       return;
     }
+    if (!$("input-modal-overlay").hidden) {
+      if (e.key === "Escape") {
+        return;
+      }
+      if (e.key === "?" || (e.key === "Enter" && (e.ctrlKey || e.metaKey))) {
+        return;
+      }
+    }
     if (e.key === "Escape") {
       if (!$("settings-overlay").hidden) {
         closeSettingsModal();
@@ -764,7 +860,8 @@ function wireEvents() {
         !$("settings-overlay").hidden ||
         !$("selective-overlay").hidden ||
         !$("command-preview-overlay").hidden ||
-        !$("licenses-overlay").hidden
+        !$("licenses-overlay").hidden ||
+        !$("input-modal-overlay").hidden
       )
         return;
       e.preventDefault();
@@ -775,6 +872,7 @@ function wireEvents() {
       if (
         !$("setup-wizard-overlay").hidden ||
         !$("settings-overlay").hidden ||
+        !$("input-modal-overlay").hidden ||
         !$("licenses-overlay").hidden ||
         !$("selective-overlay").hidden ||
         !$("command-preview-overlay").hidden ||
@@ -833,6 +931,8 @@ async function init() {
   applySettingsToForm();
   updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
   onCompressionOptionChange();
+  registerIconRefreshHook(refreshIcons);
+  refreshIcons();
 
   try {
     state.logDirectory = await invoke<string>("get_log_dir");

@@ -68,21 +68,14 @@
             title="Settings"
             aria-label="Open settings"
           >
-            <img
-              src="/twemoji/2699.svg"
-              width="15"
-              height="15"
-              alt=""
-              class="twemoji"
-              draggable="false"
-            />
+            <i data-lucide="settings" class="lucide-icon"></i>
           </button>
         </div>
       </header>
 
       <div class="modal-overlay" id="settings-overlay" hidden>
         <div
-          class="modal"
+          class="modal modal--settings"
           role="dialog"
           aria-modal="true"
           aria-labelledby="settings-title"
@@ -98,586 +91,591 @@
             </button>
           </div>
 
-          <div
-            class="settings-tabs"
-            role="tablist"
-            aria-label="Settings sections"
-          >
-            <button
-              class="settings-tab is-active"
-              role="tab"
-              id="tab-general"
-              data-tab="general"
-              aria-selected="true"
-              aria-controls="panel-general"
-              tabindex="0"
-            >
-              General
-            </button>
-            <button
-              class="settings-tab"
-              role="tab"
-              id="tab-compression"
-              data-tab="compression"
-              aria-selected="false"
-              aria-controls="panel-compression"
-              tabindex="-1"
-            >
-              Compression
-            </button>
-            <button
-              class="settings-tab"
-              role="tab"
-              id="tab-os"
-              data-tab="os"
-              aria-selected="false"
-              aria-controls="panel-os"
-              tabindex="-1"
-            >
-              OS Integration
-            </button>
-            <button
-              class="settings-tab"
-              role="tab"
-              id="tab-about"
-              data-tab="about"
-              aria-selected="false"
-              aria-controls="panel-about"
-              tabindex="-1"
-            >
-              About
-            </button>
-          </div>
-
-          <div class="modal__body">
-            <!-- General tab -->
+          <div class="modal__main">
             <div
-              class="settings-panel is-active"
-              data-panel="general"
-              id="panel-general"
-              role="tabpanel"
-              aria-labelledby="tab-general"
+              class="settings-tabs"
+              role="tablist"
+              aria-label="Settings sections"
             >
-              <div class="setting-item">
-                <div class="setting-info">
-                  <span class="setting-title" id="title-theme">Theme</span>
-                  <span class="setting-desc"
-                    >Choose between light and dark mode, or follow your system
-                    preference.</span
+              <button
+                class="settings-tab is-active"
+                role="tab"
+                id="tab-general"
+                data-tab="general"
+                aria-selected="true"
+                aria-controls="panel-general"
+                tabindex="0"
+              >
+                <i data-lucide="settings" class="lucide-icon"></i>
+                <span>General</span>
+              </button>
+              <button
+                class="settings-tab"
+                role="tab"
+                id="tab-compression"
+                data-tab="compression"
+                aria-selected="false"
+                aria-controls="panel-compression"
+                tabindex="-1"
+              >
+                <i data-lucide="sliders" class="lucide-icon"></i>
+                <span>Compression</span>
+              </button>
+              <button
+                class="settings-tab"
+                role="tab"
+                id="tab-os"
+                data-tab="os"
+                aria-selected="false"
+                aria-controls="panel-os"
+                tabindex="-1"
+              >
+                <i data-lucide="monitor" class="lucide-icon"></i>
+                <span>OS Integration</span>
+              </button>
+              <button
+                class="settings-tab"
+                role="tab"
+                id="tab-about"
+                data-tab="about"
+                aria-selected="false"
+                aria-controls="panel-about"
+                tabindex="-1"
+              >
+                <i data-lucide="info" class="lucide-icon"></i>
+                <span>About</span>
+              </button>
+            </div>
+
+            <div class="modal__body">
+              <!-- General tab -->
+              <div
+                class="settings-panel is-active"
+                data-panel="general"
+                id="panel-general"
+                role="tabpanel"
+                aria-labelledby="tab-general"
+              >
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span class="setting-title" id="title-theme">Theme</span>
+                    <span class="setting-desc"
+                      >Choose between light and dark mode, or follow your system
+                      preference.</span
+                    >
+                  </div>
+                  <select
+                    id="s-theme"
+                    class="setting-select"
+                    aria-labelledby="title-theme"
                   >
+                    <option value="system">System</option>
+                    <option value="light">Light</option>
+                    <option value="dark">Dark</option>
+                  </select>
                 </div>
-                <select
-                  id="s-theme"
-                  class="setting-select"
-                  aria-labelledby="title-theme"
-                >
-                  <option value="system">System</option>
-                  <option value="light">Light</option>
-                  <option value="dark">Dark</option>
-                </select>
-              </div>
 
-              <div class="setting-item">
-                <div class="setting-info">
-                  <span class="setting-title" id="title-workspace-mode"
-                    >Workspace mode</span
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span class="setting-title" id="title-workspace-mode"
+                      >Workspace mode</span
+                    >
+                    <span class="setting-desc"
+                      >Basic keeps the UI minimal. Power shows advanced tools
+                      and quick actions.</span
+                    >
+                  </div>
+                  <select
+                    id="s-workspace-mode"
+                    class="setting-select"
+                    aria-labelledby="title-workspace-mode"
                   >
-                  <span class="setting-desc"
-                    >Basic keeps the UI minimal. Power shows advanced tools and
-                    quick actions.</span
-                  >
+                    <option value="basic">Basic</option>
+                    <option value="power">Power</option>
+                  </select>
                 </div>
-                <select
-                  id="s-workspace-mode"
-                  class="setting-select"
-                  aria-labelledby="title-workspace-mode"
-                >
-                  <option value="basic">Basic</option>
-                  <option value="power">Power</option>
-                </select>
-              </div>
 
-              <div class="setting-item">
-                <div class="setting-info">
-                  <span class="setting-title" id="title-ui-density"
-                    >UI density</span
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span class="setting-title" id="title-ui-density"
+                      >UI density</span
+                    >
+                    <span class="setting-desc"
+                      >Comfortable is roomier. Compact fits more controls and
+                      data.</span
+                    >
+                  </div>
+                  <select
+                    id="s-ui-density"
+                    class="setting-select"
+                    aria-labelledby="title-ui-density"
                   >
-                  <span class="setting-desc"
-                    >Comfortable is roomier. Compact fits more controls and
-                    data.</span
-                  >
+                    <option value="comfortable">Comfortable</option>
+                    <option value="compact">Compact</option>
+                  </select>
                 </div>
-                <select
-                  id="s-ui-density"
-                  class="setting-select"
-                  aria-labelledby="title-ui-density"
-                >
-                  <option value="comfortable">Comfortable</option>
-                  <option value="compact">Compact</option>
-                </select>
-              </div>
 
-              <hr class="setting-divider" />
+                <hr class="setting-divider" />
 
-              <div class="setting-item">
-                <div class="setting-info">
-                  <span
-                    class="setting-title"
-                    id="title-os-integration-dismissed"
-                    >Hide OS integration setup reminder</span
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span
+                      class="setting-title"
+                      id="title-os-integration-dismissed"
+                      >Hide OS integration setup reminder</span
+                    >
+                    <span class="setting-desc"
+                      >Keep the OS integration page available in Settings.</span
+                    >
+                  </div>
+                  <label
+                    class="switch"
+                    aria-labelledby="title-os-integration-dismissed"
                   >
-                  <span class="setting-desc"
-                    >Keep the OS integration page available in Settings.</span
-                  >
+                    <input type="checkbox" id="s-os-integration-dismissed" />
+                    <span class="switch__track"></span>
+                  </label>
                 </div>
-                <label
-                  class="switch"
-                  aria-labelledby="title-os-integration-dismissed"
-                >
-                  <input type="checkbox" id="s-os-integration-dismissed" />
-                  <span class="switch__track"></span>
-                </label>
-              </div>
 
-              <hr class="setting-divider" />
+                <hr class="setting-divider" />
 
-              <div class="setting-item">
-                <div class="setting-info">
-                  <span class="setting-title" id="title-auto-check-updates"
-                    >Check and automatically download updates on startup</span
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span class="setting-title" id="title-auto-check-updates"
+                      >Check and automatically download updates on startup</span
+                    >
+                    <span class="setting-desc"
+                      >Automatically checks for updates when the app opens and
+                      downloads them in the background.</span
+                    >
+                  </div>
+                  <label
+                    class="switch"
+                    data-update-ui
+                    aria-labelledby="title-auto-check-updates"
                   >
-                  <span class="setting-desc"
-                    >Automatically checks for updates when the app opens and
-                    downloads them in the background.</span
-                  >
+                    <input type="checkbox" id="s-auto-check-updates" checked />
+                    <span class="switch__track"></span>
+                  </label>
                 </div>
-                <label
-                  class="switch"
-                  data-update-ui
-                  aria-labelledby="title-auto-check-updates"
-                >
-                  <input type="checkbox" id="s-auto-check-updates" checked />
-                  <span class="switch__track"></span>
-                </label>
-              </div>
 
-              <div class="setting-item" data-update-ui>
-                <div class="setting-info">
-                  <span class="setting-title">Check for updates now</span>
-                  <span class="setting-desc"
-                    >See if a newer version is available.</span
-                  >
-                </div>
-                <button class="btn btn--sm" id="check-updates">
-                  Check now
-                </button>
-              </div>
-
-              <div class="setting-item" data-update-ui>
-                <div class="setting-info">
-                  <span class="setting-title" id="title-update-channel"
-                    >Update channel</span
-                  >
-                  <span class="setting-desc"
-                    >Choose between production updates and beta builds.</span
-                  >
-                </div>
-                <select
-                  id="s-update-channel"
-                  class="setting-select"
-                  aria-labelledby="title-update-channel"
-                >
-                  <option value="auto">Auto (follow version)</option>
-                  <option value="stable">Stable</option>
-                  <option value="beta">Beta</option>
-                </select>
-              </div>
-
-              <hr class="setting-divider" />
-
-              <div class="setting-item">
-                <div class="setting-info">
-                  <span class="setting-title" id="title-local-logging"
-                    >Local diagnostics logging</span
-                  >
-                  <span class="setting-desc"
-                    >Store privacy-preserving activity logs on this device
-                    only.</span
-                  >
-                </div>
-                <label class="switch" aria-labelledby="title-local-logging">
-                  <input type="checkbox" id="s-local-logging" checked />
-                  <span class="switch__track"></span>
-                </label>
-              </div>
-
-              <div class="setting-item">
-                <div class="setting-info">
-                  <span class="setting-title" id="title-log-verbosity"
-                    >Log verbosity</span
-                  >
-                  <span class="setting-desc"
-                    >Use Debug only when troubleshooting.</span
-                  >
-                </div>
-                <select
-                  id="s-log-verbosity"
-                  class="setting-select"
-                  aria-labelledby="title-log-verbosity"
-                >
-                  <option value="info">Normal</option>
-                  <option value="debug">Debug</option>
-                </select>
-              </div>
-
-              <div class="setting-item">
-                <div class="setting-info">
-                  <span class="setting-title">Export diagnostics logs</span>
-                  <span class="setting-desc" id="s-log-dir"
-                    >Detecting log directory…</span
-                  >
-                </div>
-                <div class="setting-actions">
-                  <button class="btn btn--sm" id="export-logs">Export</button>
-                  <button class="btn btn--ghost btn--sm" id="open-logs-folder">
-                    Open folder
-                  </button>
-                  <button class="btn btn--ghost btn--sm" id="clear-logs">
-                    Clear
+                <div class="setting-item" data-update-ui>
+                  <div class="setting-info">
+                    <span class="setting-title">Check for updates now</span>
+                    <span class="setting-desc"
+                      >See if a newer version is available.</span
+                    >
+                  </div>
+                  <button class="btn btn--sm" id="check-updates">
+                    Check now
                   </button>
                 </div>
+
+                <div class="setting-item" data-update-ui>
+                  <div class="setting-info">
+                    <span class="setting-title" id="title-update-channel"
+                      >Update channel</span
+                    >
+                    <span class="setting-desc"
+                      >Choose between production updates and beta builds.</span
+                    >
+                  </div>
+                  <select
+                    id="s-update-channel"
+                    class="setting-select"
+                    aria-labelledby="title-update-channel"
+                  >
+                    <option value="auto">Auto (follow version)</option>
+                    <option value="stable">Stable</option>
+                    <option value="beta">Beta</option>
+                  </select>
+                </div>
+
+                <hr class="setting-divider" />
+
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span class="setting-title" id="title-local-logging"
+                      >Local diagnostics logging</span
+                    >
+                    <span class="setting-desc"
+                      >Store privacy-preserving activity logs on this device
+                      only.</span
+                    >
+                  </div>
+                  <label class="switch" aria-labelledby="title-local-logging">
+                    <input type="checkbox" id="s-local-logging" checked />
+                    <span class="switch__track"></span>
+                  </label>
+                </div>
+
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span class="setting-title" id="title-log-verbosity"
+                      >Log verbosity</span
+                    >
+                    <span class="setting-desc"
+                      >Use Debug only when troubleshooting.</span
+                    >
+                  </div>
+                  <select
+                    id="s-log-verbosity"
+                    class="setting-select"
+                    aria-labelledby="title-log-verbosity"
+                  >
+                    <option value="info">Normal</option>
+                    <option value="debug">Debug</option>
+                  </select>
+                </div>
+
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span class="setting-title">Export diagnostics logs</span>
+                    <span class="setting-desc" id="s-log-dir"
+                      >Detecting log directory…</span
+                    >
+                  </div>
+                  <div class="setting-actions">
+                    <button class="btn btn--sm" id="export-logs">Export</button>
+                    <button
+                      class="btn btn--ghost btn--sm"
+                      id="open-logs-folder"
+                    >
+                      Open folder
+                    </button>
+                    <button class="btn btn--ghost btn--sm" id="clear-logs">
+                      Clear
+                    </button>
+                  </div>
+                </div>
+
+                <hr class="setting-divider" />
+
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span class="setting-title">CPU benchmark</span>
+                    <span class="setting-desc" id="benchmark-result"
+                      >Measure compression speed to help pick a thread
+                      count.</span
+                    >
+                  </div>
+                  <div class="setting-actions">
+                    <button class="btn btn--sm" id="run-benchmark">Run</button>
+                  </div>
+                </div>
+
+                <hr class="setting-divider" />
+
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span class="setting-title">Open-source licenses</span>
+                    <span class="setting-desc"
+                      >View third-party libraries and their licenses.</span
+                    >
+                  </div>
+                  <div class="setting-actions">
+                    <button class="btn btn--sm" id="show-licenses">View</button>
+                    <button
+                      class="btn btn--ghost btn--sm"
+                      id="rerun-setup-wizard"
+                    >
+                      Run setup wizard again
+                    </button>
+                  </div>
+                </div>
+
+                <hr class="setting-divider" />
+
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span class="setting-title">Reset settings</span>
+                    <span class="setting-desc"
+                      >Restore all settings to default values and restart the
+                      application.</span
+                    >
+                  </div>
+                  <div class="setting-actions">
+                    <button class="btn btn--danger btn--sm" id="reset-settings">
+                      <i data-lucide="rotate-ccw" class="lucide-icon"></i> Reset
+                      & Restart
+                    </button>
+                  </div>
+                </div>
               </div>
 
-              <hr class="setting-divider" />
-
-              <div class="setting-item">
-                <div class="setting-info">
-                  <span class="setting-title">CPU benchmark</span>
-                  <span class="setting-desc" id="benchmark-result"
-                    >Measure compression speed to help pick a thread
-                    count.</span
-                  >
+              <!-- Compression tab -->
+              <div
+                class="settings-panel"
+                data-panel="compression"
+                id="panel-compression"
+                role="tabpanel"
+                aria-labelledby="tab-compression"
+              >
+                <p class="settings-hint">
+                  Default values applied when creating new archives.
+                </p>
+                <div class="grid-split">
+                  <div class="field">
+                    <label for="s-format">Format</label>
+                    <select id="s-format">
+                      <option value="7z">7z</option>
+                      <option value="zip">zip</option>
+                      <option value="tar">tar</option>
+                      <option value="gzip">gzip</option>
+                      <option value="bzip2">bzip2</option>
+                      <option value="xz">xz</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="s-level">Compression level</label>
+                    <select id="s-level">
+                      <option value="0">0 - Store</option>
+                      <option value="1">1 - Fastest</option>
+                      <option value="3">3 - Fast</option>
+                      <option value="5">5 - Normal</option>
+                      <option value="7">7 - Maximum</option>
+                      <option value="9">9 - Ultra</option>
+                    </select>
+                  </div>
                 </div>
-                <div class="setting-actions">
-                  <button class="btn btn--sm" id="run-benchmark">Run</button>
+                <div class="grid-split">
+                  <div class="field">
+                    <label for="s-method">Method</label>
+                    <select id="s-method">
+                      <option value="lzma2">LZMA2</option>
+                      <option value="lzma">LZMA</option>
+                      <option value="ppmd">PPMd</option>
+                      <option value="bzip2">BZip2</option>
+                      <option value="deflate">Deflate</option>
+                      <option value="zstd">Zstandard</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="s-dict">Dictionary size</label>
+                    <select id="s-dict">
+                      <option value="16m">16 MB</option>
+                      <option value="32m">32 MB</option>
+                      <option value="64m">64 MB</option>
+                      <option value="128m">128 MB</option>
+                      <option value="256m">256 MB</option>
+                      <option value="512m">512 MB</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="grid-split">
+                  <div class="field">
+                    <label for="s-word-size">Word size</label>
+                    <select id="s-word-size">
+                      <option value="16">16</option>
+                      <option value="32">32</option>
+                      <option value="64">64</option>
+                      <option value="96">96</option>
+                      <option value="128">128</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="s-solid">Solid block size</label>
+                    <select id="s-solid">
+                      <option value="off">Off</option>
+                      <option value="1g">1 GB</option>
+                      <option value="4g">4 GB</option>
+                      <option value="16g">16 GB</option>
+                      <option value="solid">Solid</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="grid-split">
+                  <div class="field">
+                    <label for="s-threads">Threads</label>
+                    <input
+                      type="number"
+                      id="s-threads"
+                      min="1"
+                      max="128"
+                      value="8"
+                    />
+                  </div>
+                  <div class="field">
+                    <label for="s-path-mode">Path mode</label>
+                    <select id="s-path-mode">
+                      <option value="relative">Relative</option>
+                      <option value="absolute">Absolute</option>
+                    </select>
+                  </div>
+                </div>
+
+                <hr class="setting-divider" />
+
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span class="setting-title" id="title-sfx"
+                      >Create self-extracting archive (SFX)</span
+                    >
+                  </div>
+                  <label class="switch" aria-labelledby="title-sfx">
+                    <input type="checkbox" id="s-sfx" />
+                    <span class="switch__track"></span>
+                  </label>
+                </div>
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span class="setting-title" id="title-encrypt-headers"
+                      >Encrypt file names</span
+                    >
+                  </div>
+                  <label class="switch" aria-labelledby="title-encrypt-headers">
+                    <input type="checkbox" id="s-encrypt-headers" />
+                    <span class="switch__track"></span>
+                  </label>
+                </div>
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span class="setting-title" id="title-delete-after"
+                      >Delete files after compression</span
+                    >
+                    <span class="setting-desc"
+                      >Source files are permanently removed after a successful
+                      archive.</span
+                    >
+                  </div>
+                  <label class="switch" aria-labelledby="title-delete-after">
+                    <input type="checkbox" id="s-delete-after" />
+                    <span class="switch__track"></span>
+                  </label>
                 </div>
               </div>
 
-              <hr class="setting-divider" />
-
-              <div class="setting-item">
-                <div class="setting-info">
-                  <span class="setting-title">Open-source licenses</span>
-                  <span class="setting-desc"
-                    >View third-party libraries and their licenses.</span
-                  >
+              <!-- OS Integration tab -->
+              <div
+                class="settings-panel"
+                data-panel="os"
+                id="panel-os"
+                role="tabpanel"
+                aria-labelledby="tab-os"
+              >
+                <p class="settings-hint" id="os-integration-help">
+                  Checking OS integration status…
+                </p>
+                <div class="os-status-grid">
+                  <div class="os-status-card">
+                    <span class="settings-label">Platform</span>
+                    <strong id="os-platform-label">Unknown</strong>
+                    <span class="settings-value" id="os-package-label"
+                      >Checking…</span
+                    >
+                  </div>
+                  <div class="os-status-card">
+                    <span class="settings-label">Archive file types</span>
+                    <span
+                      class="status-pill status-pill--warn"
+                      id="os-file-assoc-status"
+                      >Checking…</span
+                    >
+                  </div>
+                  <div class="os-status-card">
+                    <span class="settings-label">Open/extract actions</span>
+                    <span
+                      class="status-pill status-pill--warn"
+                      id="os-context-status"
+                      >Checking…</span
+                    >
+                  </div>
                 </div>
-                <div class="setting-actions">
-                  <button class="btn btn--sm" id="show-licenses">View</button>
+                <div class="setting-actions settings-actions--left">
+                  <button class="btn btn--sm" id="open-os-integration-settings">
+                    Open OS settings
+                  </button>
                   <button
                     class="btn btn--ghost btn--sm"
-                    id="rerun-setup-wizard"
+                    id="refresh-os-integration-status"
                   >
-                    Run setup wizard again
+                    Refresh
                   </button>
                 </div>
-              </div>
-            </div>
-
-            <!-- Compression tab -->
-            <div
-              class="settings-panel"
-              data-panel="compression"
-              id="panel-compression"
-              role="tabpanel"
-              aria-labelledby="tab-compression"
-            >
-              <p class="settings-hint">
-                Default values applied when creating new archives.
-              </p>
-              <div class="grid-split">
-                <div class="field">
-                  <label for="s-format">Format</label>
-                  <select id="s-format">
-                    <option value="7z">7z</option>
-                    <option value="zip">zip</option>
-                    <option value="tar">tar</option>
-                    <option value="gzip">gzip</option>
-                    <option value="bzip2">bzip2</option>
-                    <option value="xz">xz</option>
-                  </select>
-                </div>
-                <div class="field">
-                  <label for="s-level">Compression level</label>
-                  <select id="s-level">
-                    <option value="0">0 - Store</option>
-                    <option value="1">1 - Fastest</option>
-                    <option value="3">3 - Fast</option>
-                    <option value="5">5 - Normal</option>
-                    <option value="7">7 - Maximum</option>
-                    <option value="9">9 - Ultra</option>
-                  </select>
-                </div>
-              </div>
-              <div class="grid-split">
-                <div class="field">
-                  <label for="s-method">Method</label>
-                  <select id="s-method">
-                    <option value="lzma2">LZMA2</option>
-                    <option value="lzma">LZMA</option>
-                    <option value="ppmd">PPMd</option>
-                    <option value="bzip2">BZip2</option>
-                    <option value="deflate">Deflate</option>
-                    <option value="zstd">Zstandard</option>
-                  </select>
-                </div>
-                <div class="field">
-                  <label for="s-dict">Dictionary size</label>
-                  <select id="s-dict">
-                    <option value="16m">16 MB</option>
-                    <option value="32m">32 MB</option>
-                    <option value="64m">64 MB</option>
-                    <option value="128m">128 MB</option>
-                    <option value="256m">256 MB</option>
-                    <option value="512m">512 MB</option>
-                  </select>
-                </div>
-              </div>
-              <div class="grid-split">
-                <div class="field">
-                  <label for="s-word-size">Word size</label>
-                  <select id="s-word-size">
-                    <option value="16">16</option>
-                    <option value="32">32</option>
-                    <option value="64">64</option>
-                    <option value="96">96</option>
-                    <option value="128">128</option>
-                  </select>
-                </div>
-                <div class="field">
-                  <label for="s-solid">Solid block size</label>
-                  <select id="s-solid">
-                    <option value="off">Off</option>
-                    <option value="1g">1 GB</option>
-                    <option value="4g">4 GB</option>
-                    <option value="16g">16 GB</option>
-                    <option value="solid">Solid</option>
-                  </select>
-                </div>
-              </div>
-              <div class="grid-split">
-                <div class="field">
-                  <label for="s-threads">Threads</label>
-                  <input
-                    type="number"
-                    id="s-threads"
-                    min="1"
-                    max="128"
-                    value="8"
-                  />
-                </div>
-                <div class="field">
-                  <label for="s-path-mode">Path mode</label>
-                  <select id="s-path-mode">
-                    <option value="relative">Relative</option>
-                    <option value="absolute">Absolute</option>
-                  </select>
+                <div class="settings-note">
+                  Zinnia never changes default apps automatically. Pick Zinnia
+                  in your OS settings for ZIP, 7z, TAR, Gzip, Bzip2, XZ, and
+                  RAR.
                 </div>
               </div>
 
-              <hr class="setting-divider" />
-
-              <div class="setting-item">
-                <div class="setting-info">
-                  <span class="setting-title" id="title-sfx"
-                    >Create self-extracting archive (SFX)</span
-                  >
-                </div>
-                <label class="switch" aria-labelledby="title-sfx">
-                  <input type="checkbox" id="s-sfx" />
-                  <span class="switch__track"></span>
-                </label>
-              </div>
-              <div class="setting-item">
-                <div class="setting-info">
-                  <span class="setting-title" id="title-encrypt-headers"
-                    >Encrypt file names</span
-                  >
-                </div>
-                <label class="switch" aria-labelledby="title-encrypt-headers">
-                  <input type="checkbox" id="s-encrypt-headers" />
-                  <span class="switch__track"></span>
-                </label>
-              </div>
-              <div class="setting-item">
-                <div class="setting-info">
-                  <span class="setting-title" id="title-delete-after"
-                    >Delete files after compression</span
-                  >
-                  <span class="setting-desc"
-                    >Source files are permanently removed after a successful
-                    archive.</span
-                  >
-                </div>
-                <label class="switch" aria-labelledby="title-delete-after">
-                  <input type="checkbox" id="s-delete-after" />
-                  <span class="switch__track"></span>
-                </label>
-              </div>
-            </div>
-
-            <!-- OS Integration tab -->
-            <div
-              class="settings-panel"
-              data-panel="os"
-              id="panel-os"
-              role="tabpanel"
-              aria-labelledby="tab-os"
-            >
-              <p class="settings-hint" id="os-integration-help">
-                Checking OS integration status…
-              </p>
-              <div class="os-status-grid">
-                <div class="os-status-card">
-                  <span class="settings-label">Platform</span>
-                  <strong id="os-platform-label">Unknown</strong>
-                  <span class="settings-value" id="os-package-label"
-                    >Checking…</span
-                  >
-                </div>
-                <div class="os-status-card">
-                  <span class="settings-label">Archive file types</span>
-                  <span
-                    class="status-pill status-pill--warn"
-                    id="os-file-assoc-status"
-                    >Checking…</span
-                  >
-                </div>
-                <div class="os-status-card">
-                  <span class="settings-label">Open/extract actions</span>
-                  <span
-                    class="status-pill status-pill--warn"
-                    id="os-context-status"
-                    >Checking…</span
-                  >
-                </div>
-              </div>
-              <div class="setting-actions settings-actions--left">
-                <button class="btn btn--sm" id="open-os-integration-settings">
-                  Open OS settings
-                </button>
-                <button
-                  class="btn btn--ghost btn--sm"
-                  id="refresh-os-integration-status"
-                >
-                  Refresh
-                </button>
-              </div>
-              <div class="settings-note">
-                Zinnia never changes default apps automatically. Pick Zinnia in
-                your OS settings for ZIP, 7z, TAR, Gzip, Bzip2, XZ, and RAR.
-              </div>
-            </div>
-
-            <!-- About tab -->
-            <div
-              class="settings-panel"
-              data-panel="about"
-              id="panel-about"
-              role="tabpanel"
-              aria-labelledby="tab-about"
-            >
-              <div class="about-header">
-                <img
-                  src="/zinnia_default-logo.png"
-                  width="40"
-                  height="40"
-                  alt="Zinnia"
-                  class="about-icon"
-                  draggable="false"
-                />
-                <div>
-                  <h3 class="about-name">Zinnia</h3>
-                  <span class="about-tagline">A fast, focused 7z GUI</span>
-                  <span class="about-credit"
-                    >Made with
-                    <img
-                      src="/twemoji/2764.svg"
-                      width="14"
-                      height="14"
-                      alt=""
-                      class="about-heart"
-                      draggable="false"
-                    />
-                    by BurntToasters /
-                    <a href="https://rosie.run" target="_blank" rel="noopener"
-                      >rosie.run</a
-                    ></span
-                  >
-                </div>
-              </div>
-              <div class="about-rows">
-                <div class="settings-row">
-                  <span class="settings-label">Version</span>
-                  <span class="settings-value" id="s-version-label"
-                    >v0.1.0</span
-                  >
-                </div>
-                <div class="settings-row">
-                  <span class="settings-label">Platform</span>
-                  <span class="settings-value" id="s-platform-label"
-                    >Platform</span
-                  >
-                </div>
-                <div class="settings-row">
-                  <span class="settings-label">License</span>
-                  <span class="settings-value">MPL-2.0</span>
-                </div>
-              </div>
-
-              <button
-                class="btn btn--sm about-licenses-btn"
-                id="about-show-licenses"
+              <!-- About tab -->
+              <div
+                class="settings-panel"
+                data-panel="about"
+                id="panel-about"
+                role="tabpanel"
+                aria-labelledby="tab-about"
               >
-                View Open-Source Licenses
-              </button>
-
-              <div class="about-notices">
-                <div class="about-notice">
-                  <strong>7-Zip</strong>
-                  <p>
-                    This application uses
-                    <a
-                      href="https://www.7-zip.org/"
-                      target="_blank"
-                      rel="noopener"
-                      >7-Zip</a
+                <div class="about-header">
+                  <img
+                    src="/zinnia_default-logo.png"
+                    width="40"
+                    height="40"
+                    alt="Zinnia"
+                    class="about-icon"
+                    draggable="false"
+                  />
+                  <div>
+                    <h3 class="about-name">Zinnia</h3>
+                    <span class="about-tagline">A fast, focused 7z GUI</span>
+                    <span class="about-credit"
+                      >Made with
+                      <i
+                        data-lucide="heart"
+                        class="lucide-icon text-danger"
+                        style="color: var(--danger)"
+                      ></i>
+                      by BurntToasters /
+                      <a href="https://rosie.run" target="_blank" rel="noopener"
+                        >rosie.run</a
+                      ></span
                     >
-                    binaries by Igor Pavlov. 7-Zip is licensed under the GNU
-                    LGPL, with portions under the BSD 3-clause, BSD 2-clause,
-                    and unRAR licenses. Copyright &copy; 1999&ndash;2025 Igor
-                    Pavlov.
-                  </p>
+                  </div>
                 </div>
-                <div class="about-notice">
-                  <strong>Twemoji</strong>
-                  <p>
-                    Emoji graphics by
-                    <a
-                      href="https://github.com/jdecked/twemoji"
-                      target="_blank"
-                      rel="noopener"
-                      >jdecked/twemoji</a
-                    >. Graphics licensed under
-                    <a
-                      href="https://creativecommons.org/licenses/by/4.0/"
-                      target="_blank"
-                      rel="noopener"
-                      >CC-BY 4.0</a
-                    >. Copyright &copy; 2019 Twitter, Inc and other
-                    contributors. Copyright &copy; 2024 jdecked and other
-                    contributors.
-                  </p>
+                <div class="about-rows">
+                  <div class="settings-row">
+                    <span class="settings-label">Version</span>
+                    <span class="settings-value" id="s-version-label"
+                      >v0.1.0</span
+                    >
+                  </div>
+                  <div class="settings-row">
+                    <span class="settings-label">Platform</span>
+                    <span class="settings-value" id="s-platform-label"
+                      >Platform</span
+                    >
+                  </div>
+                  <div class="settings-row">
+                    <span class="settings-label">License</span>
+                    <span class="settings-value">MPL-2.0</span>
+                  </div>
+                </div>
+
+                <button
+                  class="btn btn--sm about-licenses-btn"
+                  id="about-show-licenses"
+                >
+                  View Open-Source Licenses
+                </button>
+
+                <div class="about-notices">
+                  <div class="about-notice">
+                    <strong>7-Zip</strong>
+                    <p>
+                      This application uses
+                      <a
+                        href="https://www.7-zip.org/"
+                        target="_blank"
+                        rel="noopener"
+                        >7-Zip</a
+                      >
+                      binaries by Igor Pavlov. 7-Zip is licensed under the GNU
+                      LGPL, with portions under the BSD 3-clause, BSD 2-clause,
+                      and unRAR licenses. Copyright &copy; 1999&ndash;2025 Igor
+                      Pavlov.
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -872,6 +870,38 @@
         </div>
       </div>
 
+      <div class="modal-overlay" id="input-modal-overlay" hidden>
+        <div
+          class="modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="input-modal-title"
+        >
+          <div class="modal__header">
+            <h2 id="input-modal-title">Input</h2>
+            <button
+              class="btn btn--ghost btn--sm"
+              id="input-modal-cancel-x"
+              aria-label="Cancel"
+            >
+              &times;
+            </button>
+          </div>
+          <div class="modal__body">
+            <label class="field">
+              <span id="input-modal-label">Value</span>
+              <input type="text" id="input-modal-field" autocomplete="off" />
+            </label>
+          </div>
+          <div class="modal__footer">
+            <button class="btn btn--sm" id="input-modal-confirm">OK</button>
+            <button class="btn btn--ghost btn--sm" id="input-modal-cancel">
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+
       <div
         id="setup-wizard-overlay"
         class="setup-wizard-overlay"
@@ -1045,6 +1075,44 @@
 
       <main id="main-content">
         <div id="basic-workspace" class="basic-workspace">
+          <div class="basic-toolbar" id="basic-toolbar" hidden>
+            <div class="basic-toolbar__nav">
+              <button
+                class="basic-toolbar__tab"
+                id="basic-tab-home"
+                title="Go home"
+              >
+                <i data-lucide="arrow-left" class="lucide-icon"></i>
+                <span>Back</span>
+              </button>
+              <span class="basic-toolbar__separator"></span>
+              <button
+                class="basic-toolbar__tab"
+                id="basic-tab-compress"
+                data-basic-tab="compress"
+              >
+                <i data-lucide="package" class="lucide-icon"></i>
+                <span>Compress</span>
+              </button>
+              <button
+                class="basic-toolbar__tab"
+                id="basic-tab-extract"
+                data-basic-tab="extract"
+              >
+                <i data-lucide="archive-restore" class="lucide-icon"></i>
+                <span>Extract</span>
+              </button>
+              <button
+                class="basic-toolbar__tab"
+                id="basic-tab-browse"
+                data-basic-tab="browse"
+              >
+                <i data-lucide="eye" class="lucide-icon"></i>
+                <span>Browse</span>
+              </button>
+            </div>
+          </div>
+
           <div id="basic-home" class="basic-view is-active">
             <div class="basic-home__hero">
               <h2 class="basic-home__title">Drop something here</h2>
@@ -1052,16 +1120,16 @@
                 Zinnia will open archives or compress regular files.
               </p>
             </div>
-            <div class="basic-dropzone" id="basic-dropzone">
+            <div
+              class="basic-dropzone"
+              id="basic-dropzone"
+              role="button"
+              tabindex="0"
+              aria-label="Drop files or archives, or press Enter to browse"
+            >
               <span class="basic-dropzone__icon">
                 <span class="basic-dropzone__icon-circle">
-                  <img
-                    src="/twemoji/1f4c2.svg"
-                    width="36"
-                    height="36"
-                    alt=""
-                    draggable="false"
-                  />
+                  <i data-lucide="folder-open" class="lucide-icon"></i>
                 </span>
               </span>
               <span class="basic-dropzone__text">
@@ -1074,13 +1142,7 @@
             <div class="basic-action-cards">
               <button class="basic-action-card" id="basic-action-open">
                 <span class="basic-action-card__icon">
-                  <img
-                    src="/twemoji/1f4c1.svg"
-                    width="28"
-                    height="28"
-                    alt=""
-                    draggable="false"
-                  />
+                  <i data-lucide="folder" class="lucide-icon"></i>
                 </span>
                 <span class="basic-action-card__label">Open archive</span>
                 <span class="basic-action-card__desc"
@@ -1089,13 +1151,7 @@
               </button>
               <button class="basic-action-card" id="basic-action-compress">
                 <span class="basic-action-card__icon">
-                  <img
-                    src="/twemoji/1f4e6.svg"
-                    width="28"
-                    height="28"
-                    alt=""
-                    draggable="false"
-                  />
+                  <i data-lucide="package" class="lucide-icon"></i>
                 </span>
                 <span class="basic-action-card__label">Compress files</span>
                 <span class="basic-action-card__desc"
@@ -1111,9 +1167,6 @@
 
           <div id="basic-compress" class="basic-view">
             <div class="basic-view-header">
-              <button class="basic-back-link" id="basic-compress-back">
-                &larr; Back
-              </button>
               <div>
                 <h2 class="basic-section-title">Compress files</h2>
                 <p class="basic-section-subtitle">
@@ -1340,9 +1393,6 @@
 
           <div id="basic-extract" class="basic-view">
             <div class="basic-view-header">
-              <button class="basic-back-link" id="basic-extract-back">
-                &larr; Back
-              </button>
               <div>
                 <h2 class="basic-section-title">Open archive</h2>
                 <p class="basic-section-subtitle">
@@ -1353,13 +1403,7 @@
             <div class="basic-card basic-step-card">
               <div class="basic-archive-info" id="basic-extract-archive-info">
                 <span class="basic-archive-info__icon">
-                  <img
-                    src="/twemoji/1f4e6.svg"
-                    width="28"
-                    height="28"
-                    alt=""
-                    draggable="false"
-                  />
+                  <i data-lucide="package" class="lucide-icon"></i>
                 </span>
                 <div class="basic-archive-info__details">
                   <span
@@ -1500,9 +1544,6 @@
 
           <div id="basic-browse" class="basic-view">
             <div class="basic-view-header">
-              <button class="basic-back-link" id="basic-browse-back">
-                &larr; Back
-              </button>
               <div>
                 <h2 class="basic-section-title">Browse archive</h2>
                 <p class="basic-section-subtitle">
@@ -1513,13 +1554,7 @@
             <div class="basic-card">
               <div class="basic-archive-info" id="basic-browse-archive-info">
                 <span class="basic-archive-info__icon">
-                  <img
-                    src="/twemoji/1f4e6.svg"
-                    width="28"
-                    height="28"
-                    alt=""
-                    draggable="false"
-                  />
+                  <i data-lucide="package" class="lucide-icon"></i>
                 </span>
                 <div class="basic-archive-info__details">
                   <span
@@ -1538,10 +1573,10 @@
                 <table>
                   <thead>
                     <tr>
-                      <th>Name</th>
-                      <th>Size</th>
-                      <th>Compressed</th>
-                      <th>Modified</th>
+                      <th scope="col">Name</th>
+                      <th scope="col">Size</th>
+                      <th scope="col">Compressed</th>
+                      <th scope="col">Modified</th>
                     </tr>
                   </thead>
                   <tbody id="basic-browse-tbody"></tbody>

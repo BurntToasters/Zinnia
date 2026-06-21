@@ -10,7 +10,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md), [CONTRIBUTING.md](CONTRIBUTING.md), and
 - `cargo doc --manifest-path src-tauri/Cargo.toml`
 
 Direct Cargo commands work without a separate `npm run prepare:7z`; the Tauri
-build script prepares ignored sidecar binaries from tracked assets when needed.
+build script refreshes ignored sidecar binaries from tracked assets before the
+native build runs.
 
 ## OS integration
 - Zinnia registers common archive file types in packaged builds.
@@ -31,5 +32,7 @@ build script prepares ignored sidecar binaries from tracked assets when needed.
 
 ## Updater setup
 - Updater is already configured in `src-tauri/tauri.conf.json`.
-- The release workflow automatically publishes `latest-{{target}}-{{arch}}.json` manifests and updater artifacts to GitHub releases.
-- The release workflow also publishes `SHA256SUMS-{{target}}-{{arch}}.txt` checksum files and detached `.asc` signatures.
+- Push a `v*` tag to run the full release workflow and upload updater manifests,
+  artifacts, checksum files, and detached `.asc` signatures for that tag.
+- Manual `Release` workflow runs from `main`, `beta`, or `next-*` are for
+  verification and preflight builds; they do not publish a tagged release.

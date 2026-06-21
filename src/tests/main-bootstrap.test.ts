@@ -41,6 +41,8 @@ const mocks = vi.hoisted(() => {
       getMode: vi.fn(() => runtime.mode),
       setBrowsePasswordFieldVisible: vi.fn(),
       persistSettingsImmediately: vi.fn().mockResolvedValue(undefined),
+      triggerIconRefresh: vi.fn(),
+      registerIconRefreshHook: vi.fn(),
     },
     archive: {
       runAction: vi.fn().mockResolvedValue(undefined),
@@ -136,6 +138,8 @@ vi.mock("../ui", () => ({
   getMode: mocks.ui.getMode,
   setBrowsePasswordFieldVisible: mocks.ui.setBrowsePasswordFieldVisible,
   persistSettingsImmediately: mocks.ui.persistSettingsImmediately,
+  triggerIconRefresh: mocks.ui.triggerIconRefresh,
+  registerIconRefreshHook: mocks.ui.registerIconRefreshHook,
 }));
 
 vi.mock("../archive", () => ({
@@ -315,6 +319,7 @@ function ensureMainDomElements(): void {
     "about-show-licenses",
     "close-licenses",
     "rerun-setup-wizard",
+    "reset-settings",
   ]) {
     ensureElement(id, "button");
   }
@@ -349,6 +354,10 @@ function ensureMainDomElements(): void {
   ensureSelect("format", ["7z", "zip", "tar"]);
   ensureSelect("preset", ["balanced", "ultra", "custom"]);
   ensureElement("save-preset", "button");
+  ensureElement("input-modal-overlay", "div");
+  ensureElement("input-modal-field", "input");
+  ensureElement("input-modal-confirm", "button");
+  ensureElement("input-modal-cancel", "button");
   ensureElement("delete-preset", "button");
   ensureSelect("split-size", ["", "100m", "custom"]);
   ensureElement("split-custom-field", "div");
@@ -403,6 +412,7 @@ function ensureMainDomElements(): void {
   (document.getElementById("command-preview-overlay") as HTMLElement).hidden =
     true;
   (document.getElementById("shortcuts-overlay") as HTMLElement).hidden = true;
+  (document.getElementById("input-modal-overlay") as HTMLElement).hidden = true;
   (document.getElementById("setup-wizard-overlay") as HTMLElement).hidden =
     true;
 }
@@ -1014,6 +1024,50 @@ describe("main bootstrap", () => {
       expect.stringContaining("Failed to save settings."),
       expect.objectContaining({ title: "Settings error", kind: "error" }),
     );
+  });
+
+  it("resets settings to default and relaunches the app on reset confirmation", async () => {
+    await loadMainModule();
+
+    // 1. User cancels reset
+    askMock.mockResolvedValueOnce(false);
+    (document.getElementById("reset-settings") as HTMLButtonElement).click();
+    await flushAsync();
+    expect(mocks.ui.persistSettingsImmediately).not.toHaveBeenCalled();
+
+    // 2. User confirms reset
+    const { relaunch } = await import("@tauri-apps/plugin-process");
+    const relaunchMock = vi.mocked(relaunch);
+    relaunchMock.mockReset();
+    relaunchMock.mockResolvedValue(undefined);
+
+    askMock.mockResolvedValueOnce(true);
+    (document.getElementById("reset-settings") as HTMLButtonElement).click();
+    await flushAsync();
+
+    expect(mocks.ui.persistSettingsImmediately).toHaveBeenCalledWith(
+      expect.objectContaining({
+        theme: SETTING_DEFAULTS.theme,
+        workspaceMode: SETTING_DEFAULTS.workspaceMode,
+      }),
+      {},
+    );
+    expect(relaunchMock).toHaveBeenCalled();
+  });
+
+  it("does not trigger global run shortcut while input modal is open", async () => {
+    await loadMainModule();
+    const inputOverlay = document.getElementById(
+      "input-modal-overlay",
+    ) as HTMLElement;
+    inputOverlay.hidden = false;
+
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true }),
+    );
+
+    expect(mocks.archive.runAction).not.toHaveBeenCalled();
+    expect(mocks.archive.browseArchive).not.toHaveBeenCalled();
   });
 
   it("runs setup wizard path when required and handles setup failures", async () => {

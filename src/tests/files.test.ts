@@ -11,6 +11,8 @@ vi.mock("../ui", () => ({
   renderInputs: (...args: unknown[]) => renderInputsMock(...args),
   setBrowsePasswordFieldVisible: (...args: unknown[]) =>
     setBrowsePasswordFieldVisibleMock(...args),
+  triggerIconRefresh: vi.fn(),
+  registerIconRefreshHook: vi.fn(),
 }));
 
 import { addFiles, addFolder, chooseExtract, chooseOutput } from "../files";

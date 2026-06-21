@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { message, confirm, open, save } from "@tauri-apps/plugin-dialog";
 import {
   $,
@@ -24,6 +25,7 @@ import {
   setRunning,
   getMode,
   setBrowsePasswordFieldVisible,
+  triggerIconRefresh,
 } from "./ui";
 import { ensureArchivePaths, validateExtraArgs } from "./archive-rules";
 import { formatCommandOutputForLogs } from "./output-logging";
@@ -36,6 +38,8 @@ import { resolveExtractDestinationAutofill } from "./extract-path";
 import { looksLikePasswordRequiredError, describe7zError } from "./error-hints";
 export { looksLikePasswordRequiredError, describe7zError };
 import { showToast } from "./toast";
+import { promptInput } from "./prompt-modal";
+import { SAFE_EXTRACT_OVERWRITE_MODE } from "./extract-policy";
 import {
   buildSelectiveExtractArgs,
   buildEntryTree,
@@ -70,6 +74,29 @@ interface Run7zResult {
   code: number;
   stdout_truncated?: boolean;
   stderr_truncated?: boolean;
+}
+
+interface ProgressUpdate {
+  percent?: number;
+  filesDone?: number;
+  currentFile?: string;
+}
+
+function basename(filePath: string): string {
+  const sep = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
+  return sep >= 0 ? filePath.slice(sep + 1) : filePath;
+}
+
+// Estimate remaining time for the current archive from elapsed time and percent.
+export function formatBatchEta(elapsedMs: number, percent: number): string {
+  if (percent <= 0 || percent >= 100 || elapsedMs <= 0) return "";
+  const totalMs = elapsedMs / (percent / 100);
+  const remainingSec = Math.max(0, Math.round((totalMs - elapsedMs) / 1000));
+  if (remainingSec < 1) return "";
+  if (remainingSec < 60) return `~${remainingSec}s left`;
+  const min = Math.floor(remainingSec / 60);
+  const sec = remainingSec % 60;
+  return `~${min}m ${sec.toString().padStart(2, "0")}s left`;
 }
 
 export type ArchiveTestResult =
@@ -183,6 +210,27 @@ export function withPassword(args: string[], password: string): string[] {
   return [...filtered, ...tail];
 }
 
+// Attach a live progress listener for the duration of `fn`, updating the status
+// bar with percent + current file + ETA. Returns whatever `fn` resolves to.
+async function withLiveProgress<T>(fn: () => Promise<T>): Promise<T> {
+  const startedAt = Date.now();
+  const unlisten = await listen<ProgressUpdate>(
+    "7z-progress-structured",
+    (event) => {
+      const u = event.payload;
+      if (typeof u?.percent !== "number") return;
+      const eta = formatBatchEta(Date.now() - startedAt, u.percent);
+      const file = u.currentFile ? ` ${basename(u.currentFile)}` : "";
+      setProgress(`${u.percent}%${file}${eta ? ` · ${eta}` : ""}`);
+    },
+  );
+  try {
+    return await fn();
+  } finally {
+    if (typeof unlisten === "function") unlisten();
+  }
+}
+
 // Run 7z; if an extract fails because the archive is encrypted, prompt once for
 // a password and retry. Returns the final result.
 async function runWithPasswordRetry(
@@ -195,9 +243,12 @@ async function runWithPasswordRetry(
     result.code > 1 &&
     looksLikePasswordRequiredError(result.stdout, result.stderr)
   ) {
-    const password = window.prompt(
-      "This archive is encrypted. Enter password:",
-    );
+    const password = await promptInput({
+      title: "Password required",
+      label: "This archive is encrypted. Enter password:",
+      password: true,
+      confirmLabel: "Extract",
+    });
     if (password) {
       setStatus("Retrying with password");
       result = await invoke<Run7zResult>("run_7z", {
@@ -304,12 +355,8 @@ export async function convertArchive(): Promise<void> {
     }
 
     setStatus("Recompressing");
-    const threads = parseThreads(
-      $<HTMLInputElement>("threads").value,
-      SETTING_DEFAULTS.threads,
-    );
-    const compress = ["a", `-t${format}`];
-    if (threads) compress.push(`-mmt=${threads}`);
+    // Honor the full compression options (level/method/dict/solid/threads).
+    const compress = ["a", ...buildCompressionMethodSwitches(format)];
     // Compress the extracted contents (everything inside the temp dir).
     compress.push(dest, "--", `${tempDir}/*`);
 
@@ -383,6 +430,32 @@ export function buildExtractArgsFor(
   );
 }
 
+// Format/level/method/dict/word-size/solid/threads switches read from the
+// compression form. Shared by buildArgs and convertArchive so they stay in sync.
+export function buildCompressionMethodSwitches(format: string): string[] {
+  const level = $<HTMLSelectElement>("level").value;
+  const method = $<HTMLSelectElement>("method").value;
+  const dict = $<HTMLSelectElement>("dict").value;
+  const wordSize = $<HTMLSelectElement>("word-size").value;
+  const solid = $<HTMLSelectElement>("solid").value;
+  const threads = parseThreads(
+    $<HTMLInputElement>("threads").value,
+    SETTING_DEFAULTS.threads,
+  );
+
+  const switches = [`-t${format}`, `-mx=${level}`];
+  if (method) switches.push(`-m0=${method}`);
+  if (dict) switches.push(`-md=${dict}`);
+  if (wordSize) switches.push(`-mfb=${wordSize}`);
+  if (format === "7z") {
+    if (solid === "solid") switches.push("-ms=on");
+    else if (solid === "off") switches.push("-ms=off");
+    else switches.push(`-ms=${solid}`);
+  }
+  if (threads) switches.push(`-mmt=${threads}`);
+  return switches;
+}
+
 export function buildArgs() {
   const mode = getMode();
 
@@ -406,13 +479,6 @@ export function buildArgs() {
   }
 
   const format = $<HTMLSelectElement>("format").value;
-  const level = $<HTMLSelectElement>("level").value;
-  const method = $<HTMLSelectElement>("method").value;
-  const dict = $<HTMLSelectElement>("dict").value;
-  const wordSize = $<HTMLSelectElement>("word-size").value;
-  const solid = $<HTMLSelectElement>("solid").value;
-  const threadsRaw = $<HTMLInputElement>("threads").value;
-  const threads = parseThreads(threadsRaw, SETTING_DEFAULTS.threads);
   const pathMode = $<HTMLSelectElement>("path-mode").value;
   const rawPassword = $<HTMLInputElement>("password").value;
   const rawEncryptHeaders = $<HTMLInputElement>("encrypt-headers").checked;
@@ -436,22 +502,7 @@ export function buildArgs() {
     rawEncryptHeaders,
   );
 
-  const switches: string[] = [];
-  switches.push(`-t${format}`);
-  switches.push(`-mx=${level}`);
-  if (method) switches.push(`-m0=${method}`);
-  if (dict) switches.push(`-md=${dict}`);
-  if (wordSize) switches.push(`-mfb=${wordSize}`);
-  if (format === "7z") {
-    if (solid === "solid") {
-      switches.push("-ms=on");
-    } else if (solid === "off") {
-      switches.push("-ms=off");
-    } else {
-      switches.push(`-ms=${solid}`);
-    }
-  }
-  if (threads) switches.push(`-mmt=${threads}`);
+  const switches = buildCompressionMethodSwitches(format);
   if (pathMode === "absolute") switches.push("-spf");
   if (password) switches.push(`-p${password}`);
   // ZIP defaults to weak ZipCrypto; upgrade to AES-256 when a password is set.
@@ -619,7 +670,9 @@ export function renderBrowseTable(info: ArchiveInfo) {
     if (entry.isFolder) tr.className = "is-folder";
 
     const tdName = document.createElement("td");
-    tdName.textContent = entry.path;
+    const iconName = entry.isFolder ? "folder" : "file";
+    tdName.innerHTML = `<i data-lucide="${iconName}" class="lucide-icon" style="margin-right: 6px; font-size: 0.9em; vertical-align: middle;"></i><span></span>`;
+    tdName.querySelector("span")!.textContent = entry.path;
     tdName.title = entry.path;
 
     const tdSize = document.createElement("td");
@@ -650,7 +703,9 @@ export function renderBrowseTable(info: ArchiveInfo) {
       if (entry.isFolder) tr.className = "browse-folder";
 
       const tdName = document.createElement("td");
-      tdName.textContent = entry.path;
+      const iconName = entry.isFolder ? "folder" : "file";
+      tdName.innerHTML = `<i data-lucide="${iconName}" class="lucide-icon" style="margin-right: 6px; font-size: 0.9em; vertical-align: middle;"></i><span></span>`;
+      tdName.querySelector("span")!.textContent = entry.path;
       tdName.title = entry.path;
       tdName.style.wordBreak = "break-all";
 
@@ -679,6 +734,7 @@ export function renderBrowseTable(info: ArchiveInfo) {
   if (basicSummary && summary) {
     basicSummary.innerHTML = summary.innerHTML;
   }
+  triggerIconRefresh();
 }
 
 function getOrCreateSelection(archive: string): Set<string> {
@@ -751,9 +807,13 @@ function renderSelectiveTreeNode(
   const row = document.createElement("div");
   row.className = "selective-row selective-row--tree";
   row.style.paddingLeft = `${node.depth * 18 + 8}px`;
+  row.setAttribute("role", "treeitem");
+  row.setAttribute("aria-level", String(node.depth + 1));
 
   const expandable = node.isFolder && node.children.length > 0;
   const expanded = state.selectiveExpandedFolders.has(node.path);
+  if (expandable)
+    row.setAttribute("aria-expanded", expanded ? "true" : "false");
 
   const twisty = document.createElement("button");
   twisty.type = "button";
@@ -775,6 +835,10 @@ function renderSelectiveTreeNode(
   checkbox.checked = checkState === "checked";
   checkbox.indeterminate = checkState === "indeterminate";
   checkbox.disabled = state.running;
+  row.setAttribute(
+    "aria-selected",
+    checkState === "checked" ? "true" : "false",
+  );
   checkbox.addEventListener("change", () => {
     const current = getOrCreateSelection(archive);
     const entry: BrowseEntry = {
@@ -831,11 +895,14 @@ function renderSelectiveEntryList(
 
   // Searching shows a flat result list; otherwise a collapsible tree.
   if (searching) {
+    list.removeAttribute("role");
     for (const entry of entries) {
       list.appendChild(renderSelectiveFlatRow(archive, entry, allEntries));
     }
     return;
   }
+
+  list.setAttribute("role", "tree");
 
   for (const node of buildEntryTree(entries)) {
     renderSelectiveTreeNode(archive, node, allEntries, list);
@@ -1047,18 +1114,14 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
         : "Extracting archive",
     );
 
-    const result = await invoke<Run7zResult>("run_7z", { args });
+    const result = await withLiveProgress(() =>
+      invoke<Run7zResult>("run_7z", { args }),
+    );
     if (state.cancelRequested) {
       hideProgress();
       setStatus("Cancelled", 2000);
       log("Operation cancelled by user");
       return;
-    }
-
-    const outputLines = result.stdout.split(/\r?\n/);
-    for (const line of outputLines) {
-      const percentMatch = line.match(/(\d+)%/);
-      if (percentMatch) setProgress(`${percentMatch[1]}%`);
     }
 
     logCommandResult(result.stdout, result.stderr);
@@ -1160,20 +1223,14 @@ export async function runAction() {
 
     setStatus("Running");
 
-    const result = await runWithPasswordRetry(args, mode === "extract");
+    const result = await withLiveProgress(() =>
+      runWithPasswordRetry(args, mode === "extract"),
+    );
     if (state.cancelRequested) {
       hideProgress();
       setStatus("Cancelled", 2000);
       log("Operation cancelled by user");
       return;
-    }
-
-    const outputLines = result.stdout.split(/\r?\n/);
-    for (const line of outputLines) {
-      const percentMatch = line.match(/(\d+)%/);
-      if (percentMatch) {
-        setProgress(`${percentMatch[1]}%`);
-      }
     }
 
     logCommandResult(result.stdout, result.stderr);
@@ -1217,6 +1274,7 @@ export async function runAction() {
 export async function runBatchExtract() {
   if (state.running) return;
   setRunning(true);
+  let unlistenProgress: (() => void) | null = null;
   try {
     if (!(await ensureRuntimeReady())) return;
 
@@ -1235,28 +1293,42 @@ export async function runBatchExtract() {
 
     let succeeded = 0;
     let failed = 0;
+    let current = 0;
+    let archiveStartedAt = Date.now();
+
+    // Live progress for the whole batch: show percent of the current archive,
+    // which file it's on, and an ETA, alongside the N-of-M counter.
+    unlistenProgress = await listen<ProgressUpdate>(
+      "7z-progress-structured",
+      (event) => {
+        const u = event.payload;
+        const counter = `(${current}/${archives.length})`;
+        if (typeof u?.percent === "number") {
+          const eta = formatBatchEta(Date.now() - archiveStartedAt, u.percent);
+          const file = u.currentFile ? ` ${basename(u.currentFile)}` : "";
+          setProgress(
+            `${u.percent}% ${counter}${file}${eta ? ` · ${eta}` : ""}`,
+          );
+        }
+      },
+    );
 
     for (let i = 0; i < archives.length; i++) {
       if (state.batchCancelled || state.cancelRequested) break;
 
       const archive = archives[i];
+      current = i + 1;
+      archiveStartedAt = Date.now();
       setStatus(`Extracting ${i + 1} of ${archives.length}`);
 
       try {
-        const args = ["x", `-o${dest}`, "-y"];
+        const args = ["x", `-o${dest}`, SAFE_EXTRACT_OVERWRITE_MODE, "-bb1"];
         if (password) args.push(`-p${password}`);
         args.push(...extraArgs);
         args.push("--", archive);
         devLog(`7z ${sanitizeCommandArgsForPreview(args).join(" ")}`);
 
         const result = await invoke<Run7zResult>("run_7z", { args });
-
-        const outputLines = result.stdout.split(/\r?\n/);
-        for (const line of outputLines) {
-          const percentMatch = line.match(/(\d+)%/);
-          if (percentMatch)
-            setProgress(`${percentMatch[1]}% (${i + 1}/${archives.length})`);
-        }
 
         logCommandResult(result.stdout, result.stderr);
         logTruncationNotice(result);
@@ -1302,6 +1374,7 @@ export async function runBatchExtract() {
     hideProgress();
     await message(msg, { title: "Extraction error", kind: "error" });
   } finally {
+    if (unlistenProgress) unlistenProgress();
     setRunning(false);
   }
 }

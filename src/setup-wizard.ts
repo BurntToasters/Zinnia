@@ -41,13 +41,21 @@ function showStep(step: number): void {
 }
 
 export function shouldShowSetupWizard(): boolean {
+  const setupMarkedComplete =
+    state.currentSettings.setupComplete === true ||
+    state.settingsExtras._setupComplete === true;
+  if (!setupMarkedComplete) {
+    return true;
+  }
+
+  const storedVersion = state.settingsExtras._setupWizardVersion;
   return (
-    state.settingsExtras._setupComplete !== true ||
-    state.settingsExtras._setupWizardVersion !== SETUP_WIZARD_VERSION
+    typeof storedVersion === "number" && storedVersion !== SETUP_WIZARD_VERSION
   );
 }
 
 export async function markSetupComplete(): Promise<void> {
+  state.currentSettings.setupComplete = true;
   state.settingsExtras._setupComplete = true;
   state.settingsExtras._setupWizardVersion = SETUP_WIZARD_VERSION;
   await saveSettings(state.currentSettings, state.settingsExtras);

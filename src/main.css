@@ -182,42 +182,121 @@ body {
 
 /* --- Settings tabs --- */
 
+/* --- Settings tabs & Split Sidebar layout --- */
+
+.modal--settings {
+  width: 680px;
+  height: 520px;
+}
+
+.modal__main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.modal__main > .modal__body {
+  flex: 1;
+  padding: 20px 24px;
+  overflow-y: auto;
+}
+
 .settings-tabs {
   display: flex;
-  gap: 0;
-  border-bottom: 1px solid var(--border);
-  padding: 0 18px;
-  background: var(--surface);
+  flex-direction: column;
+  width: 175px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  border-bottom: none;
+  background: var(--surface-alt);
+  padding: 16px 8px;
+  gap: 4px;
 }
 
 .settings-tab {
   background: none;
   border: none;
-  border-bottom: 2px solid transparent;
+  border-left: 3px solid transparent;
   color: var(--text-secondary);
   font-family: inherit;
   font-size: 0.75rem;
   font-weight: 500;
-  padding: 10px 16px;
+  padding: 8px 12px;
   cursor: pointer;
-  transition:
-    color var(--transition),
-    border-color var(--transition);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transition: all var(--transition);
+  text-align: left;
+  width: 100%;
 }
 
 .settings-tab:hover {
   color: var(--text);
+  background: var(--hover-overlay);
 }
 
 .settings-tab.is-active {
   color: var(--accent);
-  border-bottom-color: var(--accent);
+  background: var(--accent-bg);
+  border-left-color: var(--accent);
   font-weight: 600;
+}
+
+.settings-tab .lucide-icon {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2px;
 }
 
 .settings-tab:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+@media (max-width: 720px) {
+  .modal--settings {
+    width: calc(100vw - 32px);
+    height: calc(100vh - 48px);
+    max-height: 580px;
+  }
+
+  .modal__main {
+    flex-direction: column;
+  }
+
+  .settings-tabs {
+    flex-direction: row;
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 8px 12px;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .settings-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .settings-tab {
+    width: auto;
+    border-left: none;
+    border-bottom: 3px solid transparent;
+    padding: 6px 12px;
+    text-align: center;
+    justify-content: center;
+  }
+
+  .settings-tab.is-active {
+    border-bottom-color: var(--accent);
+    border-left-color: transparent;
+  }
+
+  .modal__main > .modal__body {
+    padding: 16px;
+  }
 }
 
 .settings-panel {
@@ -559,7 +638,7 @@ body {
   gap: var(--quick-actions-gap);
   padding: var(--quick-actions-pad-y) var(--quick-actions-pad-x);
   border-bottom: 1px solid var(--border);
-  background: linear-gradient(180deg, var(--surface), var(--surface-alt));
+  background: var(--surface);
 }
 
 .quick-actions__head {
@@ -590,14 +669,14 @@ body {
 }
 
 .session-card {
-  background: linear-gradient(180deg, var(--surface), var(--surface-alt));
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: var(--session-card-pad-y) var(--session-card-pad-x);
   display: flex;
   flex-direction: column;
   gap: var(--session-card-gap);
-  box-shadow: 0 10px 20px -18px var(--shadow-heavy);
+  box-shadow: 0 1px 3px var(--shadow);
 }
 
 .session-card__header {
@@ -871,6 +950,23 @@ input[type="number"] {
 .btn--primary:active {
   background: var(--accent-pressed);
   border-color: var(--accent-pressed);
+}
+
+.btn--danger {
+  background: var(--danger);
+  color: var(--text-on-accent);
+  border-color: var(--danger);
+  font-weight: 600;
+}
+
+.btn--danger:hover {
+  background: var(--danger-hover);
+  border-color: var(--danger-hover);
+}
+
+.btn--danger:active {
+  background: var(--danger-pressed);
+  border-color: var(--danger-pressed);
 }
 
 .btn--ghost {
@@ -1769,19 +1865,18 @@ input[type="number"] {
   display: none;
 }
 
-img.twemoji {
-  height: 1em;
-  width: 1em;
-  vertical-align: -0.15em;
-  filter: var(--twemoji-saturate);
-  opacity: 0.75;
-  transition:
-    filter var(--transition),
-    opacity var(--transition);
+.lucide-icon {
+  width: 1.1em;
+  height: 1.1em;
+  vertical-align: middle;
+  stroke-width: 2px;
+  stroke: currentColor;
+  fill: none;
+  opacity: 0.85;
+  transition: opacity var(--transition);
 }
 
-img.twemoji:hover {
-  filter: var(--twemoji-saturate-hover);
+.lucide-icon:hover {
   opacity: 1;
 }
 

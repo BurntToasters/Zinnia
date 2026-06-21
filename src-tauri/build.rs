@@ -27,7 +27,7 @@ fn prepare_7z_binaries() {
         let target_path = out_dir.join(target);
         println!("cargo:rerun-if-changed={}", source_path.display());
 
-        if !source_path.exists() || target_path.exists() {
+        if !source_path.exists() {
             continue;
         }
 

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
   buildLogFragments,
   shouldPersistLevel,
@@ -209,6 +210,23 @@ describe("workspace and density", () => {
     expect(state.currentSettings.workspaceMode).toBe("power");
   });
 
+  it("clamps restored power window size before resizing", () => {
+    const appWindow = {
+      onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
+      setSize: vi.fn(),
+    };
+    vi.mocked(getCurrentWebviewWindow).mockReturnValue(appWindow as never);
+    state.currentSettings.powerWindowWidth = -20;
+    state.currentSettings.powerWindowHeight = 99999;
+
+    setWorkspaceMode("power", { persist: false });
+
+    expect(appWindow.setSize).toHaveBeenCalledOnce();
+    const [size] = appWindow.setSize.mock.calls[0];
+    expect(size.width).toBe(800);
+    expect(size.height).toBe(2160);
+  });
+
   it("gets and sets UI density", () => {
     expect(getUiDensity()).toBe("comfortable");
     setUiDensity("compact", { persist: false });
@@ -366,7 +384,7 @@ describe("renderInputs", () => {
     renderInputs();
     const buttons = dom.inputList.querySelectorAll("button");
     expect(buttons.length).toBe(2);
-    expect(buttons[0].textContent).toBe("Remove");
+    expect(buttons[0].innerHTML).toContain('data-lucide="trash-2"');
   });
 
   it("disables remove buttons when running", () => {

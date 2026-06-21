@@ -9,6 +9,11 @@ export type WorkingMode = "add" | "extract" | "browse";
 export type WorkspaceMode = "basic" | "power";
 export type UiDensity = "comfortable" | "compact";
 
+export const POWER_WINDOW_WIDTH_MIN = 800;
+export const POWER_WINDOW_WIDTH_MAX = 4096;
+export const POWER_WINDOW_HEIGHT_MIN = 600;
+export const POWER_WINDOW_HEIGHT_MAX = 2160;
+
 export interface CustomPreset {
   name: string;
   format: string;
@@ -42,6 +47,9 @@ export interface UserSettings {
   uiDensity: UiDensity;
   osIntegrationDismissed: boolean;
   customPresets: CustomPreset[];
+  powerWindowWidth: number;
+  powerWindowHeight: number;
+  setupComplete: boolean;
 }
 
 export interface LoadSettingsResult {
@@ -74,7 +82,43 @@ export const SETTING_DEFAULTS: UserSettings = {
   uiDensity: "comfortable",
   osIntegrationDismissed: false,
   customPresets: [],
+  powerWindowWidth: 1100,
+  powerWindowHeight: 720,
+  setupComplete: false,
 };
+
+function clampWindowDimension(
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  const rounded = Math.round(value);
+  return Math.min(max, Math.max(min, rounded));
+}
+
+export function sanitizePowerWindowSize(
+  width: unknown,
+  height: unknown,
+  fallbackWidth = SETTING_DEFAULTS.powerWindowWidth,
+  fallbackHeight = SETTING_DEFAULTS.powerWindowHeight,
+): { width: number; height: number } {
+  return {
+    width: clampWindowDimension(
+      width,
+      fallbackWidth,
+      POWER_WINDOW_WIDTH_MIN,
+      POWER_WINDOW_WIDTH_MAX,
+    ),
+    height: clampWindowDimension(
+      height,
+      fallbackHeight,
+      POWER_WINDOW_HEIGHT_MIN,
+      POWER_WINDOW_HEIGHT_MAX,
+    ),
+  };
+}
 
 const THEMES = new Set<ThemePreference>(["system", "light", "dark"]);
 const FORMATS = new Set<ArchiveFormat>([
@@ -114,6 +158,9 @@ const USER_SETTING_KEYS = new Set<keyof UserSettings>([
   "uiDensity",
   "osIntegrationDismissed",
   "customPresets",
+  "powerWindowWidth",
+  "powerWindowHeight",
+  "setupComplete",
 ]);
 
 const MAX_CUSTOM_PRESETS = 50;
@@ -172,6 +219,12 @@ export function normalizeUserSettings(
   fallback: UserSettings = SETTING_DEFAULTS,
 ): UserSettings {
   const settings = asRecord(input);
+  const powerWindowSize = sanitizePowerWindowSize(
+    settings.powerWindowWidth,
+    settings.powerWindowHeight,
+    fallback.powerWindowWidth,
+    fallback.powerWindowHeight,
+  );
   return {
     theme: asSetValue(settings.theme, THEMES, fallback.theme),
     format: asSetValue(settings.format, FORMATS, fallback.format),
@@ -225,6 +278,9 @@ export function normalizeUserSettings(
       settings.customPresets,
       fallback.customPresets,
     ),
+    powerWindowWidth: powerWindowSize.width,
+    powerWindowHeight: powerWindowSize.height,
+    setupComplete: asBoolean(settings.setupComplete, fallback.setupComplete),
   };
 }
 

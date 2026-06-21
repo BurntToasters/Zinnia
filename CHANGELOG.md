@@ -9,15 +9,29 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
 | <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> MacOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux |
 | :--- | :--- | :--- |
-| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.0-beta.2/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.0-beta.2/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.0-beta.2/Zinnia-macOS.dmg)** | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.0-beta.2/Zinnia-Linux-x64.AppImage) <!--/  [arm64](https://github.com/BurntToasters/IYERIS/releases/download/v1.0.4/IYERIS-Linux-arm64.AppImage) --> |
-| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>--> | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.0-beta.2/Zinnia-macOS.zip)** | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.0-beta.2/Zinnia-Linux-x64.deb) <!--/ [arm64](https://github.com/BurntToasters/IYERIS/releases/download/v1.0.4/IYERIS-Linux-arm64.deb)--> |
-| <!--*See MSI note below*--> | | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.0-beta.2/Zinnia-Linux-x64.rpm) <!--/ [arm64](https://github.com/BurntToasters/IYERIS/releases/download/v1.0.4/IYERIS-Linux-aarch64.rpm)--> |
-| | | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.0-beta.2/Zinnia-Linux-x64.flatpak) <!--/ [arm64](https://github.com/BurntToasters/IYERIS/releases/download/v1.0.4/IYERIS-Linux-aarch64.flatpak)--> |
+| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.0-beta.3/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.0-beta.3/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.0-beta.3/Zinnia-macOS.dmg)** | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.0-beta.3/Zinnia-Linux-x64.AppImage) <!--/  [arm64](https://github.com/BurntToasters/IYERIS/releases/download/v1.0.4/IYERIS-Linux-arm64.AppImage) --> |
+| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>--> | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.0-beta.3/Zinnia-macOS.zip)** | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.0-beta.3/Zinnia-Linux-x64.deb) <!--/ [arm64](https://github.com/BurntToasters/IYERIS/releases/download/v1.0.4/IYERIS-Linux-arm64.deb)--> |
+| <!--*See MSI note below*--> | | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.0-beta.3/Zinnia-Linux-x64.rpm) <!--/ [arm64](https://github.com/BurntToasters/IYERIS/releases/download/v1.0.4/IYERIS-Linux-aarch64.rpm)--> |
+| | | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.0-beta.3/Zinnia-Linux-x64.flatpak) <!--/ [arm64](https://github.com/BurntToasters/IYERIS/releases/download/v1.0.4/IYERIS-Linux-aarch64.flatpak)--> |
 
 > [!IMPORTANT]
 The `.sig` files in this repo are NOT normal gpg signatures they are for Tauri V2's updater to verify the integrity of updates before downloading and installing.
 The `.asc` files are my normal GPG signatures which you can verify using my GPG Public Key: https://tuxedo.rosie.run/GPG/BurntToasters_0xF2FBC20F_public.asc.
 ⚠️ Arm64 Linux Binaries are *NOT* available at the moment. Its something I may get around to in the future but its not a priority. However, I do have the logic setup in the repo in-case people would like to build their own :)
+
+## Changes in `v0.5.0-beta.3:`
+
+- **Linux:** Fixed the password prompt and "Save preset" not working — they used a browser dialog that WebKitGTK silently blocks. Both now use an in-app dialog that works everywhere. 🐧
+- **UI:** Compress and extract now show live progress with the current file and an ETA, not just at the end of the operation. 📈
+- **UI:** Batch (multi-archive) extraction now shows live progress and an N-of-M counter for the whole run.
+- **UI:** The pick-files tree is now exposed to screen readers (`tree` / `treeitem` roles with expand and selection state).
+- **UI:** Made the Basic mode dropzone keyboard-accessible — it now has the correct ARIA role and responds to Enter/Space so keyboard-only users can trigger the file picker without a mouse.
+- **Convert:** "Convert archive" now honors your full compression options (level, method, dictionary, solid, threads) instead of using 7-Zip defaults.
+- **Security:** Narrowed the webview CSP `connect-src` to `'self'` only — the GitHub domains previously listed there were only used Rust-side by the updater (not CSP-bound) and were an unnecessary webview allowance.
+- **Codebase:** Fixed the pre-commit hook being silently untracked — the `.gitignore` catch-all dot-directory rule was accidentally excluding `.githooks/` (only `.github/` and `.cargo/` had exceptions). Fresh clones now get the formatting, lint, and typecheck gate active immediately after `npm install`.
+- **Codebase:** `scripts/` directory is now covered by eslint (`no-explicit-any`, `no-unused-vars`); `lint` and `lint:fix` include it.
+- **Codebase:** Consolidated the compression-switch building so create and convert always stay in sync, and hardened the progress listener cleanup.
+- **Codebase:** Removed stale `next-0.5.0` CI branch trigger, removed dead `"dialog": true` updater config, and added inline documentation to the macOS entitlements, security policy, and process single-slot design.
 
 ## Changes in `v0.5.0-beta.2:`
 * **NEW - Split archives:** Added multi-volume archive creation. Pick a volume size (100 MB, 700 MB, 1/4 GB, or custom) in the advanced compression options.
@@ -46,7 +60,7 @@ The `.asc` files are my normal GPG signatures which you can verify using my GPG 
 * **Codebase:** Cancelling a compression now deletes the partial output instead of leaving a corrupt file behind.
 * **Testing:** Added Rust integration tests that exercise the real bundled 7-Zip end to end, raised the coverage gate, and added a pre-commit hook.
 * **DEV:** CI now runs `npm audit`, `cargo audit`, and Clippy (`-D warnings`) as a security gate.
-* **Misc:** Added Dependabot, a tag-triggered release workflow, and CONTRIBUTING / ARCHITECTURE / SECURITY docs.
+* **Misc:** Added Dependabot and CONTRIBUTING / ARCHITECTURE / SECURITY docs.
 
 ## Changes in `v0.5.0:`
 * **UI:** Reworked Basic mode into a task-first launcher for opening, extracting, and compressing archives.
