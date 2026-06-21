@@ -1120,7 +1120,13 @@
                 Zinnia will open archives or compress regular files.
               </p>
             </div>
-            <div class="basic-dropzone" id="basic-dropzone">
+            <div
+              class="basic-dropzone"
+              id="basic-dropzone"
+              role="button"
+              tabindex="0"
+              aria-label="Drop files or archives, or press Enter to browse"
+            >
               <span class="basic-dropzone__icon">
                 <span class="basic-dropzone__icon-circle">
                   <i data-lucide="folder-open" class="lucide-icon"></i>
@@ -1567,10 +1573,10 @@
                 <table>
                   <thead>
                     <tr>
-                      <th>Name</th>
-                      <th>Size</th>
-                      <th>Compressed</th>
-                      <th>Modified</th>
+                      <th scope="col">Name</th>
+                      <th scope="col">Size</th>
+                      <th scope="col">Compressed</th>
+                      <th scope="col">Modified</th>
                     </tr>
                   </thead>
                   <tbody id="basic-browse-tbody"></tbody>

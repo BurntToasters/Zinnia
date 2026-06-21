@@ -19,7 +19,7 @@ All 7z invocations go through `validate_run_7z_args`
 ([`src-tauri/src/validation.rs`](src-tauri/src/validation.rs)), the security
 boundary between frontend-supplied arguments and the spawned process:
 
-- Only the commands `a`, `u`, `x`, `l`, `t` are permitted.
+- Only the commands `a`, `u`, `x`, `l`, `t`, `b` are permitted.
 - A mandatory `--` separator divides switches from paths; switches are
   allow-listed by prefix.
 - Null bytes and over-length arguments are rejected.
@@ -51,3 +51,17 @@ tracked as planned work and is out of scope for the CLI sidecar today.
 
 Avoid sharing screen recordings or process listings while an encrypted
 operation is running.
+
+### Vendored 7-Zip binaries
+
+The 7-Zip binaries in `assets/` are committed to the repository and checksummed
+in `assets/7z-checksums.json`. Because they are bundled, a 7-Zip CVE fix
+requires manually updating the binaries, regenerating checksums, and shipping a
+new Zinnia release — there is no OS-level automatic update mechanism.
+
+**Action:** watch the [7-Zip release page](https://www.7-zip.org/history.txt)
+and [NVD vendor page](https://nvd.nist.gov/vuln/search/results?form_type=Basic&results_type=overview&query=7-zip&search_type=all)
+for new advisories. When a new 7-Zip version addresses a security issue, update
+`assets/` with the new binaries, run
+`node scripts/prepare-7z.js --update-checksums` to regenerate
+`assets/7z-checksums.json`, and cut a Zinnia release.

@@ -34,6 +34,22 @@ export default [
     },
   },
   {
+    files: ["scripts/**/*.{js,ts}"],
+    languageOptions: {
+      parser: tsParser,
+    },
+    plugins: {
+      "@typescript-eslint": tsPlugin,
+    },
+    rules: {
+      "@typescript-eslint/no-explicit-any": "error",
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
+      ],
+    },
+  },
+  {
     ignores: ["dist/**", "node_modules/**", "src-tauri/**"],
   },
 ];

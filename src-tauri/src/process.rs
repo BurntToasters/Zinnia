@@ -52,6 +52,10 @@ fn lock_process(state: &RunningProcess) -> Result<std::sync::MutexGuard<'_, Proc
         .map_err(|_| "Process lock poisoned".to_string())
 }
 
+// By design, only one 7z process runs at a time across all windows.
+// A second invocation (e.g. a concurrent extract window) gets a clear error;
+// the frontend prevents this in normal flow. This keeps resource use
+// predictable and avoids partial-output races on shared state.
 pub fn ensure_idle(state: &ProcessState) -> Result<(), String> {
     if state.child.is_some() || state.cancelling {
         Err("Another archive operation is already running.".to_string())

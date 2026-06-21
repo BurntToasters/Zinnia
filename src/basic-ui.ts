@@ -617,7 +617,7 @@ export function initBasicWorkspace(): void {
   const openCard = document.getElementById("basic-action-open");
 
   if (dropzone) {
-    dropzone.addEventListener("click", async () => {
+    const activateDropzone = async (): Promise<void> => {
       const selection = await open({
         title: "Select files or archives",
         multiple: true,
@@ -626,6 +626,13 @@ export function initBasicWorkspace(): void {
       const paths = Array.isArray(selection) ? selection : [selection];
       if (paths.length > 0) {
         await handleBasicDrop(paths);
+      }
+    };
+    dropzone.addEventListener("click", () => void activateDropzone());
+    dropzone.addEventListener("keydown", (e: KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        void activateDropzone();
       }
     });
   }

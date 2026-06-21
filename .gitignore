@@ -9,6 +9,7 @@ npm-debug.log*
 licenses.json
 **/.*/
 !.github/
+!.githooks/
 !src-tauri/.cargo/
 !src-tauri/.cargo/audit.toml
 
