@@ -47,10 +47,31 @@ pub fn atomic_write_text(path: &std::path::Path, contents: &str) -> Result<(), S
 
     #[cfg(windows)]
     {
-        if let Err(e) = std::fs::remove_file(path) {
-            if e.kind() != std::io::ErrorKind::NotFound {
-                eprintln!("Warning: could not remove existing file before rename: {e}");
+        // On Windows, rename over existing file fails. Use a two-step approach:
+        // rename existing to .bak, rename tmp to target, then remove .bak.
+        // This avoids the gap where the target doesn't exist.
+        if path.exists() {
+            let backup = path.with_extension("json.bak");
+            // Remove any stale backup from a previous crash
+            let _ = std::fs::remove_file(&backup);
+            if let Err(e) = std::fs::rename(path, &backup) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    eprintln!("Warning: could not backup existing file before rename: {e}");
+                }
             }
+            std::fs::rename(&tmp, path).map_err(|e| {
+                // Attempt to restore from backup
+                let _ = std::fs::rename(&backup, path);
+                if let Err(cleanup_err) = std::fs::remove_file(&tmp) {
+                    eprintln!(
+                        "Warning: could not clean up temp file {}: {cleanup_err}",
+                        tmp.display()
+                    );
+                }
+                e.to_string()
+            })?;
+            let _ = std::fs::remove_file(&backup);
+            return Ok(());
         }
     }
 
@@ -84,11 +105,20 @@ pub fn save_settings(app: tauri::AppHandle, json: String) -> Result<(), String> 
 
     let mut incoming = parse_json_object(&json)?;
     if path.exists() {
-        if let Ok(existing_raw) = std::fs::read_to_string(&path) {
-            if let Ok(existing) = parse_json_object(&existing_raw) {
-                merge_reserved_settings(&existing, &mut incoming);
-            }
-        }
+        let existing_raw = std::fs::read_to_string(&path).map_err(|e| {
+            format!(
+                "Failed to read existing settings for reserved-key preservation: {e}. \
+                 Refusing to overwrite to avoid data loss."
+            )
+        })?;
+        let existing = parse_json_object(&existing_raw).map_err(|e| {
+            format!(
+                "Existing settings file is corrupt ({e}). \
+                 Refusing to overwrite to avoid losing reserved keys. \
+                 Delete the file manually to reset."
+            )
+        })?;
+        merge_reserved_settings(&existing, &mut incoming);
     }
 
     let merged = serde_json::Value::Object(incoming);

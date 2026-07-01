@@ -48,6 +48,9 @@ export function refreshIcons() {
       Info,
       RotateCcw,
     },
+    attrs: {
+      "aria-hidden": "true",
+    },
   });
 }
 

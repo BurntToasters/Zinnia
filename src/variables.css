@@ -105,6 +105,8 @@
     --success: #15803d;
     --success-bg: rgba(21, 128, 61, 0.12);
     --success-border: rgba(21, 128, 61, 0.3);
+    --warning: #a16207;
+    --warning-bg: rgba(202, 138, 4, 0.12);
     --text: #1f1f1f;
     --text-secondary: #5c5c5c;
     --text-on-accent: #ffffff;
