@@ -1038,6 +1038,7 @@ describe("main bootstrap", () => {
     (document.getElementById("reset-settings") as HTMLButtonElement).click();
     await flushAsync();
     expect(mocks.ui.persistSettingsImmediately).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalledWith("reset_settings");
 
     // 2. User confirms reset
     const { relaunch } = await import("@tauri-apps/plugin-process");
@@ -1049,13 +1050,9 @@ describe("main bootstrap", () => {
     (document.getElementById("reset-settings") as HTMLButtonElement).click();
     await flushAsync();
 
-    expect(mocks.ui.persistSettingsImmediately).toHaveBeenCalledWith(
-      expect.objectContaining({
-        theme: SETTING_DEFAULTS.theme,
-        workspaceMode: SETTING_DEFAULTS.workspaceMode,
-      }),
-      {},
-    );
+    expect(mocks.ui.persistSettingsImmediately).not.toHaveBeenCalled();
+    expect(invokeMock).toHaveBeenCalledWith("reset_settings");
+    expect(invokeMock).toHaveBeenCalledWith("clear_logs");
     expect(relaunchMock).toHaveBeenCalled();
   });
 

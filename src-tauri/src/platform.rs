@@ -519,7 +519,7 @@ mod macos_defaults {
         archive_status, ArchiveDefaultStatus, ArchiveDefaultTarget, ARCHIVE_DEFAULT_TARGETS,
         SYSTEM_ARCHIVER_BUNDLE_ID, ZINNIA_BUNDLE_ID,
     };
-    use core_foundation::base::{kCFAllocatorDefault, TCFType};
+    use core_foundation::base::TCFType;
     use core_foundation::string::{CFString, CFStringRef};
 
     type OSStatus = i32;
@@ -538,7 +538,6 @@ mod macos_defaults {
             in_role: u32,
         ) -> CFStringRef;
         fn UTTypeCreatePreferredIdentifierForTag(
-            allocator: *const std::ffi::c_void,
             tag_class: CFStringRef,
             tag: CFStringRef,
             conforming_to_uti: CFStringRef,
@@ -550,7 +549,6 @@ mod macos_defaults {
         let tag = CFString::new(extension);
         let uti = unsafe {
             UTTypeCreatePreferredIdentifierForTag(
-                kCFAllocatorDefault,
                 tag_class.as_concrete_TypeRef(),
                 tag.as_concrete_TypeRef(),
                 std::ptr::null(),
@@ -561,6 +559,11 @@ mod macos_defaults {
         } else {
             Some(unsafe { CFString::wrap_under_create_rule(uti) })
         }
+    }
+
+    #[cfg(test)]
+    pub fn uti_identifier_for_extension(extension: &str) -> Option<String> {
+        uti_for_extension(extension).map(|uti| uti.to_string())
     }
 
     fn current_handler_for_uti(uti: &CFString) -> Option<String> {
@@ -808,5 +811,19 @@ mod tests {
 
         assert!(result.changed);
         assert!(result.message.contains("some formats"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_archive_extensions_resolve_to_utis() {
+        let zip = macos_defaults::uti_identifier_for_extension("zip");
+        let seven_zip = macos_defaults::uti_identifier_for_extension("7z");
+
+        assert!(zip.as_deref().is_some_and(|uti| uti.contains("zip")));
+        assert!(
+            seven_zip
+                .as_deref()
+                .is_some_and(|uti| uti.contains("7-zip"))
+        );
     }
 }
