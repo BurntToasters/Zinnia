@@ -1,4 +1,5 @@
-import { open, confirm } from "@tauri-apps/plugin-dialog";
+import { open, confirm, save, message } from "@tauri-apps/plugin-dialog";
+import { promptInput } from "./prompt-modal";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { $ } from "./utils";
@@ -19,7 +20,15 @@ import {
   onCompressionOptionChange,
 } from "./presets";
 import { validateArchivePaths } from "./archive-rules";
-import { runAction, cancelAction, browseArchive, testArchive } from "./archive";
+import {
+  runAction,
+  cancelAction,
+  browseArchive,
+  testArchive,
+  Run7zResult,
+  looksLikePasswordRequiredError,
+  parseArchiveListing,
+} from "./archive";
 import { chooseOutput, chooseExtract, addFiles, addFolder } from "./files";
 import {
   deriveOutputArchivePath,
@@ -203,14 +212,15 @@ export function syncBasicWorkspaceFromPower(): void {
 
 function updateBasicExtractInfo(): void {
   const archivePath = state.inputs[0] ?? "";
-  const name = basename(archivePath) || "archive";
-  const ext =
-    extension(archivePath).replace(".", "").toUpperCase() || "Archive";
+  const name = basename(archivePath) || "No archive selected";
+  const ext = archivePath
+    ? `${extension(archivePath).replace(".", "").toUpperCase()} archive`
+    : "Click to select an archive file";
 
   const nameEl = document.getElementById("basic-extract-archive-name");
   const metaEl = document.getElementById("basic-extract-archive-meta");
   if (nameEl) nameEl.textContent = name;
-  if (metaEl) metaEl.textContent = `${ext} archive`;
+  if (metaEl) metaEl.textContent = ext;
 
   const extractPathInput = document.getElementById(
     "basic-extract-path",
@@ -230,14 +240,15 @@ function updateBasicExtractInfo(): void {
 
 function updateBasicBrowseInfo(): void {
   const archivePath = state.inputs[0] ?? "";
-  const name = basename(archivePath) || "archive";
-  const ext =
-    extension(archivePath).replace(".", "").toUpperCase() || "Archive";
+  const name = basename(archivePath) || "No archive selected";
+  const ext = archivePath
+    ? `${extension(archivePath).replace(".", "").toUpperCase()} archive`
+    : "Click to select an archive file";
 
   const nameEl = document.getElementById("basic-browse-archive-name");
   const metaEl = document.getElementById("basic-browse-archive-meta");
   if (nameEl) nameEl.textContent = name;
-  if (metaEl) metaEl.textContent = `${ext} archive`;
+  if (metaEl) metaEl.textContent = ext;
 }
 
 export function renderBasicInputs(): void {
@@ -385,6 +396,26 @@ function showBasicCompletion(
   }
   if (titleEl) titleEl.textContent = title;
   if (msgEl) msgEl.textContent = message;
+
+  // Manage "Open folder" button visibility based on success state
+  const openDestBtn = document.getElementById(`basic-${section}-open-dest`);
+  if (openDestBtn) {
+    openDestBtn.style.display = success ? "inline-flex" : "none";
+  }
+
+  // Manage text of secondary action button based on success state
+  if (section === "compress") {
+    const compressAgainBtn = document.getElementById("basic-compress-again");
+    if (compressAgainBtn) {
+      compressAgainBtn.textContent = success ? "Compress more" : "Close";
+    }
+  } else {
+    const extractAnotherBtn = document.getElementById("basic-extract-another");
+    if (extractAnotherBtn) {
+      extractAnotherBtn.textContent = success ? "Extract another" : "Close";
+    }
+  }
+
   triggerIconRefresh();
 
   const runBtn =
@@ -579,6 +610,55 @@ async function handleBasicDrop(paths: string[]): Promise<void> {
 }
 
 async function handleBasicCompressAction(): Promise<void> {
+  if (state.inputs.length === 0) {
+    showBasicCompletion(
+      "compress",
+      false,
+      "Operation failed",
+      "Add at least one input.",
+    );
+    return;
+  }
+
+  const formatSelect = document.getElementById(
+    "basic-format",
+  ) as HTMLSelectElement | null;
+  const format = formatSelect?.value ?? "7z";
+
+  let defaultPath = `Archive.${format}`;
+  if (state.inputs[0]) {
+    const parent = parentDirForPath(state.inputs[0]);
+    if (parent) {
+      const sep = state.inputs[0].includes("\\") ? "\\" : "/";
+      defaultPath = parent.endsWith(sep)
+        ? `${parent}Archive.${format}`
+        : `${parent}${sep}Archive.${format}`;
+    }
+  }
+
+  const output = await save({
+    title: "Choose output archive",
+    defaultPath,
+  });
+
+  if (!output) {
+    return;
+  }
+
+  const basicOutputPath = document.getElementById(
+    "basic-output-path",
+  ) as HTMLInputElement | null;
+  if (basicOutputPath) {
+    basicOutputPath.value = output;
+  }
+
+  const basicArchiveName = document.getElementById(
+    "basic-archive-name",
+  ) as HTMLInputElement | null;
+  if (basicArchiveName) {
+    basicArchiveName.value = ""; // Let output path dictate name
+  }
+
   syncBasicToPower();
   setMode("add");
   showBasicProgress("compress");
@@ -586,7 +666,119 @@ async function handleBasicCompressAction(): Promise<void> {
   await runAction();
 }
 
+async function testArchivePassword(
+  archive: string,
+  password?: string,
+): Promise<boolean> {
+  try {
+    const args = ["l", "-slt", archive];
+    if (password) {
+      args.push(`-p${password}`);
+    }
+    const result = await invoke<Run7zResult>("run_7z", { args });
+    if (result.code > 1) {
+      return !looksLikePasswordRequiredError(result.stdout, result.stderr);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function isArchiveEncrypted(archivePath: string): Promise<boolean> {
+  const cached = state.browseArchiveInfoByPath.get(archivePath);
+  if (cached) {
+    return cached.encrypted;
+  }
+
+  try {
+    const args = ["l", "-slt", archivePath];
+    const result = await invoke<Run7zResult>("run_7z", { args });
+    if (result.code > 1) {
+      return looksLikePasswordRequiredError(result.stdout, result.stderr);
+    }
+    const info = parseArchiveListing(result.stdout);
+    return info.encrypted;
+  } catch {
+    return false;
+  }
+}
+
 async function handleBasicExtractAction(): Promise<void> {
+  const archive = state.inputs[0];
+  if (!archive) {
+    showBasicCompletion(
+      "extract",
+      false,
+      "Operation failed",
+      "Select an archive to extract.",
+    );
+    return;
+  }
+
+  // 1. Check if archive is encrypted
+  const isEncrypted = await isArchiveEncrypted(archive);
+  let password = "";
+
+  if (isEncrypted) {
+    let correctPassword = false;
+    while (!correctPassword) {
+      const input = await promptInput({
+        title: "Password Required",
+        label: "This archive is encrypted. Enter password:",
+        password: true,
+      });
+
+      if (input === null) {
+        // User cancelled the prompt modal
+        return;
+      }
+
+      // Test the password
+      const ok = await testArchivePassword(archive, input);
+      if (ok) {
+        password = input;
+        correctPassword = true;
+      } else {
+        await message("Incorrect password. Please try again.", {
+          title: "Error",
+          kind: "error",
+        });
+      }
+    }
+  }
+
+  // 2. Set the password value in password fields so the background extractor has it!
+  const basicPasswordInput = document.getElementById(
+    "basic-extract-password",
+  ) as HTMLInputElement | null;
+  if (basicPasswordInput) {
+    basicPasswordInput.value = password;
+  }
+  const powerPasswordInput = document.getElementById(
+    "extract-password",
+  ) as HTMLInputElement | null;
+  if (powerPasswordInput) {
+    powerPasswordInput.value = password;
+  }
+
+  // 3. Open folder picker
+  const output = await open({
+    title: "Choose destination folder",
+    directory: true,
+  });
+
+  if (!output || typeof output !== "string") {
+    return;
+  }
+
+  const basicExtractPath = document.getElementById(
+    "basic-extract-path",
+  ) as HTMLInputElement | null;
+  if (basicExtractPath) {
+    basicExtractPath.value = output;
+  }
+
   syncBasicExtractToPower();
   setMode("extract");
   showBasicProgress("extract");
@@ -736,6 +928,77 @@ export function initBasicWorkspace(): void {
           renderInputs();
           setBasicView("extract");
         }
+      }
+    });
+  }
+
+  const extractArchiveInfo = document.getElementById(
+    "basic-extract-archive-info",
+  );
+  if (extractArchiveInfo) {
+    extractArchiveInfo.addEventListener("click", async () => {
+      const selection = await open({
+        title: "Open archive",
+        multiple: false,
+        filters: [
+          {
+            name: "Archives",
+            extensions: [
+              "7z",
+              "zip",
+              "tar",
+              "gz",
+              "tgz",
+              "bz2",
+              "tbz2",
+              "xz",
+              "txz",
+              "rar",
+            ],
+          },
+        ],
+      });
+      if (!selection) return;
+      const path = typeof selection === "string" ? selection : selection[0];
+      if (path) {
+        state.inputs = [path];
+        renderInputs();
+      }
+    });
+  }
+
+  const browseArchiveInfo = document.getElementById(
+    "basic-browse-archive-info",
+  );
+  if (browseArchiveInfo) {
+    browseArchiveInfo.addEventListener("click", async () => {
+      const selection = await open({
+        title: "Open archive",
+        multiple: false,
+        filters: [
+          {
+            name: "Archives",
+            extensions: [
+              "7z",
+              "zip",
+              "tar",
+              "gz",
+              "tgz",
+              "bz2",
+              "tbz2",
+              "xz",
+              "txz",
+              "rar",
+            ],
+          },
+        ],
+      });
+      if (!selection) return;
+      const path = typeof selection === "string" ? selection : selection[0];
+      if (path) {
+        state.inputs = [path];
+        renderInputs();
+        void browseArchive();
       }
     });
   }
@@ -904,18 +1167,32 @@ function wireBasicCompressEvents(): void {
   const compressAgainBtn = document.getElementById("basic-compress-again");
   if (compressAgainBtn) {
     compressAgainBtn.addEventListener("click", () => {
-      state.inputs.length = 0;
-      state.lastAutoOutputPath = null;
-      renderInputs();
+      const isFailure = compressAgainBtn.textContent?.trim() === "Close";
+      if (isFailure) {
+        hideBasicCompletion("compress");
+      } else {
+        state.inputs.length = 0;
+        state.lastAutoOutputPath = null;
+        renderInputs();
+        hideBasicCompletion("compress");
+        const nameInput = document.getElementById(
+          "basic-archive-name",
+        ) as HTMLInputElement | null;
+        const outputInput = document.getElementById(
+          "basic-output-path",
+        ) as HTMLInputElement | null;
+        if (nameInput) nameInput.value = "";
+        if (outputInput) outputInput.value = "";
+      }
+    });
+  }
+
+  const compressCloseBtn = document.getElementById(
+    "basic-compress-completion-close",
+  );
+  if (compressCloseBtn) {
+    compressCloseBtn.addEventListener("click", () => {
       hideBasicCompletion("compress");
-      const nameInput = document.getElementById(
-        "basic-archive-name",
-      ) as HTMLInputElement | null;
-      const outputInput = document.getElementById(
-        "basic-output-path",
-      ) as HTMLInputElement | null;
-      if (nameInput) nameInput.value = "";
-      if (outputInput) outputInput.value = "";
     });
   }
 }
@@ -1025,11 +1302,25 @@ function wireBasicExtractEvents(): void {
   const extractAnotherBtn = document.getElementById("basic-extract-another");
   if (extractAnotherBtn) {
     extractAnotherBtn.addEventListener("click", () => {
-      state.inputs.length = 0;
-      state.lastAutoExtractDestination = null;
-      renderInputs();
+      const isFailure = extractAnotherBtn.textContent?.trim() === "Close";
+      if (isFailure) {
+        hideBasicCompletion("extract");
+      } else {
+        state.inputs.length = 0;
+        state.lastAutoExtractDestination = null;
+        renderInputs();
+        hideBasicCompletion("extract");
+        setBasicView("home");
+      }
+    });
+  }
+
+  const extractCloseBtn = document.getElementById(
+    "basic-extract-completion-close",
+  );
+  if (extractCloseBtn) {
+    extractCloseBtn.addEventListener("click", () => {
       hideBasicCompletion("extract");
-      setBasicView("home");
     });
   }
 

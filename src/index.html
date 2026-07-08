@@ -62,6 +62,16 @@
           >
             Activity
           </button>
+          <a
+            href="https://rosie.run/support"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="btn btn--ghost btn--sm support-btn"
+            id="support-link"
+          >
+            <i data-lucide="heart" class="lucide-icon support-heart"></i>
+            <span>Support</span>
+          </a>
           <button
             class="btn btn--ghost btn--icon"
             id="open-settings"
@@ -1201,8 +1211,8 @@
                   </button>
                 </div>
               </div>
-              <hr class="basic-divider" />
-              <div class="basic-section">
+              <hr class="basic-divider" id="basic-name-location-divider" />
+              <div class="basic-section" id="basic-name-location-section">
                 <div class="basic-section-head">
                   <i data-lucide="folder" class="lucide-icon"></i>
                   <h3>Name and location</h3>
@@ -1343,6 +1353,13 @@
                 </div>
               </div>
               <div class="basic-completion" id="basic-compress-completion">
+                <button
+                  class="basic-completion__close"
+                  id="basic-compress-completion-close"
+                  aria-label="Dismiss"
+                >
+                  &times;
+                </button>
                 <span
                   class="basic-completion__icon"
                   id="basic-compress-completion-icon"
@@ -1411,13 +1428,19 @@
                   </div>
                 </div>
               </div>
-              <hr class="basic-divider" />
+              <hr
+                class="basic-divider"
+                id="basic-extract-destination-divider"
+              />
               <div class="basic-section">
-                <div class="basic-section-head">
+                <div
+                  class="basic-section-head"
+                  id="basic-extract-destination-head"
+                >
                   <i data-lucide="folder" class="lucide-icon"></i>
                   <h3>Destination</h3>
                 </div>
-                <div class="basic-field">
+                <div class="basic-field" id="basic-extract-destination-field">
                   <label class="basic-field__label" for="basic-extract-path"
                     >Extract to</label
                   >
@@ -1501,6 +1524,13 @@
                 </div>
               </div>
               <div class="basic-completion" id="basic-extract-completion">
+                <button
+                  class="basic-completion__close"
+                  id="basic-extract-completion-close"
+                  aria-label="Dismiss"
+                >
+                  &times;
+                </button>
                 <span
                   class="basic-completion__icon"
                   id="basic-extract-completion-icon"

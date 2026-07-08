@@ -176,6 +176,28 @@ body {
   -webkit-app-region: no-drag;
 }
 
+.support-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-weight: 500;
+  transition: all var(--transition);
+}
+
+.support-btn:hover {
+  color: var(--text);
+  background: var(--hover-overlay);
+}
+
+.support-btn .support-heart {
+  color: #ff4d6d;
+  fill: #ff4d6d;
+  width: 14px;
+  height: 14px;
+}
+
 .btn.btn--explorer {
   display: none;
 }
