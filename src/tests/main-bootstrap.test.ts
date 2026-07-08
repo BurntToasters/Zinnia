@@ -43,6 +43,7 @@ const mocks = vi.hoisted(() => {
       persistSettingsImmediately: vi.fn().mockResolvedValue(undefined),
       triggerIconRefresh: vi.fn(),
       registerIconRefreshHook: vi.fn(),
+      resizeWorkspaceWindow: vi.fn().mockResolvedValue(undefined),
     },
     archive: {
       runAction: vi.fn().mockResolvedValue(undefined),
@@ -140,6 +141,7 @@ vi.mock("../ui", () => ({
   persistSettingsImmediately: mocks.ui.persistSettingsImmediately,
   triggerIconRefresh: mocks.ui.triggerIconRefresh,
   registerIconRefreshHook: mocks.ui.registerIconRefreshHook,
+  resizeWorkspaceWindow: mocks.ui.resizeWorkspaceWindow,
 }));
 
 vi.mock("../archive", () => ({
@@ -498,6 +500,8 @@ beforeEach(async () => {
   mocks.ui.setBrowsePasswordFieldVisible.mockReset();
   mocks.ui.persistSettingsImmediately.mockReset();
   mocks.ui.persistSettingsImmediately.mockResolvedValue(undefined);
+  mocks.ui.resizeWorkspaceWindow.mockReset();
+  mocks.ui.resizeWorkspaceWindow.mockResolvedValue(undefined);
 
   mocks.archive.runAction.mockReset();
   mocks.archive.runAction.mockResolvedValue(undefined);
@@ -1081,7 +1085,13 @@ describe("main bootstrap", () => {
 
     await loadMainModule();
 
+    expect(mocks.ui.resizeWorkspaceWindow).toHaveBeenCalledWith("power");
     expect(mocks.setupWizard.showSetupWizard).toHaveBeenCalled();
+    expect(
+      mocks.ui.resizeWorkspaceWindow.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      mocks.setupWizard.showSetupWizard.mock.invocationCallOrder[0],
+    );
     expect(mocks.setupWizard.markSetupComplete).toHaveBeenCalled();
     expect(mocks.ui.setWorkspaceMode).toHaveBeenCalledWith("power", {
       persist: false,

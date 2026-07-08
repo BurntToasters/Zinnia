@@ -82,6 +82,7 @@ import {
   persistSettingsImmediately,
   setStatus,
   registerIconRefreshHook,
+  resizeWorkspaceWindow,
 } from "./ui";
 import {
   runAction,
@@ -341,6 +342,7 @@ async function applyIncomingPaths(
 }
 
 async function runSetupWizardFlow(): Promise<void> {
+  await resizeWorkspaceWindow("power");
   const result = await showSetupWizard();
   if (result) {
     state.currentSettings.workspaceMode = result.workspaceMode;

@@ -100,11 +100,7 @@ export function formatBatchEta(elapsedMs: number, percent: number): string {
 }
 
 export type ArchiveTestResult =
-  | "passed"
-  | "passed_with_warnings"
-  | "failed"
-  | "cancelled"
-  | "error";
+  "passed" | "passed_with_warnings" | "failed" | "cancelled" | "error";
 
 let commandPreviewTrigger: HTMLElement | null = null;
 let commandPreviewCopyTimer: number | undefined;
