@@ -366,6 +366,26 @@ async function runSetupWizardFlow(): Promise<void> {
   onCompressionOptionChange();
 }
 
+function resetRuntimeStateForFirstRun(): void {
+  state.currentSettings = { ...SETTING_DEFAULTS };
+  state.lastPersistedSettings = { ...SETTING_DEFAULTS };
+  state.settingsExtras = {};
+  state.inputs = [];
+  state.lastAutoExtractDestination = null;
+  state.lastAutoOutputPath = null;
+  state.browseArchiveInfoByPath.clear();
+  state.browseSelectionsByArchive.clear();
+  state.selectiveSearchQuery = "";
+  state.selectiveActiveArchive = null;
+  state.selectiveVisiblePaths = [];
+  state.selectiveExpandedFolders.clear();
+  state.inputValidationByPath.clear();
+  state.inputValidationRequestId += 1;
+  state.lastInputsSignature = "";
+  state.lastQuickActionByMode = {};
+  dom.logEl.textContent = "";
+}
+
 function wireEvents() {
   // Sync the output-path field when format changes so the extension updates
   // automatically even if inputs were already present.
@@ -733,13 +753,12 @@ function wireEvents() {
     if (!confirmed) return;
 
     try {
-      state.currentSettings = { ...SETTING_DEFAULTS };
-      state.settingsExtras = {};
-      await persistSettingsImmediately(
-        state.currentSettings,
-        state.settingsExtras,
-      );
-      log("Settings reset. Relaunching...");
+      await invoke("reset_settings");
+      await invoke("clear_logs").catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`Failed to clear logs during reset: ${msg}`);
+      });
+      resetRuntimeStateForFirstRun();
       await relaunch();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

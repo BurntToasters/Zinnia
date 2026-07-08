@@ -86,6 +86,14 @@ pub fn atomic_write_text(path: &std::path::Path, contents: &str) -> Result<(), S
     })
 }
 
+fn reset_settings_file(path: &std::path::Path) -> Result<(), String> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err.to_string()),
+    }
+}
+
 #[tauri::command]
 pub fn load_settings(app: tauri::AppHandle) -> Result<String, String> {
     let path = settings_path(&app)?;
@@ -126,6 +134,12 @@ pub fn save_settings(app: tauri::AppHandle, json: String) -> Result<(), String> 
     atomic_write_text(&path, &serialized)
 }
 
+#[tauri::command]
+pub fn reset_settings(app: tauri::AppHandle) -> Result<(), String> {
+    let path = settings_path(&app)?;
+    reset_settings_file(&path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,6 +167,27 @@ mod tests {
 
         let contents = std::fs::read_to_string(&file_path).expect("file should be readable");
         assert_eq!(contents, "{\"new\":true}");
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn reset_settings_file_deletes_existing_file_and_allows_missing() {
+        let base = std::env::temp_dir().join(format!(
+            "zinnia-reset-settings-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time should work")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).expect("temp directory should be created");
+        let file_path = base.join("settings.json");
+        std::fs::write(&file_path, r#"{"_setupComplete":true}"#)
+            .expect("seed settings should be written");
+
+        reset_settings_file(&file_path).expect("settings reset should delete file");
+        assert!(!file_path.exists());
+        reset_settings_file(&file_path).expect("missing settings file should be accepted");
 
         let _ = std::fs::remove_dir_all(base);
     }

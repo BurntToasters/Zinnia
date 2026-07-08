@@ -93,6 +93,7 @@ fn main() {
             archive_detect::validate_archive_paths,
             settings_store::load_settings,
             settings_store::save_settings,
+            settings_store::reset_settings,
             logging::append_local_log,
             logging::get_log_dir,
             logging::export_logs,
