@@ -339,6 +339,9 @@ pub fn collect_cli_context() -> (Vec<String>, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
     #[test]
     fn should_use_extract_window_honors_explicit_extract_mode() {
@@ -499,8 +502,10 @@ mod tests {
     }
 
     fn temp_base(tag: &str) -> std::path::PathBuf {
+        let sequence = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
         let base = std::env::temp_dir().join(format!(
-            "zinnia-{tag}-{}",
+            "zinnia-{tag}-{}-{}-{sequence}",
+            std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("time should work")

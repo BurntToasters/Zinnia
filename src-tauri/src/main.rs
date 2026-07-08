@@ -17,9 +17,9 @@ use std::sync::Mutex;
 use tauri::Manager;
 
 use launch::{
-    collect_cli_context, emit_open_paths, emit_open_urls, first_extract_window, has_extract_windows,
-    spawn_extract_window, ExtractQueue, InitialMode, InitialPaths, PendingPaths, EXTRACT_ONLY_LAUNCH,
-    FILE_OPEN_SIGNAL,
+    collect_cli_context, emit_open_paths, emit_open_urls, first_extract_window,
+    has_extract_windows, spawn_extract_window, ExtractQueue, InitialMode, InitialPaths,
+    PendingPaths, EXTRACT_ONLY_LAUNCH, FILE_OPEN_SIGNAL,
 };
 use logging::LogFileLock;
 use process::RunningProcess;
@@ -107,6 +107,8 @@ fn main() {
             platform::get_platform_info,
             platform::get_os_integration_status,
             platform::open_os_integration_settings,
+            platform::reset_preferred_archiver_to_system,
+            platform::set_zinnia_default_archiver,
             platform::get_cpu_count,
             platform::is_flatpak,
             platform::is_packaged,

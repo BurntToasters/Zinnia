@@ -587,14 +587,25 @@
                   </button>
                   <button
                     class="btn btn--ghost btn--sm"
+                    id="reset-os-integration-defaults"
+                  >
+                    Reset Preferred Archiver to System Archiver
+                  </button>
+                  <button
+                    class="btn btn--ghost btn--sm"
                     id="refresh-os-integration-status"
                   >
                     Refresh
                   </button>
                 </div>
+                <div
+                  class="os-default-list"
+                  id="os-archive-default-list"
+                  aria-live="polite"
+                ></div>
                 <div class="settings-note">
-                  Zinnia never changes default apps automatically. Pick Zinnia
-                  in your OS settings for ZIP, 7z, TAR, Gzip, Bzip2, XZ, and
+                  Zinnia only changes default archive apps when you choose it
+                  here. Supported formats: ZIP, 7z, TAR, Gzip, Bzip2, XZ, and
                   RAR.
                 </div>
               </div>
