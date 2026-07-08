@@ -130,6 +130,46 @@ async function closeWindowSafely(
 
 async function run() {
   const appWindow = getCurrentWebviewWindow();
+
+  // Detect platform and set body class
+  let platform = "unknown";
+  try {
+    platform = await invoke<string>("get_platform_info");
+  } catch {}
+  if (platform === "windows") {
+    document.body.classList.add("platform-windows");
+  } else if (platform === "macos") {
+    document.body.classList.add("platform-macos");
+  } else if (platform === "linux") {
+    document.body.classList.add("platform-linux");
+  }
+
+  // Wire custom titlebar buttons
+  const minBtn = document.getElementById("titlebar-min");
+  const maxBtn = document.getElementById("titlebar-max");
+  const closeTitlebarBtn = document.getElementById("titlebar-close");
+
+  if (minBtn) {
+    minBtn.addEventListener("click", () => {
+      void appWindow.minimize();
+    });
+  }
+  if (maxBtn) {
+    maxBtn.addEventListener("click", async () => {
+      const isMax = await appWindow.isMaximized();
+      if (isMax) {
+        void appWindow.unmaximize();
+      } else {
+        void appWindow.maximize();
+      }
+    });
+  }
+  if (closeTitlebarBtn) {
+    closeTitlebarBtn.addEventListener("click", () => {
+      void closeWindowSafely(appWindow);
+    });
+  }
+
   const cancelBtn = $("cancel-btn") as HTMLButtonElement;
   const openDestinationBtn = $("open-destination-btn") as HTMLButtonElement;
   const closeBtn = $("close-btn") as HTMLButtonElement;

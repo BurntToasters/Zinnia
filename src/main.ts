@@ -908,6 +908,34 @@ function wireEvents() {
   });
 }
 
+function wireTitlebar(): void {
+  const appWindow = getCurrentWebviewWindow();
+  const minBtn = document.getElementById("titlebar-min");
+  const maxBtn = document.getElementById("titlebar-max");
+  const closeBtn = document.getElementById("titlebar-close");
+
+  if (minBtn) {
+    minBtn.addEventListener("click", () => {
+      void appWindow.minimize();
+    });
+  }
+  if (maxBtn) {
+    maxBtn.addEventListener("click", async () => {
+      const isMax = await appWindow.isMaximized();
+      if (isMax) {
+        void appWindow.unmaximize();
+      } else {
+        void appWindow.maximize();
+      }
+    });
+  }
+  if (closeBtn) {
+    closeBtn.addEventListener("click", () => {
+      void appWindow.close();
+    });
+  }
+}
+
 async function init() {
   try {
     await invoke("probe_7z");
@@ -1033,9 +1061,13 @@ async function init() {
 
   if (platform === "windows") {
     document.body.classList.add("platform-windows");
+  } else if (platform === "macos") {
+    document.body.classList.add("platform-macos");
   } else if (platform === "linux") {
     document.body.classList.add("platform-linux");
   }
+
+  wireTitlebar();
 
   let openPathsQueue = Promise.resolve();
 

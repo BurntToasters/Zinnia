@@ -156,7 +156,7 @@ pub fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Resul
         q.insert(label.clone(), paths);
     }
 
-    let result = tauri::WebviewWindowBuilder::new(
+    let mut builder = tauri::WebviewWindowBuilder::new(
         app,
         &label,
         tauri::WebviewUrl::App("extract.html".into()),
@@ -165,9 +165,18 @@ pub fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Resul
     .inner_size(440.0, 320.0)
     .resizable(false)
     .minimizable(true)
-    .maximizable(false)
-    .build()
-    .map_err(|e| e.to_string());
+    .maximizable(false);
+
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.title("").title_bar_style(tauri::TitleBarStyle::Overlay);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        builder = builder.decorations(false);
+    }
+
+    let result = builder.build().map_err(|e| e.to_string());
 
     if result.is_err() {
         let queue = app.state::<ExtractQueue>();
