@@ -1,6 +1,9 @@
 import { saveSettings, applyTheme } from "./settings";
 import { state } from "./state";
-import { openOsIntegrationSettings } from "./os-integration";
+import {
+  refreshDefaultArchiverActionButton,
+  runDefaultArchiverAction,
+} from "./os-integration";
 import type {
   ThemePreference,
   WorkspaceMode,
@@ -214,7 +217,7 @@ export function showSetupWizard(): Promise<SetupWizardResult | null> {
     }
 
     function onOsOpen(): void {
-      void openOsIntegrationSettings();
+      void runDefaultArchiverAction(osOpen);
     }
 
     function onOsNext(): void {
@@ -237,6 +240,7 @@ export function showSetupWizard(): Promise<SetupWizardResult | null> {
     setThemeSelection(selectedTheme);
     autoUpdates.checked = selectedAutoUpdates;
     updateChannel.value = selectedChannel;
+    void refreshDefaultArchiverActionButton(osOpen);
     goTo(0);
 
     welcomeNext.addEventListener("click", onWelcomeNext);

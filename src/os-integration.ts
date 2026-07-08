@@ -67,6 +67,13 @@ function defaultActionLabel(status: OsIntegrationStatus): string {
     : "Make Zinnia Default";
 }
 
+function defaultArchiverActionAvailable(status: OsIntegrationStatus): boolean {
+  return (
+    (status.defaultArchiverActionAvailable ?? false) ||
+    status.defaultAppHelpAvailable
+  );
+}
+
 function systemResetAvailable(status: OsIntegrationStatus): boolean {
   if (status.platform === "windows") return status.defaultAppHelpAvailable;
   return status.packaged && status.platform === "macos";
@@ -170,11 +177,7 @@ export function renderOsIntegrationStatus(status: OsIntegrationStatus): void {
     "open-os-integration-settings",
   ) as HTMLButtonElement | null;
   if (openBtn) {
-    openBtn.textContent = defaultActionLabel(status);
-    openBtn.disabled = !(
-      (status.defaultArchiverActionAvailable ?? false) ||
-      status.defaultAppHelpAvailable
-    );
+    configureDefaultArchiverActionButton(openBtn, status);
   }
 
   const resetBtn = document.getElementById(
@@ -188,11 +191,36 @@ export function renderOsIntegrationStatus(status: OsIntegrationStatus): void {
   renderArchiveDefaults(status.archiveDefaults);
 }
 
+async function getOsIntegrationStatus(): Promise<OsIntegrationStatus> {
+  const status = await invoke<OsIntegrationStatus>("get_os_integration_status");
+  latestStatus = status;
+  return status;
+}
+
+export function configureDefaultArchiverActionButton(
+  button: HTMLButtonElement,
+  status: OsIntegrationStatus,
+): void {
+  button.textContent = defaultActionLabel(status);
+  button.disabled = !defaultArchiverActionAvailable(status);
+  button.title = status.defaultArchiverHelp ?? "";
+}
+
+export async function refreshDefaultArchiverActionButton(
+  button: HTMLButtonElement,
+): Promise<void> {
+  try {
+    const status = await getOsIntegrationStatus();
+    configureDefaultArchiverActionButton(button, status);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`Failed to refresh default archiver action: ${msg}`);
+  }
+}
+
 export async function refreshOsIntegrationStatus(): Promise<void> {
   try {
-    const status = await invoke<OsIntegrationStatus>(
-      "get_os_integration_status",
-    );
+    const status = await getOsIntegrationStatus();
     renderOsIntegrationStatus(status);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -212,10 +240,11 @@ export async function openOsIntegrationSettings(): Promise<void> {
   }
 }
 
-export async function setZinniaDefaultArchiver(): Promise<void> {
-  const button = document.getElementById(
+export async function setZinniaDefaultArchiver(
+  button = document.getElementById(
     "open-os-integration-settings",
-  ) as HTMLButtonElement | null;
+  ) as HTMLButtonElement | null,
+): Promise<void> {
   const previousLabel = button?.textContent ?? "";
   if (button) {
     button.disabled = true;
@@ -248,6 +277,33 @@ export async function setZinniaDefaultArchiver(): Promise<void> {
         : previousLabel;
     }
   }
+}
+
+export async function runDefaultArchiverAction(
+  button = document.getElementById(
+    "open-os-integration-settings",
+  ) as HTMLButtonElement | null,
+): Promise<void> {
+  let status = latestStatus;
+  if (!status) {
+    try {
+      status = await getOsIntegrationStatus();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await message(msg, {
+        title: "Default archive app",
+        kind: "warning",
+      });
+      return;
+    }
+  }
+
+  if (status.platform === "windows") {
+    await openOsIntegrationSettings();
+    return;
+  }
+
+  await setZinniaDefaultArchiver(button);
 }
 
 export async function resetPreferredArchiverToSystem(): Promise<void> {
@@ -299,11 +355,7 @@ export function wireOsIntegrationEvents(): void {
     void refreshOsIntegrationStatus();
   });
   $("open-os-integration-settings").addEventListener("click", () => {
-    if (latestStatus?.platform === "windows") {
-      void openOsIntegrationSettings();
-      return;
-    }
-    void setZinniaDefaultArchiver();
+    void runDefaultArchiverAction();
   });
   $("reset-os-integration-defaults").addEventListener("click", () => {
     void resetPreferredArchiverToSystem();

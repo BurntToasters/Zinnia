@@ -605,8 +605,8 @@
                 ></div>
                 <div class="settings-note">
                   Zinnia only changes default archive apps when you choose it
-                  here. Supported formats: ZIP, 7z, TAR, Gzip, Bzip2, XZ, and
-                  RAR.
+                  here. Supported formats: ZIP, 7z, TAR, Gzip/TGZ, Bzip2/TBZ2,
+                  XZ/TXZ, and RAR.
                 </div>
               </div>
 
@@ -1049,17 +1049,20 @@
           <div class="setup-wizard-step" data-step="4" hidden>
             <h2 class="setup-wizard-step__title">OS integration</h2>
             <p class="setup-wizard-step__desc">
-              Make Zinnia your archive app from your OS settings. Zinnia can
-              open archives directly and expose quick open/extract actions after
-              install.
+              Make Zinnia your archive app when your platform supports it.
+              Zinnia can open archives directly and expose quick open/extract
+              actions after install.
             </p>
             <div class="setup-wizard-os-box">
-              <span>Supported types: ZIP, 7z, TAR, Gzip, Bzip2, XZ, RAR</span>
+              <span
+                >Supported types: ZIP, 7z, TAR, Gzip/TGZ, Bzip2/TBZ2, XZ/TXZ,
+                RAR</span
+              >
             </div>
             <div class="setup-wizard-step__actions">
               <button class="btn btn--ghost" id="setup-os-back">Back</button>
               <button class="btn btn--ghost" id="setup-os-open">
-                Open OS settings
+                Make Zinnia Default
               </button>
               <button class="btn btn--primary" id="setup-os-next">
                 Continue

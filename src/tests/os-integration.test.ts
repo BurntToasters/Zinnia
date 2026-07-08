@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import {
+  configureDefaultArchiverActionButton,
   renderOsIntegrationStatus,
   refreshOsIntegrationStatus,
+  runDefaultArchiverAction,
   resetPreferredArchiverToSystem,
   setZinniaDefaultArchiver,
 } from "../os-integration";
@@ -166,6 +168,96 @@ describe("OS integration UI", () => {
       "set_zinnia_default_archiver",
     );
     expect(invokeMock).toHaveBeenNthCalledWith(2, "get_os_integration_status");
+  });
+
+  it("configures setup-style default action buttons from platform status", () => {
+    const button = document.createElement("button");
+
+    configureDefaultArchiverActionButton(button, {
+      platform: "macos",
+      packaged: true,
+      fileAssociationsKnown: true,
+      contextActionsKnown: true,
+      defaultAppHelpAvailable: true,
+      defaultArchiverActionAvailable: true,
+      defaultArchiverActionLabel: "Make Zinnia Default",
+      defaultArchiverHelp: "macOS may ask you to confirm each archive type.",
+      archiveDefaults: [],
+    });
+
+    expect(button.textContent).toBe("Make Zinnia Default");
+    expect(button.disabled).toBe(false);
+    expect(button.title).toContain("macOS");
+  });
+
+  it("runs the shared default archiver action for macOS", async () => {
+    const button = document.createElement("button");
+    renderOsIntegrationStatus({
+      platform: "macos",
+      packaged: true,
+      fileAssociationsKnown: true,
+      contextActionsKnown: true,
+      defaultAppHelpAvailable: true,
+      defaultArchiverActionAvailable: true,
+      defaultArchiverActionLabel: "Make Zinnia Default",
+      defaultArchiverHelp: "macOS may ask you to confirm each archive type.",
+      archiveDefaults: [],
+    });
+    invokeMock.mockResolvedValueOnce({
+      platform: "macos",
+      changed: true,
+      message: "ok",
+      results: [
+        {
+          key: "tgz",
+          label: "TGZ",
+          extension: "tgz",
+          mimeType: "application/x-compressed-tar",
+          currentHandler: "run.rosie.zinnia",
+          isDefault: true,
+          canChange: true,
+          status: "Default",
+        },
+      ],
+    });
+    invokeMock.mockResolvedValueOnce({
+      platform: "macos",
+      packaged: true,
+      fileAssociationsKnown: true,
+      contextActionsKnown: true,
+      defaultAppHelpAvailable: true,
+      defaultArchiverActionAvailable: true,
+      defaultArchiverActionLabel: "Make Zinnia Default",
+      defaultArchiverHelp: "macOS may ask you to confirm each archive type.",
+      archiveDefaults: [],
+    });
+
+    await runDefaultArchiverAction(button);
+
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      1,
+      "set_zinnia_default_archiver",
+    );
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "get_os_integration_status");
+  });
+
+  it("runs the shared default archiver action through Windows Settings", async () => {
+    const button = document.createElement("button");
+    renderOsIntegrationStatus({
+      platform: "windows",
+      packaged: true,
+      fileAssociationsKnown: true,
+      contextActionsKnown: true,
+      defaultAppHelpAvailable: true,
+      defaultArchiverActionAvailable: false,
+      defaultArchiverActionLabel: "Open Default Apps",
+      defaultArchiverHelp: "Windows requires selecting defaults in Settings.",
+      archiveDefaults: [],
+    });
+
+    await runDefaultArchiverAction(button);
+
+    expect(invokeMock).toHaveBeenCalledWith("open_os_integration_settings");
   });
 
   it("resets preferred archiver to the system archiver and refreshes status", async () => {

@@ -15,7 +15,7 @@ pub struct ArchiveDefaultTarget {
     mime_type: &'static str,
 }
 
-const ARCHIVE_DEFAULT_TARGETS: [ArchiveDefaultTarget; 7] = [
+const ARCHIVE_DEFAULT_TARGETS: [ArchiveDefaultTarget; 10] = [
     ArchiveDefaultTarget {
         key: "zip",
         label: "ZIP",
@@ -41,16 +41,34 @@ const ARCHIVE_DEFAULT_TARGETS: [ArchiveDefaultTarget; 7] = [
         mime_type: "application/gzip",
     },
     ArchiveDefaultTarget {
+        key: "tgz",
+        label: "TGZ",
+        extension: "tgz",
+        mime_type: "application/x-compressed-tar",
+    },
+    ArchiveDefaultTarget {
         key: "bzip2",
         label: "Bzip2",
         extension: "bz2",
         mime_type: "application/x-bzip2",
     },
     ArchiveDefaultTarget {
+        key: "tbz2",
+        label: "TBZ2",
+        extension: "tbz2",
+        mime_type: "application/x-bzip2-compressed-tar",
+    },
+    ArchiveDefaultTarget {
         key: "xz",
         label: "XZ",
         extension: "xz",
         mime_type: "application/x-xz",
+    },
+    ArchiveDefaultTarget {
+        key: "txz",
+        label: "TXZ",
+        extension: "txz",
+        mime_type: "application/x-xz-compressed-tar",
     },
     ArchiveDefaultTarget {
         key: "rar",
@@ -731,7 +749,7 @@ mod tests {
         assert!(packaged.file_associations_known);
         assert!(packaged.context_actions_known);
         assert!(packaged.default_app_help_available);
-        assert!(packaged.archive_defaults.len() >= 7);
+        assert_eq!(packaged.archive_defaults.len(), ARCHIVE_DEFAULT_TARGETS.len());
 
         let dev = os_integration_status_for("linux", false);
         assert!(!dev.file_associations_known);
@@ -749,10 +767,12 @@ mod tests {
 
         let defaults = linux_query_archive_defaults(&backend, true);
         let zip = defaults.iter().find(|entry| entry.key == "zip").unwrap();
+        let txz = defaults.iter().find(|entry| entry.key == "txz").unwrap();
         let rar = defaults.iter().find(|entry| entry.key == "rar").unwrap();
 
         assert!(zip.is_default);
         assert_eq!(zip.current_handler.as_deref(), Some(ZINNIA_DESKTOP_ID));
+        assert_eq!(txz.mime_type, "application/x-xz-compressed-tar");
         assert!(!rar.is_default);
         assert!(rar.can_change);
     }
