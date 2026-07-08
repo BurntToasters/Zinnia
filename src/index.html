@@ -213,6 +213,60 @@
               >
                 <div class="setting-item">
                   <div class="setting-info">
+                    <span class="setting-title" id="title-auto-check-updates"
+                      >Check and automatically download updates on startup</span
+                    >
+                    <span class="setting-desc"
+                      >Automatically checks for updates when the app opens and
+                      downloads them in the background.</span
+                    >
+                  </div>
+                  <label
+                    class="switch"
+                    data-update-ui
+                    aria-labelledby="title-auto-check-updates"
+                  >
+                    <input type="checkbox" id="s-auto-check-updates" checked />
+                    <span class="switch__track"></span>
+                  </label>
+                </div>
+
+                <div class="setting-item" data-update-ui>
+                  <div class="setting-info">
+                    <span class="setting-title">Check for updates now</span>
+                    <span class="setting-desc"
+                      >See if a newer version is available.</span
+                    >
+                  </div>
+                  <button class="btn btn--sm" id="check-updates">
+                    Check now
+                  </button>
+                </div>
+
+                <div class="setting-item" data-update-ui>
+                  <div class="setting-info">
+                    <span class="setting-title" id="title-update-channel"
+                      >Update channel</span
+                    >
+                    <span class="setting-desc"
+                      >Choose between production updates and beta builds.</span
+                    >
+                  </div>
+                  <select
+                    id="s-update-channel"
+                    class="setting-select"
+                    aria-labelledby="title-update-channel"
+                  >
+                    <option value="auto">Auto (follow version)</option>
+                    <option value="stable">Stable</option>
+                    <option value="beta">Beta</option>
+                  </select>
+                </div>
+
+                <hr class="setting-divider" />
+
+                <div class="setting-item">
+                  <div class="setting-info">
                     <span class="setting-title" id="title-theme">Theme</span>
                     <span class="setting-desc"
                       >Choose between light and dark mode, or follow your system
@@ -290,60 +344,6 @@
                     <input type="checkbox" id="s-os-integration-dismissed" />
                     <span class="switch__track"></span>
                   </label>
-                </div>
-
-                <hr class="setting-divider" />
-
-                <div class="setting-item">
-                  <div class="setting-info">
-                    <span class="setting-title" id="title-auto-check-updates"
-                      >Check and automatically download updates on startup</span
-                    >
-                    <span class="setting-desc"
-                      >Automatically checks for updates when the app opens and
-                      downloads them in the background.</span
-                    >
-                  </div>
-                  <label
-                    class="switch"
-                    data-update-ui
-                    aria-labelledby="title-auto-check-updates"
-                  >
-                    <input type="checkbox" id="s-auto-check-updates" checked />
-                    <span class="switch__track"></span>
-                  </label>
-                </div>
-
-                <div class="setting-item" data-update-ui>
-                  <div class="setting-info">
-                    <span class="setting-title">Check for updates now</span>
-                    <span class="setting-desc"
-                      >See if a newer version is available.</span
-                    >
-                  </div>
-                  <button class="btn btn--sm" id="check-updates">
-                    Check now
-                  </button>
-                </div>
-
-                <div class="setting-item" data-update-ui>
-                  <div class="setting-info">
-                    <span class="setting-title" id="title-update-channel"
-                      >Update channel</span
-                    >
-                    <span class="setting-desc"
-                      >Choose between production updates and beta builds.</span
-                    >
-                  </div>
-                  <select
-                    id="s-update-channel"
-                    class="setting-select"
-                    aria-labelledby="title-update-channel"
-                  >
-                    <option value="auto">Auto (follow version)</option>
-                    <option value="stable">Stable</option>
-                    <option value="beta">Beta</option>
-                  </select>
                 </div>
 
                 <hr class="setting-divider" />
