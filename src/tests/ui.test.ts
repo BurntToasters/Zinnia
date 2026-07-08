@@ -17,6 +17,7 @@ import {
   setProgress,
   hideProgress,
   log,
+  resizeWorkspaceWindow,
   renderInputs,
   setRunning,
   toggleActivity,
@@ -210,6 +211,21 @@ describe("workspace and density", () => {
     expect(state.currentSettings.workspaceMode).toBe("power");
   });
 
+  it("resizes to the basic portrait window size", async () => {
+    const appWindow = {
+      onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
+      setSize: vi.fn().mockResolvedValue(undefined),
+    };
+    vi.mocked(getCurrentWebviewWindow).mockReturnValue(appWindow as never);
+
+    await resizeWorkspaceWindow("basic");
+
+    expect(appWindow.setSize).toHaveBeenCalledOnce();
+    const [size] = appWindow.setSize.mock.calls[0];
+    expect(size.width).toBe(500);
+    expect(size.height).toBe(600);
+  });
+
   it("clamps restored power window size before resizing", () => {
     const appWindow = {
       onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
@@ -225,6 +241,21 @@ describe("workspace and density", () => {
     const [size] = appWindow.setSize.mock.calls[0];
     expect(size.width).toBe(800);
     expect(size.height).toBe(2160);
+  });
+
+  it("logs and continues when workspace resizing fails", async () => {
+    const appWindow = {
+      onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
+      setSize: vi.fn().mockRejectedValue(new Error("permission denied")),
+    };
+    vi.mocked(getCurrentWebviewWindow).mockReturnValue(appWindow as never);
+    state.currentSettings.logVerbosity = "debug";
+
+    await resizeWorkspaceWindow("power");
+
+    expect(dom.logEl.textContent).toContain(
+      "Unable to resize power workspace window: permission denied",
+    );
   });
 
   it("gets and sets UI density", () => {

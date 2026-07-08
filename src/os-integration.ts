@@ -85,8 +85,15 @@ export function renderOsIntegrationStatus(status: OsIntegrationStatus): void {
 }
 
 export async function refreshOsIntegrationStatus(): Promise<void> {
-  const status = await invoke<OsIntegrationStatus>("get_os_integration_status");
-  renderOsIntegrationStatus(status);
+  try {
+    const status = await invoke<OsIntegrationStatus>(
+      "get_os_integration_status",
+    );
+    renderOsIntegrationStatus(status);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`Failed to refresh OS integration status: ${msg}`);
+  }
 }
 
 export async function openOsIntegrationSettings(): Promise<void> {

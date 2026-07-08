@@ -17,12 +17,17 @@ function sha256File(filePath) {
 }
 
 function loadChecksums() {
-  if (!fs.existsSync(checksumPath)) return {};
+  if (!fs.existsSync(checksumPath)) {
+    console.error(
+      "FATAL: 7z-checksums.json not found. Cannot verify sidecar integrity.",
+    );
+    process.exit(1);
+  }
   try {
     return JSON.parse(fs.readFileSync(checksumPath, "utf8"));
   } catch (err) {
-    console.warn(`Could not read 7z-checksums.json: ${err.message}`);
-    return {};
+    console.error(`FATAL: Could not parse 7z-checksums.json: ${err.message}`);
+    process.exit(1);
   }
 }
 
@@ -121,9 +126,10 @@ for (const mapping of mappings) {
       process.exit(1);
     }
     if (!expected) {
-      console.warn(
-        `No tracked checksum for ${mapping.source}; run "node scripts/prepare-7z.js --update-checksums" after verifying the binary.`,
+      console.error(
+        `FATAL: No tracked checksum for ${mapping.source}. Run "node scripts/prepare-7z.js --update-checksums" after verifying the binary.`,
       );
+      process.exit(1);
     }
   }
 

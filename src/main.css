@@ -93,7 +93,7 @@ body {
   --session-card-pad-y: 9px;
   --session-card-pad-x: 10px;
   --session-card-gap: 7px;
-  --field-label-size: 10px;
+  --field-label-size: 11px;
   --field-label-gap: 4px;
   --input-pad-y: 6px;
   --input-pad-x: 8px;
@@ -112,7 +112,7 @@ body {
   --session-card-pad-y: 7px;
   --session-card-pad-x: 8px;
   --session-card-gap: 5px;
-  --field-label-size: 9px;
+  --field-label-size: 10px;
   --field-label-gap: 3px;
   --input-pad-y: 5px;
   --input-pad-x: 7px;
@@ -1005,8 +1005,10 @@ input[type="number"] {
 }
 
 .btn--sm {
-  padding: 3px 8px;
-  font-size: 0.625rem;
+  padding: 4px 10px;
+  font-size: 0.6875rem;
+  min-height: 24px;
+  min-width: 24px;
 }
 
 .btn--icon {
@@ -1153,7 +1155,9 @@ input[type="number"] {
   color: var(--text-secondary);
   cursor: pointer;
   font-size: 0.6875rem;
-  padding: 2px 6px;
+  padding: 4px 8px;
+  min-width: 24px;
+  min-height: 24px;
   border-radius: var(--radius-sm);
   flex-shrink: 0;
   transition: all var(--transition);
@@ -1943,8 +1947,9 @@ input[type="number"] {
   cursor: pointer;
   font-size: 0.7rem;
   line-height: 1;
-  padding: 0;
-  width: 16px;
+  padding: 4px;
+  width: 24px;
+  min-height: 24px;
 }
 
 .selective-twisty:disabled {

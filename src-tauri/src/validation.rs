@@ -10,6 +10,9 @@ const ALLOWED_7Z_SWITCH_PREFIXES: &[&str] = &[
     "-ao", "-ba", "-bb", "-bs", "-bt", "-scs", "-slt", "-sns", "-snl", "-sni", "-stl", "-slp",
     "-ssp", "-ssw",
 ];
+// NOTE: -sfx is intentionally allowed — Zinnia supports creating self-extracting archives.
+// It is restricted to the `a` (compress) command via the frontend form; the backend allow-list
+// permits it because the switch itself is not dangerous (it only affects the output format).
 
 // True if any path component is exactly "..". Substrings like "name..bak" are fine.
 fn has_parent_dir_component(path: &str) -> bool {
@@ -66,6 +69,13 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
         let lower = arg.to_lowercase();
         if BLOCKED_7Z_ARGS.iter().any(|b| lower.starts_with(b)) {
             return Err(format!("7z argument '{arg}' is not permitted."));
+        }
+        // Reject @listfile references before -- (7z reads them as file lists with
+        // unvalidated contents). After --, the leading @ is literal.
+        if separator_index.is_none() && arg.starts_with('@') {
+            return Err(format!(
+                "7z argument '{arg}' is not permitted (response files are not allowed)."
+            ));
         }
         if lower.starts_with("-sdel") && cmd != "a" && cmd != "u" {
             return Err(format!(
@@ -137,6 +147,15 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
                 return Err(
                     "Extraction command cannot include positional arguments before '--'."
                         .to_string(),
+                );
+            }
+            // Require -o for extract to prevent extraction into an unpredictable CWD.
+            let has_output_dir = args[1..separator]
+                .iter()
+                .any(|a| a.to_lowercase().starts_with("-o"));
+            if !has_output_dir {
+                return Err(
+                    "Extraction command must include an output directory (-o<path>).".to_string(),
                 );
             }
         }
@@ -343,6 +362,7 @@ mod tests {
     fn validate_run_7z_args_rejects_parent_dir_in_positional_path() {
         let args = vec![
             "x".to_string(),
+            "-o/tmp/out".to_string(),
             "--".to_string(),
             "../../etc/passwd".to_string(),
         ];
@@ -364,6 +384,7 @@ mod tests {
     fn validate_run_7z_args_rejects_parent_dir_in_include_switch() {
         let args = vec![
             "x".to_string(),
+            "-o/tmp/out".to_string(),
             "-ir!../../secret".to_string(),
             "--".to_string(),
             "archive.7z".to_string(),
@@ -375,6 +396,7 @@ mod tests {
     fn validate_run_7z_args_rejects_parent_dir_in_workdir_switch() {
         let args = vec![
             "x".to_string(),
+            "-o/tmp/out".to_string(),
             "-w../../tmp".to_string(),
             "--".to_string(),
             "archive.7z".to_string(),
@@ -400,6 +422,46 @@ mod tests {
             "out.7z".to_string(),
             "--".to_string(),
             "-dash-leading-file.txt".to_string(),
+        ];
+        assert!(validate_run_7z_args(&args).is_ok());
+    }
+
+    #[test]
+    fn validate_run_7z_args_rejects_extract_without_output_dir() {
+        let args = vec![
+            "x".to_string(),
+            "-y".to_string(),
+            "--".to_string(),
+            "archive.7z".to_string(),
+        ];
+        let err = validate_run_7z_args(&args).unwrap_err();
+        assert!(err.contains("-o"), "expected error about -o, got: {err}");
+    }
+
+    #[test]
+    fn validate_run_7z_args_rejects_listfile_reference_before_separator() {
+        let args = vec![
+            "a".to_string(),
+            "@listfile.txt".to_string(),
+            "out.7z".to_string(),
+            "--".to_string(),
+            "input.txt".to_string(),
+        ];
+        let err = validate_run_7z_args(&args).unwrap_err();
+        assert!(
+            err.contains("response files"),
+            "expected response file error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_run_7z_args_allows_at_sign_after_separator() {
+        // After --, leading @ is treated as a literal filename by 7z.
+        let args = vec![
+            "a".to_string(),
+            "out.7z".to_string(),
+            "--".to_string(),
+            "@literal-at-file.txt".to_string(),
         ];
         assert!(validate_run_7z_args(&args).is_ok());
     }

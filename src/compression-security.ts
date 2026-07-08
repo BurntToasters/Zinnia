@@ -1,3 +1,13 @@
+/**
+ * Compression security capabilities — maps which archive formats support password
+ * encryption and header encryption. Used to normalize/validate UI form options before
+ * building 7z argument lists.
+ *
+ * NOTE: Despite the name "security", this module does NOT provide decompression-bomb
+ * detection, zip-slip protection, or extraction sandboxing. Those concerns are handled
+ * by the Rust backend (validation.rs: path traversal rejection, process.rs: `-o` enforcement)
+ * and by 7z's own protections against malicious archive contents.
+ */
 import type { ArchiveFormat } from "./settings-model.ts";
 
 export interface CompressionSecuritySupport {

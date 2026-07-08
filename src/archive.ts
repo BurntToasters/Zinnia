@@ -100,11 +100,7 @@ export function formatBatchEta(elapsedMs: number, percent: number): string {
 }
 
 export type ArchiveTestResult =
-  | "passed"
-  | "passed_with_warnings"
-  | "failed"
-  | "cancelled"
-  | "error";
+  "passed" | "passed_with_warnings" | "failed" | "cancelled" | "error";
 
 let commandPreviewTrigger: HTMLElement | null = null;
 let commandPreviewCopyTimer: number | undefined;
@@ -344,10 +340,17 @@ export async function convertArchive(): Promise<void> {
 
     tempDir = await invoke<string>("create_temp_extract_dir");
 
+    // Use the browse/extract password field for encrypted archives.
+    const browsePassword = $<HTMLInputElement>("browse-password").value.trim();
+    const extractPassword =
+      $<HTMLInputElement>("extract-password").value.trim();
+    const password = extractPassword || browsePassword;
+
     setStatus("Extracting for conversion");
-    const extract = await invoke<Run7zResult>("run_7z", {
-      args: ["x", `-o${tempDir}`, "-y", "--", archive],
-    });
+    const extractArgs = ["x", `-o${tempDir}`, "-y"];
+    if (password) extractArgs.push(`-p${password}`);
+    extractArgs.push("--", archive);
+    const extract = await runWithPasswordRetry(extractArgs, true);
     if (extract.code > 1) {
       setStatus("Error", 3000, extract.stderr || "Extraction failed.");
       await showOperationError(extract.code, extract.stdout, extract.stderr);
@@ -355,8 +358,32 @@ export async function convertArchive(): Promise<void> {
     }
 
     setStatus("Recompressing");
-    // Honor the full compression options (level/method/dict/solid/threads).
+    // Honor the full compression options (level/method/dict/solid/threads),
+    // plus password/encrypt-headers/sfx/split/timestamps from the form.
     const compress = ["a", ...buildCompressionMethodSwitches(format)];
+
+    // Carry security options from the compression form
+    const rawPassword = $<HTMLInputElement>("password").value;
+    const rawEncryptHeaders = $<HTMLInputElement>("encrypt-headers").checked;
+    const { password: compressPassword, encryptHeaders } =
+      normalizeCompressionSecurityOptions(
+        format,
+        rawPassword,
+        rawEncryptHeaders,
+      );
+    if (compressPassword) compress.push(`-p${compressPassword}`);
+    if (compressPassword && format === "zip") compress.push("-mem=AES256");
+    if (encryptHeaders) compress.push("-mhe=on");
+
+    // Carry additional options
+    const sfx = $<HTMLInputElement>("sfx").checked;
+    const storeTimestamps = $<HTMLInputElement>("store-timestamps").checked;
+    if (storeTimestamps) compress.push("-mtc=on", "-mta=on");
+    if (sfx) compress.push("-sfx");
+
+    const splitSize = readSplitSize();
+    if (splitSize) compress.push(`-v${splitSize}`);
+
     // Compress the extracted contents (everything inside the temp dir).
     compress.push(dest, "--", `${tempDir}/*`);
 
@@ -977,6 +1004,10 @@ export function closeSelectiveExtractModal(): void {
   state.selectiveActiveArchive = null;
   state.selectiveVisiblePaths = [];
   state.selectiveExpandedFolders.clear();
+  if (selectiveTrigger) {
+    selectiveTrigger.focus();
+    selectiveTrigger = null;
+  }
 }
 
 export function setSelectiveExtractSearch(query: string): void {
@@ -1006,8 +1037,11 @@ export function clearPickerSelection(): void {
   renderSelectiveExtractModal();
 }
 
+let selectiveTrigger: HTMLElement | null = null;
+
 export async function openSelectiveExtractModal(): Promise<void> {
   if (state.running) return;
+  selectiveTrigger = document.activeElement as HTMLElement | null;
 
   const archive = state.inputs[0];
   if (!archive) {
@@ -1096,7 +1130,16 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
 
     const selectedPaths = getCurrentArchiveSelectionPaths(archive, info);
     if (selectedPaths.length === 0) {
-      log("No entries selected in picker. Falling back to extract all.");
+      const extractAll = await confirm(
+        "No entries are selected. Extract all files from the archive?",
+        {
+          title: "No selection",
+          kind: "warning",
+          okLabel: "Extract all",
+          cancelLabel: "Cancel",
+        },
+      );
+      if (!extractAll) return;
     }
     const args = buildExtractArgsFor(
       archive,
@@ -1115,7 +1158,7 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
     );
 
     const result = await withLiveProgress(() =>
-      invoke<Run7zResult>("run_7z", { args }),
+      runWithPasswordRetry(args, true),
     );
     if (state.cancelRequested) {
       hideProgress();
@@ -1252,6 +1295,9 @@ export async function runAction() {
         mode === "extract" ? "Extraction complete." : "Archive created.",
         "success",
       );
+      // Clear password fields after successful operation to avoid lingering secrets in the DOM.
+      $<HTMLInputElement>("password").value = "";
+      $<HTMLInputElement>("extract-password").value = "";
     }
   } catch (err) {
     if (state.cancelRequested) {
@@ -1328,7 +1374,7 @@ export async function runBatchExtract() {
         args.push("--", archive);
         devLog(`7z ${sanitizeCommandArgsForPreview(args).join(" ")}`);
 
-        const result = await invoke<Run7zResult>("run_7z", { args });
+        const result = await runWithPasswordRetry(args, true);
 
         logCommandResult(result.stdout, result.stderr);
         logTruncationNotice(result);

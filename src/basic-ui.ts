@@ -1,5 +1,6 @@
 import { open, confirm } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { $ } from "./utils";
 import { state } from "./state";
 import {
@@ -398,6 +399,30 @@ function hideBasicCompletion(section: "compress" | "extract"): void {
   if (completion) completion.classList.remove("is-active");
 }
 
+let basicProgressUnlisten: (() => void) | null = null;
+
+function setBasicBarDeterminate(
+  section: "compress" | "extract",
+  percent: number,
+): void {
+  const bar = document.getElementById(`basic-${section}-bar`);
+  if (!bar) return;
+  const clamped = Math.max(0, Math.min(100, percent));
+  bar.classList.remove("is-indeterminate");
+  bar.style.width = `${clamped}%`;
+  bar.style.marginLeft = "0";
+  bar.style.animation = "none";
+}
+
+function resetBasicBar(section: "compress" | "extract"): void {
+  const bar = document.getElementById(`basic-${section}-bar`);
+  if (!bar) return;
+  bar.classList.add("is-indeterminate");
+  bar.style.width = "";
+  bar.style.marginLeft = "";
+  bar.style.animation = "";
+}
+
 export function updateBasicRunningState(active: boolean): void {
   if (getWorkspaceMode() !== "basic") return;
 
@@ -405,8 +430,28 @@ export function updateBasicRunningState(active: boolean): void {
 
   if (active) {
     showBasicProgress(section);
+    resetBasicBar(section);
+    // Listen for structured progress events to show determinate progress.
+    void listen<{ percent?: number }>("7z-progress-structured", (event) => {
+      const percent = event.payload?.percent;
+      if (typeof percent === "number") {
+        setBasicBarDeterminate(section, Math.min(99, percent));
+      }
+    })
+      .then((unlisten) => {
+        basicProgressUnlisten = unlisten;
+      })
+      .catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        log(`Failed to listen for basic progress updates: ${msg}`, "error");
+      });
   } else {
     hideBasicProgress(section);
+    resetBasicBar(section);
+    if (basicProgressUnlisten) {
+      basicProgressUnlisten();
+      basicProgressUnlisten = null;
+    }
     const runBtn =
       section === "compress"
         ? document.getElementById("basic-run-compress")
@@ -554,12 +599,15 @@ function togglePasswordVisibility(inputId: string, btnId: string): void {
   const btn = document.getElementById(btnId) as HTMLButtonElement | null;
   if (!input || !btn) return;
 
-  if (input.type === "password") {
+  const isPassword = input.type === "password";
+  if (isPassword) {
     input.type = "text";
     btn.textContent = "Hide";
+    btn.setAttribute("aria-pressed", "true");
   } else {
     input.type = "password";
     btn.textContent = "Show";
+    btn.setAttribute("aria-pressed", "false");
   }
 }
 

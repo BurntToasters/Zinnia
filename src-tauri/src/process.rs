@@ -66,15 +66,28 @@ pub fn ensure_idle(state: &ProcessState) -> Result<(), String> {
 
 // For a compress (`a`) command, the output archive is the single positional
 // arg before `--`. Returned so a cancelled op can delete the partial file.
-fn compress_output_path(args: &[String]) -> Option<std::path::PathBuf> {
-    if args.first().map(String::as_str) != Some("a") {
-        return None;
+// For an extract (`x`) command, the -o<dir> destination is returned so a
+// cancelled op can clean up the partially extracted directory.
+fn operation_cleanup_path(args: &[String]) -> Option<std::path::PathBuf> {
+    let cmd = args.first().map(String::as_str)?;
+    match cmd {
+        "a" => {
+            let separator = args.iter().position(|a| a == "--")?;
+            args[1..separator]
+                .iter()
+                .find(|a| !a.starts_with('-'))
+                .map(std::path::PathBuf::from)
+        }
+        "x" => {
+            // Find -o<dir> in the args before --
+            let separator = args.iter().position(|a| a == "--").unwrap_or(args.len());
+            args[1..separator]
+                .iter()
+                .find(|a| a.to_lowercase().starts_with("-o"))
+                .map(|a| std::path::PathBuf::from(&a[2..]))
+        }
+        _ => None,
     }
-    let separator = args.iter().position(|a| a == "--")?;
-    args[1..separator]
-        .iter()
-        .find(|a| !a.starts_with('-'))
-        .map(std::path::PathBuf::from)
 }
 
 pub fn is_non_running_kill_error(message: &str) -> bool {
@@ -92,6 +105,10 @@ struct CollectedOutput {
 }
 
 // `on_stdout_line` runs per stdout chunk for progress streaming; pass a no-op to skip.
+// NOTE: String::from_utf8_lossy is used per-chunk. Tauri's shell plugin delivers data in
+// line-buffered chunks, so multibyte character splits across chunk boundaries are rare but
+// possible for non-ASCII filenames. In that edge case, a replacement char is emitted.
+// A full fix would require accumulating raw bytes and decoding on line boundaries.
 async fn collect_command_output<F>(
     rx: &mut tauri::async_runtime::Receiver<CommandEvent>,
     max_bytes: usize,
@@ -139,7 +156,7 @@ pub async fn run_7z(
 ) -> Result<RunResult, String> {
     validate_run_7z_args(&args)?;
 
-    let cleanup_target = compress_output_path(&args);
+    let cleanup_target = operation_cleanup_path(&args);
 
     let command = app
         .shell()
@@ -160,23 +177,55 @@ pub async fn run_7z(
     };
 
     let emit_window = window.clone();
-    let collected = collect_command_output(&mut rx, MAX_OUTPUT_BYTES, |chunk| {
+
+    // Watchdog: if 7z blocks on an interactive prompt (e.g. overwrite/password)
+    // it will hang forever since stdin is never written to. Time out after 10 minutes
+    // as a safety net; real operations that take longer emit progress events.
+    let run_timeout = std::time::Duration::from_secs(600);
+
+    let output_future = collect_command_output(&mut rx, MAX_OUTPUT_BYTES, |chunk| {
         let _ = emit_window.emit("7z-progress", chunk.to_string());
         if let Some(update) = parse_progress_line(chunk) {
             let _ = emit_window.emit("7z-progress-structured", update);
         }
-    })
-    .await;
+    });
 
-    // Reset state without `?`: a poisoned lock here must not discard the 7z result.
+    let collected = match tokio::time::timeout(run_timeout, output_future).await {
+        Ok(collected) => collected,
+        Err(_) => {
+            // Timed out — kill the child and report.
+            if let Ok(mut process) = lock_process(&state) {
+                if let Some(child) = process.child.take() {
+                    let _ = child.kill();
+                }
+                process.cancelling = false;
+                process.owner_label = None;
+                process.cleanup_target = None;
+            }
+            return Err("7z operation timed out (10 minutes with no output). The process may have been waiting for interactive input. Ensure -y is passed to suppress prompts.".to_string());
+        }
+    };
+
+    let exit_code = collected
+        .exit
+        .as_ref()
+        .and_then(|payload| payload.code)
+        .unwrap_or(-1);
+
+    // Determine if the process was actually killed (cancelled) vs completed normally.
+    // Only treat as cancelled if the flag was set AND the exit code indicates abnormal
+    // termination (non-zero). This prevents a race where cancel_7z sets the flag after
+    // the child has already exited successfully, which would otherwise delete a valid archive.
     let was_cancelled = match lock_process(&state) {
         Ok(mut process) => {
-            let cancelled = process.cancelling;
+            let cancel_flag = process.cancelling;
             process.child = None;
             process.cancelling = false;
             process.owner_label = None;
             process.cleanup_target = None;
-            cancelled
+            // Only consider it cancelled if the flag was set AND the process didn't
+            // exit successfully (code 0 or 1 means 7z completed its work).
+            cancel_flag && exit_code != 0 && exit_code != 1
         }
         Err(e) => {
             eprintln!("Process lock unavailable after run: {e}");
@@ -186,19 +235,27 @@ pub async fn run_7z(
 
     if was_cancelled {
         if let Some(target) = &cleanup_target {
-            if let Err(e) = std::fs::remove_file(target) {
+            // For compress ops, target is a file; for extract ops, it's a directory.
+            if target.is_dir() {
+                if let Err(e) = std::fs::remove_dir_all(target) {
+                    if e.kind() != std::io::ErrorKind::NotFound {
+                        eprintln!(
+                            "Could not remove partial extract dir {}: {e}",
+                            target.display()
+                        );
+                    }
+                }
+            } else if let Err(e) = std::fs::remove_file(target) {
                 if e.kind() != std::io::ErrorKind::NotFound {
-                    eprintln!("Could not remove partial archive {}: {e}", target.display());
+                    eprintln!(
+                        "Could not remove partial archive {}: {e}",
+                        target.display()
+                    );
                 }
             }
         }
         let _ = window.emit("7z-cancelled", ());
     }
-
-    let exit_code = collected
-        .exit
-        .and_then(|payload| payload.code)
-        .unwrap_or(-1);
 
     Ok(RunResult {
         stdout: sanitize_output(&collected.stdout),
@@ -322,7 +379,7 @@ mod tests {
     }
 
     #[test]
-    fn compress_output_path_finds_archive_for_add() {
+    fn operation_cleanup_path_finds_archive_for_add() {
         let args = vec![
             "a".to_string(),
             "-t7z".to_string(),
@@ -331,20 +388,33 @@ mod tests {
             "input.txt".to_string(),
         ];
         assert_eq!(
-            compress_output_path(&args),
+            operation_cleanup_path(&args),
             Some(std::path::PathBuf::from("/tmp/out.7z"))
         );
     }
 
     #[test]
-    fn compress_output_path_none_for_extract() {
+    fn operation_cleanup_path_finds_output_dir_for_extract() {
         let args = vec![
             "x".to_string(),
             "-o/tmp/out".to_string(),
             "--".to_string(),
             "archive.7z".to_string(),
         ];
-        assert_eq!(compress_output_path(&args), None);
+        assert_eq!(
+            operation_cleanup_path(&args),
+            Some(std::path::PathBuf::from("/tmp/out"))
+        );
+    }
+
+    #[test]
+    fn operation_cleanup_path_none_for_list() {
+        let args = vec![
+            "l".to_string(),
+            "--".to_string(),
+            "archive.7z".to_string(),
+        ];
+        assert_eq!(operation_cleanup_path(&args), None);
     }
 
     #[test]

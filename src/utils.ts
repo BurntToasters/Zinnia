@@ -134,3 +134,27 @@ export function isArchiveFile(path: string): boolean {
   }
   return false;
 }
+
+/**
+ * Validate that a value from invoke() has the expected shape at runtime.
+ * Throws with a clear message if the backend returned an unexpected payload.
+ */
+export function assertRunResult(value: unknown): asserts value is {
+  stdout: string;
+  stderr: string;
+  code: number;
+  stdout_truncated?: boolean;
+  stderr_truncated?: boolean;
+} {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    typeof (value as Record<string, unknown>).stdout !== "string" ||
+    typeof (value as Record<string, unknown>).stderr !== "string" ||
+    typeof (value as Record<string, unknown>).code !== "number"
+  ) {
+    throw new Error(
+      `Unexpected run_7z response shape: ${JSON.stringify(value)?.slice(0, 200)}`,
+    );
+  }
+}

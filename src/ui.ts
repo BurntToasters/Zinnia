@@ -54,6 +54,8 @@ const LOG_CHUNK_CHARS = 2_000;
 const MAX_PENDING_LOCAL_LOG_WRITES = 250;
 const WORKING_CONTEXT_PERSIST_DEBOUNCE_MS = 140;
 const INPUT_VALIDATION_REASON_INLINE_MAX_CHARS = 92;
+const BASIC_WINDOW_WIDTH = 500;
+const BASIC_WINDOW_HEIGHT = 600;
 let pendingLocalLogWrites = 0;
 let droppedLocalLogWrites = 0;
 let workingContextPersistTimer: number | undefined;
@@ -308,6 +310,28 @@ export function getWorkspaceMode(): WorkspaceMode {
   return mode === "power" ? "power" : "basic";
 }
 
+export async function resizeWorkspaceWindow(
+  mode: WorkspaceMode,
+): Promise<void> {
+  const appWindow = getCurrentWebviewWindow();
+  if (!appWindow || typeof appWindow.setSize !== "function") return;
+
+  const size =
+    mode === "basic"
+      ? { width: BASIC_WINDOW_WIDTH, height: BASIC_WINDOW_HEIGHT }
+      : sanitizePowerWindowSize(
+          state.currentSettings.powerWindowWidth,
+          state.currentSettings.powerWindowHeight,
+        );
+
+  try {
+    await appWindow.setSize(new LogicalSize(size.width, size.height));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    devLog(`Unable to resize ${mode} workspace window: ${msg}`);
+  }
+}
+
 export function setWorkspaceMode(
   mode: WorkspaceMode,
   options: ContextPersistOptions = {},
@@ -325,20 +349,7 @@ export function setWorkspaceMode(
     queuePersistWorkingContext();
   }
 
-  const appWindow = getCurrentWebviewWindow();
-  if (appWindow && typeof appWindow.setSize === "function") {
-    if (mode === "basic") {
-      void appWindow.setSize(new LogicalSize(500, 600));
-    } else {
-      const powerWindowSize = sanitizePowerWindowSize(
-        state.currentSettings.powerWindowWidth,
-        state.currentSettings.powerWindowHeight,
-      );
-      void appWindow.setSize(
-        new LogicalSize(powerWindowSize.width, powerWindowSize.height),
-      );
-    }
-  }
+  void resizeWorkspaceWindow(mode);
 }
 
 export function getUiDensity(): UiDensity {
