@@ -1150,4 +1150,116 @@ describe("main bootstrap", () => {
     expect(mocks.basicUi.setBasicView).toHaveBeenCalledWith("extract");
     expect(mocks.ui.renderInputs).toHaveBeenCalled();
   });
+
+  it("applies platform-windows class and wires titlebar for Windows", async () => {
+    document.body.className = "";
+    setInvokeRouter((command) => {
+      if (command === "probe_7z") return undefined;
+      if (command === "get_cpu_count") return 8;
+      if (command === "get_log_dir") return "/tmp/logs";
+      if (command === "get_platform_info") return "windows";
+      if (command === "is_packaged") return true;
+      if (command === "is_flatpak") return false;
+      if (command === "get_initial_mode") return "";
+      if (command === "get_initial_paths") return [];
+      if (command === "drain_pending_paths") return [];
+      return undefined;
+    });
+
+    await loadMainModule();
+
+    expect(document.body.classList.contains("platform-windows")).toBe(true);
+    expect(document.body.classList.contains("platform-macos")).toBe(false);
+    expect(document.body.classList.contains("platform-linux")).toBe(false);
+  });
+
+  it("applies platform-macos class for macOS", async () => {
+    document.body.className = "";
+    setInvokeRouter((command) => {
+      if (command === "probe_7z") return undefined;
+      if (command === "get_cpu_count") return 8;
+      if (command === "get_log_dir") return "/tmp/logs";
+      if (command === "get_platform_info") return "macos";
+      if (command === "is_packaged") return true;
+      if (command === "is_flatpak") return false;
+      if (command === "get_initial_mode") return "";
+      if (command === "get_initial_paths") return [];
+      if (command === "drain_pending_paths") return [];
+      return undefined;
+    });
+
+    await loadMainModule();
+
+    expect(document.body.classList.contains("platform-macos")).toBe(true);
+    expect(document.body.classList.contains("platform-windows")).toBe(false);
+  });
+
+  it("wires titlebar minimize/maximize/close buttons", async () => {
+    const minimizeMock = vi.fn().mockResolvedValue(undefined);
+    const maximizeMock = vi.fn().mockResolvedValue(undefined);
+    const isMaximizedMock = vi.fn().mockResolvedValue(false);
+    const unmaximizeMock = vi.fn().mockResolvedValue(undefined);
+    const closeMock = vi.fn().mockResolvedValue(undefined);
+
+    getCurrentWebviewWindowMock.mockReturnValue({
+      minimize: minimizeMock,
+      maximize: maximizeMock,
+      isMaximized: isMaximizedMock,
+      unmaximize: unmaximizeMock,
+      close: closeMock,
+      onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
+    } as never);
+
+    // Create titlebar button elements
+    ensureElement("titlebar-min", "button");
+    ensureElement("titlebar-max", "button");
+    ensureElement("titlebar-close", "button");
+
+    await loadMainModule();
+
+    (document.getElementById("titlebar-min") as HTMLButtonElement).click();
+    await flushAsync();
+    expect(minimizeMock).toHaveBeenCalled();
+
+    (document.getElementById("titlebar-close") as HTMLButtonElement).click();
+    await flushAsync();
+    expect(closeMock).toHaveBeenCalled();
+
+    (document.getElementById("titlebar-max") as HTMLButtonElement).click();
+    await flushAsync();
+    expect(maximizeMock).toHaveBeenCalled();
+
+    // Test unmaximize path
+    isMaximizedMock.mockResolvedValue(true);
+    (document.getElementById("titlebar-max") as HTMLButtonElement).click();
+    await flushAsync();
+    expect(unmaximizeMock).toHaveBeenCalled();
+  });
+
+  it("handles platform detection failure gracefully", async () => {
+    document.body.className = "";
+    // Reset DOM from any previous test that may have set body.textContent
+    while (document.body.firstChild) document.body.firstChild.remove();
+    ensureMainDomElements();
+    setInvokeRouter((command) => {
+      if (command === "get_platform_info") throw new Error("IPC failed");
+      if (command === "probe_7z") return undefined;
+      if (command === "get_cpu_count") return 8;
+      if (command === "get_log_dir") return "/tmp/logs";
+      if (command === "is_packaged") return true;
+      if (command === "is_flatpak") return false;
+      if (command === "get_initial_mode") return "";
+      if (command === "get_initial_paths") return [];
+      if (command === "drain_pending_paths") return [];
+      return undefined;
+    });
+
+    await loadMainModule();
+
+    // Should not crash — app starts without platform class
+    expect(document.body.textContent ?? "").not.toContain("Failed to start:");
+    expect(document.body.classList.contains("platform-windows")).toBe(false);
+    expect(document.body.classList.contains("platform-macos")).toBe(false);
+    expect(document.body.classList.contains("platform-linux")).toBe(false);
+  });
 });
