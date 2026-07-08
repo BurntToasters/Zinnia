@@ -43,20 +43,6 @@ async function renderLicenses() {
     const data = { ...(npmLicenses ?? {}), ...(cargoLicenses ?? {}) };
     container.innerHTML = "";
 
-    const twemojiCard = document.createElement("details");
-    twemojiCard.className = "license-card";
-    twemojiCard.innerHTML =
-      `<summary class="license-card__header">` +
-      `<strong>Twemoji</strong><span class="license-card__tag">CC-BY-4.0 / MIT</span>` +
-      `</summary>` +
-      `<div class="license-card__body">` +
-      `<p>Emoji graphics by <a href="https://github.com/jdecked/twemoji" target="_blank" rel="noopener">jdecked/twemoji</a>, ` +
-      `licensed under <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC-BY 4.0</a>.</p>` +
-      `<p>Code licensed under <a href="https://opensource.org/licenses/MIT" target="_blank" rel="noopener">MIT</a>.</p>` +
-      `<p>Copyright 2019 Twitter, Inc and other contributors.<br/>Copyright 2024 jdecked and other contributors.</p>` +
-      `</div>`;
-    container.appendChild(twemojiCard);
-
     const sevenZipCard = document.createElement("details");
     sevenZipCard.className = "license-card";
     sevenZipCard.innerHTML =

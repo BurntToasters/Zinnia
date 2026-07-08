@@ -35,6 +35,15 @@ describe("validateExtraArgs", () => {
     );
   });
 
+  it("rejects parent traversal inside switch payloads", () => {
+    expect(() => validateExtraArgs(["-ir!../../secret"])).toThrow(
+      /parent-directory segment/,
+    );
+    expect(() => validateExtraArgs(["-w../../tmp"])).toThrow(
+      /parent-directory segment/,
+    );
+  });
+
   it("rejects unknown double-dash args", () => {
     expect(() => validateExtraArgs(["--totally-unknown"])).toThrow();
   });

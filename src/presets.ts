@@ -1,5 +1,7 @@
 import { $ } from "./utils";
 import { getCompressionSecuritySupport } from "./compression-security";
+import { state } from "./state";
+import type { CustomPreset } from "./settings-model";
 
 export interface PresetConfig {
   format: string;
@@ -8,6 +10,23 @@ export interface PresetConfig {
   dict: string;
   wordSize: string;
   solid: string;
+}
+
+const CUSTOM_PRESET_PREFIX = "custom:";
+
+function currentConfig(): PresetConfig {
+  return {
+    format: $<HTMLSelectElement>("format").value,
+    level: $<HTMLSelectElement>("level").value,
+    method: $<HTMLSelectElement>("method").value,
+    dict: $<HTMLSelectElement>("dict").value,
+    wordSize: $<HTMLSelectElement>("word-size").value,
+    solid: $<HTMLSelectElement>("solid").value,
+  };
+}
+
+function getCustomPreset(name: string): CustomPreset | undefined {
+  return state.currentSettings.customPresets.find((p) => p.name === name);
 }
 
 export const PRESETS: Record<string, PresetConfig> = {
@@ -179,7 +198,11 @@ export function updateCompressionOptionsForFormat(format: string) {
 
 export function applyPreset(name: string) {
   if (name === "custom") return;
-  const preset = PRESETS[name];
+
+  let preset: PresetConfig | undefined = PRESETS[name];
+  if (!preset && name.startsWith(CUSTOM_PRESET_PREFIX)) {
+    preset = getCustomPreset(name.slice(CUSTOM_PRESET_PREFIX.length));
+  }
   if (!preset) return;
 
   $<HTMLSelectElement>("format").value = preset.format;
@@ -191,27 +214,70 @@ export function applyPreset(name: string) {
   $<HTMLSelectElement>("solid").value = preset.solid;
 }
 
+function configsMatch(a: PresetConfig, b: PresetConfig): boolean {
+  return (
+    a.format === b.format &&
+    a.level === b.level &&
+    a.method === b.method &&
+    a.dict === b.dict &&
+    a.wordSize === b.wordSize &&
+    a.solid === b.solid
+  );
+}
+
 export function detectPreset(): string {
-  const format = $<HTMLSelectElement>("format").value;
-  const level = $<HTMLSelectElement>("level").value;
-  const method = $<HTMLSelectElement>("method").value;
-  const dict = $<HTMLSelectElement>("dict").value;
-  const wordSize = $<HTMLSelectElement>("word-size").value;
-  const solid = $<HTMLSelectElement>("solid").value;
+  const config = currentConfig();
 
   for (const [name, p] of Object.entries(PRESETS)) {
-    if (
-      p.format === format &&
-      p.level === level &&
-      p.method === method &&
-      p.dict === dict &&
-      p.wordSize === wordSize &&
-      p.solid === solid
-    ) {
-      return name;
-    }
+    if (configsMatch(p, config)) return name;
+  }
+  for (const p of state.currentSettings.customPresets) {
+    if (configsMatch(p, config)) return `${CUSTOM_PRESET_PREFIX}${p.name}`;
   }
   return "custom";
+}
+
+// Add or replace a named custom preset from the current compression options.
+export function saveCustomPreset(name: string): CustomPreset {
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("Preset name cannot be empty.");
+  if (trimmed in PRESETS) {
+    throw new Error(`"${trimmed}" is a built-in preset name. Choose another.`);
+  }
+
+  const preset: CustomPreset = { name: trimmed, ...currentConfig() };
+  const existing = state.currentSettings.customPresets.filter(
+    (p) => p.name !== trimmed,
+  );
+  state.currentSettings.customPresets = [...existing, preset];
+  return preset;
+}
+
+export function deleteCustomPreset(name: string): void {
+  state.currentSettings.customPresets =
+    state.currentSettings.customPresets.filter((p) => p.name !== name);
+}
+
+export function refreshPresetDropdown(selected?: string): void {
+  const select = $<HTMLSelectElement>("preset");
+  const current = selected ?? select.value;
+
+  for (const opt of [...select.options]) {
+    if (opt.value.startsWith(CUSTOM_PRESET_PREFIX)) opt.remove();
+  }
+
+  const customOptionGroup = state.currentSettings.customPresets;
+  const customAnchor = [...select.options].find((o) => o.value === "custom");
+  for (const preset of customOptionGroup) {
+    const opt = document.createElement("option");
+    opt.value = `${CUSTOM_PRESET_PREFIX}${preset.name}`;
+    opt.textContent = preset.name;
+    select.insertBefore(opt, customAnchor ?? null);
+  }
+
+  if ([...select.options].some((o) => o.value === current)) {
+    select.value = current;
+  }
 }
 
 export function onCompressionOptionChange() {

@@ -9,6 +9,21 @@ export type WorkingMode = "add" | "extract" | "browse";
 export type WorkspaceMode = "basic" | "power";
 export type UiDensity = "comfortable" | "compact";
 
+export const POWER_WINDOW_WIDTH_MIN = 800;
+export const POWER_WINDOW_WIDTH_MAX = 4096;
+export const POWER_WINDOW_HEIGHT_MIN = 600;
+export const POWER_WINDOW_HEIGHT_MAX = 2160;
+
+export interface CustomPreset {
+  name: string;
+  format: string;
+  level: string;
+  method: string;
+  dict: string;
+  wordSize: string;
+  solid: string;
+}
+
 export interface UserSettings {
   theme: ThemePreference;
   format: ArchiveFormat;
@@ -30,6 +45,11 @@ export interface UserSettings {
   showActivityPanel: boolean;
   workspaceMode: WorkspaceMode;
   uiDensity: UiDensity;
+  osIntegrationDismissed: boolean;
+  customPresets: CustomPreset[];
+  powerWindowWidth: number;
+  powerWindowHeight: number;
+  setupComplete: boolean;
 }
 
 export interface LoadSettingsResult {
@@ -60,7 +80,45 @@ export const SETTING_DEFAULTS: UserSettings = {
   showActivityPanel: false,
   workspaceMode: "basic",
   uiDensity: "comfortable",
+  osIntegrationDismissed: false,
+  customPresets: [],
+  powerWindowWidth: 1100,
+  powerWindowHeight: 720,
+  setupComplete: false,
 };
+
+function clampWindowDimension(
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  const rounded = Math.round(value);
+  return Math.min(max, Math.max(min, rounded));
+}
+
+export function sanitizePowerWindowSize(
+  width: unknown,
+  height: unknown,
+  fallbackWidth = SETTING_DEFAULTS.powerWindowWidth,
+  fallbackHeight = SETTING_DEFAULTS.powerWindowHeight,
+): { width: number; height: number } {
+  return {
+    width: clampWindowDimension(
+      width,
+      fallbackWidth,
+      POWER_WINDOW_WIDTH_MIN,
+      POWER_WINDOW_WIDTH_MAX,
+    ),
+    height: clampWindowDimension(
+      height,
+      fallbackHeight,
+      POWER_WINDOW_HEIGHT_MIN,
+      POWER_WINDOW_HEIGHT_MAX,
+    ),
+  };
+}
 
 const THEMES = new Set<ThemePreference>(["system", "light", "dark"]);
 const FORMATS = new Set<ArchiveFormat>([
@@ -77,6 +135,73 @@ const UPDATE_CHANNELS = new Set<UpdateChannel>(["auto", "stable", "beta"]);
 const WORKING_MODES = new Set<WorkingMode>(["add", "extract", "browse"]);
 const WORKSPACE_MODES = new Set<WorkspaceMode>(["basic", "power"]);
 const UI_DENSITIES = new Set<UiDensity>(["comfortable", "compact"]);
+
+// Compression parameter allow-sets — reject corrupt/hostile persisted values
+// that would otherwise flow into 7z as -mx=, -m0=, -md=, -mfb=, -ms= switches.
+const VALID_LEVELS = new Set(["0", "1", "3", "5", "7", "9"]);
+const VALID_METHODS = new Set([
+  "",
+  "lzma",
+  "lzma2",
+  "ppmd",
+  "bzip2",
+  "deflate",
+  "deflate64",
+  "copy",
+  "zstd",
+]);
+const VALID_DICTS = new Set([
+  "",
+  "64k",
+  "256k",
+  "1m",
+  "2m",
+  "4m",
+  "8m",
+  "16m",
+  "32m",
+  "64m",
+  "128m",
+  "256m",
+  "512m",
+  "1g",
+  "1536m",
+]);
+const VALID_WORD_SIZES = new Set([
+  "",
+  "8",
+  "12",
+  "16",
+  "24",
+  "32",
+  "48",
+  "64",
+  "96",
+  "128",
+  "192",
+  "256",
+  "273",
+]);
+const VALID_SOLIDS = new Set([
+  "",
+  "off",
+  "on",
+  "solid",
+  "1g",
+  "2g",
+  "4g",
+  "8g",
+  "16g",
+  "32g",
+  "64g",
+  "e1g",
+  "e2g",
+  "e4g",
+  "e8g",
+  "e16g",
+  "e32g",
+  "e64g",
+]);
 const USER_SETTING_KEYS = new Set<keyof UserSettings>([
   "theme",
   "format",
@@ -98,7 +223,40 @@ const USER_SETTING_KEYS = new Set<keyof UserSettings>([
   "showActivityPanel",
   "workspaceMode",
   "uiDensity",
+  "osIntegrationDismissed",
+  "customPresets",
+  "powerWindowWidth",
+  "powerWindowHeight",
+  "setupComplete",
 ]);
+
+const MAX_CUSTOM_PRESETS = 50;
+
+function asCustomPresets(
+  value: unknown,
+  fallback: CustomPreset[],
+): CustomPreset[] {
+  if (!Array.isArray(value)) return [...fallback];
+  const presets: CustomPreset[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    const r = asRecord(item);
+    const name = asString(r.name, "").trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    presets.push({
+      name,
+      format: asString(r.format, SETTING_DEFAULTS.format),
+      level: asString(r.level, SETTING_DEFAULTS.level),
+      method: asString(r.method, SETTING_DEFAULTS.method),
+      dict: asString(r.dict, SETTING_DEFAULTS.dict),
+      wordSize: asString(r.wordSize, SETTING_DEFAULTS.wordSize),
+      solid: asString(r.solid, SETTING_DEFAULTS.solid),
+    });
+    if (presets.length >= MAX_CUSTOM_PRESETS) break;
+  }
+  return presets;
+}
 
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -128,14 +286,24 @@ export function normalizeUserSettings(
   fallback: UserSettings = SETTING_DEFAULTS,
 ): UserSettings {
   const settings = asRecord(input);
+  const powerWindowSize = sanitizePowerWindowSize(
+    settings.powerWindowWidth,
+    settings.powerWindowHeight,
+    fallback.powerWindowWidth,
+    fallback.powerWindowHeight,
+  );
   return {
     theme: asSetValue(settings.theme, THEMES, fallback.theme),
     format: asSetValue(settings.format, FORMATS, fallback.format),
-    level: asString(settings.level, fallback.level),
-    method: asString(settings.method, fallback.method),
-    dict: asString(settings.dict, fallback.dict),
-    wordSize: asString(settings.wordSize, fallback.wordSize),
-    solid: asString(settings.solid, fallback.solid),
+    level: asSetValue(settings.level, VALID_LEVELS, fallback.level),
+    method: asSetValue(settings.method, VALID_METHODS, fallback.method),
+    dict: asSetValue(settings.dict, VALID_DICTS, fallback.dict),
+    wordSize: asSetValue(
+      settings.wordSize,
+      VALID_WORD_SIZES,
+      fallback.wordSize,
+    ),
+    solid: asSetValue(settings.solid, VALID_SOLIDS, fallback.solid),
     threads: parseThreads(
       String(settings.threads ?? fallback.threads),
       fallback.threads,
@@ -173,6 +341,17 @@ export function normalizeUserSettings(
       fallback.workspaceMode,
     ),
     uiDensity: asSetValue(settings.uiDensity, UI_DENSITIES, fallback.uiDensity),
+    osIntegrationDismissed: asBoolean(
+      settings.osIntegrationDismissed,
+      fallback.osIntegrationDismissed,
+    ),
+    customPresets: asCustomPresets(
+      settings.customPresets,
+      fallback.customPresets,
+    ),
+    powerWindowWidth: powerWindowSize.width,
+    powerWindowHeight: powerWindowSize.height,
+    setupComplete: asBoolean(settings.setupComplete, fallback.setupComplete),
   };
 }
 

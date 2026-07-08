@@ -18,7 +18,9 @@ export interface InputValidationInfo {
 export type QuickActionMode = "add" | "extract" | "browse";
 export type LastQuickActionByMode = Partial<Record<QuickActionMode, string>>;
 
-function evictOldest<K, V>(map: Map<K, V>, max: number): void {
+function evictOldest<K, V>(map: Map<K, V>, max: number, newKey: K): void {
+  // If we're re-caching an existing key, no eviction needed.
+  if (map.has(newKey)) return;
   while (map.size >= max) {
     const oldest = map.keys().next().value;
     if (oldest === undefined) break;
@@ -27,12 +29,12 @@ function evictOldest<K, V>(map: Map<K, V>, max: number): void {
 }
 
 export function cacheBrowseInfo(archive: string, info: ArchiveInfo): void {
-  evictOldest(state.browseArchiveInfoByPath, MAX_CACHED_ARCHIVES);
+  evictOldest(state.browseArchiveInfoByPath, MAX_CACHED_ARCHIVES, archive);
   state.browseArchiveInfoByPath.set(archive, info);
 }
 
 export function cacheSelection(archive: string, set: Set<string>): void {
-  evictOldest(state.browseSelectionsByArchive, MAX_CACHED_ARCHIVES);
+  evictOldest(state.browseSelectionsByArchive, MAX_CACHED_ARCHIVES, archive);
   state.browseSelectionsByArchive.set(archive, set);
 }
 
@@ -56,6 +58,7 @@ export const state = {
   selectiveSearchQuery: "",
   selectiveActiveArchive: null as string | null,
   selectiveVisiblePaths: [] as string[],
+  selectiveExpandedFolders: new Set<string>(),
   inputValidationByPath: new Map<string, InputValidationInfo>(),
   inputValidationRequestId: 0,
   lastInputValidationMode: "add" as "add" | "extract" | "browse",

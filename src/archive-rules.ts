@@ -40,9 +40,25 @@ interface ArchiveValidationCacheEntry {
 const ARCHIVE_VALIDATION_CACHE_TTL_MS = 10_000;
 const ARCHIVE_VALIDATION_CACHE_MAX_ENTRIES = 2_000;
 const archiveValidationCache = new Map<string, ArchiveValidationCacheEntry>();
+const SWITCH_PATH_PREFIXES = ["-i", "-x", "-w", "-o"];
 
 function normalizePath(path: string): string {
   return path.trim();
+}
+
+function hasParentDirComponent(path: string): boolean {
+  return path.split(/[\\/]+/).some((segment) => segment === "..");
+}
+
+function switchContainsParentTraversal(arg: string): boolean {
+  const lower = arg.toLowerCase();
+  if (!SWITCH_PATH_PREFIXES.some((prefix) => lower.startsWith(prefix))) {
+    return false;
+  }
+  const payload = arg.slice(2);
+  return payload
+    .split(/[!:@]/)
+    .some((segment) => hasParentDirComponent(segment));
 }
 
 function getCachedValidation(path: string): ArchivePathValidation | null {
@@ -145,6 +161,12 @@ export function validateExtraArgs(args: string[]): void {
     if (!ALLOWED_EXTRA_PREFIXES.some((p) => lower.startsWith(p))) {
       throw new Error(
         `Unknown argument "${arg}". Only recognized 7z switches are allowed.`,
+      );
+    }
+
+    if (switchContainsParentTraversal(arg)) {
+      throw new Error(
+        `"${arg}" must not contain a '..' parent-directory segment.`,
       );
     }
   }

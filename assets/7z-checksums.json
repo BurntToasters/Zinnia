@@ -1,0 +1,7 @@
+{
+  "linux/arm64/7zzs": "2f9b4ffcdc83eedb737a95bbdb04ab7f4805f8ad92aaef32ccc6b2bf32883209",
+  "linux/x64/7zzs": "20df89e993594c1bb7686f125dabe1acc56c109fb1d9b40435ea5fcbc1ca3453",
+  "mac/7zz": "9c56cf3379a0d8544e9244958b96fdc7c17f9ce70f5a160eb2b41f5f3df96d8c",
+  "win/arm64/7za.exe": "cadbd34657713935222eb14fddbcdd51953501b44c749d9a029fab8f1c46be7e",
+  "win/x64/7za.exe": "35d4d69d7cd6cb44558f208c3b1334268013f9daf82d2dda848893a1c30c59c2"
+}

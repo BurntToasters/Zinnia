@@ -27,6 +27,8 @@
 html,
 body {
   overscroll-behavior: none;
+  height: 100vh;
+  overflow: hidden;
 }
 
 body {
@@ -43,7 +45,8 @@ body {
   font-size: 0.8125rem;
   color: var(--text);
   background: var(--bg);
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -70,9 +73,11 @@ body {
 }
 
 .app {
-  min-height: 100vh;
+  height: 100vh;
+  max-height: 100vh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 #main-content {
@@ -93,7 +98,7 @@ body {
   --session-card-pad-y: 9px;
   --session-card-pad-x: 10px;
   --session-card-gap: 7px;
-  --field-label-size: 10px;
+  --field-label-size: 11px;
   --field-label-gap: 4px;
   --input-pad-y: 6px;
   --input-pad-x: 8px;
@@ -112,7 +117,7 @@ body {
   --session-card-pad-y: 7px;
   --session-card-pad-x: 8px;
   --session-card-gap: 5px;
-  --field-label-size: 9px;
+  --field-label-size: 10px;
   --field-label-gap: 3px;
   --input-pad-y: 5px;
   --input-pad-x: 7px;
@@ -171,6 +176,28 @@ body {
   -webkit-app-region: no-drag;
 }
 
+.support-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-weight: 500;
+  transition: all var(--transition);
+}
+
+.support-btn:hover {
+  color: var(--text);
+  background: var(--hover-overlay);
+}
+
+.support-btn .support-heart {
+  color: #ff4d6d;
+  fill: #ff4d6d;
+  width: 14px;
+  height: 14px;
+}
+
 .btn.btn--explorer {
   display: none;
 }
@@ -182,42 +209,121 @@ body {
 
 /* --- Settings tabs --- */
 
+/* --- Settings tabs & Split Sidebar layout --- */
+
+.modal--settings {
+  width: 680px;
+  height: 520px;
+}
+
+.modal__main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.modal__main > .modal__body {
+  flex: 1;
+  padding: 20px 24px;
+  overflow-y: auto;
+}
+
 .settings-tabs {
   display: flex;
-  gap: 0;
-  border-bottom: 1px solid var(--border);
-  padding: 0 18px;
-  background: var(--surface);
+  flex-direction: column;
+  width: 175px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  border-bottom: none;
+  background: var(--surface-alt);
+  padding: 16px 8px;
+  gap: 4px;
 }
 
 .settings-tab {
   background: none;
   border: none;
-  border-bottom: 2px solid transparent;
+  border-left: 3px solid transparent;
   color: var(--text-secondary);
   font-family: inherit;
   font-size: 0.75rem;
   font-weight: 500;
-  padding: 10px 16px;
+  padding: 8px 12px;
   cursor: pointer;
-  transition:
-    color var(--transition),
-    border-color var(--transition);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transition: all var(--transition);
+  text-align: left;
+  width: 100%;
 }
 
 .settings-tab:hover {
   color: var(--text);
+  background: var(--hover-overlay);
 }
 
 .settings-tab.is-active {
   color: var(--accent);
-  border-bottom-color: var(--accent);
+  background: var(--accent-bg);
+  border-left-color: var(--accent);
   font-weight: 600;
+}
+
+.settings-tab .lucide-icon {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2px;
 }
 
 .settings-tab:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+@media (max-width: 720px) {
+  .modal--settings {
+    width: calc(100vw - 32px);
+    height: calc(100vh - 48px);
+    max-height: 580px;
+  }
+
+  .modal__main {
+    flex-direction: column;
+  }
+
+  .settings-tabs {
+    flex-direction: row;
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 8px 12px;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .settings-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .settings-tab {
+    width: auto;
+    border-left: none;
+    border-bottom: 3px solid transparent;
+    padding: 6px 12px;
+    text-align: center;
+    justify-content: center;
+  }
+
+  .settings-tab.is-active {
+    border-bottom-color: var(--accent);
+    border-left-color: transparent;
+  }
+
+  .modal__main > .modal__body {
+    padding: 16px;
+  }
 }
 
 .settings-panel {
@@ -559,7 +665,7 @@ body {
   gap: var(--quick-actions-gap);
   padding: var(--quick-actions-pad-y) var(--quick-actions-pad-x);
   border-bottom: 1px solid var(--border);
-  background: linear-gradient(180deg, var(--surface), var(--surface-alt));
+  background: var(--surface);
 }
 
 .quick-actions__head {
@@ -590,14 +696,14 @@ body {
 }
 
 .session-card {
-  background: linear-gradient(180deg, var(--surface), var(--surface-alt));
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: var(--session-card-pad-y) var(--session-card-pad-x);
   display: flex;
   flex-direction: column;
   gap: var(--session-card-gap);
-  box-shadow: 0 10px 20px -18px var(--shadow-heavy);
+  box-shadow: 0 1px 3px var(--shadow);
 }
 
 .session-card__header {
@@ -873,6 +979,23 @@ input[type="number"] {
   border-color: var(--accent-pressed);
 }
 
+.btn--danger {
+  background: var(--danger);
+  color: var(--text-on-accent);
+  border-color: var(--danger);
+  font-weight: 600;
+}
+
+.btn--danger:hover {
+  background: var(--danger-hover);
+  border-color: var(--danger-hover);
+}
+
+.btn--danger:active {
+  background: var(--danger-pressed);
+  border-color: var(--danger-pressed);
+}
+
 .btn--ghost {
   background: transparent;
   color: var(--text-secondary);
@@ -909,8 +1032,10 @@ input[type="number"] {
 }
 
 .btn--sm {
-  padding: 3px 8px;
-  font-size: 0.625rem;
+  padding: 4px 10px;
+  font-size: 0.6875rem;
+  min-height: 24px;
+  min-width: 24px;
 }
 
 .btn--icon {
@@ -1057,7 +1182,9 @@ input[type="number"] {
   color: var(--text-secondary);
   cursor: pointer;
   font-size: 0.6875rem;
-  padding: 2px 6px;
+  padding: 4px 8px;
+  min-width: 24px;
+  min-height: 24px;
   border-radius: var(--radius-sm);
   flex-shrink: 0;
   transition: all var(--transition);
@@ -1278,6 +1405,110 @@ input[type="number"] {
   user-select: text;
 }
 
+.toast-region {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 600;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(360px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  cursor: pointer;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.8125rem;
+  box-shadow: var(--shadow);
+  animation: toast-in 0.18s ease-out;
+}
+
+.toast--leaving {
+  opacity: 0;
+  transform: translateY(6px);
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+}
+
+.toast--success {
+  border-color: var(--success-border);
+  color: var(--success);
+  background: var(--success-bg);
+}
+
+.toast--error {
+  border-color: var(--danger-border);
+  color: var(--danger);
+  background: var(--danger-bg);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+  .toast--leaving {
+    transition: none;
+  }
+}
+
+.shortcut-list {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.shortcut-list__row {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 12px;
+  align-items: center;
+  font-size: 0.8125rem;
+}
+
+.shortcut-list dt {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.shortcut-list dd {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.shortcut-list kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  font-family: "Cascadia Code", "SF Mono", "Consolas", monospace;
+  font-size: 0.6875rem;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+}
+
 .setup-wizard-overlay {
   position: fixed;
   inset: 0;
@@ -1436,6 +1667,104 @@ input[type="number"] {
   text-transform: uppercase;
   letter-spacing: 0.03em;
   color: var(--text-secondary);
+}
+
+.setup-wizard-os-box {
+  width: 100%;
+  max-width: 390px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.os-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.os-status-card {
+  min-height: 86px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  justify-content: center;
+}
+
+.os-status-card strong {
+  font-size: 0.9375rem;
+}
+
+.status-pill {
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.status-pill--ok {
+  color: var(--success);
+  background: var(--success-bg);
+}
+
+.status-pill--warn {
+  color: var(--warning);
+  background: var(--warning-bg);
+}
+
+.os-default-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.os-default-row {
+  display: grid;
+  grid-template-columns: minmax(62px, 0.7fr) minmax(0, 1.3fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.os-default-row__name {
+  font-weight: 600;
+}
+
+.os-default-row__handler {
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 0.6875rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-actions--left {
+  justify-content: flex-start;
+}
+
+.settings-note {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-bg);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.45;
 }
 
 .settings-group {
@@ -1597,19 +1926,18 @@ input[type="number"] {
   display: none;
 }
 
-img.twemoji {
-  height: 1em;
-  width: 1em;
-  vertical-align: -0.15em;
-  filter: var(--twemoji-saturate);
-  opacity: 0.75;
-  transition:
-    filter var(--transition),
-    opacity var(--transition);
+.lucide-icon {
+  width: 1.1em;
+  height: 1.1em;
+  vertical-align: middle;
+  stroke-width: 2px;
+  stroke: currentColor;
+  fill: none;
+  opacity: 0.85;
+  transition: opacity var(--transition);
 }
 
-img.twemoji:hover {
-  filter: var(--twemoji-saturate-hover);
+.lucide-icon:hover {
   opacity: 1;
 }
 
@@ -1663,6 +1991,27 @@ img.twemoji:hover {
 
 .selective-row:last-child {
   border-bottom: none;
+}
+
+.selective-row--tree {
+  grid-template-columns: 16px auto minmax(0, 1fr) auto;
+}
+
+.selective-twisty {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.7rem;
+  line-height: 1;
+  padding: 4px;
+  width: 24px;
+  min-height: 24px;
+}
+
+.selective-twisty:disabled {
+  cursor: default;
+  opacity: 0;
 }
 
 .selective-row:hover {
@@ -1904,5 +2253,214 @@ img.twemoji:hover {
   }
   .setup-wizard-card {
     animation: none;
+  }
+}
+
+/* Remove redundant branding header */
+.header__brand {
+  display: none !important;
+}
+
+/* Custom Titlebar Styles */
+#titlebar {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.75rem;
+  font-weight: 500;
+  user-select: none;
+  border-bottom: 1px solid var(--border);
+  position: relative;
+  z-index: 9999;
+  -webkit-app-region: drag !important;
+}
+
+/* Display titlebar on platforms with custom window chrome */
+body.platform-windows #titlebar,
+body.platform-macos #titlebar,
+body.platform-linux #titlebar {
+  display: flex;
+}
+
+.titlebar-logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.titlebar-icon {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+
+.titlebar-text {
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+#titlebar-controls {
+  display: flex;
+  height: 100%;
+  position: absolute;
+  right: 0;
+  top: 0;
+  -webkit-app-region: no-drag !important;
+}
+
+.titlebar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: default !important;
+  transition:
+    background 150ms ease,
+    color 150ms ease;
+  -webkit-app-region: no-drag !important;
+}
+
+.titlebar-btn svg {
+  display: block;
+}
+
+.titlebar-btn:hover {
+  background: var(--hover-overlay);
+  color: var(--text);
+}
+
+.titlebar-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.titlebar-btn--close:hover {
+  background: #e81123 !important;
+  color: #fff !important;
+}
+
+/* Platform Adjustments */
+body.platform-macos #titlebar {
+  height: 38px;
+  background: transparent !important;
+  border-bottom: none !important;
+}
+
+body.platform-macos .titlebar-logo {
+  display: flex !important;
+}
+
+body.platform-macos #titlebar-controls {
+  display: none !important;
+}
+
+/* Make sure dragging header doesn't conflict when titlebar is active */
+body.platform-windows .header,
+body.platform-macos .header,
+body.platform-linux .header {
+  -webkit-app-region: no-drag !important;
+}
+
+/* Hide redundant branding when custom titlebar is showing */
+body.platform-windows .header__brand,
+body.platform-macos .header__brand,
+body.platform-linux .header__brand {
+  display: none;
+}
+
+/* Offset modal overlays below the custom titlebar */
+body.platform-windows .modal-overlay,
+body.platform-windows .setup-wizard-overlay {
+  top: 32px;
+}
+
+body.platform-macos .modal-overlay,
+body.platform-macos .setup-wizard-overlay {
+  top: 38px;
+}
+
+body.platform-linux .modal-overlay,
+body.platform-linux .setup-wizard-overlay {
+  top: 32px;
+}
+
+/* Windows High Contrast / forced-colors support */
+@media (forced-colors: active) {
+  #titlebar {
+    border-bottom: 1px solid ButtonText;
+  }
+
+  .titlebar-btn {
+    color: ButtonText;
+  }
+
+  .titlebar-btn:hover {
+    background: Highlight;
+    color: HighlightText;
+  }
+
+  .titlebar-btn:focus-visible {
+    outline: 2px solid Highlight;
+  }
+
+  .titlebar-btn--close:hover {
+    background: LinkText;
+    color: HighlightText;
+  }
+
+  .btn,
+  .segmented__btn,
+  .settings-tab {
+    border: 1px solid ButtonText;
+  }
+
+  .btn:focus-visible,
+  .segmented__btn:focus-visible,
+  .settings-tab:focus-visible {
+    outline: 2px solid Highlight;
+  }
+
+  input,
+  select {
+    border: 1px solid ButtonText;
+  }
+
+  input:focus-visible,
+  select:focus-visible {
+    outline: 2px solid Highlight;
+  }
+
+  .switch__track {
+    border: 1px solid ButtonText;
+  }
+
+  .switch input:checked + .switch__track {
+    background: Highlight;
+    border-color: Highlight;
+  }
+
+  .modal {
+    border: 1px solid ButtonText;
+  }
+
+  .header {
+    border-bottom: 1px solid ButtonText;
+  }
+
+  .statusbar {
+    border-top: 1px solid ButtonText;
   }
 }

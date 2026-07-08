@@ -25,6 +25,51 @@
       data-workspace-mode="basic"
       data-density="comfortable"
     >
+      <div id="titlebar" data-tauri-drag-region>
+        <div class="titlebar-logo" data-tauri-drag-region>
+          <img
+            src="/zinnia_default-logo.png"
+            class="titlebar-icon"
+            data-tauri-drag-region
+            alt=""
+          />
+          <span class="titlebar-text" data-tauri-drag-region>Zinnia</span>
+        </div>
+        <div id="titlebar-controls">
+          <button class="titlebar-btn" id="titlebar-min" aria-label="Minimize">
+            <svg width="10" height="1" viewBox="0 0 10 1">
+              <rect width="10" height="1" fill="currentColor" />
+            </svg>
+          </button>
+          <button class="titlebar-btn" id="titlebar-max" aria-label="Maximize">
+            <svg width="10" height="10" viewBox="0 0 10 10">
+              <rect
+                width="9"
+                height="9"
+                x="0.5"
+                y="0.5"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1"
+              />
+            </svg>
+          </button>
+          <button
+            class="titlebar-btn titlebar-btn--close"
+            id="titlebar-close"
+            aria-label="Close"
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10">
+              <path
+                d="M0.5,0.5 L9.5,9.5 M9.5,0.5 L0.5,9.5"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
       <header class="header">
         <div class="header__brand">
           <h1>Zinnia</h1>
@@ -62,27 +107,30 @@
           >
             Activity
           </button>
+          <a
+            href="https://rosie.run/support"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="btn btn--ghost btn--sm support-btn"
+            id="support-link"
+          >
+            <i data-lucide="heart" class="lucide-icon support-heart"></i>
+            <span>Support</span>
+          </a>
           <button
             class="btn btn--ghost btn--icon"
             id="open-settings"
             title="Settings"
             aria-label="Open settings"
           >
-            <img
-              src="/twemoji/2699.svg"
-              width="15"
-              height="15"
-              alt=""
-              class="twemoji"
-              draggable="false"
-            />
+            <i data-lucide="settings" class="lucide-icon"></i>
           </button>
         </div>
       </header>
 
       <div class="modal-overlay" id="settings-overlay" hidden>
         <div
-          class="modal"
+          class="modal modal--settings"
           role="dialog"
           aria-modal="true"
           aria-labelledby="settings-title"
@@ -98,485 +146,602 @@
             </button>
           </div>
 
-          <div
-            class="settings-tabs"
-            role="tablist"
-            aria-label="Settings sections"
-          >
-            <button
-              class="settings-tab is-active"
-              role="tab"
-              id="tab-general"
-              data-tab="general"
-              aria-selected="true"
-              aria-controls="panel-general"
-              tabindex="0"
-            >
-              General
-            </button>
-            <button
-              class="settings-tab"
-              role="tab"
-              id="tab-compression"
-              data-tab="compression"
-              aria-selected="false"
-              aria-controls="panel-compression"
-              tabindex="-1"
-            >
-              Compression
-            </button>
-            <button
-              class="settings-tab"
-              role="tab"
-              id="tab-about"
-              data-tab="about"
-              aria-selected="false"
-              aria-controls="panel-about"
-              tabindex="-1"
-            >
-              About
-            </button>
-          </div>
-
-          <div class="modal__body">
-            <!-- General tab -->
+          <div class="modal__main">
             <div
-              class="settings-panel is-active"
-              data-panel="general"
-              id="panel-general"
-              role="tabpanel"
-              aria-labelledby="tab-general"
+              class="settings-tabs"
+              role="tablist"
+              aria-label="Settings sections"
             >
-              <div class="setting-item">
-                <div class="setting-info">
-                  <span class="setting-title" id="title-theme">Theme</span>
-                  <span class="setting-desc"
-                    >Choose between light and dark mode, or follow your system
-                    preference.</span
+              <button
+                class="settings-tab is-active"
+                role="tab"
+                id="tab-general"
+                data-tab="general"
+                aria-selected="true"
+                aria-controls="panel-general"
+                tabindex="0"
+              >
+                <i data-lucide="settings" class="lucide-icon"></i>
+                <span>General</span>
+              </button>
+              <button
+                class="settings-tab"
+                role="tab"
+                id="tab-compression"
+                data-tab="compression"
+                aria-selected="false"
+                aria-controls="panel-compression"
+                tabindex="-1"
+              >
+                <i data-lucide="sliders" class="lucide-icon"></i>
+                <span>Compression</span>
+              </button>
+              <button
+                class="settings-tab"
+                role="tab"
+                id="tab-os"
+                data-tab="os"
+                aria-selected="false"
+                aria-controls="panel-os"
+                tabindex="-1"
+              >
+                <i data-lucide="monitor" class="lucide-icon"></i>
+                <span>OS Integration</span>
+              </button>
+              <button
+                class="settings-tab"
+                role="tab"
+                id="tab-about"
+                data-tab="about"
+                aria-selected="false"
+                aria-controls="panel-about"
+                tabindex="-1"
+              >
+                <i data-lucide="info" class="lucide-icon"></i>
+                <span>About</span>
+              </button>
+            </div>
+
+            <div class="modal__body">
+              <!-- General tab -->
+              <div
+                class="settings-panel is-active"
+                data-panel="general"
+                id="panel-general"
+                role="tabpanel"
+                aria-labelledby="tab-general"
+              >
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span class="setting-title" id="title-auto-check-updates"
+                      >Check and automatically download updates on startup</span
+                    >
+                    <span class="setting-desc"
+                      >Automatically checks for updates when the app opens and
+                      downloads them in the background.</span
+                    >
+                  </div>
+                  <label
+                    class="switch"
+                    data-update-ui
+                    aria-labelledby="title-auto-check-updates"
                   >
+                    <input type="checkbox" id="s-auto-check-updates" checked />
+                    <span class="switch__track"></span>
+                  </label>
                 </div>
-                <select
-                  id="s-theme"
-                  class="setting-select"
-                  aria-labelledby="title-theme"
-                >
-                  <option value="system">System</option>
-                  <option value="light">Light</option>
-                  <option value="dark">Dark</option>
-                </select>
-              </div>
 
-              <div class="setting-item">
-                <div class="setting-info">
-                  <span class="setting-title" id="title-workspace-mode"
-                    >Workspace mode</span
-                  >
-                  <span class="setting-desc"
-                    >Basic keeps the UI minimal. Power shows advanced tools and
-                    quick actions.</span
-                  >
-                </div>
-                <select
-                  id="s-workspace-mode"
-                  class="setting-select"
-                  aria-labelledby="title-workspace-mode"
-                >
-                  <option value="basic">Basic</option>
-                  <option value="power">Power</option>
-                </select>
-              </div>
-
-              <div class="setting-item">
-                <div class="setting-info">
-                  <span class="setting-title" id="title-ui-density"
-                    >UI density</span
-                  >
-                  <span class="setting-desc"
-                    >Comfortable is roomier. Compact fits more controls and
-                    data.</span
-                  >
-                </div>
-                <select
-                  id="s-ui-density"
-                  class="setting-select"
-                  aria-labelledby="title-ui-density"
-                >
-                  <option value="comfortable">Comfortable</option>
-                  <option value="compact">Compact</option>
-                </select>
-              </div>
-
-              <hr class="setting-divider" />
-
-              <div class="setting-item">
-                <div class="setting-info">
-                  <span class="setting-title" id="title-auto-check-updates"
-                    >Check and automatically download updates on startup</span
-                  >
-                  <span class="setting-desc"
-                    >Automatically checks for updates when the app opens and
-                    downloads them in the background.</span
-                  >
-                </div>
-                <label
-                  class="switch"
-                  data-update-ui
-                  aria-labelledby="title-auto-check-updates"
-                >
-                  <input type="checkbox" id="s-auto-check-updates" checked />
-                  <span class="switch__track"></span>
-                </label>
-              </div>
-
-              <div class="setting-item" data-update-ui>
-                <div class="setting-info">
-                  <span class="setting-title">Check for updates now</span>
-                  <span class="setting-desc"
-                    >See if a newer version is available.</span
-                  >
-                </div>
-                <button class="btn btn--sm" id="check-updates">
-                  Check now
-                </button>
-              </div>
-
-              <div class="setting-item" data-update-ui>
-                <div class="setting-info">
-                  <span class="setting-title" id="title-update-channel"
-                    >Update channel</span
-                  >
-                  <span class="setting-desc"
-                    >Choose between production updates and beta builds.</span
-                  >
-                </div>
-                <select
-                  id="s-update-channel"
-                  class="setting-select"
-                  aria-labelledby="title-update-channel"
-                >
-                  <option value="auto">Auto (follow version)</option>
-                  <option value="stable">Stable</option>
-                  <option value="beta">Beta</option>
-                </select>
-              </div>
-
-              <hr class="setting-divider" />
-
-              <div class="setting-item">
-                <div class="setting-info">
-                  <span class="setting-title" id="title-local-logging"
-                    >Local diagnostics logging</span
-                  >
-                  <span class="setting-desc"
-                    >Store privacy-preserving activity logs on this device
-                    only.</span
-                  >
-                </div>
-                <label class="switch" aria-labelledby="title-local-logging">
-                  <input type="checkbox" id="s-local-logging" checked />
-                  <span class="switch__track"></span>
-                </label>
-              </div>
-
-              <div class="setting-item">
-                <div class="setting-info">
-                  <span class="setting-title" id="title-log-verbosity"
-                    >Log verbosity</span
-                  >
-                  <span class="setting-desc"
-                    >Use Debug only when troubleshooting.</span
-                  >
-                </div>
-                <select
-                  id="s-log-verbosity"
-                  class="setting-select"
-                  aria-labelledby="title-log-verbosity"
-                >
-                  <option value="info">Normal</option>
-                  <option value="debug">Debug</option>
-                </select>
-              </div>
-
-              <div class="setting-item">
-                <div class="setting-info">
-                  <span class="setting-title">Export diagnostics logs</span>
-                  <span class="setting-desc" id="s-log-dir"
-                    >Detecting log directory…</span
-                  >
-                </div>
-                <div class="setting-actions">
-                  <button class="btn btn--sm" id="export-logs">Export</button>
-                  <button class="btn btn--ghost btn--sm" id="open-logs-folder">
-                    Open folder
-                  </button>
-                  <button class="btn btn--ghost btn--sm" id="clear-logs">
-                    Clear
+                <div class="setting-item" data-update-ui>
+                  <div class="setting-info">
+                    <span class="setting-title">Check for updates now</span>
+                    <span class="setting-desc"
+                      >See if a newer version is available.</span
+                    >
+                  </div>
+                  <button class="btn btn--sm" id="check-updates">
+                    Check now
                   </button>
                 </div>
+
+                <div class="setting-item" data-update-ui>
+                  <div class="setting-info">
+                    <span class="setting-title" id="title-update-channel"
+                      >Update channel</span
+                    >
+                    <span class="setting-desc"
+                      >Choose between production updates and beta builds.</span
+                    >
+                  </div>
+                  <select
+                    id="s-update-channel"
+                    class="setting-select"
+                    aria-labelledby="title-update-channel"
+                  >
+                    <option value="auto">Auto (follow version)</option>
+                    <option value="stable">Stable</option>
+                    <option value="beta">Beta</option>
+                  </select>
+                </div>
+
+                <hr class="setting-divider" />
+
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span class="setting-title" id="title-theme">Theme</span>
+                    <span class="setting-desc"
+                      >Choose between light and dark mode, or follow your system
+                      preference.</span
+                    >
+                  </div>
+                  <select
+                    id="s-theme"
+                    class="setting-select"
+                    aria-labelledby="title-theme"
+                  >
+                    <option value="system">System</option>
+                    <option value="light">Light</option>
+                    <option value="dark">Dark</option>
+                  </select>
+                </div>
+
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span class="setting-title" id="title-workspace-mode"
+                      >Workspace mode</span
+                    >
+                    <span class="setting-desc"
+                      >Basic keeps the UI minimal. Power shows advanced tools
+                      and quick actions.</span
+                    >
+                  </div>
+                  <select
+                    id="s-workspace-mode"
+                    class="setting-select"
+                    aria-labelledby="title-workspace-mode"
+                  >
+                    <option value="basic">Basic</option>
+                    <option value="power">Power</option>
+                  </select>
+                </div>
+
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span class="setting-title" id="title-ui-density"
+                      >UI density</span
+                    >
+                    <span class="setting-desc"
+                      >Comfortable is roomier. Compact fits more controls and
+                      data.</span
+                    >
+                  </div>
+                  <select
+                    id="s-ui-density"
+                    class="setting-select"
+                    aria-labelledby="title-ui-density"
+                  >
+                    <option value="comfortable">Comfortable</option>
+                    <option value="compact">Compact</option>
+                  </select>
+                </div>
+
+                <hr class="setting-divider" />
+
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span
+                      class="setting-title"
+                      id="title-os-integration-dismissed"
+                      >Hide OS integration setup reminder</span
+                    >
+                    <span class="setting-desc"
+                      >Keep the OS integration page available in Settings.</span
+                    >
+                  </div>
+                  <label
+                    class="switch"
+                    aria-labelledby="title-os-integration-dismissed"
+                  >
+                    <input type="checkbox" id="s-os-integration-dismissed" />
+                    <span class="switch__track"></span>
+                  </label>
+                </div>
+
+                <hr class="setting-divider" />
+
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span class="setting-title" id="title-local-logging"
+                      >Local diagnostics logging</span
+                    >
+                    <span class="setting-desc"
+                      >Store privacy-preserving activity logs on this device
+                      only.</span
+                    >
+                  </div>
+                  <label class="switch" aria-labelledby="title-local-logging">
+                    <input type="checkbox" id="s-local-logging" checked />
+                    <span class="switch__track"></span>
+                  </label>
+                </div>
+
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span class="setting-title" id="title-log-verbosity"
+                      >Log verbosity</span
+                    >
+                    <span class="setting-desc"
+                      >Use Debug only when troubleshooting.</span
+                    >
+                  </div>
+                  <select
+                    id="s-log-verbosity"
+                    class="setting-select"
+                    aria-labelledby="title-log-verbosity"
+                  >
+                    <option value="info">Normal</option>
+                    <option value="debug">Debug</option>
+                  </select>
+                </div>
+
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span class="setting-title">Export diagnostics logs</span>
+                    <span class="setting-desc" id="s-log-dir"
+                      >Detecting log directory…</span
+                    >
+                  </div>
+                  <div class="setting-actions">
+                    <button class="btn btn--sm" id="export-logs">Export</button>
+                    <button
+                      class="btn btn--ghost btn--sm"
+                      id="open-logs-folder"
+                    >
+                      Open folder
+                    </button>
+                    <button class="btn btn--ghost btn--sm" id="clear-logs">
+                      Clear
+                    </button>
+                  </div>
+                </div>
+
+                <hr class="setting-divider" />
+
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span class="setting-title">CPU benchmark</span>
+                    <span class="setting-desc" id="benchmark-result"
+                      >Measure compression speed to help pick a thread
+                      count.</span
+                    >
+                  </div>
+                  <div class="setting-actions">
+                    <button class="btn btn--sm" id="run-benchmark">Run</button>
+                  </div>
+                </div>
+
+                <hr class="setting-divider" />
+
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span class="setting-title">Open-source licenses</span>
+                    <span class="setting-desc"
+                      >View third-party libraries and their licenses.</span
+                    >
+                  </div>
+                  <div class="setting-actions">
+                    <button class="btn btn--sm" id="show-licenses">View</button>
+                    <button
+                      class="btn btn--ghost btn--sm"
+                      id="rerun-setup-wizard"
+                    >
+                      Run setup wizard again
+                    </button>
+                  </div>
+                </div>
+
+                <hr class="setting-divider" />
+
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span class="setting-title">Reset settings</span>
+                    <span class="setting-desc"
+                      >Restore all settings to default values and restart the
+                      application.</span
+                    >
+                  </div>
+                  <div class="setting-actions">
+                    <button class="btn btn--danger btn--sm" id="reset-settings">
+                      <i data-lucide="rotate-ccw" class="lucide-icon"></i> Reset
+                      & Restart
+                    </button>
+                  </div>
+                </div>
               </div>
 
-              <hr class="setting-divider" />
-
-              <div class="setting-item">
-                <div class="setting-info">
-                  <span class="setting-title">Open-source licenses</span>
-                  <span class="setting-desc"
-                    >View third-party libraries and their licenses.</span
-                  >
+              <!-- Compression tab -->
+              <div
+                class="settings-panel"
+                data-panel="compression"
+                id="panel-compression"
+                role="tabpanel"
+                aria-labelledby="tab-compression"
+              >
+                <p class="settings-hint">
+                  Default values applied when creating new archives.
+                </p>
+                <div class="grid-split">
+                  <div class="field">
+                    <label for="s-format">Format</label>
+                    <select id="s-format">
+                      <option value="7z">7z</option>
+                      <option value="zip">zip</option>
+                      <option value="tar">tar</option>
+                      <option value="gzip">gzip</option>
+                      <option value="bzip2">bzip2</option>
+                      <option value="xz">xz</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="s-level">Compression level</label>
+                    <select id="s-level">
+                      <option value="0">0 - Store</option>
+                      <option value="1">1 - Fastest</option>
+                      <option value="3">3 - Fast</option>
+                      <option value="5">5 - Normal</option>
+                      <option value="7">7 - Maximum</option>
+                      <option value="9">9 - Ultra</option>
+                    </select>
+                  </div>
                 </div>
-                <div class="setting-actions">
-                  <button class="btn btn--sm" id="show-licenses">View</button>
+                <div class="grid-split">
+                  <div class="field">
+                    <label for="s-method">Method</label>
+                    <select id="s-method">
+                      <option value="lzma2">LZMA2</option>
+                      <option value="lzma">LZMA</option>
+                      <option value="ppmd">PPMd</option>
+                      <option value="bzip2">BZip2</option>
+                      <option value="deflate">Deflate</option>
+                      <option value="zstd">Zstandard</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="s-dict">Dictionary size</label>
+                    <select id="s-dict">
+                      <option value="16m">16 MB</option>
+                      <option value="32m">32 MB</option>
+                      <option value="64m">64 MB</option>
+                      <option value="128m">128 MB</option>
+                      <option value="256m">256 MB</option>
+                      <option value="512m">512 MB</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="grid-split">
+                  <div class="field">
+                    <label for="s-word-size">Word size</label>
+                    <select id="s-word-size">
+                      <option value="16">16</option>
+                      <option value="32">32</option>
+                      <option value="64">64</option>
+                      <option value="96">96</option>
+                      <option value="128">128</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="s-solid">Solid block size</label>
+                    <select id="s-solid">
+                      <option value="off">Off</option>
+                      <option value="1g">1 GB</option>
+                      <option value="4g">4 GB</option>
+                      <option value="16g">16 GB</option>
+                      <option value="solid">Solid</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="grid-split">
+                  <div class="field">
+                    <label for="s-threads">Threads</label>
+                    <input
+                      type="number"
+                      id="s-threads"
+                      min="1"
+                      max="128"
+                      value="8"
+                    />
+                  </div>
+                  <div class="field">
+                    <label for="s-path-mode">Path mode</label>
+                    <select id="s-path-mode">
+                      <option value="relative">Relative</option>
+                      <option value="absolute">Absolute</option>
+                    </select>
+                  </div>
+                </div>
+
+                <hr class="setting-divider" />
+
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span class="setting-title" id="title-sfx"
+                      >Create self-extracting archive (SFX)</span
+                    >
+                  </div>
+                  <label class="switch" aria-labelledby="title-sfx">
+                    <input type="checkbox" id="s-sfx" />
+                    <span class="switch__track"></span>
+                  </label>
+                </div>
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span class="setting-title" id="title-encrypt-headers"
+                      >Encrypt file names</span
+                    >
+                  </div>
+                  <label class="switch" aria-labelledby="title-encrypt-headers">
+                    <input type="checkbox" id="s-encrypt-headers" />
+                    <span class="switch__track"></span>
+                  </label>
+                </div>
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span class="setting-title" id="title-delete-after"
+                      >Delete files after compression</span
+                    >
+                    <span class="setting-desc"
+                      >Source files are permanently removed after a successful
+                      archive.</span
+                    >
+                  </div>
+                  <label class="switch" aria-labelledby="title-delete-after">
+                    <input type="checkbox" id="s-delete-after" />
+                    <span class="switch__track"></span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- OS Integration tab -->
+              <div
+                class="settings-panel"
+                data-panel="os"
+                id="panel-os"
+                role="tabpanel"
+                aria-labelledby="tab-os"
+              >
+                <p class="settings-hint" id="os-integration-help">
+                  Checking OS integration status…
+                </p>
+                <div class="os-status-grid">
+                  <div class="os-status-card">
+                    <span class="settings-label">Platform</span>
+                    <strong id="os-platform-label">Unknown</strong>
+                    <span class="settings-value" id="os-package-label"
+                      >Checking…</span
+                    >
+                  </div>
+                  <div class="os-status-card">
+                    <span class="settings-label">Archive file types</span>
+                    <span
+                      class="status-pill status-pill--warn"
+                      id="os-file-assoc-status"
+                      >Checking…</span
+                    >
+                  </div>
+                  <div class="os-status-card">
+                    <span class="settings-label">Open/extract actions</span>
+                    <span
+                      class="status-pill status-pill--warn"
+                      id="os-context-status"
+                      >Checking…</span
+                    >
+                  </div>
+                </div>
+                <div class="setting-actions settings-actions--left">
+                  <button class="btn btn--sm" id="open-os-integration-settings">
+                    Open OS settings
+                  </button>
                   <button
                     class="btn btn--ghost btn--sm"
-                    id="rerun-setup-wizard"
+                    id="reset-os-integration-defaults"
                   >
-                    Run setup wizard again
+                    Reset Preferred Archiver to System Archiver
+                  </button>
+                  <button
+                    class="btn btn--ghost btn--sm"
+                    id="refresh-os-integration-status"
+                  >
+                    Refresh
                   </button>
                 </div>
-              </div>
-            </div>
-
-            <!-- Compression tab -->
-            <div
-              class="settings-panel"
-              data-panel="compression"
-              id="panel-compression"
-              role="tabpanel"
-              aria-labelledby="tab-compression"
-            >
-              <p class="settings-hint">
-                Default values applied when creating new archives.
-              </p>
-              <div class="grid-split">
-                <div class="field">
-                  <label for="s-format">Format</label>
-                  <select id="s-format">
-                    <option value="7z">7z</option>
-                    <option value="zip">zip</option>
-                    <option value="tar">tar</option>
-                    <option value="gzip">gzip</option>
-                    <option value="bzip2">bzip2</option>
-                    <option value="xz">xz</option>
-                  </select>
-                </div>
-                <div class="field">
-                  <label for="s-level">Compression level</label>
-                  <select id="s-level">
-                    <option value="0">0 - Store</option>
-                    <option value="1">1 - Fastest</option>
-                    <option value="3">3 - Fast</option>
-                    <option value="5">5 - Normal</option>
-                    <option value="7">7 - Maximum</option>
-                    <option value="9">9 - Ultra</option>
-                  </select>
-                </div>
-              </div>
-              <div class="grid-split">
-                <div class="field">
-                  <label for="s-method">Method</label>
-                  <select id="s-method">
-                    <option value="lzma2">LZMA2</option>
-                    <option value="lzma">LZMA</option>
-                    <option value="ppmd">PPMd</option>
-                    <option value="bzip2">BZip2</option>
-                    <option value="deflate">Deflate</option>
-                    <option value="zstd">Zstandard</option>
-                  </select>
-                </div>
-                <div class="field">
-                  <label for="s-dict">Dictionary size</label>
-                  <select id="s-dict">
-                    <option value="16m">16 MB</option>
-                    <option value="32m">32 MB</option>
-                    <option value="64m">64 MB</option>
-                    <option value="128m">128 MB</option>
-                    <option value="256m">256 MB</option>
-                    <option value="512m">512 MB</option>
-                  </select>
-                </div>
-              </div>
-              <div class="grid-split">
-                <div class="field">
-                  <label for="s-word-size">Word size</label>
-                  <select id="s-word-size">
-                    <option value="16">16</option>
-                    <option value="32">32</option>
-                    <option value="64">64</option>
-                    <option value="96">96</option>
-                    <option value="128">128</option>
-                  </select>
-                </div>
-                <div class="field">
-                  <label for="s-solid">Solid block size</label>
-                  <select id="s-solid">
-                    <option value="off">Off</option>
-                    <option value="1g">1 GB</option>
-                    <option value="4g">4 GB</option>
-                    <option value="16g">16 GB</option>
-                    <option value="solid">Solid</option>
-                  </select>
-                </div>
-              </div>
-              <div class="grid-split">
-                <div class="field">
-                  <label for="s-threads">Threads</label>
-                  <input
-                    type="number"
-                    id="s-threads"
-                    min="1"
-                    max="128"
-                    value="8"
-                  />
-                </div>
-                <div class="field">
-                  <label for="s-path-mode">Path mode</label>
-                  <select id="s-path-mode">
-                    <option value="relative">Relative</option>
-                    <option value="absolute">Absolute</option>
-                  </select>
+                <div
+                  class="os-default-list"
+                  id="os-archive-default-list"
+                  aria-live="polite"
+                ></div>
+                <div class="settings-note">
+                  Zinnia only changes default archive apps when you choose it
+                  here. Supported formats: ZIP, 7z, TAR, Gzip/TGZ, Bzip2/TBZ2,
+                  XZ/TXZ, and RAR.
                 </div>
               </div>
 
-              <hr class="setting-divider" />
-
-              <div class="setting-item">
-                <div class="setting-info">
-                  <span class="setting-title" id="title-sfx"
-                    >Create self-extracting archive (SFX)</span
-                  >
-                </div>
-                <label class="switch" aria-labelledby="title-sfx">
-                  <input type="checkbox" id="s-sfx" />
-                  <span class="switch__track"></span>
-                </label>
-              </div>
-              <div class="setting-item">
-                <div class="setting-info">
-                  <span class="setting-title" id="title-encrypt-headers"
-                    >Encrypt file names</span
-                  >
-                </div>
-                <label class="switch" aria-labelledby="title-encrypt-headers">
-                  <input type="checkbox" id="s-encrypt-headers" />
-                  <span class="switch__track"></span>
-                </label>
-              </div>
-              <div class="setting-item">
-                <div class="setting-info">
-                  <span class="setting-title" id="title-delete-after"
-                    >Delete files after compression</span
-                  >
-                  <span class="setting-desc"
-                    >Source files are permanently removed after a successful
-                    archive.</span
-                  >
-                </div>
-                <label class="switch" aria-labelledby="title-delete-after">
-                  <input type="checkbox" id="s-delete-after" />
-                  <span class="switch__track"></span>
-                </label>
-              </div>
-            </div>
-
-            <!-- About tab -->
-            <div
-              class="settings-panel"
-              data-panel="about"
-              id="panel-about"
-              role="tabpanel"
-              aria-labelledby="tab-about"
-            >
-              <div class="about-header">
-                <img
-                  src="/zinnia_default-logo.png"
-                  width="40"
-                  height="40"
-                  alt="Zinnia"
-                  class="about-icon"
-                  draggable="false"
-                />
-                <div>
-                  <h3 class="about-name">Zinnia</h3>
-                  <span class="about-tagline">A fast, focused 7z GUI</span>
-                  <span class="about-credit"
-                    >Made with
-                    <img
-                      src="/twemoji/2764.svg"
-                      width="14"
-                      height="14"
-                      alt=""
-                      class="about-heart"
-                      draggable="false"
-                    />
-                    by BurntToasters /
-                    <a href="https://rosie.run" target="_blank" rel="noopener"
-                      >rosie.run</a
-                    ></span
-                  >
-                </div>
-              </div>
-              <div class="about-rows">
-                <div class="settings-row">
-                  <span class="settings-label">Version</span>
-                  <span class="settings-value" id="s-version-label"
-                    >v0.1.0</span
-                  >
-                </div>
-                <div class="settings-row">
-                  <span class="settings-label">Platform</span>
-                  <span class="settings-value" id="s-platform-label"
-                    >Platform</span
-                  >
-                </div>
-                <div class="settings-row">
-                  <span class="settings-label">License</span>
-                  <span class="settings-value">MPL-2.0</span>
-                </div>
-              </div>
-
-              <button
-                class="btn btn--sm about-licenses-btn"
-                id="about-show-licenses"
+              <!-- About tab -->
+              <div
+                class="settings-panel"
+                data-panel="about"
+                id="panel-about"
+                role="tabpanel"
+                aria-labelledby="tab-about"
               >
-                View Open-Source Licenses
-              </button>
-
-              <div class="about-notices">
-                <div class="about-notice">
-                  <strong>7-Zip</strong>
-                  <p>
-                    This application uses
-                    <a
-                      href="https://www.7-zip.org/"
-                      target="_blank"
-                      rel="noopener"
-                      >7-Zip</a
+                <div class="about-header">
+                  <img
+                    src="/zinnia_default-logo.png"
+                    width="40"
+                    height="40"
+                    alt="Zinnia"
+                    class="about-icon"
+                    draggable="false"
+                  />
+                  <div>
+                    <h3 class="about-name">Zinnia</h3>
+                    <span class="about-tagline">A fast, focused 7z GUI</span>
+                    <span class="about-credit"
+                      >Made with
+                      <i
+                        data-lucide="heart"
+                        class="lucide-icon text-danger"
+                        style="color: var(--danger)"
+                      ></i>
+                      by BurntToasters /
+                      <a href="https://rosie.run" target="_blank" rel="noopener"
+                        >rosie.run</a
+                      ></span
                     >
-                    binaries by Igor Pavlov. 7-Zip is licensed under the GNU
-                    LGPL, with portions under the BSD 3-clause, BSD 2-clause,
-                    and unRAR licenses. Copyright &copy; 1999&ndash;2025 Igor
-                    Pavlov.
-                  </p>
+                  </div>
                 </div>
-                <div class="about-notice">
-                  <strong>Twemoji</strong>
-                  <p>
-                    Emoji graphics by
-                    <a
-                      href="https://github.com/jdecked/twemoji"
-                      target="_blank"
-                      rel="noopener"
-                      >jdecked/twemoji</a
-                    >. Graphics licensed under
-                    <a
-                      href="https://creativecommons.org/licenses/by/4.0/"
-                      target="_blank"
-                      rel="noopener"
-                      >CC-BY 4.0</a
-                    >. Copyright &copy; 2019 Twitter, Inc and other
-                    contributors. Copyright &copy; 2024 jdecked and other
-                    contributors.
-                  </p>
+                <div class="about-rows">
+                  <div class="settings-row">
+                    <span class="settings-label">Version</span>
+                    <span class="settings-value" id="s-version-label"
+                      >v0.1.0</span
+                    >
+                  </div>
+                  <div class="settings-row">
+                    <span class="settings-label">Platform</span>
+                    <span class="settings-value" id="s-platform-label"
+                      >Platform</span
+                    >
+                  </div>
+                  <div class="settings-row">
+                    <span class="settings-label">License</span>
+                    <span class="settings-value">MPL-2.0</span>
+                  </div>
+                </div>
+
+                <button
+                  class="btn btn--sm about-licenses-btn"
+                  id="about-show-licenses"
+                >
+                  View Open-Source Licenses
+                </button>
+
+                <div class="about-notices">
+                  <div class="about-notice">
+                    <strong>7-Zip</strong>
+                    <p>
+                      This application uses
+                      <a
+                        href="https://www.7-zip.org/"
+                        target="_blank"
+                        rel="noopener"
+                        >7-Zip</a
+                      >
+                      binaries by Igor Pavlov. 7-Zip is licensed under the GNU
+                      LGPL, with portions under the BSD 3-clause, BSD 2-clause,
+                      and unRAR licenses. Copyright &copy; 1999&ndash;2025 Igor
+                      Pavlov.
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -726,6 +891,83 @@
         </div>
       </div>
 
+      <div class="modal-overlay" id="shortcuts-overlay" hidden>
+        <div
+          class="modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="shortcuts-title"
+        >
+          <div class="modal__header">
+            <h2 id="shortcuts-title">Keyboard shortcuts</h2>
+            <button
+              class="btn btn--ghost btn--sm"
+              id="close-shortcuts"
+              aria-label="Close keyboard shortcuts"
+            >
+              &times;
+            </button>
+          </div>
+          <div class="modal__body">
+            <dl class="shortcut-list">
+              <div class="shortcut-list__row">
+                <dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd></dt>
+                <dd>Run the current operation</dd>
+              </div>
+              <div class="shortcut-list__row">
+                <dt><kbd>Esc</kbd></dt>
+                <dd>Close the open dialog</dd>
+              </div>
+              <div class="shortcut-list__row">
+                <dt><kbd>?</kbd></dt>
+                <dd>Show this help</dd>
+              </div>
+              <div class="shortcut-list__row">
+                <dt><kbd>←</kbd> <kbd>→</kbd> in settings tabs</dt>
+                <dd>Move between settings tabs</dd>
+              </div>
+            </dl>
+          </div>
+          <div class="modal__footer">
+            <button class="btn btn--ghost btn--sm" id="close-shortcuts-footer">
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-overlay" id="input-modal-overlay" hidden>
+        <div
+          class="modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="input-modal-title"
+        >
+          <div class="modal__header">
+            <h2 id="input-modal-title">Input</h2>
+            <button
+              class="btn btn--ghost btn--sm"
+              id="input-modal-cancel-x"
+              aria-label="Cancel"
+            >
+              &times;
+            </button>
+          </div>
+          <div class="modal__body">
+            <label class="field">
+              <span id="input-modal-label">Value</span>
+              <input type="text" id="input-modal-field" autocomplete="off" />
+            </label>
+          </div>
+          <div class="modal__footer">
+            <button class="btn btn--sm" id="input-modal-confirm">OK</button>
+            <button class="btn btn--ghost btn--sm" id="input-modal-cancel">
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+
       <div
         id="setup-wizard-overlay"
         class="setup-wizard-overlay"
@@ -854,22 +1096,31 @@
                 Back
               </button>
               <button class="btn btn--primary" id="setup-updates-next">
-                Finish setup
+                Next
               </button>
             </div>
           </div>
 
           <div class="setup-wizard-step" data-step="4" hidden>
-            <h2 class="setup-wizard-step__title">You're all set</h2>
+            <h2 class="setup-wizard-step__title">OS integration</h2>
             <p class="setup-wizard-step__desc">
-              Zinnia is ready. You can rerun setup from Settings anytime.
+              Make Zinnia your archive app when your platform supports it.
+              Zinnia can open archives directly and expose quick open/extract
+              actions after install.
             </p>
-            <div class="setup-wizard-step__actions">
-              <button
-                class="btn btn--primary setup-wizard-btn-wide"
-                id="setup-done-btn"
+            <div class="setup-wizard-os-box">
+              <span
+                >Supported types: ZIP, 7z, TAR, Gzip/TGZ, Bzip2/TBZ2, XZ/TXZ,
+                RAR</span
               >
-                Launch Zinnia
+            </div>
+            <div class="setup-wizard-step__actions">
+              <button class="btn btn--ghost" id="setup-os-back">Back</button>
+              <button class="btn btn--ghost" id="setup-os-open">
+                Make Zinnia Default
+              </button>
+              <button class="btn btn--primary" id="setup-os-next">
+                Finish setup
               </button>
             </div>
           </div>
@@ -878,370 +1129,506 @@
 
       <main id="main-content">
         <div id="basic-workspace" class="basic-workspace">
+          <div class="basic-toolbar" id="basic-toolbar" hidden>
+            <div class="basic-toolbar__nav">
+              <button
+                class="basic-toolbar__tab"
+                id="basic-tab-home"
+                title="Go home"
+              >
+                <i data-lucide="arrow-left" class="lucide-icon"></i>
+                <span>Back</span>
+              </button>
+              <span class="basic-toolbar__separator"></span>
+              <button
+                class="basic-toolbar__tab"
+                id="basic-tab-compress"
+                data-basic-tab="compress"
+              >
+                <i data-lucide="package" class="lucide-icon"></i>
+                <span>Compress</span>
+              </button>
+              <button
+                class="basic-toolbar__tab"
+                id="basic-tab-extract"
+                data-basic-tab="extract"
+              >
+                <i data-lucide="archive-restore" class="lucide-icon"></i>
+                <span>Extract</span>
+              </button>
+              <button
+                class="basic-toolbar__tab"
+                id="basic-tab-browse"
+                data-basic-tab="browse"
+              >
+                <i data-lucide="eye" class="lucide-icon"></i>
+                <span>Browse</span>
+              </button>
+            </div>
+          </div>
+
           <div id="basic-home" class="basic-view is-active">
             <div class="basic-home__hero">
-              <h2 class="basic-home__title">What would you like to do?</h2>
+              <h2 class="basic-home__title">Drop something here</h2>
               <p class="basic-home__subtitle">
-                Drop files here or choose an action below
+                Zinnia will open archives or compress regular files.
               </p>
             </div>
-            <div class="basic-dropzone" id="basic-dropzone">
+            <div
+              class="basic-dropzone"
+              id="basic-dropzone"
+              role="button"
+              tabindex="0"
+              aria-label="Drop files or archives, or press Enter to browse"
+            >
               <span class="basic-dropzone__icon">
                 <span class="basic-dropzone__icon-circle">
-                  <img
-                    src="/twemoji/1f4c2.svg"
-                    width="36"
-                    height="36"
-                    alt=""
-                    draggable="false"
-                  />
+                  <i data-lucide="folder-open" class="lucide-icon"></i>
                 </span>
               </span>
               <span class="basic-dropzone__text">
-                <strong>Drop files or archives</strong> to get started
+                <strong id="basic-dropzone-title"
+                  >Drop files or archives</strong
+                >
+                <span id="basic-dropzone-subtitle">or click to choose</span>
               </span>
             </div>
             <div class="basic-action-cards">
+              <button class="basic-action-card" id="basic-action-open">
+                <span class="basic-action-card__icon">
+                  <i data-lucide="folder" class="lucide-icon"></i>
+                </span>
+                <span class="basic-action-card__label">Open archive</span>
+                <span class="basic-action-card__desc"
+                  >Browse contents or extract all</span
+                >
+              </button>
               <button class="basic-action-card" id="basic-action-compress">
                 <span class="basic-action-card__icon">
-                  <img
-                    src="/twemoji/1f4e6.svg"
-                    width="28"
-                    height="28"
-                    alt=""
-                    draggable="false"
-                  />
+                  <i data-lucide="package" class="lucide-icon"></i>
                 </span>
                 <span class="basic-action-card__label">Compress files</span>
                 <span class="basic-action-card__desc"
                   >Create a new archive from files or folders</span
                 >
               </button>
-              <button class="basic-action-card" id="basic-action-open">
-                <span class="basic-action-card__icon">
-                  <img
-                    src="/twemoji/1f4c1.svg"
-                    width="28"
-                    height="28"
-                    alt=""
-                    draggable="false"
-                  />
-                </span>
-                <span class="basic-action-card__label">Open archive</span>
-                <span class="basic-action-card__desc"
-                  >Extract or browse an existing archive</span
-                >
-              </button>
+            </div>
+            <div class="basic-recent" id="basic-recent" hidden>
+              <div class="basic-recent__header">Recent</div>
+              <div class="basic-recent__list" id="basic-recent-list"></div>
             </div>
           </div>
 
           <div id="basic-compress" class="basic-view">
-            <button class="basic-back-link" id="basic-compress-back">
-              &larr; Back
-            </button>
-            <h2 class="basic-section-title">Compress files</h2>
-            <div class="basic-card">
-              <div class="basic-file-list" id="basic-input-list"></div>
-              <div class="basic-file-actions">
-                <button
-                  class="basic-btn basic-btn--sm basic-btn--secondary"
-                  id="basic-add-files"
-                >
-                  Add files
-                </button>
-                <button
-                  class="basic-btn basic-btn--sm basic-btn--secondary"
-                  id="basic-add-folder"
-                >
-                  Add folder
-                </button>
-                <button
-                  class="basic-btn basic-btn--sm basic-btn--ghost basic-btn--danger"
-                  id="basic-clear-inputs"
-                >
-                  Clear all
-                </button>
-              </div>
-            </div>
-            <div class="basic-card">
-              <div class="basic-field-grid">
-                <div class="basic-field">
-                  <label class="basic-field__label" for="basic-preset"
-                    >Preset</label
-                  >
-                  <select id="basic-preset">
-                    <option value="store">Store (no compression)</option>
-                    <option value="quick">Quick</option>
-                    <option value="balanced" selected>Balanced</option>
-                    <option value="high">High</option>
-                    <option value="ultra">Ultra</option>
-                  </select>
-                </div>
-                <div class="basic-field">
-                  <label class="basic-field__label" for="basic-format"
-                    >Format</label
-                  >
-                  <select id="basic-format">
-                    <option value="7z">7z</option>
-                    <option value="zip">zip</option>
-                    <option value="tar">tar</option>
-                    <option value="gzip">gzip</option>
-                    <option value="bzip2">bzip2</option>
-                    <option value="xz">xz</option>
-                  </select>
+            <div class="basic-view-scroll-content">
+              <div class="basic-view-header">
+                <div>
+                  <h2 class="basic-section-title">Compress files</h2>
+                  <p class="basic-section-subtitle">
+                    Pick sources, confirm save location, then compress.
+                  </p>
                 </div>
               </div>
-              <div class="basic-field">
-                <label class="basic-field__label" for="basic-archive-name"
-                  >Archive name (optional)</label
-                >
-                <input
-                  type="text"
-                  id="basic-archive-name"
-                  placeholder="Leave blank to use source name"
-                />
-              </div>
-              <div class="basic-field">
-                <label class="basic-field__label" for="basic-output-path"
-                  >Save to</label
-                >
-                <div class="basic-input-row">
-                  <input
-                    type="text"
-                    id="basic-output-path"
-                    placeholder="Choose where to save the archive"
-                  />
+              <div class="basic-section">
+                <div class="basic-section-head">
+                  <i data-lucide="folder-open" class="lucide-icon"></i>
+                  <h3>Sources</h3>
+                </div>
+                <div class="basic-file-list" id="basic-input-list"></div>
+                <div class="basic-file-actions">
                   <button
                     class="basic-btn basic-btn--sm basic-btn--secondary"
-                    id="basic-choose-output"
+                    id="basic-add-files"
                   >
-                    Browse
+                    Add files
                   </button>
-                </div>
-              </div>
-              <div class="basic-field">
-                <label class="basic-field__label" for="basic-password"
-                  >Password (optional)</label
-                >
-                <div class="basic-input-row">
-                  <input
-                    type="password"
-                    id="basic-password"
-                    placeholder="Leave blank for none"
-                    autocomplete="off"
-                  />
                   <button
-                    class="basic-password-toggle"
-                    id="basic-toggle-password"
-                    type="button"
-                    aria-label="Toggle password visibility"
+                    class="basic-btn basic-btn--sm basic-btn--secondary"
+                    id="basic-add-folder"
                   >
-                    Show
+                    Add folder
+                  </button>
+                  <button
+                    class="basic-btn basic-btn--sm basic-btn--ghost basic-btn--danger"
+                    id="basic-clear-inputs"
+                  >
+                    Clear all
                   </button>
                 </div>
               </div>
-            </div>
-            <button
-              class="basic-btn basic-btn--primary basic-btn--full"
-              id="basic-run-compress"
-            >
-              Compress
-            </button>
-            <div class="basic-progress" id="basic-compress-progress">
-              <div class="basic-progress__bar-track">
+              <hr class="basic-divider" id="basic-name-location-divider" />
+              <div class="basic-section" id="basic-name-location-section">
+                <div class="basic-section-head">
+                  <i data-lucide="folder" class="lucide-icon"></i>
+                  <h3>Name and location</h3>
+                </div>
+                <div class="basic-field">
+                  <label class="basic-field__label" for="basic-archive-name"
+                    >Archive name</label
+                  >
+                  <input
+                    type="text"
+                    id="basic-archive-name"
+                    placeholder="Use source name"
+                  />
+                </div>
+                <div class="basic-field basic-field--path">
+                  <label class="basic-field__label" for="basic-output-path"
+                    >Output path</label
+                  >
+                  <div class="basic-input-row">
+                    <input
+                      type="text"
+                      id="basic-output-path"
+                      placeholder="Choose where to save the archive"
+                    />
+                    <button
+                      class="basic-btn basic-btn--sm basic-btn--secondary"
+                      id="basic-choose-output"
+                    >
+                      Choose folder
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <hr class="basic-divider" />
+              <div class="basic-section">
+                <div class="basic-section-head">
+                  <i data-lucide="sliders" class="lucide-icon"></i>
+                  <h3>Options</h3>
+                </div>
+                <select id="basic-preset" class="basic-hidden-select">
+                  <option value="quick">Fast</option>
+                  <option value="balanced" selected>Balanced</option>
+                  <option value="ultra">Smallest</option>
+                </select>
                 <div
-                  class="basic-progress__bar-fill is-indeterminate"
-                  id="basic-compress-bar"
-                ></div>
-              </div>
-              <div class="basic-progress__status" id="basic-compress-status">
-                Compressing…
-              </div>
-              <div class="basic-progress__actions">
-                <button
-                  class="basic-btn basic-btn--sm basic-btn--secondary"
-                  id="basic-compress-cancel"
+                  class="basic-preset-pills"
+                  role="group"
+                  aria-label="Compression preset"
                 >
-                  Cancel
-                </button>
+                  <button
+                    class="basic-preset-pill"
+                    type="button"
+                    data-basic-preset="quick"
+                    aria-pressed="false"
+                  >
+                    Fast
+                  </button>
+                  <button
+                    class="basic-preset-pill is-active"
+                    type="button"
+                    data-basic-preset="balanced"
+                    aria-pressed="true"
+                  >
+                    Balanced
+                  </button>
+                  <button
+                    class="basic-preset-pill"
+                    type="button"
+                    data-basic-preset="ultra"
+                    aria-pressed="false"
+                  >
+                    Smallest
+                  </button>
+                </div>
+                <details class="basic-more-options">
+                  <summary>More options</summary>
+                  <div class="basic-field">
+                    <label class="basic-field__label" for="basic-format"
+                      >Format</label
+                    >
+                    <select id="basic-format">
+                      <option value="7z">7z</option>
+                      <option value="zip">zip</option>
+                      <option value="tar">tar</option>
+                      <option value="gzip">gzip</option>
+                      <option value="bzip2">bzip2</option>
+                      <option value="xz">xz</option>
+                    </select>
+                  </div>
+                  <div class="basic-field">
+                    <label class="basic-field__label" for="basic-password"
+                      >Password</label
+                    >
+                    <div class="basic-input-row">
+                      <input
+                        type="password"
+                        id="basic-password"
+                        placeholder="Leave blank for none"
+                        autocomplete="off"
+                      />
+                      <button
+                        class="basic-password-toggle"
+                        id="basic-toggle-password"
+                        type="button"
+                        aria-label="Toggle password visibility"
+                      >
+                        Show
+                      </button>
+                    </div>
+                  </div>
+                </details>
               </div>
             </div>
-            <div class="basic-completion" id="basic-compress-completion">
-              <span
-                class="basic-completion__icon"
-                id="basic-compress-completion-icon"
-              ></span>
-              <h3
-                class="basic-completion__title"
-                id="basic-compress-completion-title"
-              ></h3>
-              <p
-                class="basic-completion__message"
-                id="basic-compress-completion-msg"
-              ></p>
-              <div class="basic-completion__actions">
+            <div class="basic-view-sticky-bottom">
+              <button
+                class="basic-btn basic-btn--primary basic-btn--full"
+                id="basic-run-compress"
+              >
+                Compress
+              </button>
+              <div class="basic-progress" id="basic-compress-progress">
+                <div class="basic-progress__bar-track">
+                  <div
+                    class="basic-progress__bar-fill is-indeterminate"
+                    id="basic-compress-bar"
+                  ></div>
+                </div>
+                <div class="basic-progress__status" id="basic-compress-status">
+                  Compressing…
+                </div>
+                <div class="basic-progress__actions">
+                  <button
+                    class="basic-btn basic-btn--sm basic-btn--secondary"
+                    id="basic-compress-cancel"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+              <div class="basic-completion" id="basic-compress-completion">
                 <button
-                  class="basic-btn basic-btn--sm basic-btn--primary"
-                  id="basic-compress-open-dest"
+                  class="basic-completion__close"
+                  id="basic-compress-completion-close"
+                  aria-label="Dismiss"
                 >
-                  Open folder
+                  &times;
                 </button>
-                <button
-                  class="basic-btn basic-btn--sm basic-btn--secondary"
-                  id="basic-compress-again"
-                >
-                  Compress more
-                </button>
+                <span
+                  class="basic-completion__icon"
+                  id="basic-compress-completion-icon"
+                ></span>
+                <h3
+                  class="basic-completion__title"
+                  id="basic-compress-completion-title"
+                ></h3>
+                <p
+                  class="basic-completion__message"
+                  id="basic-compress-completion-msg"
+                ></p>
+                <p
+                  class="basic-completion__path"
+                  id="basic-compress-completion-path"
+                ></p>
+                <div class="basic-completion__actions">
+                  <button
+                    class="basic-btn basic-btn--sm basic-btn--primary"
+                    id="basic-compress-open-dest"
+                  >
+                    Open folder
+                  </button>
+                  <button
+                    class="basic-btn basic-btn--sm basic-btn--secondary"
+                    id="basic-compress-again"
+                  >
+                    Compress more
+                  </button>
+                  <button
+                    class="basic-btn basic-btn--sm basic-btn--ghost"
+                    id="basic-compress-home"
+                  >
+                    Back home
+                  </button>
+                </div>
               </div>
             </div>
           </div>
 
           <div id="basic-extract" class="basic-view">
-            <button class="basic-back-link" id="basic-extract-back">
-              &larr; Back
-            </button>
-            <h2 class="basic-section-title">Extract archive</h2>
-            <div class="basic-card">
-              <div class="basic-archive-info" id="basic-extract-archive-info">
-                <span class="basic-archive-info__icon">
-                  <img
-                    src="/twemoji/1f4e6.svg"
-                    width="28"
-                    height="28"
-                    alt=""
-                    draggable="false"
-                  />
-                </span>
-                <div class="basic-archive-info__details">
-                  <span
-                    class="basic-archive-info__name"
-                    id="basic-extract-archive-name"
-                    >archive.7z</span
-                  >
-                  <span
-                    class="basic-archive-info__meta"
-                    id="basic-extract-archive-meta"
-                  ></span>
+            <div class="basic-view-scroll-content">
+              <div class="basic-view-header">
+                <div>
+                  <h2 class="basic-section-title">Open archive</h2>
+                  <p class="basic-section-subtitle">
+                    Browse contents or extract everything.
+                  </p>
                 </div>
               </div>
-              <div class="basic-field">
-                <label class="basic-field__label" for="basic-extract-path"
-                  >Extract to</label
+              <div class="basic-section">
+                <div class="basic-archive-info" id="basic-extract-archive-info">
+                  <span class="basic-archive-info__icon">
+                    <i data-lucide="package" class="lucide-icon"></i>
+                  </span>
+                  <div class="basic-archive-info__details">
+                    <span
+                      class="basic-archive-info__name"
+                      id="basic-extract-archive-name"
+                      >archive.7z</span
+                    >
+                    <span
+                      class="basic-archive-info__meta"
+                      id="basic-extract-archive-meta"
+                    ></span>
+                  </div>
+                </div>
+              </div>
+              <hr
+                class="basic-divider"
+                id="basic-extract-destination-divider"
+              />
+              <div class="basic-section">
+                <div
+                  class="basic-section-head"
+                  id="basic-extract-destination-head"
                 >
-                <div class="basic-input-row">
-                  <input
-                    type="text"
-                    id="basic-extract-path"
-                    placeholder="Choose destination folder"
-                  />
+                  <i data-lucide="folder" class="lucide-icon"></i>
+                  <h3>Destination</h3>
+                </div>
+                <div class="basic-field" id="basic-extract-destination-field">
+                  <label class="basic-field__label" for="basic-extract-path"
+                    >Extract to</label
+                  >
+                  <div class="basic-input-row">
+                    <input
+                      type="text"
+                      id="basic-extract-path"
+                      placeholder="Choose destination folder"
+                    />
+                    <button
+                      class="basic-btn basic-btn--sm basic-btn--secondary"
+                      id="basic-choose-extract"
+                    >
+                      Choose folder
+                    </button>
+                  </div>
+                </div>
+                <details
+                  class="basic-more-options"
+                  id="basic-extract-password-field"
+                >
+                  <summary>Password</summary>
+                  <div class="basic-field">
+                    <label
+                      class="basic-field__label"
+                      for="basic-extract-password"
+                      >Password</label
+                    >
+                    <div class="basic-input-row">
+                      <input
+                        type="password"
+                        id="basic-extract-password"
+                        placeholder="Enter archive password"
+                        autocomplete="off"
+                      />
+                      <button
+                        class="basic-password-toggle"
+                        id="basic-toggle-extract-password"
+                        type="button"
+                        aria-label="Toggle password visibility"
+                      >
+                        Show
+                      </button>
+                    </div>
+                  </div>
+                </details>
+              </div>
+            </div>
+            <div class="basic-view-sticky-bottom">
+              <div class="basic-extract-actions">
+                <button
+                  class="basic-btn basic-btn--primary basic-btn--flex"
+                  id="basic-run-extract"
+                >
+                  Extract
+                </button>
+                <button
+                  class="basic-btn basic-btn--secondary"
+                  id="basic-browse-contents"
+                >
+                  Browse contents
+                </button>
+              </div>
+              <div class="basic-progress" id="basic-extract-progress">
+                <div class="basic-progress__bar-track">
+                  <div
+                    class="basic-progress__bar-fill is-indeterminate"
+                    id="basic-extract-bar"
+                  ></div>
+                </div>
+                <div class="basic-progress__status" id="basic-extract-status">
+                  Extracting…
+                </div>
+                <div class="basic-progress__actions">
                   <button
                     class="basic-btn basic-btn--sm basic-btn--secondary"
-                    id="basic-choose-extract"
+                    id="basic-extract-cancel"
                   >
-                    Browse
+                    Cancel
                   </button>
                 </div>
               </div>
-              <div class="basic-field" id="basic-extract-password-field">
-                <label class="basic-field__label" for="basic-extract-password"
-                  >Password</label
+              <div class="basic-completion" id="basic-extract-completion">
+                <button
+                  class="basic-completion__close"
+                  id="basic-extract-completion-close"
+                  aria-label="Dismiss"
                 >
-                <div class="basic-input-row">
-                  <input
-                    type="password"
-                    id="basic-extract-password"
-                    placeholder="Enter archive password"
-                    autocomplete="off"
-                  />
+                  &times;
+                </button>
+                <span
+                  class="basic-completion__icon"
+                  id="basic-extract-completion-icon"
+                ></span>
+                <h3
+                  class="basic-completion__title"
+                  id="basic-extract-completion-title"
+                ></h3>
+                <p
+                  class="basic-completion__message"
+                  id="basic-extract-completion-msg"
+                ></p>
+                <p
+                  class="basic-completion__path"
+                  id="basic-extract-completion-path"
+                ></p>
+                <div class="basic-completion__actions">
                   <button
-                    class="basic-password-toggle"
-                    id="basic-toggle-extract-password"
-                    type="button"
-                    aria-label="Toggle password visibility"
+                    class="basic-btn basic-btn--sm basic-btn--primary"
+                    id="basic-extract-open-dest"
                   >
-                    Show
+                    Open folder
+                  </button>
+                  <button
+                    class="basic-btn basic-btn--sm basic-btn--secondary"
+                    id="basic-extract-another"
+                  >
+                    Extract another
+                  </button>
+                  <button
+                    class="basic-btn basic-btn--sm basic-btn--ghost"
+                    id="basic-extract-home"
+                  >
+                    Back home
                   </button>
                 </div>
-              </div>
-            </div>
-            <div class="basic-extract-actions">
-              <button
-                class="basic-btn basic-btn--primary basic-btn--flex"
-                id="basic-run-extract"
-              >
-                Extract
-              </button>
-              <button
-                class="basic-btn basic-btn--secondary"
-                id="basic-browse-contents"
-              >
-                Browse contents
-              </button>
-            </div>
-            <div class="basic-progress" id="basic-extract-progress">
-              <div class="basic-progress__bar-track">
-                <div
-                  class="basic-progress__bar-fill is-indeterminate"
-                  id="basic-extract-bar"
-                ></div>
-              </div>
-              <div class="basic-progress__status" id="basic-extract-status">
-                Extracting…
-              </div>
-              <div class="basic-progress__actions">
-                <button
-                  class="basic-btn basic-btn--sm basic-btn--secondary"
-                  id="basic-extract-cancel"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-            <div class="basic-completion" id="basic-extract-completion">
-              <span
-                class="basic-completion__icon"
-                id="basic-extract-completion-icon"
-              ></span>
-              <h3
-                class="basic-completion__title"
-                id="basic-extract-completion-title"
-              ></h3>
-              <p
-                class="basic-completion__message"
-                id="basic-extract-completion-msg"
-              ></p>
-              <div class="basic-completion__actions">
-                <button
-                  class="basic-btn basic-btn--sm basic-btn--primary"
-                  id="basic-extract-open-dest"
-                >
-                  Open folder
-                </button>
-                <button
-                  class="basic-btn basic-btn--sm basic-btn--secondary"
-                  id="basic-extract-another"
-                >
-                  Extract another
-                </button>
               </div>
             </div>
           </div>
 
           <div id="basic-browse" class="basic-view">
-            <button class="basic-back-link" id="basic-browse-back">
-              &larr; Back
-            </button>
-            <h2 class="basic-section-title">Browse archive</h2>
+            <div class="basic-view-header">
+              <div>
+                <h2 class="basic-section-title">Browse archive</h2>
+                <p class="basic-section-subtitle">
+                  Preview contents before extracting.
+                </p>
+              </div>
+            </div>
             <div class="basic-card">
               <div class="basic-archive-info" id="basic-browse-archive-info">
                 <span class="basic-archive-info__icon">
-                  <img
-                    src="/twemoji/1f4e6.svg"
-                    width="28"
-                    height="28"
-                    alt=""
-                    draggable="false"
-                  />
+                  <i data-lucide="package" class="lucide-icon"></i>
                 </span>
                 <div class="basic-archive-info__details">
                   <span
@@ -1260,10 +1647,10 @@
                 <table>
                   <thead>
                     <tr>
-                      <th>Name</th>
-                      <th>Size</th>
-                      <th>Compressed</th>
-                      <th>Modified</th>
+                      <th scope="col">Name</th>
+                      <th scope="col">Size</th>
+                      <th scope="col">Compressed</th>
+                      <th scope="col">Modified</th>
                     </tr>
                   </thead>
                   <tbody id="basic-browse-tbody"></tbody>
@@ -1495,14 +1882,33 @@
                 <div class="field-grid field-grid--triple">
                   <div class="field">
                     <label for="preset">Preset</label>
-                    <select id="preset">
-                      <option value="store">Store</option>
-                      <option value="quick">Quick</option>
-                      <option value="balanced" selected>Balanced</option>
-                      <option value="high">High</option>
-                      <option value="ultra">Ultra</option>
-                      <option value="custom">Custom</option>
-                    </select>
+                    <div class="input-row">
+                      <select id="preset">
+                        <option value="store">Store</option>
+                        <option value="quick">Quick</option>
+                        <option value="balanced" selected>Balanced</option>
+                        <option value="high">High</option>
+                        <option value="ultra">Ultra</option>
+                        <option value="custom">Custom</option>
+                      </select>
+                      <button
+                        type="button"
+                        class="btn btn--ghost btn--sm"
+                        id="save-preset"
+                        title="Save current options as a preset"
+                      >
+                        Save
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn--ghost btn--sm"
+                        id="delete-preset"
+                        title="Delete the selected custom preset"
+                        hidden
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </div>
                   <div class="field">
                     <label for="format">Format</label>
@@ -1715,6 +2121,21 @@
                   >
                     Select items...
                   </button>
+                  <button
+                    class="btn btn--accent-outline"
+                    id="browse-add-files"
+                    data-power-only
+                  >
+                    Add files...
+                  </button>
+                  <button
+                    class="btn btn--accent-outline"
+                    id="browse-convert"
+                    data-power-only
+                    title="Extract and recompress this archive using the current compression format"
+                  >
+                    Convert...
+                  </button>
                   <button class="btn btn--ghost" id="browse-test">
                     Test integrity
                   </button>
@@ -1794,6 +2215,28 @@
                         </select>
                       </div>
                     </div>
+                    <div class="grid-split">
+                      <div class="field">
+                        <label for="split-size">Split into volumes</label>
+                        <select id="split-size">
+                          <option value="" selected>Off (single file)</option>
+                          <option value="100m">100 MB</option>
+                          <option value="700m">700 MB (CD)</option>
+                          <option value="1g">1 GB</option>
+                          <option value="4g">4 GB (FAT32)</option>
+                          <option value="custom">Custom…</option>
+                        </select>
+                      </div>
+                      <div class="field" id="split-custom-field" hidden>
+                        <label for="split-custom">Custom size</label>
+                        <input
+                          type="text"
+                          id="split-custom"
+                          placeholder="e.g. 250m, 2g"
+                          autocomplete="off"
+                        />
+                      </div>
+                    </div>
                   </div>
                 </details>
 
@@ -1803,6 +2246,12 @@
                     <div class="field">
                       <label>Options</label>
                       <div class="toggle-row">
+                        <label
+                          class="toggle"
+                          title="Add or refresh files inside the existing archive at the output path instead of creating a new one"
+                          ><input type="checkbox" id="update-mode" />Update
+                          existing archive</label
+                        >
                         <label class="toggle"
                           ><input type="checkbox" id="sfx" />Create SFX</label
                         >
@@ -1813,6 +2262,12 @@
                         <label class="toggle"
                           ><input type="checkbox" id="delete-after" />Delete
                           files after compression</label
+                        >
+                        <label
+                          class="toggle"
+                          title="Preserve created and accessed timestamps in addition to modified time"
+                          ><input type="checkbox" id="store-timestamps" />Store
+                          all timestamps</label
                         >
                       </div>
                     </div>

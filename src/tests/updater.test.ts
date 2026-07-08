@@ -25,6 +25,8 @@ vi.mock("../ui", () => ({
   log: (...args: unknown[]) => logMock(...args),
   devLog: (...args: unknown[]) => devLogMock(...args),
   setStatus: (...args: unknown[]) => setStatusMock(...args),
+  triggerIconRefresh: vi.fn(),
+  registerIconRefreshHook: vi.fn(),
 }));
 
 vi.mock("../state", () => ({

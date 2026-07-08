@@ -25,6 +25,7 @@ vi.mock("@tauri-apps/api/app", () => ({
 vi.mock("@tauri-apps/api/webviewWindow", () => ({
   getCurrentWebviewWindow: vi.fn().mockReturnValue({
     onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
+    setSize: vi.fn(),
   }),
 }));
 vi.mock("@tauri-apps/plugin-updater", () => ({
@@ -106,6 +107,8 @@ addEl("button", "browse-list");
 addEl("button", "browse-test");
 addEl("button", "browse-extract");
 addEl("button", "browse-selective");
+addEl("button", "browse-add-files");
+addEl("button", "browse-convert");
 for (const [quickActionId, quickAction] of [
   ["quick-add-balanced", "add-run-balanced"],
   ["quick-add-ultra", "add-run-ultra"],
@@ -171,6 +174,8 @@ addSelect("word-size", WORD_SIZE_OPTIONS);
 addSelect("solid", SOLID_OPTIONS);
 addSelect("path-mode", PATH_MODE_OPTIONS);
 addSelect("preset", ["store", "quick", "balanced", "high", "ultra", "custom"]);
+addEl("button", "save-preset");
+addEl("button", "delete-preset");
 
 // Compression form inputs
 addEl("input", "output-path");
@@ -181,9 +186,19 @@ const encryptHeaders = addEl("input", "encrypt-headers") as HTMLInputElement;
 encryptHeaders.type = "checkbox";
 const sfxInput = addEl("input", "sfx") as HTMLInputElement;
 sfxInput.type = "checkbox";
+const updateModeInput = addEl("input", "update-mode") as HTMLInputElement;
+updateModeInput.type = "checkbox";
+const storeTimestampsInput = addEl(
+  "input",
+  "store-timestamps",
+) as HTMLInputElement;
+storeTimestampsInput.type = "checkbox";
 const deleteAfter = addEl("input", "delete-after") as HTMLInputElement;
 deleteAfter.type = "checkbox";
 addEl("button", "toggle-password");
+addSelect("split-size", ["", "100m", "700m", "1g", "4g", "custom"]);
+addEl("div", "split-custom-field");
+addEl("input", "split-custom");
 
 // Extract form inputs
 addEl("input", "extract-path");
@@ -217,13 +232,49 @@ const sacu = addEl("input", "s-auto-check-updates") as HTMLInputElement;
 sacu.type = "checkbox";
 const sll = addEl("input", "s-local-logging") as HTMLInputElement;
 sll.type = "checkbox";
+const soid = addEl("input", "s-os-integration-dismissed") as HTMLInputElement;
+soid.type = "checkbox";
 addEl("div", "s-log-dir");
+addEl("button", "run-benchmark");
+addEl("div", "benchmark-result");
+addEl("div", "os-integration-help");
+addEl("div", "os-platform-label");
+addEl("div", "os-package-label");
+addEl("div", "os-file-assoc-status");
+addEl("div", "os-context-status");
+addEl("div", "os-archive-default-list");
+addEl("button", "open-os-integration-settings");
+addEl("button", "reset-os-integration-defaults");
+addEl("button", "refresh-os-integration-status");
 addEl("div", "settings-overlay");
 addEl("button", "rerun-setup-wizard");
+addEl("button", "reset-settings");
 
 // Licenses modal
 addEl("div", "licenses-overlay");
 addEl("div", "licenses-list");
+
+// Shortcuts modal
+const shortcutsOverlay = addEl("div", "shortcuts-overlay");
+shortcutsOverlay.hidden = true;
+const shortcutsModal = document.createElement("div");
+shortcutsModal.className = "modal";
+shortcutsOverlay.appendChild(shortcutsModal);
+addEl("button", "close-shortcuts");
+addEl("button", "close-shortcuts-footer");
+
+// Input prompt modal
+const inputOverlay = addEl("div", "input-modal-overlay");
+inputOverlay.hidden = true;
+const inputModal = document.createElement("div");
+inputModal.className = "modal";
+inputOverlay.appendChild(inputModal);
+addEl("div", "input-modal-title");
+addEl("div", "input-modal-label");
+addEl("input", "input-modal-field");
+addEl("button", "input-modal-confirm");
+addEl("button", "input-modal-cancel");
+addEl("button", "input-modal-cancel-x");
 
 // Command preview modal
 const commandPreviewOverlay = addEl("div", "command-preview-overlay");
@@ -269,7 +320,9 @@ addEl("button", "setup-theme-back");
 addEl("button", "setup-theme-next");
 addEl("button", "setup-updates-back");
 addEl("button", "setup-updates-next");
-addEl("button", "setup-done-btn");
+addEl("button", "setup-os-back");
+addEl("button", "setup-os-open");
+addEl("button", "setup-os-next");
 
 const setupAutoUpdates = addEl(
   "input",

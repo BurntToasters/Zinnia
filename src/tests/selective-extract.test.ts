@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import type { BrowseEntry } from "../browse-model";
 import {
   buildSelectiveExtractArgs,
+  buildEntryTree,
+  computeNodeCheckState,
   clearPathSelection,
   filterBrowseEntriesByQuery,
   isPathWithinFolder,
@@ -11,6 +13,7 @@ import {
   toggleEntrySelection,
   togglePathSelection,
 } from "../selective-extract";
+import type { TreeNode } from "../selective-extract";
 
 const SAMPLE_ENTRIES: BrowseEntry[] = [
   {
@@ -170,7 +173,7 @@ describe("buildSelectiveExtractArgs", () => {
     ).toEqual([
       "x",
       "-o/tmp/output",
-      "-y",
+      "-aou",
       "-psecret",
       "-aos",
       "-spd",
@@ -193,7 +196,7 @@ describe("buildSelectiveExtractArgs", () => {
     ).toEqual([
       "x",
       "-o/tmp/output",
-      "-y",
+      "-aou",
       "-spd",
       "--",
       "/tmp/archive.7z",
@@ -204,7 +207,7 @@ describe("buildSelectiveExtractArgs", () => {
   it("extracts everything when no paths selected", () => {
     expect(
       buildSelectiveExtractArgs("/tmp/archive.7z", "/tmp/output", "", [], []),
-    ).toEqual(["x", "-o/tmp/output", "-y", "--", "/tmp/archive.7z"]);
+    ).toEqual(["x", "-o/tmp/output", "-aou", "--", "/tmp/archive.7z"]);
   });
 });
 
@@ -227,5 +230,77 @@ describe("normalizeSelectiveSearchQuery", () => {
 
   it("handles mixed case and whitespace", () => {
     expect(normalizeSelectiveSearchQuery("\tDocs/Guide\n")).toBe("docs/guide");
+  });
+});
+
+describe("buildEntryTree", () => {
+  function findNode(nodes: TreeNode[], path: string): TreeNode | undefined {
+    for (const node of nodes) {
+      if (node.path === path) return node;
+      const found = findNode(node.children, path);
+      if (found) return found;
+    }
+    return undefined;
+  }
+
+  it("nests files under their folders", () => {
+    const tree = buildEntryTree(SAMPLE_ENTRIES);
+    const docs = findNode(tree, "docs");
+    expect(docs?.isFolder).toBe(true);
+    expect(findNode(tree, "docs/readme.md")?.isFolder).toBe(false);
+    expect(findNode(tree, "docs/guide/install.md")).toBeDefined();
+  });
+
+  it("synthesizes intermediate folders absent from the entry list", () => {
+    const tree = buildEntryTree([
+      {
+        path: "a/b/c.txt",
+        size: 1,
+        packedSize: 1,
+        modified: "",
+        isFolder: false,
+      },
+    ]);
+    const a = findNode(tree, "a");
+    expect(a?.isFolder).toBe(true);
+    expect(findNode(tree, "a/b")?.isFolder).toBe(true);
+  });
+
+  it("sorts folders before files alphabetically", () => {
+    const tree = buildEntryTree(SAMPLE_ENTRIES);
+    const topNames = tree.map((n) => n.name);
+    const docsIdx = topNames.indexOf("docs");
+    const fileIdx = topNames.indexOf("-leading-switch-name.txt");
+    expect(docsIdx).toBeLessThan(fileIdx);
+  });
+});
+
+describe("computeNodeCheckState", () => {
+  it("returns checked when all descendant files are selected", () => {
+    const tree = buildEntryTree(SAMPLE_ENTRIES);
+    const docs = tree.find((n) => n.path === "docs")!;
+    const selected = new Set(["docs/readme.md", "docs/guide/install.md"]);
+    expect(computeNodeCheckState(docs, selected)).toBe("checked");
+  });
+
+  it("returns indeterminate when some descendants are selected", () => {
+    const tree = buildEntryTree(SAMPLE_ENTRIES);
+    const docs = tree.find((n) => n.path === "docs")!;
+    const selected = new Set(["docs/readme.md"]);
+    expect(computeNodeCheckState(docs, selected)).toBe("indeterminate");
+  });
+
+  it("returns unchecked when nothing is selected", () => {
+    const tree = buildEntryTree(SAMPLE_ENTRIES);
+    const docs = tree.find((n) => n.path === "docs")!;
+    expect(computeNodeCheckState(docs, new Set())).toBe("unchecked");
+  });
+
+  it("reflects a single file's own state", () => {
+    const tree = buildEntryTree(SAMPLE_ENTRIES);
+    const src = tree.find((n) => n.path === "src")!;
+    const file = src.children[0];
+    expect(computeNodeCheckState(file, new Set([file.path]))).toBe("checked");
+    expect(computeNodeCheckState(file, new Set())).toBe("unchecked");
   });
 });

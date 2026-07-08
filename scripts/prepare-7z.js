@@ -6,6 +6,30 @@ import { spawnSync } from "child_process";
 const root = process.cwd();
 const assetsDir = path.join(root, "assets");
 const outDir = path.join(root, "src-tauri", "binaries");
+const checksumPath = path.join(assetsDir, "7z-checksums.json");
+const updateChecksums = process.argv.includes("--update-checksums");
+
+function sha256File(filePath) {
+  return crypto
+    .createHash("sha256")
+    .update(fs.readFileSync(filePath))
+    .digest("hex");
+}
+
+function loadChecksums() {
+  if (!fs.existsSync(checksumPath)) {
+    console.error(
+      "FATAL: 7z-checksums.json not found. Cannot verify sidecar integrity.",
+    );
+    process.exit(1);
+  }
+  try {
+    return JSON.parse(fs.readFileSync(checksumPath, "utf8"));
+  } catch (err) {
+    console.error(`FATAL: Could not parse 7z-checksums.json: ${err.message}`);
+    process.exit(1);
+  }
+}
 
 const mappings = [
   { source: "win/x64/7za.exe", target: "7z-x86_64-pc-windows-msvc.exe" },
@@ -76,6 +100,9 @@ function sanitizeMacSidecar(targetPath) {
 
 fs.mkdirSync(outDir, { recursive: true });
 
+const expectedChecksums = loadChecksums();
+const regeneratedChecksums = {};
+
 let copied = 0;
 
 for (const mapping of mappings) {
@@ -87,12 +114,27 @@ for (const mapping of mappings) {
     continue;
   }
 
+  // Verify the source asset against the tracked manifest before trusting it.
+  const sourceHash = sha256File(sourcePath);
+  regeneratedChecksums[mapping.source] = sourceHash;
+  if (!updateChecksums) {
+    const expected = expectedChecksums[mapping.source];
+    if (expected && expected !== sourceHash) {
+      console.error(
+        `Checksum mismatch for ${mapping.source}\n  expected ${expected}\n  actual   ${sourceHash}`,
+      );
+      process.exit(1);
+    }
+    if (!expected) {
+      console.error(
+        `FATAL: No tracked checksum for ${mapping.source}. Run "node scripts/prepare-7z.js --update-checksums" after verifying the binary.`,
+      );
+      process.exit(1);
+    }
+  }
+
   fs.copyFileSync(sourcePath, targetPath);
-  const hash = crypto
-    .createHash("sha256")
-    .update(fs.readFileSync(targetPath))
-    .digest("hex");
-  console.log(`  ${mapping.target}: sha256=${hash}`);
+  console.log(`  ${mapping.target}: sha256=${sourceHash}`);
   if (process.platform !== "win32") {
     try {
       fs.chmodSync(targetPath, 0o755);
@@ -110,6 +152,16 @@ for (const mapping of mappings) {
 if (copied === 0) {
   console.error("No 7-Zip binaries found in assets/.");
   process.exit(1);
+}
+
+if (updateChecksums) {
+  const sorted = Object.fromEntries(
+    Object.keys(regeneratedChecksums)
+      .sort()
+      .map((key) => [key, regeneratedChecksums[key]]),
+  );
+  fs.writeFileSync(checksumPath, `${JSON.stringify(sorted, null, 2)}\n`);
+  console.log(`Wrote ${checksumPath}`);
 }
 
 console.log(`Prepared ${copied} 7z binaries.`);

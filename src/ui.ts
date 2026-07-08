@@ -1,4 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { LogicalSize } from "@tauri-apps/api/dpi";
 import {
   $,
   MAX_LOG_LINES,
@@ -11,6 +13,7 @@ import {
   type LogVerbosity,
   type WorkspaceMode,
   type UiDensity,
+  sanitizePowerWindowSize,
 } from "./settings-model";
 import { saveSettings } from "./settings";
 import {
@@ -22,10 +25,20 @@ import {
   resolveOutputArchiveAutofill,
 } from "./extract-path";
 
+let iconRefreshHook: (() => void) | null = null;
+
+export function registerIconRefreshHook(hook: () => void): void {
+  iconRefreshHook = hook;
+}
+
+export function triggerIconRefresh(): void {
+  iconRefreshHook?.();
+}
+
 type BasicHooks = {
   onRenderInputs: () => void;
   onSetRunning: (active: boolean) => void;
-  onSetStatus: (text: string) => void;
+  onSetStatus: (text: string, errorDetail?: string) => void;
 };
 let basicHooks: BasicHooks | null = null;
 
@@ -41,6 +54,8 @@ const LOG_CHUNK_CHARS = 2_000;
 const MAX_PENDING_LOCAL_LOG_WRITES = 250;
 const WORKING_CONTEXT_PERSIST_DEBOUNCE_MS = 140;
 const INPUT_VALIDATION_REASON_INLINE_MAX_CHARS = 92;
+const BASIC_WINDOW_WIDTH = 500;
+const BASIC_WINDOW_HEIGHT = 650;
 let pendingLocalLogWrites = 0;
 let droppedLocalLogWrites = 0;
 let workingContextPersistTimer: number | undefined;
@@ -295,6 +310,28 @@ export function getWorkspaceMode(): WorkspaceMode {
   return mode === "power" ? "power" : "basic";
 }
 
+export async function resizeWorkspaceWindow(
+  mode: WorkspaceMode,
+): Promise<void> {
+  const appWindow = getCurrentWebviewWindow();
+  if (!appWindow || typeof appWindow.setSize !== "function") return;
+
+  const size =
+    mode === "basic"
+      ? { width: BASIC_WINDOW_WIDTH, height: BASIC_WINDOW_HEIGHT }
+      : sanitizePowerWindowSize(
+          state.currentSettings.powerWindowWidth,
+          state.currentSettings.powerWindowHeight,
+        );
+
+  try {
+    await appWindow.setSize(new LogicalSize(size.width, size.height));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    devLog(`Unable to resize ${mode} workspace window: ${msg}`);
+  }
+}
+
 export function setWorkspaceMode(
   mode: WorkspaceMode,
   options: ContextPersistOptions = {},
@@ -311,6 +348,8 @@ export function setWorkspaceMode(
   if (options.persist !== false && previousMode !== mode) {
     queuePersistWorkingContext();
   }
+
+  void resizeWorkspaceWindow(mode);
 }
 
 export function getUiDensity(): UiDensity {
@@ -339,13 +378,17 @@ export function setUiDensity(
   }
 }
 
-export function setStatus(text: string, autoResetMs?: number) {
+export function setStatus(
+  text: string,
+  autoResetMs?: number,
+  errorDetail?: string,
+) {
   if (state.statusTimeout !== undefined) {
     clearTimeout(state.statusTimeout);
     state.statusTimeout = undefined;
   }
   dom.statusEl.textContent = text;
-  basicHooks?.onSetStatus(text);
+  basicHooks?.onSetStatus(text, errorDetail);
   if (autoResetMs) {
     state.statusTimeout = window.setTimeout(() => {
       setStatus("Idle");
@@ -395,6 +438,7 @@ function clearBrowsePickerSessionState() {
   state.selectiveSearchQuery = "";
   state.selectiveActiveArchive = null;
   state.selectiveVisiblePaths = [];
+  state.selectiveExpandedFolders.clear();
   const overlay = document.getElementById(
     "selective-overlay",
   ) as HTMLElement | null;
@@ -546,10 +590,10 @@ export function renderInputs() {
       badge.className = `list__item-badge list__item-badge--${validation.state}`;
       badge.textContent =
         validation.state === "valid"
-          ? "Valid"
+          ? "\u2713 Valid"
           : validation.state === "invalid"
-            ? "Invalid"
-            : "Checking\u2026";
+            ? "\u2717 Invalid"
+            : "\u22ef Checking";
       content.appendChild(badge);
 
       if (validation.state === "invalid") {
@@ -568,7 +612,7 @@ export function renderInputs() {
     const remove = document.createElement("button");
     remove.className = "btn btn--ghost btn--sm";
     remove.setAttribute("aria-label", `Remove ${path}`);
-    remove.textContent = "Remove";
+    remove.innerHTML = '<i data-lucide="trash-2" class="lucide-icon"></i>';
     remove.disabled = state.running;
     remove.addEventListener("click", () => {
       const removedPrimary = index === 0;
@@ -587,6 +631,7 @@ export function renderInputs() {
   });
 
   basicHooks?.onRenderInputs();
+  triggerIconRefresh();
 }
 
 export function setRunning(active: boolean) {
@@ -648,4 +693,14 @@ export function setRunning(active: boolean) {
 
   basicHooks?.onSetRunning(active);
   renderInputs();
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("resize", () => {
+    if (getWorkspaceMode() === "power") {
+      state.currentSettings.powerWindowWidth = window.innerWidth;
+      state.currentSettings.powerWindowHeight = window.innerHeight;
+      queuePersistWorkingContext();
+    }
+  });
 }

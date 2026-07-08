@@ -3,8 +3,59 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { relaunch } from "@tauri-apps/plugin-process";
+import {
+  createIcons,
+  Settings,
+  Heart,
+  FolderOpen,
+  Folder,
+  Package,
+  File,
+  ArrowLeft,
+  Eye,
+  ArchiveRestore,
+  Trash2,
+  FilePlus,
+  FolderPlus,
+  Check,
+  AlertTriangle,
+  Sliders,
+  Monitor,
+  Info,
+  RotateCcw,
+} from "lucide";
 
-import { $ } from "./utils";
+export function refreshIcons() {
+  createIcons({
+    icons: {
+      Settings,
+      Heart,
+      FolderOpen,
+      Folder,
+      Package,
+      File,
+      ArrowLeft,
+      Eye,
+      ArchiveRestore,
+      Trash2,
+      FilePlus,
+      FolderPlus,
+      Check,
+      AlertTriangle,
+      Sliders,
+      Monitor,
+      Info,
+      RotateCcw,
+    },
+    attrs: {
+      "aria-hidden": "true",
+    },
+  });
+}
+
+import { $, trapFocus, releaseFocusTrap } from "./utils";
+import { promptInput } from "./prompt-modal";
 import { SETTING_DEFAULTS, state, dom } from "./state";
 import {
   applyTheme,
@@ -29,12 +80,17 @@ import {
   getMode,
   setBrowsePasswordFieldVisible,
   persistSettingsImmediately,
+  setStatus,
+  registerIconRefreshHook,
+  resizeWorkspaceWindow,
 } from "./ui";
 import {
   runAction,
   cancelAction,
   testArchive,
   browseArchive,
+  addFilesToArchive,
+  convertArchive,
   previewCommand,
   copyCommandPreview,
   closeCommandPreviewModal,
@@ -52,6 +108,9 @@ import {
   updateCompressionOptionsForFormat,
   applyPreset,
   onCompressionOptionChange,
+  saveCustomPreset,
+  deleteCustomPreset,
+  refreshPresetDropdown,
 } from "./presets";
 import { checkUpdates, autoCheckUpdates } from "./updater";
 import { openLicensesModal, closeLicensesModal } from "./licenses";
@@ -74,7 +133,79 @@ import {
   setBasicView,
   handleBasicDragDrop,
   syncBasicBeforeRun,
+  syncBasicWorkspaceFromPower,
 } from "./basic-ui";
+import {
+  refreshOsIntegrationStatus,
+  wireOsIntegrationEvents,
+} from "./os-integration";
+
+let shortcutsTrigger: HTMLElement | null = null;
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  return (
+    tag === "INPUT" ||
+    tag === "TEXTAREA" ||
+    tag === "SELECT" ||
+    target.isContentEditable
+  );
+}
+
+function openShortcutsModal(): void {
+  shortcutsTrigger = document.activeElement as HTMLElement | null;
+  const overlay = $("shortcuts-overlay");
+  overlay.hidden = false;
+  const modal = overlay.querySelector<HTMLElement>(".modal");
+  if (modal) trapFocus(modal);
+  $("close-shortcuts").focus();
+}
+
+function closeShortcutsModal(): void {
+  const overlay = $("shortcuts-overlay");
+  if (overlay.hidden) return;
+  const modal = overlay.querySelector<HTMLElement>(".modal");
+  if (modal) releaseFocusTrap(modal);
+  overlay.hidden = true;
+  shortcutsTrigger?.focus();
+  shortcutsTrigger = null;
+}
+
+// Pull the overall rating from 7z benchmark output (the trailing "Tot:" line,
+// whose last column is the combined compress/decompress rating in KiB/s-ish units).
+export function parseBenchmarkSummary(stdout: string): string | null {
+  const lines = stdout.split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (line.startsWith("Tot:")) {
+      const nums = line.match(/\d+/g);
+      if (nums && nums.length > 0) {
+        return `Rating: ${nums[nums.length - 1]}`;
+      }
+    }
+  }
+  return null;
+}
+
+async function runBenchmark() {
+  const button = $("run-benchmark") as HTMLButtonElement;
+  const result = $("benchmark-result");
+  button.disabled = true;
+  result.textContent = "Running benchmark…";
+  try {
+    const res = await invoke<{ stdout: string; code: number }>("run_7z", {
+      args: ["b"],
+    });
+    const summary = parseBenchmarkSummary(res.stdout);
+    result.textContent = summary ?? "Benchmark finished (no rating reported).";
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    result.textContent = `Benchmark failed: ${msg}`;
+  } finally {
+    button.disabled = false;
+  }
+}
 
 async function exportLocalLogs() {
   try {
@@ -157,6 +288,21 @@ async function applyIncomingPaths(
 ): Promise<void> {
   if (!paths.length) return;
 
+  if (mode === "compress") {
+    setMode("add");
+    for (const path of paths) {
+      if (!state.inputs.includes(path)) {
+        state.inputs.push(path);
+      }
+    }
+    renderInputs();
+    devLog(`Received ${paths.length} path(s) from ${source}.`);
+    if (getWorkspaceMode() === "basic") {
+      setBasicView("compress");
+    }
+    return;
+  }
+
   const allArchives = await allPathsAreArchives(paths);
   const shouldAutoBrowse =
     mode !== "extract" && paths.length === 1 && allArchives;
@@ -196,12 +342,17 @@ async function applyIncomingPaths(
 }
 
 async function runSetupWizardFlow(): Promise<void> {
+  await resizeWorkspaceWindow("power");
   const result = await showSetupWizard();
   if (result) {
     state.currentSettings.workspaceMode = result.workspaceMode;
     state.currentSettings.theme = result.theme;
     state.currentSettings.autoCheckUpdates = result.autoCheckUpdates;
     state.currentSettings.updateChannel = result.updateChannel;
+    if (typeof result.osIntegrationDismissed === "boolean") {
+      state.currentSettings.osIntegrationDismissed =
+        result.osIntegrationDismissed;
+    }
   }
 
   await markSetupComplete();
@@ -213,6 +364,26 @@ async function runSetupWizardFlow(): Promise<void> {
   applySettingsToForm();
   updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
   onCompressionOptionChange();
+}
+
+function resetRuntimeStateForFirstRun(): void {
+  state.currentSettings = { ...SETTING_DEFAULTS };
+  state.lastPersistedSettings = { ...SETTING_DEFAULTS };
+  state.settingsExtras = {};
+  state.inputs = [];
+  state.lastAutoExtractDestination = null;
+  state.lastAutoOutputPath = null;
+  state.browseArchiveInfoByPath.clear();
+  state.browseSelectionsByArchive.clear();
+  state.selectiveSearchQuery = "";
+  state.selectiveActiveArchive = null;
+  state.selectiveVisiblePaths = [];
+  state.selectiveExpandedFolders.clear();
+  state.inputValidationByPath.clear();
+  state.inputValidationRequestId += 1;
+  state.lastInputsSignature = "";
+  state.lastQuickActionByMode = {};
+  dom.logEl.textContent = "";
 }
 
 function wireEvents() {
@@ -285,6 +456,13 @@ function wireEvents() {
   $("command-preview-overlay").addEventListener("click", (e) => {
     if (e.target === e.currentTarget) closeCommandPreviewModal();
   });
+
+  $("close-shortcuts").addEventListener("click", closeShortcutsModal);
+  $("close-shortcuts-footer").addEventListener("click", closeShortcutsModal);
+  $("shortcuts-overlay").addEventListener("click", (e) => {
+    if (e.target === e.currentTarget) closeShortcutsModal();
+  });
+
   $("test-integrity").addEventListener("click", testArchive);
 
   $("browse-list").addEventListener("click", browseArchive);
@@ -292,6 +470,12 @@ function wireEvents() {
   $("browse-extract").addEventListener("click", () => setMode("extract"));
   $("browse-selective").addEventListener("click", () => {
     void openSelectiveExtractModal();
+  });
+  $("browse-add-files").addEventListener("click", () => {
+    void addFilesToArchive();
+  });
+  $("browse-convert").addEventListener("click", () => {
+    void convertArchive();
   });
 
   $("close-selective").addEventListener("click", closeSelectiveExtractModal);
@@ -329,8 +513,60 @@ function wireEvents() {
     }
   });
 
+  const updateDeletePresetButton = () => {
+    const isCustom = $<HTMLSelectElement>("preset").value.startsWith("custom:");
+    $("delete-preset").hidden = !isCustom;
+  };
+
+  refreshPresetDropdown();
+  updateDeletePresetButton();
+
   $<HTMLSelectElement>("preset").addEventListener("change", () => {
     applyPreset($<HTMLSelectElement>("preset").value);
+    updateDeletePresetButton();
+  });
+
+  $("save-preset").addEventListener("click", () => {
+    void (async () => {
+      const raw = await promptInput({
+        title: "Save preset",
+        label: "Name this preset:",
+        placeholder: "e.g. My backup",
+        confirmLabel: "Save",
+      });
+      const name = raw?.trim();
+      if (!name) return;
+      try {
+        saveCustomPreset(name);
+        refreshPresetDropdown(`custom:${name}`);
+        updateDeletePresetButton();
+        void persistSettingsImmediately(
+          state.currentSettings,
+          state.settingsExtras,
+        );
+        setStatus(`Preset "${name}" saved`, 2000);
+      } catch (err) {
+        setStatus(
+          "Error",
+          3000,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    })();
+  });
+
+  $("delete-preset").addEventListener("click", () => {
+    const value = $<HTMLSelectElement>("preset").value;
+    if (!value.startsWith("custom:")) return;
+    const name = value.slice("custom:".length);
+    deleteCustomPreset(name);
+    refreshPresetDropdown("custom");
+    updateDeletePresetButton();
+    void persistSettingsImmediately(
+      state.currentSettings,
+      state.settingsExtras,
+    );
+    setStatus(`Preset "${name}" deleted`, 2000);
   });
 
   $<HTMLSelectElement>("s-format").addEventListener("change", () => {
@@ -369,6 +605,12 @@ function wireEvents() {
   for (const id of ["level", "method", "dict", "word-size", "solid"]) {
     $(id).addEventListener("change", onCompressionOptionChange);
   }
+
+  $<HTMLSelectElement>("split-size").addEventListener("change", () => {
+    const isCustom = $<HTMLSelectElement>("split-size").value === "custom";
+    $("split-custom-field").hidden = !isCustom;
+    if (isCustom) $<HTMLInputElement>("split-custom").focus();
+  });
 
   $("toggle-password").addEventListener("click", () => {
     const input = $<HTMLInputElement>("password");
@@ -412,18 +654,13 @@ function wireEvents() {
       btn.addEventListener("click", () => {
         const mode =
           btn.dataset.workspaceModeBtn === "power" ? "power" : "basic";
+        if (mode === "power") {
+          syncBasicBeforeRun();
+        }
         setWorkspaceMode(mode);
         if (mode === "basic") {
-          const currentMode = getMode();
-          if (currentMode === "add" && state.inputs.length > 0) {
-            setBasicView("compress");
-          } else if (currentMode === "extract") {
-            setBasicView("extract");
-          } else if (currentMode === "browse") {
-            setBasicView("browse");
-          } else {
-            setBasicView("home");
-          }
+          syncBasicWorkspaceFromPower();
+          setBasicView("home");
         }
         refreshQuickActionRepeatState();
       });
@@ -448,6 +685,12 @@ function wireEvents() {
     state.currentSettings = readSettingsModal();
     applyTheme(state.currentSettings.theme);
     setWorkspaceMode(state.currentSettings.workspaceMode, { persist: false });
+    if (
+      state.currentSettings.workspaceMode === "basic" &&
+      previous.workspaceMode !== "basic"
+    ) {
+      setBasicView("home");
+    }
     setUiDensity(state.currentSettings.uiDensity, { persist: false });
     applySettingsToForm();
     updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
@@ -489,6 +732,36 @@ function wireEvents() {
       log(`Setup wizard failed: ${msg}`, "error");
       await message(`Failed to run setup wizard.\n\n${msg}`, {
         title: "Setup wizard error",
+        kind: "error",
+      });
+    }
+  });
+
+  $("reset-settings").addEventListener("click", async () => {
+    const confirmed = await ask(
+      "Are you sure you want to reset all settings to default and restart Zinnia?",
+      {
+        title: "Reset Settings",
+        kind: "warning",
+        okLabel: "Reset & Restart",
+        cancelLabel: "Cancel",
+      },
+    );
+    if (!confirmed) return;
+
+    try {
+      await invoke("reset_settings");
+      await invoke("clear_logs").catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`Failed to clear logs during reset: ${msg}`);
+      });
+      resetRuntimeStateForFirstRun();
+      await relaunch();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`Failed to reset settings: ${msg}`, "error");
+      await message(`Failed to reset settings.\n\n${msg}`, {
+        title: "Reset settings error",
         kind: "error",
       });
     }
@@ -539,12 +812,14 @@ function wireEvents() {
   $("export-logs").addEventListener("click", exportLocalLogs);
   $("open-logs-folder").addEventListener("click", openLogsFolder);
   $("clear-logs").addEventListener("click", clearLocalLogs);
+  $("run-benchmark").addEventListener("click", runBenchmark);
   $("show-licenses").addEventListener("click", (e) =>
     openLicensesModal(e.currentTarget as HTMLElement),
   );
   $("about-show-licenses").addEventListener("click", (e) =>
     openLicensesModal(e.currentTarget as HTMLElement),
   );
+  wireOsIntegrationEvents();
 
   $("close-licenses").addEventListener("click", closeLicensesModal);
   $("licenses-overlay").addEventListener("click", (e) => {
@@ -570,6 +845,14 @@ function wireEvents() {
       }
       return;
     }
+    if (!$("input-modal-overlay").hidden) {
+      if (e.key === "Escape") {
+        return;
+      }
+      if (e.key === "?" || (e.key === "Enter" && (e.ctrlKey || e.metaKey))) {
+        return;
+      }
+    }
     if (e.key === "Escape") {
       if (!$("settings-overlay").hidden) {
         closeSettingsModal();
@@ -587,14 +870,34 @@ function wireEvents() {
         closeLicensesModal();
         return;
       }
+      if (!$("shortcuts-overlay").hidden) {
+        closeShortcutsModal();
+        return;
+      }
+    }
+    if (e.key === "?" && !isEditableTarget(e.target)) {
+      if (
+        !$("setup-wizard-overlay").hidden ||
+        !$("settings-overlay").hidden ||
+        !$("selective-overlay").hidden ||
+        !$("command-preview-overlay").hidden ||
+        !$("licenses-overlay").hidden ||
+        !$("input-modal-overlay").hidden
+      )
+        return;
+      e.preventDefault();
+      openShortcutsModal();
+      return;
     }
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       if (
         !$("setup-wizard-overlay").hidden ||
         !$("settings-overlay").hidden ||
+        !$("input-modal-overlay").hidden ||
         !$("licenses-overlay").hidden ||
         !$("selective-overlay").hidden ||
-        !$("command-preview-overlay").hidden
+        !$("command-preview-overlay").hidden ||
+        !$("shortcuts-overlay").hidden
       )
         return;
       e.preventDefault();
@@ -605,7 +908,52 @@ function wireEvents() {
   });
 }
 
+function wireTitlebar(): void {
+  const appWindow = getCurrentWebviewWindow();
+  const minBtn = document.getElementById("titlebar-min");
+  const maxBtn = document.getElementById("titlebar-max");
+  const closeBtn = document.getElementById("titlebar-close");
+
+  if (minBtn) {
+    minBtn.addEventListener("click", () => {
+      void appWindow.minimize();
+    });
+  }
+  if (maxBtn) {
+    maxBtn.addEventListener("click", async () => {
+      const isMax = await appWindow.isMaximized();
+      if (isMax) {
+        void appWindow.unmaximize();
+      } else {
+        void appWindow.maximize();
+      }
+    });
+  }
+  if (closeBtn) {
+    closeBtn.addEventListener("click", () => {
+      void appWindow.close();
+    });
+  }
+}
+
 async function init() {
+  // Detect platform and show titlebar immediately to prevent layout flash
+  let platform = "unknown";
+  try {
+    platform = await invoke<string>("get_platform_info");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    devLog(`Unable to detect platform: ${msg}`);
+  }
+  if (platform === "windows") {
+    document.body.classList.add("platform-windows");
+  } else if (platform === "macos") {
+    document.body.classList.add("platform-macos");
+  } else if (platform === "linux") {
+    document.body.classList.add("platform-linux");
+  }
+  wireTitlebar();
+
   try {
     await invoke("probe_7z");
   } catch (err) {
@@ -649,6 +997,8 @@ async function init() {
   applySettingsToForm();
   updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
   onCompressionOptionChange();
+  registerIconRefreshHook(refreshIcons);
+  refreshIcons();
 
   try {
     state.logDirectory = await invoke<string>("get_log_dir");
@@ -683,13 +1033,6 @@ async function init() {
     devLog(`Unable to read app version: ${msg}`);
   }
 
-  let platform = "unknown";
-  try {
-    platform = await invoke<string>("get_platform_info");
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    devLog(`Unable to detect platform: ${msg}`);
-  }
   state.platformName = platform;
   try {
     state.appIsPackaged = await invoke<boolean>("is_packaged");
@@ -710,6 +1053,10 @@ async function init() {
   dom.platformLabel.textContent = platformDisplay;
   $("s-version-label").textContent = version;
   $("s-platform-label").textContent = platformDisplay;
+  await refreshOsIntegrationStatus().catch((err) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    devLog(`Unable to read OS integration status: ${msg}`);
+  });
 
   let flatpak = false;
   try {
@@ -720,12 +1067,6 @@ async function init() {
   }
   if (flatpak) {
     document.body.classList.add("platform-flatpak");
-  }
-
-  if (platform === "windows") {
-    document.body.classList.add("platform-windows");
-  } else if (platform === "linux") {
-    document.body.classList.add("platform-linux");
   }
 
   let openPathsQueue = Promise.resolve();

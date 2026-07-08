@@ -194,6 +194,7 @@ describe("readSettingsModal", () => {
     setSelectValue("s-log-verbosity", "debug");
     setSelectValue("s-workspace-mode", "power");
     setSelectValue("s-ui-density", "compact");
+    setChecked("s-os-integration-dismissed", true);
 
     const settings = readSettingsModal();
     expect(settings.theme).toBe("dark");
@@ -214,6 +215,7 @@ describe("readSettingsModal", () => {
     expect(settings.logVerbosity).toBe("debug");
     expect(settings.workspaceMode).toBe("power");
     expect(settings.uiDensity).toBe("compact");
+    expect(settings.osIntegrationDismissed).toBe(true);
   });
 
   it("disables encryptHeaders for formats that don't support it", () => {

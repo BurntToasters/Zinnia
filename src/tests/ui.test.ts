@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
   buildLogFragments,
   shouldPersistLevel,
@@ -16,6 +17,7 @@ import {
   setProgress,
   hideProgress,
   log,
+  resizeWorkspaceWindow,
   renderInputs,
   setRunning,
   toggleActivity,
@@ -209,6 +211,53 @@ describe("workspace and density", () => {
     expect(state.currentSettings.workspaceMode).toBe("power");
   });
 
+  it("resizes to the basic portrait window size", async () => {
+    const appWindow = {
+      onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
+      setSize: vi.fn().mockResolvedValue(undefined),
+    };
+    vi.mocked(getCurrentWebviewWindow).mockReturnValue(appWindow as never);
+
+    await resizeWorkspaceWindow("basic");
+
+    expect(appWindow.setSize).toHaveBeenCalledOnce();
+    const [size] = appWindow.setSize.mock.calls[0];
+    expect(size.width).toBe(500);
+    expect(size.height).toBe(650);
+  });
+
+  it("clamps restored power window size before resizing", () => {
+    const appWindow = {
+      onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
+      setSize: vi.fn(),
+    };
+    vi.mocked(getCurrentWebviewWindow).mockReturnValue(appWindow as never);
+    state.currentSettings.powerWindowWidth = -20;
+    state.currentSettings.powerWindowHeight = 99999;
+
+    setWorkspaceMode("power", { persist: false });
+
+    expect(appWindow.setSize).toHaveBeenCalledOnce();
+    const [size] = appWindow.setSize.mock.calls[0];
+    expect(size.width).toBe(800);
+    expect(size.height).toBe(2160);
+  });
+
+  it("logs and continues when workspace resizing fails", async () => {
+    const appWindow = {
+      onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
+      setSize: vi.fn().mockRejectedValue(new Error("permission denied")),
+    };
+    vi.mocked(getCurrentWebviewWindow).mockReturnValue(appWindow as never);
+    state.currentSettings.logVerbosity = "debug";
+
+    await resizeWorkspaceWindow("power");
+
+    expect(dom.logEl.textContent).toContain(
+      "Unable to resize power workspace window: permission denied",
+    );
+  });
+
   it("gets and sets UI density", () => {
     expect(getUiDensity()).toBe("comfortable");
     setUiDensity("compact", { persist: false });
@@ -366,7 +415,7 @@ describe("renderInputs", () => {
     renderInputs();
     const buttons = dom.inputList.querySelectorAll("button");
     expect(buttons.length).toBe(2);
-    expect(buttons[0].textContent).toBe("Remove");
+    expect(buttons[0].innerHTML).toContain('data-lucide="trash-2"');
   });
 
   it("disables remove buttons when running", () => {

@@ -9,10 +9,21 @@ import {
 
 const mockSaveSettings = vi.fn().mockResolvedValue(undefined);
 const mockApplyTheme = vi.fn();
+const mockRefreshDefaultArchiverActionButton = vi
+  .fn()
+  .mockResolvedValue(undefined);
+const mockRunDefaultArchiverAction = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("../settings", () => ({
   saveSettings: (...args: unknown[]) => mockSaveSettings(...args),
   applyTheme: (...args: unknown[]) => mockApplyTheme(...args),
+}));
+
+vi.mock("../os-integration", () => ({
+  refreshDefaultArchiverActionButton: (...args: unknown[]) =>
+    mockRefreshDefaultArchiverActionButton(...args),
+  runDefaultArchiverAction: (...args: unknown[]) =>
+    mockRunDefaultArchiverAction(...args),
 }));
 
 beforeEach(() => {
@@ -25,6 +36,8 @@ beforeEach(() => {
   overlay.hidden = true;
   mockSaveSettings.mockClear();
   mockApplyTheme.mockClear();
+  mockRefreshDefaultArchiverActionButton.mockClear();
+  mockRunDefaultArchiverAction.mockClear();
 });
 
 describe("setup wizard state", () => {
@@ -33,12 +46,21 @@ describe("setup wizard state", () => {
   });
 
   it("does not show wizard when setup is complete for current version", () => {
+    state.currentSettings.setupComplete = true;
     state.settingsExtras._setupComplete = true;
-    state.settingsExtras._setupWizardVersion = 1;
+    state.settingsExtras._setupWizardVersion = 3;
+    expect(shouldShowSetupWizard()).toBe(false);
+  });
+
+  it("does not show wizard for legacy completed settings without new flag", () => {
+    state.currentSettings.setupComplete = false;
+    state.settingsExtras._setupComplete = true;
+    delete state.settingsExtras._setupWizardVersion;
     expect(shouldShowSetupWizard()).toBe(false);
   });
 
   it("shows wizard again when setup version is outdated", () => {
+    state.currentSettings.setupComplete = true;
     state.settingsExtras._setupComplete = true;
     state.settingsExtras._setupWizardVersion = 0;
     expect(shouldShowSetupWizard()).toBe(true);
@@ -46,8 +68,9 @@ describe("setup wizard state", () => {
 
   it("marks setup complete and persists settings", async () => {
     await markSetupComplete();
+    expect(state.currentSettings.setupComplete).toBe(true);
     expect(state.settingsExtras._setupComplete).toBe(true);
-    expect(state.settingsExtras._setupWizardVersion).toBe(1);
+    expect(state.settingsExtras._setupWizardVersion).toBe(3);
     expect(mockSaveSettings).toHaveBeenCalledOnce();
   });
 });
@@ -92,7 +115,7 @@ describe("showSetupWizard", () => {
     (
       document.getElementById("setup-updates-next") as HTMLButtonElement
     ).click();
-    (document.getElementById("setup-done-btn") as HTMLButtonElement).click();
+    (document.getElementById("setup-os-next") as HTMLButtonElement).click();
 
     const result = await promise;
     expect(result).toEqual({
@@ -100,6 +123,7 @@ describe("showSetupWizard", () => {
       theme: "dark",
       autoCheckUpdates: false,
       updateChannel: "beta",
+      osIntegrationDismissed: true,
     });
     expect(mockApplyTheme).toHaveBeenCalledWith("dark");
   });
@@ -118,9 +142,37 @@ describe("showSetupWizard", () => {
     (
       document.getElementById("setup-updates-next") as HTMLButtonElement
     ).click();
-    (document.getElementById("setup-done-btn") as HTMLButtonElement).click();
+    (document.getElementById("setup-os-next") as HTMLButtonElement).click();
 
     const result = await promise;
     expect(result?.updateChannel).toBe("auto");
+  });
+
+  it("uses the shared default archiver action in the OS integration step", async () => {
+    const promise = showSetupWizard();
+    const setupOsOpen = document.getElementById(
+      "setup-os-open",
+    ) as HTMLButtonElement;
+
+    expect(mockRefreshDefaultArchiverActionButton).toHaveBeenCalledWith(
+      setupOsOpen,
+    );
+
+    (
+      document.getElementById("setup-welcome-next") as HTMLButtonElement
+    ).click();
+    (
+      document.getElementById("setup-workspace-next") as HTMLButtonElement
+    ).click();
+    (document.getElementById("setup-theme-next") as HTMLButtonElement).click();
+    (
+      document.getElementById("setup-updates-next") as HTMLButtonElement
+    ).click();
+    setupOsOpen.click();
+    (document.getElementById("setup-os-next") as HTMLButtonElement).click();
+
+    await promise;
+
+    expect(mockRunDefaultArchiverAction).toHaveBeenCalledWith(setupOsOpen);
   });
 });

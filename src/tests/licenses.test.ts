@@ -62,11 +62,10 @@ describe("licenses modal", () => {
     const list = document.getElementById("licenses-list") as HTMLElement;
 
     expect(overlay.hidden).toBe(false);
-    expect(list.textContent).toContain("Twemoji");
     expect(list.textContent).toContain("7-Zip");
     expect(list.textContent).toContain("pkg-npm");
     expect(list.textContent).toContain("pkg-cargo");
-    expect(list.querySelectorAll("details.license-card").length).toBe(4);
+    expect(list.querySelectorAll("details.license-card").length).toBe(3);
 
     closeLicensesModal();
     expect(document.activeElement).toBe(trigger);

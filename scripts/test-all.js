@@ -189,7 +189,7 @@ ${colors.reset}`);
     }${colors.reset} (lines ${results.coverage.lines ?? "n/a"}%, statements ${results.coverage.statements ?? "n/a"}%, functions ${results.coverage.functions ?? "n/a"}%, branches ${results.coverage.branches ?? "n/a"}%)`,
   );
   console.log(
-    `${colors.bold}Rust Check:${colors.reset} ${
+    `${colors.bold}Rust Tests:${colors.reset} ${
       results.rust.status === "passed"
         ? `${colors.green}✓ PASS`
         : `${colors.red}✗ FAIL`
@@ -233,7 +233,7 @@ function main() {
   runCommand(
     "rust",
     "cargo",
-    ["check", "--manifest-path", "src-tauri/Cargo.toml"],
+    ["test", "--manifest-path", "src-tauri/Cargo.toml"],
     null,
     results,
     { timeout: rustTimeoutMs },

@@ -41,6 +41,9 @@ const mocks = vi.hoisted(() => {
       getMode: vi.fn(() => runtime.mode),
       setBrowsePasswordFieldVisible: vi.fn(),
       persistSettingsImmediately: vi.fn().mockResolvedValue(undefined),
+      triggerIconRefresh: vi.fn(),
+      registerIconRefreshHook: vi.fn(),
+      resizeWorkspaceWindow: vi.fn().mockResolvedValue(undefined),
     },
     archive: {
       runAction: vi.fn().mockResolvedValue(undefined),
@@ -66,6 +69,9 @@ const mocks = vi.hoisted(() => {
       updateCompressionOptionsForFormat: vi.fn(),
       applyPreset: vi.fn(),
       onCompressionOptionChange: vi.fn(),
+      saveCustomPreset: vi.fn(),
+      deleteCustomPreset: vi.fn(),
+      refreshPresetDropdown: vi.fn(),
     },
     updater: {
       checkUpdates: vi.fn().mockResolvedValue(undefined),
@@ -90,6 +96,10 @@ const mocks = vi.hoisted(() => {
       showSetupWizard: vi.fn().mockResolvedValue(null),
       markSetupComplete: vi.fn().mockResolvedValue(undefined),
     },
+    osIntegration: {
+      refreshOsIntegrationStatus: vi.fn().mockResolvedValue(undefined),
+      wireOsIntegrationEvents: vi.fn(),
+    },
     extractPath: {
       deriveOutputArchivePath: vi.fn().mockReturnValue("/tmp/out.7z"),
       resolveOutputArchiveAutofill: vi.fn().mockReturnValue(null),
@@ -99,6 +109,7 @@ const mocks = vi.hoisted(() => {
       setBasicView: vi.fn(),
       handleBasicDragDrop: vi.fn(),
       syncBasicBeforeRun: vi.fn(),
+      syncBasicWorkspaceFromPower: vi.fn(),
     },
   };
 });
@@ -128,6 +139,9 @@ vi.mock("../ui", () => ({
   getMode: mocks.ui.getMode,
   setBrowsePasswordFieldVisible: mocks.ui.setBrowsePasswordFieldVisible,
   persistSettingsImmediately: mocks.ui.persistSettingsImmediately,
+  triggerIconRefresh: mocks.ui.triggerIconRefresh,
+  registerIconRefreshHook: mocks.ui.registerIconRefreshHook,
+  resizeWorkspaceWindow: mocks.ui.resizeWorkspaceWindow,
 }));
 
 vi.mock("../archive", () => ({
@@ -158,6 +172,9 @@ vi.mock("../presets", () => ({
     mocks.presets.updateCompressionOptionsForFormat,
   applyPreset: mocks.presets.applyPreset,
   onCompressionOptionChange: mocks.presets.onCompressionOptionChange,
+  saveCustomPreset: mocks.presets.saveCustomPreset,
+  deleteCustomPreset: mocks.presets.deleteCustomPreset,
+  refreshPresetDropdown: mocks.presets.refreshPresetDropdown,
 }));
 
 vi.mock("../updater", () => ({
@@ -189,6 +206,11 @@ vi.mock("../setup-wizard", () => ({
   markSetupComplete: mocks.setupWizard.markSetupComplete,
 }));
 
+vi.mock("../os-integration", () => ({
+  refreshOsIntegrationStatus: mocks.osIntegration.refreshOsIntegrationStatus,
+  wireOsIntegrationEvents: mocks.osIntegration.wireOsIntegrationEvents,
+}));
+
 vi.mock("../extract-path", () => ({
   deriveOutputArchivePath: mocks.extractPath.deriveOutputArchivePath,
   resolveOutputArchiveAutofill: mocks.extractPath.resolveOutputArchiveAutofill,
@@ -199,6 +221,7 @@ vi.mock("../basic-ui", () => ({
   setBasicView: mocks.basicUi.setBasicView,
   handleBasicDragDrop: mocks.basicUi.handleBasicDragDrop,
   syncBasicBeforeRun: mocks.basicUi.syncBasicBeforeRun,
+  syncBasicWorkspaceFromPower: mocks.basicUi.syncBasicWorkspaceFromPower,
 }));
 
 const invokeMock = vi.mocked(invoke);
@@ -273,6 +296,8 @@ function ensureMainDomElements(): void {
     "browse-test",
     "browse-extract",
     "browse-selective",
+    "browse-add-files",
+    "browse-convert",
     "selective-select-all",
     "selective-clear",
     "selective-cancel",
@@ -296,6 +321,7 @@ function ensureMainDomElements(): void {
     "about-show-licenses",
     "close-licenses",
     "rerun-setup-wizard",
+    "reset-settings",
   ]) {
     ensureElement(id, "button");
   }
@@ -328,7 +354,16 @@ function ensureMainDomElements(): void {
   }
 
   ensureSelect("format", ["7z", "zip", "tar"]);
-  ensureSelect("preset", ["balanced", "ultra"]);
+  ensureSelect("preset", ["balanced", "ultra", "custom"]);
+  ensureElement("save-preset", "button");
+  ensureElement("input-modal-overlay", "div");
+  ensureElement("input-modal-field", "input");
+  ensureElement("input-modal-confirm", "button");
+  ensureElement("input-modal-cancel", "button");
+  ensureElement("delete-preset", "button");
+  ensureSelect("split-size", ["", "100m", "custom"]);
+  ensureElement("split-custom-field", "div");
+  ensureElement("split-custom", "input");
   ensureSelect("s-format", ["7z", "zip", "tar"]);
   for (const id of ["level", "method", "dict", "word-size", "solid"]) {
     ensureSelect(id, [""]);
@@ -348,6 +383,8 @@ function ensureMainDomElements(): void {
   ensureElement("export-logs", "button");
   ensureElement("open-logs-folder", "button");
   ensureElement("clear-logs", "button");
+  ensureElement("run-benchmark", "button");
+  ensureElement("benchmark-result", "div");
   ensureElement("show-licenses", "button");
   ensureElement("about-show-licenses", "button");
   ensureElement("close-licenses", "button");
@@ -366,6 +403,9 @@ function ensureMainDomElements(): void {
   ensureElement("licenses-list", "div");
   ensureElement("selective-overlay", "div");
   ensureElement("command-preview-overlay", "div");
+  ensureElement("shortcuts-overlay", "div");
+  ensureElement("close-shortcuts", "button");
+  ensureElement("close-shortcuts-footer", "button");
   ensureElement("setup-wizard-overlay", "div");
 
   (document.getElementById("settings-overlay") as HTMLElement).hidden = true;
@@ -373,6 +413,8 @@ function ensureMainDomElements(): void {
   (document.getElementById("selective-overlay") as HTMLElement).hidden = true;
   (document.getElementById("command-preview-overlay") as HTMLElement).hidden =
     true;
+  (document.getElementById("shortcuts-overlay") as HTMLElement).hidden = true;
+  (document.getElementById("input-modal-overlay") as HTMLElement).hidden = true;
   (document.getElementById("setup-wizard-overlay") as HTMLElement).hidden =
     true;
 }
@@ -458,6 +500,8 @@ beforeEach(async () => {
   mocks.ui.setBrowsePasswordFieldVisible.mockReset();
   mocks.ui.persistSettingsImmediately.mockReset();
   mocks.ui.persistSettingsImmediately.mockResolvedValue(undefined);
+  mocks.ui.resizeWorkspaceWindow.mockReset();
+  mocks.ui.resizeWorkspaceWindow.mockResolvedValue(undefined);
 
   mocks.archive.runAction.mockReset();
   mocks.archive.runAction.mockResolvedValue(undefined);
@@ -506,6 +550,10 @@ beforeEach(async () => {
   mocks.setupWizard.markSetupComplete.mockReset();
   mocks.setupWizard.markSetupComplete.mockResolvedValue(undefined);
 
+  mocks.osIntegration.refreshOsIntegrationStatus.mockReset();
+  mocks.osIntegration.refreshOsIntegrationStatus.mockResolvedValue(undefined);
+  mocks.osIntegration.wireOsIntegrationEvents.mockReset();
+
   mocks.extractPath.deriveOutputArchivePath.mockReset();
   mocks.extractPath.deriveOutputArchivePath.mockReturnValue("/tmp/out.7z");
   mocks.extractPath.resolveOutputArchiveAutofill.mockReset();
@@ -515,6 +563,7 @@ beforeEach(async () => {
   mocks.basicUi.setBasicView.mockReset();
   mocks.basicUi.handleBasicDragDrop.mockReset();
   mocks.basicUi.syncBasicBeforeRun.mockReset();
+  mocks.basicUi.syncBasicWorkspaceFromPower.mockReset();
 
   askMock.mockReset();
   askMock.mockResolvedValue(false);
@@ -588,6 +637,33 @@ describe("main bootstrap", () => {
       (document.getElementById("s-version-label") as HTMLElement).textContent,
     ).toBe("v1.2.3");
     expect(document.body.classList.contains("platform-linux")).toBe(true);
+  });
+
+  it("opens the basic compress view for a --compress launch", async () => {
+    const { state } = await import("../state");
+    state.inputs = [];
+    setInvokeRouter((command) => {
+      if (command === "probe_7z") return undefined;
+      if (command === "get_cpu_count") return 12;
+      if (command === "get_log_dir") return "/tmp/logs";
+      if (command === "get_platform_info") return "linux";
+      if (command === "is_packaged") return true;
+      if (command === "is_flatpak") return false;
+      if (command === "get_initial_mode") return "compress";
+      if (command === "get_initial_paths") return ["/tmp/folder-to-zip"];
+      if (command === "drain_pending_paths") return [];
+      return undefined;
+    });
+
+    await loadMainModule();
+
+    expect(document.body.textContent ?? "").not.toContain("Failed to start:");
+    expect(mocks.ui.setMode).toHaveBeenCalledWith("add");
+    expect(state.inputs).toContain("/tmp/folder-to-zip");
+    expect(mocks.basicUi.setBasicView).toHaveBeenCalledWith("compress");
+    expect(mocks.basicUi.setBasicView).not.toHaveBeenCalledWith("extract");
+    expect(mocks.basicUi.setBasicView).not.toHaveBeenCalledWith("browse");
+    expect(mocks.archive.browseArchive).not.toHaveBeenCalled();
   });
 
   it("shows startup failure details when runtime probe fails", async () => {
@@ -908,6 +984,16 @@ describe("main bootstrap", () => {
     extractToggle.click();
     expect(extractPassword.type).toBe("password");
 
+    (
+      document.getElementById("workspace-mode-power") as HTMLButtonElement
+    ).click();
+    expect(mocks.basicUi.syncBasicBeforeRun).toHaveBeenCalled();
+
+    (
+      document.getElementById("workspace-mode-basic") as HTMLButtonElement
+    ).click();
+    expect(mocks.basicUi.syncBasicWorkspaceFromPower).toHaveBeenCalled();
+
     state.lastAutoExtractDestination = "/tmp/auto";
     const extractPath = document.getElementById(
       "extract-path",
@@ -944,6 +1030,47 @@ describe("main bootstrap", () => {
     );
   });
 
+  it("resets settings to default and relaunches the app on reset confirmation", async () => {
+    await loadMainModule();
+
+    // 1. User cancels reset
+    askMock.mockResolvedValueOnce(false);
+    (document.getElementById("reset-settings") as HTMLButtonElement).click();
+    await flushAsync();
+    expect(mocks.ui.persistSettingsImmediately).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalledWith("reset_settings");
+
+    // 2. User confirms reset
+    const { relaunch } = await import("@tauri-apps/plugin-process");
+    const relaunchMock = vi.mocked(relaunch);
+    relaunchMock.mockReset();
+    relaunchMock.mockResolvedValue(undefined);
+
+    askMock.mockResolvedValueOnce(true);
+    (document.getElementById("reset-settings") as HTMLButtonElement).click();
+    await flushAsync();
+
+    expect(mocks.ui.persistSettingsImmediately).not.toHaveBeenCalled();
+    expect(invokeMock).toHaveBeenCalledWith("reset_settings");
+    expect(invokeMock).toHaveBeenCalledWith("clear_logs");
+    expect(relaunchMock).toHaveBeenCalled();
+  });
+
+  it("does not trigger global run shortcut while input modal is open", async () => {
+    await loadMainModule();
+    const inputOverlay = document.getElementById(
+      "input-modal-overlay",
+    ) as HTMLElement;
+    inputOverlay.hidden = false;
+
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true }),
+    );
+
+    expect(mocks.archive.runAction).not.toHaveBeenCalled();
+    expect(mocks.archive.browseArchive).not.toHaveBeenCalled();
+  });
+
   it("runs setup wizard path when required and handles setup failures", async () => {
     mocks.setupWizard.shouldShowSetupWizard.mockReturnValue(true);
     mocks.setupWizard.showSetupWizard.mockResolvedValueOnce({
@@ -955,7 +1082,13 @@ describe("main bootstrap", () => {
 
     await loadMainModule();
 
+    expect(mocks.ui.resizeWorkspaceWindow).toHaveBeenCalledWith("power");
     expect(mocks.setupWizard.showSetupWizard).toHaveBeenCalled();
+    expect(
+      mocks.ui.resizeWorkspaceWindow.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      mocks.setupWizard.showSetupWizard.mock.invocationCallOrder[0],
+    );
     expect(mocks.setupWizard.markSetupComplete).toHaveBeenCalled();
     expect(mocks.ui.setWorkspaceMode).toHaveBeenCalledWith("power", {
       persist: false,
@@ -1016,5 +1149,117 @@ describe("main bootstrap", () => {
     expect(mocks.ui.setMode).toHaveBeenCalledWith("extract");
     expect(mocks.basicUi.setBasicView).toHaveBeenCalledWith("extract");
     expect(mocks.ui.renderInputs).toHaveBeenCalled();
+  });
+
+  it("applies platform-windows class and wires titlebar for Windows", async () => {
+    document.body.className = "";
+    setInvokeRouter((command) => {
+      if (command === "probe_7z") return undefined;
+      if (command === "get_cpu_count") return 8;
+      if (command === "get_log_dir") return "/tmp/logs";
+      if (command === "get_platform_info") return "windows";
+      if (command === "is_packaged") return true;
+      if (command === "is_flatpak") return false;
+      if (command === "get_initial_mode") return "";
+      if (command === "get_initial_paths") return [];
+      if (command === "drain_pending_paths") return [];
+      return undefined;
+    });
+
+    await loadMainModule();
+
+    expect(document.body.classList.contains("platform-windows")).toBe(true);
+    expect(document.body.classList.contains("platform-macos")).toBe(false);
+    expect(document.body.classList.contains("platform-linux")).toBe(false);
+  });
+
+  it("applies platform-macos class for macOS", async () => {
+    document.body.className = "";
+    setInvokeRouter((command) => {
+      if (command === "probe_7z") return undefined;
+      if (command === "get_cpu_count") return 8;
+      if (command === "get_log_dir") return "/tmp/logs";
+      if (command === "get_platform_info") return "macos";
+      if (command === "is_packaged") return true;
+      if (command === "is_flatpak") return false;
+      if (command === "get_initial_mode") return "";
+      if (command === "get_initial_paths") return [];
+      if (command === "drain_pending_paths") return [];
+      return undefined;
+    });
+
+    await loadMainModule();
+
+    expect(document.body.classList.contains("platform-macos")).toBe(true);
+    expect(document.body.classList.contains("platform-windows")).toBe(false);
+  });
+
+  it("wires titlebar minimize/maximize/close buttons", async () => {
+    const minimizeMock = vi.fn().mockResolvedValue(undefined);
+    const maximizeMock = vi.fn().mockResolvedValue(undefined);
+    const isMaximizedMock = vi.fn().mockResolvedValue(false);
+    const unmaximizeMock = vi.fn().mockResolvedValue(undefined);
+    const closeMock = vi.fn().mockResolvedValue(undefined);
+
+    getCurrentWebviewWindowMock.mockReturnValue({
+      minimize: minimizeMock,
+      maximize: maximizeMock,
+      isMaximized: isMaximizedMock,
+      unmaximize: unmaximizeMock,
+      close: closeMock,
+      onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
+    } as never);
+
+    // Create titlebar button elements
+    ensureElement("titlebar-min", "button");
+    ensureElement("titlebar-max", "button");
+    ensureElement("titlebar-close", "button");
+
+    await loadMainModule();
+
+    (document.getElementById("titlebar-min") as HTMLButtonElement).click();
+    await flushAsync();
+    expect(minimizeMock).toHaveBeenCalled();
+
+    (document.getElementById("titlebar-close") as HTMLButtonElement).click();
+    await flushAsync();
+    expect(closeMock).toHaveBeenCalled();
+
+    (document.getElementById("titlebar-max") as HTMLButtonElement).click();
+    await flushAsync();
+    expect(maximizeMock).toHaveBeenCalled();
+
+    // Test unmaximize path
+    isMaximizedMock.mockResolvedValue(true);
+    (document.getElementById("titlebar-max") as HTMLButtonElement).click();
+    await flushAsync();
+    expect(unmaximizeMock).toHaveBeenCalled();
+  });
+
+  it("handles platform detection failure gracefully", async () => {
+    document.body.className = "";
+    // Reset DOM from any previous test that may have set body.textContent
+    while (document.body.firstChild) document.body.firstChild.remove();
+    ensureMainDomElements();
+    setInvokeRouter((command) => {
+      if (command === "get_platform_info") throw new Error("IPC failed");
+      if (command === "probe_7z") return undefined;
+      if (command === "get_cpu_count") return 8;
+      if (command === "get_log_dir") return "/tmp/logs";
+      if (command === "is_packaged") return true;
+      if (command === "is_flatpak") return false;
+      if (command === "get_initial_mode") return "";
+      if (command === "get_initial_paths") return [];
+      if (command === "drain_pending_paths") return [];
+      return undefined;
+    });
+
+    await loadMainModule();
+
+    // Should not crash — app starts without platform class
+    expect(document.body.textContent ?? "").not.toContain("Failed to start:");
+    expect(document.body.classList.contains("platform-windows")).toBe(false);
+    expect(document.body.classList.contains("platform-macos")).toBe(false);
+    expect(document.body.classList.contains("platform-linux")).toBe(false);
   });
 });

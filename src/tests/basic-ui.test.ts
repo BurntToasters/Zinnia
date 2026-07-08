@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { state } from "../state";
 
 const uiMocks = vi.hoisted(() => {
@@ -47,6 +48,8 @@ vi.mock("../ui", () => ({
   renderInputs: uiMocks.renderInputs,
   setBrowsePasswordFieldVisible: uiMocks.setBrowsePasswordFieldVisible,
   registerBasicHooks: uiMocks.registerBasicHooks,
+  triggerIconRefresh: vi.fn(),
+  registerIconRefreshHook: vi.fn(),
 }));
 
 vi.mock("../presets", () => ({
@@ -94,6 +97,7 @@ import {
 
 const openMock = vi.mocked(open);
 const invokeMock = vi.mocked(invoke);
+const listenMock = vi.mocked(listen);
 
 function addEl<T extends HTMLElement>(
   root: HTMLElement,
@@ -271,6 +275,8 @@ beforeEach(() => {
   openMock.mockResolvedValue(null);
   invokeMock.mockReset();
   invokeMock.mockResolvedValue(undefined);
+  listenMock.mockReset();
+  listenMock.mockResolvedValue(() => {});
 });
 
 describe("basic-ui views and rendering", () => {

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { message, confirm } from "@tauri-apps/plugin-dialog";
+import { listen } from "@tauri-apps/api/event";
+import { message, confirm, open, save } from "@tauri-apps/plugin-dialog";
 import {
   $,
   parseThreads,
@@ -24,6 +25,7 @@ import {
   setRunning,
   getMode,
   setBrowsePasswordFieldVisible,
+  triggerIconRefresh,
 } from "./ui";
 import { ensureArchivePaths, validateExtraArgs } from "./archive-rules";
 import { formatCommandOutputForLogs } from "./output-logging";
@@ -33,13 +35,21 @@ import {
 } from "./compression-security";
 import type { ArchiveInfo, BrowseEntry } from "./browse-model";
 import { resolveExtractDestinationAutofill } from "./extract-path";
+import { looksLikePasswordRequiredError, describe7zError } from "./error-hints";
+export { looksLikePasswordRequiredError, describe7zError };
+import { showToast } from "./toast";
+import { promptInput } from "./prompt-modal";
+import { SAFE_EXTRACT_OVERWRITE_MODE } from "./extract-policy";
 import {
   buildSelectiveExtractArgs,
+  buildEntryTree,
+  computeNodeCheckState,
   clearPathSelection,
   filterBrowseEntriesByQuery,
   selectEntries,
   toggleEntrySelection,
 } from "./selective-extract";
+import type { TreeNode } from "./selective-extract";
 
 export function truncateForDialog(text: string, maxChars = 4000): string {
   if (text.length <= maxChars) return text;
@@ -58,7 +68,7 @@ function logCommandResult(stdout: string, stderr: string) {
   }
 }
 
-interface Run7zResult {
+export interface Run7zResult {
   stdout: string;
   stderr: string;
   code: number;
@@ -66,12 +76,31 @@ interface Run7zResult {
   stderr_truncated?: boolean;
 }
 
+interface ProgressUpdate {
+  percent?: number;
+  filesDone?: number;
+  currentFile?: string;
+}
+
+function basename(filePath: string): string {
+  const sep = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
+  return sep >= 0 ? filePath.slice(sep + 1) : filePath;
+}
+
+// Estimate remaining time for the current archive from elapsed time and percent.
+export function formatBatchEta(elapsedMs: number, percent: number): string {
+  if (percent <= 0 || percent >= 100 || elapsedMs <= 0) return "";
+  const totalMs = elapsedMs / (percent / 100);
+  const remainingSec = Math.max(0, Math.round((totalMs - elapsedMs) / 1000));
+  if (remainingSec < 1) return "";
+  if (remainingSec < 60) return `~${remainingSec}s left`;
+  const min = Math.floor(remainingSec / 60);
+  const sec = remainingSec % 60;
+  return `~${min}m ${sec.toString().padStart(2, "0")}s left`;
+}
+
 export type ArchiveTestResult =
-  | "passed"
-  | "passed_with_warnings"
-  | "failed"
-  | "cancelled"
-  | "error";
+  "passed" | "passed_with_warnings" | "failed" | "cancelled" | "error";
 
 let commandPreviewTrigger: HTMLElement | null = null;
 let commandPreviewCopyTimer: number | undefined;
@@ -167,19 +196,236 @@ export function methodLooksEncrypted(value: string): boolean {
   );
 }
 
-export function looksLikePasswordRequiredError(
+// Inject or replace the -p password switch in a 7z arg list (before "--").
+export function withPassword(args: string[], password: string): string[] {
+  const sepIndex = args.indexOf("--");
+  const head = sepIndex === -1 ? args.slice() : args.slice(0, sepIndex);
+  const tail = sepIndex === -1 ? [] : args.slice(sepIndex);
+  const filtered = head.filter((a) => !a.startsWith("-p"));
+  filtered.push(`-p${password}`);
+  return [...filtered, ...tail];
+}
+
+// Attach a live progress listener for the duration of `fn`, updating the status
+// bar with percent + current file + ETA. Returns whatever `fn` resolves to.
+async function withLiveProgress<T>(fn: () => Promise<T>): Promise<T> {
+  const startedAt = Date.now();
+  const unlisten = await listen<ProgressUpdate>(
+    "7z-progress-structured",
+    (event) => {
+      const u = event.payload;
+      if (typeof u?.percent !== "number") return;
+      const eta = formatBatchEta(Date.now() - startedAt, u.percent);
+      const file = u.currentFile ? ` ${basename(u.currentFile)}` : "";
+      setProgress(`${u.percent}%${file}${eta ? ` · ${eta}` : ""}`);
+    },
+  );
+  try {
+    return await fn();
+  } finally {
+    if (typeof unlisten === "function") unlisten();
+  }
+}
+
+// Run 7z; if an extract fails because the archive is encrypted, prompt once for
+// a password and retry. Returns the final result.
+async function runWithPasswordRetry(
+  args: string[],
+  isExtract: boolean,
+): Promise<Run7zResult> {
+  let result = await invoke<Run7zResult>("run_7z", { args });
+  if (
+    isExtract &&
+    result.code > 1 &&
+    looksLikePasswordRequiredError(result.stdout, result.stderr)
+  ) {
+    const password = await promptInput({
+      title: "Password required",
+      label: "This archive is encrypted. Enter password:",
+      password: true,
+      confirmLabel: "Extract",
+    });
+    if (password) {
+      setStatus("Retrying with password");
+      result = await invoke<Run7zResult>("run_7z", {
+        args: withPassword(args, password),
+      });
+    }
+  }
+  return result;
+}
+
+// Add user-picked files into the currently browsed archive via the 7z update
+// command. Surfaces errors with hints and a success toast.
+export async function addFilesToArchive(): Promise<void> {
+  if (state.running) return;
+  const archive = state.inputs[0]?.trim();
+  if (!archive) {
+    await message("Open an archive first to add files to it.", {
+      title: "No archive",
+      kind: "warning",
+    });
+    return;
+  }
+
+  const selection = await open({ multiple: true, directory: false });
+  const files = Array.isArray(selection)
+    ? selection
+    : selection
+      ? [selection]
+      : [];
+  if (files.length === 0) return;
+
+  setRunning(true);
+  try {
+    if (!(await ensureRuntimeReady())) return;
+    const threads = parseThreads(
+      $<HTMLInputElement>("threads").value,
+      SETTING_DEFAULTS.threads,
+    );
+    const args = ["u"];
+    if (threads) args.push(`-mmt=${threads}`);
+    args.push(archive, "--", ...files);
+
+    setStatus("Adding files");
+    devLog(`7z ${sanitizeCommandArgsForPreview(args).join(" ")}`);
+    const result = await invoke<Run7zResult>("run_7z", { args });
+    logCommandResult(result.stdout, result.stderr);
+
+    if (result.code > 1) {
+      setStatus("Error", 3000, result.stderr || "Operation failed.");
+      await showOperationError(result.code, result.stdout, result.stderr);
+    } else {
+      setStatus("Done", 2000);
+      showToast(
+        `Added ${files.length} file${files.length === 1 ? "" : "s"} to the archive.`,
+        "success",
+      );
+      void browseArchive();
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Error: ${msg}`, "error");
+    setStatus("Error", 3000, msg);
+    await message(msg, { title: "Error", kind: "error" });
+  } finally {
+    setRunning(false);
+  }
+}
+
+// Convert the browsed archive to another format: extract to a managed temp dir,
+// recompress its contents with the current compression options, then clean up.
+export async function convertArchive(): Promise<void> {
+  if (state.running) return;
+  const archive = state.inputs[0]?.trim();
+  if (!archive) {
+    await message("Open an archive first to convert it.", {
+      title: "No archive",
+      kind: "warning",
+    });
+    return;
+  }
+
+  const format = $<HTMLSelectElement>("format").value;
+  const dest = await save({
+    title: "Convert archive to",
+    defaultPath: `converted.${format === "gzip" ? "gz" : format}`,
+  });
+  if (!dest) return;
+
+  setRunning(true);
+  let tempDir: string | null = null;
+  try {
+    if (!(await ensureRuntimeReady())) return;
+
+    tempDir = await invoke<string>("create_temp_extract_dir");
+
+    // Use the browse/extract password field for encrypted archives.
+    const browsePassword = $<HTMLInputElement>("browse-password").value.trim();
+    const extractPassword =
+      $<HTMLInputElement>("extract-password").value.trim();
+    const password = extractPassword || browsePassword;
+
+    setStatus("Extracting for conversion");
+    const extractArgs = ["x", `-o${tempDir}`, "-y"];
+    if (password) extractArgs.push(`-p${password}`);
+    extractArgs.push("--", archive);
+    const extract = await runWithPasswordRetry(extractArgs, true);
+    if (extract.code > 1) {
+      setStatus("Error", 3000, extract.stderr || "Extraction failed.");
+      await showOperationError(extract.code, extract.stdout, extract.stderr);
+      return;
+    }
+
+    setStatus("Recompressing");
+    // Honor the full compression options (level/method/dict/solid/threads),
+    // plus password/encrypt-headers/sfx/split/timestamps from the form.
+    const compress = ["a", ...buildCompressionMethodSwitches(format)];
+
+    // Carry security options from the compression form
+    const rawPassword = $<HTMLInputElement>("password").value;
+    const rawEncryptHeaders = $<HTMLInputElement>("encrypt-headers").checked;
+    const { password: compressPassword, encryptHeaders } =
+      normalizeCompressionSecurityOptions(
+        format,
+        rawPassword,
+        rawEncryptHeaders,
+      );
+    if (compressPassword) compress.push(`-p${compressPassword}`);
+    if (compressPassword && format === "zip") compress.push("-mem=AES256");
+    if (encryptHeaders) compress.push("-mhe=on");
+
+    // Carry additional options
+    const sfx = $<HTMLInputElement>("sfx").checked;
+    const storeTimestamps = $<HTMLInputElement>("store-timestamps").checked;
+    if (storeTimestamps) compress.push("-mtc=on", "-mta=on");
+    if (sfx) compress.push("-sfx");
+
+    const splitSize = readSplitSize();
+    if (splitSize) compress.push(`-v${splitSize}`);
+
+    // Compress the extracted contents (everything inside the temp dir).
+    compress.push(dest, "--", `${tempDir}/*`);
+
+    const result = await invoke<Run7zResult>("run_7z", { args: compress });
+    logCommandResult(result.stdout, result.stderr);
+    if (result.code > 1) {
+      setStatus("Error", 3000, result.stderr || "Conversion failed.");
+      await showOperationError(result.code, result.stdout, result.stderr);
+    } else {
+      setStatus("Done", 2000);
+      showToast(`Converted archive to ${format.toUpperCase()}.`, "success");
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Error: ${msg}`, "error");
+    setStatus("Error", 3000, msg);
+    await message(msg, { title: "Conversion error", kind: "error" });
+  } finally {
+    if (tempDir) {
+      try {
+        await invoke("remove_managed_temp_dir", { path: tempDir });
+      } catch (err) {
+        devLog(
+          `Failed to clean up temp dir: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    setRunning(false);
+  }
+}
+
+async function showOperationError(
+  code: number,
   stdout: string,
   stderr: string,
-): boolean {
-  const combined = `${stdout}\n${stderr}`.toLowerCase();
-  return (
-    combined.includes("wrong password") ||
-    combined.includes("can not open encrypted archive") ||
-    combined.includes("can't open encrypted archive") ||
-    combined.includes("data error in encrypted file") ||
-    combined.includes("encrypted headers") ||
-    combined.includes("enter password") ||
-    combined.includes("is encrypted")
+): Promise<void> {
+  const hint = describe7zError(stdout, stderr);
+  const detail = stderr.trim() ? `\n\n${truncateForDialog(stderr.trim())}` : "";
+  const hintLine = hint ? `\n\n${hint}` : "";
+  await message(
+    `Operation failed with exit code ${code}.${hintLine}${detail}`,
+    { title: "Operation failed", kind: "error" },
   );
 }
 
@@ -211,6 +457,32 @@ export function buildExtractArgsFor(
   );
 }
 
+// Format/level/method/dict/word-size/solid/threads switches read from the
+// compression form. Shared by buildArgs and convertArchive so they stay in sync.
+export function buildCompressionMethodSwitches(format: string): string[] {
+  const level = $<HTMLSelectElement>("level").value;
+  const method = $<HTMLSelectElement>("method").value;
+  const dict = $<HTMLSelectElement>("dict").value;
+  const wordSize = $<HTMLSelectElement>("word-size").value;
+  const solid = $<HTMLSelectElement>("solid").value;
+  const threads = parseThreads(
+    $<HTMLInputElement>("threads").value,
+    SETTING_DEFAULTS.threads,
+  );
+
+  const switches = [`-t${format}`, `-mx=${level}`];
+  if (method) switches.push(`-m0=${method}`);
+  if (dict) switches.push(`-md=${dict}`);
+  if (wordSize) switches.push(`-mfb=${wordSize}`);
+  if (format === "7z") {
+    if (solid === "solid") switches.push("-ms=on");
+    else if (solid === "off") switches.push("-ms=off");
+    else switches.push(`-ms=${solid}`);
+  }
+  if (threads) switches.push(`-mmt=${threads}`);
+  return switches;
+}
+
 export function buildArgs() {
   const mode = getMode();
 
@@ -234,18 +506,13 @@ export function buildArgs() {
   }
 
   const format = $<HTMLSelectElement>("format").value;
-  const level = $<HTMLSelectElement>("level").value;
-  const method = $<HTMLSelectElement>("method").value;
-  const dict = $<HTMLSelectElement>("dict").value;
-  const wordSize = $<HTMLSelectElement>("word-size").value;
-  const solid = $<HTMLSelectElement>("solid").value;
-  const threadsRaw = $<HTMLInputElement>("threads").value;
-  const threads = parseThreads(threadsRaw, SETTING_DEFAULTS.threads);
   const pathMode = $<HTMLSelectElement>("path-mode").value;
   const rawPassword = $<HTMLInputElement>("password").value;
   const rawEncryptHeaders = $<HTMLInputElement>("encrypt-headers").checked;
-  const sfx = $<HTMLInputElement>("sfx").checked;
+  const updateMode = $<HTMLInputElement>("update-mode").checked;
+  const sfx = !updateMode && $<HTMLInputElement>("sfx").checked;
   const deleteAfter = $<HTMLInputElement>("delete-after").checked;
+  const storeTimestamps = $<HTMLInputElement>("store-timestamps").checked;
 
   const validationError = validateCompressionSecurityOptions(
     format,
@@ -262,30 +529,23 @@ export function buildArgs() {
     rawEncryptHeaders,
   );
 
-  const switches: string[] = [];
-  switches.push(`-t${format}`);
-  switches.push(`-mx=${level}`);
-  if (method) switches.push(`-m0=${method}`);
-  if (dict) switches.push(`-md=${dict}`);
-  if (wordSize) switches.push(`-mfb=${wordSize}`);
-  if (format === "7z") {
-    if (solid === "solid") {
-      switches.push("-ms=on");
-    } else if (solid === "off") {
-      switches.push("-ms=off");
-    } else {
-      switches.push(`-ms=${solid}`);
-    }
-  }
-  if (threads) switches.push(`-mmt=${threads}`);
+  const switches = buildCompressionMethodSwitches(format);
   if (pathMode === "absolute") switches.push("-spf");
   if (password) switches.push(`-p${password}`);
+  // ZIP defaults to weak ZipCrypto; upgrade to AES-256 when a password is set.
+  if (password && format === "zip") switches.push("-mem=AES256");
   if (encryptHeaders) switches.push("-mhe=on");
+  if (storeTimestamps) switches.push("-mtc=on", "-mta=on");
   if (sfx) switches.push("-sfx");
   if (deleteAfter) switches.push("-sdel");
 
+  if (!updateMode) {
+    const splitSize = readSplitSize();
+    if (splitSize) switches.push(`-v${splitSize}`);
+  }
+
   const args = [
-    "a",
+    updateMode ? "u" : "a",
     ...switches,
     ...extraArgs,
     outputPath,
@@ -293,6 +553,25 @@ export function buildArgs() {
     ...state.inputs,
   ];
   return args;
+}
+
+const SPLIT_SIZE_PATTERN = /^\d+(?:b|k|m|g)?$/i;
+
+export function readSplitSize(): string {
+  const select = $<HTMLSelectElement>("split-size");
+  const choice = select.value;
+  if (!choice) return "";
+  const raw =
+    choice === "custom"
+      ? $<HTMLInputElement>("split-custom").value.trim().toLowerCase()
+      : choice;
+  if (!raw) return "";
+  if (!SPLIT_SIZE_PATTERN.test(raw)) {
+    throw new Error(
+      `Invalid split size "${raw}". Use a number with optional b/k/m/g, e.g. 100m.`,
+    );
+  }
+  return raw;
 }
 
 export function parseArchiveListing(stdout: string): ArchiveInfo {
@@ -418,7 +697,9 @@ export function renderBrowseTable(info: ArchiveInfo) {
     if (entry.isFolder) tr.className = "is-folder";
 
     const tdName = document.createElement("td");
-    tdName.textContent = entry.path;
+    const iconName = entry.isFolder ? "folder" : "file";
+    tdName.innerHTML = `<i data-lucide="${iconName}" class="lucide-icon" style="margin-right: 6px; font-size: 0.9em; vertical-align: middle;"></i><span></span>`;
+    tdName.querySelector("span")!.textContent = entry.path;
     tdName.title = entry.path;
 
     const tdSize = document.createElement("td");
@@ -449,7 +730,9 @@ export function renderBrowseTable(info: ArchiveInfo) {
       if (entry.isFolder) tr.className = "browse-folder";
 
       const tdName = document.createElement("td");
-      tdName.textContent = entry.path;
+      const iconName = entry.isFolder ? "folder" : "file";
+      tdName.innerHTML = `<i data-lucide="${iconName}" class="lucide-icon" style="margin-right: 6px; font-size: 0.9em; vertical-align: middle;"></i><span></span>`;
+      tdName.querySelector("span")!.textContent = entry.path;
       tdName.title = entry.path;
       tdName.style.wordBreak = "break-all";
 
@@ -478,6 +761,7 @@ export function renderBrowseTable(info: ArchiveInfo) {
   if (basicSummary && summary) {
     basicSummary.innerHTML = summary.innerHTML;
   }
+  triggerIconRefresh();
 }
 
 function getOrCreateSelection(archive: string): Set<string> {
@@ -503,10 +787,126 @@ function getCurrentArchiveSelectionPaths(
     .map((entry) => entry.path);
 }
 
+function renderSelectiveFlatRow(
+  archive: string,
+  entry: BrowseEntry,
+  allEntries: BrowseEntry[],
+): HTMLElement {
+  const selected = getOrCreateSelection(archive);
+  const row = document.createElement("label");
+  row.className = "selective-row";
+
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = selected.has(entry.path);
+  checkbox.disabled = state.running;
+  checkbox.addEventListener("change", () => {
+    const current = getOrCreateSelection(archive);
+    const next = toggleEntrySelection(current, entry, allEntries);
+    cacheSelection(archive, next);
+    renderSelectiveExtractModal();
+  });
+
+  const path = document.createElement("span");
+  path.className = "selective-row__path";
+  path.textContent = entry.path;
+  path.title = entry.path;
+
+  const meta = document.createElement("span");
+  meta.className = "selective-row__meta";
+  const kind = entry.isFolder ? "Folder" : "File";
+  const size = entry.isFolder ? "\u2014" : formatSize(entry.size);
+  meta.textContent = `${kind} \u00b7 ${size}`;
+
+  row.appendChild(checkbox);
+  row.appendChild(path);
+  row.appendChild(meta);
+  return row;
+}
+
+function renderSelectiveTreeNode(
+  archive: string,
+  node: TreeNode,
+  allEntries: BrowseEntry[],
+  list: HTMLElement,
+): void {
+  const selected = getOrCreateSelection(archive);
+  const row = document.createElement("div");
+  row.className = "selective-row selective-row--tree";
+  row.style.paddingLeft = `${node.depth * 18 + 8}px`;
+  row.setAttribute("role", "treeitem");
+  row.setAttribute("aria-level", String(node.depth + 1));
+
+  const expandable = node.isFolder && node.children.length > 0;
+  const expanded = state.selectiveExpandedFolders.has(node.path);
+  if (expandable)
+    row.setAttribute("aria-expanded", expanded ? "true" : "false");
+
+  const twisty = document.createElement("button");
+  twisty.type = "button";
+  twisty.className = "selective-twisty";
+  twisty.textContent = expandable ? (expanded ? "\u25be" : "\u25b8") : "";
+  twisty.disabled = !expandable;
+  twisty.setAttribute("aria-label", expanded ? "Collapse" : "Expand");
+  if (expandable) {
+    twisty.addEventListener("click", () => {
+      if (expanded) state.selectiveExpandedFolders.delete(node.path);
+      else state.selectiveExpandedFolders.add(node.path);
+      renderSelectiveExtractModal();
+    });
+  }
+
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  const checkState = computeNodeCheckState(node, selected);
+  checkbox.checked = checkState === "checked";
+  checkbox.indeterminate = checkState === "indeterminate";
+  checkbox.disabled = state.running;
+  row.setAttribute(
+    "aria-selected",
+    checkState === "checked" ? "true" : "false",
+  );
+  checkbox.addEventListener("change", () => {
+    const current = getOrCreateSelection(archive);
+    const entry: BrowseEntry = {
+      path: node.path,
+      isFolder: node.isFolder,
+      size: node.size,
+      packedSize: 0,
+      modified: "",
+    };
+    const next = toggleEntrySelection(current, entry, allEntries);
+    cacheSelection(archive, next);
+    renderSelectiveExtractModal();
+  });
+
+  const name = document.createElement("span");
+  name.className = "selective-row__path";
+  name.textContent = node.isFolder ? `${node.name}/` : node.name;
+  name.title = node.path;
+
+  const meta = document.createElement("span");
+  meta.className = "selective-row__meta";
+  meta.textContent = node.isFolder ? "Folder" : formatSize(node.size);
+
+  row.appendChild(twisty);
+  row.appendChild(checkbox);
+  row.appendChild(name);
+  row.appendChild(meta);
+  list.appendChild(row);
+
+  if (expandable && expanded) {
+    for (const child of node.children) {
+      renderSelectiveTreeNode(archive, child, allEntries, list);
+    }
+  }
+}
+
 function renderSelectiveEntryList(
   archive: string,
   entries: BrowseEntry[],
   allEntries: BrowseEntry[],
+  searching: boolean,
 ): void {
   const list = document.getElementById("selective-list");
   if (!list) return;
@@ -520,37 +920,19 @@ function renderSelectiveEntryList(
     return;
   }
 
-  const selected = getOrCreateSelection(archive);
-  for (const entry of entries) {
-    const row = document.createElement("label");
-    row.className = "selective-row";
+  // Searching shows a flat result list; otherwise a collapsible tree.
+  if (searching) {
+    list.removeAttribute("role");
+    for (const entry of entries) {
+      list.appendChild(renderSelectiveFlatRow(archive, entry, allEntries));
+    }
+    return;
+  }
 
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.checked = selected.has(entry.path);
-    checkbox.disabled = state.running;
-    checkbox.addEventListener("change", () => {
-      const current = getOrCreateSelection(archive);
-      const next = toggleEntrySelection(current, entry, allEntries);
-      cacheSelection(archive, next);
-      renderSelectiveExtractModal();
-    });
+  list.setAttribute("role", "tree");
 
-    const path = document.createElement("span");
-    path.className = "selective-row__path";
-    path.textContent = entry.path;
-    path.title = entry.path;
-
-    const meta = document.createElement("span");
-    meta.className = "selective-row__meta";
-    const kind = entry.isFolder ? "Folder" : "File";
-    const size = entry.isFolder ? "\u2014" : formatSize(entry.size);
-    meta.textContent = `${kind} \u00b7 ${size}`;
-
-    row.appendChild(checkbox);
-    row.appendChild(path);
-    row.appendChild(meta);
-    list.appendChild(row);
+  for (const node of buildEntryTree(entries)) {
+    renderSelectiveTreeNode(archive, node, allEntries, list);
   }
 }
 
@@ -560,13 +942,14 @@ export function renderSelectiveExtractModal(): void {
   const info = getCachedArchiveInfo(archive);
   if (!info) return;
 
+  const searching = state.selectiveSearchQuery.trim().length > 0;
   const filteredEntries = filterBrowseEntriesByQuery(
     info.entries,
     state.selectiveSearchQuery,
   );
   state.selectiveVisiblePaths = filteredEntries.map((entry) => entry.path);
 
-  renderSelectiveEntryList(archive, filteredEntries, info.entries);
+  renderSelectiveEntryList(archive, filteredEntries, info.entries, searching);
 
   const summary = document.getElementById("selective-summary");
   if (summary) {
@@ -620,6 +1003,11 @@ export function closeSelectiveExtractModal(): void {
   state.selectiveSearchQuery = "";
   state.selectiveActiveArchive = null;
   state.selectiveVisiblePaths = [];
+  state.selectiveExpandedFolders.clear();
+  if (selectiveTrigger) {
+    selectiveTrigger.focus();
+    selectiveTrigger = null;
+  }
 }
 
 export function setSelectiveExtractSearch(query: string): void {
@@ -649,8 +1037,11 @@ export function clearPickerSelection(): void {
   renderSelectiveExtractModal();
 }
 
+let selectiveTrigger: HTMLElement | null = null;
+
 export async function openSelectiveExtractModal(): Promise<void> {
   if (state.running) return;
+  selectiveTrigger = document.activeElement as HTMLElement | null;
 
   const archive = state.inputs[0];
   if (!archive) {
@@ -676,6 +1067,7 @@ export async function openSelectiveExtractModal(): Promise<void> {
 
   state.selectiveActiveArchive = archive;
   state.selectiveSearchQuery = "";
+  state.selectiveExpandedFolders.clear();
   getOrCreateSelection(archive);
 
   const search = document.getElementById(
@@ -738,7 +1130,16 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
 
     const selectedPaths = getCurrentArchiveSelectionPaths(archive, info);
     if (selectedPaths.length === 0) {
-      log("No entries selected in picker. Falling back to extract all.");
+      const extractAll = await confirm(
+        "No entries are selected. Extract all files from the archive?",
+        {
+          title: "No selection",
+          kind: "warning",
+          okLabel: "Extract all",
+          cancelLabel: "Cancel",
+        },
+      );
+      if (!extractAll) return;
     }
     const args = buildExtractArgsFor(
       archive,
@@ -746,8 +1147,7 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
       password,
       destination,
     );
-    const logSafe = args.map((a) => (a.startsWith("-p") ? "-p***" : a));
-    devLog(`7z ${logSafe.join(" ")}`);
+    devLog(`7z ${sanitizeCommandArgsForPreview(args).join(" ")}`);
 
     closeSelectiveExtractModal();
 
@@ -757,18 +1157,14 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
         : "Extracting archive",
     );
 
-    const result = await invoke<Run7zResult>("run_7z", { args });
+    const result = await withLiveProgress(() =>
+      runWithPasswordRetry(args, true),
+    );
     if (state.cancelRequested) {
       hideProgress();
       setStatus("Cancelled", 2000);
       log("Operation cancelled by user");
       return;
-    }
-
-    const outputLines = result.stdout.split(/\r?\n/);
-    for (const line of outputLines) {
-      const percentMatch = line.match(/(\d+)%/);
-      if (percentMatch) setProgress(`${percentMatch[1]}%`);
     }
 
     logCommandResult(result.stdout, result.stderr);
@@ -777,26 +1173,20 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
 
     if (result.code > 1) {
       log(`7z exited with code ${result.code}`);
-      setStatus("Error", 3000);
+      setStatus("Error", 3000, result.stderr || "Operation failed.");
       hideProgress();
-      const errorDetails = result.stderr
-        ? `\n\n${truncateForDialog(result.stderr.trim())}`
-        : "";
-      await message(
-        `Operation failed with exit code ${result.code}.${errorDetails}`,
-        { title: "Operation failed", kind: "error" },
-      );
+      await showOperationError(result.code, result.stdout, result.stderr);
     } else {
       if (result.code === 1) {
         log("Operation completed with warnings.");
       }
       setStatus("Done", 2000);
       hideProgress();
-      await message(
+      showToast(
         selectedPaths.length > 0
-          ? "Selected entries extracted successfully."
-          : "Extraction completed successfully.",
-        { title: "Done" },
+          ? "Selected entries extracted."
+          : "Extraction complete.",
+        "success",
       );
     }
   } catch (err) {
@@ -809,7 +1199,7 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
 
     const msg = err instanceof Error ? err.message : String(err);
     log(`Error: ${msg}`);
-    setStatus("Error", 3000);
+    setStatus("Error", 3000, msg);
     hideProgress();
     await message(msg, { title: "Error", kind: "error" });
   } finally {
@@ -872,25 +1262,18 @@ export async function runAction() {
       args = buildArgs();
     }
 
-    const logSafe = args.map((a) => (a.startsWith("-p") ? "-p***" : a));
-    devLog(`7z ${logSafe.join(" ")}`);
+    devLog(`7z ${sanitizeCommandArgsForPreview(args).join(" ")}`);
 
     setStatus("Running");
 
-    const result = await invoke<Run7zResult>("run_7z", { args });
+    const result = await withLiveProgress(() =>
+      runWithPasswordRetry(args, mode === "extract"),
+    );
     if (state.cancelRequested) {
       hideProgress();
       setStatus("Cancelled", 2000);
       log("Operation cancelled by user");
       return;
-    }
-
-    const outputLines = result.stdout.split(/\r?\n/);
-    for (const line of outputLines) {
-      const percentMatch = line.match(/(\d+)%/);
-      if (percentMatch) {
-        setProgress(`${percentMatch[1]}%`);
-      }
     }
 
     logCommandResult(result.stdout, result.stderr);
@@ -899,27 +1282,22 @@ export async function runAction() {
 
     if (result.code > 1) {
       log(`7z exited with code ${result.code}`);
-      setStatus("Error", 3000);
+      setStatus("Error", 3000, result.stderr || "Operation failed.");
       hideProgress();
-      const errorDetails = result.stderr
-        ? `\n\n${truncateForDialog(result.stderr.trim())}`
-        : "";
-      await message(
-        `Operation failed with exit code ${result.code}.${errorDetails}`,
-        { title: "Operation failed", kind: "error" },
-      );
+      await showOperationError(result.code, result.stdout, result.stderr);
     } else {
       if (result.code === 1) {
         log("Operation completed with warnings.");
       }
       setStatus("Done", 2000);
       hideProgress();
-      await message(
-        mode === "extract"
-          ? "Extraction completed successfully."
-          : "Archive created successfully.",
-        { title: "Done" },
+      showToast(
+        mode === "extract" ? "Extraction complete." : "Archive created.",
+        "success",
       );
+      // Clear password fields after successful operation to avoid lingering secrets in the DOM.
+      $<HTMLInputElement>("password").value = "";
+      $<HTMLInputElement>("extract-password").value = "";
     }
   } catch (err) {
     if (state.cancelRequested) {
@@ -931,7 +1309,7 @@ export async function runAction() {
 
     const messageText = err instanceof Error ? err.message : String(err);
     log(`Error: ${messageText}`);
-    setStatus("Error", 3000);
+    setStatus("Error", 3000, messageText);
     hideProgress();
     await message(messageText, { title: "Error", kind: "error" });
   } finally {
@@ -942,6 +1320,7 @@ export async function runAction() {
 export async function runBatchExtract() {
   if (state.running) return;
   setRunning(true);
+  let unlistenProgress: (() => void) | null = null;
   try {
     if (!(await ensureRuntimeReady())) return;
 
@@ -960,29 +1339,42 @@ export async function runBatchExtract() {
 
     let succeeded = 0;
     let failed = 0;
+    let current = 0;
+    let archiveStartedAt = Date.now();
+
+    // Live progress for the whole batch: show percent of the current archive,
+    // which file it's on, and an ETA, alongside the N-of-M counter.
+    unlistenProgress = await listen<ProgressUpdate>(
+      "7z-progress-structured",
+      (event) => {
+        const u = event.payload;
+        const counter = `(${current}/${archives.length})`;
+        if (typeof u?.percent === "number") {
+          const eta = formatBatchEta(Date.now() - archiveStartedAt, u.percent);
+          const file = u.currentFile ? ` ${basename(u.currentFile)}` : "";
+          setProgress(
+            `${u.percent}% ${counter}${file}${eta ? ` · ${eta}` : ""}`,
+          );
+        }
+      },
+    );
 
     for (let i = 0; i < archives.length; i++) {
       if (state.batchCancelled || state.cancelRequested) break;
 
       const archive = archives[i];
+      current = i + 1;
+      archiveStartedAt = Date.now();
       setStatus(`Extracting ${i + 1} of ${archives.length}`);
 
       try {
-        const args = ["x", `-o${dest}`, "-y"];
+        const args = ["x", `-o${dest}`, SAFE_EXTRACT_OVERWRITE_MODE, "-bb1"];
         if (password) args.push(`-p${password}`);
         args.push(...extraArgs);
         args.push("--", archive);
-        const logSafe = args.map((a) => (a.startsWith("-p") ? "-p***" : a));
-        devLog(`7z ${logSafe.join(" ")}`);
+        devLog(`7z ${sanitizeCommandArgsForPreview(args).join(" ")}`);
 
-        const result = await invoke<Run7zResult>("run_7z", { args });
-
-        const outputLines = result.stdout.split(/\r?\n/);
-        for (const line of outputLines) {
-          const percentMatch = line.match(/(\d+)%/);
-          if (percentMatch)
-            setProgress(`${percentMatch[1]}% (${i + 1}/${archives.length})`);
-        }
+        const result = await runWithPasswordRetry(args, true);
 
         logCommandResult(result.stdout, result.stderr);
         logTruncationNotice(result);
@@ -1024,10 +1416,11 @@ export async function runBatchExtract() {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Error: ${msg}`);
-    setStatus("Error", 3000);
+    setStatus("Error", 3000, msg);
     hideProgress();
     await message(msg, { title: "Extraction error", kind: "error" });
   } finally {
+    if (unlistenProgress) unlistenProgress();
     setRunning(false);
   }
 }
@@ -1112,7 +1505,7 @@ export async function testArchive(): Promise<ArchiveTestResult> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Test error: ${msg}`);
-    setStatus("Error", 3000);
+    setStatus("Error", 3000, msg);
     hideProgress();
     await message(msg, { title: "Test error", kind: "error" });
     return "error";
@@ -1184,7 +1577,7 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Browse error: ${msg}`);
-    setStatus("Error", 3000);
+    setStatus("Error", 3000, msg);
     await message(msg, { title: "Browse error", kind: "error" });
     return null;
   } finally {

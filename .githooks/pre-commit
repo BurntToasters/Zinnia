@@ -1,0 +1,16 @@
+#!/bin/sh
+# Zinnia pre-commit gate. Enabled via `git config core.hooksPath .githooks`
+# (set automatically by `npm install` through the prepare script).
+# Bypass with: git commit --no-verify
+
+set -e
+
+# Only run JS tooling when staged files touch the frontend/tooling surface.
+if git diff --cached --name-only --diff-filter=ACM | grep -qE '\.(ts|css|html|js)$'; then
+  echo "pre-commit: prettier --check"
+  npm run --silent format:check
+  echo "pre-commit: eslint"
+  npm run --silent lint
+  echo "pre-commit: tsc --noEmit"
+  npm run --silent typecheck
+fi

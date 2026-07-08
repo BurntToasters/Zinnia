@@ -66,10 +66,12 @@ describe("normalizeUserSettings", () => {
     const result = normalizeUserSettings({
       autoCheckUpdates: false,
       localLoggingEnabled: false,
+      osIntegrationDismissed: true,
       logVerbosity: "debug",
     });
     expect(result.autoCheckUpdates).toBe(false);
     expect(result.localLoggingEnabled).toBe(false);
+    expect(result.osIntegrationDismissed).toBe(true);
     expect(result.logVerbosity).toBe("debug");
   });
 
@@ -86,11 +88,26 @@ describe("normalizeUserSettings", () => {
       showActivityPanel: true,
       workspaceMode: "power",
       uiDensity: "compact",
+      powerWindowWidth: 960,
+      powerWindowHeight: 640,
+      setupComplete: true,
     });
     expect(result.lastMode).toBe("browse");
     expect(result.showActivityPanel).toBe(true);
     expect(result.workspaceMode).toBe("power");
     expect(result.uiDensity).toBe("compact");
+    expect(result.powerWindowWidth).toBe(960);
+    expect(result.powerWindowHeight).toBe(640);
+    expect(result.setupComplete).toBe(true);
+  });
+
+  it("clamps invalid power window size values", () => {
+    const result = normalizeUserSettings({
+      powerWindowWidth: -10,
+      powerWindowHeight: 99999,
+    });
+    expect(result.powerWindowWidth).toBe(800);
+    expect(result.powerWindowHeight).toBe(2160);
   });
 
   it("rejects invalid lastMode and uses default", () => {

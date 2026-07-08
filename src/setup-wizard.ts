@@ -1,5 +1,9 @@
 import { saveSettings, applyTheme } from "./settings";
 import { state } from "./state";
+import {
+  refreshDefaultArchiverActionButton,
+  runDefaultArchiverAction,
+} from "./os-integration";
 import type {
   ThemePreference,
   WorkspaceMode,
@@ -7,7 +11,7 @@ import type {
 } from "./settings-model";
 import { trapFocus, releaseFocusTrap } from "./utils";
 
-const SETUP_WIZARD_VERSION = 1;
+const SETUP_WIZARD_VERSION = 3;
 const LAST_STEP = 4;
 
 interface SetupWizardResult {
@@ -15,6 +19,7 @@ interface SetupWizardResult {
   theme: ThemePreference;
   autoCheckUpdates: boolean;
   updateChannel: UpdateChannel;
+  osIntegrationDismissed: boolean;
 }
 
 function $(id: string): HTMLElement {
@@ -39,13 +44,21 @@ function showStep(step: number): void {
 }
 
 export function shouldShowSetupWizard(): boolean {
+  const setupMarkedComplete =
+    state.currentSettings.setupComplete === true ||
+    state.settingsExtras._setupComplete === true;
+  if (!setupMarkedComplete) {
+    return true;
+  }
+
+  const storedVersion = state.settingsExtras._setupWizardVersion;
   return (
-    state.settingsExtras._setupComplete !== true ||
-    state.settingsExtras._setupWizardVersion !== SETUP_WIZARD_VERSION
+    typeof storedVersion === "number" && storedVersion !== SETUP_WIZARD_VERSION
   );
 }
 
 export async function markSetupComplete(): Promise<void> {
+  state.currentSettings.setupComplete = true;
   state.settingsExtras._setupComplete = true;
   state.settingsExtras._setupWizardVersion = SETUP_WIZARD_VERSION;
   await saveSettings(state.currentSettings, state.settingsExtras);
@@ -76,7 +89,9 @@ export function showSetupWizard(): Promise<SetupWizardResult | null> {
     const themeNext = $("setup-theme-next") as HTMLButtonElement;
     const updatesBack = $("setup-updates-back") as HTMLButtonElement;
     const updatesNext = $("setup-updates-next") as HTMLButtonElement;
-    const doneBtn = $("setup-done-btn") as HTMLButtonElement;
+    const osBack = $("setup-os-back") as HTMLButtonElement;
+    const osOpen = $("setup-os-open") as HTMLButtonElement;
+    const osNext = $("setup-os-next") as HTMLButtonElement;
     const autoUpdates = $("setup-auto-updates") as HTMLInputElement;
     const updateChannel = $("setup-update-channel") as HTMLSelectElement;
     const workspaceButtons = document.querySelectorAll<HTMLButtonElement>(
@@ -120,7 +135,9 @@ export function showSetupWizard(): Promise<SetupWizardResult | null> {
       themeNext.removeEventListener("click", onThemeNext);
       updatesBack.removeEventListener("click", onUpdatesBack);
       updatesNext.removeEventListener("click", onUpdatesNext);
-      doneBtn.removeEventListener("click", onDone);
+      osBack.removeEventListener("click", onOsBack);
+      osOpen.removeEventListener("click", onOsOpen);
+      osNext.removeEventListener("click", onOsNext);
       autoUpdates.removeEventListener("change", onAutoUpdatesChange);
       updateChannel.removeEventListener("change", onUpdateChannelChange);
       workspaceButtons.forEach((btn) =>
@@ -193,12 +210,21 @@ export function showSetupWizard(): Promise<SetupWizardResult | null> {
       goTo(4);
     }
 
-    function onDone(): void {
+    function onOsBack(): void {
+      goTo(3);
+    }
+
+    function onOsOpen(): void {
+      void runDefaultArchiverAction(osOpen);
+    }
+
+    function onOsNext(): void {
       const result: SetupWizardResult = {
         workspaceMode: selectedWorkspace,
         theme: selectedTheme,
         autoCheckUpdates: selectedAutoUpdates,
         updateChannel: selectedChannel,
+        osIntegrationDismissed: true,
       };
       cleanup();
       resolve(result);
@@ -208,6 +234,7 @@ export function showSetupWizard(): Promise<SetupWizardResult | null> {
     setThemeSelection(selectedTheme);
     autoUpdates.checked = selectedAutoUpdates;
     updateChannel.value = selectedChannel;
+    void refreshDefaultArchiverActionButton(osOpen);
     goTo(0);
 
     welcomeNext.addEventListener("click", onWelcomeNext);
@@ -218,7 +245,9 @@ export function showSetupWizard(): Promise<SetupWizardResult | null> {
     themeNext.addEventListener("click", onThemeNext);
     updatesBack.addEventListener("click", onUpdatesBack);
     updatesNext.addEventListener("click", onUpdatesNext);
-    doneBtn.addEventListener("click", onDone);
+    osBack.addEventListener("click", onOsBack);
+    osOpen.addEventListener("click", onOsOpen);
+    osNext.addEventListener("click", onOsNext);
     autoUpdates.addEventListener("change", onAutoUpdatesChange);
     updateChannel.addEventListener("change", onUpdateChannelChange);
     workspaceButtons.forEach((btn) =>

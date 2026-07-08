@@ -1,9 +1,25 @@
 # Zinnia
 A cross-platform 7z GUI built with Tauri.
 
+See [ARCHITECTURE.md](ARCHITECTURE.md), [CONTRIBUTING.md](CONTRIBUTING.md), and
+[SECURITY.md](SECURITY.md).
+
 ## Dev
 - `npm install`
 - `npm run tauri:dev`
+- `cargo doc --manifest-path src-tauri/Cargo.toml`
+
+Direct Cargo commands work without a separate `npm run prepare:7z`; the Tauri
+build script refreshes ignored sidecar binaries from tracked assets before the
+native build runs.
+
+## OS integration
+- Zinnia registers common archive file types in packaged builds.
+- Windows NSIS builds add per-user Explorer verbs for `Open with Zinnia` and
+  `Extract with Zinnia`.
+- Linux `deb` and `rpm` bundles include desktop `Open` and `Extract` actions.
+- macOS users can choose Zinnia from Finder's Open With/Get Info default-app
+  flow; Zinnia routes archive launches to the quick extract window.
 
 ## Builds
 - Windows: `npm run build:win`
@@ -16,5 +32,7 @@ A cross-platform 7z GUI built with Tauri.
 
 ## Updater setup
 - Updater is already configured in `src-tauri/tauri.conf.json`.
-- The release workflow automatically publishes `latest-{{target}}-{{arch}}.json` manifests and updater artifacts to GitHub releases.
-- The release workflow also publishes `SHA256SUMS-{{target}}-{{arch}}.txt` checksum files and detached `.asc` signatures.
+- Push a `v*` tag to run the full release workflow and upload updater manifests,
+  artifacts, checksum files, and detached `.asc` signatures for that tag.
+- Manual `Release` workflow runs from `main`, `beta`, or `next-*` are for
+  verification and preflight builds; they do not publish a tagged release.
