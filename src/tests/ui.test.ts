@@ -223,7 +223,7 @@ describe("workspace and density", () => {
     expect(appWindow.setSize).toHaveBeenCalledOnce();
     const [size] = appWindow.setSize.mock.calls[0];
     expect(size.width).toBe(500);
-    expect(size.height).toBe(600);
+    expect(size.height).toBe(650);
   });
 
   it("clamps restored power window size before resizing", () => {

@@ -660,16 +660,7 @@ function wireEvents() {
         setWorkspaceMode(mode);
         if (mode === "basic") {
           syncBasicWorkspaceFromPower();
-          const currentMode = getMode();
-          if (currentMode === "add" && state.inputs.length > 0) {
-            setBasicView("compress");
-          } else if (currentMode === "extract") {
-            setBasicView("extract");
-          } else if (currentMode === "browse") {
-            setBasicView("browse");
-          } else {
-            setBasicView("home");
-          }
+          setBasicView("home");
         }
         refreshQuickActionRepeatState();
       });
@@ -694,6 +685,12 @@ function wireEvents() {
     state.currentSettings = readSettingsModal();
     applyTheme(state.currentSettings.theme);
     setWorkspaceMode(state.currentSettings.workspaceMode, { persist: false });
+    if (
+      state.currentSettings.workspaceMode === "basic" &&
+      previous.workspaceMode !== "basic"
+    ) {
+      setBasicView("home");
+    }
     setUiDensity(state.currentSettings.uiDensity, { persist: false });
     applySettingsToForm();
     updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);

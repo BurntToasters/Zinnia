@@ -27,6 +27,8 @@
 html,
 body {
   overscroll-behavior: none;
+  height: 100vh;
+  overflow: hidden;
 }
 
 body {
@@ -43,7 +45,8 @@ body {
   font-size: 0.8125rem;
   color: var(--text);
   background: var(--bg);
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -70,9 +73,11 @@ body {
 }
 
 .app {
-  min-height: 100vh;
+  height: 100vh;
+  max-height: 100vh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 #main-content {

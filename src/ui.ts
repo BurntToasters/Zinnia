@@ -55,7 +55,7 @@ const MAX_PENDING_LOCAL_LOG_WRITES = 250;
 const WORKING_CONTEXT_PERSIST_DEBOUNCE_MS = 140;
 const INPUT_VALIDATION_REASON_INLINE_MAX_CHARS = 92;
 const BASIC_WINDOW_WIDTH = 500;
-const BASIC_WINDOW_HEIGHT = 600;
+const BASIC_WINDOW_HEIGHT = 650;
 let pendingLocalLogWrites = 0;
 let droppedLocalLogWrites = 0;
 let workingContextPersistTimer: number | undefined;

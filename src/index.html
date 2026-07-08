@@ -1041,7 +1041,7 @@
                 Back
               </button>
               <button class="btn btn--primary" id="setup-updates-next">
-                Finish setup
+                Next
               </button>
             </div>
           </div>
@@ -1065,22 +1065,7 @@
                 Make Zinnia Default
               </button>
               <button class="btn btn--primary" id="setup-os-next">
-                Continue
-              </button>
-            </div>
-          </div>
-
-          <div class="setup-wizard-step" data-step="5" hidden>
-            <h2 class="setup-wizard-step__title">You're all set</h2>
-            <p class="setup-wizard-step__desc">
-              Zinnia is ready. You can rerun setup from Settings anytime.
-            </p>
-            <div class="setup-wizard-step__actions">
-              <button
-                class="btn btn--primary setup-wizard-btn-wide"
-                id="setup-done-btn"
-              >
-                Launch Zinnia
+                Finish setup
               </button>
             </div>
           </div>
@@ -1180,378 +1165,378 @@
           </div>
 
           <div id="basic-compress" class="basic-view">
-            <div class="basic-view-header">
-              <div>
-                <h2 class="basic-section-title">Compress files</h2>
-                <p class="basic-section-subtitle">
-                  Pick sources, confirm save location, then compress.
-                </p>
-              </div>
-            </div>
-            <div class="basic-card basic-step-card">
-              <div class="basic-step-head">
-                <span class="basic-step-number">1</span>
+            <div class="basic-view-scroll-content">
+              <div class="basic-view-header">
                 <div>
+                  <h2 class="basic-section-title">Compress files</h2>
+                  <p class="basic-section-subtitle">
+                    Pick sources, confirm save location, then compress.
+                  </p>
+                </div>
+              </div>
+              <div class="basic-section">
+                <div class="basic-section-head">
+                  <i data-lucide="folder-open" class="lucide-icon"></i>
                   <h3>Sources</h3>
-                  <p>Files and folders going into the archive.</p>
                 </div>
-              </div>
-              <div class="basic-file-list" id="basic-input-list"></div>
-              <div class="basic-file-actions">
-                <button
-                  class="basic-btn basic-btn--sm basic-btn--secondary"
-                  id="basic-add-files"
-                >
-                  Add files
-                </button>
-                <button
-                  class="basic-btn basic-btn--sm basic-btn--secondary"
-                  id="basic-add-folder"
-                >
-                  Add folder
-                </button>
-                <button
-                  class="basic-btn basic-btn--sm basic-btn--ghost basic-btn--danger"
-                  id="basic-clear-inputs"
-                >
-                  Clear all
-                </button>
-              </div>
-            </div>
-            <div class="basic-card basic-step-card">
-              <div class="basic-step-head">
-                <span class="basic-step-number">2</span>
-                <div>
-                  <h3>Name and location</h3>
-                  <p>Default saves next to the source.</p>
-                </div>
-              </div>
-              <div class="basic-output-summary">
-                <span class="basic-output-summary__label">Save to</span>
-                <strong id="basic-output-summary">Choose files first</strong>
-              </div>
-              <div class="basic-field">
-                <label class="basic-field__label" for="basic-archive-name"
-                  >Archive name</label
-                >
-                <input
-                  type="text"
-                  id="basic-archive-name"
-                  placeholder="Use source name"
-                />
-              </div>
-              <div class="basic-field basic-field--path">
-                <label class="basic-field__label" for="basic-output-path"
-                  >Output path</label
-                >
-                <div class="basic-input-row">
-                  <input
-                    type="text"
-                    id="basic-output-path"
-                    placeholder="Choose where to save the archive"
-                  />
+                <div class="basic-file-list" id="basic-input-list"></div>
+                <div class="basic-file-actions">
                   <button
                     class="basic-btn basic-btn--sm basic-btn--secondary"
-                    id="basic-choose-output"
+                    id="basic-add-files"
                   >
-                    Choose folder
+                    Add files
+                  </button>
+                  <button
+                    class="basic-btn basic-btn--sm basic-btn--secondary"
+                    id="basic-add-folder"
+                  >
+                    Add folder
+                  </button>
+                  <button
+                    class="basic-btn basic-btn--sm basic-btn--ghost basic-btn--danger"
+                    id="basic-clear-inputs"
+                  >
+                    Clear all
                   </button>
                 </div>
               </div>
-            </div>
-            <div class="basic-card basic-step-card">
-              <div class="basic-step-head">
-                <span class="basic-step-number">3</span>
-                <div>
-                  <h3>Options</h3>
-                  <p>Balanced is best for most archives.</p>
+              <hr class="basic-divider" />
+              <div class="basic-section">
+                <div class="basic-section-head">
+                  <i data-lucide="folder" class="lucide-icon"></i>
+                  <h3>Name and location</h3>
                 </div>
-              </div>
-              <select id="basic-preset" class="basic-hidden-select">
-                <option value="quick">Fast</option>
-                <option value="balanced" selected>Balanced</option>
-                <option value="ultra">Smallest</option>
-              </select>
-              <div
-                class="basic-preset-pills"
-                role="group"
-                aria-label="Compression preset"
-              >
-                <button
-                  class="basic-preset-pill"
-                  type="button"
-                  data-basic-preset="quick"
-                  aria-pressed="false"
-                >
-                  Fast
-                </button>
-                <button
-                  class="basic-preset-pill is-active"
-                  type="button"
-                  data-basic-preset="balanced"
-                  aria-pressed="true"
-                >
-                  Balanced
-                </button>
-                <button
-                  class="basic-preset-pill"
-                  type="button"
-                  data-basic-preset="ultra"
-                  aria-pressed="false"
-                >
-                  Smallest
-                </button>
-              </div>
-              <details class="basic-more-options">
-                <summary>More options</summary>
                 <div class="basic-field">
-                  <label class="basic-field__label" for="basic-format"
-                    >Format</label
+                  <label class="basic-field__label" for="basic-archive-name"
+                    >Archive name</label
                   >
-                  <select id="basic-format">
-                    <option value="7z">7z</option>
-                    <option value="zip">zip</option>
-                    <option value="tar">tar</option>
-                    <option value="gzip">gzip</option>
-                    <option value="bzip2">bzip2</option>
-                    <option value="xz">xz</option>
-                  </select>
+                  <input
+                    type="text"
+                    id="basic-archive-name"
+                    placeholder="Use source name"
+                  />
                 </div>
-                <div class="basic-field">
-                  <label class="basic-field__label" for="basic-password"
-                    >Password</label
+                <div class="basic-field basic-field--path">
+                  <label class="basic-field__label" for="basic-output-path"
+                    >Output path</label
                   >
                   <div class="basic-input-row">
                     <input
-                      type="password"
-                      id="basic-password"
-                      placeholder="Leave blank for none"
-                      autocomplete="off"
+                      type="text"
+                      id="basic-output-path"
+                      placeholder="Choose where to save the archive"
                     />
                     <button
-                      class="basic-password-toggle"
-                      id="basic-toggle-password"
-                      type="button"
-                      aria-label="Toggle password visibility"
+                      class="basic-btn basic-btn--sm basic-btn--secondary"
+                      id="basic-choose-output"
                     >
-                      Show
+                      Choose folder
                     </button>
                   </div>
                 </div>
-              </details>
-            </div>
-            <button
-              class="basic-btn basic-btn--primary basic-btn--full"
-              id="basic-run-compress"
-            >
-              Compress
-            </button>
-            <div class="basic-progress" id="basic-compress-progress">
-              <div class="basic-progress__bar-track">
+              </div>
+              <hr class="basic-divider" />
+              <div class="basic-section">
+                <div class="basic-section-head">
+                  <i data-lucide="sliders" class="lucide-icon"></i>
+                  <h3>Options</h3>
+                </div>
+                <select id="basic-preset" class="basic-hidden-select">
+                  <option value="quick">Fast</option>
+                  <option value="balanced" selected>Balanced</option>
+                  <option value="ultra">Smallest</option>
+                </select>
                 <div
-                  class="basic-progress__bar-fill is-indeterminate"
-                  id="basic-compress-bar"
-                ></div>
-              </div>
-              <div class="basic-progress__status" id="basic-compress-status">
-                Compressing…
-              </div>
-              <div class="basic-progress__actions">
-                <button
-                  class="basic-btn basic-btn--sm basic-btn--secondary"
-                  id="basic-compress-cancel"
+                  class="basic-preset-pills"
+                  role="group"
+                  aria-label="Compression preset"
                 >
-                  Cancel
-                </button>
+                  <button
+                    class="basic-preset-pill"
+                    type="button"
+                    data-basic-preset="quick"
+                    aria-pressed="false"
+                  >
+                    Fast
+                  </button>
+                  <button
+                    class="basic-preset-pill is-active"
+                    type="button"
+                    data-basic-preset="balanced"
+                    aria-pressed="true"
+                  >
+                    Balanced
+                  </button>
+                  <button
+                    class="basic-preset-pill"
+                    type="button"
+                    data-basic-preset="ultra"
+                    aria-pressed="false"
+                  >
+                    Smallest
+                  </button>
+                </div>
+                <details class="basic-more-options">
+                  <summary>More options</summary>
+                  <div class="basic-field">
+                    <label class="basic-field__label" for="basic-format"
+                      >Format</label
+                    >
+                    <select id="basic-format">
+                      <option value="7z">7z</option>
+                      <option value="zip">zip</option>
+                      <option value="tar">tar</option>
+                      <option value="gzip">gzip</option>
+                      <option value="bzip2">bzip2</option>
+                      <option value="xz">xz</option>
+                    </select>
+                  </div>
+                  <div class="basic-field">
+                    <label class="basic-field__label" for="basic-password"
+                      >Password</label
+                    >
+                    <div class="basic-input-row">
+                      <input
+                        type="password"
+                        id="basic-password"
+                        placeholder="Leave blank for none"
+                        autocomplete="off"
+                      />
+                      <button
+                        class="basic-password-toggle"
+                        id="basic-toggle-password"
+                        type="button"
+                        aria-label="Toggle password visibility"
+                      >
+                        Show
+                      </button>
+                    </div>
+                  </div>
+                </details>
               </div>
             </div>
-            <div class="basic-completion" id="basic-compress-completion">
-              <span
-                class="basic-completion__icon"
-                id="basic-compress-completion-icon"
-              ></span>
-              <h3
-                class="basic-completion__title"
-                id="basic-compress-completion-title"
-              ></h3>
-              <p
-                class="basic-completion__message"
-                id="basic-compress-completion-msg"
-              ></p>
-              <p
-                class="basic-completion__path"
-                id="basic-compress-completion-path"
-              ></p>
-              <div class="basic-completion__actions">
-                <button
-                  class="basic-btn basic-btn--sm basic-btn--primary"
-                  id="basic-compress-open-dest"
-                >
-                  Open folder
-                </button>
-                <button
-                  class="basic-btn basic-btn--sm basic-btn--secondary"
-                  id="basic-compress-again"
-                >
-                  Compress more
-                </button>
-                <button
-                  class="basic-btn basic-btn--sm basic-btn--ghost"
-                  id="basic-compress-home"
-                >
-                  Back home
-                </button>
+            <div class="basic-view-sticky-bottom">
+              <button
+                class="basic-btn basic-btn--primary basic-btn--full"
+                id="basic-run-compress"
+              >
+                Compress
+              </button>
+              <div class="basic-progress" id="basic-compress-progress">
+                <div class="basic-progress__bar-track">
+                  <div
+                    class="basic-progress__bar-fill is-indeterminate"
+                    id="basic-compress-bar"
+                  ></div>
+                </div>
+                <div class="basic-progress__status" id="basic-compress-status">
+                  Compressing…
+                </div>
+                <div class="basic-progress__actions">
+                  <button
+                    class="basic-btn basic-btn--sm basic-btn--secondary"
+                    id="basic-compress-cancel"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+              <div class="basic-completion" id="basic-compress-completion">
+                <span
+                  class="basic-completion__icon"
+                  id="basic-compress-completion-icon"
+                ></span>
+                <h3
+                  class="basic-completion__title"
+                  id="basic-compress-completion-title"
+                ></h3>
+                <p
+                  class="basic-completion__message"
+                  id="basic-compress-completion-msg"
+                ></p>
+                <p
+                  class="basic-completion__path"
+                  id="basic-compress-completion-path"
+                ></p>
+                <div class="basic-completion__actions">
+                  <button
+                    class="basic-btn basic-btn--sm basic-btn--primary"
+                    id="basic-compress-open-dest"
+                  >
+                    Open folder
+                  </button>
+                  <button
+                    class="basic-btn basic-btn--sm basic-btn--secondary"
+                    id="basic-compress-again"
+                  >
+                    Compress more
+                  </button>
+                  <button
+                    class="basic-btn basic-btn--sm basic-btn--ghost"
+                    id="basic-compress-home"
+                  >
+                    Back home
+                  </button>
+                </div>
               </div>
             </div>
           </div>
 
           <div id="basic-extract" class="basic-view">
-            <div class="basic-view-header">
-              <div>
-                <h2 class="basic-section-title">Open archive</h2>
-                <p class="basic-section-subtitle">
-                  Browse contents or extract everything.
-                </p>
-              </div>
-            </div>
-            <div class="basic-card basic-step-card">
-              <div class="basic-archive-info" id="basic-extract-archive-info">
-                <span class="basic-archive-info__icon">
-                  <i data-lucide="package" class="lucide-icon"></i>
-                </span>
-                <div class="basic-archive-info__details">
-                  <span
-                    class="basic-archive-info__name"
-                    id="basic-extract-archive-name"
-                    >archive.7z</span
-                  >
-                  <span
-                    class="basic-archive-info__meta"
-                    id="basic-extract-archive-meta"
-                  ></span>
+            <div class="basic-view-scroll-content">
+              <div class="basic-view-header">
+                <div>
+                  <h2 class="basic-section-title">Open archive</h2>
+                  <p class="basic-section-subtitle">
+                    Browse contents or extract everything.
+                  </p>
                 </div>
               </div>
-              <div class="basic-output-summary">
-                <span class="basic-output-summary__label">Destination</span>
-                <strong id="basic-extract-summary"
-                  >Extract to a folder named after the archive</strong
-                >
-              </div>
-              <div class="basic-field">
-                <label class="basic-field__label" for="basic-extract-path"
-                  >Extract to</label
-                >
-                <div class="basic-input-row">
-                  <input
-                    type="text"
-                    id="basic-extract-path"
-                    placeholder="Choose destination folder"
-                  />
-                  <button
-                    class="basic-btn basic-btn--sm basic-btn--secondary"
-                    id="basic-choose-extract"
-                  >
-                    Choose folder
-                  </button>
+              <div class="basic-section">
+                <div class="basic-archive-info" id="basic-extract-archive-info">
+                  <span class="basic-archive-info__icon">
+                    <i data-lucide="package" class="lucide-icon"></i>
+                  </span>
+                  <div class="basic-archive-info__details">
+                    <span
+                      class="basic-archive-info__name"
+                      id="basic-extract-archive-name"
+                      >archive.7z</span
+                    >
+                    <span
+                      class="basic-archive-info__meta"
+                      id="basic-extract-archive-meta"
+                    ></span>
+                  </div>
                 </div>
               </div>
-              <details
-                class="basic-more-options"
-                id="basic-extract-password-field"
-              >
-                <summary>Password</summary>
+              <hr class="basic-divider" />
+              <div class="basic-section">
+                <div class="basic-section-head">
+                  <i data-lucide="folder" class="lucide-icon"></i>
+                  <h3>Destination</h3>
+                </div>
                 <div class="basic-field">
-                  <label class="basic-field__label" for="basic-extract-password"
-                    >Password</label
+                  <label class="basic-field__label" for="basic-extract-path"
+                    >Extract to</label
                   >
                   <div class="basic-input-row">
                     <input
-                      type="password"
-                      id="basic-extract-password"
-                      placeholder="Enter archive password"
-                      autocomplete="off"
+                      type="text"
+                      id="basic-extract-path"
+                      placeholder="Choose destination folder"
                     />
                     <button
-                      class="basic-password-toggle"
-                      id="basic-toggle-extract-password"
-                      type="button"
-                      aria-label="Toggle password visibility"
+                      class="basic-btn basic-btn--sm basic-btn--secondary"
+                      id="basic-choose-extract"
                     >
-                      Show
+                      Choose folder
                     </button>
                   </div>
                 </div>
-              </details>
-            </div>
-            <div class="basic-extract-actions">
-              <button
-                class="basic-btn basic-btn--primary basic-btn--flex"
-                id="basic-run-extract"
-              >
-                Extract
-              </button>
-              <button
-                class="basic-btn basic-btn--secondary"
-                id="basic-browse-contents"
-              >
-                Browse contents
-              </button>
-            </div>
-            <div class="basic-progress" id="basic-extract-progress">
-              <div class="basic-progress__bar-track">
-                <div
-                  class="basic-progress__bar-fill is-indeterminate"
-                  id="basic-extract-bar"
-                ></div>
-              </div>
-              <div class="basic-progress__status" id="basic-extract-status">
-                Extracting…
-              </div>
-              <div class="basic-progress__actions">
-                <button
-                  class="basic-btn basic-btn--sm basic-btn--secondary"
-                  id="basic-extract-cancel"
+                <details
+                  class="basic-more-options"
+                  id="basic-extract-password-field"
                 >
-                  Cancel
-                </button>
+                  <summary>Password</summary>
+                  <div class="basic-field">
+                    <label
+                      class="basic-field__label"
+                      for="basic-extract-password"
+                      >Password</label
+                    >
+                    <div class="basic-input-row">
+                      <input
+                        type="password"
+                        id="basic-extract-password"
+                        placeholder="Enter archive password"
+                        autocomplete="off"
+                      />
+                      <button
+                        class="basic-password-toggle"
+                        id="basic-toggle-extract-password"
+                        type="button"
+                        aria-label="Toggle password visibility"
+                      >
+                        Show
+                      </button>
+                    </div>
+                  </div>
+                </details>
               </div>
             </div>
-            <div class="basic-completion" id="basic-extract-completion">
-              <span
-                class="basic-completion__icon"
-                id="basic-extract-completion-icon"
-              ></span>
-              <h3
-                class="basic-completion__title"
-                id="basic-extract-completion-title"
-              ></h3>
-              <p
-                class="basic-completion__message"
-                id="basic-extract-completion-msg"
-              ></p>
-              <p
-                class="basic-completion__path"
-                id="basic-extract-completion-path"
-              ></p>
-              <div class="basic-completion__actions">
+            <div class="basic-view-sticky-bottom">
+              <div class="basic-extract-actions">
                 <button
-                  class="basic-btn basic-btn--sm basic-btn--primary"
-                  id="basic-extract-open-dest"
+                  class="basic-btn basic-btn--primary basic-btn--flex"
+                  id="basic-run-extract"
                 >
-                  Open folder
+                  Extract
                 </button>
                 <button
-                  class="basic-btn basic-btn--sm basic-btn--secondary"
-                  id="basic-extract-another"
+                  class="basic-btn basic-btn--secondary"
+                  id="basic-browse-contents"
                 >
-                  Extract another
+                  Browse contents
                 </button>
-                <button
-                  class="basic-btn basic-btn--sm basic-btn--ghost"
-                  id="basic-extract-home"
-                >
-                  Back home
-                </button>
+              </div>
+              <div class="basic-progress" id="basic-extract-progress">
+                <div class="basic-progress__bar-track">
+                  <div
+                    class="basic-progress__bar-fill is-indeterminate"
+                    id="basic-extract-bar"
+                  ></div>
+                </div>
+                <div class="basic-progress__status" id="basic-extract-status">
+                  Extracting…
+                </div>
+                <div class="basic-progress__actions">
+                  <button
+                    class="basic-btn basic-btn--sm basic-btn--secondary"
+                    id="basic-extract-cancel"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+              <div class="basic-completion" id="basic-extract-completion">
+                <span
+                  class="basic-completion__icon"
+                  id="basic-extract-completion-icon"
+                ></span>
+                <h3
+                  class="basic-completion__title"
+                  id="basic-extract-completion-title"
+                ></h3>
+                <p
+                  class="basic-completion__message"
+                  id="basic-extract-completion-msg"
+                ></p>
+                <p
+                  class="basic-completion__path"
+                  id="basic-extract-completion-path"
+                ></p>
+                <div class="basic-completion__actions">
+                  <button
+                    class="basic-btn basic-btn--sm basic-btn--primary"
+                    id="basic-extract-open-dest"
+                  >
+                    Open folder
+                  </button>
+                  <button
+                    class="basic-btn basic-btn--sm basic-btn--secondary"
+                    id="basic-extract-another"
+                  >
+                    Extract another
+                  </button>
+                  <button
+                    class="basic-btn basic-btn--sm basic-btn--ghost"
+                    id="basic-extract-home"
+                  >
+                    Back home
+                  </button>
+                </div>
               </div>
             </div>
           </div>
