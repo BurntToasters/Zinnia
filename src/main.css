@@ -1696,6 +1696,36 @@ input[type="number"] {
   background: var(--warning-bg);
 }
 
+.os-default-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.os-default-row {
+  display: grid;
+  grid-template-columns: minmax(62px, 0.7fr) minmax(0, 1.3fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.os-default-row__name {
+  font-weight: 600;
+}
+
+.os-default-row__handler {
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 0.6875rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .settings-actions--left {
   justify-content: flex-start;
 }
