@@ -1218,6 +1218,22 @@
   left: 0;
 }
 
+/* Account for titlebar height in basic mode fullscreen settings */
+body.platform-windows #app[data-workspace-mode="basic"] #settings-overlay {
+  top: 32px;
+  height: calc(100vh - 32px);
+}
+
+body.platform-macos #app[data-workspace-mode="basic"] #settings-overlay {
+  top: 38px;
+  height: calc(100vh - 38px);
+}
+
+body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
+  top: 32px;
+  height: calc(100vh - 32px);
+}
+
 #app[data-workspace-mode="basic"] #settings-overlay:not([hidden]) {
   display: flex;
 }

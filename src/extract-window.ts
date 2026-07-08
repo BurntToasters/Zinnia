@@ -146,22 +146,11 @@ async function run() {
 
   // Wire custom titlebar buttons
   const minBtn = document.getElementById("titlebar-min");
-  const maxBtn = document.getElementById("titlebar-max");
   const closeTitlebarBtn = document.getElementById("titlebar-close");
 
   if (minBtn) {
     minBtn.addEventListener("click", () => {
       void appWindow.minimize();
-    });
-  }
-  if (maxBtn) {
-    maxBtn.addEventListener("click", async () => {
-      const isMax = await appWindow.isMaximized();
-      if (isMax) {
-        void appWindow.unmaximize();
-      } else {
-        void appWindow.maximize();
-      }
     });
   }
   if (closeTitlebarBtn) {

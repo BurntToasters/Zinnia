@@ -32,9 +32,13 @@ body {
 .extract-app {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  min-height: calc(100vh - 32px);
   padding: 20px 24px;
   gap: 16px;
+}
+
+body.platform-macos .extract-app {
+  min-height: calc(100vh - 38px);
 }
 
 .extract-header {
@@ -240,9 +244,9 @@ body {
   }
 }
 
-/* Remove redundant branding header */
-.extract-header {
-  display: none !important;
+/* Remove redundant logo from extract header (titlebar shows branding) */
+.extract-logo {
+  display: none;
 }
 
 /* Custom Titlebar Styles */
@@ -256,15 +260,16 @@ body {
   font-size: 0.75rem;
   font-weight: 500;
   user-select: none;
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border);
   position: relative;
   z-index: 9999;
   -webkit-app-region: drag !important;
 }
 
-/* Display titlebar only on supported custom titlebar platforms */
+/* Display titlebar on platforms with custom window chrome */
 body.platform-windows #titlebar,
-body.platform-macos #titlebar {
+body.platform-macos #titlebar,
+body.platform-linux #titlebar {
   display: flex;
 }
 
@@ -321,7 +326,7 @@ body.platform-macos #titlebar {
 }
 
 .titlebar-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--hover-overlay);
   color: var(--text);
 }
 

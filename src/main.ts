@@ -937,6 +937,23 @@ function wireTitlebar(): void {
 }
 
 async function init() {
+  // Detect platform and show titlebar immediately to prevent layout flash
+  let platform = "unknown";
+  try {
+    platform = await invoke<string>("get_platform_info");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    devLog(`Unable to detect platform: ${msg}`);
+  }
+  if (platform === "windows") {
+    document.body.classList.add("platform-windows");
+  } else if (platform === "macos") {
+    document.body.classList.add("platform-macos");
+  } else if (platform === "linux") {
+    document.body.classList.add("platform-linux");
+  }
+  wireTitlebar();
+
   try {
     await invoke("probe_7z");
   } catch (err) {
@@ -1016,13 +1033,6 @@ async function init() {
     devLog(`Unable to read app version: ${msg}`);
   }
 
-  let platform = "unknown";
-  try {
-    platform = await invoke<string>("get_platform_info");
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    devLog(`Unable to detect platform: ${msg}`);
-  }
   state.platformName = platform;
   try {
     state.appIsPackaged = await invoke<boolean>("is_packaged");
@@ -1058,16 +1068,6 @@ async function init() {
   if (flatpak) {
     document.body.classList.add("platform-flatpak");
   }
-
-  if (platform === "windows") {
-    document.body.classList.add("platform-windows");
-  } else if (platform === "macos") {
-    document.body.classList.add("platform-macos");
-  } else if (platform === "linux") {
-    document.body.classList.add("platform-linux");
-  }
-
-  wireTitlebar();
 
   let openPathsQueue = Promise.resolve();
 

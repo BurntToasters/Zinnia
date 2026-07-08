@@ -2272,15 +2272,16 @@ input[type="number"] {
   font-size: 0.75rem;
   font-weight: 500;
   user-select: none;
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border);
   position: relative;
   z-index: 9999;
   -webkit-app-region: drag !important;
 }
 
-/* Display titlebar only on supported custom titlebar platforms */
+/* Display titlebar on platforms with custom window chrome */
 body.platform-windows #titlebar,
-body.platform-macos #titlebar {
+body.platform-macos #titlebar,
+body.platform-linux #titlebar {
   display: flex;
 }
 
@@ -2337,7 +2338,7 @@ body.platform-macos #titlebar {
 }
 
 .titlebar-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--hover-overlay);
   color: var(--text);
 }
 
@@ -2363,6 +2364,30 @@ body.platform-macos #titlebar-controls {
 
 /* Make sure dragging header doesn't conflict when titlebar is active */
 body.platform-windows .header,
-body.platform-macos .header {
+body.platform-macos .header,
+body.platform-linux .header {
   -webkit-app-region: no-drag !important;
+}
+
+/* Hide redundant branding when custom titlebar is showing */
+body.platform-windows .header__brand,
+body.platform-macos .header__brand,
+body.platform-linux .header__brand {
+  display: none;
+}
+
+/* Offset modal overlays below the custom titlebar */
+body.platform-windows .modal-overlay,
+body.platform-windows .setup-wizard-overlay {
+  top: 32px;
+}
+
+body.platform-macos .modal-overlay,
+body.platform-macos .setup-wizard-overlay {
+  top: 38px;
+}
+
+body.platform-linux .modal-overlay,
+body.platform-linux .setup-wizard-overlay {
+  top: 32px;
 }
