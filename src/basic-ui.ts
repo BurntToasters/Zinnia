@@ -261,11 +261,34 @@ export function renderBasicInputs(): void {
 
   if (state.inputs.length === 0) {
     const empty = document.createElement("div");
-    empty.style.cssText =
-      "padding: 12px; text-align: center; color: var(--text-secondary); font-size: 0.75rem;";
-    empty.textContent =
-      "No files added yet. Drop files above or use the buttons below.";
+    empty.className = "basic-archive-info";
+    empty.style.cursor = "default";
+    empty.innerHTML = `
+      <span class="basic-archive-info__icon">
+        <i data-lucide="file-plus" class="lucide-icon"></i>
+      </span>
+      <div class="basic-archive-info__details">
+        <span class="basic-archive-info__name">No files added yet</span>
+        <span class="basic-archive-info__meta">Click to select files or folders</span>
+      </div>
+    `;
+    empty.addEventListener("click", async () => {
+      const selection = await open({
+        title: "Select files or folders",
+        multiple: true,
+      });
+      if (!selection) return;
+      const paths = Array.isArray(selection) ? selection : [selection];
+      if (paths.length > 0) {
+        state.inputs.length = 0;
+        for (const p of paths) {
+          if (!state.inputs.includes(p)) state.inputs.push(p);
+        }
+        renderInputs();
+      }
+    });
     list.appendChild(empty);
+    triggerIconRefresh();
     return;
   }
 
