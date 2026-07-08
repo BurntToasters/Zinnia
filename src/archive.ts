@@ -68,7 +68,7 @@ function logCommandResult(stdout: string, stderr: string) {
   }
 }
 
-interface Run7zResult {
+export interface Run7zResult {
   stdout: string;
   stderr: string;
   code: number;

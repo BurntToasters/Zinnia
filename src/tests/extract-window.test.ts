@@ -199,6 +199,36 @@ describe("extract-window", () => {
     ).toBe(true);
   });
 
+  it("extracts opened archives into a sibling folder named after the archive", async () => {
+    const { invokeMock } = await setupAndRun(async (cmd, payload) => {
+      if (cmd === "get_extract_paths") return ["/Downloads/test.zip"];
+      if (cmd === "probe_7z") return undefined;
+      if (cmd === "run_7z") {
+        const args = (payload as { args?: string[] } | undefined)?.args ?? [];
+        if (args[0] === "l") {
+          return { stdout: "- unzipped_data\n", stderr: "", code: 0 };
+        }
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      return undefined;
+    });
+
+    expect(
+      (document.getElementById("extract-dest") as HTMLElement).textContent,
+    ).toBe("/Downloads/test");
+
+    expect(invokeMock).toHaveBeenCalledWith("run_7z", {
+      args: [
+        "x",
+        "-o/Downloads/test",
+        "-aou",
+        "-bb1",
+        "--",
+        "/Downloads/test.zip",
+      ],
+    });
+  });
+
   it("falls back to webview close and destroy when backend close command fails", async () => {
     const { appWindow } = await setupAndRun(async (cmd) => {
       if (cmd === "get_extract_paths") return [];

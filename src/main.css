@@ -27,6 +27,8 @@
 html,
 body {
   overscroll-behavior: none;
+  height: 100vh;
+  overflow: hidden;
 }
 
 body {
@@ -43,7 +45,8 @@ body {
   font-size: 0.8125rem;
   color: var(--text);
   background: var(--bg);
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -70,9 +73,11 @@ body {
 }
 
 .app {
-  min-height: 100vh;
+  height: 100vh;
+  max-height: 100vh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 #main-content {
@@ -169,6 +174,28 @@ body {
   flex-wrap: wrap;
   justify-content: flex-end;
   -webkit-app-region: no-drag;
+}
+
+.support-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-weight: 500;
+  transition: all var(--transition);
+}
+
+.support-btn:hover {
+  color: var(--text);
+  background: var(--hover-overlay);
+}
+
+.support-btn .support-heart {
+  color: #ff4d6d;
+  fill: #ff4d6d;
+  width: 14px;
+  height: 14px;
 }
 
 .btn.btn--explorer {
@@ -2227,4 +2254,115 @@ input[type="number"] {
   .setup-wizard-card {
     animation: none;
   }
+}
+
+/* Remove redundant branding header */
+.header__brand {
+  display: none !important;
+}
+
+/* Custom Titlebar Styles */
+#titlebar {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.75rem;
+  font-weight: 500;
+  user-select: none;
+  border-bottom: 1px solid var(--border-subtle);
+  position: relative;
+  z-index: 9999;
+  -webkit-app-region: drag !important;
+}
+
+/* Display titlebar only on supported custom titlebar platforms */
+body.platform-windows #titlebar,
+body.platform-macos #titlebar {
+  display: flex;
+}
+
+.titlebar-logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.titlebar-icon {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+
+.titlebar-text {
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+#titlebar-controls {
+  display: flex;
+  height: 100%;
+  position: absolute;
+  right: 0;
+  top: 0;
+  -webkit-app-region: no-drag !important;
+}
+
+.titlebar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: default !important;
+  transition:
+    background 150ms ease,
+    color 150ms ease;
+  -webkit-app-region: no-drag !important;
+}
+
+.titlebar-btn svg {
+  display: block;
+}
+
+.titlebar-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+
+.titlebar-btn--close:hover {
+  background: #e81123 !important;
+  color: #fff !important;
+}
+
+/* Platform Adjustments */
+body.platform-macos #titlebar {
+  height: 38px;
+  background: transparent !important;
+  border-bottom: none !important;
+}
+
+body.platform-macos .titlebar-logo {
+  display: flex !important;
+}
+
+body.platform-macos #titlebar-controls {
+  display: none !important;
+}
+
+/* Make sure dragging header doesn't conflict when titlebar is active */
+body.platform-windows .header,
+body.platform-macos .header {
+  -webkit-app-region: no-drag !important;
 }

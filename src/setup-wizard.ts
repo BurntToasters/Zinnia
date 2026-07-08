@@ -11,8 +11,8 @@ import type {
 } from "./settings-model";
 import { trapFocus, releaseFocusTrap } from "./utils";
 
-const SETUP_WIZARD_VERSION = 2;
-const LAST_STEP = 5;
+const SETUP_WIZARD_VERSION = 3;
+const LAST_STEP = 4;
 
 interface SetupWizardResult {
   workspaceMode: WorkspaceMode;
@@ -92,7 +92,6 @@ export function showSetupWizard(): Promise<SetupWizardResult | null> {
     const osBack = $("setup-os-back") as HTMLButtonElement;
     const osOpen = $("setup-os-open") as HTMLButtonElement;
     const osNext = $("setup-os-next") as HTMLButtonElement;
-    const doneBtn = $("setup-done-btn") as HTMLButtonElement;
     const autoUpdates = $("setup-auto-updates") as HTMLInputElement;
     const updateChannel = $("setup-update-channel") as HTMLSelectElement;
     const workspaceButtons = document.querySelectorAll<HTMLButtonElement>(
@@ -139,7 +138,6 @@ export function showSetupWizard(): Promise<SetupWizardResult | null> {
       osBack.removeEventListener("click", onOsBack);
       osOpen.removeEventListener("click", onOsOpen);
       osNext.removeEventListener("click", onOsNext);
-      doneBtn.removeEventListener("click", onDone);
       autoUpdates.removeEventListener("change", onAutoUpdatesChange);
       updateChannel.removeEventListener("change", onUpdateChannelChange);
       workspaceButtons.forEach((btn) =>
@@ -221,10 +219,6 @@ export function showSetupWizard(): Promise<SetupWizardResult | null> {
     }
 
     function onOsNext(): void {
-      goTo(5);
-    }
-
-    function onDone(): void {
       const result: SetupWizardResult = {
         workspaceMode: selectedWorkspace,
         theme: selectedTheme,
@@ -254,7 +248,6 @@ export function showSetupWizard(): Promise<SetupWizardResult | null> {
     osBack.addEventListener("click", onOsBack);
     osOpen.addEventListener("click", onOsOpen);
     osNext.addEventListener("click", onOsNext);
-    doneBtn.addEventListener("click", onDone);
     autoUpdates.addEventListener("change", onAutoUpdatesChange);
     updateChannel.addEventListener("change", onUpdateChannelChange);
     workspaceButtons.forEach((btn) =>

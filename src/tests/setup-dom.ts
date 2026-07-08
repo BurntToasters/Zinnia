@@ -304,7 +304,7 @@ const setupProgress = document.createElement("div");
 setupProgress.id = "setup-wizard-progress-bar";
 setupCard.appendChild(setupProgress);
 
-for (const step of ["0", "1", "2", "3", "4", "5"]) {
+for (const step of ["0", "1", "2", "3", "4"]) {
   const section = document.createElement("div");
   section.className = "setup-wizard-step";
   section.dataset.step = step;
@@ -323,7 +323,6 @@ addEl("button", "setup-updates-next");
 addEl("button", "setup-os-back");
 addEl("button", "setup-os-open");
 addEl("button", "setup-os-next");
-addEl("button", "setup-done-btn");
 
 const setupAutoUpdates = addEl(
   "input",

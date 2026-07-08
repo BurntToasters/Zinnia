@@ -17,6 +17,51 @@
     <link rel="stylesheet" href="/extract.css" />
   </head>
   <body>
+    <div id="titlebar" data-tauri-drag-region>
+      <div class="titlebar-logo" data-tauri-drag-region>
+        <img
+          src="/zinnia_default-logo.png"
+          class="titlebar-icon"
+          data-tauri-drag-region
+          alt=""
+        />
+        <span class="titlebar-text" data-tauri-drag-region>Zinnia</span>
+      </div>
+      <div id="titlebar-controls">
+        <button class="titlebar-btn" id="titlebar-min" aria-label="Minimize">
+          <svg width="10" height="1" viewBox="0 0 10 1">
+            <rect width="10" height="1" fill="currentColor" />
+          </svg>
+        </button>
+        <button class="titlebar-btn" id="titlebar-max" aria-label="Maximize">
+          <svg width="10" height="10" viewBox="0 0 10 10">
+            <rect
+              width="9"
+              height="9"
+              x="0.5"
+              y="0.5"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1"
+            />
+          </svg>
+        </button>
+        <button
+          class="titlebar-btn titlebar-btn--close"
+          id="titlebar-close"
+          aria-label="Close"
+        >
+          <svg width="10" height="10" viewBox="0 0 10 10">
+            <path
+              d="M0.5,0.5 L9.5,9.5 M9.5,0.5 L0.5,9.5"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1"
+            />
+          </svg>
+        </button>
+      </div>
+    </div>
     <div id="extract-app" class="extract-app">
       <div class="extract-header">
         <img

@@ -50,6 +50,15 @@ fn main() {
         .manage(LogFileLock(Mutex::new(())))
         .manage(RunningProcess::new())
         .setup(move |app| {
+            #[cfg(not(target_os = "macos"))]
+            if let Some(main_window) = app.get_webview_window("main") {
+                let _ = main_window.set_decorations(false);
+            }
+            #[cfg(target_os = "macos")]
+            if let Some(main_window) = app.get_webview_window("main") {
+                let _ = main_window.set_title("");
+            }
+
             let launch_extract_window = initial_mode == "extract" && !initial_paths.is_empty();
 
             if launch_extract_window {
