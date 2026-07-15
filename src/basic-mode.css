@@ -1238,6 +1238,10 @@ body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
   display: flex;
 }
 
+#app[data-workspace-mode="basic"] #licenses-overlay {
+  z-index: 1001;
+}
+
 #app[data-workspace-mode="basic"] .modal--settings {
   width: 100% !important;
   height: 100% !important;
