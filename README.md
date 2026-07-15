@@ -1,6 +1,23 @@
 # Zinnia
 A cross-platform 7z GUI built with Tauri.
 
+<div align="center">
+  <table>
+    <tr>
+      <td valign="middle" align="center" width="220">
+        <img src="./media/icon.png"
+             alt="Dacx logo" width="140" />
+      </td>
+      <td valign="middle" align="center">
+        <p align="center">
+  <img width="85%" height="1012" alt="Dacx screenshot" src="./media/zinnia-1.png" />
+&nbsp;
+</p>
+      </td>
+    </tr>
+  </table>
+</div>
+
 See [ARCHITECTURE.md](ARCHITECTURE.md), [CONTRIBUTING.md](CONTRIBUTING.md), and
 [SECURITY.md](SECURITY.md).
 
