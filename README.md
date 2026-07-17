@@ -34,7 +34,8 @@ native build runs.
 - Zinnia registers common archive file types in packaged builds.
 - Windows NSIS builds add per-user Explorer verbs for `Open with Zinnia` and
   `Extract with Zinnia`.
-- Linux `deb` and `rpm` bundles include desktop `Open` and `Extract` actions.
+- Linux `deb`, `rpm`, and Flatpak bundles include desktop `Open`, `Extract`, and
+  `Compress` actions.
 - macOS users can choose Zinnia from Finder's Open With/Get Info default-app
   flow; Zinnia routes archive launches to the quick extract window.
 

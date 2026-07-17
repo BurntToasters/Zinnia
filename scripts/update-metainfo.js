@@ -62,37 +62,37 @@ function run({ now = new Date() } = {}) {
     throw new Error("Could not locate releases section");
   }
 
-  const releaseSelfClosingRegex = /[^\S\n]*<release\b[^>]*\/>/;
-  const releasePairedRegex = /<release\b[^>]*>[\s\S]*?<\/release>/;
-
-  const currentReleaseMatch =
-    releasesSectionMatch[0].match(releaseSelfClosingRegex) ||
-    releasesSectionMatch[0].match(/<release\b[^>]*>/);
-
-  if (currentReleaseMatch) {
-    const currentReleaseTag = currentReleaseMatch[0];
-    const currentVersionMatch = currentReleaseTag.match(/version="([^"]+)"/);
-    const currentDateMatch = currentReleaseTag.match(/date="([^"]+)"/);
-    const currentVersion = currentVersionMatch ? currentVersionMatch[1] : null;
-    const currentDate = currentDateMatch ? currentDateMatch[1] : null;
-
-    if (currentVersion === version && currentDate === dateStr) {
-      return { updated: false, version, date: dateStr };
-    }
-  }
+  const existingReleaseRegex = new RegExp(
+    `<release\\b(?=[^>]*\\bversion="${version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}")[^>]*(?:/>|>[\\s\\S]*?</release>)`,
+  );
+  const existingReleaseMatch =
+    releasesSectionMatch[0].match(existingReleaseRegex);
 
   let updatedSection = releasesSectionMatch[0];
-  if (releaseSelfClosingRegex.test(updatedSection)) {
+  if (existingReleaseMatch) {
+    // The current version can be prepared over several days. Update only its
+    // date, preserving any release notes/details URL and all older entries.
+    const currentDateMatch = existingReleaseMatch[0].match(/date="([^"]+)"/);
+    if (currentDateMatch?.[1] === dateStr) {
+      return { updated: false, version, date: dateStr };
+    }
+
+    const updatedRelease = currentDateMatch
+      ? existingReleaseMatch[0].replace(/date="[^"]*"/, `date="${dateStr}"`)
+      : existingReleaseMatch[0].replace(
+          /<release\b/,
+          `<release date="${dateStr}"`,
+        );
     updatedSection = updatedSection.replace(
-      releaseSelfClosingRegex,
-      newReleaseTag,
+      existingReleaseMatch[0],
+      updatedRelease,
     );
-  } else if (releasePairedRegex.test(updatedSection)) {
-    updatedSection = updatedSection.replace(releasePairedRegex, newReleaseTag);
   } else {
+    // AppStream keeps release history newest-first. Never replace the previous
+    // entry: software centers use it to show users what changed between versions.
     updatedSection = updatedSection.replace(
       /<releases>\s*/,
-      `<releases>\n${newReleaseTag}\n${baseIndent}`,
+      `<releases>\n${newReleaseTag}\n${releaseIndent}`,
     );
   }
 

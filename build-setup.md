@@ -52,9 +52,10 @@ installer names, so a stale bundle cannot be signed accidentally.
 The `b`, `r`, and `release:*` scripts intentionally reset and clean their Git
 worktrees. Run them only on disposable, isolated build VMs. Before publishing,
 verify that the draft contains the expected Windows x64/ARM64 NSIS installers,
-universal macOS DMG/ZIP, Linux x64 AppImage/DEB/RPM/Flatpak, Linux ARM64
-AppImage/DEB/RPM, updater manifests/signatures, SHA-256 lists, and GPG detached
-signatures.
+universal macOS DMG/ZIP, Linux x64 AppImage/DEB/RPM/Flatpak, updater
+manifests/signatures, SHA-256 lists, and GPG detached signatures. Include Linux
+ARM64 AppImage/DEB/RPM only when intentionally running `release:linux:arm64`;
+the normal public release currently ships Linux x64 only.
 
 The Tauri plugins are already declared in `package.json` and
 `src-tauri/Cargo.toml`; do not re-add them during normal setup.
