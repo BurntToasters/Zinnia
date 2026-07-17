@@ -54,7 +54,7 @@
     "build:linux:x64": "npm run sync-version && npm run licenses && npm run prepare:7z && dotenv -e .env -- tauri build --target x86_64-unknown-linux-gnu --bundles appimage,deb,rpm",
     "build:linux:arm64": "npm run sync-version && npm run licenses && npm run prepare:7z && dotenv -e .env -- tauri build --target aarch64-unknown-linux-gnu --bundles appimage,deb,rpm",
     "build:linux": "npm run build:linux:x64 && npm run build:linux:arm64",
-    "flatpak:bundle": "flatpak-builder --repo=flatpak-repo --force-clean flatpak-build run.rosie.zinnia.yml && flatpak build-bundle flatpak-repo dist/Zinnia-Linux.flatpak run.rosie.zinnia",
+    "flatpak:bundle": "flatpak-builder --repo=flatpak-repo --force-clean flatpak-build run.rosie.zinnia.yml && flatpak build-bundle flatpak-repo dist/Zinnia-Linux-x64.flatpak run.rosie.zinnia",
     "flatpak:clean": "rm -rf flatpak-build flatpak-repo",
     "rust:update": "rustup toolchain install stable --profile minimal",
     "rust:targets:win": "rustup target add --toolchain stable x86_64-pc-windows-msvc aarch64-pc-windows-msvc",

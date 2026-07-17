@@ -241,6 +241,10 @@ function cleanArtifactBaseName(name) {
   if (/x86_64\.rpm$/i.test(name)) return "Zinnia-Linux-x64.rpm";
   if (/aarch64\.rpm$/i.test(name)) return "Zinnia-Linux-arm64.rpm";
 
+  // The public Flatpak release currently targets Linux x64 only. Normalize
+  // generic files left by older build scripts to the documented asset name.
+  if (/^Zinnia-Linux\.flatpak$/i.test(name)) return "Zinnia-Linux-x64.flatpak";
+
   return name;
 }
 
