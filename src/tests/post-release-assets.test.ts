@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -77,6 +78,53 @@ describe("post-release assets", () => {
         "utf8",
       ),
     ).toBe("hash");
+  });
+
+  it("dedicated runner executes finalization without an argv guard", () => {
+    const root = makeTemporaryDirectory();
+    const scriptsDir = path.join(root, "scripts");
+    const releaseDir = path.join(root, "release");
+    const destination = path.join(root, "mirror");
+    fs.mkdirSync(scriptsDir, { recursive: true });
+    fs.mkdirSync(releaseDir);
+    fs.copyFileSync(
+      path.resolve(process.cwd(), "scripts", "post-release-assets.js"),
+      path.join(scriptsDir, "post-release-assets.js"),
+    );
+    fs.copyFileSync(
+      path.resolve(process.cwd(), "scripts", "finalize-release-assets.js"),
+      path.join(scriptsDir, "finalize-release-assets.js"),
+    );
+    fs.writeFileSync(
+      path.join(releaseDir, "Zinnia-Windows-x64.exe"),
+      "installer",
+    );
+
+    const output = execFileSync(
+      process.execPath,
+      [path.join(scriptsDir, "finalize-release-assets.js")],
+      {
+        encoding: "utf8",
+        env: { ...process.env, AFTER_PACK_LOC: destination },
+      },
+    );
+
+    expect(output).toContain("Mirrored and verified 1 cleaned release entries");
+    expect(
+      fs.readFileSync(path.join(destination, "Zinnia-Windows-x64.exe"), "utf8"),
+    ).toBe("installer");
+  });
+
+  it("release finalization runs the observable mirror command first", () => {
+    const packageJson = JSON.parse(
+      fs.readFileSync(path.resolve(process.cwd(), "package.json"), "utf8"),
+    );
+    expect(packageJson.scripts["release:mirror"]).toContain(
+      "scripts/finalize-release-assets.js",
+    );
+    expect(packageJson.scripts["release:finalize"]).toMatch(
+      /^npm run release:mirror &&/,
+    );
   });
 
   it("fails instead of claiming success when the release directory is missing", () => {

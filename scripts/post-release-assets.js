@@ -162,18 +162,27 @@ function run({ releaseDir = RELEASE_DIR, env = process.env } = {}) {
   };
 }
 
-if (isDirectExecution()) {
+function finalizeReleaseAssets({
+  releaseDir = RELEASE_DIR,
+  env = process.env,
+  logger = console,
+} = {}) {
+  const result = run({ releaseDir, env });
+  if (result.mirrored) {
+    logger.log(
+      `Mirrored and verified ${result.copiedEntries} cleaned release entries to: ${result.destination}`,
+    );
+  } else {
+    logger.warn(
+      "WARNING: Cleaned release assets, but AFTER_PACK_LOC is not set; mirror intentionally skipped.",
+    );
+  }
+  return result;
+}
+
+function main() {
   try {
-    const result = run();
-    if (result.mirrored) {
-      console.log(
-        `Mirrored and verified ${result.copiedEntries} cleaned release entries to: ${result.destination}`,
-      );
-    } else {
-      console.warn(
-        "WARNING: Cleaned release assets, but AFTER_PACK_LOC is not set; mirror intentionally skipped.",
-      );
-    }
+    return finalizeReleaseAssets();
   } catch (error) {
     const message =
       error && typeof error === "object" && "message" in error
@@ -190,9 +199,12 @@ if (isDirectExecution()) {
     console.error(
       "The following git reset/clean was blocked. Correct the problem and rerun npm run release:finalize.",
     );
-    process.exit(1);
+    process.exitCode = 1;
+    return null;
   }
 }
+
+if (isDirectExecution()) main();
 
 export {
   RELEASE_DIR,
@@ -207,4 +219,6 @@ export {
   verifyCopiedPath,
   copyReleaseAssets,
   run,
+  finalizeReleaseAssets,
+  main,
 };
