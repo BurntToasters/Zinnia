@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import {
   RELEASE_DIR,
   finalizeReleaseAssets,
@@ -6,8 +7,8 @@ import {
 
 // Dedicated entry point: never gate on argv/path identity (Windows ESM footgun).
 function banner(message) {
-  // stderr survives npm/PowerShell piping better than stdout on Windows build VMs.
-  console.error(`[release:mirror] ${message}`);
+  // writeSync so the line is on the console even if Node later aborts in native fs.
+  fs.writeSync(2, `[release:mirror] ${message}\n`);
 }
 
 banner("starting");
