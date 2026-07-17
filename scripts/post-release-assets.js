@@ -19,7 +19,11 @@ const BUILD_ONLY_DIRECTORIES = [
   "nsis",
   "rpm",
 ];
-const BUILD_ONLY_FILES = ["builder-debug.yml", "builder-effective-config.yaml"];
+const BUILD_ONLY_FILES = [
+  "builder-debug.yml",
+  "builder-effective-config.yaml",
+  ".build-session.json",
+];
 const CLI_FLAG = "--finalize-release-assets";
 
 function removePath(targetPath) {
@@ -75,12 +79,17 @@ function isDirectExecution(argv = process.argv, platform = process.platform) {
   return basename.toLowerCase() === "post-release-assets.js";
 }
 
+function isMirrorableReleaseEntry(name) {
+  // Dotfiles are build/session markers (e.g. .build-session.json), never ship artifacts.
+  return Boolean(name) && !name.startsWith(".");
+}
+
 function getReleaseEntries(releaseDir) {
   if (!fs.existsSync(releaseDir)) {
     throw new Error(`release directory does not exist: ${releaseDir}`);
   }
 
-  const entries = fs.readdirSync(releaseDir);
+  const entries = fs.readdirSync(releaseDir).filter(isMirrorableReleaseEntry);
   if (!entries.length) {
     throw new Error(`release directory is empty: ${releaseDir}`);
   }
@@ -292,6 +301,7 @@ export {
   getAfterPackLocation,
   pathsEqual,
   isDirectExecution,
+  isMirrorableReleaseEntry,
   getReleaseEntries,
   verifyCopiedPath,
   copyReleaseAssets,

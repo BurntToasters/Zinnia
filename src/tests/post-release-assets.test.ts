@@ -75,6 +75,10 @@ describe("post-release assets", () => {
       path.join(releaseDir, "SHA256SUMS-windows-x86_64.txt"),
       "hash",
     );
+    fs.writeFileSync(
+      path.join(releaseDir, ".build-session.json"),
+      '{"version":"0.0.0"}\n',
+    );
 
     const result = run({
       releaseDir,
@@ -87,6 +91,12 @@ describe("post-release assets", () => {
       copiedEntries: 2,
     });
     expect(fs.existsSync(path.join(releaseDir, "nsis"))).toBe(false);
+    expect(fs.existsSync(path.join(releaseDir, ".build-session.json"))).toBe(
+      false,
+    );
+    expect(fs.existsSync(path.join(destination, ".build-session.json"))).toBe(
+      false,
+    );
     expect(
       fs.readFileSync(path.join(destination, "Zinnia-Windows-x64.exe"), "utf8"),
     ).toBe("installer");

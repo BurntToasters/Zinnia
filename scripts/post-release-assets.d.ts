@@ -17,6 +17,7 @@ export function isDirectExecution(
   platform?: NodeJS.Platform,
 ): boolean;
 export function getReleaseEntries(releaseDir: string): string[];
+export function isMirrorableReleaseEntry(name: string): boolean;
 export function verifyCopiedPath(
   sourcePath: string,
   destinationPath: string,
