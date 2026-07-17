@@ -563,6 +563,25 @@ describe("basic-ui drag and init wiring", () => {
     expect(depMocks.browseArchive).toHaveBeenCalled();
   });
 
+  it("ignores drops and disables basic launch controls while running", async () => {
+    state.inputs = ["/tmp/original.txt"];
+    state.running = true;
+
+    updateBasicRunningState(true);
+    handleBasicDragDrop("drop", ["/tmp/replacement.7z"]);
+    await flushAsync();
+
+    expect(state.inputs).toEqual(["/tmp/original.txt"]);
+    expect(depMocks.validateArchivePaths).not.toHaveBeenCalled();
+    expect(
+      (document.getElementById("basic-action-open") as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(
+      document.getElementById("basic-dropzone")?.getAttribute("aria-disabled"),
+    ).toBe("true");
+  });
+
   it("wires card actions and register hooks on init", async () => {
     initBasicWorkspace();
 

@@ -106,6 +106,7 @@ let commandPreviewTrigger: HTMLElement | null = null;
 let commandPreviewCopyTimer: number | undefined;
 const OUTPUT_TRUNCATION_LIMIT_MIB = 10;
 const RUNTIME_PROBE_TIMEOUT_MS = 7000;
+let runtimeProbePromise: Promise<void> | null = null;
 
 async function withTimeout<T>(
   promise: Promise<T>,
@@ -157,13 +158,15 @@ function logTruncationNotice(result: Run7zResult) {
 
 async function ensureRuntimeReady(): Promise<boolean> {
   try {
-    await withTimeout(
-      invoke("probe_7z"),
+    runtimeProbePromise ??= withTimeout(
+      invoke<void>("probe_7z"),
       RUNTIME_PROBE_TIMEOUT_MS,
       `7-Zip runtime probe timed out after ${RUNTIME_PROBE_TIMEOUT_MS / 1000} seconds.`,
     );
+    await runtimeProbePromise;
     return true;
   } catch (err) {
+    runtimeProbePromise = null;
     const msg = err instanceof Error ? err.message : String(err);
     log(`7-Zip runtime check failed: ${msg}`, "error");
     setStatus("Missing runtime dependency", 3000);
@@ -283,7 +286,7 @@ export async function addFilesToArchive(): Promise<void> {
       $<HTMLInputElement>("threads").value,
       SETTING_DEFAULTS.threads,
     );
-    const args = ["u"];
+    const args = ["u", "-sse"];
     if (threads) args.push(`-mmt=${threads}`);
     args.push(archive, "--", ...files);
 
@@ -292,7 +295,7 @@ export async function addFilesToArchive(): Promise<void> {
     const result = await invoke<Run7zResult>("run_7z", { args });
     logCommandResult(result.stdout, result.stderr);
 
-    if (result.code > 1) {
+    if (result.code !== 0) {
       setStatus("Error", 3000, result.stderr || "Operation failed.");
       await showOperationError(result.code, result.stdout, result.stderr);
     } else {
@@ -351,7 +354,7 @@ export async function convertArchive(): Promise<void> {
     if (password) extractArgs.push(`-p${password}`);
     extractArgs.push("--", archive);
     const extract = await runWithPasswordRetry(extractArgs, true);
-    if (extract.code > 1) {
+    if (extract.code !== 0) {
       setStatus("Error", 3000, extract.stderr || "Extraction failed.");
       await showOperationError(extract.code, extract.stdout, extract.stderr);
       return;
@@ -360,7 +363,7 @@ export async function convertArchive(): Promise<void> {
     setStatus("Recompressing");
     // Honor the full compression options (level/method/dict/solid/threads),
     // plus password/encrypt-headers/sfx/split/timestamps from the form.
-    const compress = ["a", ...buildCompressionMethodSwitches(format)];
+    const compress = ["a", "-sse", ...buildCompressionMethodSwitches(format)];
 
     // Carry security options from the compression form
     const rawPassword = $<HTMLInputElement>("password").value;
@@ -376,10 +379,8 @@ export async function convertArchive(): Promise<void> {
     if (encryptHeaders) compress.push("-mhe=on");
 
     // Carry additional options
-    const sfx = $<HTMLInputElement>("sfx").checked;
     const storeTimestamps = $<HTMLInputElement>("store-timestamps").checked;
     if (storeTimestamps) compress.push("-mtc=on", "-mta=on");
-    if (sfx) compress.push("-sfx");
 
     const splitSize = readSplitSize();
     if (splitSize) compress.push(`-v${splitSize}`);
@@ -389,12 +390,13 @@ export async function convertArchive(): Promise<void> {
 
     const result = await invoke<Run7zResult>("run_7z", { args: compress });
     logCommandResult(result.stdout, result.stderr);
-    if (result.code > 1) {
+    if (result.code !== 0) {
       setStatus("Error", 3000, result.stderr || "Conversion failed.");
       await showOperationError(result.code, result.stdout, result.stderr);
     } else {
       setStatus("Done", 2000);
       showToast(`Converted archive to ${format.toUpperCase()}.`, "success");
+      clearPasswordFields();
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -411,6 +413,7 @@ export async function convertArchive(): Promise<void> {
         );
       }
     }
+    clearPasswordFields();
     setRunning(false);
   }
 }
@@ -483,6 +486,24 @@ export function buildCompressionMethodSwitches(format: string): string[] {
   return switches;
 }
 
+/**
+ * GZIP, BZIP2, and XZ are single-stream formats in 7-Zip. A multi-file
+ * selection must be wrapped in TAR first (for example, tar.gz); passing
+ * multiple inputs directly makes 7-Zip fail with E_INVALIDARG.
+ */
+export function validateCompressionInputShape(
+  format: string,
+  inputCount: number,
+): string | null {
+  if (
+    (format === "gzip" || format === "bzip2" || format === "xz") &&
+    inputCount !== 1
+  ) {
+    return `${format.toUpperCase()} compression accepts exactly one input. Select one file, or use a TAR-based format for multiple files.`;
+  }
+  return null;
+}
+
 export function buildArgs() {
   const mode = getMode();
 
@@ -506,11 +527,15 @@ export function buildArgs() {
   }
 
   const format = $<HTMLSelectElement>("format").value;
+  const inputShapeError = validateCompressionInputShape(
+    format,
+    state.inputs.length,
+  );
+  if (inputShapeError) throw new Error(inputShapeError);
   const pathMode = $<HTMLSelectElement>("path-mode").value;
   const rawPassword = $<HTMLInputElement>("password").value;
   const rawEncryptHeaders = $<HTMLInputElement>("encrypt-headers").checked;
   const updateMode = $<HTMLInputElement>("update-mode").checked;
-  const sfx = !updateMode && $<HTMLInputElement>("sfx").checked;
   const deleteAfter = $<HTMLInputElement>("delete-after").checked;
   const storeTimestamps = $<HTMLInputElement>("store-timestamps").checked;
 
@@ -529,15 +554,18 @@ export function buildArgs() {
     rawEncryptHeaders,
   );
 
-  const switches = buildCompressionMethodSwitches(format);
+  const switches = ["-sse", ...buildCompressionMethodSwitches(format)];
   if (pathMode === "absolute") switches.push("-spf");
   if (password) switches.push(`-p${password}`);
   // ZIP defaults to weak ZipCrypto; upgrade to AES-256 when a password is set.
   if (password && format === "zip") switches.push("-mem=AES256");
   if (encryptHeaders) switches.push("-mhe=on");
   if (storeTimestamps) switches.push("-mtc=on", "-mta=on");
-  if (sfx) switches.push("-sfx");
-  if (deleteAfter) switches.push("-sdel");
+  if (deleteAfter) {
+    throw new Error(
+      "Delete after compression is unavailable because source deletion cannot be rolled back safely. Delete the sources manually after testing the archive.",
+    );
+  }
 
   if (!updateMode) {
     const splitSize = readSplitSize();
@@ -1171,15 +1199,12 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
     logTruncationNotice(result);
     devLog(`Exit code: ${result.code}`);
 
-    if (result.code > 1) {
+    if (result.code !== 0) {
       log(`7z exited with code ${result.code}`);
       setStatus("Error", 3000, result.stderr || "Operation failed.");
       hideProgress();
       await showOperationError(result.code, result.stdout, result.stderr);
     } else {
-      if (result.code === 1) {
-        log("Operation completed with warnings.");
-      }
       setStatus("Done", 2000);
       hideProgress();
       showToast(
@@ -1188,6 +1213,7 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
           : "Extraction complete.",
         "success",
       );
+      clearPasswordFields();
     }
   } catch (err) {
     if (state.cancelRequested) {
@@ -1203,6 +1229,7 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
     hideProgress();
     await message(msg, { title: "Error", kind: "error" });
   } finally {
+    clearPasswordFields();
     setRunning(false);
   }
 }
@@ -1280,24 +1307,20 @@ export async function runAction() {
     logTruncationNotice(result);
     devLog(`Exit code: ${result.code}`);
 
-    if (result.code > 1) {
+    if (result.code !== 0) {
       log(`7z exited with code ${result.code}`);
       setStatus("Error", 3000, result.stderr || "Operation failed.");
       hideProgress();
       await showOperationError(result.code, result.stdout, result.stderr);
     } else {
-      if (result.code === 1) {
-        log("Operation completed with warnings.");
-      }
       setStatus("Done", 2000);
       hideProgress();
       showToast(
         mode === "extract" ? "Extraction complete." : "Archive created.",
         "success",
       );
-      // Clear password fields after successful operation to avoid lingering secrets in the DOM.
-      $<HTMLInputElement>("password").value = "";
-      $<HTMLInputElement>("extract-password").value = "";
+      // Clear every mirrored password field after a successful operation.
+      clearPasswordFields();
     }
   } catch (err) {
     if (state.cancelRequested) {
@@ -1313,6 +1336,7 @@ export async function runAction() {
     hideProgress();
     await message(messageText, { title: "Error", kind: "error" });
   } finally {
+    clearPasswordFields();
     setRunning(false);
   }
 }
@@ -1379,10 +1403,7 @@ export async function runBatchExtract() {
         logCommandResult(result.stdout, result.stderr);
         logTruncationNotice(result);
 
-        if (result.code === 0 || result.code === 1) {
-          if (result.code === 1) {
-            log(`Warnings: ${archive}`);
-          }
+        if (result.code === 0) {
           succeeded++;
         } else {
           failed++;
@@ -1421,6 +1442,7 @@ export async function runBatchExtract() {
     await message(msg, { title: "Extraction error", kind: "error" });
   } finally {
     if (unlistenProgress) unlistenProgress();
+    clearPasswordFields();
     setRunning(false);
   }
 }
@@ -1435,7 +1457,27 @@ export async function cancelAction() {
     devLog("Cancel signal sent to running process.");
   } catch (err) {
     const messageText = err instanceof Error ? err.message : String(err);
-    devLog(`Cancel error: ${messageText}`);
+    state.batchCancelled = false;
+    state.cancelRequested = false;
+    log(`Cancel failed: ${messageText}`, "error");
+    setStatus("Cancel failed", 3000, messageText);
+    await message(`Could not cancel the archive operation.\n\n${messageText}`, {
+      title: "Cancel failed",
+      kind: "error",
+    });
+  }
+}
+
+function clearPasswordFields(): void {
+  for (const id of [
+    "password",
+    "extract-password",
+    "browse-password",
+    "basic-password",
+    "basic-extract-password",
+  ]) {
+    const field = document.getElementById(id) as HTMLInputElement | null;
+    if (field) field.value = "";
   }
 }
 
@@ -1463,8 +1505,9 @@ export async function testArchive(): Promise<ArchiveTestResult> {
       mode === "browse" ? "browse-password" : "extract-password";
     const password = $<HTMLInputElement>(passwordField).value.trim();
 
-    const args = ["t", archive];
+    const args = ["t"];
     if (password) args.push(`-p${password}`);
+    args.push("--", archive);
 
     if (!(await ensureRuntimeReady())) return "error";
 
@@ -1481,6 +1524,7 @@ export async function testArchive(): Promise<ArchiveTestResult> {
       await message("Archive integrity test passed. No errors found.", {
         title: "Test passed",
       });
+      clearPasswordFields();
       return "passed";
     } else if (result.code === 1) {
       setStatus("Integrity test passed with warnings", 3000);
@@ -1489,6 +1533,7 @@ export async function testArchive(): Promise<ArchiveTestResult> {
         "Archive integrity test passed with warnings. Check the log for details.",
         { title: "Test passed" },
       );
+      clearPasswordFields();
       return "passed_with_warnings";
     } else {
       setStatus("Integrity test failed", 3000);
@@ -1510,6 +1555,7 @@ export async function testArchive(): Promise<ArchiveTestResult> {
     await message(msg, { title: "Test error", kind: "error" });
     return "error";
   } finally {
+    clearPasswordFields();
     setRunning(false);
   }
 }
@@ -1534,8 +1580,9 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
     }
 
     const password = $<HTMLInputElement>("browse-password").value.trim();
-    const args = ["l", "-slt", archive];
+    const args = ["l", "-slt"];
     if (password) args.push(`-p${password}`);
+    args.push("--", archive);
 
     if (!(await ensureRuntimeReady())) return null;
 
@@ -1544,7 +1591,7 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
     const result = await invoke<Run7zResult>("run_7z", { args });
     logTruncationNotice(result);
 
-    if (result.code > 1) {
+    if (result.code !== 0) {
       const needsPassword = looksLikePasswordRequiredError(
         result.stdout,
         result.stderr,
@@ -1564,6 +1611,15 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
       await message(
         `Failed to list archive contents (exit code ${result.code}).${passwordHint}${errorDetails}`,
         { title: "Browse failed", kind: "error" },
+      );
+      return null;
+    }
+
+    if (result.stdout_truncated) {
+      setStatus("Archive listing too large", 3000);
+      await message(
+        "The archive listing exceeded Zinnia's safe output limit, so it cannot be displayed completely.",
+        { title: "Browse incomplete", kind: "error" },
       );
       return null;
     }

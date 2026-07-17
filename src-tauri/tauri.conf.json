@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "create": false,
         "title": "Zinnia",
         "width": 500,
         "height": 600,

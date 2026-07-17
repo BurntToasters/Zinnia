@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { buildArgs, buildExtractArgsFor } from "../archive";
+import {
+  buildArgs,
+  buildExtractArgsFor,
+  validateCompressionInputShape,
+} from "../archive";
 import { state } from "../state";
 
 function setSelectValue(id: string, value: string) {
@@ -47,6 +51,14 @@ beforeEach(() => {
 });
 
 describe("buildArgs (add mode)", () => {
+  it("rejects multiple inputs for single-stream formats", () => {
+    state.inputs = ["file1.txt", "file2.txt"];
+    setInputValue("output-path", "output.gz");
+    setSelectValue("format", "gzip");
+
+    expect(() => buildArgs()).toThrow(/accepts exactly one input/);
+  });
+
   it("builds basic 7z create command", () => {
     state.inputs = ["file1.txt", "file2.txt"];
     setInputValue("output-path", "output.7z");
@@ -234,22 +246,21 @@ describe("buildArgs (add mode)", () => {
     expect(args).toContain("-mhe=on");
   });
 
-  it("includes sfx switch", () => {
+  it("does not emit an unavailable sfx switch", () => {
     state.inputs = ["a.txt"];
     setInputValue("output-path", "out.7z");
     setChecked("sfx", true);
 
     const args = buildArgs();
-    expect(args).toContain("-sfx");
+    expect(args).not.toContain("-sfx");
   });
 
-  it("includes delete-after switch", () => {
+  it("rejects non-transactional delete-after compression", () => {
     state.inputs = ["a.txt"];
     setInputValue("output-path", "out.7z");
     setChecked("delete-after", true);
 
-    const args = buildArgs();
-    expect(args).toContain("-sdel");
+    expect(() => buildArgs()).toThrow(/cannot be rolled back safely/i);
   });
 
   it("throws when output path is empty", () => {
@@ -284,6 +295,17 @@ describe("buildArgs (add mode)", () => {
 
     const args = buildArgs();
     expect(args).toContain("-bb3");
+  });
+});
+
+describe("validateCompressionInputShape", () => {
+  it("allows one input for single-stream formats", () => {
+    expect(validateCompressionInputShape("xz", 1)).toBeNull();
+  });
+
+  it("allows multiple inputs for archive formats", () => {
+    expect(validateCompressionInputShape("7z", 3)).toBeNull();
+    expect(validateCompressionInputShape("tar", 3)).toBeNull();
   });
 });
 

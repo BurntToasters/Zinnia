@@ -67,9 +67,7 @@ fn parse_current_file(rest: &str, update: &mut ProgressUpdate) {
 
     // Strip a leading action marker (+ - = U).
     let name = match trimmed.chars().next() {
-        Some(marker @ ('+' | '-' | '=' | 'U')) => {
-            trimmed[marker.len_utf8()..].trim_start()
-        }
+        Some(marker @ ('+' | '-' | '=' | 'U')) => trimmed[marker.len_utf8()..].trim_start(),
         _ => trimmed,
     };
 

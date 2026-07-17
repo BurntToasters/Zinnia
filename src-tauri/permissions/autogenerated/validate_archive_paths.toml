@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-validate-archive-paths"
+description = "Enables the validate_archive_paths command without any pre-configured scope."
+commands.allow = ["validate_archive_paths"]
+
+[[permission]]
+identifier = "deny-validate-archive-paths"
+description = "Denies the validate_archive_paths command without any pre-configured scope."
+commands.deny = ["validate_archive_paths"]

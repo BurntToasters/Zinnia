@@ -23,6 +23,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 * **License menu:** Fixed an issue with the license menu rendering in basic mode.
 - **NEW - Windows code signing:** WOO HOO!! Windows Codesigning is here!
   - After a good while of not having it, Windows Binaries are now signed by Azure Artifact Signing!
+- **Windows security:** Temporarily disabled RAR operations and RAR file associations while conflicting CVE-2026-58052 affected-version data is resolved.
 
 ## Changes in `v0.5.0:`
 

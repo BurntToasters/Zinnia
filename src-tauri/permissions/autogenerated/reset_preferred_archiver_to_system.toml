@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reset-preferred-archiver-to-system"
+description = "Enables the reset_preferred_archiver_to_system command without any pre-configured scope."
+commands.allow = ["reset_preferred_archiver_to_system"]
+
+[[permission]]
+identifier = "deny-reset-preferred-archiver-to-system"
+description = "Denies the reset_preferred_archiver_to_system command without any pre-configured scope."
+commands.deny = ["reset_preferred_archiver_to_system"]

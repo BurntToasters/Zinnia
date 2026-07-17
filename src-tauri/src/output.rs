@@ -3,6 +3,48 @@
 pub const MAX_OUTPUT_BYTES: usize = 10 * 1024 * 1024;
 pub const MAX_LOG_ENTRY_BYTES: usize = 16 * 1024;
 
+#[derive(Default)]
+pub struct Utf8StreamDecoder {
+    pending: Vec<u8>,
+}
+
+impl Utf8StreamDecoder {
+    pub fn push(&mut self, bytes: &[u8]) -> String {
+        self.pending.extend_from_slice(bytes);
+        let mut decoded = String::new();
+        loop {
+            match std::str::from_utf8(&self.pending) {
+                Ok(valid) => {
+                    decoded.push_str(valid);
+                    self.pending.clear();
+                    break;
+                }
+                Err(error) => {
+                    let valid_up_to = error.valid_up_to();
+                    if valid_up_to > 0 {
+                        if let Ok(valid) = std::str::from_utf8(&self.pending[..valid_up_to]) {
+                            decoded.push_str(valid);
+                        }
+                        self.pending.drain(..valid_up_to);
+                    }
+                    let Some(error_len) = error.error_len() else {
+                        break;
+                    };
+                    decoded.push('\u{fffd}');
+                    self.pending.drain(..error_len);
+                }
+            }
+        }
+        decoded
+    }
+
+    pub fn finish(&mut self) -> String {
+        let decoded = String::from_utf8_lossy(&self.pending).into_owned();
+        self.pending.clear();
+        decoded
+    }
+}
+
 pub fn truncate_for_bytes(input: &str, max_bytes: usize) -> String {
     if input.len() <= max_bytes {
         return input.to_string();
@@ -17,7 +59,12 @@ pub fn truncate_for_bytes(input: &str, max_bytes: usize) -> String {
     format!("{} [truncated {} bytes]", &input[..boundary], omitted)
 }
 
-pub fn append_limited_output(target: &mut String, chunk: &str, max_bytes: usize, truncated: &mut bool) {
+pub fn append_limited_output(
+    target: &mut String,
+    chunk: &str,
+    max_bytes: usize,
+    truncated: &mut bool,
+) {
     if *truncated {
         return;
     }
@@ -82,5 +129,14 @@ mod tests {
         assert_eq!(out, "éé");
         assert!(truncated);
         assert!(std::str::from_utf8(out.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn stream_decoder_preserves_multibyte_characters_split_across_chunks() {
+        let mut decoder = Utf8StreamDecoder::default();
+        let bytes = "café".as_bytes();
+        assert_eq!(decoder.push(&bytes[..4]), "caf");
+        assert_eq!(decoder.push(&bytes[4..]), "é");
+        assert_eq!(decoder.finish(), "");
     }
 }

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
   buildLogFragments,
@@ -22,6 +23,7 @@ import {
   setRunning,
   toggleActivity,
   registerBasicHooks,
+  persistSettingsImmediately,
 } from "../ui";
 import { state, dom } from "../state";
 import { SETTING_DEFAULTS } from "../settings-model";
@@ -89,6 +91,26 @@ describe("validation helpers", () => {
     expect(mapped.state).toBe("invalid");
     expect(mapped.reason).toBe("Not a supported archive");
     expect(mapped.reasonShort).toBe("Not a supported archive");
+  });
+});
+
+describe("settings persistence queue", () => {
+  it("continues after a failed save instead of poisoning later writes", async () => {
+    const invokeMock = vi.mocked(invoke);
+    invokeMock.mockRejectedValueOnce(new Error("disk full"));
+
+    await expect(
+      persistSettingsImmediately(state.currentSettings, state.settingsExtras),
+    ).rejects.toThrow("disk full");
+
+    invokeMock.mockResolvedValueOnce(undefined);
+    await expect(
+      persistSettingsImmediately(state.currentSettings, state.settingsExtras),
+    ).resolves.toBeUndefined();
+    expect(invokeMock).toHaveBeenLastCalledWith(
+      "save_settings",
+      expect.objectContaining({ json: expect.any(String) }),
+    );
   });
 });
 

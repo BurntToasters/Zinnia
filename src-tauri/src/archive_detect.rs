@@ -150,6 +150,12 @@ fn read_probe_bytes(path: &std::path::Path, max_bytes: usize) -> Result<Vec<u8>,
     Ok(buf)
 }
 
+#[cfg(target_os = "windows")]
+pub fn is_rar_archive_file(path: &std::path::Path) -> Result<bool, String> {
+    let bytes = read_probe_bytes(path, 8)?;
+    Ok(detect_archive_signature(&bytes) == Some("rar"))
+}
+
 fn extension_mismatch_reason(expected: &str, detected: Option<&str>, tar: bool) -> String {
     if expected == "tar" && tar {
         return String::new();
@@ -218,6 +224,13 @@ pub fn validate_archive_path(path: &str) -> ArchivePathValidation {
 
     let signature = detect_archive_signature(&bytes);
     let tar = has_tar_signature(&bytes);
+
+    #[cfg(target_os = "windows")]
+    if signature == Some("rar") {
+        return invalid(
+            "RAR extraction is temporarily disabled on Windows while conflicting CVE-2026-58052 affected-version data is resolved.",
+        );
+    }
     let valid = match expected_archive_family(&lower) {
         Some("7z") => signature == Some("7z"),
         Some("zip") => signature == Some("zip"),

@@ -61,14 +61,9 @@ async function setupAndRun(invokeImpl?: AnyInvoke): Promise<{
     appWindow as never,
   );
 
-  const defaultInvoke: AnyInvoke = async (cmd, payload) => {
+  const defaultInvoke: AnyInvoke = async (cmd, _payload) => {
     if (cmd === "get_extract_paths") return ["/tmp/archive.zip"];
-    if (cmd === "probe_7z") return undefined;
     if (cmd === "run_7z") {
-      const args = (payload as { args?: string[] } | undefined)?.args ?? [];
-      if (args[0] === "l") {
-        return { stdout: "- one\n- two\n", stderr: "", code: 0 };
-      }
       return { stdout: "", stderr: "", code: 0 };
     }
     if (cmd === "close_extract_window") return undefined;
@@ -112,10 +107,10 @@ describe("extract-window", () => {
     );
   });
 
-  it("shows error when runtime probe fails", async () => {
+  it("shows error when extraction process fails to start", async () => {
     await setupAndRun(async (cmd) => {
       if (cmd === "get_extract_paths") return ["/tmp/archive.7z"];
-      if (cmd === "probe_7z") throw new Error("missing sidecar");
+      if (cmd === "run_7z") throw new Error("missing sidecar");
       return undefined;
     });
 
@@ -130,15 +125,10 @@ describe("extract-window", () => {
     ).toContain("missing sidecar");
   });
 
-  it("renders warnings when extraction exits with code 1", async () => {
-    await setupAndRun(async (cmd, payload) => {
+  it("treats warning exits as failed transactional extraction", async () => {
+    await setupAndRun(async (cmd, _payload) => {
       if (cmd === "get_extract_paths") return ["/tmp/archive.7z"];
-      if (cmd === "probe_7z") return undefined;
       if (cmd === "run_7z") {
-        const args = (payload as { args?: string[] } | undefined)?.args ?? [];
-        if (args[0] === "l") {
-          return { stdout: "- entry\n", stderr: "", code: 0 };
-        }
         return { stdout: "", stderr: "minor warning", code: 1 };
       }
       return undefined;
@@ -146,29 +136,24 @@ describe("extract-window", () => {
 
     expect(
       (document.getElementById("extract-status") as HTMLElement).textContent,
-    ).toBe("Done (with warnings)");
+    ).toBe("Failed");
     expect(
       (document.getElementById("extract-error") as HTMLElement).hidden,
     ).toBe(false);
     expect(
       (document.querySelector(".extract-error-title") as HTMLElement)
         .textContent,
-    ).toBe("Warnings");
+    ).toBe("Extraction failed");
     expect(
       (document.getElementById("open-destination-btn") as HTMLButtonElement)
         .hidden,
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("shows failure details for non-warning extraction failures", async () => {
-    await setupAndRun(async (cmd, payload) => {
+    await setupAndRun(async (cmd, _payload) => {
       if (cmd === "get_extract_paths") return ["/tmp/archive.7z"];
-      if (cmd === "probe_7z") return undefined;
       if (cmd === "run_7z") {
-        const args = (payload as { args?: string[] } | undefined)?.args ?? [];
-        if (args[0] === "l") {
-          return { stdout: "- entry\n", stderr: "", code: 0 };
-        }
         return { stdout: "", stderr: "fatal extraction error", code: 2 };
       }
       return undefined;
@@ -182,7 +167,7 @@ describe("extract-window", () => {
     ).toBe("fatal extraction error");
   });
 
-  it("auto-closes after successful extraction", async () => {
+  it("stays open after successful extraction", async () => {
     vi.useFakeTimers();
 
     const { invokeMock } = await setupAndRun();
@@ -196,18 +181,13 @@ describe("extract-window", () => {
 
     expect(
       invokeMock.mock.calls.some(([name]) => name === "close_extract_window"),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("extracts opened archives into a sibling folder named after the archive", async () => {
-    const { invokeMock } = await setupAndRun(async (cmd, payload) => {
+    const { invokeMock } = await setupAndRun(async (cmd, _payload) => {
       if (cmd === "get_extract_paths") return ["/Downloads/test.zip"];
-      if (cmd === "probe_7z") return undefined;
       if (cmd === "run_7z") {
-        const args = (payload as { args?: string[] } | undefined)?.args ?? [];
-        if (args[0] === "l") {
-          return { stdout: "- unzipped_data\n", stderr: "", code: 0 };
-        }
         return { stdout: "", stderr: "", code: 0 };
       }
       return undefined;
@@ -223,13 +203,20 @@ describe("extract-window", () => {
         "-o/Downloads/test",
         "-aou",
         "-bb1",
+        "-bsp1",
         "--",
         "/Downloads/test.zip",
       ],
     });
+    expect(
+      invokeMock.mock.calls.filter(([name]) => name === "run_7z"),
+    ).toHaveLength(1);
+    expect(invokeMock.mock.calls.some(([name]) => name === "probe_7z")).toBe(
+      false,
+    );
   });
 
-  it("falls back to webview close and destroy when backend close command fails", async () => {
+  it("keeps the window open when backend close cannot finish safely", async () => {
     const { appWindow } = await setupAndRun(async (cmd) => {
       if (cmd === "get_extract_paths") return [];
       if (cmd === "close_extract_window")
@@ -237,25 +224,20 @@ describe("extract-window", () => {
       return undefined;
     });
 
-    appWindow.close.mockRejectedValueOnce(new Error("close failed"));
-    appWindow.destroy.mockResolvedValueOnce(undefined);
-
     (document.getElementById("close-btn") as HTMLButtonElement).click();
     await flushAsync();
 
-    expect(appWindow.close).toHaveBeenCalledOnce();
-    expect(appWindow.destroy).toHaveBeenCalledOnce();
+    expect(appWindow.close).not.toHaveBeenCalled();
+    expect(appWindow.destroy).not.toHaveBeenCalled();
+    expect(document.getElementById("extract-status")?.textContent).toBe(
+      "Waiting for cleanup",
+    );
   });
 
   it("shows open destination error without crashing", async () => {
-    const { invokeMock } = await setupAndRun(async (cmd, payload) => {
+    const { invokeMock } = await setupAndRun(async (cmd, _payload) => {
       if (cmd === "get_extract_paths") return ["/tmp/archive.7z"];
-      if (cmd === "probe_7z") return undefined;
       if (cmd === "run_7z") {
-        const args = (payload as { args?: string[] } | undefined)?.args ?? [];
-        if (args[0] === "l") {
-          return { stdout: "- entry\n", stderr: "", code: 0 };
-        }
         return { stdout: "", stderr: "warning only", code: 1 };
       }
       if (cmd === "open_path") throw new Error("permission denied");

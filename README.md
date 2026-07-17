@@ -49,7 +49,11 @@ native build runs.
 
 ## Updater setup
 - Updater is already configured in `src-tauri/tauri.conf.json`.
-- Push a `v*` tag to run the full release workflow and upload updater manifests,
-  artifacts, checksum files, and detached `.asc` signatures for that tag.
-- Manual `Release` workflow runs from `main`, `beta`, or `next-*` are for
-  verification and preflight builds; they do not publish a tagged release.
+- CI runs tests and checks on Linux, Windows, and macOS. It never builds release
+  binaries, publishes releases, or consumes release signing secrets.
+- Signed releases are intentionally explicit: run the platform-specific
+  `release:win`, `release:mac`, and `release:linux` scripts for the same version.
+  They stage updater manifests, artifacts, checksum files, and detached `.asc`
+  signatures in the matching draft GitHub release.
+- Do not push a release tag until every platform artifact is present and its
+  updater signature and checksum have been verified.

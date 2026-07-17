@@ -5,6 +5,7 @@ import path from "path";
 
 const FLATPAK_BUILD_DIR_PREFIX = "flatpak-build";
 const TAURI_TARGET_DIR = path.join("src-tauri", "target");
+const RELEASE_BUILD_SESSION = ".build-session.json";
 
 const CLEAN_TARGETS = {
   clean: ["dist"],
@@ -111,6 +112,19 @@ function cleanDirs(mode) {
           : String(error);
       throw new Error(`Failed to clean "${relativeDir}": ${message}`);
     }
+  }
+
+  if (mode === "clean-release-artifacts") {
+    const releaseDir = path.join(cwd, "release");
+    const packageVersion = JSON.parse(
+      fs.readFileSync(path.join(cwd, "package.json"), "utf8"),
+    ).version;
+    fs.mkdirSync(releaseDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(releaseDir, RELEASE_BUILD_SESSION),
+      `${JSON.stringify({ version: packageVersion, startedAt: Date.now() })}\n`,
+      { flag: "wx", mode: 0o600 },
+    );
   }
 }
 

@@ -58,11 +58,11 @@ export function applySettingsToForm() {
   $<HTMLSelectElement>("solid").value = state.currentSettings.solid;
   $<HTMLInputElement>("threads").value = String(state.currentSettings.threads);
   $<HTMLSelectElement>("path-mode").value = state.currentSettings.pathMode;
-  $<HTMLInputElement>("sfx").checked = state.currentSettings.sfx;
+  $<HTMLInputElement>("sfx").checked = false;
+  $<HTMLInputElement>("sfx").disabled = true;
   $<HTMLInputElement>("encrypt-headers").checked =
     state.currentSettings.encryptHeaders;
-  $<HTMLInputElement>("delete-after").checked =
-    state.currentSettings.deleteAfter;
+  $<HTMLInputElement>("delete-after").checked = false;
 }
 
 export function populateSettingsModal() {
@@ -77,11 +77,11 @@ export function populateSettingsModal() {
     state.currentSettings.threads,
   );
   $<HTMLSelectElement>("s-path-mode").value = state.currentSettings.pathMode;
-  $<HTMLInputElement>("s-sfx").checked = state.currentSettings.sfx;
+  $<HTMLInputElement>("s-sfx").checked = false;
+  $<HTMLInputElement>("s-sfx").disabled = true;
   $<HTMLInputElement>("s-encrypt-headers").checked =
     state.currentSettings.encryptHeaders;
-  $<HTMLInputElement>("s-delete-after").checked =
-    state.currentSettings.deleteAfter;
+  $<HTMLInputElement>("s-delete-after").checked = false;
   $<HTMLInputElement>("s-auto-check-updates").checked =
     state.currentSettings.autoCheckUpdates;
   $<HTMLSelectElement>("s-update-channel").value =
@@ -132,7 +132,7 @@ export function readSettingsModal(): UserSettings {
     ),
     pathMode: $<HTMLSelectElement>("s-path-mode")
       .value as UserSettings["pathMode"],
-    sfx: $<HTMLInputElement>("s-sfx").checked,
+    sfx: false,
     encryptHeaders:
       securitySupport.encryptHeaders &&
       $<HTMLInputElement>("s-encrypt-headers").checked,

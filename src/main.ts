@@ -288,6 +288,12 @@ async function applyIncomingPaths(
 ): Promise<void> {
   if (!paths.length) return;
 
+  // Do not mutate the shared input model underneath an active job. Keeping
+  // this promise pending also preserves file-open FIFO ordering.
+  while (state.running) {
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
+  }
+
   if (mode === "compress") {
     setMode("add");
     for (const path of paths) {
@@ -303,7 +309,16 @@ async function applyIncomingPaths(
     return;
   }
 
-  const allArchives = await allPathsAreArchives(paths);
+  let allArchives: boolean;
+  // Archive detection crosses the IPC boundary. An operation may start while
+  // that await is pending, so re-check and retry before touching shared input.
+  for (;;) {
+    allArchives = await allPathsAreArchives(paths);
+    if (!state.running) break;
+    while (state.running) {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
+    }
+  }
   const shouldAutoBrowse =
     mode !== "extract" && paths.length === 1 && allArchives;
   const shouldAutoExtract =
@@ -386,7 +401,11 @@ function resetRuntimeStateForFirstRun(): void {
   dom.logEl.textContent = "";
 }
 
+let eventsWired = false;
+
 function wireEvents() {
+  if (eventsWired) return;
+  eventsWired = true;
   // Sync the output-path field when format changes so the extension updates
   // automatically even if inputs were already present.
   function syncOutputPath(): void {
@@ -499,19 +518,23 @@ function wireEvents() {
     syncDestinationWhilePickerOpen($<HTMLInputElement>("selective-dest").value);
   });
 
-  $("toggle-browse-password").addEventListener("click", () => {
-    const input = $<HTMLInputElement>("browse-password");
-    const btn = $<HTMLButtonElement>("toggle-browse-password");
-    if (input.type === "password") {
-      input.type = "text";
-      btn.textContent = "Hide";
-      btn.setAttribute("aria-pressed", "true");
-    } else {
-      input.type = "password";
-      btn.textContent = "Show";
-      btn.setAttribute("aria-pressed", "false");
-    }
-  });
+  const browsePasswordToggle = $<HTMLButtonElement>("toggle-browse-password");
+  if (!browsePasswordToggle.dataset.zinniaWired) {
+    browsePasswordToggle.dataset.zinniaWired = "true";
+    browsePasswordToggle.addEventListener("click", () => {
+      const input = $<HTMLInputElement>("browse-password");
+      const btn = $<HTMLButtonElement>("toggle-browse-password");
+      if (input.type === "password") {
+        input.type = "text";
+        btn.textContent = "Hide";
+        btn.setAttribute("aria-pressed", "true");
+      } else {
+        input.type = "password";
+        btn.textContent = "Show";
+        btn.setAttribute("aria-pressed", "false");
+      }
+    });
+  }
 
   const updateDeletePresetButton = () => {
     const isCustom = $<HTMLSelectElement>("preset").value.startsWith("custom:");
@@ -612,33 +635,41 @@ function wireEvents() {
     if (isCustom) $<HTMLInputElement>("split-custom").focus();
   });
 
-  $("toggle-password").addEventListener("click", () => {
-    const input = $<HTMLInputElement>("password");
-    const btn = $<HTMLButtonElement>("toggle-password");
-    if (input.type === "password") {
-      input.type = "text";
-      btn.textContent = "Hide";
-      btn.setAttribute("aria-pressed", "true");
-    } else {
-      input.type = "password";
-      btn.textContent = "Show";
-      btn.setAttribute("aria-pressed", "false");
-    }
-  });
+  const passwordToggle = $<HTMLButtonElement>("toggle-password");
+  if (!passwordToggle.dataset.zinniaWired) {
+    passwordToggle.dataset.zinniaWired = "true";
+    passwordToggle.addEventListener("click", () => {
+      const input = $<HTMLInputElement>("password");
+      const btn = $<HTMLButtonElement>("toggle-password");
+      if (input.type === "password") {
+        input.type = "text";
+        btn.textContent = "Hide";
+        btn.setAttribute("aria-pressed", "true");
+      } else {
+        input.type = "password";
+        btn.textContent = "Show";
+        btn.setAttribute("aria-pressed", "false");
+      }
+    });
+  }
 
-  $("toggle-extract-password").addEventListener("click", () => {
-    const input = $<HTMLInputElement>("extract-password");
-    const btn = $<HTMLButtonElement>("toggle-extract-password");
-    if (input.type === "password") {
-      input.type = "text";
-      btn.textContent = "Hide";
-      btn.setAttribute("aria-pressed", "true");
-    } else {
-      input.type = "password";
-      btn.textContent = "Show";
-      btn.setAttribute("aria-pressed", "false");
-    }
-  });
+  const extractPasswordToggle = $<HTMLButtonElement>("toggle-extract-password");
+  if (!extractPasswordToggle.dataset.zinniaWired) {
+    extractPasswordToggle.dataset.zinniaWired = "true";
+    extractPasswordToggle.addEventListener("click", () => {
+      const input = $<HTMLInputElement>("extract-password");
+      const btn = $<HTMLButtonElement>("toggle-extract-password");
+      if (input.type === "password") {
+        input.type = "text";
+        btn.textContent = "Hide";
+        btn.setAttribute("aria-pressed", "true");
+      } else {
+        input.type = "password";
+        btn.textContent = "Show";
+        btn.setAttribute("aria-pressed", "false");
+      }
+    });
+  }
 
   $("extract-path").addEventListener("input", () => {
     const value = $<HTMLInputElement>("extract-path").value.trim();
@@ -937,6 +968,40 @@ function wireTitlebar(): void {
 }
 
 async function init() {
+  let uiReadyForOpenPaths = false;
+  let openPathsQueue = Promise.resolve();
+
+  async function drainPendingPaths(): Promise<void> {
+    let batches: { paths: string[]; mode: string }[] = [];
+    try {
+      batches = await invoke<{ paths: string[]; mode: string }[]>(
+        "drain_pending_paths",
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`Failed to read pending Explorer paths: ${msg}`, "error");
+      return;
+    }
+    for (const batch of batches) {
+      if (batch.paths.length > 0) {
+        await applyIncomingPaths(batch.paths, batch.mode, "Explorer");
+      }
+    }
+  }
+
+  try {
+    await listen("pending-paths-changed", () => {
+      if (!uiReadyForOpenPaths) return;
+      openPathsQueue = openPathsQueue.then(drainPendingPaths).catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        log(`Failed to process incoming Explorer paths: ${msg}`, "error");
+      });
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Failed to subscribe to Explorer open events: ${msg}`, "error");
+  }
+
   // Detect platform and show titlebar immediately to prevent layout flash
   let platform = "unknown";
   try {
@@ -953,17 +1018,6 @@ async function init() {
     document.body.classList.add("platform-linux");
   }
   wireTitlebar();
-
-  try {
-    await invoke("probe_7z");
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    await message(`The bundled 7-Zip runtime check failed.\n\n${msg}`, {
-      title: "Missing runtime dependency",
-      kind: "error",
-    });
-    throw err;
-  }
 
   try {
     const cpuCount = await invoke<number>("get_cpu_count");
@@ -1000,12 +1054,14 @@ async function init() {
   registerIconRefreshHook(refreshIcons);
   refreshIcons();
 
-  try {
-    state.logDirectory = await invoke<string>("get_log_dir");
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    devLog(`Unable to resolve log directory: ${msg}`);
-  }
+  void invoke<string>("get_log_dir")
+    .then((directory) => {
+      state.logDirectory = directory;
+    })
+    .catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      devLog(`Unable to resolve log directory: ${msg}`);
+    });
 
   window
     .matchMedia("(prefers-color-scheme: dark)")
@@ -1020,26 +1076,28 @@ async function init() {
   renderInputs();
   wireEvents();
   initBasicWorkspace();
+  uiReadyForOpenPaths = true;
   refreshQuickActionRepeatState();
   if (loadedSettings.malformed && loadedSettings.warning) {
     log(loadedSettings.warning, "error");
   }
 
-  let version = "v?";
-  try {
-    version = `v${await getVersion()}`;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    devLog(`Unable to read app version: ${msg}`);
-  }
-
   state.platformName = platform;
-  try {
-    state.appIsPackaged = await invoke<boolean>("is_packaged");
-  } catch (err) {
-    state.appIsPackaged = false;
-    const msg = err instanceof Error ? err.message : String(err);
-    devLog(`Unable to determine package state: ${msg}`);
+  const [versionResult, packagedResult] = await Promise.allSettled([
+    getVersion(),
+    invoke<boolean>("is_packaged"),
+  ]);
+  const version =
+    versionResult.status === "fulfilled" ? `v${versionResult.value}` : "v?";
+  if (versionResult.status === "rejected") {
+    devLog(`Unable to read app version: ${String(versionResult.reason)}`);
+  }
+  state.appIsPackaged =
+    packagedResult.status === "fulfilled" ? packagedResult.value : false;
+  if (packagedResult.status === "rejected") {
+    devLog(
+      `Unable to determine package state: ${String(packagedResult.reason)}`,
+    );
   }
   const platformDisplay =
     platform === "windows"
@@ -1053,53 +1111,24 @@ async function init() {
   dom.platformLabel.textContent = platformDisplay;
   $("s-version-label").textContent = version;
   $("s-platform-label").textContent = platformDisplay;
-  await refreshOsIntegrationStatus().catch((err) => {
+  void refreshOsIntegrationStatus().catch((err) => {
     const msg = err instanceof Error ? err.message : String(err);
     devLog(`Unable to read OS integration status: ${msg}`);
   });
 
-  let flatpak = false;
-  try {
-    flatpak = await invoke<boolean>("is_flatpak");
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    devLog(`Unable to detect Flatpak context: ${msg}`);
-  }
-  if (flatpak) {
-    document.body.classList.add("platform-flatpak");
-  }
-
-  let openPathsQueue = Promise.resolve();
-
-  async function drainPendingPaths(): Promise<void> {
-    let batches: { paths: string[]; mode: string }[] = [];
-    try {
-      batches = await invoke<{ paths: string[]; mode: string }[]>(
-        "drain_pending_paths",
-      );
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log(`Failed to read pending Explorer paths: ${msg}`, "error");
-      return;
-    }
-    for (const batch of batches) {
-      if (batch.paths.length > 0) {
-        await applyIncomingPaths(batch.paths, batch.mode, "Explorer");
+  void invoke<boolean>("is_flatpak")
+    .then((flatpak) => {
+      if (flatpak) {
+        document.body.classList.add("platform-flatpak");
+      } else if (state.currentSettings.autoCheckUpdates) {
+        void autoCheckUpdates();
       }
-    }
-  }
-
-  try {
-    await listen("pending-paths-changed", () => {
-      openPathsQueue = openPathsQueue.then(drainPendingPaths).catch((err) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        log(`Failed to process incoming Explorer paths: ${msg}`, "error");
-      });
+    })
+    .catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      devLog(`Unable to detect Flatpak context: ${msg}`);
+      if (state.currentSettings.autoCheckUpdates) void autoCheckUpdates();
     });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log(`Failed to subscribe to Explorer open events: ${msg}`, "error");
-  }
 
   let initialMode = "";
   let initialPaths: string[] = [];
@@ -1125,14 +1154,16 @@ async function init() {
 
   // Drain any paths that queued up while we were initializing
   await drainPendingPaths();
-
-  if (state.currentSettings.autoCheckUpdates && !flatpak) {
-    void autoCheckUpdates();
-  }
+  await invoke("mark_main_window_ready").catch(() => {});
 
   const appWindow = getCurrentWebviewWindow();
   await appWindow.onDragDropEvent(async (event) => {
     try {
+      if (state.running) {
+        dom.inputList.classList.remove("list--dragover");
+        handleBasicDragDrop("leave");
+        return;
+      }
       if (getWorkspaceMode() === "basic") {
         handleBasicDragDrop(
           event.payload.type,

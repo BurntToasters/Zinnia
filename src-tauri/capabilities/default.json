@@ -2,9 +2,7 @@
   "$schema": "https://schema.tauri.app/capabilities/2",
   "identifier": "default",
   "description": "Default permissions",
-  "windows": [
-    "main"
-  ],
+  "windows": ["main"],
   "permissions": [
     "core:default",
     "core:window:allow-close",
@@ -19,7 +17,34 @@
     "dialog:default",
     "updater:default",
     "process:default",
-    "shell:allow-open",
-    "notification:default"
+    "notification:default",
+    "allow-run-7z",
+    "allow-cancel-7z",
+    "allow-is-7z-running",
+    "allow-probe-7z",
+    "allow-validate-archive-paths",
+    "allow-load-settings",
+    "allow-save-settings",
+    "allow-reset-settings",
+    "allow-append-local-log",
+    "allow-get-log-dir",
+    "allow-export-logs",
+    "allow-clear-logs",
+    "allow-open-log-dir",
+    "allow-open-path",
+    "allow-get-initial-paths",
+    "allow-get-initial-mode",
+    "allow-drain-pending-paths",
+    "allow-mark-main-window-ready",
+    "allow-get-platform-info",
+    "allow-get-os-integration-status",
+    "allow-open-os-integration-settings",
+    "allow-reset-preferred-archiver-to-system",
+    "allow-set-zinnia-default-archiver",
+    "allow-get-cpu-count",
+    "allow-is-flatpak",
+    "allow-is-packaged",
+    "allow-create-temp-extract-dir",
+    "allow-remove-managed-temp-dir"
   ]
 }

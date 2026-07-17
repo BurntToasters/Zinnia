@@ -26,9 +26,18 @@ split into focused modules:
 | `platform.rs` | Platform/OS-integration queries |
 | `output.rs` | Byte-bounded, UTF-8-safe output buffering |
 
-`run_7z` validates args, spawns the sidecar via the shared drain helper, emits
-raw (`7z-progress`) and structured (`7z-progress-structured`) progress events,
-and on cancel deletes the partial output of a *create* (`a`) operation.
+`run_7z` validates args, owns one sidecar operation globally, emits throttled
+raw (`7z-progress`) plus structured (`7z-progress-structured`) progress events,
+and keeps the operation locked until termination is confirmed. Extraction runs
+in a contained staging directory and promotes only validated, successful output.
+Create and update operations write to a sibling staging basename and atomically
+promote the completed archive (including every split volume), so a failed or
+cancelled operation never edits the destination archive in place.
+
+Cancellation is a lifecycle state, not just a kill signal: the operation slot
+remains busy until the child has exited and staging has been promoted or rolled
+back. The extract-only window asks the backend to cancel and waits for that
+cleanup before it can be destroyed.
 
 ## Frontend (`src/`)
 
@@ -51,3 +60,8 @@ communicate via direct calls and a few custom DOM events.
 - Frontend: Vitest + jsdom. Shared DOM fixture and Tauri mocks in
   `src/tests/setup-dom.ts`.
 - Backend: `cargo test` — unit tests live beside each module.
+- Sidecar integration: `src-tauri/tests/sidecar_roundtrip.rs` exercises create,
+  list, test, extract, and encrypted-archive failure against bundled 7-Zip.
+- CI runs tests and checks on Linux, Windows, and macOS; Clippy and dependency
+  audits run as separate security gates. Release binaries are built only by the
+  intentionally destructive platform release scripts on isolated build VMs.

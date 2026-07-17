@@ -75,8 +75,7 @@ function defaultArchiverActionAvailable(status: OsIntegrationStatus): boolean {
 }
 
 function systemResetAvailable(status: OsIntegrationStatus): boolean {
-  if (status.platform === "windows") return status.defaultAppHelpAvailable;
-  return status.packaged && status.platform === "macos";
+  return status.platform === "windows" && status.defaultAppHelpAvailable;
 }
 
 function systemResetHelp(status: OsIntegrationStatus): string {
@@ -84,7 +83,7 @@ function systemResetHelp(status: OsIntegrationStatus): string {
     return "Install a packaged build before changing archive defaults.";
   }
   if (status.platform === "macos") {
-    return "Restore supported archive types to Archive Utility.";
+    return "macOS has no universal system archiver for every archive type. Use Finder's Get Info / Open With controls.";
   }
   if (status.platform === "windows") {
     return "Open Windows Default Apps and choose the system archive app.";

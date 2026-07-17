@@ -42,7 +42,6 @@
   !insertmacro ZINNIA_REGISTER_ARCHIVE_VERBS ".tbz2"
   !insertmacro ZINNIA_REGISTER_ARCHIVE_VERBS ".xz"
   !insertmacro ZINNIA_REGISTER_ARCHIVE_VERBS ".txz"
-  !insertmacro ZINNIA_REGISTER_ARCHIVE_VERBS ".rar"
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
@@ -56,5 +55,4 @@
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".tbz2"
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".xz"
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".txz"
-  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".rar"
 !macroend

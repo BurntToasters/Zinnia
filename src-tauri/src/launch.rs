@@ -5,10 +5,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, Url};
 
-use crate::archive_detect::validate_archive_path;
+use crate::process::RunningProcess;
 
 static EXTRACT_WINDOW_COUNTER: AtomicU64 = AtomicU64::new(0);
 pub static EXTRACT_ONLY_LAUNCH: AtomicBool = AtomicBool::new(false);
+pub static MAC_FALLBACK_MAIN_PENDING: AtomicBool = AtomicBool::new(false);
 pub static FILE_OPEN_SIGNAL: Mutex<Option<std::sync::mpsc::Sender<()>>> = Mutex::new(None);
 
 pub struct InitialPaths(pub Mutex<Vec<String>>);
@@ -125,8 +126,50 @@ pub fn first_extract_window(app: &tauri::AppHandle) -> Option<tauri::WebviewWind
         })
 }
 
+pub fn ensure_main_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
+    if let Some(window) = app.get_webview_window("main") {
+        return Ok(window);
+    }
+
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|config| config.label == "main")
+        .ok_or_else(|| "Main window configuration is missing".to_string())?;
+
+    tauri::WebviewWindowBuilder::from_config(app, config)
+        .map_err(|e| e.to_string())?
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+pub fn show_main_window(app: &tauri::AppHandle) -> Result<(), String> {
+    let window = ensure_main_window(app)?;
+
+    #[cfg(not(target_os = "macos"))]
+    window.set_decorations(false).map_err(|e| e.to_string())?;
+    #[cfg(target_os = "macos")]
+    window.set_title("").map_err(|e| e.to_string())?;
+
+    window.show().map_err(|e| e.to_string())?;
+    window.set_focus().map_err(|e| e.to_string())
+}
+
 #[tauri::command]
-pub fn close_extract_window(window: tauri::Window, app: tauri::AppHandle) -> Result<(), String> {
+pub fn mark_main_window_ready() {
+    MAC_FALLBACK_MAIN_PENDING.store(false, Ordering::SeqCst);
+}
+
+#[tauri::command]
+pub async fn close_extract_window(
+    window: tauri::Window,
+    app: tauri::AppHandle,
+    _state: tauri::State<'_, RunningProcess>,
+) -> Result<(), String> {
+    cancel_owner_and_wait(&app, window.label()).await?;
+
     if EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst) {
         if let Some(main_window) = app.get_webview_window("main") {
             let _ = main_window.destroy();
@@ -135,6 +178,57 @@ pub fn close_extract_window(window: tauri::Window, app: tauri::AppHandle) -> Res
     }
 
     window.destroy().map_err(|e| e.to_string())
+}
+
+pub async fn cancel_owner_and_wait(
+    app: &tauri::AppHandle,
+    owner_label: &str,
+) -> Result<(), String> {
+    let state = app.state::<RunningProcess>();
+    let child = {
+        let mut process = state
+            .0
+            .lock()
+            .map_err(|_| "Process lock poisoned".to_string())?;
+        if let Some(owner) = &process.owner_label {
+            if owner == owner_label {
+                process.cancelling = true;
+                process.child.take()
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+    if let Some(child) = child {
+        if let Err(e) = child.kill() {
+            return Err(format!(
+                "Could not stop the archive operation before closing this window: {e}"
+            ));
+        }
+    }
+
+    // `run_7z` owns termination collection and filesystem finalization.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    loop {
+        let busy = {
+            let process = state
+                .0
+                .lock()
+                .map_err(|_| "Process lock poisoned".to_string())?;
+            process.owner_label.as_deref() == Some(owner_label)
+                && (process.child.is_some() || process.preparing || process.cancelling)
+        };
+        if !busy {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("The archive operation has not finished cleaning up. Keep Zinnia open and try closing again shortly.".to_string());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    Ok(())
 }
 
 pub fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Result<(), String> {
@@ -169,7 +263,9 @@ pub fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Resul
 
     #[cfg(target_os = "macos")]
     {
-        builder = builder.title("").title_bar_style(tauri::TitleBarStyle::Overlay);
+        builder = builder
+            .title("")
+            .title_bar_style(tauri::TitleBarStyle::Overlay);
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -199,7 +295,19 @@ fn should_use_extract_window(paths: &[String], mode: &str) -> bool {
         return false;
     }
 
-    validate_archive_path(&paths[0]).valid
+    looks_like_archive_path(&paths[0])
+}
+
+fn looks_like_archive_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    [
+        ".7z", ".zip", ".rar", ".tar", ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz",
+    ]
+    .iter()
+    .any(|extension| lower.ends_with(extension))
+        || lower.rsplit_once('.').is_some_and(|(_, suffix)| {
+            suffix.len() == 3 && suffix.bytes().all(|b| b.is_ascii_digit())
+        })
 }
 
 fn normalize_open_path_arg(arg: &str) -> Option<String> {
@@ -258,7 +366,7 @@ where
 
     if mode != "extract"
         && !paths.is_empty()
-        && paths.iter().all(|path| validate_archive_path(path).valid)
+        && paths.iter().all(|path| looks_like_archive_path(path))
     {
         mode = "extract".to_string();
     }
@@ -276,6 +384,31 @@ fn route_open_request(app: &tauri::AppHandle, paths: Vec<String>, mode: String) 
     }
 
     if should_use_extract_window(&paths, &mode) {
+        // The backend intentionally owns one 7z job at a time. Route additional
+        // open requests into the main window's existing pending FIFO instead of
+        // creating a second quick window that can only fail as busy.
+        if has_extract_windows(app) {
+            EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);
+            let pending = app.state::<PendingPaths>();
+            if let Ok(mut queue) = pending.0.lock() {
+                let total_paths: usize = queue.iter().map(|item| item.paths.len()).sum();
+                if queue.len() < 100 && total_paths + paths.len() <= 1000 {
+                    queue.push(OpenPathsPayload {
+                        paths,
+                        mode: "extract".to_string(),
+                    });
+                } else {
+                    eprintln!("Pending extract queue full, dropping open request");
+                }
+            }
+            let _ = app.emit("pending-paths-changed", ());
+            if let Err(e) = show_main_window(app) {
+                eprintln!("Failed to show queued extraction in main window: {e}");
+            }
+            return;
+        }
+        let fallback_main = MAC_FALLBACK_MAIN_PENDING.swap(false, Ordering::SeqCst);
+        let had_main_window = app.get_webview_window("main").is_some() && !fallback_main;
         if let Ok(mut guard) = FILE_OPEN_SIGNAL.lock() {
             if let Some(tx) = guard.take() {
                 let _ = tx.send(());
@@ -283,16 +416,20 @@ fn route_open_request(app: &tauri::AppHandle, paths: Vec<String>, mode: String) 
         }
         if let Err(e) = spawn_extract_window(app, paths) {
             eprintln!("Failed to open extract window: {e}");
-            if let Some(main_window) = app.get_webview_window("main") {
-                let _ = main_window.show();
-                let _ = main_window.set_focus();
+            if let Err(main_error) = show_main_window(app) {
+                eprintln!("Failed to open main window: {main_error}");
             }
             EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);
         } else {
-            if let Some(main_window) = app.get_webview_window("main") {
-                let _ = main_window.destroy();
+            if had_main_window {
+                // Warm opens must not discard the user's active main workspace.
+                EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);
+            } else {
+                if let Some(main_window) = app.get_webview_window("main") {
+                    let _ = main_window.destroy();
+                }
+                EXTRACT_ONLY_LAUNCH.store(true, Ordering::SeqCst);
             }
-            EXTRACT_ONLY_LAUNCH.store(true, Ordering::SeqCst);
         }
         return;
     }
@@ -320,9 +457,8 @@ fn route_open_request(app: &tauri::AppHandle, paths: Vec<String>, mode: String) 
         eprintln!("Failed to emit pending-paths-changed: {e}");
     }
 
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.set_focus();
+    if let Err(e) = show_main_window(app) {
+        eprintln!("Failed to open main window: {e}");
     }
 }
 

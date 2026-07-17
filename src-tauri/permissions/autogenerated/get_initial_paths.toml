@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-initial-paths"
+description = "Enables the get_initial_paths command without any pre-configured scope."
+commands.allow = ["get_initial_paths"]
+
+[[permission]]
+identifier = "deny-get-initial-paths"
+description = "Denies the get_initial_paths command without any pre-configured scope."
+commands.deny = ["get_initial_paths"]

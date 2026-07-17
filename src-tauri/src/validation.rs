@@ -1,18 +1,102 @@
 //! Allow-list validation for 7z args. Security boundary between frontend and process.
 
-const MAX_7Z_ARGS: usize = 256;
+// Large drag-and-drop selections are valid. This is still bounded to protect
+// the sidecar and IPC boundary without rejecting ordinary bulk operations.
+const MAX_7Z_ARGS: usize = 4096;
 const MAX_7Z_ARG_BYTES: usize = 8192;
 
 const ALLOWED_7Z_COMMANDS: &[&str] = &["a", "u", "x", "l", "t", "b"];
-const BLOCKED_7Z_ARGS: &[&str] = &["-si", "-so"];
-const ALLOWED_7Z_SWITCH_PREFIXES: &[&str] = &[
-    "-t", "-m", "-o", "-p", "-spf", "-sdel", "-spd", "-sfx", "-v", "-y", "-r", "-w", "-x", "-i",
-    "-ao", "-ba", "-bb", "-bs", "-bt", "-scs", "-slt", "-sns", "-snl", "-sni", "-stl", "-slp",
-    "-ssp", "-ssw",
+const BLOCKED_7Z_ARGS: &[&str] = &[
+    "-si", "-so", "-sdel", "-sfx", "-w", "-sns", "-sni", "-snl", "-snh", "-spf2",
 ];
-// NOTE: -sfx is intentionally allowed — Zinnia supports creating self-extracting archives.
-// It is restricted to the `a` (compress) command via the frontend form; the backend allow-list
-// permits it because the switch itself is not dangerous (it only affects the output format).
+
+fn has_embedded_listfile(arg: &str) -> bool {
+    let lower = arg.to_ascii_lowercase();
+    (lower.starts_with("-i") || lower.starts_with("-x")) && arg[2..].contains('@')
+}
+
+fn is_numbered_switch(arg: &str, prefix: &str, max: u8) -> bool {
+    arg.strip_prefix(prefix)
+        .and_then(|value| value.parse::<u8>().ok())
+        .is_some_and(|value| value <= max)
+}
+
+fn is_stream_switch(arg: &str) -> bool {
+    let bytes = arg.as_bytes();
+    bytes.len() == 5
+        && bytes[0..3].eq_ignore_ascii_case(b"-bs")
+        && matches!(bytes[3].to_ascii_lowercase(), b'o' | b'e' | b'p')
+        && matches!(bytes[4], b'0' | b'1' | b'2')
+}
+
+fn is_include_or_exclude(arg: &str) -> bool {
+    let lower = arg.to_ascii_lowercase();
+    (lower.starts_with("-i") || lower.starts_with("-x"))
+        && !has_embedded_listfile(arg)
+        && arg.contains('!')
+}
+
+fn is_common_diagnostic_switch(lower: &str) -> bool {
+    lower == "-ba"
+        || lower == "-bt"
+        || lower == "-slt"
+        || is_numbered_switch(lower, "-bb", 3)
+        || is_stream_switch(lower)
+        || (lower.starts_with("-scs") && lower.len() > 4)
+}
+
+fn is_allowed_switch(cmd: &str, arg: &str) -> bool {
+    let lower = arg.to_ascii_lowercase();
+    if is_common_diagnostic_switch(&lower) {
+        return true;
+    }
+
+    match cmd {
+        "a" | "u" => {
+            (lower.starts_with("-t") && lower.len() > 2)
+                || (lower.starts_with("-m") && lower.len() > 2)
+                || (lower.starts_with("-p") && lower.len() > 2)
+                || lower == "-spf"
+                || lower == "-r"
+                || lower == "-r-"
+                || lower == "-r0"
+                || lower == "-stl"
+                || lower == "-slp"
+                || lower == "-ssp"
+                || lower == "-ssw"
+                || lower == "-sse"
+                || is_include_or_exclude(arg)
+                || (cmd == "a"
+                    && lower.starts_with("-v")
+                    && lower.len() > 2
+                    && lower[2..]
+                        .chars()
+                        .all(|ch| ch.is_ascii_digit() || matches!(ch, 'b' | 'k' | 'm' | 'g')))
+        }
+        "x" => {
+            (lower.starts_with("-o") && lower.len() > 2)
+                || (lower.starts_with("-p") && lower.len() > 2)
+                || matches!(lower.as_str(), "-aoa" | "-aos" | "-aou" | "-aot")
+                || lower == "-y"
+                || lower == "-spd"
+                || lower == "-r"
+                || lower == "-r-"
+                || lower == "-r0"
+                || (lower.starts_with("-t") && lower.len() > 2)
+                || is_include_or_exclude(arg)
+        }
+        "l" | "t" => {
+            (lower.starts_with("-p") && lower.len() > 2)
+                || (lower.starts_with("-t") && lower.len() > 2)
+                || lower == "-r"
+                || lower == "-r-"
+                || lower == "-r0"
+                || is_include_or_exclude(arg)
+        }
+        "b" => lower.starts_with("-m") && lower.len() > 2,
+        _ => false,
+    }
+}
 
 // True if any path component is exactly "..". Substrings like "name..bak" are fine.
 fn has_parent_dir_component(path: &str) -> bool {
@@ -56,6 +140,9 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
     let mut separator_index = None;
     let mut positional_before_separator = 0usize;
     let mut positional_after_separator = 0usize;
+    let mut output_switches = 0usize;
+    let mut password_switches = 0usize;
+    let mut overwrite_switches = 0usize;
 
     for (idx, arg) in args.iter().enumerate().skip(1) {
         if arg == "--" {
@@ -77,15 +164,19 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
                 "7z argument '{arg}' is not permitted (response files are not allowed)."
             ));
         }
-        if lower.starts_with("-sdel") && cmd != "a" && cmd != "u" {
+        if has_embedded_listfile(arg) {
             return Err(format!(
-                "7z argument '{arg}' is only permitted for compression."
+                "7z argument '{arg}' is not permitted (list files are backend-managed only)."
             ));
         }
-        if lower.starts_with("-v") && cmd != "a" {
-            return Err(format!(
-                "7z argument '{arg}' is only permitted when creating an archive."
-            ));
+        if separator_index.is_none() && lower.starts_with("-o") {
+            output_switches += 1;
+        }
+        if separator_index.is_none() && lower.starts_with("-p") {
+            password_switches += 1;
+        }
+        if separator_index.is_none() && lower.starts_with("-ao") {
+            overwrite_switches += 1;
         }
 
         if separator_index.is_some() {
@@ -96,10 +187,7 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
                 ));
             }
         } else if arg.starts_with('-') {
-            if !ALLOWED_7Z_SWITCH_PREFIXES
-                .iter()
-                .any(|p| lower.starts_with(p))
-            {
+            if !is_allowed_switch(cmd, arg) {
                 return Err(format!("7z argument '{arg}' is not permitted."));
             }
             // -o<dir> sets the extract/output directory; block traversal in it.
@@ -121,6 +209,16 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
                 ));
             }
         }
+    }
+
+    if password_switches > 1 {
+        return Err("Password switch may appear only once.".to_string());
+    }
+    if output_switches > 1 {
+        return Err("Extraction output switch may appear only once.".to_string());
+    }
+    if overwrite_switches > 1 {
+        return Err("Extraction overwrite policy may appear only once.".to_string());
     }
 
     match cmd {
@@ -150,22 +248,23 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
                 );
             }
             // Require -o for extract to prevent extraction into an unpredictable CWD.
-            let has_output_dir = args[1..separator]
-                .iter()
-                .any(|a| a.to_lowercase().starts_with("-o"));
-            if !has_output_dir {
+            if output_switches != 1 {
                 return Err(
-                    "Extraction command must include an output directory (-o<path>).".to_string(),
+                    "Extraction command must include exactly one output directory (-o<path>)."
+                        .to_string(),
                 );
             }
         }
         "l" | "t" => {
-            if let Some(separator) = separator_index {
-                if separator + 1 >= args.len() {
-                    return Err("Missing archive path after '--'.".to_string());
-                }
-            } else if positional_before_separator == 0 {
-                return Err("Missing archive path.".to_string());
+            let separator = separator_index
+                .ok_or_else(|| "List/test arguments must include '--'.".to_string())?;
+            if separator + 1 >= args.len() || positional_after_separator != 1 {
+                return Err(
+                    "List/test command requires exactly one archive path after '--'.".to_string(),
+                );
+            }
+            if positional_before_separator != 0 {
+                return Err("List/test command cannot include paths before '--'.".to_string());
             }
         }
         "b" if separator_index.is_some()
@@ -181,6 +280,18 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
         return Err("Missing archive path(s) after '--'.".to_string());
     }
 
+    if cmd == "a" && positional_after_separator != 1 {
+        let single_stream = args.iter().any(|arg| {
+            matches!(
+                arg.to_ascii_lowercase().as_str(),
+                "-tgzip" | "-tbzip2" | "-txz"
+            )
+        });
+        if single_stream {
+            return Err("GZIP, BZIP2, and XZ compression accept exactly one input. Use a TAR-based format for multiple files.".to_string());
+        }
+    }
+
     Ok(())
 }
 
@@ -189,7 +300,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn validate_run_7z_args_allows_internal_delete_after_for_compress() {
+    fn validate_run_7z_args_rejects_delete_after_for_compress() {
         let args = vec![
             "a".to_string(),
             "-sdel".to_string(),
@@ -197,7 +308,7 @@ mod tests {
             "--".to_string(),
             "input.txt".to_string(),
         ];
-        assert!(validate_run_7z_args(&args).is_ok());
+        assert!(validate_run_7z_args(&args).is_err());
     }
 
     #[test]
@@ -312,7 +423,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_run_7z_args_allows_delete_after_for_update() {
+    fn validate_run_7z_args_rejects_delete_after_for_update() {
         let args = vec![
             "u".to_string(),
             "-sdel".to_string(),
@@ -320,7 +431,7 @@ mod tests {
             "--".to_string(),
             "newfile.txt".to_string(),
         ];
-        assert!(validate_run_7z_args(&args).is_ok());
+        assert!(validate_run_7z_args(&args).is_err());
     }
 
     #[test]
@@ -464,5 +575,43 @@ mod tests {
             "@literal-at-file.txt".to_string(),
         ];
         assert!(validate_run_7z_args(&args).is_ok());
+    }
+
+    #[test]
+    fn validate_run_7z_args_rejects_unsafe_extract_path_mode() {
+        let args = vec![
+            "x".to_string(),
+            "-o/tmp/out".to_string(),
+            "-spf".to_string(),
+            "--".to_string(),
+            "archive.7z".to_string(),
+        ];
+        assert!(validate_run_7z_args(&args).is_err());
+    }
+
+    #[test]
+    fn validate_run_7z_args_rejects_duplicate_extract_output() {
+        let args = vec![
+            "x".to_string(),
+            "-o/tmp/one".to_string(),
+            "-o/tmp/two".to_string(),
+            "--".to_string(),
+            "archive.7z".to_string(),
+        ];
+        assert!(validate_run_7z_args(&args).is_err());
+    }
+
+    #[test]
+    fn validate_run_7z_args_rejects_embedded_listfiles_and_sfx_modules() {
+        for switch in ["-ir@files.txt", "-xr@files.txt", "-sfx7z.sfx"] {
+            let args = vec![
+                "a".to_string(),
+                switch.to_string(),
+                "out.7z".to_string(),
+                "--".to_string(),
+                "input.txt".to_string(),
+            ];
+            assert!(validate_run_7z_args(&args).is_err(), "accepted {switch}");
+        }
     }
 }

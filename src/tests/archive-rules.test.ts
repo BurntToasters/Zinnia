@@ -40,7 +40,7 @@ describe("validateExtraArgs", () => {
       /parent-directory segment/,
     );
     expect(() => validateExtraArgs(["-w../../tmp"])).toThrow(
-      /parent-directory segment/,
+      /Unknown argument/,
     );
   });
 
@@ -72,8 +72,8 @@ describe("validateArchivePaths", () => {
     });
   });
 
-  it("uses cached validation results for repeated probes", async () => {
-    const path = uniqueArchivePath("cache-hit");
+  it("revalidates repeated probes so replaced files cannot use stale results", async () => {
+    const path = uniqueArchivePath("fresh-probe");
     invokeMock.mockResolvedValue([
       {
         path,
@@ -87,7 +87,7 @@ describe("validateArchivePaths", () => {
 
     expect(first[0].valid).toBe(false);
     expect(second[0].valid).toBe(false);
-    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock).toHaveBeenCalledTimes(2);
   });
 
   it("returns fallback invalid result when backend omits a path", async () => {

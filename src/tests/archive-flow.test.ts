@@ -587,7 +587,7 @@ describe("archive test/browse/selective flows", () => {
     );
   });
 
-  it("runs add-mode action and handles warning exit code", async () => {
+  it("rolls back add-mode output on warning exit code", async () => {
     const app = document.getElementById("app") as HTMLElement;
     app.dataset.mode = "add";
     state.inputs = ["/tmp/input.txt"];
@@ -614,8 +614,10 @@ describe("archive test/browse/selective flows", () => {
     const runCall = invokeMock.mock.calls.find(([name]) => name === "run_7z");
     const args = (runCall?.[1] as { args?: string[] } | undefined)?.args ?? [];
     expect(args[0]).toBe("a");
-    const toast = document.querySelector("#toast-region .toast--success");
-    expect(toast?.textContent).toBe("Archive created.");
+    expect(messageMock).toHaveBeenCalledWith(
+      expect.stringContaining("exit code 1"),
+      expect.objectContaining({ kind: "error" }),
+    );
   });
 
   it("delegates runAction to batch extraction for multiple archives", async () => {
@@ -681,7 +683,7 @@ describe("archive test/browse/selective flows", () => {
     });
   });
 
-  it("cancels running operations and swallows cancel backend errors", async () => {
+  it("resets cancellation state and reports backend errors", async () => {
     await cancelAction();
     expect(invokeMock.mock.calls.some(([name]) => name === "cancel_7z")).toBe(
       false,
@@ -695,8 +697,12 @@ describe("archive test/browse/selective flows", () => {
 
     await cancelAction();
 
-    expect(state.cancelRequested).toBe(true);
+    expect(state.cancelRequested).toBe(false);
     expect(invokeMock).toHaveBeenCalledWith("cancel_7z");
+    expect(messageMock).toHaveBeenCalledWith(
+      expect.stringContaining("busy"),
+      expect.objectContaining({ title: "Cancel failed" }),
+    );
   });
 
   it("shows missing-info preview dialog when command args cannot be built", async () => {

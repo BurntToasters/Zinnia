@@ -4,9 +4,9 @@
  * building 7z argument lists.
  *
  * NOTE: Despite the name "security", this module does NOT provide decompression-bomb
- * detection, zip-slip protection, or extraction sandboxing. Those concerns are handled
- * by the Rust backend (validation.rs: path traversal rejection, process.rs: `-o` enforcement)
- * and by 7z's own protections against malicious archive contents.
+ * detection, archive-member path policy, or extraction sandboxing. Command argument
+ * validation is handled by Rust; archive-content protections require the staged
+ * extraction policy and the bundled 7-Zip runtime.
  */
 import type { ArchiveFormat } from "./settings-model.ts";
 

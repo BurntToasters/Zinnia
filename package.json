@@ -4,6 +4,9 @@
   "private": true,
   "description": "Cross-platform 7z GUI built with Tauri.",
   "type": "module",
+  "engines": {
+    "node": ">=22.12 <25"
+  },
   "scripts": {
     "prepare": "node scripts/install-git-hooks.js",
     "dev": "vite",

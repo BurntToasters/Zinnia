@@ -10,6 +10,7 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
 const releaseDir = path.join(root, "release");
+const buildSessionPath = path.join(releaseDir, ".build-session.json");
 const pkg = JSON.parse(
   fs.readFileSync(path.join(root, "package.json"), "utf-8"),
 );
@@ -62,13 +63,15 @@ const ARTIFACT_RULES = [
   ext(".flatpak"),
   rx(/\.appimage$/i),
 
-  rx(/\.zip$/i),
+  rx(/^Zinnia(?:-macOS)?\.zip$/i),
 
   rx(/\.nsis\.zip$/i),
   rx(/\.app\.tar\.gz$/i),
   rx(/\.appimage\.tar\.gz$/i),
 
-  rx(/\.(?:exe|msi|dmg|deb|rpm|flatpak|appimage|zip)\.sig$/i),
+  rx(/\.(?:exe|msi|dmg|deb|rpm|flatpak|appimage)\.sig$/i),
+  rx(/^Zinnia(?:-macOS)?\.zip\.sig$/i),
+  rx(/\.nsis\.zip\.sig$/i),
   rx(/\.tar\.gz\.sig$/i),
 
   exact("latest.json"),
@@ -83,7 +86,7 @@ const SIGN_RULES = [
   ext(".rpm"),
   ext(".flatpak"),
   rx(/\.appimage$/i),
-  rx(/\.zip$/i),
+  rx(/^Zinnia(?:-macOS)?\.zip$/i),
   rx(/\.nsis\.zip$/i),
   rx(/\.app\.tar\.gz$/i),
   rx(/\.appimage\.tar\.gz$/i),
@@ -94,10 +97,24 @@ const isSignable = (name) => SIGN_RULES.some((r) => r(name));
 const shouldUploadReleaseEntry = (name) =>
   isArtifact(name) || name.endsWith(".asc") || isChecksumTextName(name);
 
-const SEARCH_DIRS = [
-  path.join(root, "src-tauri", "target"),
-  path.join(root, "dist"),
-];
+function releaseArtifactSearchDirs() {
+  const targetRoot = path.join(root, "src-tauri", "target");
+  const dirs = [
+    path.join(targetRoot, "release", "bundle"),
+    path.join(root, "dist"),
+  ];
+  try {
+    for (const entry of fs.readdirSync(targetRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      dirs.push(path.join(targetRoot, entry.name, "release", "bundle"));
+    }
+  } catch {}
+  return dirs;
+}
+
+// Search only canonical release bundle roots. Recursing all of target/ can pick
+// up stale debug outputs, fixtures, or unrelated zip files with misleading names.
+const SEARCH_DIRS = releaseArtifactSearchDirs();
 
 function artifactMatchesVersion(name) {
   if (name === "latest.json" || isPerTargetManifest(name)) return true;
@@ -106,6 +123,32 @@ function artifactMatchesVersion(name) {
   );
   if (!versions || versions.length === 0) return true;
   return versions.some((v) => v === VERSION || v.startsWith(VERSION + "-"));
+}
+
+function readBuildSession() {
+  let session;
+  try {
+    session = JSON.parse(fs.readFileSync(buildSessionPath, "utf8"));
+  } catch (error) {
+    throw new Error(
+      `Release build session is missing or invalid. Run npm run release:prepare before building: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (session.version !== VERSION || !Number.isFinite(session.startedAt)) {
+    throw new Error(
+      `Release build session does not match package version ${VERSION}. Run npm run release:prepare again.`,
+    );
+  }
+  return session;
+}
+
+function wasBuiltInSession(filePath, session) {
+  try {
+    // Permit coarse filesystem timestamp resolution without accepting an old build.
+    return fs.statSync(filePath).mtimeMs >= session.startedAt - 2000;
+  } catch {
+    return false;
+  }
 }
 
 function clearReleaseStaging() {
@@ -569,10 +612,13 @@ function normalizePreStagedArtifacts(staged) {
 
 function collectArtifacts() {
   fs.mkdirSync(releaseDir, { recursive: true });
+  const buildSession = readBuildSession();
 
   const discovered = SEARCH_DIRS.flatMap((d) => walk(d));
-  const found = discovered.filter((filePath) =>
-    artifactMatchesVersion(path.basename(filePath)),
+  const found = discovered.filter(
+    (filePath) =>
+      artifactMatchesVersion(path.basename(filePath)) &&
+      wasBuiltInSession(filePath, buildSession),
   );
   if (found.length > 0) {
     clearReleaseStaging();
@@ -613,7 +659,11 @@ function collectArtifacts() {
     )
     .map((n) => path.join(releaseDir, n));
 
-  if (staged.length === 0) {
+  const currentStaged = staged.filter((filePath) =>
+    wasBuiltInSession(filePath, buildSession),
+  );
+
+  if (currentStaged.length === 0) {
     console.error(
       "No build artifacts found in:",
       [...SEARCH_DIRS, releaseDir].join(", "),
@@ -621,17 +671,28 @@ function collectArtifacts() {
     process.exit(1);
   }
 
-  console.log(`  Found ${staged.length} pre-staged artifact(s) in release/`);
-  const normalizedStaged = normalizePreStagedArtifacts(staged);
+  console.log(
+    `  Found ${currentStaged.length} current pre-staged artifact(s) in release/`,
+  );
+  const normalizedStaged = normalizePreStagedArtifacts(currentStaged);
   const manifests = generateUpdaterManifests(normalizedStaged);
   return Array.from(new Set([...normalizedStaged, ...manifests]));
 }
 
 function sha256(filePath) {
-  return crypto
-    .createHash("sha256")
-    .update(fs.readFileSync(filePath))
-    .digest("hex");
+  const hash = crypto.createHash("sha256");
+  const descriptor = fs.openSync(filePath, "r");
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  try {
+    let bytesRead;
+    do {
+      bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, null);
+      if (bytesRead > 0) hash.update(buffer.subarray(0, bytesRead));
+    } while (bytesRead > 0);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  return hash.digest("hex");
 }
 
 function generateChecksums(files) {
@@ -713,6 +774,8 @@ function signFile(filePath) {
   const result = spawnSync("gpg", args, {
     stdio: "pipe",
     input: usePassphraseStdin ? `${GPG_PASSPHRASE}\n` : undefined,
+    timeout: 120_000,
+    maxBuffer: 1024 * 1024,
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
@@ -758,24 +821,29 @@ function ghRequest(method, endpoint, body) {
           if (res.statusCode >= 200 && res.statusCode < 300) {
             resolve(json);
           } else {
-            reject(
-              new Error(`GitHub ${res.statusCode}: ${json.message || data}`),
+            const error = new Error(
+              `GitHub ${res.statusCode}: ${json.message || data}`,
             );
+            error.statusCode = res.statusCode;
+            reject(error);
           }
         } catch {
           if (res.statusCode >= 200 && res.statusCode < 300) {
             resolve(data);
           } else {
-            reject(
-              new Error(
-                `GitHub ${res.statusCode}: ${data || "Non-JSON error response"}`,
-              ),
+            const error = new Error(
+              `GitHub ${res.statusCode}: ${data || "Non-JSON error response"}`,
             );
+            error.statusCode = res.statusCode;
+            reject(error);
           }
         }
       });
     });
     req.on("error", reject);
+    req.setTimeout(30_000, () => {
+      req.destroy(new Error("GitHub API request timed out."));
+    });
     if (body) req.write(JSON.stringify(body));
     req.end();
   });
@@ -787,16 +855,16 @@ async function getOrCreateRelease() {
       "GET",
       `/repos/${REPO_OWNER}/${REPO_NAME}/releases/tags/${TAG}`,
     );
-  } catch {}
+  } catch (error) {
+    if (error?.statusCode !== 404) throw error;
+  }
 
-  try {
-    const releases = await ghRequest(
-      "GET",
-      `/repos/${REPO_OWNER}/${REPO_NAME}/releases?per_page=30`,
-    );
-    const draft = releases.find((r) => r.draft && r.tag_name === TAG);
-    if (draft) return draft;
-  } catch {}
+  const releases = await ghRequest(
+    "GET",
+    `/repos/${REPO_OWNER}/${REPO_NAME}/releases?per_page=30`,
+  );
+  const draft = releases.find((r) => r.draft && r.tag_name === TAG);
+  if (draft) return draft;
 
   return await ghRequest("POST", `/repos/${REPO_OWNER}/${REPO_NAME}/releases`, {
     tag_name: TAG,
@@ -806,9 +874,9 @@ async function getOrCreateRelease() {
   });
 }
 
-async function uploadAsset(uploadUrl, filePath) {
+async function uploadAssetOnce(uploadUrl, filePath) {
   const fileName = path.basename(filePath);
-  const content = fs.readFileSync(filePath);
+  const contentLength = fs.statSync(filePath).size;
   const url = new URL(uploadUrl.replace("{?name,label}", ""));
   url.searchParams.set("name", fileName);
 
@@ -825,7 +893,7 @@ async function uploadAsset(uploadUrl, filePath) {
           "User-Agent": "Zinnia-Release",
           Accept: "application/vnd.github.v3+json",
           "Content-Type": isText ? "text/plain" : "application/octet-stream",
-          "Content-Length": content.length,
+          "Content-Length": contentLength,
         },
       },
       (res) => {
@@ -850,9 +918,28 @@ async function uploadAsset(uploadUrl, filePath) {
       },
     );
     req.on("error", reject);
-    req.write(content);
-    req.end();
+    req.setTimeout(120_000, () => {
+      req.destroy(new Error(`Upload ${fileName} timed out.`));
+    });
+    const stream = fs.createReadStream(filePath);
+    stream.on("error", (error) => req.destroy(error));
+    stream.pipe(req);
   });
+}
+
+async function uploadAsset(uploadUrl, filePath) {
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await uploadAssetOnce(uploadUrl, filePath);
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("(422)") || attempt === 3) throw error;
+      await new Promise((resolve) => setTimeout(resolve, attempt * 1000));
+    }
+  }
+  throw lastError;
 }
 
 async function listReleaseAssets(releaseId) {

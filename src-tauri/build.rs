@@ -46,8 +46,8 @@ impl Sha256 {
     fn new() -> Self {
         Sha256 {
             state: [
-                0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c,
-                0x1f83d9ab, 0x5be0cd19,
+                0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+                0x5be0cd19,
             ],
             buf: [0u8; 64],
             buf_len: 0,
@@ -271,5 +271,41 @@ fn prepare_7z_binaries() {
 
 fn main() {
     prepare_7z_binaries();
-    tauri_build::build();
+    const COMMANDS: &[&str] = &[
+        "run_7z",
+        "cancel_7z",
+        "is_7z_running",
+        "probe_7z",
+        "validate_archive_paths",
+        "load_settings",
+        "save_settings",
+        "reset_settings",
+        "append_local_log",
+        "get_log_dir",
+        "export_logs",
+        "clear_logs",
+        "open_log_dir",
+        "open_path",
+        "get_initial_paths",
+        "get_initial_mode",
+        "drain_pending_paths",
+        "get_extract_paths",
+        "close_extract_window",
+        "mark_main_window_ready",
+        "get_platform_info",
+        "get_os_integration_status",
+        "open_os_integration_settings",
+        "reset_preferred_archiver_to_system",
+        "set_zinnia_default_archiver",
+        "get_cpu_count",
+        "is_flatpak",
+        "is_packaged",
+        "create_temp_extract_dir",
+        "remove_managed_temp_dir",
+    ];
+    tauri_build::try_build(
+        tauri_build::Attributes::new()
+            .app_manifest(tauri_build::AppManifest::new().commands(COMMANDS)),
+    )
+    .expect("failed to build Tauri application metadata");
 }

@@ -111,14 +111,17 @@ function enqueueSettingsPersist(
   extras: typeof state.settingsExtras,
   generation: number,
 ): Promise<void> {
-  settingsPersistQueue = settingsPersistQueue.then(async () => {
-    if (generation < settingsPersistGeneration) return;
-    await saveSettings(snapshot, extras);
-    if (generation === settingsPersistGeneration) {
-      state.lastPersistedSettings = { ...snapshot };
-    }
-  });
-  return settingsPersistQueue;
+  const operation = settingsPersistQueue
+    .catch(() => undefined)
+    .then(async () => {
+      if (generation < settingsPersistGeneration) return;
+      await saveSettings(snapshot, extras);
+      if (generation === settingsPersistGeneration) {
+        state.lastPersistedSettings = { ...snapshot };
+      }
+    });
+  settingsPersistQueue = operation.catch(() => undefined);
+  return operation;
 }
 
 export async function persistSettingsImmediately(

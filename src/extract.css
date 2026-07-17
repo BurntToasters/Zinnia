@@ -188,6 +188,71 @@ body.platform-macos .extract-app {
   border-top: 1px solid var(--border);
 }
 
+.extract-input-modal-overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgb(0 0 0 / 45%);
+  z-index: 10;
+}
+
+.extract-input-modal-overlay[hidden] {
+  display: none;
+}
+
+.extract-input-modal {
+  width: min(360px, 100%);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 30%);
+}
+
+.extract-input-modal__header,
+.extract-input-modal__footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+}
+
+.extract-input-modal__header {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+}
+
+.extract-input-modal__header h2 {
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.extract-input-modal__body {
+  padding: 14px;
+}
+
+.extract-input-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.extract-input-field input {
+  width: 100%;
+  padding: 7px 8px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  font: inherit;
+}
+
+.extract-input-modal__footer {
+  justify-content: flex-end;
+  border-top: 1px solid var(--border);
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
@@ -209,6 +274,14 @@ body.platform-macos .extract-app {
 .btn:hover {
   background: var(--surface-alt);
   border-color: var(--border-strong);
+}
+
+.btn--sm {
+  padding: 4px 10px;
+}
+
+.btn--ghost {
+  background: transparent;
 }
 
 .btn--close {

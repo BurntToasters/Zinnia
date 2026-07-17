@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-cpu-count"
+description = "Enables the get_cpu_count command without any pre-configured scope."
+commands.allow = ["get_cpu_count"]
+
+[[permission]]
+identifier = "deny-get-cpu-count"
+description = "Denies the get_cpu_count command without any pre-configured scope."
+commands.deny = ["get_cpu_count"]
