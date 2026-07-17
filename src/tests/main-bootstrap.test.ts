@@ -666,26 +666,24 @@ describe("main bootstrap", () => {
     expect(mocks.archive.browseArchive).not.toHaveBeenCalled();
   });
 
-  it("shows startup failure details when runtime probe fails", async () => {
+  it("defers runtime probing until an archive operation starts", async () => {
     setInvokeRouter((command) => {
       if (command === "probe_7z") {
         throw new Error("missing sidecar");
       }
+      if (command === "drain_pending_paths") return [];
+      if (command === "get_initial_paths") return [];
+      if (command === "get_initial_mode") return "";
       return undefined;
     });
 
     await loadMainModule();
 
-    expect(messageMock).toHaveBeenCalledWith(
+    expect(messageMock).not.toHaveBeenCalledWith(
       expect.stringContaining("runtime check failed"),
-      expect.objectContaining({
-        title: "Missing runtime dependency",
-        kind: "error",
-      }),
+      expect.anything(),
     );
-    expect(document.body.textContent ?? "").toContain(
-      "Failed to start: missing sidecar",
-    );
+    expect(document.body.textContent ?? "").not.toContain("Failed to start:");
   });
 
   it("handles keyboard shortcuts for browse, run, and escape overlays", async () => {
@@ -907,6 +905,7 @@ describe("main bootstrap", () => {
 
   it("wires form controls and settings save success/failure paths", async () => {
     await loadMainModule();
+    await flushAsync();
 
     const { state } = await import("../state");
     state.inputs = ["/tmp/input.txt"];

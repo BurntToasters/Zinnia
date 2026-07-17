@@ -1,15 +1,24 @@
 //! Settings persistence with atomic writes; preserves reserved `_`-prefixed keys.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::Manager;
 
-static WRITE_SEQ: AtomicU64 = AtomicU64::new(0);
+static SETTINGS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 const MAX_SETTINGS_BYTES: usize = 512 * 1024;
+
+fn lock_settings() -> Result<std::sync::MutexGuard<'static, ()>, String> {
+    SETTINGS_LOCK
+        .lock()
+        .map_err(|_| "Settings file lock poisoned".to_string())
+}
 
 fn settings_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     Ok(dir.join("settings.json"))
+}
+
+fn backup_path(path: &std::path::Path) -> std::path::PathBuf {
+    path.with_extension("json.bak")
 }
 
 pub fn parse_json_object(json: &str) -> Result<serde_json::Map<String, serde_json::Value>, String> {
@@ -37,41 +46,100 @@ pub fn atomic_write_text(path: &std::path::Path, contents: &str) -> Result<(), S
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
-    let seq = WRITE_SEQ.fetch_add(1, Ordering::SeqCst);
     let file_name = path
         .file_name()
         .and_then(|n| n.to_str())
         .ok_or_else(|| "Invalid file name in path".to_string())?;
-    let tmp = path.with_file_name(format!(".{file_name}.{seq}.tmp"));
-    std::fs::write(&tmp, contents).map_err(|e| e.to_string())?;
+    use std::io::Write;
+    let mut reserved = None;
+    for _ in 0..32 {
+        let mut random = [0u8; 16];
+        getrandom::fill(&mut random)
+            .map_err(|e| format!("Could not generate a secure temp file name: {e}"))?;
+        let token: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+        let candidate = path.with_file_name(format!(".{file_name}.{token}.tmp"));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&candidate) {
+            Ok(file) => {
+                reserved = Some((candidate, file));
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!(
+                    "Could not create a secure settings temp file: {error}"
+                ));
+            }
+        }
+    }
+    let (tmp, mut file) =
+        reserved.ok_or_else(|| "Could not reserve a unique settings temp file.".to_string())?;
+    if let Err(error) = file
+        .write_all(contents.as_bytes())
+        .and_then(|()| file.sync_all())
+    {
+        drop(file);
+        if let Err(cleanup_error) = std::fs::remove_file(&tmp) {
+            eprintln!(
+                "Warning: could not clean up temp file {}: {cleanup_error}",
+                tmp.display()
+            );
+        }
+        return Err(error.to_string());
+    }
+    drop(file);
 
     #[cfg(windows)]
     {
         // On Windows, rename over existing file fails. Use a two-step approach:
         // rename existing to .bak, rename tmp to target, then remove .bak.
-        // This avoids the gap where the target doesn't exist.
+        // A recoverable .bak covers the short gap where the target does not exist.
         if path.exists() {
-            let backup = path.with_extension("json.bak");
-            // Remove any stale backup from a previous crash
-            let _ = std::fs::remove_file(&backup);
-            if let Err(e) = std::fs::rename(path, &backup) {
-                if e.kind() != std::io::ErrorKind::NotFound {
-                    eprintln!("Warning: could not backup existing file before rename: {e}");
+            let backup = backup_path(path);
+            // A backup can be left by an interrupted previous promotion. The
+            // current target is authoritative when it exists, so it is safe to
+            // replace that stale recovery copy only after the new temp is durable.
+            match std::fs::remove_file(&backup) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    let _ = std::fs::remove_file(&tmp);
+                    return Err(format!("Could not remove stale settings backup: {error}"));
                 }
             }
-            std::fs::rename(&tmp, path).map_err(|e| {
-                // Attempt to restore from backup
-                let _ = std::fs::rename(&backup, path);
-                if let Err(cleanup_err) = std::fs::remove_file(&tmp) {
-                    eprintln!(
-                        "Warning: could not clean up temp file {}: {cleanup_err}",
-                        tmp.display()
-                    );
+            let backed_up = match std::fs::rename(path, &backup) {
+                Ok(()) => true,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+                Err(error) => {
+                    let _ = std::fs::remove_file(&tmp);
+                    return Err(format!("Could not create settings backup: {error}"));
                 }
-                e.to_string()
-            })?;
-            let _ = std::fs::remove_file(&backup);
-            return Ok(());
+            };
+            if let Err(error) = std::fs::rename(&tmp, path) {
+                let restore_error = if backed_up {
+                    std::fs::rename(&backup, path).err()
+                } else {
+                    None
+                };
+                let _ = std::fs::remove_file(&tmp);
+                return Err(match restore_error {
+                    Some(restore_error) => format!(
+                        "Could not promote settings: {error}; backup restore also failed: {restore_error}"
+                    ),
+                    None => format!("Could not promote settings: {error}"),
+                });
+            }
+            if backed_up {
+                std::fs::remove_file(&backup)
+                    .map_err(|e| format!("Settings saved, but backup cleanup failed: {e}"))?;
+            }
+            return sync_parent_directory(path);
         }
     }
 
@@ -83,7 +151,18 @@ pub fn atomic_write_text(path: &std::path::Path, contents: &str) -> Result<(), S
             );
         }
         e.to_string()
-    })
+    })?;
+    sync_parent_directory(path)
+}
+
+pub(crate) fn sync_parent_directory(path: &std::path::Path) -> Result<(), String> {
+    #[cfg(unix)]
+    if let Some(parent) = path.parent() {
+        std::fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 fn reset_settings_file(path: &std::path::Path) -> Result<(), String> {
@@ -94,18 +173,42 @@ fn reset_settings_file(path: &std::path::Path) -> Result<(), String> {
     }
 }
 
+fn reset_settings_files(path: &std::path::Path) -> Result<(), String> {
+    reset_settings_file(path)?;
+    reset_settings_file(&backup_path(path))?;
+    sync_parent_directory(path)
+}
+
 #[tauri::command]
 pub fn load_settings(app: tauri::AppHandle) -> Result<String, String> {
+    let _guard = lock_settings()?;
     let path = settings_path(&app)?;
     match std::fs::read_to_string(&path) {
         Ok(contents) => Ok(contents),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok("{}".to_string()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            let backup = backup_path(&path);
+            match std::fs::read_to_string(&backup) {
+                Ok(contents) => {
+                    // Recover the visible settings path when a Windows
+                    // two-step replace was interrupted between renames.
+                    std::fs::rename(&backup, &path).map_err(|e| {
+                        format!("Settings backup exists but could not be restored: {e}")
+                    })?;
+                    Ok(contents)
+                }
+                Err(backup_err) if backup_err.kind() == std::io::ErrorKind::NotFound => {
+                    Ok("{}".to_string())
+                }
+                Err(backup_err) => Err(backup_err.to_string()),
+            }
+        }
         Err(err) => Err(err.to_string()),
     }
 }
 
 #[tauri::command]
 pub fn save_settings(app: tauri::AppHandle, json: String) -> Result<(), String> {
+    let _guard = lock_settings()?;
     if json.len() > MAX_SETTINGS_BYTES {
         return Err("Settings payload exceeds maximum allowed size.".to_string());
     }
@@ -136,8 +239,9 @@ pub fn save_settings(app: tauri::AppHandle, json: String) -> Result<(), String> 
 
 #[tauri::command]
 pub fn reset_settings(app: tauri::AppHandle) -> Result<(), String> {
+    let _guard = lock_settings()?;
     let path = settings_path(&app)?;
-    reset_settings_file(&path)
+    reset_settings_files(&path)
 }
 
 #[cfg(test)]
@@ -189,6 +293,25 @@ mod tests {
         assert!(!file_path.exists());
         reset_settings_file(&file_path).expect("missing settings file should be accepted");
 
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn reset_settings_removes_recovery_backup_too() {
+        let base = std::env::temp_dir().join(format!(
+            "zinnia-reset-backup-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time should work")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).expect("test directory");
+        let path = base.join("settings.json");
+        std::fs::write(&path, "{}").expect("settings");
+        std::fs::write(backup_path(&path), "{}").expect("backup");
+        reset_settings_files(&path).expect("reset settings and backup");
+        assert!(!path.exists());
+        assert!(!backup_path(&path).exists());
         let _ = std::fs::remove_dir_all(base);
     }
 

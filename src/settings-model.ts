@@ -74,7 +74,7 @@ export const SETTING_DEFAULTS: UserSettings = {
   deleteAfter: false,
   autoCheckUpdates: true,
   updateChannel: "auto",
-  localLoggingEnabled: true,
+  localLoggingEnabled: false,
   logVerbosity: "info",
   lastMode: "add",
   showActivityPanel: false,

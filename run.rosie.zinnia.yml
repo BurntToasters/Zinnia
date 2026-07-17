@@ -1,6 +1,6 @@
 app-id: run.rosie.zinnia
 runtime: org.gnome.Platform
-runtime-version: '48'
+runtime-version: "48"
 sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.node22
@@ -12,12 +12,10 @@ finish-args:
   - --share=ipc
   - --socket=x11
   - --socket=wayland
-  - --share=network
   - --device=dri
-  - --filesystem=home
-  - --filesystem=/tmp
-  - --filesystem=/media
-  - --filesystem=/run/media
+
+environment:
+  GTK_USE_PORTAL: "1"
 
 modules:
   - name: zinnia
@@ -30,7 +28,8 @@ modules:
         CARGO_HOME: /run/build/zinnia/cargo
         RUSTUP_HOME: /run/build/zinnia/rustup
         npm_config_cache: /run/build/zinnia/npm-cache
-        HUSKY: '0'
+        HUSKY: "0"
+        RUSTUP_TOOLCHAIN: stable
     build-commands:
       - npm ci
       - npm run sync-version
@@ -49,3 +48,16 @@ modules:
     sources:
       - type: dir
         path: .
+        skip:
+          - .git
+          - .github
+          - .agents
+          - .codex
+          - .env
+          - .env.*
+          - node_modules
+          - src-tauri/target
+          - dist
+          - release
+          - flatpak-build
+          - flatpak-repo

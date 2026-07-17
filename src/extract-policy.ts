@@ -2,9 +2,8 @@
  * Extract overwrite policy — determines how 7z handles name collisions during extraction.
  * `-aou` = auto-rename extracted files if they collide with existing files at the destination.
  *
- * NOTE: This module does NOT provide zip-slip/path-traversal or decompression-bomb protection.
- * Path traversal is blocked by the Rust validation layer (validation.rs) which rejects `..`
- * components. Archive *content* containment (symlinks, absolute member paths) relies on 7z's
- * own protections combined with the mandatory `-o<dir>` extraction destination.
+ * NOTE: This module does not by itself provide archive-member path policy or
+ * decompression-bomb limits. Argument validation and the mandatory output directory
+ * protect the process boundary; content-level protection is enforced by staged extraction.
  */
 export const SAFE_EXTRACT_OVERWRITE_MODE = "-aou";

@@ -10,16 +10,13 @@ export const ALLOWED_EXTRA_PREFIXES = [
   "-bt",
   "-scs",
   "-slt",
-  "-sns",
-  "-snl",
-  "-sni",
   "-stl",
   "-slp",
   "-ssp",
   "-ssw",
+  "-sse",
   "-y",
   "-r",
-  "-w",
 ];
 
 export interface ArchivePathValidation {
@@ -32,14 +29,6 @@ export type ProbeArchivePaths = (
   paths: string[],
 ) => Promise<ArchivePathValidation[]>;
 
-interface ArchiveValidationCacheEntry {
-  result: ArchivePathValidation;
-  expiresAt: number;
-}
-
-const ARCHIVE_VALIDATION_CACHE_TTL_MS = 10_000;
-const ARCHIVE_VALIDATION_CACHE_MAX_ENTRIES = 2_000;
-const archiveValidationCache = new Map<string, ArchiveValidationCacheEntry>();
 const SWITCH_PATH_PREFIXES = ["-i", "-x", "-w", "-o"];
 
 function normalizePath(path: string): string {
@@ -61,32 +50,6 @@ function switchContainsParentTraversal(arg: string): boolean {
     .some((segment) => hasParentDirComponent(segment));
 }
 
-function getCachedValidation(path: string): ArchivePathValidation | null {
-  const cached = archiveValidationCache.get(path);
-  if (!cached) return null;
-  if (cached.expiresAt < Date.now()) {
-    archiveValidationCache.delete(path);
-    return null;
-  }
-  return cached.result;
-}
-
-function setCachedValidation(
-  path: string,
-  result: ArchivePathValidation,
-): void {
-  archiveValidationCache.delete(path);
-  archiveValidationCache.set(path, {
-    result,
-    expiresAt: Date.now() + ARCHIVE_VALIDATION_CACHE_TTL_MS,
-  });
-  while (archiveValidationCache.size > ARCHIVE_VALIDATION_CACHE_MAX_ENTRIES) {
-    const oldest = archiveValidationCache.keys().next().value;
-    if (!oldest) break;
-    archiveValidationCache.delete(oldest);
-  }
-}
-
 export async function validateArchivePaths(
   paths: string[],
 ): Promise<ArchivePathValidation[]> {
@@ -97,11 +60,6 @@ export async function validateArchivePaths(
   for (const path of normalized) {
     if (!path) {
       byPath.set(path, { path, valid: false, reason: "Path is empty." });
-      continue;
-    }
-    const cached = getCachedValidation(path);
-    if (cached) {
-      byPath.set(path, cached);
       continue;
     }
     toProbe.add(path);
@@ -120,7 +78,6 @@ export async function validateArchivePaths(
         valid: result.valid,
         reason: result.reason,
       };
-      setCachedValidation(normalizedPath, normalizedResult);
       byPath.set(normalizedPath, normalizedResult);
     }
     for (const path of probeList) {
@@ -130,7 +87,6 @@ export async function validateArchivePaths(
           valid: false,
           reason: "Validation returned no result.",
         };
-        setCachedValidation(path, fallback);
         byPath.set(path, fallback);
       }
     }

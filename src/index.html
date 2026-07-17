@@ -359,7 +359,7 @@
                     >
                   </div>
                   <label class="switch" aria-labelledby="title-local-logging">
-                    <input type="checkbox" id="s-local-logging" checked />
+                    <input type="checkbox" id="s-local-logging" />
                     <span class="switch__track"></span>
                   </label>
                 </div>
@@ -564,11 +564,11 @@
                 <div class="setting-item">
                   <div class="setting-info">
                     <span class="setting-title" id="title-sfx"
-                      >Create self-extracting archive (SFX)</span
+                      >Self-extracting archives (not bundled)</span
                     >
                   </div>
                   <label class="switch" aria-labelledby="title-sfx">
-                    <input type="checkbox" id="s-sfx" />
+                    <input type="checkbox" id="s-sfx" disabled />
                     <span class="switch__track"></span>
                   </label>
                 </div>
@@ -589,12 +589,13 @@
                       >Delete files after compression</span
                     >
                     <span class="setting-desc"
-                      >Source files are permanently removed after a successful
+                      >Unavailable: source deletion cannot be rolled back
+                      safely. Delete files manually after testing the
                       archive.</span
                     >
                   </div>
                   <label class="switch" aria-labelledby="title-delete-after">
-                    <input type="checkbox" id="s-delete-after" />
+                    <input type="checkbox" id="s-delete-after" disabled />
                     <span class="switch__track"></span>
                   </label>
                 </div>
@@ -661,7 +662,9 @@
                 <div class="settings-note">
                   Zinnia only changes default archive apps when you choose it
                   here. Supported formats: ZIP, 7z, TAR, Gzip/TGZ, Bzip2/TBZ2,
-                  XZ/TXZ, and RAR.
+                  XZ/TXZ, and RAR. RAR operations are temporarily unavailable on
+                  Windows while its bundled runtime awaits an upstream security
+                  fix.
                 </div>
               </div>
 
@@ -1111,7 +1114,7 @@
             <div class="setup-wizard-os-box">
               <span
                 >Supported types: ZIP, 7z, TAR, Gzip/TGZ, Bzip2/TBZ2, XZ/TXZ,
-                RAR</span
+                RAR (temporarily unavailable on Windows)</span
               >
             </div>
             <div class="setup-wizard-step__actions">
@@ -2253,15 +2256,22 @@
                           existing archive</label
                         >
                         <label class="toggle"
-                          ><input type="checkbox" id="sfx" />Create SFX</label
+                          ><input type="checkbox" id="sfx" disabled />SFX
+                          unavailable</label
                         >
                         <label class="toggle"
                           ><input type="checkbox" id="encrypt-headers" />Encrypt
                           file names</label
                         >
-                        <label class="toggle"
-                          ><input type="checkbox" id="delete-after" />Delete
-                          files after compression</label
+                        <label
+                          class="toggle"
+                          title="Unavailable because source deletion cannot be rolled back safely"
+                          ><input
+                            type="checkbox"
+                            id="delete-after"
+                            disabled
+                          />Delete files manually after testing the
+                          archive</label
                         >
                         <label
                           class="toggle"

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Zinnia",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "identifier": "run.rosie.zinnia",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "create": false,
         "title": "Zinnia",
         "width": 500,
         "height": 600,

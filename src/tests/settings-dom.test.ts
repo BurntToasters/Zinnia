@@ -97,9 +97,9 @@ describe("applySettingsToForm", () => {
     expect(getSelectValue("solid")).toBe("solid");
     expect(getInputValue("threads")).toBe("4");
     expect(getSelectValue("path-mode")).toBe("absolute");
-    expect(getChecked("sfx")).toBe(true);
+    expect(getChecked("sfx")).toBe(false);
     expect(getChecked("encrypt-headers")).toBe(true);
-    expect(getChecked("delete-after")).toBe(true);
+    expect(getChecked("delete-after")).toBe(false);
   });
 
   it("applies defaults when state has defaults", () => {
@@ -148,9 +148,9 @@ describe("populateSettingsModal", () => {
     expect(getSelectValue("s-solid")).toBe("4g");
     expect(getInputValue("s-threads")).toBe("8");
     expect(getSelectValue("s-path-mode")).toBe("absolute");
-    expect(getChecked("s-sfx")).toBe(true);
+    expect(getChecked("s-sfx")).toBe(false);
     expect(getChecked("s-encrypt-headers")).toBe(false);
-    expect(getChecked("s-delete-after")).toBe(true);
+    expect(getChecked("s-delete-after")).toBe(false);
     expect(getChecked("s-auto-check-updates")).toBe(false);
     expect(getSelectValue("s-update-channel")).toBe("beta");
     expect(getChecked("s-local-logging")).toBe(true);
@@ -263,7 +263,7 @@ describe("readSettingsModal", () => {
     expect(result.format).toBe(original.format);
     expect(result.level).toBe(original.level);
     expect(result.threads).toBe(original.threads);
-    expect(result.sfx).toBe(original.sfx);
+    expect(result.sfx).toBe(false);
     expect(result.encryptHeaders).toBe(original.encryptHeaders);
     expect(result.autoCheckUpdates).toBe(original.autoCheckUpdates);
     expect(result.updateChannel).toBe(original.updateChannel);

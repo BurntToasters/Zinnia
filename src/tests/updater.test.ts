@@ -33,7 +33,12 @@ vi.mock("../state", () => ({
   state: mockState,
 }));
 
-import { autoCheckUpdates, checkUpdates, notify } from "../updater";
+import {
+  autoCheckUpdates,
+  checkUpdates,
+  notify,
+  discardPendingUpdate,
+} from "../updater";
 
 const askMock = vi.mocked(ask);
 const messageMock = vi.mocked(message);
@@ -46,6 +51,7 @@ const requestPermissionMock = vi.mocked(requestPermission);
 const sendNotificationMock = vi.mocked(sendNotification);
 
 beforeEach(() => {
+  discardPendingUpdate();
   mockState.currentSettings.updateChannel = "stable";
 
   askMock.mockReset();
@@ -64,7 +70,9 @@ beforeEach(() => {
   askMock.mockResolvedValue(false);
   messageMock.mockResolvedValue("Ok");
   getVersionMock.mockResolvedValue("0.4.1");
-  invokeMock.mockResolvedValue("windows");
+  invokeMock.mockImplementation((command) =>
+    Promise.resolve(command === "is_7z_running" ? false : "windows"),
+  );
   checkMock.mockResolvedValue(null);
   relaunchMock.mockResolvedValue(undefined);
   isPermissionGrantedMock.mockResolvedValue(true);
@@ -113,7 +121,7 @@ describe("checkUpdates", () => {
 
     await checkUpdates();
 
-    expect(checkMock).toHaveBeenCalledWith();
+    expect(checkMock).toHaveBeenCalledWith({ timeout: 30_000 });
     expect(devLogMock).toHaveBeenCalledWith("No updates available.");
     expect(messageMock).toHaveBeenCalledWith(
       "You are running the latest version.",
@@ -131,7 +139,10 @@ describe("checkUpdates", () => {
     await checkUpdates();
 
     expect(invokeMock).toHaveBeenCalledWith("get_platform_info");
-    expect(checkMock).toHaveBeenCalledWith({ target: "windows-beta" });
+    expect(checkMock).toHaveBeenCalledWith({
+      target: "windows-beta",
+      timeout: 30_000,
+    });
   });
 
   it("downloads and installs update when user accepts restart", async () => {
@@ -146,7 +157,7 @@ describe("checkUpdates", () => {
 
     await checkUpdates();
 
-    expect(download).toHaveBeenCalledOnce();
+    expect(download).toHaveBeenCalledWith(undefined, { timeout: 120_000 });
     expect(install).toHaveBeenCalledOnce();
     expect(relaunchMock).toHaveBeenCalledOnce();
     expect(setStatusMock).toHaveBeenCalledWith("Downloading update");
@@ -172,9 +183,61 @@ describe("checkUpdates", () => {
     expect(relaunchMock).not.toHaveBeenCalled();
     expect(sendNotificationMock).toHaveBeenCalledWith({
       title: "Zinnia",
-      body: "Update downloaded. Install it later from Check now.",
+      body: "Update downloaded and ready to install from Check now.",
     });
-    expect(setStatusMock).toHaveBeenLastCalledWith("Idle");
+    expect(setStatusMock).toHaveBeenLastCalledWith("Update ready");
+  });
+
+  it("releases a deferred update when it is discarded", async () => {
+    const close = vi.fn().mockResolvedValue(undefined);
+    checkMock.mockResolvedValue({
+      version: "0.5.0",
+      download: vi.fn().mockResolvedValue(undefined),
+      install: vi.fn().mockResolvedValue(undefined),
+      close,
+    } as unknown as Awaited<ReturnType<typeof check>>);
+
+    await checkUpdates();
+    discardPendingUpdate();
+    await Promise.resolve();
+
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("logs a pending-update resource cleanup failure", async () => {
+    const close = vi.fn().mockRejectedValue(new Error("close failed"));
+    checkMock.mockResolvedValue({
+      version: "0.5.0",
+      download: vi.fn().mockResolvedValue(undefined),
+      install: vi.fn().mockResolvedValue(undefined),
+      close,
+    } as unknown as Awaited<ReturnType<typeof check>>);
+
+    await checkUpdates();
+    discardPendingUpdate();
+    await vi.waitFor(() =>
+      expect(devLogMock).toHaveBeenCalledWith(
+        "Failed to release pending update resources: Error: close failed",
+      ),
+    );
+  });
+
+  it("coalesces overlapping update checks", async () => {
+    let resolveCheck: (value: null) => void = () => {};
+    checkMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveCheck = resolve;
+        }),
+    );
+
+    const first = checkUpdates();
+    const second = checkUpdates();
+    await vi.waitFor(() => expect(checkMock).toHaveBeenCalledOnce());
+    resolveCheck(null);
+    await Promise.all([first, second]);
+
+    expect(checkMock).toHaveBeenCalledOnce();
   });
 
   it("shows update error dialog on failures", async () => {
@@ -199,7 +262,7 @@ describe("autoCheckUpdates", () => {
 
     await autoCheckUpdates();
 
-    expect(checkMock).toHaveBeenCalledWith();
+    expect(checkMock).toHaveBeenCalledWith({ timeout: 30_000 });
     expect(invokeMock).not.toHaveBeenCalled();
     expect(devLogMock).toHaveBeenCalledWith(
       "Auto-update check: no updates available.",

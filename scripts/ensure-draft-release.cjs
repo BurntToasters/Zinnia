@@ -30,7 +30,9 @@ const WAIT_POLL_INTERVAL_MS = Number.parseInt(
 const packageJson = require('../package.json');
 const VERSION = packageJson.version;
 const TAG_NAME = 'v' + VERSION;
-const IS_PRERELEASE = VERSION.includes('beta') || VERSION.includes('alpha');
+// Keep this in sync with scripts/gpg-sign.js so every release path classifies
+// release candidates consistently.
+const IS_PRERELEASE = /-(?:beta|alpha|rc)(?:[.-]?\d+)?/i.test(VERSION);
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));

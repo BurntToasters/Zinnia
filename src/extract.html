@@ -114,6 +114,38 @@
       </div>
     </div>
 
+    <div class="extract-input-modal-overlay" id="input-modal-overlay" hidden>
+      <div
+        class="modal extract-input-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="input-modal-title"
+      >
+        <div class="extract-input-modal__header">
+          <h2 id="input-modal-title">Input</h2>
+          <button
+            class="btn btn--ghost btn--sm"
+            id="input-modal-cancel-x"
+            aria-label="Cancel"
+          >
+            &times;
+          </button>
+        </div>
+        <div class="extract-input-modal__body">
+          <label class="extract-input-field">
+            <span id="input-modal-label">Value</span>
+            <input type="text" id="input-modal-field" autocomplete="off" />
+          </label>
+        </div>
+        <div class="extract-input-modal__footer">
+          <button class="btn btn--sm" id="input-modal-confirm">OK</button>
+          <button class="btn btn--ghost btn--sm" id="input-modal-cancel">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+
     <script type="module" src="/extract-window.ts"></script>
   </body>
 </html>

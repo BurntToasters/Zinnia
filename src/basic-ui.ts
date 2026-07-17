@@ -454,6 +454,7 @@ function hideBasicCompletion(section: "compress" | "extract"): void {
 }
 
 let basicProgressUnlisten: (() => void) | null = null;
+let basicProgressGeneration = 0;
 
 function setBasicBarDeterminate(
   section: "compress" | "extract",
@@ -483,6 +484,7 @@ export function updateBasicRunningState(active: boolean): void {
   const section = getMode() === "extract" ? "extract" : "compress";
 
   if (active) {
+    const generation = ++basicProgressGeneration;
     showBasicProgress(section);
     resetBasicBar(section);
     // Listen for structured progress events to show determinate progress.
@@ -493,6 +495,14 @@ export function updateBasicRunningState(active: boolean): void {
       }
     })
       .then((unlisten) => {
+        if (
+          generation !== basicProgressGeneration ||
+          getWorkspaceMode() !== "basic"
+        ) {
+          unlisten();
+          return;
+        }
+        if (basicProgressUnlisten) basicProgressUnlisten();
         basicProgressUnlisten = unlisten;
       })
       .catch((err) => {
@@ -500,6 +510,7 @@ export function updateBasicRunningState(active: boolean): void {
         log(`Failed to listen for basic progress updates: ${msg}`, "error");
       });
   } else {
+    basicProgressGeneration += 1;
     hideBasicProgress(section);
     resetBasicBar(section);
     if (basicProgressUnlisten) {
@@ -523,6 +534,17 @@ export function updateBasicRunningState(active: boolean): void {
   for (const id of btns) {
     const el = document.getElementById(id) as HTMLButtonElement | null;
     if (el) el.disabled = active;
+  }
+  for (const id of [
+    "basic-dropzone",
+    "basic-action-compress",
+    "basic-action-open",
+  ]) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.setAttribute("aria-disabled", String(active));
+    el.classList.toggle("is-disabled", active);
+    if (el instanceof HTMLButtonElement) el.disabled = active;
   }
 }
 
@@ -582,9 +604,10 @@ function loadInputs(paths: string[]): void {
 }
 
 async function handleBasicDrop(paths: string[]): Promise<void> {
-  if (paths.length === 0) return;
+  if (paths.length === 0 || state.running) return;
 
   const { archives, others } = await partitionByArchive(paths);
+  if (state.running) return;
   const allArchives = others.length === 0 && archives.length > 0;
   const mixed = archives.length > 0 && others.length > 0;
 
@@ -598,6 +621,7 @@ async function handleBasicDrop(paths: string[]): Promise<void> {
         cancelLabel: "Compress all",
       },
     );
+    if (state.running) return;
     if (extractThem) {
       loadInputs(archives);
       setMode("extract");
@@ -694,10 +718,11 @@ async function testArchivePassword(
   password?: string,
 ): Promise<boolean> {
   try {
-    const args = ["l", "-slt", archive];
+    const args = ["t"];
     if (password) {
       args.push(`-p${password}`);
     }
+    args.push("--", archive);
     const result = await invoke<Run7zResult>("run_7z", { args });
     if (result.code > 1) {
       return !looksLikePasswordRequiredError(result.stdout, result.stderr);
@@ -715,7 +740,7 @@ async function isArchiveEncrypted(archivePath: string): Promise<boolean> {
   }
 
   try {
-    const args = ["l", "-slt", archivePath];
+    const args = ["l", "-slt", "--", archivePath];
     const result = await invoke<Run7zResult>("run_7z", { args });
     if (result.code > 1) {
       return looksLikePasswordRequiredError(result.stdout, result.stderr);
@@ -771,7 +796,19 @@ async function handleBasicExtractAction(): Promise<void> {
     }
   }
 
-  // 2. Set the password value in password fields so the background extractor has it!
+  // 2. Open the folder picker before copying a password into the DOM. A
+  // cancelled picker must not leave a verified password resident in fields.
+  const output = await open({
+    title: "Choose destination folder",
+    directory: true,
+  });
+
+  if (!output || typeof output !== "string") {
+    return;
+  }
+
+  // 3. Populate the fields only for the immediate extraction run. The normal
+  // run cleanup clears both fields when the operation finishes.
   const basicPasswordInput = document.getElementById(
     "basic-extract-password",
   ) as HTMLInputElement | null;
@@ -783,16 +820,6 @@ async function handleBasicExtractAction(): Promise<void> {
   ) as HTMLInputElement | null;
   if (powerPasswordInput) {
     powerPasswordInput.value = password;
-  }
-
-  // 3. Open folder picker
-  const output = await open({
-    title: "Choose destination folder",
-    directory: true,
-  });
-
-  if (!output || typeof output !== "string") {
-    return;
   }
 
   const basicExtractPath = document.getElementById(
@@ -881,10 +908,12 @@ export function initBasicWorkspace(): void {
 
   if (dropzone) {
     const activateDropzone = async (): Promise<void> => {
+      if (state.running) return;
       const selection = await open({
         title: "Select files or archives",
         multiple: true,
       });
+      if (state.running) return;
       if (!selection) return;
       const paths = Array.isArray(selection) ? selection : [selection];
       if (paths.length > 0) {
@@ -902,6 +931,7 @@ export function initBasicWorkspace(): void {
 
   if (compressCard) {
     compressCard.addEventListener("click", async () => {
+      if (state.running) return;
       state.inputs.length = 0;
       state.lastAutoOutputPath = null;
       setMode("add");
@@ -912,6 +942,7 @@ export function initBasicWorkspace(): void {
 
   if (openCard) {
     openCard.addEventListener("click", async () => {
+      if (state.running) return;
       const selection = await open({
         title: "Open archive",
         multiple: true,
@@ -933,6 +964,7 @@ export function initBasicWorkspace(): void {
           },
         ],
       });
+      if (state.running) return;
       if (!selection) return;
       const paths = Array.isArray(selection) ? selection : [selection];
       if (paths.length > 0) {
@@ -1393,6 +1425,12 @@ export function handleBasicDragDrop(type: string, paths?: string[]): void {
   const workspace = document.getElementById("basic-workspace");
   const target = currentBasicView === "home" && dropzone ? dropzone : workspace;
   if (!target) return;
+
+  if (state.running) {
+    dropzone?.classList.remove("is-drag-over");
+    workspace?.classList.remove("is-drag-over");
+    return;
+  }
 
   if (type === "enter" || type === "over") {
     target.classList.add("is-drag-over");

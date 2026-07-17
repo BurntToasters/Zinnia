@@ -46,6 +46,9 @@ export function promptInput(options: PromptOptions): Promise<string | null> {
       document.removeEventListener("keydown", onKey);
       overlay.removeEventListener("click", onOverlayClick);
       if (modal) releaseFocusTrap(modal);
+      // Passwords must not remain in a hidden DOM field after the prompt ends.
+      field.value = "";
+      field.type = "text";
       overlay.hidden = true;
       trigger?.focus();
     };

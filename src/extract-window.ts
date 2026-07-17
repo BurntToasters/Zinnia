@@ -2,8 +2,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { deriveExtractDestinationPath } from "./extract-path";
-import { describe7zError } from "./error-hints";
+import { describe7zError, looksLikePasswordRequiredError } from "./error-hints";
 import { SAFE_EXTRACT_OVERWRITE_MODE } from "./extract-policy";
+import { promptInput } from "./prompt-modal";
 
 interface Run7zResult {
   stdout: string;
@@ -28,6 +29,38 @@ function $(id: string): HTMLElement {
 function basename(filePath: string): string {
   const sep = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
   return sep >= 0 ? filePath.slice(sep + 1) : filePath;
+}
+
+function withPassword(args: string[], password: string): string[] {
+  const separator = args.indexOf("--");
+  const head = separator === -1 ? args : args.slice(0, separator);
+  const tail = separator === -1 ? [] : args.slice(separator);
+  return [
+    ...head.filter((arg) => !arg.startsWith("-p")),
+    `-p${password}`,
+    ...tail,
+  ];
+}
+
+async function runWithPasswordRetry(args: string[]): Promise<Run7zResult> {
+  let result = await invoke<Run7zResult>("run_7z", { args });
+  if (
+    result.code > 1 &&
+    looksLikePasswordRequiredError(result.stdout ?? "", result.stderr ?? "")
+  ) {
+    const password = await promptInput({
+      title: "Password required",
+      label: "This archive is encrypted. Enter password:",
+      password: true,
+      confirmLabel: "Extract",
+    });
+    if (password) {
+      result = await invoke<Run7zResult>("run_7z", {
+        args: withPassword(args, password),
+      });
+    }
+  }
+  return result;
 }
 
 // Estimate remaining time from elapsed time and percent complete.
@@ -100,49 +133,34 @@ function setDeterminateProgress(widthPercent: number): void {
   }
 }
 
-async function countArchiveEntries(archivePath: string): Promise<number> {
-  try {
-    const result = await invoke<Run7zResult>("run_7z", {
-      args: ["l", "-ba", "--", archivePath],
-    });
-    if (result.code !== 0) return 0;
-    return result.stdout.split("\n").filter((l) => l.trim().length > 0).length;
-  } catch {
-    return 0;
-  }
-}
-
-async function closeWindowSafely(
-  appWindow: ReturnType<typeof getCurrentWebviewWindow>,
-): Promise<void> {
+async function closeWindowSafely(): Promise<void> {
   try {
     await invoke("close_extract_window");
-  } catch {
-    try {
-      await appWindow.close();
-    } catch {
-      try {
-        await appWindow.destroy();
-      } catch {}
-    }
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    const errorBox = document.getElementById("extract-error");
+    if (errorBox) errorBox.hidden = false;
+    const title = errorBox?.querySelector<HTMLElement>(".extract-error-title");
+    if (title) title.textContent = "Could not close safely";
+    const detailBox = document.getElementById("error-detail");
+    if (detailBox) detailBox.textContent = detail;
+    const status = document.getElementById("extract-status");
+    if (status) status.textContent = "Waiting for cleanup";
   }
 }
 
 async function run() {
   const appWindow = getCurrentWebviewWindow();
 
-  // Detect platform and set body class
-  let platform = "unknown";
-  try {
-    platform = await invoke<string>("get_platform_info");
-  } catch {}
-  if (platform === "windows") {
-    document.body.classList.add("platform-windows");
-  } else if (platform === "macos") {
-    document.body.classList.add("platform-macos");
-  } else if (platform === "linux") {
-    document.body.classList.add("platform-linux");
-  }
+  // Platform styling is independent of extraction startup; do not put it on
+  // the critical path between first paint and starting 7-Zip.
+  void invoke<string>("get_platform_info")
+    .then((platform) => {
+      if (["windows", "macos", "linux"].includes(platform)) {
+        document.body.classList.add(`platform-${platform}`);
+      }
+    })
+    .catch(() => {});
 
   // Wire custom titlebar buttons
   const minBtn = document.getElementById("titlebar-min");
@@ -155,7 +173,7 @@ async function run() {
   }
   if (closeTitlebarBtn) {
     closeTitlebarBtn.addEventListener("click", () => {
-      void closeWindowSafely(appWindow);
+      void closeWindowSafely();
     });
   }
 
@@ -165,14 +183,6 @@ async function run() {
   let cancelRequested = false;
   let operationFinished = false;
   let destination = "";
-  let autoCloseTimer: ReturnType<typeof setTimeout> | null = null;
-
-  const clearAutoCloseTimer = () => {
-    if (autoCloseTimer !== null) {
-      clearTimeout(autoCloseTimer);
-      autoCloseTimer = null;
-    }
-  };
 
   const finish = (
     status: string,
@@ -223,17 +233,26 @@ async function run() {
     $("extract-status").textContent = "Cancelling...";
     try {
       await invoke("cancel_7z");
-    } catch {}
+    } catch (err) {
+      cancelRequested = false;
+      cancelBtn.disabled = false;
+      const detail = err instanceof Error ? err.message : String(err);
+      $("extract-error").hidden = false;
+      const title = $("extract-error").querySelector<HTMLElement>(
+        ".extract-error-title",
+      );
+      if (title) title.textContent = "Could not cancel safely";
+      $("error-detail").textContent = detail;
+      $("extract-status").textContent = "Extraction still running";
+    }
   });
 
   closeBtn.addEventListener("click", async () => {
-    clearAutoCloseTimer();
-    await closeWindowSafely(appWindow);
+    await closeWindowSafely();
   });
 
   openDestinationBtn.addEventListener("click", async () => {
     if (!destination) return;
-    clearAutoCloseTimer();
     openDestinationBtn.disabled = true;
     try {
       await invoke("open_path", { path: destination });
@@ -272,28 +291,16 @@ async function run() {
   $("archive-name").title = archivePath;
   $("extract-dest").textContent = destination;
   $("extract-dest").title = destination;
-  $("extract-status").textContent = "Scanning archive...";
+  $("extract-status").textContent = "Starting extraction...";
   $("extract-error").hidden = true;
 
-  try {
-    await invoke("probe_7z");
-  } catch (err) {
-    showError(
-      `7-Zip binary not found.\n\n${err instanceof Error ? err.message : String(err)}`,
-    );
-    return;
-  }
-
-  const totalEntries = await countArchiveEntries(archivePath);
-  let processedEntries = 0;
   let sawStructuredPercent = false;
 
   const startedAt = Date.now();
   let lastFile = "";
 
-  const unlistenStructured = await listen<ProgressUpdate>(
-    "7z-progress-structured",
-    (event) => {
+  const [unlistenStructured, unlistenRaw] = await Promise.all([
+    listen<ProgressUpdate>("7z-progress-structured", (event) => {
       const update = event.payload;
       let eta = "";
       if (typeof update?.percent === "number") {
@@ -306,29 +313,19 @@ async function run() {
       }
       const label = lastFile ? `Extracting ${lastFile}...` : "Extracting...";
       $("extract-status").textContent = eta ? `${label}  ${eta}` : label;
-    },
-  );
-
-  // Fallback for archives 7z extracts without emitting a percent: count entries.
-  const unlistenRaw = await listen<string>("7z-progress", (event) => {
-    if (sawStructuredPercent) return;
-    const chunk = typeof event.payload === "string" ? event.payload : "";
-    if (!chunk) return;
-    let changed = false;
-    for (const line of chunk.split(/\r?\n/)) {
-      if (/^- \S/.test(line)) {
-        processedEntries++;
-        changed = true;
+    }),
+    listen<string>("7z-progress", (event) => {
+      if (sawStructuredPercent) return;
+      const chunk = typeof event.payload === "string" ? event.payload : "";
+      for (const line of chunk.split(/[\r\n]+/)) {
+        const match = line.trim().match(/^-\s+(.+)/);
+        if (match?.[1]) {
+          $("extract-status").textContent =
+            `Extracting ${basename(match[1])}...`;
+        }
       }
-    }
-    if (changed && totalEntries > 0) {
-      const pct = Math.min(
-        99,
-        Math.floor((processedEntries / totalEntries) * 100),
-      );
-      setDeterminateProgress(pct);
-    }
-  });
+    }),
+  ]);
 
   const unlistenProgress = () => {
     unlistenStructured();
@@ -336,21 +333,19 @@ async function run() {
   };
 
   $("extract-status").textContent = "Extracting...";
-  if (totalEntries > 0) {
-    setDeterminateProgress(0);
-  }
 
   const args = [
     "x",
     `-o${destination}`,
     SAFE_EXTRACT_OVERWRITE_MODE,
     "-bb1",
+    "-bsp1",
     "--",
     archivePath,
   ];
 
   try {
-    const result = await invoke<Run7zResult>("run_7z", { args });
+    const result = await runWithPasswordRetry(args);
     unlistenProgress();
 
     if (cancelRequested) {
@@ -358,35 +353,14 @@ async function run() {
       return;
     }
 
-    if (result.code !== 0 && result.code !== 1) {
+    if (result.code !== 0) {
       const hint = describe7zError(result.stdout ?? "", result.stderr ?? "");
       const base = result.stderr?.trim() || `Exit code ${result.code}`;
       showError(hint ? `${hint}\n\n${base}` : base);
       return;
     }
 
-    if (result.code === 1) {
-      const detail =
-        result.stderr?.trim() ||
-        result.stdout?.trim() ||
-        "Exit code 1 (no detail available).";
-      const titleEl = $("extract-error").querySelector<HTMLElement>(
-        ".extract-error-title",
-      );
-      if (titleEl) titleEl.textContent = "Warnings";
-      $("error-detail").textContent = detail;
-      $("extract-error").hidden = false;
-      finish("Done (with warnings)", 100);
-    } else {
-      finish("Done", 100);
-      clearAutoCloseTimer();
-      autoCloseTimer = setTimeout(() => {
-        autoCloseTimer = null;
-        if (!cancelRequested) {
-          void closeWindowSafely(appWindow);
-        }
-      }, 1200);
-    }
+    finish("Done", 100);
   } catch (err) {
     unlistenProgress();
     if (cancelRequested) {

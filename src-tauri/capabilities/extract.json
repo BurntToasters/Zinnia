@@ -2,16 +2,18 @@
   "$schema": "https://schema.tauri.app/capabilities/2",
   "identifier": "extract-window",
   "description": "Permissions for extract-only windows",
-  "windows": [
-    "extract-*"
-  ],
+  "windows": ["extract-*"],
   "permissions": [
     "core:default",
     "core:window:allow-close",
     "core:window:allow-destroy",
     "core:window:allow-start-dragging",
     "core:window:allow-minimize",
-    "process:default",
-    "shell:allow-open"
+    "allow-run-7z",
+    "allow-cancel-7z",
+    "allow-get-extract-paths",
+    "allow-close-extract-window",
+    "allow-open-path",
+    "allow-get-platform-info"
   ]
 }

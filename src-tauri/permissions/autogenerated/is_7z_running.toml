@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-is-7z-running"
+description = "Enables the is_7z_running command without any pre-configured scope."
+commands.allow = ["is_7z_running"]
+
+[[permission]]
+identifier = "deny-is-7z-running"
+description = "Denies the is_7z_running command without any pre-configured scope."
+commands.deny = ["is_7z_running"]

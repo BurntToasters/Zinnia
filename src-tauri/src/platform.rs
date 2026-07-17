@@ -5,7 +5,6 @@ use std::process::Command;
 
 const ZINNIA_BUNDLE_ID: &str = "run.rosie.zinnia";
 const ZINNIA_DESKTOP_ID: &str = "run.rosie.zinnia.desktop";
-const SYSTEM_ARCHIVER_BUNDLE_ID: &str = "com.apple.archiveutility";
 
 #[derive(Clone, Copy, Debug)]
 pub struct ArchiveDefaultTarget {
@@ -156,6 +155,7 @@ fn fallback_archive_defaults(
 
     ARCHIVE_DEFAULT_TARGETS
         .iter()
+        .filter(|target| !(platform == "windows" && target.key == "rar"))
         .map(|target| archive_status(*target, None, can_change, status))
         .collect()
 }
@@ -195,9 +195,7 @@ pub fn get_os_integration_status() -> OsIntegrationStatus {
 }
 
 #[tauri::command]
-pub fn set_zinnia_default_archiver(
-    app: tauri::AppHandle,
-) -> Result<DefaultArchiverResult, String> {
+pub fn set_zinnia_default_archiver(app: tauri::AppHandle) -> Result<DefaultArchiverResult, String> {
     let platform = std::env::consts::OS;
     let packaged = is_packaged();
 
@@ -267,8 +265,7 @@ pub fn reset_preferred_archiver_to_system(
 
     #[cfg(target_os = "macos")]
     if platform == "macos" {
-        let results = macos_reset_archive_defaults_to_system();
-        return Ok(system_archiver_result(platform, results));
+        return Err("macOS does not expose a reliable universal 'system archiver' handler for every supported archive type. Use Finder's Get Info / Open With controls to choose a handler per extension.".to_string());
     }
 
     if platform == "linux" {
@@ -365,36 +362,6 @@ fn default_archiver_result(
     }
 }
 
-#[cfg(any(target_os = "macos", test))]
-fn system_archiver_result(
-    platform: &str,
-    results: Vec<ArchiveDefaultStatus>,
-) -> DefaultArchiverResult {
-    let changed = results
-        .iter()
-        .any(|result| result.current_handler.as_deref() == Some(SYSTEM_ARCHIVER_BUNDLE_ID));
-    let failures = results
-        .iter()
-        .filter(|result| result.current_handler.as_deref() != Some(SYSTEM_ARCHIVER_BUNDLE_ID))
-        .count();
-    let message = if failures == 0 {
-        "The system archive app is now preferred for supported formats.".to_string()
-    } else if changed {
-        format!(
-            "The system archive app was restored for some formats. {failures} format(s) still need attention."
-        )
-    } else {
-        "The system archive app could not be restored automatically.".to_string()
-    };
-
-    DefaultArchiverResult {
-        platform: platform.to_string(),
-        changed,
-        message,
-        results,
-    }
-}
-
 fn query_archive_defaults(platform: &str, packaged: bool) -> Vec<ArchiveDefaultStatus> {
     if !packaged {
         return fallback_archive_defaults(platform, packaged, false);
@@ -407,9 +374,7 @@ fn query_archive_defaults(platform: &str, packaged: bool) -> Vec<ArchiveDefaultS
 
     #[cfg(target_os = "linux")]
     if platform == "linux" {
-        let backend = XdgMimeBackend;
-        return linux_query_archive_defaults(
-            &backend,
+        return linux_query_archive_defaults_parallel(
             !is_flatpak() && linux_desktop_session_available(),
         );
     }
@@ -469,6 +434,44 @@ impl LinuxMimeBackend for XdgMimeBackend {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn linux_query_archive_defaults_parallel(can_change: bool) -> Vec<ArchiveDefaultStatus> {
+    let handles: Vec<_> = ARCHIVE_DEFAULT_TARGETS
+        .iter()
+        .copied()
+        .map(|target| {
+            std::thread::spawn(move || {
+                let backend = XdgMimeBackend;
+                match backend.query_default(target.mime_type) {
+                    Ok(current_handler) => {
+                        let status = if current_handler.as_deref() == Some(ZINNIA_DESKTOP_ID) {
+                            "Default"
+                        } else {
+                            "Not default"
+                        };
+                        archive_status(target, current_handler, can_change, status)
+                    }
+                    Err(err) => archive_status(target, None, can_change, err),
+                }
+            })
+        })
+        .collect();
+    handles
+        .into_iter()
+        .enumerate()
+        .map(|(index, handle)| {
+            handle.join().unwrap_or_else(|_| {
+                archive_status(
+                    ARCHIVE_DEFAULT_TARGETS[index],
+                    None,
+                    can_change,
+                    "xdg-mime query worker failed",
+                )
+            })
+        })
+        .collect()
+}
+
 #[cfg(any(target_os = "linux", test))]
 fn linux_query_archive_defaults<B: LinuxMimeBackend>(
     backend: &B,
@@ -517,7 +520,7 @@ fn linux_set_archive_defaults<B: LinuxMimeBackend>(backend: &mut B) -> Vec<Archi
 mod macos_defaults {
     use super::{
         archive_status, ArchiveDefaultStatus, ArchiveDefaultTarget, ARCHIVE_DEFAULT_TARGETS,
-        SYSTEM_ARCHIVER_BUNDLE_ID, ZINNIA_BUNDLE_ID,
+        ZINNIA_BUNDLE_ID,
     };
     use core_foundation::base::TCFType;
     use core_foundation::string::{CFString, CFStringRef};
@@ -634,13 +637,6 @@ mod macos_defaults {
             .map(|target| set_target(*target, ZINNIA_BUNDLE_ID, "Default"))
             .collect()
     }
-
-    pub fn reset_archive_defaults_to_system() -> Vec<ArchiveDefaultStatus> {
-        ARCHIVE_DEFAULT_TARGETS
-            .iter()
-            .map(|target| set_target(*target, SYSTEM_ARCHIVER_BUNDLE_ID, "System"))
-            .collect()
-    }
 }
 
 #[cfg(target_os = "macos")]
@@ -651,11 +647,6 @@ fn macos_query_archive_defaults(can_change: bool) -> Vec<ArchiveDefaultStatus> {
 #[cfg(target_os = "macos")]
 fn macos_set_archive_defaults() -> Vec<ArchiveDefaultStatus> {
     macos_defaults::set_archive_defaults()
-}
-
-#[cfg(target_os = "macos")]
-fn macos_reset_archive_defaults_to_system() -> Vec<ArchiveDefaultStatus> {
-    macos_defaults::reset_archive_defaults_to_system()
 }
 
 #[tauri::command]
@@ -752,7 +743,14 @@ mod tests {
         assert!(packaged.file_associations_known);
         assert!(packaged.context_actions_known);
         assert!(packaged.default_app_help_available);
-        assert_eq!(packaged.archive_defaults.len(), ARCHIVE_DEFAULT_TARGETS.len());
+        assert_eq!(
+            packaged.archive_defaults.len(),
+            ARCHIVE_DEFAULT_TARGETS.len() - 1
+        );
+        assert!(!packaged
+            .archive_defaults
+            .iter()
+            .any(|entry| entry.key == "rar"));
 
         let dev = os_integration_status_for("linux", false);
         assert!(!dev.file_associations_known);
@@ -801,29 +799,19 @@ mod tests {
         );
     }
 
-    #[test]
-    fn system_archiver_result_reports_partial_restores() {
-        let mut results = fallback_archive_defaults("macos", true, true);
-        results[0].current_handler = Some(SYSTEM_ARCHIVER_BUNDLE_ID.to_string());
-        results[0].status = "System".to_string();
-
-        let result = system_archiver_result("macos", results);
-
-        assert!(result.changed);
-        assert!(result.message.contains("some formats"));
-    }
-
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_archive_extensions_resolve_to_utis() {
         let zip = macos_defaults::uti_identifier_for_extension("zip");
         let seven_zip = macos_defaults::uti_identifier_for_extension("7z");
 
-        assert!(zip.as_deref().is_some_and(|uti| uti.contains("zip")));
-        assert!(
-            seven_zip
-                .as_deref()
-                .is_some_and(|uti| uti.contains("7-zip"))
-        );
+        // Apple does not guarantee which identifier is returned when multiple
+        // declarations match an extension; unknown mappings may be dynamic
+        // (`dyn.*`). Verify a usable identifier, not an implementation-specific
+        // spelling that changes across macOS releases.
+        assert!(zip.as_deref().is_some_and(|uti| !uti.trim().is_empty()));
+        assert!(seven_zip
+            .as_deref()
+            .is_some_and(|uti| !uti.trim().is_empty()));
     }
 }

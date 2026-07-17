@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-probe-7z"
+description = "Enables the probe_7z command without any pre-configured scope."
+commands.allow = ["probe_7z"]
+
+[[permission]]
+identifier = "deny-probe-7z"
+description = "Denies the probe_7z command without any pre-configured scope."
+commands.deny = ["probe_7z"]

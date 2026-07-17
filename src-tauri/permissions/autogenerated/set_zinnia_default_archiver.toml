@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-zinnia-default-archiver"
+description = "Enables the set_zinnia_default_archiver command without any pre-configured scope."
+commands.allow = ["set_zinnia_default_archiver"]
+
+[[permission]]
+identifier = "deny-set-zinnia-default-archiver"
+description = "Denies the set_zinnia_default_archiver command without any pre-configured scope."
+commands.deny = ["set_zinnia_default_archiver"]

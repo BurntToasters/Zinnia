@@ -33,6 +33,12 @@ fn log_file_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
 fn ensure_logs_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     let dir = logs_dir_path(app)?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| e.to_string())?;
+    }
     Ok(dir)
 }
 
@@ -75,11 +81,20 @@ pub fn append_local_log(
     let line = line.replace('\r', "").replace('\n', " ");
     let line = truncate_for_bytes(&line, MAX_LOG_ENTRY_BYTES);
 
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(|e| e.to_string())?;
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&path).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| e.to_string())?;
+    }
 
     writeln!(file, "{line}").map_err(|e| e.to_string())?;
     trim_log_file_if_needed(&path)
@@ -138,7 +153,10 @@ pub fn export_logs(
 }
 
 #[tauri::command]
-pub fn clear_logs(app: tauri::AppHandle, lock: tauri::State<'_, LogFileLock>) -> Result<(), String> {
+pub fn clear_logs(
+    app: tauri::AppHandle,
+    lock: tauri::State<'_, LogFileLock>,
+) -> Result<(), String> {
     let _guard = lock_log_file(&lock)?;
     let path = log_file_path(&app)?;
     match std::fs::remove_file(path) {

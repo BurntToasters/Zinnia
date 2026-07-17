@@ -26,9 +26,33 @@ boundary between frontend-supplied arguments and the spawned process:
 - Positional paths and the `-o` output directory may not contain a `..`
   parent-directory segment (defense-in-depth against path traversal, independent
   of frontend validation).
+- Destructive `-sdel` operations are rejected. Users delete source files
+  explicitly after verifying the archive.
 
 Arguments are passed to the sidecar as an array — never via a shell string — so
 command injection is not possible.
+
+### Output transactions and extraction containment
+
+Zinnia does not let 7-Zip write directly into the final output for mutating
+operations:
+
+- Create/update writes to a sibling staging basename. Only a successful process
+  promotes the complete output family, including split volumes.
+- Extraction writes to a contained staging directory. Before promotion, Zinnia
+  walks the entire tree, rejects symbolic links and unsupported file types, and
+  applies entry-count and expanded-size ceilings.
+- Promotion resolves file/directory conflicts without overwriting unrelated
+  destination content. A durable move plan and transaction journal allow an
+  interrupted merge or split-archive promotion to be rolled back on restart.
+- Cancel/close keeps the global operation slot locked until the child has exited
+  and staging cleanup has completed.
+- Extraction growth is limited by both expansion ratio and current free disk
+  space, with capacity reserved for the OS and other applications.
+
+These checks are defense in depth around 7-Zip's own path sanitization. They do
+not make untrusted archives harmless: users should still keep Zinnia and its
+bundled 7-Zip current and avoid opening extracted executables they do not trust.
 
 ### Password handling (known limitation)
 
@@ -65,3 +89,14 @@ for new advisories. When a new 7-Zip version addresses a security issue, update
 `assets/` with the new binaries, run
 `node scripts/prepare-7z.js --update-checksums` to regenerate
 `assets/7z-checksums.json`, and cut a Zinnia release.
+
+#### Temporary Windows RAR restriction
+
+The published data for CVE-2026-58052 is currently inconsistent: the NVD/CNA
+affected range was revised to end at 26.01, while the NVD analysis and upstream
+7-Zip ticket still describe 26.02 as affected. Until the exact bundled Windows
+runtime is conclusively verified against the published reproducer, Zinnia
+conservatively rejects RAR extraction on Windows at both archive-validation and
+process-spawn boundaries. Windows packages also omit RAR file associations and
+Explorer verbs while this restriction is active. RAR browsing, testing,
+conversion, and extraction remain available on macOS and Linux.

@@ -5,14 +5,9 @@
     <!-- allow-jit: required for JavaScript JIT compilation in WKWebView -->
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
-    <!-- allow-unsigned-executable-memory: required alongside allow-jit for
-         certain WKWebView memory mapping operations on some macOS versions -->
-    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
-    <true/>
-    <!-- disable-library-validation: required for WKWebView to load its
-         dynamic libraries (WebKit frameworks) at runtime -->
-    <key>com.apple.security.cs.disable-library-validation</key>
-    <true/>
+    <!-- Do not add allow-unsigned-executable-memory or disable-library-validation:
+         WKWebView uses Apple-signed system frameworks, and neither broad hardened-
+         runtime exception is required by Zinnia's executable 7z sidecar. -->
     <!-- network.client: required for the updater to reach GitHub releases -->
     <key>com.apple.security.network.client</key>
     <true/>
