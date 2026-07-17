@@ -14,7 +14,7 @@ Prerequisites per platform are in [build-setup.md](build-setup.md).
 | Command | What it does |
 | --- | --- |
 | `npm run typecheck` | `tsc --noEmit` (strict) |
-| `npm run lint` | ESLint over `src/` |
+| `npm run lint` | ESLint over `src/` and `scripts/` |
 | `npm run format:check` | Prettier check (use `npm run format` to fix) |
 | `npm test` | Vitest (frontend) |
 | `npm run test:rust` | `cargo test` (backend) |
@@ -35,13 +35,14 @@ format/lint/typecheck when staged files touch `.ts/.css/.html/.js`.
 ## CI and merge protection
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the quality gate on
-every push and PR to `main`, plus Rust checks on Windows/macOS and a security
-audit (`npm audit`, `cargo audit`, `cargo clippy -D warnings`).
+every push and PR to `main` and `beta`, plus Rust checks on Windows/macOS and a
+security audit (`npm audit`, `cargo audit`, `cargo clippy -D warnings`).
 
 CI runs do not block merges by default. To make the quality gate a hard
-requirement, a maintainer must enable branch protection on `main`:
+requirement, a maintainer must enable branch protection on each protected
+branch:
 
-> Settings → Branches → Add rule → Branch name `main` →
+> Settings → Branches → Add rule → Branch name `main` or `beta` →
 > **Require status checks to pass before merging** → select `quality-gate`
 > (and `rust-check`, `security-audit` as desired).
 

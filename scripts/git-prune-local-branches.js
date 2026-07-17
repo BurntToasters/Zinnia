@@ -1,5 +1,4 @@
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
 
 const SCRIPT_VERSION = "1.0.0";
 
@@ -241,7 +240,7 @@ export function main(argv = process.argv) {
   return skipped.length > 0 && !options.dryRun ? 1 : 0;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (import.meta.main) {
   try {
     process.exit(main());
   } catch (error) {
