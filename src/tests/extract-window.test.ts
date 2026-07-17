@@ -167,7 +167,7 @@ describe("extract-window", () => {
     ).toBe("fatal extraction error");
   });
 
-  it("stays open after successful extraction", async () => {
+  it("auto-closes after successful extraction", async () => {
     vi.useFakeTimers();
 
     const { invokeMock } = await setupAndRun();
@@ -179,6 +179,26 @@ describe("extract-window", () => {
     vi.advanceTimersByTime(1201);
     await flushAsync();
 
+    expect(
+      invokeMock.mock.calls.some(([name]) => name === "close_extract_window"),
+    ).toBe(true);
+  });
+
+  it("cancels auto-close when the user opens the destination", async () => {
+    vi.useFakeTimers();
+
+    const { invokeMock } = await setupAndRun();
+
+    (
+      document.getElementById("open-destination-btn") as HTMLButtonElement
+    ).click();
+    await flushAsync();
+    vi.advanceTimersByTime(1201);
+    await flushAsync();
+
+    expect(invokeMock).toHaveBeenCalledWith("open_path", {
+      path: "/tmp/archive",
+    });
     expect(
       invokeMock.mock.calls.some(([name]) => name === "close_extract_window"),
     ).toBe(false);

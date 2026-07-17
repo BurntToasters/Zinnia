@@ -1,6 +1,6 @@
 {
   "name": "zinnia",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "private": true,
   "description": "Cross-platform 7z GUI built with Tauri.",
   "type": "module",
@@ -66,7 +66,7 @@
     "release:draft": "dotenv -e .env -- node scripts/ensure-draft-release.cjs",
     "release:wait-draft": "dotenv -e .env -- node scripts/ensure-draft-release.cjs --wait",
     "prerelease:prepare": "node scripts/release-warning.js",
-    "release:finalize": "dotenv -e .env -- node scripts/post-release-assets.js && git fetch origin && git reset --hard @{u} && git clean -fd",
+    "release:finalize": "dotenv -e .env -- node scripts/post-release-assets.js --finalize-release-assets && git fetch origin && git reset --hard @{u} && git clean -fd",
     "release:win": "npm run release:prepare && npm run release:draft && npm run rust:targets:win && npm run build:win && npm run release:sign:gpg && npm run release:finalize",
     "release:mac": "npm run release:prepare && npm run release:wait-draft && npm run rust:targets:mac && npm run build:mac:universal && npm run build:mac:zip && npm run release:sign:gpg && npm run release:finalize",
     "release:mac:ssh": "npm run mac:ssh:keychain && npm run release:mac",

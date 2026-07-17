@@ -105,7 +105,7 @@ function run({ now = new Date() } = {}) {
   return { updated: true, version, date: dateStr };
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+if (import.meta.main) {
   try {
     const result = run();
     if (result.updated) {
