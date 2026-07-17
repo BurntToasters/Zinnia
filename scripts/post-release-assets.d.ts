@@ -24,6 +24,7 @@ export function verifyCopiedPath(
 export function copyReleaseAssets(
   releaseDir: string | undefined,
   destination: string,
+  options?: { logger?: Pick<Console, "log" | "warn" | "error"> },
 ): number;
 
 export type FinalizeResult =
@@ -37,4 +38,5 @@ export type FinalizeResult =
 export function run(options?: {
   releaseDir?: string;
   env?: Record<string, string | undefined>;
+  logger?: Pick<Console, "log" | "warn" | "error">;
 }): FinalizeResult;
