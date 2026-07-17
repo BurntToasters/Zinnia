@@ -171,7 +171,7 @@ function printSummary({
   deleted,
   skipped,
 }) {
-  console.log(`IYERIS gitprune`);
+  console.log(`Zinnia gitprune`);
   console.log(`Script Version: ${SCRIPT_VERSION}`);
   console.log(`Remote: ${remote}`);
   console.log(`Current branch: ${currentBranch}`);
