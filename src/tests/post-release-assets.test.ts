@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -41,6 +41,24 @@ describe("post-release assets", () => {
     expect(isDirectExecution(["node", "unrelated.js", CLI_FLAG], "win32")).toBe(
       true,
     );
+  });
+
+  it("detects direct execution by basename so Windows path identity cannot no-op", () => {
+    expect(
+      isDirectExecution(
+        ["node", "C:\\Users\\Main\\Zinnia\\scripts\\post-release-assets.js"],
+        "win32",
+      ),
+    ).toBe(true);
+    expect(
+      isDirectExecution(
+        [
+          "node",
+          "C:\\Users\\Main\\Zinnia\\scripts\\finalize-release-assets.js",
+        ],
+        "win32",
+      ),
+    ).toBe(false);
   });
 
   it("cleans, mirrors, and verifies release entries", () => {
@@ -100,7 +118,7 @@ describe("post-release assets", () => {
       "installer",
     );
 
-    const output = execFileSync(
+    const ran = spawnSync(
       process.execPath,
       [path.join(scriptsDir, "finalize-release-assets.js")],
       {
@@ -108,8 +126,14 @@ describe("post-release assets", () => {
         env: { ...process.env, AFTER_PACK_LOC: destination },
       },
     );
+    const combined = `${ran.stdout ?? ""}${ran.stderr ?? ""}`;
 
-    expect(output).toContain("Mirrored and verified 1 cleaned release entries");
+    expect(ran.status).toBe(0);
+    expect(combined).toContain(
+      "Mirrored and verified 1 cleaned release entries",
+    );
+    expect(combined).toContain("[release:mirror] starting");
+    expect(combined).toContain(`AFTER_PACK_LOC=${JSON.stringify(destination)}`);
     expect(
       fs.readFileSync(path.join(destination, "Zinnia-Windows-x64.exe"), "utf8"),
     ).toBe("installer");

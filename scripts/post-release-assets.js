@@ -62,7 +62,17 @@ function isDirectExecution(argv = process.argv, platform = process.platform) {
   if (argv.includes(CLI_FLAG)) {
     return true;
   }
-  return Boolean(argv[1] && pathsEqual(argv[1], __filename, platform));
+  const entry = argv[1];
+  if (!entry) {
+    return false;
+  }
+  // Basename-only check: full-path identity breaks on Windows ESM
+  // (argv vs import.meta.url / slash / case / symlink mismatches) and
+  // previously caused a silent no-op with zero log output.
+  // Use the platform's path module so tests can simulate win32 on darwin/linux.
+  const basename =
+    platform === "win32" ? path.win32.basename(entry) : path.basename(entry);
+  return basename.toLowerCase() === "post-release-assets.js";
 }
 
 function getReleaseEntries(releaseDir) {
