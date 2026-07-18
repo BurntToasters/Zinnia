@@ -1263,7 +1263,7 @@ describe("main bootstrap", () => {
 
     await loadMainModule();
 
-    // Should not crash — app starts without platform class
+    // Should not crash; app starts without platform class
     expect(document.body.textContent ?? "").not.toContain("Failed to start:");
     expect(document.body.classList.contains("platform-windows")).toBe(false);
     expect(document.body.classList.contains("platform-macos")).toBe(false);

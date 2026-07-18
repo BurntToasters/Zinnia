@@ -48,7 +48,7 @@ branch:
 
 ## Conventions
 
-- Match the surrounding code's style; no framework — vanilla TS + DOM.
+- Match the surrounding code's style; no framework: vanilla TS + DOM.
 - Add tests with each change. Pure logic is unit-tested directly; DOM-dependent
   code uses the jsdom fixture in [`src/tests/setup-dom.ts`](src/tests/setup-dom.ts).
 - New 7z switches/commands need both a Vitest arg-builder test and a Rust

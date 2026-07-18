@@ -16,7 +16,7 @@ split into focused modules:
 
 | Module | Responsibility |
 | --- | --- |
-| `validation.rs` | Allow-list validation of 7z args — the security boundary |
+| `validation.rs` | Allow-list validation of 7z args: the security boundary |
 | `process.rs` | Process lifecycle: single-slot state, shared spawn/drain, `run_7z`/`probe_7z`/`cancel_7z` |
 | `progress.rs` | Parse 7z stdout into structured `{percent, filesDone, currentFile}` |
 | `archive_detect.rs` | Magic-byte / TAR detection, extension-vs-header validation |
@@ -59,7 +59,7 @@ communicate via direct calls and a few custom DOM events.
 
 - Frontend: Vitest + jsdom. Shared DOM fixture and Tauri mocks in
   `src/tests/setup-dom.ts`.
-- Backend: `cargo test` — unit tests live beside each module.
+- Backend: `cargo test`; unit tests live beside each module.
 - Sidecar integration: `src-tauri/tests/sidecar_roundtrip.rs` exercises create,
   list, test, extract, and encrypted-archive failure against bundled 7-Zip.
 - CI runs tests and checks on Linux, Windows, and macOS; Clippy and dependency

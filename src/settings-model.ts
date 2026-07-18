@@ -150,7 +150,7 @@ const WORKING_MODES = new Set<WorkingMode>(["add", "extract", "browse"]);
 const WORKSPACE_MODES = new Set<WorkspaceMode>(["basic", "power"]);
 const UI_DENSITIES = new Set<UiDensity>(["comfortable", "compact"]);
 
-// Compression parameter allow-sets — reject corrupt/hostile persisted values
+// Compression parameter allow-sets: reject corrupt/hostile persisted values
 // that would otherwise flow into 7z as -mx=, -m0=, -md=, -mfb=, -ms= switches.
 const VALID_LEVELS = new Set(["0", "1", "3", "5", "7", "9"]);
 const VALID_METHODS = new Set([

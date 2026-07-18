@@ -246,10 +246,10 @@ async function run() {
           : "Extraction complete";
     }
     document.title = asError
-      ? "Zinnia — Failed"
+      ? "Zinnia: Failed"
       : asCancelled
-        ? "Zinnia — Cancelled"
-        : "Zinnia — Done";
+        ? "Zinnia: Cancelled"
+        : "Zinnia: Done";
     stopProgressAt(progressPercent, asError);
     setButtons(false, !asError && allowOpenDestination, true);
     cancelBtn.disabled = false;
@@ -374,7 +374,7 @@ async function run() {
   const startedAt = Date.now();
   let lastFile = "";
 
-  // Register progress listeners without awaiting confirmation before run_7z —
+  // Register progress listeners without awaiting confirmation before run_7z;
   // backend prepare time usually dwarfs listener registration.
   const structuredListen = listen<ProgressUpdate>(
     "7z-progress-structured",

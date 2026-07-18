@@ -215,7 +215,7 @@ fn main() {
                 if let Err(e) = process::recover_interrupted_transaction(&maintenance_handle) {
                     eprintln!("Failed to recover an interrupted archive transaction: {e}");
                 }
-                // Unblock run_7z before temp cleanup — recovery is what must be serialized.
+                // Unblock run_7z before temp cleanup; recovery is what must be serialized.
                 process::mark_startup_recovery_done();
                 if let Err(e) = tempdir::cleanup_stale_temp_dirs(&maintenance_handle) {
                     eprintln!("Failed to clean stale conversion directories: {e}");

@@ -29,7 +29,7 @@ boundary between frontend-supplied arguments and the spawned process:
 - Destructive `-sdel` operations are rejected. Users delete source files
   explicitly after verifying the archive.
 
-Arguments are passed to the sidecar as an array — never via a shell string — so
+Arguments are passed to the sidecar as an array, never via a shell string, so
 command injection is not possible.
 
 ### Output transactions and extraction containment
@@ -81,7 +81,7 @@ operation is running.
 The 7-Zip binaries in `assets/` are committed to the repository and checksummed
 in `assets/7z-checksums.json`. Because they are bundled, a 7-Zip CVE fix
 requires manually updating the binaries, regenerating checksums, and shipping a
-new Zinnia release — there is no OS-level automatic update mechanism.
+new Zinnia release; there is no OS-level automatic update mechanism.
 
 **Action:** watch the [7-Zip release page](https://www.7-zip.org/history.txt)
 and [NVD vendor page](https://nvd.nist.gov/vuln/search/results?form_type=Basic&results_type=overview&query=7-zip&search_type=all)

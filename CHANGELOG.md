@@ -26,6 +26,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Fix:** Extract-window teardown clears bindings on OS close; extract capability no longer allows direct `destroy` (must use cancel-aware close).
 - **Security:** Extract promote rejects sibling writes outside the stage directory; `run_7z` re-validates archive headers for extract/list/test.
 - **UI:** Basic mode home redesign (drop-first layout, friendlier copy, warmer floral accent). On macOS/Windows, Basic can use a translucent window with OS-native blur (toggle in Settings); Linux Basic stays opaque.
+- **UI:** In Basic mode, Basic/Power, Support, and Settings sit in the custom titlebar; Power keeps the separate header row.
 
 ## Changes in `v0.5.4-beta.2:`
 

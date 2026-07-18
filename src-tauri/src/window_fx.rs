@@ -1,5 +1,5 @@
 //! OS-native window glass for Basic mode (macOS vibrancy / Windows Mica·Acrylic).
-//! Linux is intentionally a no-op — Basic stays fully opaque there.
+//! Linux is intentionally a no-op; Basic stays fully opaque there.
 
 use tauri::{AppHandle, Manager, WebviewWindow};
 

@@ -204,7 +204,7 @@ pub fn mark_startup_recovery_done() {
 }
 
 async fn wait_for_startup_recovery() {
-    // Back off instead of a 1ms spin. Do not force-complete on timeout — that let
+    // Back off instead of a 1ms spin. Do not force-complete on timeout; that let
     // run_7z claim the slot then block on RECOVERY_LOCK with a misleading "busy" UI.
     let mut delay_ms = 10u64;
     while !STARTUP_RECOVERY_DONE.load(std::sync::atomic::Ordering::Acquire) {
@@ -223,7 +223,7 @@ pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), Str
     let _recovery_guard = RECOVERY_LOCK
         .lock()
         .map_err(|_| "Archive recovery lock is unavailable.".to_string())?;
-    // Re-check under the lock — another thread may have cleared it.
+    // Re-check under the lock; another thread may have cleared it.
     let json = match std::fs::read_to_string(&path) {
         Ok(json) => json,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -892,7 +892,7 @@ fn archive_family(base: &std::path::Path) -> Result<Vec<std::path::PathBuf>, Str
         Err(error) => return Err(error.to_string()),
     }
     // 7-Zip volumes are a contiguous sequence beginning at .001. Do not sweep
-    // arbitrary numeric suffixes such as `archive.7z.2024` — those may be
+    // arbitrary numeric suffixes such as `archive.7z.2024`; those may be
     // unrelated user files.
     for index in 1..=1_000_000u32 {
         let candidate = parent.join(format!("{name}.{index:03}"));

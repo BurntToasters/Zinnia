@@ -103,7 +103,7 @@ fn is_allowed_switch(cmd: &str, arg: &str) -> bool {
         "x" => {
             (lower.starts_with("-o") && lower.len() > 2)
                 || (lower.starts_with("-p") && lower.len() > 2)
-                // Only auto-rename / skip existing — never overwrite-all (-aoa) or
+                // Only auto-rename / skip existing; never overwrite-all (-aoa) or
                 // rename-existing (-aot). Frontend default is -aou.
                 || matches!(lower.as_str(), "-aos" | "-aou")
                 || lower == "-y"

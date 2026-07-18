@@ -769,7 +769,7 @@ pub fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Resul
         &label,
         tauri::WebviewUrl::App("extract.html".into()),
     )
-    .title("Zinnia \u{2014} Extracting")
+    .title("Zinnia: Extracting")
     .inner_size(440.0, 320.0)
     .resizable(false)
     .minimizable(true)

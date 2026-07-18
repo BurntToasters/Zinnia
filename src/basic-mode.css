@@ -10,8 +10,79 @@
   display: none;
 }
 
+/* Basic: fold chrome into the custom titlebar (Power keeps its own header). */
 #app[data-workspace-mode="basic"] .header {
-  padding: 8px 14px;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10000;
+  height: 38px;
+  padding: 0;
+  margin: 0;
+  border: none !important;
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
+  pointer-events: none;
+  -webkit-app-region: no-drag !important;
+}
+
+#app[data-workspace-mode="basic"] .header__actions {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  padding: 0 12px 0 78px;
+  pointer-events: none;
+  -webkit-app-region: no-drag !important;
+}
+
+#app[data-workspace-mode="basic"] .header__actions > * {
+  pointer-events: auto;
+  -webkit-app-region: no-drag !important;
+}
+
+#app[data-workspace-mode="basic"] #support-link {
+  margin-left: auto;
+}
+
+#app[data-workspace-mode="basic"] .segmented--workspace {
+  height: 26px;
+  padding: 2px;
+}
+
+#app[data-workspace-mode="basic"] .segmented--workspace .segmented__btn {
+  height: 22px;
+  padding: 0 10px;
+  font-size: 0.75rem;
+}
+
+#app[data-workspace-mode="basic"] #open-settings {
+  width: 30px;
+  height: 30px;
+}
+
+#app[data-workspace-mode="basic"] .support-btn {
+  height: 30px;
+  padding: 0 8px;
+  font-size: 0.75rem;
+}
+
+body.platform-windows #app[data-workspace-mode="basic"] .header,
+body.platform-linux #app[data-workspace-mode="basic"] .header {
+  height: 32px;
+}
+
+body.platform-windows #app[data-workspace-mode="basic"] .header__actions,
+body.platform-linux #app[data-workspace-mode="basic"] .header__actions {
+  padding-left: 12px;
+  /* Leave room for custom min/max/close */
+  padding-right: 138px;
 }
 
 #app[data-workspace-mode="power"] .basic-workspace {
@@ -1749,16 +1820,6 @@ html:not([data-window-fx]) #app[data-workspace-mode="basic"] {
 }
 
 /* 4. Layout Element Upgrades */
-#app[data-workspace-mode="basic"] .header {
-  background: color-mix(in srgb, var(--bg) 75%, transparent) !important;
-  backdrop-filter: blur(var(--basic-glass-blur))
-    saturate(var(--basic-glass-saturate)) !important;
-  -webkit-backdrop-filter: blur(var(--basic-glass-blur))
-    saturate(var(--basic-glass-saturate)) !important;
-  border-bottom: 1px solid var(--basic-glass-border) !important;
-  box-shadow: none !important;
-}
-
 #app[data-workspace-mode="basic"] .basic-dropzone {
   background: var(--basic-glass-bg) !important;
   backdrop-filter: blur(var(--basic-glass-blur))
