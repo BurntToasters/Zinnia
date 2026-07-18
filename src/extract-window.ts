@@ -5,6 +5,10 @@ import { deriveExtractDestinationPath } from "./extract-path";
 import { describe7zError, looksLikePasswordRequiredError } from "./error-hints";
 import { SAFE_EXTRACT_OVERWRITE_MODE } from "./extract-policy";
 import { promptInput } from "./prompt-modal";
+import {
+  setProgressIndeterminateClass,
+  setProgressPercentClass,
+} from "./progress-bar";
 
 interface Run7zResult {
   stdout: string;
@@ -99,9 +103,7 @@ function setButtons(
 function stopProgressAt(widthPercent: number, error: boolean): void {
   const fill = $("progress-fill");
   fill.classList.toggle("extract-progress-fill--error", error);
-  fill.style.animation = "none";
-  fill.style.marginLeft = "0";
-  fill.style.width = `${widthPercent}%`;
+  setProgressPercentClass(fill, widthPercent);
   const bar = document.getElementById("extract-progress");
   if (bar) {
     bar.setAttribute("aria-valuenow", String(widthPercent));
@@ -113,18 +115,14 @@ function stopProgressAt(widthPercent: number, error: boolean): void {
 function startIndeterminateProgress(): void {
   const fill = $("progress-fill");
   fill.classList.remove("extract-progress-fill--error");
-  fill.style.animation = "";
-  fill.style.marginLeft = "";
-  fill.style.width = "";
+  setProgressIndeterminateClass(fill);
 }
 
 function setDeterminateProgress(widthPercent: number): void {
   const clamped = Math.max(0, Math.min(100, widthPercent));
   const fill = $("progress-fill");
   fill.classList.remove("extract-progress-fill--error");
-  fill.style.animation = "none";
-  fill.style.marginLeft = "0";
-  fill.style.width = `${clamped}%`;
+  setProgressPercentClass(fill, clamped);
   const bar = document.getElementById("extract-progress");
   if (bar) {
     bar.setAttribute("aria-valuenow", String(clamped));
@@ -265,6 +263,7 @@ async function run() {
     clearAutoCloseTimer();
     openDestinationBtn.disabled = true;
     try {
+      await invoke("register_extract_open_path", { path: destination });
       await invoke("open_path", { path: destination });
       $("extract-status").textContent = "Destination opened.";
     } catch (err) {
@@ -312,6 +311,12 @@ async function run() {
   const [unlistenStructured, unlistenRaw] = await Promise.all([
     listen<ProgressUpdate>("7z-progress-structured", (event) => {
       const update = event.payload;
+      if (update?.currentFile === "Finalizing…") {
+        sawStructuredPercent = true;
+        setDeterminateProgress(100);
+        $("extract-status").textContent = "Finalizing…";
+        return;
+      }
       let eta = "";
       if (typeof update?.percent === "number") {
         sawStructuredPercent = true;

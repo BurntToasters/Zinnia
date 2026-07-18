@@ -29,6 +29,12 @@ describe("validateExtraArgs", () => {
     expect(() => validateExtraArgs(["-psecret"])).toThrow();
   });
 
+  it("rejects overwrite-all extract modes", () => {
+    expect(() => validateExtraArgs(["-aoa"])).toThrow(/safe extract/);
+    expect(() => validateExtraArgs(["-aot"])).toThrow(/safe extract/);
+    expect(() => validateExtraArgs(["-aou"])).not.toThrow();
+  });
+
   it("rejects blocked archive type args", () => {
     expect(() => validateExtraArgs(["-tzip"])).toThrow(
       /not allowed in extra args/,
@@ -46,6 +52,28 @@ describe("validateExtraArgs", () => {
 
   it("rejects unknown double-dash args", () => {
     expect(() => validateExtraArgs(["--totally-unknown"])).toThrow();
+  });
+
+  it("accepts known method switches with digit/= boundaries", () => {
+    expect(() =>
+      validateExtraArgs(["-mx9", "-mx=9", "-mmt=on", "-md=64m", "-mtc=on"]),
+    ).not.toThrow();
+  });
+
+  it("rejects method values with path separators or parent segments", () => {
+    expect(() => validateExtraArgs(["-m0=../x"])).toThrow(/compression method/);
+    expect(() => validateExtraArgs(["-mem=/tmp/x"])).toThrow(
+      /compression method/,
+    );
+    expect(() => validateExtraArgs(["-mtc=a\\b"])).toThrow(
+      /compression method/,
+    );
+    expect(() => validateExtraArgs(["-m0="])).toThrow(/compression method/);
+  });
+
+  it("rejects open-ended method prefixes that only share a substring", () => {
+    expect(() => validateExtraArgs(["-mxyz"])).toThrow(/compression method/);
+    expect(() => validateExtraArgs(["-mfoo"])).toThrow(/compression method/);
   });
 });
 

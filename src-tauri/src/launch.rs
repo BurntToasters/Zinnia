@@ -1,6 +1,6 @@
 //! Launch routing: CLI/file-association args, extract windows, pending-path queues.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, Url};
@@ -12,10 +12,50 @@ pub static EXTRACT_ONLY_LAUNCH: AtomicBool = AtomicBool::new(false);
 pub static MAC_FALLBACK_MAIN_PENDING: AtomicBool = AtomicBool::new(false);
 pub static FILE_OPEN_SIGNAL: Mutex<Option<std::sync::mpsc::Sender<()>>> = Mutex::new(None);
 
+const MAX_OPENABLE_DIRECTORIES: usize = 64;
+
 pub struct InitialPaths(pub Mutex<Vec<String>>);
 pub struct InitialMode(pub Mutex<String>);
 pub struct ExtractQueue(pub Mutex<HashMap<String, Vec<String>>>);
 pub struct PendingPaths(pub Mutex<Vec<OpenPathsPayload>>);
+/// Extract windows may only open directories they register here first.
+pub struct ExtractOpenAllowlist(pub Mutex<HashMap<String, std::path::PathBuf>>);
+/// Destination folder bound at extract-window spawn (E1/E2). Survives after
+/// `get_extract_paths` drains the queue so run_7z/-o and open_path stay pinned.
+pub struct ExtractBoundDestination(pub Mutex<HashMap<String, std::path::PathBuf>>);
+/// Main window may only open directories produced by recent successful operations.
+pub struct OpenPathAllowlist(pub Mutex<VecDeque<std::path::PathBuf>>);
+
+impl Default for OpenPathAllowlist {
+    fn default() -> Self {
+        Self(Mutex::new(VecDeque::new()))
+    }
+}
+
+/// Remember a destination folder after a successful compress/extract so the main
+/// window can open it later. Failures are ignored (open will simply refuse).
+pub fn remember_openable_directory(app: &tauri::AppHandle, path: &std::path::Path) {
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return;
+    };
+    if crate::path_safety::is_link_or_reparse(&meta) || !meta.is_dir() {
+        return;
+    }
+    let Ok(canonical) = path.canonicalize() else {
+        return;
+    };
+    let Some(state) = app.try_state::<OpenPathAllowlist>() else {
+        return;
+    };
+    let Ok(mut guard) = state.0.lock() else {
+        return;
+    };
+    guard.retain(|existing| existing != &canonical);
+    guard.push_back(canonical);
+    while guard.len() > MAX_OPENABLE_DIRECTORIES {
+        guard.pop_front();
+    }
+}
 
 #[derive(serde::Serialize, Clone)]
 pub struct OpenPathsPayload {
@@ -42,9 +82,245 @@ fn normalize_shell_open_path(path: std::path::PathBuf) -> std::path::PathBuf {
     path
 }
 
+fn normalize_destination_path(path: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) => {
+            crate::path_safety::reject_link_or_reparse(path, &meta)?;
+            path.canonicalize().map_err(|e| e.to_string())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+            let canonical_parent = parent
+                .canonicalize()
+                .map_err(|e| format!("Could not resolve destination parent: {e}"))?;
+            let name = path
+                .file_name()
+                .ok_or_else(|| "Destination path must have a directory name.".to_string())?;
+            Ok(canonical_parent.join(name))
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+/// Keep aligned with `src/extract-path.ts` deriveExtractDestinationPath + parent fallback.
+pub fn derive_extract_destination_path(archive_path: &str) -> Option<std::path::PathBuf> {
+    let trimmed = archive_path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(derived) = derive_extract_folder_destination(trimmed) {
+        return Some(derived);
+    }
+    parent_dir_path(trimmed)
+}
+
+fn parent_dir_path(path: &str) -> Option<std::path::PathBuf> {
+    let parts = split_path_parts(path);
+    if parts.name.is_empty() {
+        return None;
+    }
+    if parts.parent.is_empty() {
+        return None;
+    }
+    Some(std::path::PathBuf::from(parts.parent))
+}
+
+fn derive_extract_folder_destination(archive_path: &str) -> Option<std::path::PathBuf> {
+    let parts = split_path_parts(archive_path);
+    if parts.name.is_empty() {
+        return None;
+    }
+    let folder = derive_extract_folder_name(&parts.name)?;
+    Some(std::path::PathBuf::from(join_path(
+        &parts.parent,
+        &folder,
+        parts.separator,
+    )))
+}
+
+struct PathParts {
+    parent: String,
+    name: String,
+    separator: char,
+}
+
+fn looks_like_windows_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    (bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/'))
+        || path.starts_with("\\\\")
+}
+
+fn split_path_parts(raw_path: &str) -> PathParts {
+    let archive_path = raw_path.trim();
+    if archive_path.is_empty() {
+        return PathParts {
+            parent: String::new(),
+            name: String::new(),
+            separator: '/',
+        };
+    }
+    let windows_like = looks_like_windows_path(archive_path);
+    let slash = archive_path.rfind('/');
+    let backslash = if windows_like {
+        archive_path.rfind('\\')
+    } else {
+        None
+    };
+    let split_index = match (slash, backslash) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (Some(a), None) | (None, Some(a)) => Some(a),
+        (None, None) => None,
+    };
+    let separator = match split_index {
+        None if windows_like => '\\',
+        None => '/',
+        Some(idx) => {
+            if backslash == Some(idx) {
+                '\\'
+            } else {
+                '/'
+            }
+        }
+    };
+    let Some(idx) = split_index else {
+        return PathParts {
+            parent: String::new(),
+            name: archive_path.to_string(),
+            separator,
+        };
+    };
+    let mut parent = archive_path[..idx].to_string();
+    let name = archive_path[idx + 1..].to_string();
+    if parent.is_empty() && separator == '/' {
+        parent = "/".to_string();
+    } else if parent.len() == 2
+        && parent.as_bytes()[0].is_ascii_alphabetic()
+        && parent.as_bytes()[1] == b':'
+    {
+        parent = format!("{parent}{separator}");
+    }
+    PathParts {
+        parent,
+        name,
+        separator,
+    }
+}
+
+fn join_path(parent: &str, name: &str, separator: char) -> String {
+    if parent.is_empty() {
+        return name.to_string();
+    }
+    if parent.ends_with('/') || parent.ends_with('\\') {
+        return format!("{parent}{name}");
+    }
+    format!("{parent}{separator}{name}")
+}
+
+fn derive_extract_folder_name(archive_name: &str) -> Option<String> {
+    const SUFFIXES: &[&str] = &[
+        ".tar.gz", ".tar.bz2", ".tar.xz", ".tbz2", ".tgz", ".txz", ".7z", ".zip", ".rar", ".tar",
+        ".gz", ".bz2", ".xz",
+    ];
+    let cleaned = archive_name.trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    let lower = cleaned.to_ascii_lowercase();
+    for suffix in SUFFIXES {
+        if lower.ends_with(suffix) && cleaned.len() > suffix.len() {
+            return Some(cleaned[..cleaned.len() - suffix.len()].to_string());
+        }
+    }
+    Some(format!("{cleaned}_extracted"))
+}
+
+/// Ensure an extract window's `-o` / open path matches the destination bound at spawn.
+pub fn assert_extract_bound_destination(
+    app: &tauri::AppHandle,
+    label: &str,
+    requested: &std::path::Path,
+) -> Result<(), String> {
+    let state = app
+        .try_state::<ExtractBoundDestination>()
+        .ok_or_else(|| "Extract destination binding is unavailable.".to_string())?;
+    let guard = state
+        .0
+        .lock()
+        .map_err(|_| "Extract destination lock poisoned.".to_string())?;
+    let Some(bound) = guard.get(label) else {
+        return Err("Extract window has no bound destination.".to_string());
+    };
+    let bound_norm = normalize_destination_path(bound)?;
+    let requested_norm = normalize_destination_path(requested)?;
+    if bound_norm != requested_norm {
+        return Err(
+            "Quick-extract windows may only write to their bound destination folder.".to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn clear_extract_window_bindings(app: &tauri::AppHandle, label: &str) {
+    if let Some(state) = app.try_state::<ExtractBoundDestination>() {
+        if let Ok(mut guard) = state.0.lock() {
+            guard.remove(label);
+        }
+    }
+    if let Some(state) = app.try_state::<ExtractOpenAllowlist>() {
+        if let Ok(mut guard) = state.0.lock() {
+            guard.remove(label);
+        }
+    }
+}
+
+#[tauri::command]
+pub fn register_extract_open_path(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    path: String,
+    state: tauri::State<'_, ExtractOpenAllowlist>,
+) -> Result<(), String> {
+    if !is_extract_window_label(window.label()) {
+        return Err("Only extract windows can register an open destination.".to_string());
+    }
+    let Some(raw_path) = normalize_open_path_arg(&path) else {
+        return Err("Path is required.".to_string());
+    };
+    if raw_path.contains('\0') {
+        return Err("Path contains invalid characters.".to_string());
+    }
+    let resolved = std::path::PathBuf::from(&raw_path);
+    assert_extract_bound_destination(&app, window.label(), &resolved)?;
+    let meta =
+        std::fs::symlink_metadata(&resolved).map_err(|_| "Path does not exist.".to_string())?;
+    crate::path_safety::reject_link_or_reparse(&resolved, &meta)
+        .map_err(|_| "Symbolic links and reparse points cannot be opened directly.".to_string())?;
+    if !meta.is_dir() {
+        return Err("Only directories can be opened.".to_string());
+    }
+    let canonical = resolved
+        .canonicalize()
+        .map_err(|_| "Path does not exist.".to_string())?;
+    let mut allowlist = state
+        .0
+        .lock()
+        .map_err(|_| "Extract open allowlist lock poisoned.".to_string())?;
+    allowlist.insert(window.label().to_string(), canonical);
+    Ok(())
+}
+
 #[tauri::command]
 #[allow(deprecated)]
-pub fn open_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
+pub fn open_path(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    path: String,
+    extract_allowlist: tauri::State<'_, ExtractOpenAllowlist>,
+    main_allowlist: tauri::State<'_, OpenPathAllowlist>,
+) -> Result<(), String> {
     use tauri_plugin_shell::ShellExt;
 
     let Some(raw_path) = normalize_open_path_arg(&path) else {
@@ -59,9 +335,8 @@ pub fn open_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
 
     let meta =
         std::fs::symlink_metadata(&resolved).map_err(|_| "Path does not exist.".to_string())?;
-    if meta.is_symlink() {
-        return Err("Symbolic links cannot be opened directly.".to_string());
-    }
+    crate::path_safety::reject_link_or_reparse(&resolved, &meta)
+        .map_err(|_| "Symbolic links and reparse points cannot be opened directly.".to_string())?;
     if !meta.is_dir() {
         return Err("Only directories can be opened.".to_string());
     }
@@ -69,6 +344,33 @@ pub fn open_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
     let canonical = resolved
         .canonicalize()
         .map_err(|_| "Path does not exist.".to_string())?;
+
+    if is_extract_window_label(window.label()) {
+        let allowed = extract_allowlist
+            .0
+            .lock()
+            .map_err(|_| "Extract open allowlist lock poisoned.".to_string())?;
+        let Some(expected) = allowed.get(window.label()) else {
+            return Err(
+                "Extract window must register its destination before opening it.".to_string(),
+            );
+        };
+        if expected != &canonical {
+            return Err("Extract windows may only open their registered destination.".to_string());
+        }
+    } else {
+        let allowed = main_allowlist
+            .0
+            .lock()
+            .map_err(|_| "Open-path allowlist lock poisoned.".to_string())?;
+        if !allowed.iter().any(|entry| entry == &canonical) {
+            return Err(
+                "Only folders from a recent successful Zinnia compress/extract can be opened."
+                    .to_string(),
+            );
+        }
+    }
+
     let normalized = normalize_shell_open_path(canonical);
     let path_str = normalized.to_string_lossy().to_string();
     app.shell().open(&path_str, None).map_err(|e| e.to_string())
@@ -167,8 +469,10 @@ pub async fn close_extract_window(
     window: tauri::Window,
     app: tauri::AppHandle,
     _state: tauri::State<'_, RunningProcess>,
+    _allowlist: tauri::State<'_, ExtractOpenAllowlist>,
 ) -> Result<(), String> {
     cancel_owner_and_wait(&app, window.label()).await?;
+    clear_extract_window_bindings(&app, window.label());
 
     if EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst) {
         if let Some(main_window) = app.get_webview_window("main") {
@@ -235,6 +539,12 @@ pub fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Resul
     if paths.len() > 100 {
         return Err("Too many paths in a single extract batch.".to_string());
     }
+    let archive = paths
+        .first()
+        .map(String::as_str)
+        .ok_or_else(|| "Extract window requires an archive path.".to_string())?;
+    let destination = derive_extract_destination_path(archive)
+        .ok_or_else(|| "Could not derive an extract destination for this archive.".to_string())?;
 
     let label = format!(
         "extract-{}",
@@ -248,6 +558,11 @@ pub fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Resul
             return Err("Extract queue is full".to_string());
         }
         q.insert(label.clone(), paths);
+    }
+    {
+        let bound = app.state::<ExtractBoundDestination>();
+        let mut map = bound.0.lock().map_err(|_| "Lock poisoned".to_string())?;
+        map.insert(label.clone(), destination);
     }
 
     let mut builder = tauri::WebviewWindowBuilder::new(
@@ -279,6 +594,7 @@ pub fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Resul
         if let Ok(mut q) = queue.0.lock() {
             q.remove(&label);
         };
+        clear_extract_window_bindings(app, &label);
     }
 
     result.map(|_| ())
@@ -300,11 +616,20 @@ fn should_use_extract_window(paths: &[String], mode: &str) -> bool {
 
 fn looks_like_archive_path(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
-    [
-        ".7z", ".zip", ".rar", ".tar", ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz",
-    ]
-    .iter()
-    .any(|extension| lower.ends_with(extension))
+    // Windows: omit .rar so file-open routing does not land on the temporary
+    // RAR extract block (CVE-2026-58052). macOS/Linux still treat RAR as archives.
+    let extensions: &[&str] = if cfg!(windows) {
+        &[
+            ".7z", ".zip", ".tar", ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz",
+        ]
+    } else {
+        &[
+            ".7z", ".zip", ".rar", ".tar", ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz",
+        ]
+    };
+    extensions
+        .iter()
+        .any(|extension| lower.ends_with(extension))
         || lower.rsplit_once('.').is_some_and(|(_, suffix)| {
             suffix.len() == 3 && suffix.bytes().all(|b| b.is_ascii_digit())
         })
@@ -399,6 +724,10 @@ fn route_open_request(app: &tauri::AppHandle, paths: Vec<String>, mode: String) 
                     });
                 } else {
                     eprintln!("Pending extract queue full, dropping open request");
+                    let _ = app.emit(
+                        "open-paths-dropped",
+                        "Zinnia is busy and the pending extract queue is full. Try again shortly.",
+                    );
                 }
             }
             let _ = app.emit("pending-paths-changed", ());
@@ -448,6 +777,10 @@ fn route_open_request(app: &tauri::AppHandle, paths: Vec<String>, mode: String) 
                 q.push(OpenPathsPayload { paths, mode });
             } else {
                 eprintln!("Pending paths queue full, dropping open request");
+                let _ = app.emit(
+                    "open-paths-dropped",
+                    "Zinnia could not accept more open requests. Finish the current job and try again.",
+                );
             }
         }
         Err(e) => eprintln!("Failed to acquire pending paths lock: {e}"),
@@ -487,6 +820,47 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    #[test]
+    fn derive_extract_destination_matches_frontend_rules() {
+        assert_eq!(
+            derive_extract_destination_path("/downloads/example.zip"),
+            Some(std::path::PathBuf::from("/downloads/example"))
+        );
+        assert_eq!(
+            derive_extract_destination_path("/downloads/example.tar.gz"),
+            Some(std::path::PathBuf::from("/downloads/example"))
+        );
+        assert_eq!(
+            derive_extract_destination_path(r"C:\downloads\example.7z"),
+            Some(std::path::PathBuf::from(r"C:\downloads\example"))
+        );
+        assert_eq!(
+            derive_extract_destination_path("/downloads/example.custom"),
+            Some(std::path::PathBuf::from("/downloads/example.custom_extracted"))
+        );
+        assert_eq!(
+            derive_extract_destination_path("/example.zip"),
+            Some(std::path::PathBuf::from("/example"))
+        );
+        assert_eq!(
+            derive_extract_destination_path(r"C:\example.zip"),
+            Some(std::path::PathBuf::from(r"C:\example"))
+        );
+        assert_eq!(derive_extract_destination_path("   "), None);
+    }
+
+    #[test]
+    fn normalize_destination_path_joins_missing_leaf_under_canonical_parent() {
+        let base = temp_base("normalize-dest");
+        let missing = base.join("fresh-output");
+        let normalized = normalize_destination_path(&missing).expect("normalize");
+        assert_eq!(
+            normalized,
+            base.canonicalize().expect("base").join("fresh-output")
+        );
+        let _ = std::fs::remove_dir_all(base);
+    }
 
     #[test]
     fn should_use_extract_window_honors_explicit_extract_mode() {

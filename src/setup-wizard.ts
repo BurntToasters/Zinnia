@@ -10,6 +10,7 @@ import type {
   UpdateChannel,
 } from "./settings-model";
 import { trapFocus, releaseFocusTrap } from "./utils";
+import { setProgressPercentClass } from "./progress-bar";
 
 const SETUP_WIZARD_VERSION = 3;
 const LAST_STEP = 4;
@@ -31,7 +32,7 @@ function $(id: string): HTMLElement {
 function setProgress(step: number): void {
   const bar = $("setup-wizard-progress-bar");
   const pct = (step / LAST_STEP) * 100;
-  bar.style.width = `${pct}%`;
+  setProgressPercentClass(bar, pct);
 }
 
 function showStep(step: number): void {

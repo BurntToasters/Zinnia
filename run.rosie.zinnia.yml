@@ -10,9 +10,17 @@ separate-locales: false
 
 finish-args:
   - --share=ipc
+  - --share=network
   - --socket=x11
   - --socket=wayland
   - --device=dri
+  # Broad FS access is intentional for a file archiver: the 7z sidecar must
+  # read/write user-selected paths. Portals alone are not enough today.
+  # See SECURITY.md "Flatpak filesystem access".
+  - --filesystem=home
+  - --filesystem=xdg-download
+  - --filesystem=xdg-documents
+  - --filesystem=xdg-desktop
 
 environment:
   GTK_USE_PORTAL: "1"
@@ -33,7 +41,7 @@ modules:
     build-commands:
       - npm ci
       - npm run sync-version
-      - npm run prepare:7z
+      - npm run prepare:7z:all
       - npm run licenses
       - npm run build
       - npx tauri build --no-bundle

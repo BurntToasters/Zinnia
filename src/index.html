@@ -693,7 +693,6 @@
                       <i
                         data-lucide="heart"
                         class="lucide-icon text-danger"
-                        style="color: var(--danger)"
                       ></i>
                       by BurntToasters /
                       <a href="https://rosie.run" target="_blank" rel="noopener"
@@ -1371,6 +1370,34 @@
                       </button>
                     </div>
                   </div>
+                  <label class="basic-toggle" id="basic-encrypt-headers-row">
+                    <input type="checkbox" id="basic-encrypt-headers" />
+                    Encrypt file names
+                  </label>
+                  <div class="basic-field">
+                    <label class="basic-field__label" for="basic-split-size"
+                      >Split volumes</label
+                    >
+                    <select id="basic-split-size">
+                      <option value="" selected>Off (single file)</option>
+                      <option value="100m">100 MB</option>
+                      <option value="700m">700 MB (CD)</option>
+                      <option value="1g">1 GB</option>
+                      <option value="4g">4 GB (FAT32)</option>
+                      <option value="custom">Custom…</option>
+                    </select>
+                  </div>
+                  <div class="basic-field" id="basic-split-custom-field" hidden>
+                    <label class="basic-field__label" for="basic-split-custom"
+                      >Custom size</label
+                    >
+                    <input
+                      type="text"
+                      id="basic-split-custom"
+                      placeholder="e.g. 250m, 2g"
+                      autocomplete="off"
+                    />
+                  </div>
                 </details>
               </div>
             </div>
@@ -1658,6 +1685,25 @@
                   </thead>
                   <tbody id="basic-browse-tbody"></tbody>
                 </table>
+              </div>
+            </div>
+            <div class="field" id="basic-browse-password-field" hidden>
+              <label for="basic-browse-password">Archive password</label>
+              <div class="password-field">
+                <input
+                  id="basic-browse-password"
+                  type="password"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+                <button
+                  type="button"
+                  class="icon-btn"
+                  id="basic-toggle-browse-password"
+                  aria-label="Show password"
+                >
+                  <i data-lucide="eye" class="lucide-icon"></i>
+                </button>
               </div>
             </div>
             <div class="basic-browse-actions">

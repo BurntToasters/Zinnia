@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 
-use crate::output::{truncate_for_bytes, MAX_LOG_ENTRY_BYTES};
+use crate::output::{redact_sensitive_text, truncate_for_bytes, MAX_LOG_ENTRY_BYTES};
 use crate::settings_store::atomic_write_text;
 
 const MAX_LOG_FILE_BYTES: u64 = 5 * 1024 * 1024;
@@ -79,6 +79,7 @@ pub fn append_local_log(
     let path = log_file_path(&app)?;
     trim_log_file_if_needed(&path)?;
     let line = line.replace('\r', "").replace('\n', " ");
+    let line = redact_sensitive_text(&line);
     let line = truncate_for_bytes(&line, MAX_LOG_ENTRY_BYTES);
 
     let mut options = std::fs::OpenOptions::new();

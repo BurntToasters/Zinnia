@@ -35,10 +35,13 @@ import {
   resolveOutputArchiveAutofill,
   resolveExtractDestinationAutofill,
 } from "./extract-path";
+import { getCompressionSecuritySupport } from "./compression-security";
+import {
+  setProgressIndeterminateClass,
+  setProgressPercentClass,
+} from "./progress-bar";
 
 export type BasicView = "home" | "compress" | "extract" | "browse";
-
-const ENCRYPTION_FORMATS = new Set(["7z", "zip"]);
 
 let currentBasicView: BasicView = "home";
 
@@ -130,6 +133,12 @@ function syncBasicToPower(): void {
   const basicPassword = document.getElementById(
     "basic-password",
   ) as HTMLInputElement | null;
+  const basicEncryptHeaders = document.getElementById(
+    "basic-encrypt-headers",
+  ) as HTMLInputElement | null;
+  const basicSplitSize = document.getElementById(
+    "basic-split-size",
+  ) as HTMLSelectElement | null;
 
   if (basicFormat) {
     $<HTMLSelectElement>("format").value = basicFormat.value;
@@ -151,6 +160,26 @@ function syncBasicToPower(): void {
 
   if (basicPassword) {
     $<HTMLInputElement>("password").value = basicPassword.value;
+  }
+
+  if (basicEncryptHeaders) {
+    $<HTMLInputElement>("encrypt-headers").checked =
+      basicEncryptHeaders.checked;
+  }
+
+  if (basicSplitSize) {
+    const splitValue = basicSplitSize.value;
+    $<HTMLSelectElement>("split-size").value = splitValue;
+    const customField = document.getElementById("split-custom-field");
+    if (customField) customField.hidden = splitValue !== "custom";
+    if (splitValue === "custom") {
+      const basicCustom = document.getElementById(
+        "basic-split-custom",
+      ) as HTMLInputElement | null;
+      if (basicCustom) {
+        $<HTMLInputElement>("split-custom").value = basicCustom.value;
+      }
+    }
   }
 
   onCompressionOptionChange();
@@ -183,6 +212,15 @@ function syncPowerToBasicCompress(): void {
   const basicArchiveName = document.getElementById(
     "basic-archive-name",
   ) as HTMLInputElement | null;
+  const basicPassword = document.getElementById(
+    "basic-password",
+  ) as HTMLInputElement | null;
+  const basicEncryptHeaders = document.getElementById(
+    "basic-encrypt-headers",
+  ) as HTMLInputElement | null;
+  const basicSplitSize = document.getElementById(
+    "basic-split-size",
+  ) as HTMLSelectElement | null;
 
   if (basicFormat) {
     basicFormat.value = $<HTMLSelectElement>("format").value;
@@ -193,21 +231,100 @@ function syncPowerToBasicCompress(): void {
   if (basicArchiveName) {
     basicArchiveName.value = $<HTMLInputElement>("archive-name").value;
   }
+  if (basicPassword) {
+    basicPassword.value = $<HTMLInputElement>("password").value;
+  }
+  if (basicEncryptHeaders) {
+    basicEncryptHeaders.checked =
+      $<HTMLInputElement>("encrypt-headers").checked;
+  }
+  if (basicSplitSize) {
+    const powerSplit = $<HTMLSelectElement>("split-size").value;
+    const known = [...basicSplitSize.options].some(
+      (option) => option.value === powerSplit,
+    );
+    basicSplitSize.value = known ? powerSplit : powerSplit ? "custom" : "";
+    const basicCustom = document.getElementById(
+      "basic-split-custom",
+    ) as HTMLInputElement | null;
+    if (basicCustom && powerSplit === "custom") {
+      basicCustom.value = $<HTMLInputElement>("split-custom").value;
+    }
+    updateBasicSplitCustomVisibility();
+  }
+}
+
+function updateBasicSplitCustomVisibility(): void {
+  const basicSplitSize = document.getElementById(
+    "basic-split-size",
+  ) as HTMLSelectElement | null;
+  const customField = document.getElementById("basic-split-custom-field");
+  if (!basicSplitSize || !customField) return;
+  customField.hidden = basicSplitSize.value !== "custom";
+}
+
+function syncBasicBrowsePasswordToPower(): void {
+  const basic = document.getElementById(
+    "basic-browse-password",
+  ) as HTMLInputElement | null;
+  const power = document.getElementById(
+    "browse-password",
+  ) as HTMLInputElement | null;
+  if (basic && power) {
+    power.value = basic.value;
+  }
+}
+
+function setBasicBrowsePasswordVisible(visible: boolean): void {
+  const field = document.getElementById("basic-browse-password-field");
+  if (field) {
+    field.hidden = !visible;
+  }
+  setBrowsePasswordFieldVisible(visible);
+}
+
+async function runBasicBrowseArchive(): Promise<void> {
+  syncBasicBrowsePasswordToPower();
+  await browseArchive();
+  const powerField = document.getElementById("browse-password-field");
+  if (powerField && !powerField.hidden) {
+    setBasicBrowsePasswordVisible(true);
+  }
 }
 
 function syncPowerToBasicExtract(): void {
   const basicExtractPath = document.getElementById(
     "basic-extract-path",
   ) as HTMLInputElement | null;
+  const basicExtractPassword = document.getElementById(
+    "basic-extract-password",
+  ) as HTMLInputElement | null;
   if (basicExtractPath) {
     basicExtractPath.value = $<HTMLInputElement>("extract-path").value;
+  }
+  if (basicExtractPassword) {
+    basicExtractPassword.value = $<HTMLInputElement>("extract-password").value;
+  }
+}
+
+function syncPowerToBasicBrowsePassword(): void {
+  const basic = document.getElementById(
+    "basic-browse-password",
+  ) as HTMLInputElement | null;
+  const power = document.getElementById(
+    "browse-password",
+  ) as HTMLInputElement | null;
+  if (basic && power) {
+    basic.value = power.value;
   }
 }
 
 export function syncBasicWorkspaceFromPower(): void {
   syncPowerToBasicCompress();
   syncPowerToBasicExtract();
+  syncPowerToBasicBrowsePassword();
   updateBasicPasswordField();
+  updateBasicSplitCustomVisibility();
 }
 
 function updateBasicExtractInfo(): void {
@@ -261,8 +378,7 @@ export function renderBasicInputs(): void {
 
   if (state.inputs.length === 0) {
     const empty = document.createElement("div");
-    empty.className = "basic-archive-info";
-    empty.style.cursor = "default";
+    empty.className = "basic-archive-info cursor-default";
     empty.innerHTML = `
       <span class="basic-archive-info__icon">
         <i data-lucide="file-plus" class="lucide-icon"></i>
@@ -358,17 +474,33 @@ function updateBasicPasswordField(): void {
   const toggleBtn = document.getElementById(
     "basic-toggle-password",
   ) as HTMLButtonElement | null;
+  const encryptHeadersEl = document.getElementById(
+    "basic-encrypt-headers",
+  ) as HTMLInputElement | null;
+  const encryptHeadersRow = document.getElementById(
+    "basic-encrypt-headers-row",
+  ) as HTMLElement | null;
   if (!formatEl || !passwordEl) return;
 
-  const supported = ENCRYPTION_FORMATS.has(formatEl.value);
-  passwordEl.disabled = !supported;
-  if (toggleBtn) toggleBtn.disabled = !supported;
+  const support = getCompressionSecuritySupport(formatEl.value);
+  passwordEl.disabled = !support.password;
+  if (toggleBtn) toggleBtn.disabled = !support.password;
 
-  if (supported) {
+  if (support.password) {
     passwordEl.placeholder = "Leave blank for none";
   } else {
     passwordEl.placeholder = `${formatEl.value.toUpperCase()} does not support encryption`;
     passwordEl.value = "";
+  }
+
+  if (encryptHeadersEl) {
+    if (!support.encryptHeaders) {
+      encryptHeadersEl.checked = false;
+    }
+    encryptHeadersEl.disabled = !support.encryptHeaders;
+  }
+  if (encryptHeadersRow) {
+    encryptHeadersRow.hidden = !support.encryptHeaders;
   }
 }
 
@@ -414,8 +546,8 @@ function showBasicCompletion(
 
   if (iconEl) {
     iconEl.innerHTML = success
-      ? '<i data-lucide="check" class="lucide-icon text-success" style="color: var(--success)"></i>'
-      : '<i data-lucide="alert-triangle" class="lucide-icon text-danger" style="color: var(--danger)"></i>';
+      ? '<i data-lucide="check" class="lucide-icon text-success"></i>'
+      : '<i data-lucide="alert-triangle" class="lucide-icon text-danger"></i>';
   }
   if (titleEl) titleEl.textContent = title;
   if (msgEl) msgEl.textContent = message;
@@ -423,7 +555,7 @@ function showBasicCompletion(
   // Manage "Open folder" button visibility based on success state
   const openDestBtn = document.getElementById(`basic-${section}-open-dest`);
   if (openDestBtn) {
-    openDestBtn.style.display = success ? "inline-flex" : "none";
+    openDestBtn.hidden = !success;
   }
 
   // Manage text of secondary action button based on success state
@@ -462,20 +594,13 @@ function setBasicBarDeterminate(
 ): void {
   const bar = document.getElementById(`basic-${section}-bar`);
   if (!bar) return;
-  const clamped = Math.max(0, Math.min(100, percent));
-  bar.classList.remove("is-indeterminate");
-  bar.style.width = `${clamped}%`;
-  bar.style.marginLeft = "0";
-  bar.style.animation = "none";
+  setProgressPercentClass(bar, percent);
 }
 
 function resetBasicBar(section: "compress" | "extract"): void {
   const bar = document.getElementById(`basic-${section}-bar`);
   if (!bar) return;
-  bar.classList.add("is-indeterminate");
-  bar.style.width = "";
-  bar.style.marginLeft = "";
-  bar.style.animation = "";
+  setProgressIndeterminateClass(bar);
 }
 
 export function updateBasicRunningState(active: boolean): void {
@@ -488,12 +613,21 @@ export function updateBasicRunningState(active: boolean): void {
     showBasicProgress(section);
     resetBasicBar(section);
     // Listen for structured progress events to show determinate progress.
-    void listen<{ percent?: number }>("7z-progress-structured", (event) => {
-      const percent = event.payload?.percent;
-      if (typeof percent === "number") {
-        setBasicBarDeterminate(section, Math.min(99, percent));
-      }
-    })
+    void listen<{ percent?: number; currentFile?: string }>(
+      "7z-progress-structured",
+      (event) => {
+        if (event.payload?.currentFile === "Finalizing…") {
+          setBasicBarDeterminate(section, 100);
+          const status = document.getElementById(`basic-${section}-status`);
+          if (status) status.textContent = "Finalizing…";
+          return;
+        }
+        const percent = event.payload?.percent;
+        if (typeof percent === "number") {
+          setBasicBarDeterminate(section, Math.min(99, percent));
+        }
+      },
+    )
       .then((unlisten) => {
         if (
           generation !== basicProgressGeneration ||
@@ -643,7 +777,7 @@ async function handleBasicDrop(paths: string[]): Promise<void> {
       setMode("browse");
       setBasicView("browse");
       renderInputs();
-      void browseArchive();
+      void runBasicBrowseArchive();
     } else {
       setMode("extract");
       setBasicView("extract");
@@ -663,6 +797,22 @@ async function handleBasicCompressAction(): Promise<void> {
       false,
       "Operation failed",
       "Add at least one input.",
+    );
+    return;
+  }
+
+  const formatEarly = (
+    document.getElementById("basic-format") as HTMLSelectElement | null
+  )?.value?.toLowerCase();
+  if (
+    state.inputs.length > 1 &&
+    (formatEarly === "gzip" || formatEarly === "bzip2" || formatEarly === "xz")
+  ) {
+    showBasicCompletion(
+      "compress",
+      false,
+      "Operation failed",
+      `${(formatEarly || "format").toUpperCase()} accepts exactly one input. Pick one file, or use 7z/ZIP/TAR.`,
     );
     return;
   }
@@ -872,17 +1022,17 @@ export function renderBasicBrowseTable(
 
     const tdName = document.createElement("td");
     const iconName = entry.isDir ? "folder" : "file";
-    tdName.innerHTML = `<i data-lucide="${iconName}" class="lucide-icon" style="margin-right: 6px; font-size: 0.9em; vertical-align: middle;"></i><span></span>`;
+    tdName.innerHTML = `<i data-lucide="${iconName}" class="lucide-icon lucide-icon--inline"></i><span></span>`;
     tdName.querySelector("span")!.textContent = entry.path;
-    tdName.style.wordBreak = "break-all";
+    tdName.classList.add("cell-break");
 
     const tdSize = document.createElement("td");
     tdSize.textContent = entry.size;
-    tdSize.style.fontVariantNumeric = "tabular-nums";
+    tdSize.classList.add("cell-tabular");
 
     const tdPacked = document.createElement("td");
     tdPacked.textContent = entry.packed;
-    tdPacked.style.fontVariantNumeric = "tabular-nums";
+    tdPacked.classList.add("cell-tabular");
 
     const tdModified = document.createElement("td");
     tdModified.textContent = entry.modified;
@@ -974,10 +1124,10 @@ export function initBasicWorkspace(): void {
         }
         if (paths.length === 1) {
           setMode("browse");
-          setBrowsePasswordFieldVisible(false);
+          setBasicBrowsePasswordVisible(false);
           renderInputs();
           setBasicView("browse");
-          await browseArchive();
+          await runBasicBrowseArchive();
         } else {
           setMode("extract");
           renderInputs();
@@ -1053,7 +1203,7 @@ export function initBasicWorkspace(): void {
       if (path) {
         state.inputs = [path];
         renderInputs();
-        void browseArchive();
+        void runBasicBrowseArchive();
       }
     });
   }
@@ -1163,6 +1313,34 @@ function wireBasicCompressEvents(): void {
       syncBasicToPower();
       syncBasicOutputAutofill();
       updateBasicPasswordField();
+    });
+  }
+
+  const encryptHeadersInput = document.getElementById(
+    "basic-encrypt-headers",
+  ) as HTMLInputElement | null;
+  if (encryptHeadersInput) {
+    encryptHeadersInput.addEventListener("change", () => {
+      syncBasicToPower();
+    });
+  }
+
+  const splitSizeSelect = document.getElementById(
+    "basic-split-size",
+  ) as HTMLSelectElement | null;
+  if (splitSizeSelect) {
+    splitSizeSelect.addEventListener("change", () => {
+      updateBasicSplitCustomVisibility();
+      syncBasicToPower();
+    });
+  }
+
+  const splitCustomInput = document.getElementById(
+    "basic-split-custom",
+  ) as HTMLInputElement | null;
+  if (splitCustomInput) {
+    splitCustomInput.addEventListener("input", () => {
+      syncBasicToPower();
     });
   }
 
@@ -1279,9 +1457,33 @@ function wireBasicExtractEvents(): void {
   if (browseContentsBtn) {
     browseContentsBtn.addEventListener("click", async () => {
       setMode("browse");
-      setBrowsePasswordFieldVisible(false);
+      setBasicBrowsePasswordVisible(false);
       setBasicView("browse");
-      await browseArchive();
+      await runBasicBrowseArchive();
+    });
+  }
+
+  const toggleBrowsePwBtn = document.getElementById(
+    "basic-toggle-browse-password",
+  );
+  if (toggleBrowsePwBtn) {
+    toggleBrowsePwBtn.addEventListener("click", () => {
+      togglePasswordVisibility(
+        "basic-browse-password",
+        "basic-toggle-browse-password",
+      );
+    });
+  }
+
+  const basicBrowsePassword = document.getElementById("basic-browse-password");
+  if (basicBrowsePassword) {
+    basicBrowsePassword.addEventListener("change", () => {
+      syncBasicBrowsePasswordToPower();
+    });
+    basicBrowsePassword.addEventListener("keydown", (event) => {
+      if ((event as KeyboardEvent).key === "Enter") {
+        void runBasicBrowseArchive();
+      }
     });
   }
 
@@ -1397,12 +1599,16 @@ function wireBasicBrowseEvents(): void {
     extractAllBtn.addEventListener("click", () => {
       setMode("extract");
       setBasicView("extract");
+      void handleBasicExtractAction();
     });
   }
 
   const testBtn = document.getElementById("basic-browse-test");
   if (testBtn) {
-    testBtn.addEventListener("click", () => void testArchive());
+    testBtn.addEventListener("click", () => {
+      syncBasicBrowsePasswordToPower();
+      void testArchive();
+    });
   }
 }
 
@@ -1411,8 +1617,20 @@ export function syncBasicBeforeRun(): void {
   const mode = getMode();
   if (mode === "add") {
     syncBasicToPower();
+    // Basic mode does not expose these Power-only controls; force safe defaults
+    // so a prior Power session cannot leak update/absolute-path into Basic runs.
+    const updateMode = document.getElementById(
+      "update-mode",
+    ) as HTMLInputElement | null;
+    if (updateMode) updateMode.checked = false;
+    const pathMode = document.getElementById(
+      "path-mode",
+    ) as HTMLSelectElement | null;
+    if (pathMode) pathMode.value = "relative";
   } else if (mode === "extract") {
     syncBasicExtractToPower();
+  } else if (mode === "browse") {
+    syncBasicBrowsePasswordToPower();
   }
 }
 

@@ -92,9 +92,89 @@ pub fn append_limited_output(
 }
 
 pub fn sanitize_output(s: &str) -> String {
-    s.chars()
+    let cleaned: String = s
+        .chars()
         .filter(|c| !c.is_control() || matches!(*c, '\n' | '\t'))
-        .collect()
+        .collect();
+    redact_sensitive_text(&cleaned)
+}
+
+/// Redact 7-Zip `-p` passwords and common secret key=value forms from log/output text.
+pub fn redact_sensitive_text(input: &str) -> String {
+    let with_args = redact_password_args(input);
+    redact_key_value_secrets(&with_args)
+}
+
+fn redact_password_args(input: &str) -> String {
+    // Token-aware: only redact whitespace-delimited args that start with `-p`.
+    let mut out = String::with_capacity(input.len());
+    for token in input.split_inclusive(char::is_whitespace) {
+        let trimmed = token.trim_start_matches(char::is_whitespace);
+        let leading = token.len() - trimmed.len();
+        if trimmed.starts_with("-p") {
+            out.push_str(&token[..leading]);
+            out.push_str("-p***");
+            let non_ws_len = trimmed
+                .chars()
+                .take_while(|c| !c.is_whitespace())
+                .map(|c| c.len_utf8())
+                .sum::<usize>();
+            out.push_str(&trimmed[non_ws_len..]);
+        } else {
+            out.push_str(token);
+        }
+    }
+    out
+}
+
+fn redact_key_value_secrets(input: &str) -> String {
+    let keys = [
+        "password",
+        "passphrase",
+        "token",
+        "private_key",
+        "private-key",
+    ];
+    let lower = input.to_ascii_lowercase();
+    let mut redacted = String::with_capacity(input.len());
+    let mut i = 0usize;
+    while i < input.len() {
+        let slice = &lower[i..];
+        let matched = keys
+            .iter()
+            .find(|key| slice.starts_with(*key))
+            .copied();
+        if let Some(key) = matched {
+            let boundary_ok = i == 0
+                || input[..i]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| !c.is_ascii_alphanumeric() && c != '_');
+            let after_key = i + key.len();
+            let sep = input[after_key..].chars().next();
+            if boundary_ok && matches!(sep, Some('=') | Some(':')) {
+                redacted.push_str(&input[i..after_key]);
+                let sep_ch = sep.unwrap();
+                redacted.push(sep_ch);
+                i = after_key + sep_ch.len_utf8();
+                while i < input.len()
+                    && !input[i..]
+                        .chars()
+                        .next()
+                        .unwrap()
+                        .is_whitespace()
+                {
+                    i += input[i..].chars().next().unwrap().len_utf8();
+                }
+                redacted.push_str("***");
+                continue;
+            }
+        }
+        let ch = input[i..].chars().next().unwrap();
+        redacted.push(ch);
+        i += ch.len_utf8();
+    }
+    redacted
 }
 
 #[cfg(test)]
@@ -138,5 +218,30 @@ mod tests {
         assert_eq!(decoder.push(&bytes[..4]), "caf");
         assert_eq!(decoder.push(&bytes[4..]), "é");
         assert_eq!(decoder.finish(), "");
+    }
+
+    #[test]
+    fn redact_sensitive_text_masks_password_args() {
+        assert_eq!(
+            redact_sensitive_text("7z a -pmySecret out.7z"),
+            "7z a -p*** out.7z"
+        );
+        assert!(!sanitize_output("err -phunter2").contains("hunter2"));
+    }
+
+    #[test]
+    fn redact_sensitive_text_masks_key_values() {
+        assert_eq!(
+            redact_sensitive_text("password=abc passphrase:xyz"),
+            "password=*** passphrase:***"
+        );
+    }
+
+    #[test]
+    fn redact_sensitive_text_leaves_unrelated_dash_p_paths() {
+        assert_eq!(
+            redact_sensitive_text("copy skip-path/file.txt"),
+            "copy skip-path/file.txt"
+        );
     }
 }

@@ -1,4 +1,5 @@
 @import "./variables.css";
+@import "./progress-pct.css";
 
 *,
 *::before,
@@ -120,6 +121,15 @@ body.platform-macos .extract-app {
   width: 0%;
   transition: width 200ms ease;
   animation: indeterminate 1.8s ease-in-out infinite;
+}
+
+.extract-progress-fill.is-indeterminate {
+  animation: indeterminate 1.8s ease-in-out infinite;
+}
+
+.extract-progress-fill.is-determinate {
+  animation: none;
+  margin-left: 0;
 }
 
 .extract-progress-fill--error {

@@ -218,6 +218,10 @@ async function withLiveProgress<T>(fn: () => Promise<T>): Promise<T> {
     (event) => {
       const u = event.payload;
       if (typeof u?.percent !== "number") return;
+      if (u.currentFile === "Finalizing…") {
+        setProgress("Finalizing…");
+        return;
+      }
       const eta = formatBatchEta(Date.now() - startedAt, u.percent);
       const file = u.currentFile ? ` ${basename(u.currentFile)}` : "";
       setProgress(`${u.percent}%${file}${eta ? ` · ${eta}` : ""}`);
@@ -350,7 +354,7 @@ export async function convertArchive(): Promise<void> {
     const password = extractPassword || browsePassword;
 
     setStatus("Extracting for conversion");
-    const extractArgs = ["x", `-o${tempDir}`, "-y"];
+    const extractArgs = ["x", `-o${tempDir}`, SAFE_EXTRACT_OVERWRITE_MODE];
     if (password) extractArgs.push(`-p${password}`);
     extractArgs.push("--", archive);
     const extract = await runWithPasswordRetry(extractArgs, true);
@@ -726,16 +730,17 @@ export function renderBrowseTable(info: ArchiveInfo) {
 
     const tdName = document.createElement("td");
     const iconName = entry.isFolder ? "folder" : "file";
-    tdName.innerHTML = `<i data-lucide="${iconName}" class="lucide-icon" style="margin-right: 6px; font-size: 0.9em; vertical-align: middle;"></i><span></span>`;
+    tdName.innerHTML = `<i data-lucide="${iconName}" class="lucide-icon lucide-icon--inline"></i><span></span>`;
     tdName.querySelector("span")!.textContent = entry.path;
     tdName.title = entry.path;
+    tdName.classList.add("cell-break");
 
     const tdSize = document.createElement("td");
-    tdSize.className = "size-col";
+    tdSize.className = "size-col cell-tabular";
     tdSize.textContent = entry.isFolder ? "\u2014" : formatSize(entry.size);
 
     const tdPacked = document.createElement("td");
-    tdPacked.className = "size-col";
+    tdPacked.className = "size-col cell-tabular";
     tdPacked.textContent = entry.isFolder
       ? "\u2014"
       : formatSize(entry.packedSize);
@@ -759,17 +764,17 @@ export function renderBrowseTable(info: ArchiveInfo) {
 
       const tdName = document.createElement("td");
       const iconName = entry.isFolder ? "folder" : "file";
-      tdName.innerHTML = `<i data-lucide="${iconName}" class="lucide-icon" style="margin-right: 6px; font-size: 0.9em; vertical-align: middle;"></i><span></span>`;
+      tdName.innerHTML = `<i data-lucide="${iconName}" class="lucide-icon lucide-icon--inline"></i><span></span>`;
       tdName.querySelector("span")!.textContent = entry.path;
       tdName.title = entry.path;
-      tdName.style.wordBreak = "break-all";
+      tdName.classList.add("cell-break");
 
       const tdSize = document.createElement("td");
-      tdSize.style.fontVariantNumeric = "tabular-nums";
+      tdSize.classList.add("cell-tabular");
       tdSize.textContent = entry.isFolder ? "\u2014" : formatSize(entry.size);
 
       const tdPacked = document.createElement("td");
-      tdPacked.style.fontVariantNumeric = "tabular-nums";
+      tdPacked.classList.add("cell-tabular");
       tdPacked.textContent = entry.isFolder
         ? "\u2014"
         : formatSize(entry.packedSize);
@@ -861,7 +866,7 @@ function renderSelectiveTreeNode(
   const selected = getOrCreateSelection(archive);
   const row = document.createElement("div");
   row.className = "selective-row selective-row--tree";
-  row.style.paddingLeft = `${node.depth * 18 + 8}px`;
+  row.dataset.depth = String(Math.min(Math.max(node.depth, 0), 20));
   row.setAttribute("role", "treeitem");
   row.setAttribute("aria-level", String(node.depth + 1));
 
@@ -1265,21 +1270,6 @@ export async function runAction() {
     state.batchCancelled = false;
     state.cancelRequested = false;
 
-    if (mode === "add") {
-      const deleteAfter = $<HTMLInputElement>("delete-after").checked;
-      if (deleteAfter) {
-        const confirmed = await confirm(
-          "This will permanently delete source files after compression. Continue?",
-          {
-            title: "Confirm deletion",
-            kind: "warning",
-            okLabel: "Delete files",
-          },
-        );
-        if (!confirmed) return;
-      }
-    }
-
     let args: string[];
     if (mode === "extract") {
       if (!state.inputs[0]) throw new Error("Select an archive to extract.");
@@ -1682,8 +1672,7 @@ export async function copyCommandPreview(): Promise<void> {
       const textarea = document.createElement("textarea");
       textarea.value = text;
       textarea.setAttribute("readonly", "true");
-      textarea.style.position = "fixed";
-      textarea.style.opacity = "0";
+      textarea.className = "copy-scratch";
       document.body.appendChild(textarea);
       textarea.focus();
       textarea.select();

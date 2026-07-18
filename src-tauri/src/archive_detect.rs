@@ -204,8 +204,8 @@ pub fn validate_archive_path(path: &str) -> ArchivePathValidation {
             };
         }
     };
-    if meta.is_symlink() {
-        return invalid("Path is a symbolic link.");
+    if crate::path_safety::is_link_or_reparse(&meta) {
+        return invalid("Path is a symbolic link or reparse point.");
     }
     if !meta.is_file() {
         return invalid("Path is not a file.");
@@ -225,12 +225,8 @@ pub fn validate_archive_path(path: &str) -> ArchivePathValidation {
     let signature = detect_archive_signature(&bytes);
     let tar = has_tar_signature(&bytes);
 
-    #[cfg(target_os = "windows")]
-    if signature == Some("rar") {
-        return invalid(
-            "RAR extraction is temporarily disabled on Windows while conflicting CVE-2026-58052 affected-version data is resolved.",
-        );
-    }
+    // Windows RAR extract is blocked at run_7z (command `x`) for CVE-2026-58052.
+    // Browse/test remain allowed so users can inspect archives without extracting.
     let valid = match expected_archive_family(&lower) {
         Some("7z") => signature == Some("7z"),
         Some("zip") => signature == Some("zip"),

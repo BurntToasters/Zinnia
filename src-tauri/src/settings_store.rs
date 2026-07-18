@@ -156,11 +156,8 @@ pub fn atomic_write_text(path: &std::path::Path, contents: &str) -> Result<(), S
 }
 
 pub(crate) fn sync_parent_directory(path: &std::path::Path) -> Result<(), String> {
-    #[cfg(unix)]
     if let Some(parent) = path.parent() {
-        std::fs::File::open(parent)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|e| e.to_string())?;
+        crate::fs_secure::sync_directory(parent)?;
     }
     Ok(())
 }

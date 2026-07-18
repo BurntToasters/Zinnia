@@ -45,6 +45,34 @@ fn is_common_diagnostic_switch(lower: &str) -> bool {
         || (lower.starts_with("-scs") && lower.len() > 4)
 }
 
+fn is_allowed_method_switch(lower: &str) -> bool {
+    // Intentionally narrow: reject open-ended -m* (and -ssw is blocked separately).
+    // Prefixes ending in '=' require a non-empty value. Others require end / '=' / digit
+    // so `-mxyz` does not match `-mx`.
+    const PREFIXES: &[&str] = &[
+        "-m0=", "-mem=", "-mhe=", "-mtc=", "-mta=", "-mtb=", "-mhc=", "-mcu=", "-mcl=", "-mx",
+        "-md", "-mfb", "-ms", "-mmt",
+    ];
+    for prefix in PREFIXES {
+        let Some(rest) = lower.strip_prefix(prefix) else {
+            continue;
+        };
+        if prefix.ends_with('=') {
+            return !rest.is_empty()
+                && !rest.contains('/')
+                && !rest.contains('\\')
+                && !rest.contains("..");
+        }
+        return rest.is_empty()
+            || rest.starts_with('=')
+            || rest
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_digit());
+    }
+    false
+}
+
 fn is_allowed_switch(cmd: &str, arg: &str) -> bool {
     let lower = arg.to_ascii_lowercase();
     if is_common_diagnostic_switch(&lower) {
@@ -54,7 +82,7 @@ fn is_allowed_switch(cmd: &str, arg: &str) -> bool {
     match cmd {
         "a" | "u" => {
             (lower.starts_with("-t") && lower.len() > 2)
-                || (lower.starts_with("-m") && lower.len() > 2)
+                || is_allowed_method_switch(&lower)
                 || (lower.starts_with("-p") && lower.len() > 2)
                 || lower == "-spf"
                 || lower == "-r"
@@ -63,7 +91,6 @@ fn is_allowed_switch(cmd: &str, arg: &str) -> bool {
                 || lower == "-stl"
                 || lower == "-slp"
                 || lower == "-ssp"
-                || lower == "-ssw"
                 || lower == "-sse"
                 || is_include_or_exclude(arg)
                 || (cmd == "a"
@@ -76,7 +103,9 @@ fn is_allowed_switch(cmd: &str, arg: &str) -> bool {
         "x" => {
             (lower.starts_with("-o") && lower.len() > 2)
                 || (lower.starts_with("-p") && lower.len() > 2)
-                || matches!(lower.as_str(), "-aoa" | "-aos" | "-aou" | "-aot")
+                // Only auto-rename / skip existing — never overwrite-all (-aoa) or
+                // rename-existing (-aot). Frontend default is -aou.
+                || matches!(lower.as_str(), "-aos" | "-aou")
                 || lower == "-y"
                 || lower == "-spd"
                 || lower == "-r"
@@ -93,7 +122,7 @@ fn is_allowed_switch(cmd: &str, arg: &str) -> bool {
                 || lower == "-r0"
                 || is_include_or_exclude(arg)
         }
-        "b" => lower.starts_with("-m") && lower.len() > 2,
+        "b" => is_allowed_method_switch(&lower),
         _ => false,
     }
 }
@@ -254,6 +283,13 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
                         .to_string(),
                 );
             }
+            // Require a safe overwrite policy; never rely on interactive defaults.
+            if overwrite_switches != 1 {
+                return Err(
+                    "Extraction command must include exactly one overwrite policy (-aou or -aos)."
+                        .to_string(),
+                );
+            }
         }
         "l" | "t" => {
             let separator = separator_index
@@ -345,12 +381,29 @@ mod tests {
         let args = vec![
             "x".to_string(),
             "-o/tmp/out".to_string(),
+            "-aou".to_string(),
             "-y".to_string(),
             "-spd".to_string(),
             "--".to_string(),
             "archive.7z".to_string(),
         ];
         assert!(validate_run_7z_args(&args).is_ok());
+    }
+
+    #[test]
+    fn validate_run_7z_args_requires_extract_overwrite_policy() {
+        let args = vec![
+            "x".to_string(),
+            "-o/tmp/out".to_string(),
+            "-y".to_string(),
+            "--".to_string(),
+            "archive.7z".to_string(),
+        ];
+        let err = validate_run_7z_args(&args).expect_err("missing -ao*");
+        assert!(
+            err.contains("overwrite"),
+            "expected overwrite policy error, got: {err}"
+        );
     }
 
     #[test]
@@ -371,8 +424,35 @@ mod tests {
     }
 
     #[test]
+    fn validate_run_7z_args_rejects_ssw_and_open_ended_method_switches() {
+        for bad in ["-ssw", "-mfoo=1", "-m", "-mxyz"] {
+            let err = validate_run_7z_args(&[
+                "a".to_string(),
+                bad.to_string(),
+                "out.7z".to_string(),
+                "--".to_string(),
+                "in.txt".to_string(),
+            ])
+            .expect_err("unsafe method/ssw switch");
+            assert!(
+                err.contains("not permitted"),
+                "expected '{bad}' to be rejected, got {err}"
+            );
+        }
+        validate_run_7z_args(&[
+            "a".to_string(),
+            "-mx=9".to_string(),
+            "-mhe=on".to_string(),
+            "out.7z".to_string(),
+            "--".to_string(),
+            "in.txt".to_string(),
+        ])
+        .expect("known method switches should pass");
+    }
+
+    #[test]
     fn validate_run_7z_args_rejects_unknown_switches() {
-        for bad in ["-sao", "-foo", "-an", "-c"] {
+        for bad in ["-sao", "-foo", "-an", "-c", "-ssw"] {
             let args = vec![
                 "a".to_string(),
                 bad.to_string(),
@@ -474,6 +554,7 @@ mod tests {
         let args = vec![
             "x".to_string(),
             "-o/tmp/out".to_string(),
+            "-aou".to_string(),
             "--".to_string(),
             "../../etc/passwd".to_string(),
         ];
@@ -485,6 +566,7 @@ mod tests {
         let args = vec![
             "x".to_string(),
             "-o/tmp/../etc".to_string(),
+            "-aou".to_string(),
             "--".to_string(),
             "archive.7z".to_string(),
         ];
@@ -496,6 +578,7 @@ mod tests {
         let args = vec![
             "x".to_string(),
             "-o/tmp/out".to_string(),
+            "-aou".to_string(),
             "-ir!../../secret".to_string(),
             "--".to_string(),
             "archive.7z".to_string(),
@@ -508,6 +591,7 @@ mod tests {
         let args = vec![
             "x".to_string(),
             "-o/tmp/out".to_string(),
+            "-aou".to_string(),
             "-w../../tmp".to_string(),
             "--".to_string(),
             "archive.7z".to_string(),
@@ -541,6 +625,7 @@ mod tests {
     fn validate_run_7z_args_rejects_extract_without_output_dir() {
         let args = vec![
             "x".to_string(),
+            "-aou".to_string(),
             "-y".to_string(),
             "--".to_string(),
             "archive.7z".to_string(),
@@ -582,6 +667,7 @@ mod tests {
         let args = vec![
             "x".to_string(),
             "-o/tmp/out".to_string(),
+            "-aou".to_string(),
             "-spf".to_string(),
             "--".to_string(),
             "archive.7z".to_string(),
@@ -590,11 +676,37 @@ mod tests {
     }
 
     #[test]
+    fn validate_run_7z_args_rejects_overwrite_all_extract_modes() {
+        for bad in ["-aoa", "-aot"] {
+            let args = vec![
+                "x".to_string(),
+                "-o/tmp/out".to_string(),
+                bad.to_string(),
+                "--".to_string(),
+                "archive.7z".to_string(),
+            ];
+            assert!(
+                validate_run_7z_args(&args).is_err(),
+                "expected {bad} to be rejected"
+            );
+        }
+        let ok = vec![
+            "x".to_string(),
+            "-o/tmp/out".to_string(),
+            "-aou".to_string(),
+            "--".to_string(),
+            "archive.7z".to_string(),
+        ];
+        assert!(validate_run_7z_args(&ok).is_ok());
+    }
+
+    #[test]
     fn validate_run_7z_args_rejects_duplicate_extract_output() {
         let args = vec![
             "x".to_string(),
             "-o/tmp/one".to_string(),
             "-o/tmp/two".to_string(),
+            "-aou".to_string(),
             "--".to_string(),
             "archive.7z".to_string(),
         ];

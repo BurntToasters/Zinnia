@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { showToast } from "./toast";
 import {
   createIcons,
   Settings,
@@ -1000,6 +1001,20 @@ async function init() {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Failed to subscribe to Explorer open events: ${msg}`, "error");
+  }
+
+  try {
+    await listen<string>("open-paths-dropped", (event) => {
+      const detail =
+        typeof event.payload === "string" && event.payload.trim()
+          ? event.payload
+          : "Zinnia could not accept another open request right now.";
+      showToast(detail, "error", 5000);
+      log(detail, "error");
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Failed to subscribe to open-paths-dropped: ${msg}`, "error");
   }
 
   // Detect platform and show titlebar immediately to prevent layout flash

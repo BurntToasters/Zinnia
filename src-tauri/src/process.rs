@@ -132,10 +132,62 @@ fn clear_cleanup_journal(app: &tauri::AppHandle) -> Result<(), String> {
 }
 
 fn sync_directory(path: &std::path::Path) -> Result<(), String> {
-    #[cfg(unix)]
-    std::fs::File::open(path)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|e| e.to_string())?;
+    crate::fs_secure::sync_directory(path)
+}
+
+fn archive_journal_has_backups(journal: &CleanupJournal) -> bool {
+    journal
+        .previous_archive_family
+        .iter()
+        .enumerate()
+        .any(|(index, _)| journal.stage.join(format!("backup-{index}")).is_file())
+}
+
+fn archive_journal_stage_retains_outputs(journal: &CleanupJournal) -> bool {
+    journal.next_archive_family.iter().any(|destination| {
+        destination
+            .file_name()
+            .map(|name| journal.stage.join(name).is_file())
+            .unwrap_or(false)
+    })
+}
+
+/// Promote finished successfully when next outputs are recorded, no backups remain,
+/// and the stage no longer holds unpublished archive members. Leftover empty stage
+/// dirs must not trigger destructive rollback of the published archive.
+fn archive_journal_is_committed(journal: &CleanupJournal) -> bool {
+    !journal.next_archive_family.is_empty()
+        && !archive_journal_has_backups(journal)
+        && !archive_journal_stage_retains_outputs(journal)
+}
+
+fn rollback_archive_journal(journal: &CleanupJournal) -> Result<(), String> {
+    let candidates = if journal.next_archive_family.is_empty() {
+        archive_family(&journal.destination)?
+    } else {
+        journal.next_archive_family.clone()
+    };
+    for current in candidates {
+        let prior_index = journal
+            .previous_archive_family
+            .iter()
+            .position(|target| target == &current);
+        // Only delete a destination when we can restore a backup, or when it is a
+        // newly published volume (not in previous family) during an incomplete promote.
+        let should_remove = match prior_index {
+            Some(index) => journal.stage.join(format!("backup-{index}")).is_file(),
+            None => true,
+        };
+        if should_remove {
+            remove_regular_file_if_present(&current)?;
+        }
+    }
+    for (index, target) in journal.previous_archive_family.iter().enumerate() {
+        let backup = journal.stage.join(format!("backup-{index}"));
+        if backup.is_file() {
+            std::fs::rename(&backup, target).map_err(|e| e.to_string())?;
+        }
+    }
     Ok(())
 }
 
@@ -156,7 +208,7 @@ pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), Str
         .and_then(|name| name.to_str())
         .unwrap_or("");
     if journal.stage.parent() != journal.destination.parent()
-        || !(stage_name.contains(".zinnia-extract-") || stage_name.contains(".zinnia-archive-"))
+        || !is_safe_stage_dir_name(stage_name)
     {
         return Err("Refusing unsafe interrupted-transaction recovery path.".to_string());
     }
@@ -167,33 +219,20 @@ pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), Str
         }
         Err(error) => return Err(error.to_string()),
     };
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+    if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_dir() {
         return Err("Refusing unsafe interrupted-transaction staging directory.".to_string());
     }
 
     if journal.archive {
-        let candidates = if journal.next_archive_family.is_empty() {
-            archive_family(&journal.destination)?
-        } else {
-            journal.next_archive_family.clone()
-        };
-        for current in candidates {
-            let prior_index = journal
-                .previous_archive_family
-                .iter()
-                .position(|target| target == &current);
-            let should_remove = prior_index
-                .is_none_or(|index| journal.stage.join(format!("backup-{index}")).is_file());
-            if should_remove {
-                remove_regular_file_if_present(&current)?;
+        if archive_journal_is_committed(&journal) {
+            // Publish already succeeded; only clear leftovers. Never delete destinations.
+            let _ = std::fs::remove_dir_all(&journal.stage);
+            if let Some(parent) = journal.stage.parent() {
+                let _ = sync_directory(parent);
             }
+            return clear_cleanup_journal(app);
         }
-        for (index, target) in journal.previous_archive_family.iter().enumerate() {
-            let backup = journal.stage.join(format!("backup-{index}"));
-            if backup.is_file() {
-                std::fs::rename(&backup, target).map_err(|e| e.to_string())?;
-            }
-        }
+        rollback_archive_journal(&journal)?;
     } else {
         rollback_persisted_move_plan(&journal.stage, &journal.destination)?;
     }
@@ -204,12 +243,30 @@ pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), Str
     clear_cleanup_journal(app)
 }
 
+/// Stage dirs are created as `.<basename>.zinnia-(extract|archive)-<32 hex>`.
+fn is_safe_stage_dir_name(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix('.') else {
+        return false;
+    };
+    for marker in [".zinnia-extract-", ".zinnia-archive-"] {
+        if let Some(idx) = rest.rfind(marker) {
+            let token = &rest[idx + marker.len()..];
+            return token.len() == 32 && token.chars().all(|c| c.is_ascii_hexdigit());
+        }
+    }
+    false
+}
+
 fn remove_regular_file_if_present(path: &std::path::Path) -> Result<(), String> {
     match std::fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => Err(format!(
-            "Refusing to remove unexpected recovery target {}.",
-            path.display()
-        )),
+        Ok(metadata)
+            if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_file() =>
+        {
+            Err(format!(
+                "Refusing to remove unexpected recovery target {}.",
+                path.display()
+            ))
+        }
         Ok(_) => std::fs::remove_file(path).map_err(|e| e.to_string()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error.to_string()),
@@ -324,19 +381,71 @@ fn path_entry_exists(path: &std::path::Path) -> Result<bool, String> {
     }
 }
 
+fn assert_real_directory(path: &std::path::Path) -> Result<(), String> {
+    crate::path_safety::assert_real_directory(path).map_err(|error| {
+        if error.starts_with("Path is not a real directory") {
+            format!("Extraction path is not a real directory: {}", path.display())
+        } else {
+            error
+        }
+    })
+}
+
+/// Re-check every ancestor from `destination` through `target`'s parent immediately
+/// before publish so a same-user TOCTOU cannot swap an intermediate directory for a
+/// symlink/reparse point between planning and rename.
+///
+/// Residual same-user race remains between this check and the subsequent rename/
+/// hard_link; closing that fully needs no-follow directory handles (platform APIs).
+fn assert_safe_extract_target_ancestors(
+    destination: &std::path::Path,
+    target: &std::path::Path,
+) -> Result<(), String> {
+    assert_real_directory(destination)?;
+    let Some(parent) = target.parent() else {
+        return Ok(());
+    };
+    if parent == destination {
+        return Ok(());
+    }
+    let relative = parent.strip_prefix(destination).map_err(|_| {
+        format!(
+            "Extraction target escaped destination: {}",
+            target.display()
+        )
+    })?;
+    let mut cursor = destination.to_path_buf();
+    for component in relative.components() {
+        cursor.push(component);
+        assert_real_directory(&cursor)?;
+    }
+    Ok(())
+}
+
 fn resolve_existing_target(
     target: &std::path::Path,
     expected_directory: bool,
 ) -> Result<std::path::PathBuf, String> {
-    let meta = std::fs::symlink_metadata(target).map_err(|e| e.to_string())?;
-    if meta.file_type().is_symlink() {
-        return Err("Output target cannot be a symbolic link.".to_string());
-    }
-    if expected_directory && !meta.is_dir() {
-        return Err("Extraction destination is not a directory.".to_string());
-    }
-    if !expected_directory && !meta.is_file() {
-        return Err("Archive output is not a regular file.".to_string());
+    if expected_directory {
+        crate::path_safety::assert_real_directory(target).map_err(|error| {
+            if error.contains("not a real directory") {
+                "Extraction destination is not a directory.".to_string()
+            } else if error.contains("symbolic link") || error.contains("reparse") {
+                "Output target cannot be a symbolic link or reparse point.".to_string()
+            } else {
+                error
+            }
+        })?;
+    } else {
+        crate::path_safety::assert_real_file(target).map_err(|error| {
+            if error.contains("not a regular file") {
+                "Archive output is not a regular file.".to_string()
+            } else if error.contains("symbolic link") || error.contains("reparse") {
+                "Output target cannot be a symbolic link or reparse point.".to_string()
+            } else {
+                error
+            }
+        })?;
     }
     target.canonicalize().map_err(|e| e.to_string())
 }
@@ -352,16 +461,7 @@ fn create_private_stage_dir(
         .unwrap_or("output");
     for _ in 0..32 {
         let candidate = parent.join(format!(".{name}.zinnia-{purpose}-{}", random_token()?));
-        #[cfg(unix)]
-        let result = {
-            use std::os::unix::fs::DirBuilderExt;
-            let mut builder = std::fs::DirBuilder::new();
-            builder.mode(0o700).create(&candidate)
-        };
-        #[cfg(not(unix))]
-        let result = std::fs::create_dir(&candidate);
-
-        match result {
+        match crate::fs_secure::create_private_dir(&candidate) {
             Ok(()) => return Ok(candidate),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => {
@@ -377,9 +477,9 @@ fn create_private_stage_dir(
 fn next_extract_stage_path(target: &std::path::Path) -> Result<std::path::PathBuf, String> {
     if path_entry_exists(target)? {
         let meta = std::fs::symlink_metadata(target).map_err(|e| e.to_string())?;
-        if meta.file_type().is_symlink() {
-            return Err("Extraction destination cannot be a symbolic link.".to_string());
-        }
+        crate::path_safety::reject_link_or_reparse(target, &meta).map_err(|_| {
+            "Extraction destination cannot be a symbolic link or reparse point.".to_string()
+        })?;
         if !meta.is_dir() {
             return Err("Extraction destination is not a directory.".to_string());
         }
@@ -573,7 +673,13 @@ fn available_space(path: &std::path::Path) -> Result<u64, String> {
     Ok(available)
 }
 
-fn staged_tree_usage(root: &std::path::Path, max_files: u64, max_bytes: u64) -> Result<(), String> {
+/// Walk a staged extract tree. On success returns `(files, bytes)` counted so far
+/// so callers can back off scan frequency when usage is still well under limits.
+fn staged_tree_usage(
+    root: &std::path::Path,
+    max_files: u64,
+    max_bytes: u64,
+) -> Result<(u64, u64), String> {
     let mut pending = vec![root.to_path_buf()];
     let mut files = 0u64;
     let mut bytes = 0u64;
@@ -581,8 +687,11 @@ fn staged_tree_usage(root: &std::path::Path, max_files: u64, max_bytes: u64) -> 
         for entry in std::fs::read_dir(&directory).map_err(|e| e.to_string())? {
             let entry = entry.map_err(|e| e.to_string())?;
             let metadata = std::fs::symlink_metadata(entry.path()).map_err(|e| e.to_string())?;
-            if metadata.file_type().is_symlink() {
-                return Err("Extraction created a symbolic link; operation stopped.".to_string());
+            if crate::path_safety::is_link_or_reparse(&metadata) {
+                return Err(
+                    "Extraction created a symbolic link or reparse point; operation stopped."
+                        .to_string(),
+                );
             }
             files = files.saturating_add(1);
             bytes = bytes.saturating_add(metadata.len());
@@ -602,7 +711,7 @@ fn staged_tree_usage(root: &std::path::Path, max_files: u64, max_bytes: u64) -> 
             }
         }
     }
-    Ok(())
+    Ok((files, bytes))
 }
 
 async fn monitor_extract_quota(
@@ -647,18 +756,31 @@ async fn monitor_extract_quota(
             staged_tree_usage(&scan_path, MAX_EXTRACT_ENTRIES, max_bytes)
         })
         .await;
-        let scan_delay = scan_started.elapsed().saturating_mul(4).clamp(
-            std::time::Duration::from_millis(750),
-            std::time::Duration::from_secs(5),
-        );
-        next_tree_scan = std::time::Instant::now() + scan_delay;
         let reason = match scan {
-            Ok(Err(reason)) => reason,
-            Err(error) => format!("Extraction safety scan failed: {error}"),
-            Ok(Ok(())) => continue,
+            Ok(Err(reason)) => Some(reason),
+            Err(error) => Some(format!("Extraction safety scan failed: {error}")),
+            Ok(Ok((files, bytes))) => {
+                // Huge extracts: back off harder when still under half the limits so
+                // quota monitoring does not dominate I/O with full-tree walks.
+                let under_half = files <= MAX_EXTRACT_ENTRIES / 2 && bytes <= max_bytes / 2;
+                let multiplier = if under_half { 8 } else { 4 };
+                let max_delay = if under_half {
+                    std::time::Duration::from_secs(15)
+                } else {
+                    std::time::Duration::from_secs(8)
+                };
+                let scan_delay = scan_started.elapsed().saturating_mul(multiplier).clamp(
+                    std::time::Duration::from_secs(2),
+                    max_delay,
+                );
+                next_tree_scan = std::time::Instant::now() + scan_delay;
+                None
+            }
         };
-        stop_extract_for_quota(&app, reason);
-        break;
+        if let Some(reason) = reason {
+            stop_extract_for_quota(&app, reason);
+            break;
+        }
     }
 }
 
@@ -691,7 +813,7 @@ fn archive_family(base: &std::path::Path) -> Result<Vec<std::path::PathBuf>, Str
         .ok_or_else(|| "Archive output has an invalid file name.".to_string())?;
     let mut family = Vec::new();
     match std::fs::symlink_metadata(base) {
-        Ok(meta) if meta.file_type().is_symlink() || !meta.is_file() => {
+        Ok(meta) if crate::path_safety::is_link_or_reparse(&meta) || !meta.is_file() => {
             return Err(format!(
                 "Archive output is not a regular file: {}",
                 base.display()
@@ -711,7 +833,7 @@ fn archive_family(base: &std::path::Path) -> Result<Vec<std::path::PathBuf>, Str
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
             Err(error) => return Err(error.to_string()),
         };
-        if meta.file_type().is_symlink() || !meta.is_file() {
+        if crate::path_safety::is_link_or_reparse(&meta) || !meta.is_file() {
             return Err(format!(
                 "Archive volume is not a regular file: {}",
                 candidate.display()
@@ -963,7 +1085,7 @@ fn validate_staged_tree(root: &std::path::Path, max_bytes: u64) -> Result<(), St
     let mut bytes = 0u64;
     while let Some(directory) = pending.pop() {
         let meta = std::fs::symlink_metadata(&directory).map_err(|e| e.to_string())?;
-        if meta.file_type().is_symlink() || !meta.is_dir() {
+        if crate::path_safety::is_link_or_reparse(&meta) || !meta.is_dir() {
             return Err(format!("Unsafe staged directory: {}", directory.display()));
         }
         for entry in std::fs::read_dir(&directory).map_err(|e| e.to_string())? {
@@ -976,9 +1098,9 @@ fn validate_staged_tree(root: &std::path::Path, max_bytes: u64) -> Result<(), St
             }
             let path = entry.path();
             let meta = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
-            if meta.file_type().is_symlink() {
+            if crate::path_safety::is_link_or_reparse(&meta) {
                 return Err(format!(
-                    "Archive contains a symbolic link: {}",
+                    "Archive contains a symbolic link or reparse point: {}",
                     path.display()
                 ));
             }
@@ -1017,13 +1139,14 @@ fn plan_staged_contents(
         if meta.is_dir() {
             match std::fs::symlink_metadata(&requested_target) {
                 Ok(target_meta)
-                    if target_meta.is_dir() && !target_meta.file_type().is_symlink() =>
+                    if target_meta.is_dir()
+                        && !crate::path_safety::is_link_or_reparse(&target_meta) =>
                 {
                     plan_staged_contents(&source, &requested_target, reserved, plan)?;
                     continue;
                 }
                 Ok(_) => {
-                    // Existing symlinks, junction-like entries, files, and special
+                    // Existing symlinks, reparse points, files, and special
                     // nodes are conflicts. Never recurse through them.
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -1086,9 +1209,9 @@ fn rollback_move_records(
             // The move was planned but never executed.
             continue;
         }
-        if target_metadata.file_type().is_symlink() {
+        if crate::path_safety::is_link_or_reparse(&target_metadata) {
             failures.push(format!(
-                "Refusing to roll back a symbolic-link target: {}",
+                "Refusing to roll back a symbolic-link or reparse-point target: {}",
                 record.target.display()
             ));
             continue;
@@ -1136,22 +1259,44 @@ fn merge_staged_extract(
     // Fast extractions can finish before the live monitor's first poll.
     validate_staged_tree(staged, max_bytes)?;
     if !path_entry_exists(destination)? {
+        if let Some(parent) = destination.parent() {
+            assert_real_directory(parent)?;
+        }
+        // Re-check immediately before rename: a symlink/reparse point must never
+        // be published as the destination root.
+        match std::fs::symlink_metadata(destination) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Ok(meta) if crate::path_safety::is_link_or_reparse(&meta) => {
+                return Err(
+                    "Extraction destination became a symbolic link or reparse point during commit."
+                        .to_string(),
+                );
+            }
+            Ok(_) => {
+                return Err("Extraction destination appeared during commit.".to_string());
+            }
+            Err(error) => return Err(error.to_string()),
+        }
         std::fs::rename(staged, destination).map_err(|e| e.to_string())?;
         if let Some(parent) = destination.parent() {
             sync_directory(parent)?;
         }
         return Ok(());
     }
-    let destination_meta = std::fs::symlink_metadata(destination).map_err(|e| e.to_string())?;
-    if destination_meta.file_type().is_symlink() || !destination_meta.is_dir() {
-        return Err("Extraction destination is not a directory.".to_string());
-    }
+    assert_real_directory(destination)?;
     let mut reserved = std::collections::HashSet::new();
     let mut plan = Vec::new();
     plan_staged_contents(staged, destination, &mut reserved, &mut plan)?;
     write_move_plan(staged, &plan)?;
     for record in &plan {
         validate_move_record(staged, destination, record)?;
+        if let Err(error) = assert_safe_extract_target_ancestors(destination, &record.target) {
+            let rollback = rollback_move_records(staged, destination, &plan);
+            return Err(match rollback {
+                Ok(()) => error,
+                Err(rollback_error) => format!("{error}; rollback also failed: {rollback_error}"),
+            });
+        }
         if path_entry_exists(&record.target)? {
             let error = format!(
                 "Extraction destination changed during commit: {}",
@@ -1193,10 +1338,14 @@ fn commit_cleanup(app: &tauri::AppHandle, plan: &CleanupPlan) -> Result<(), Stri
             plan.max_extract_bytes.unwrap_or(MAX_EXTRACTED_BYTES),
         )
         .map_err(|e| format!("Could not promote staged extraction safely: {e}"))?;
+        crate::launch::remember_openable_directory(app, destination);
     }
     if let Some((staged, destination)) = &plan.staged_archive {
         update_archive_journal(app, plan)?;
         promote_archive_family(staged, destination)?;
+        if let Some(parent) = destination.parent() {
+            crate::launch::remember_openable_directory(app, parent);
+        }
     }
     Ok(())
 }
@@ -1305,8 +1454,14 @@ pub async fn run_7z(
             return Err("RAR extraction is temporarily disabled on Windows while conflicting CVE-2026-58052 affected-version data is resolved. Install a future Zinnia release after the bundled runtime has been conclusively verified.".to_string());
         }
     }
-    if window.label().starts_with("extract-") && args.first().map(String::as_str) != Some("x") {
-        return Err("Quick-extract windows may only start extraction commands.".to_string());
+    if window.label().starts_with("extract-") {
+        if args.first().map(String::as_str) != Some("x") {
+            return Err("Quick-extract windows may only start extraction commands.".to_string());
+        }
+        let Some(requested) = operation_output_path(&args) else {
+            return Err("Extraction command is missing an output directory.".to_string());
+        };
+        crate::launch::assert_extract_bound_destination(&app, window.label(), &requested)?;
     }
 
     {
@@ -1537,6 +1692,14 @@ pub async fn run_7z(
             Ok(())
         }
     } else {
+        let _ = emit_window.emit(
+            "7z-progress-structured",
+            crate::progress::ProgressUpdate {
+                percent: Some(100),
+                files_done: None,
+                current_file: Some("Finalizing…".to_string()),
+            },
+        );
         commit_cleanup(&app, &cleanup_plan)
     };
 
@@ -1564,48 +1727,71 @@ pub async fn run_7z(
 }
 
 #[tauri::command]
-pub async fn probe_7z(app: tauri::AppHandle) -> Result<(), String> {
+pub async fn probe_7z(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, RunningProcess>,
+) -> Result<(), String> {
     const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
     const PROBE_OUTPUT_LIMIT: usize = 4096;
 
-    let command = app
-        .shell()
-        .sidecar("7z")
-        .map_err(|e| e.to_string())?
-        .args(["i"]);
+    {
+        let mut process = lock_process(&state)?;
+        ensure_idle(&process)?;
+        process.preparing = true;
+        process.owner_label = Some("__probe__".to_string());
+    }
 
-    let (mut rx, child) = command.spawn().map_err(|e| e.to_string())?;
+    let result = async {
+        let command = app
+            .shell()
+            .sidecar("7z")
+            .map_err(|e| e.to_string())?
+            .args(["i"]);
 
-    let probe = async {
-        let collected = collect_command_output(&mut rx, PROBE_OUTPUT_LIMIT, |_| {}).await;
+        let (mut rx, child) = command.spawn().map_err(|e| e.to_string())?;
 
-        let Some(payload) = collected.exit else {
-            return Err("7z probe exited before reporting status.".to_string());
+        let probe = async {
+            let collected = collect_command_output(&mut rx, PROBE_OUTPUT_LIMIT, |_| {}).await;
+
+            let Some(payload) = collected.exit else {
+                return Err("7z probe exited before reporting status.".to_string());
+            };
+
+            let code = payload.code.unwrap_or(-1);
+            if code == 0 || code == 1 {
+                return Ok(());
+            }
+
+            let mut message = format!("7z probe exited with code {code}.");
+            let clean_stderr = sanitize_output(collected.stderr.trim());
+            let clean_stdout = sanitize_output(collected.stdout.trim());
+            if !clean_stderr.is_empty() {
+                message.push_str(&format!(" stderr: {clean_stderr}"));
+            } else if !clean_stdout.is_empty() {
+                message.push_str(&format!(" output: {clean_stdout}"));
+            }
+            Err(message)
         };
 
-        let code = payload.code.unwrap_or(-1);
-        if code == 0 || code == 1 {
-            return Ok(());
-        }
-
-        let mut message = format!("7z probe exited with code {code}.");
-        let clean_stderr = sanitize_output(collected.stderr.trim());
-        let clean_stdout = sanitize_output(collected.stdout.trim());
-        if !clean_stderr.is_empty() {
-            message.push_str(&format!(" stderr: {clean_stderr}"));
-        } else if !clean_stdout.is_empty() {
-            message.push_str(&format!(" output: {clean_stdout}"));
-        }
-        Err(message)
-    };
-
-    match tokio::time::timeout(PROBE_TIMEOUT, probe).await {
-        Ok(result) => result,
-        Err(_) => {
-            let _ = child.kill();
-            Err("7z runtime probe timed out.".to_string())
+        match tokio::time::timeout(PROBE_TIMEOUT, probe).await {
+            Ok(result) => result,
+            Err(_) => {
+                let _ = child.kill();
+                Err("7z runtime probe timed out.".to_string())
+            }
         }
     }
+    .await;
+
+    if let Ok(mut process) = lock_process(&state) {
+        if process.owner_label.as_deref() == Some("__probe__") {
+            process.preparing = false;
+            process.owner_label = None;
+            process.cancelling = false;
+        }
+    }
+
+    result
 }
 
 #[tauri::command]
@@ -1680,6 +1866,23 @@ mod tests {
 
         assert!(ensure_idle(&idle).is_ok());
         assert!(ensure_idle(&cancelling).is_err());
+    }
+
+    #[test]
+    fn safe_stage_dir_name_requires_exact_token_pattern() {
+        assert!(is_safe_stage_dir_name(
+            ".out.zinnia-extract-0123456789abcdef0123456789abcdef"
+        ));
+        assert!(is_safe_stage_dir_name(
+            ".archive.7z.zinnia-archive-fedcba9876543210fedcba9876543210"
+        ));
+        assert!(!is_safe_stage_dir_name("photos.zinnia-extract-evil"));
+        assert!(!is_safe_stage_dir_name(
+            ".out.zinnia-extract-0123456789abcdef0123456789abcd"
+        ));
+        assert!(!is_safe_stage_dir_name(
+            "out.zinnia-extract-0123456789abcdef0123456789abcdef"
+        ));
     }
 
     #[test]
@@ -1839,6 +2042,32 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn publish_rejects_symlink_swapped_ancestor_before_rename() {
+        use std::os::unix::fs::symlink;
+        let root = temp_root("zinnia-toctou-ancestor-test");
+        let destination = root.join("destination");
+        let outside = root.join("outside");
+        let nested = destination.join("nested");
+        std::fs::create_dir_all(&nested).expect("destination nested");
+        std::fs::create_dir_all(&outside).expect("outside");
+        let target = nested.join("new.txt");
+        assert_safe_extract_target_ancestors(&destination, &target).expect("real ancestors ok");
+
+        std::fs::remove_dir(&nested).expect("remove nested");
+        symlink(&outside, &nested).expect("swap nested for symlink");
+        let error = assert_safe_extract_target_ancestors(&destination, &target)
+            .expect_err("symlink ancestor must fail");
+        assert!(
+            error.contains("real directory")
+                || error.contains("symbolic link")
+                || error.contains("reparse"),
+            "unexpected error: {error}"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn persisted_move_plan_rolls_back_a_partial_merge() {
         let root = temp_root("zinnia-move-recovery-test");
@@ -1910,6 +2139,67 @@ mod tests {
         assert!(staged_tree_usage(&root, 1, 100).is_err());
         assert!(staged_tree_usage(&root, 10, 7).is_err());
 
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn archive_journal_committed_when_promote_finished_and_stage_empty() {
+        let root = temp_root("zinnia-journal-committed");
+        let stage = root.join(".zinnia-archive-abc");
+        let destination = root.join("out.7z");
+        std::fs::create_dir_all(&stage).expect("stage");
+        std::fs::write(&destination, b"published").expect("dest");
+        let journal = CleanupJournal {
+            stage: stage.clone(),
+            destination: destination.clone(),
+            archive: true,
+            previous_archive_family: Vec::new(),
+            next_archive_family: vec![destination.clone()],
+        };
+        assert!(archive_journal_is_committed(&journal));
+        assert_eq!(std::fs::read(&destination).unwrap(), b"published");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn archive_journal_not_committed_while_staged_outputs_remain() {
+        let root = temp_root("zinnia-journal-incomplete");
+        let stage = root.join(".zinnia-archive-abc");
+        let destination = root.join("out.7z");
+        std::fs::create_dir_all(&stage).expect("stage");
+        std::fs::write(stage.join("out.7z"), b"staged").expect("staged output");
+        std::fs::write(&destination, b"partial").expect("partial dest");
+        let journal = CleanupJournal {
+            stage: stage.clone(),
+            destination: destination.clone(),
+            archive: true,
+            previous_archive_family: Vec::new(),
+            next_archive_family: vec![destination.clone()],
+        };
+        assert!(!archive_journal_is_committed(&journal));
+        rollback_archive_journal(&journal).expect("rollback partial new archive");
+        assert!(!destination.exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn archive_journal_rollback_restores_backups_for_update() {
+        let root = temp_root("zinnia-journal-update");
+        let stage = root.join(".zinnia-archive-abc");
+        let destination = root.join("out.7z");
+        std::fs::create_dir_all(&stage).expect("stage");
+        std::fs::write(stage.join("backup-0"), b"old").expect("backup");
+        std::fs::write(&destination, b"new-partial").expect("partial new");
+        let journal = CleanupJournal {
+            stage: stage.clone(),
+            destination: destination.clone(),
+            archive: true,
+            previous_archive_family: vec![destination.clone()],
+            next_archive_family: vec![destination.clone()],
+        };
+        assert!(!archive_journal_is_committed(&journal));
+        rollback_archive_journal(&journal).expect("rollback update");
+        assert_eq!(std::fs::read(&destination).unwrap(), b"old");
         let _ = std::fs::remove_dir_all(root);
     }
 }

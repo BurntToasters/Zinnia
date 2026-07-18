@@ -29,7 +29,7 @@ pub fn cleanup_stale_temp_dirs(app: &tauri::AppHandle) -> Result<(), String> {
         let Ok(meta) = std::fs::symlink_metadata(entry.path()) else {
             continue;
         };
-        if meta.file_type().is_symlink() || !meta.is_dir() {
+        if crate::path_safety::is_link_or_reparse(&meta) || !meta.is_dir() {
             continue;
         }
         let old_enough = meta
@@ -53,15 +53,7 @@ pub fn create_temp_extract_dir(app: tauri::AppHandle) -> Result<String, String> 
         getrandom::fill(&mut random).map_err(|e| e.to_string())?;
         let token: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
         let dir = base.join(format!("tmp-{token}"));
-        #[cfg(unix)]
-        let result = {
-            use std::os::unix::fs::DirBuilderExt;
-            let mut builder = std::fs::DirBuilder::new();
-            builder.mode(0o700).create(&dir)
-        };
-        #[cfg(not(unix))]
-        let result = std::fs::create_dir(&dir);
-        match result {
+        match crate::fs_secure::create_private_dir(&dir) {
             Ok(()) => return Ok(dir.to_string_lossy().to_string()),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error.to_string()),
@@ -84,9 +76,8 @@ pub fn remove_managed_temp_dir(app: tauri::AppHandle, path: String) -> Result<()
     let target = std::path::PathBuf::from(&path);
 
     let raw_meta = std::fs::symlink_metadata(&target).map_err(|e| e.to_string())?;
-    if raw_meta.file_type().is_symlink() {
-        return Err("Temp path cannot be a symbolic link.".to_string());
-    }
+    crate::path_safety::reject_link_or_reparse(&target, &raw_meta)
+        .map_err(|_| "Temp path cannot be a symbolic link or reparse point.".to_string())?;
 
     // Refuse anything outside the managed base.
     let canonical_base = base.canonicalize().unwrap_or(base.clone());

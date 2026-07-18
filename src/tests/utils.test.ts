@@ -8,6 +8,7 @@ import {
   redactSensitiveText,
   safeHref,
   isArchiveFile,
+  assertRunResult,
   trapFocus,
   releaseFocusTrap,
 } from "../utils";
@@ -153,6 +154,26 @@ describe("formatSize", () => {
 
   it("formats gigabytes", () => {
     expect(formatSize(1073741824)).toBe("1.0 GB");
+  });
+});
+
+describe("assertRunResult", () => {
+  it("accepts a well-shaped run_7z payload", () => {
+    expect(() =>
+      assertRunResult({
+        stdout: "",
+        stderr: "",
+        code: 0,
+        stdout_truncated: false,
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects malformed payloads", () => {
+    expect(() => assertRunResult(null)).toThrow(/Unexpected run_7z response/);
+    expect(() => assertRunResult({ stdout: "", stderr: "" })).toThrow(
+      /Unexpected run_7z response/,
+    );
   });
 });
 

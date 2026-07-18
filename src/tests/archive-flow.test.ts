@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { confirm, message } from "@tauri-apps/plugin-dialog";
+import { confirm, message, save } from "@tauri-apps/plugin-dialog";
 import {
   browseArchive,
   cancelAction,
   closeCommandPreviewModal,
+  convertArchive,
   copyCommandPreview,
   clearPickerSelection,
   openSelectiveExtractModal,
@@ -20,10 +21,12 @@ import {
 } from "../archive";
 import { state } from "../state";
 import type { ArchiveInfo } from "../browse-model";
+import { SAFE_EXTRACT_OVERWRITE_MODE } from "../extract-policy";
 
 const invokeMock = vi.mocked(invoke);
 const messageMock = vi.mocked(message);
 const confirmMock = vi.mocked(confirm);
+const saveMock = vi.mocked(save);
 
 function uniqueArchivePath(prefix: string): string {
   return `/tmp/${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}.7z`;
@@ -134,6 +137,8 @@ beforeEach(() => {
   messageMock.mockResolvedValue("Ok");
   confirmMock.mockReset();
   confirmMock.mockResolvedValue(true);
+  saveMock.mockReset();
+  saveMock.mockResolvedValue(null);
   invokeMock.mockReset();
 });
 
@@ -561,7 +566,7 @@ describe("archive test/browse/selective flows", () => {
     );
   });
 
-  it("skips runAction when delete-after confirmation is declined", async () => {
+  it("rejects runAction when delete-after is checked", async () => {
     const app = document.getElementById("app") as HTMLElement;
     app.dataset.mode = "add";
     state.inputs = ["/tmp/input.txt"];
@@ -569,22 +574,22 @@ describe("archive test/browse/selective flows", () => {
       "/tmp/output.7z";
     (document.getElementById("delete-after") as HTMLInputElement).checked =
       true;
-    confirmMock.mockResolvedValueOnce(false);
 
     setInvokeRouter((command) => {
       if (command === "probe_7z") return undefined;
       if (command === "run_7z") {
-        throw new Error("run_7z should not run when confirmation is declined");
+        throw new Error("run_7z should not run when delete-after is checked");
       }
       return undefined;
     });
 
     await runAction();
 
-    expect(confirmMock).toHaveBeenCalledOnce();
+    expect(confirmMock).not.toHaveBeenCalled();
     expect(invokeMock.mock.calls.some(([name]) => name === "run_7z")).toBe(
       false,
     );
+    expect(messageMock).toHaveBeenCalled();
   });
 
   it("rolls back add-mode output on warning exit code", async () => {
@@ -781,5 +786,61 @@ describe("archive test/browse/selective flows", () => {
       (document.getElementById("copy-command-preview") as HTMLButtonElement)
         .textContent,
     ).toBe("Copied");
+  });
+});
+
+describe("convertArchive", () => {
+  it("requires an open archive before converting", async () => {
+    state.inputs = [];
+    await convertArchive();
+    expect(messageMock).toHaveBeenCalledWith(
+      "Open an archive first to convert it.",
+      expect.objectContaining({ title: "No archive", kind: "warning" }),
+    );
+    expect(saveMock).not.toHaveBeenCalled();
+  });
+
+  it("extracts with the safe overwrite policy then recompresses", async () => {
+    const archive = uniqueArchivePath("convert-src");
+    state.inputs = [archive];
+    saveMock.mockResolvedValueOnce("/tmp/converted.7z");
+
+    const runArgs: string[][] = [];
+    setInvokeRouter((command, payload) => {
+      if (command === "probe_7z") return undefined;
+      if (command === "create_temp_extract_dir")
+        return "/tmp/zinnia-convert-tmp";
+      if (command === "remove_managed_temp_dir") return undefined;
+      if (command === "run_7z") {
+        const args = (payload as { args?: string[] } | undefined)?.args ?? [];
+        runArgs.push(args);
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      return undefined;
+    });
+
+    await convertArchive();
+
+    expect(runArgs).toHaveLength(2);
+    expect(runArgs[0][0]).toBe("x");
+    expect(runArgs[0]).toContain("-o/tmp/zinnia-convert-tmp");
+    expect(runArgs[0]).toContain(SAFE_EXTRACT_OVERWRITE_MODE);
+    expect(runArgs[0]).not.toContain("-y");
+    expect(runArgs[1][0]).toBe("a");
+    expect(runArgs[1]).toContain("/tmp/converted.7z");
+    expect(invokeMock).toHaveBeenCalledWith("remove_managed_temp_dir", {
+      path: "/tmp/zinnia-convert-tmp",
+    });
+  });
+
+  it("aborts cleanly when the save dialog is cancelled", async () => {
+    state.inputs = [uniqueArchivePath("convert-cancel")];
+    saveMock.mockResolvedValueOnce(null);
+
+    await convertArchive();
+
+    expect(invokeMock.mock.calls.some(([name]) => name === "run_7z")).toBe(
+      false,
+    );
   });
 });

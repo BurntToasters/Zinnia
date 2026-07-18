@@ -40,6 +40,17 @@ describe("deriveExtractDestinationPath", () => {
       "/downloads/example_extracted",
     );
   });
+
+  it("keeps POSIX and Windows drive roots as parents", () => {
+    expect(deriveExtractDestinationPath("/example.zip")).toBe("/example");
+    expect(deriveExtractDestinationPath("C:/example.zip")).toBe("C:/example");
+    expect(deriveExtractDestinationPath("C:\\example.zip")).toBe("C:\\example");
+  });
+
+  it("returns empty for blank input", () => {
+    expect(deriveExtractDestinationPath("   ")).toBe("");
+    expect(deriveExtractFolderName("")).toBe("");
+  });
 });
 
 describe("deriveExtractFolderName", () => {

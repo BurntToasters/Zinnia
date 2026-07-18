@@ -14,6 +14,7 @@
     "allow-get-extract-paths",
     "allow-close-extract-window",
     "allow-open-path",
+    "allow-register-extract-open-path",
     "allow-get-platform-info"
   ]
 }

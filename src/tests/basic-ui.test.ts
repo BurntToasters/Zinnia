@@ -91,6 +91,7 @@ import {
   setBasicBrowseSummary,
   setBasicView,
   syncBasicBeforeRun,
+  syncBasicWorkspaceFromPower,
   updateBasicRunningState,
   updateBasicStatus,
 } from "../basic-ui";
@@ -185,12 +186,31 @@ function mountBasicDom(): void {
 
   addSelect(root, "basic-preset", ["balanced", "ultra"]);
   addSelect(root, "basic-format", ["7z", "zip", "tar"]);
+  addSelect(root, "basic-split-size", [
+    "",
+    "100m",
+    "700m",
+    "1g",
+    "4g",
+    "custom",
+  ]);
+  const splitCustomField = addEl(root, "div", "basic-split-custom-field");
+  splitCustomField.hidden = true;
+  addEl(root, "input", "basic-split-custom");
 
   addEl(root, "input", "basic-archive-name");
   addEl(root, "input", "basic-output-path");
   addEl(root, "input", "basic-password");
+  const encryptHeaders = addEl(
+    root,
+    "input",
+    "basic-encrypt-headers",
+  ) as HTMLInputElement;
+  encryptHeaders.type = "checkbox";
+  addEl(root, "label", "basic-encrypt-headers-row");
   addEl(root, "input", "basic-extract-path");
   addEl(root, "input", "basic-extract-password");
+  addEl(root, "input", "basic-browse-password");
 
   for (const section of ["compress", "extract"] as const) {
     const progress = addEl(root, "div", `basic-${section}-progress`);
@@ -223,6 +243,7 @@ beforeEach(() => {
   ensureGlobalInput("password");
   ensureGlobalInput("extract-path");
   ensureGlobalInput("extract-password");
+  ensureGlobalInput("browse-password");
 
   uiMocks.runtime.workspaceMode = "basic";
   uiMocks.runtime.mode = "add";
@@ -494,6 +515,11 @@ describe("basic-ui state transitions", () => {
       "/tmp/release.zip";
     (document.getElementById("basic-password") as HTMLInputElement).value =
       "pw";
+    (document.getElementById("basic-split-size") as HTMLSelectElement).value =
+      "100m";
+    (
+      document.getElementById("basic-encrypt-headers") as HTMLInputElement
+    ).checked = true;
 
     syncBasicBeforeRun();
 
@@ -517,6 +543,12 @@ describe("basic-ui state transitions", () => {
     expect(
       (document.getElementById("password") as HTMLInputElement).value,
     ).toBe("pw");
+    expect(
+      (document.getElementById("split-size") as HTMLSelectElement).value,
+    ).toBe("100m");
+    expect(
+      (document.getElementById("encrypt-headers") as HTMLInputElement).checked,
+    ).toBe(true);
 
     uiMocks.runtime.mode = "extract";
     (document.getElementById("basic-extract-path") as HTMLInputElement).value =
@@ -534,6 +566,61 @@ describe("basic-ui state transitions", () => {
       (document.getElementById("extract-password") as HTMLInputElement).value,
     ).toBe("secret");
   });
+
+  it("forces relative path-mode and disables update-mode for basic compress runs", () => {
+    uiMocks.runtime.workspaceMode = "basic";
+    uiMocks.runtime.mode = "add";
+    (document.getElementById("update-mode") as HTMLInputElement).checked = true;
+    (document.getElementById("path-mode") as HTMLSelectElement).value =
+      "absolute";
+
+    syncBasicBeforeRun();
+
+    expect(
+      (document.getElementById("update-mode") as HTMLInputElement).checked,
+    ).toBe(false);
+    expect(
+      (document.getElementById("path-mode") as HTMLSelectElement).value,
+    ).toBe("relative");
+  });
+
+  it("syncs power extract/browse passwords and custom split into basic", () => {
+    (document.getElementById("extract-password") as HTMLInputElement).value =
+      "power-extract";
+    (document.getElementById("browse-password") as HTMLInputElement).value =
+      "power-browse";
+    (document.getElementById("split-size") as HTMLSelectElement).value =
+      "custom";
+    (document.getElementById("split-custom") as HTMLInputElement).value =
+      "250m";
+    (document.getElementById("encrypt-headers") as HTMLInputElement).checked =
+      true;
+
+    syncBasicWorkspaceFromPower();
+
+    expect(
+      (document.getElementById("basic-extract-password") as HTMLInputElement)
+        .value,
+    ).toBe("power-extract");
+    expect(
+      (document.getElementById("basic-browse-password") as HTMLInputElement)
+        .value,
+    ).toBe("power-browse");
+    expect(
+      (document.getElementById("basic-split-size") as HTMLSelectElement).value,
+    ).toBe("custom");
+    expect(
+      (document.getElementById("basic-split-custom") as HTMLInputElement).value,
+    ).toBe("250m");
+    expect(
+      (document.getElementById("basic-split-custom-field") as HTMLElement)
+        .hidden,
+    ).toBe(false);
+    expect(
+      (document.getElementById("basic-encrypt-headers") as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+  });
 });
 
 describe("basic-ui drag and init wiring", () => {
@@ -547,6 +634,50 @@ describe("basic-ui drag and init wiring", () => {
         .getElementById("basic-dropzone")
         ?.classList.contains("is-drag-over"),
     ).toBe(false);
+  });
+
+  it("toggles drag-over styling on enter/leave in basic mode", () => {
+    uiMocks.runtime.workspaceMode = "basic";
+    setBasicView("home");
+
+    handleBasicDragDrop("enter");
+    expect(
+      document
+        .getElementById("basic-dropzone")
+        ?.classList.contains("is-drag-over"),
+    ).toBe(true);
+
+    handleBasicDragDrop("leave");
+    expect(
+      document
+        .getElementById("basic-dropzone")
+        ?.classList.contains("is-drag-over"),
+    ).toBe(false);
+  });
+
+  it("forces relative path-mode for basic compress and syncs extract/browse passwords", () => {
+    uiMocks.runtime.workspaceMode = "basic";
+    uiMocks.runtime.mode = "extract";
+    (
+      document.getElementById("basic-extract-password") as HTMLInputElement
+    ).value = "extract-secret";
+    (document.getElementById("extract-password") as HTMLInputElement).value =
+      "";
+
+    syncBasicBeforeRun();
+    expect(
+      (document.getElementById("extract-password") as HTMLInputElement).value,
+    ).toBe("extract-secret");
+
+    uiMocks.runtime.mode = "browse";
+    (
+      document.getElementById("basic-browse-password") as HTMLInputElement
+    ).value = "browse-secret";
+    (document.getElementById("browse-password") as HTMLInputElement).value = "";
+    syncBasicBeforeRun();
+    expect(
+      (document.getElementById("browse-password") as HTMLInputElement).value,
+    ).toBe("browse-secret");
   });
 
   it("handles archive drag-drop and auto-browse for a single archive", async () => {

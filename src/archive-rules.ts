@@ -1,7 +1,25 @@
 import { invoke } from "@tauri-apps/api/core";
 
+/** Keep in sync with validation.rs is_allowed_method_switch / compress extras. */
+export const ALLOWED_METHOD_PREFIXES = [
+  "-mx",
+  "-m0=",
+  "-md",
+  "-mfb",
+  "-ms",
+  "-mmt",
+  "-mem=",
+  "-mhe=",
+  "-mtc=",
+  "-mta=",
+  "-mtb=",
+  "-mhc=",
+  "-mcu=",
+  "-mcl=",
+];
+
 export const ALLOWED_EXTRA_PREFIXES = [
-  "-m",
+  ...ALLOWED_METHOD_PREFIXES,
   "-x",
   "-i",
   "-ao",
@@ -13,7 +31,6 @@ export const ALLOWED_EXTRA_PREFIXES = [
   "-stl",
   "-slp",
   "-ssp",
-  "-ssw",
   "-sse",
   "-y",
   "-r",
@@ -48,6 +65,28 @@ function switchContainsParentTraversal(arg: string): boolean {
   return payload
     .split(/[!:@]/)
     .some((segment) => hasParentDirComponent(segment));
+}
+
+/** Keep aligned with validation.rs is_allowed_method_switch. */
+function isAllowedMethodSwitch(lower: string): boolean {
+  for (const prefix of ALLOWED_METHOD_PREFIXES) {
+    if (!lower.startsWith(prefix)) continue;
+    const rest = lower.slice(prefix.length);
+    if (prefix.endsWith("=")) {
+      return (
+        rest.length > 0 &&
+        !rest.includes("/") &&
+        !rest.includes("\\") &&
+        !rest.includes("..")
+      );
+    }
+    return (
+      rest.length === 0 ||
+      rest.startsWith("=") ||
+      (rest.charCodeAt(0) >= 48 && rest.charCodeAt(0) <= 57)
+    );
+  }
+  return false;
 }
 
 export async function validateArchivePaths(
@@ -100,7 +139,7 @@ export async function validateArchivePaths(
 }
 
 export function validateExtraArgs(args: string[]): void {
-  const blocked = ["-sdel", "-p", "-mhe", "-o", "-si", "-so", "-t"];
+  const blocked = ["-sdel", "-p", "-mhe", "-o", "-si", "-so", "-t", "-ssw"];
 
   for (const arg of args) {
     if (!arg.startsWith("-")) {
@@ -108,13 +147,24 @@ export function validateExtraArgs(args: string[]): void {
     }
 
     const lower = arg.toLowerCase();
+    if (lower === "-aoa" || lower === "-aot") {
+      throw new Error(
+        `"${arg}" is not allowed. Zinnia only permits safe extract overwrite modes (-aou / -aos).`,
+      );
+    }
     if (blocked.some((b) => lower.startsWith(b))) {
       throw new Error(
         `"${arg}" is not allowed in extra args. Use the dedicated fields instead.`,
       );
     }
 
-    if (!ALLOWED_EXTRA_PREFIXES.some((p) => lower.startsWith(p))) {
+    if (lower.startsWith("-m")) {
+      if (!isAllowedMethodSwitch(lower)) {
+        throw new Error(
+          `"${arg}" is not an allowed compression method switch.`,
+        );
+      }
+    } else if (!ALLOWED_EXTRA_PREFIXES.some((p) => lower.startsWith(p))) {
       throw new Error(
         `Unknown argument "${arg}". Only recognized 7z switches are allowed.`,
       );
