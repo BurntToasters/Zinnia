@@ -3,6 +3,7 @@
 #![cfg(target_os = "macos")]
 
 use std::ffi::CStr;
+use std::sync::atomic::Ordering;
 use std::sync::OnceLock;
 
 use objc2::rc::Retained;
@@ -10,9 +11,12 @@ use objc2::runtime::AnyObject;
 use objc2::{define_class, msg_send, ClassType, MainThreadOnly};
 use objc2_app_kit::{NSApplication, NSPasteboard, NSUpdateDynamicServices};
 use objc2_foundation::{NSArray, NSObject, NSObjectProtocol, NSString, NSURL};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
-use crate::launch::{emit_open_paths, show_main_window, FILE_OPEN_SIGNAL};
+use crate::launch::{
+    emit_open_paths, show_main_window, EXTRACT_ONLY_LAUNCH, FILE_OPEN_SIGNAL,
+    MAC_FALLBACK_MAIN_PENDING,
+};
 
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 
@@ -78,12 +82,21 @@ fn handle_service(pasteboard: Option<&NSPasteboard>, mode: &str) {
 
     // Compress needs the main workspace. Extract must NOT show main first —
     // that would defeat extract-only / quick-extract routing in launch.rs.
-    // Also cancel the cold-start 150ms main-window fallback so Services Extract
-    // does not race a flash of the main window.
     if mode == "extract" {
+        // Claim extract-only before any queued main-thread fallback runs, and
+        // cancel the cold-start 150ms timer if it is still waiting.
+        EXTRACT_ONLY_LAUNCH.store(true, Ordering::SeqCst);
         if let Ok(mut guard) = FILE_OPEN_SIGNAL.lock() {
             if let Some(tx) = guard.take() {
                 let _ = tx.send(());
+            }
+        }
+        // If the fallback already opened main, hide it immediately to avoid a flash.
+        // Leave MAC_FALLBACK_MAIN_PENDING set so route_open_request still treats it
+        // as a fallback window and destroys it (not as a user workspace).
+        if MAC_FALLBACK_MAIN_PENDING.load(Ordering::SeqCst) {
+            if let Some(main) = app.get_webview_window("main") {
+                let _ = main.hide();
             }
         }
     } else if mode == "compress" {

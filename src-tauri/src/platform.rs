@@ -313,19 +313,19 @@ fn win11_modern_menu_status_for(platform: &str, packaged: bool) -> Win11ModernMe
             available: true,
             known: true,
             registered: true,
-            help: "Win11 modern menu is registered (sparse identity package only — Zinnia itself remains a normal NSIS install). Classic verbs remain under Show more options.".to_string(),
+            help: "Win11 modern menu package is registered (sparse identity only — Zinnia remains a normal NSIS install). Confirm Extract/Compress actually launch from the primary menu; classic verbs remain under Show more options.".to_string(),
         },
         Some(false) => Win11ModernMenuInfo {
             available: true,
             known: true,
             registered: false,
-            help: "Win11 modern menu is not registered. Classic Explorer verbs still work. Check zinnia-context-menu-register.log in the install folder, or reinstall a signed build.".to_string(),
+            help: "Win11 modern menu package is not registered. Classic Explorer verbs still work. Check zinnia-context-menu-register.log in the install folder, or reinstall a signed build.".to_string(),
         },
         None => Win11ModernMenuInfo {
             available: true,
             known: false,
             registered: false,
-            help: "Could not verify Win11 modern menu registration. Classic Explorer verbs should still work if this is a packaged install.".to_string(),
+            help: "Could not verify Win11 modern menu package registration. Classic Explorer verbs should still work if this is a packaged install.".to_string(),
         },
     }
 }

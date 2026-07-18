@@ -38,7 +38,8 @@ native build runs.
   **sparse identity MSIX** + `zinnia_shell.dll` (`Zinnia` submenu, plus top-level
   Extract on archives). Zinnia itself stays a normal per-user NSIS Win32 install —
   the MSIX is not a Store/AppX app package; it only grants package identity so
-  Explorer can load the shell DLL. See `src-tauri/windows/shell/README.md`.
+  Explorer can load the shell DLL. See `src-tauri/windows/shell/README.md` and
+  `docs/QA-CONTEXT-MENUS.md`.
 - Linux `deb`, `rpm`, and Flatpak bundles include desktop `Open`, `Extract`, and
   `Compress` actions.
 - macOS users can choose Zinnia from Finder's Open With/Get Info default-app
