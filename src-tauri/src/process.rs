@@ -10,6 +10,10 @@ use crate::progress::parse_progress_line;
 use crate::validation::validate_run_7z_args;
 
 static RECOVERY_LOCK: Mutex<()> = Mutex::new(());
+/// Set after the startup maintenance thread finishes its one-shot recovery pass.
+/// `run_7z` waits for this so it cannot race startup recovery against a live journal.
+static STARTUP_RECOVERY_DONE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(cfg!(test));
 
 #[derive(serde::Serialize)]
 pub struct RunResult {
@@ -191,11 +195,35 @@ fn rollback_archive_journal(journal: &CleanupJournal) -> Result<(), String> {
     Ok(())
 }
 
+/// Mark the one-shot startup recovery pass complete (success or failure).
+pub fn mark_startup_recovery_done() {
+    STARTUP_RECOVERY_DONE.store(true, std::sync::atomic::Ordering::Release);
+}
+
+async fn wait_for_startup_recovery() {
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !STARTUP_RECOVERY_DONE.load(std::sync::atomic::Ordering::Acquire) {
+        if std::time::Instant::now() >= deadline {
+            // Avoid hanging the UI forever if startup recovery never reports.
+            mark_startup_recovery_done();
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+    }
+}
+
 pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), String> {
+    let path = cleanup_journal_path(app)?;
+    // Fast path: with no journal there is nothing to recover. Skip the lock so a
+    // concurrent startup maintenance pass cannot delay the first extract.
+    if !path.exists() {
+        return Ok(());
+    }
     let _recovery_guard = RECOVERY_LOCK
         .lock()
         .map_err(|_| "Archive recovery lock is unavailable.".to_string())?;
-    let path = cleanup_journal_path(app)?;
+    // Re-check under the lock — another thread may have cleared it.
     let json = match std::fs::read_to_string(&path) {
         Ok(json) => json,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -1463,6 +1491,9 @@ pub async fn run_7z(
         };
         crate::launch::assert_extract_bound_destination(&app, window.label(), &requested)?;
     }
+
+    // Serialize past the one-shot startup recovery before claiming the operation slot.
+    wait_for_startup_recovery().await;
 
     {
         let mut process = lock_process(&state)?;

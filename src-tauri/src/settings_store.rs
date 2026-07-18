@@ -30,6 +30,66 @@ pub fn parse_json_object(json: &str) -> Result<serde_json::Map<String, serde_jso
     }
 }
 
+/// Preferences for keeping Zinnia resident after quick-extract closes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct QuickExtractWarmPrefs {
+    pub enabled: bool,
+    pub idle_secs: u64,
+}
+
+impl Default for QuickExtractWarmPrefs {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            idle_secs: 10 * 60,
+        }
+    }
+}
+
+pub fn parse_quick_extract_warm_prefs(json: &str) -> QuickExtractWarmPrefs {
+    let Ok(map) = parse_json_object(json) else {
+        return QuickExtractWarmPrefs::default();
+    };
+    let enabled = map
+        .get("quickExtractKeepWarm")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true);
+    let minutes = map
+        .get("quickExtractWarmIdleMinutes")
+        .and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_i64().and_then(|n| u64::try_from(n).ok()))
+                .or_else(|| value.as_str()?.parse::<u64>().ok())
+        })
+        .unwrap_or(10);
+    let minutes = match minutes {
+        5 | 10 | 30 | 60 => minutes,
+        _ => 10,
+    };
+    QuickExtractWarmPrefs {
+        enabled,
+        idle_secs: minutes.saturating_mul(60),
+    }
+}
+
+/// Read warm-idle prefs from disk. Failures fall back to defaults.
+pub fn quick_extract_warm_prefs(app: &tauri::AppHandle) -> QuickExtractWarmPrefs {
+    let Ok(_guard) = lock_settings() else {
+        return QuickExtractWarmPrefs::default();
+    };
+    let Ok(path) = settings_path(app) else {
+        return QuickExtractWarmPrefs::default();
+    };
+    match std::fs::read_to_string(&path) {
+        Ok(raw) => parse_quick_extract_warm_prefs(&raw),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            QuickExtractWarmPrefs::default()
+        }
+        Err(_) => QuickExtractWarmPrefs::default(),
+    }
+}
+
 pub fn merge_reserved_settings(
     existing: &serde_json::Map<String, serde_json::Value>,
     incoming: &mut serde_json::Map<String, serde_json::Value>,
@@ -310,6 +370,33 @@ mod tests {
         assert!(!path.exists());
         assert!(!backup_path(&path).exists());
         let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn parse_quick_extract_warm_prefs_defaults_and_clamps() {
+        assert_eq!(
+            parse_quick_extract_warm_prefs("{}"),
+            QuickExtractWarmPrefs::default()
+        );
+        assert_eq!(
+            parse_quick_extract_warm_prefs(
+                r#"{"quickExtractKeepWarm":false,"quickExtractWarmIdleMinutes":30}"#
+            ),
+            QuickExtractWarmPrefs {
+                enabled: false,
+                idle_secs: 30 * 60,
+            }
+        );
+        assert_eq!(
+            parse_quick_extract_warm_prefs(r#"{"quickExtractWarmIdleMinutes":7}"#)
+                .idle_secs,
+            10 * 60
+        );
+        assert_eq!(
+            parse_quick_extract_warm_prefs(r#"{"quickExtractWarmIdleMinutes":"60"}"#)
+                .idle_secs,
+            60 * 60
+        );
     }
 
     #[test]

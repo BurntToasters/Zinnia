@@ -19,10 +19,11 @@ use std::sync::Mutex;
 use tauri::Manager;
 
 use launch::{
-    collect_cli_context, emit_open_paths, emit_open_urls, first_extract_window,
-    has_extract_windows, show_main_window, spawn_extract_window, ExtractBoundDestination,
-    ExtractOpenAllowlist, ExtractQueue, InitialMode, InitialPaths, OpenPathAllowlist, PendingPaths,
-    EXTRACT_ONLY_LAUNCH, FILE_OPEN_SIGNAL, MAC_FALLBACK_MAIN_PENDING,
+    collect_cli_context, emit_open_paths, emit_open_urls, enter_extract_warm_idle,
+    first_extract_window, has_extract_windows, leave_extract_warm, should_keep_extract_warm,
+    show_main_window, spawn_extract_window, ExtractBoundDestination, ExtractOpenAllowlist,
+    ExtractQueue, InitialMode, InitialPaths, OpenPathAllowlist, PendingPaths, EXTRACT_ONLY_LAUNCH,
+    FILE_OPEN_SIGNAL, MAC_FALLBACK_MAIN_PENDING,
 };
 use logging::LogFileLock;
 use process::RunningProcess;
@@ -171,6 +172,8 @@ fn main() {
                 if let Err(e) = process::recover_interrupted_transaction(&maintenance_handle) {
                     eprintln!("Failed to recover an interrupted archive transaction: {e}");
                 }
+                // Unblock run_7z before temp cleanup — recovery is what must be serialized.
+                process::mark_startup_recovery_done();
                 if let Err(e) = tempdir::cleanup_stale_temp_dirs(&maintenance_handle) {
                     eprintln!("Failed to clean stale conversion directories: {e}");
                 }
@@ -215,8 +218,15 @@ fn main() {
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     app.run(|app_handle, event| match event {
-        tauri::RunEvent::ExitRequested { api, .. }
-            if defer_exit_while_operation_finishes(app_handle, &api) => {}
+        tauri::RunEvent::ExitRequested { api, .. } => {
+            if defer_exit_while_operation_finishes(app_handle, &api) {
+                return;
+            }
+            // Stay resident after quick-extract so the next file association is warm.
+            if should_keep_extract_warm(app_handle) && enter_extract_warm_idle(app_handle) {
+                api.prevent_exit();
+            }
+        }
         tauri::RunEvent::Opened { urls } => {
             emit_open_urls(app_handle, urls);
         }
@@ -232,7 +242,12 @@ fn main() {
                     let _ = extract_window.show();
                     let _ = extract_window.set_focus();
                 } else {
-                    app_handle.exit(0);
+                    // Dock click while warm-idle: open the full app instead of quitting.
+                    EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);
+                    leave_extract_warm(app_handle);
+                    if let Err(e) = show_main_window(app_handle) {
+                        eprintln!("Failed to reopen main window: {e}");
+                    }
                 }
             } else if !has_visible_windows {
                 if let Err(e) = show_main_window(app_handle) {
@@ -250,11 +265,11 @@ fn main() {
         tauri::RunEvent::WindowEvent {
             event: tauri::WindowEvent::Destroyed,
             ..
-        } if EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst) && !has_extract_windows(app_handle) => {
+        } if should_keep_extract_warm(app_handle) => {
             if let Some(main_window) = app_handle.get_webview_window("main") {
                 let _ = main_window.destroy();
             }
-            app_handle.exit(0);
+            let _ = enter_extract_warm_idle(app_handle);
         }
         _ => {}
     });
@@ -263,6 +278,10 @@ fn main() {
     app.run(|app_handle, event| {
         if let tauri::RunEvent::ExitRequested { api, .. } = &event {
             if defer_exit_while_operation_finishes(app_handle, api) {
+                return;
+            }
+            if should_keep_extract_warm(app_handle) && enter_extract_warm_idle(app_handle) {
+                api.prevent_exit();
                 return;
             }
         }
@@ -281,11 +300,11 @@ fn main() {
             ..
         } = event
         {
-            if EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst) && !has_extract_windows(app_handle) {
+            if should_keep_extract_warm(app_handle) {
                 if let Some(main_window) = app_handle.get_webview_window("main") {
                     let _ = main_window.destroy();
                 }
-                app_handle.exit(0);
+                let _ = enter_extract_warm_idle(app_handle);
             }
         }
     });

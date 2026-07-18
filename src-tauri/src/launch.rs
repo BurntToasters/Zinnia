@@ -12,6 +12,12 @@ pub static EXTRACT_ONLY_LAUNCH: AtomicBool = AtomicBool::new(false);
 pub static MAC_FALLBACK_MAIN_PENDING: AtomicBool = AtomicBool::new(false);
 pub static FILE_OPEN_SIGNAL: Mutex<Option<std::sync::mpsc::Sender<()>>> = Mutex::new(None);
 
+/// Bumped whenever extract-only warm-idle should be cancelled (new window, quit, leave warm).
+static EXTRACT_WARM_IDLE_GENERATION: AtomicU64 = AtomicU64::new(0);
+/// True while extract-only warm-idle is engaged (dedupes ExitRequested + Destroyed).
+static EXTRACT_WARM_IDLE_ACTIVE: AtomicBool = AtomicBool::new(false);
+const EXTRACT_WARM_TRAY_ID: &str = "extract-warm";
+
 const MAX_OPENABLE_DIRECTORIES: usize = 64;
 
 pub struct InitialPaths(pub Mutex<Vec<String>>);
@@ -264,6 +270,11 @@ pub fn assert_extract_bound_destination(
 }
 
 fn clear_extract_window_bindings(app: &tauri::AppHandle, label: &str) {
+    if let Some(state) = app.try_state::<ExtractQueue>() {
+        if let Ok(mut guard) = state.0.lock() {
+            guard.remove(label);
+        }
+    }
     if let Some(state) = app.try_state::<ExtractBoundDestination>() {
         if let Ok(mut guard) = state.0.lock() {
             guard.remove(label);
@@ -428,6 +439,133 @@ pub fn first_extract_window(app: &tauri::AppHandle) -> Option<tauri::WebviewWind
         })
 }
 
+fn bump_extract_warm_idle_generation() {
+    EXTRACT_WARM_IDLE_GENERATION.fetch_add(1, Ordering::SeqCst);
+}
+
+/// Embed archive/destination for the extract window. Escapes U+2028/U+2029 because
+/// serde_json leaves them unescaped and they break JavaScript string literals.
+fn extract_session_init_script(archive: &str, destination: &str) -> String {
+    let payload = serde_json::json!({
+        "archive": archive,
+        "destination": destination,
+    });
+    let json = payload
+        .to_string()
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029");
+    format!(
+        "Object.defineProperty(window,\"__ZINNIA_EXTRACT__\",{{value:Object.freeze({json}),enumerable:false,configurable:false}});"
+    )
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn ensure_extract_warm_tray(app: &tauri::AppHandle) -> bool {
+    if app.tray_by_id(EXTRACT_WARM_TRAY_ID).is_some() {
+        return true;
+    }
+    use tauri::menu::{Menu, MenuItem};
+    use tauri::tray::TrayIconBuilder;
+
+    let Ok(quit) = MenuItem::with_id(app, "quit", "Quit Zinnia", true, None::<&str>) else {
+        eprintln!("Failed to create extract warm-tray quit item");
+        return false;
+    };
+    let Ok(menu) = Menu::with_items(app, &[&quit]) else {
+        eprintln!("Failed to create extract warm-tray menu");
+        return false;
+    };
+    let Some(icon) = app.default_window_icon().cloned() else {
+        eprintln!("Failed to create extract warm-tray: missing app icon");
+        return false;
+    };
+    match TrayIconBuilder::with_id(EXTRACT_WARM_TRAY_ID)
+        .icon(icon)
+        .menu(&menu)
+        .tooltip("Zinnia")
+        .on_menu_event(|app, event| {
+            if event.id.as_ref() == "quit" {
+                leave_extract_warm(app);
+                EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);
+                app.exit(0);
+            }
+        })
+        .build(app)
+    {
+        Ok(_) => true,
+        Err(error) => {
+            eprintln!("Failed to create extract warm-tray: {error}");
+            false
+        }
+    }
+}
+
+/// Drop the resident extract-only tray and cancel the idle exit timer.
+pub fn leave_extract_warm(app: &tauri::AppHandle) {
+    EXTRACT_WARM_IDLE_ACTIVE.store(false, Ordering::SeqCst);
+    bump_extract_warm_idle_generation();
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let _ = app.remove_tray_by_id(EXTRACT_WARM_TRAY_ID);
+    }
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let _ = app;
+    }
+}
+
+/// After the last quick-extract window closes, stay resident for the next open.
+/// Returns whether warm-idle was engaged (caller may `prevent_exit`).
+pub fn enter_extract_warm_idle(app: &tauri::AppHandle) -> bool {
+    if !should_keep_extract_warm(app) {
+        return EXTRACT_WARM_IDLE_ACTIVE.load(Ordering::SeqCst);
+    }
+
+    let prefs = crate::settings_store::quick_extract_warm_prefs(app);
+    if !prefs.enabled {
+        leave_extract_warm(app);
+        return false;
+    }
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        // macOS can stay warm via the Dock even if tray creation fails.
+        // Windows/Linux need a tray affordance or the process becomes invisible.
+        let tray_ok = ensure_extract_warm_tray(app);
+        if !tray_ok && !cfg!(target_os = "macos") {
+            return false;
+        }
+    }
+
+    // Refresh the idle timer when ExitRequested and Destroyed both fire.
+    EXTRACT_WARM_IDLE_ACTIVE.store(true, Ordering::SeqCst);
+    let generation = EXTRACT_WARM_IDLE_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    let idle_secs = prefs.idle_secs.max(60);
+
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(idle_secs));
+        if EXTRACT_WARM_IDLE_GENERATION.load(Ordering::SeqCst) != generation {
+            return;
+        }
+        if !EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst) || has_extract_windows(&handle) {
+            return;
+        }
+        let exit_handle = handle.clone();
+        let _ = handle.run_on_main_thread(move || {
+            leave_extract_warm(&exit_handle);
+            EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);
+            exit_handle.exit(0);
+        });
+    });
+    true
+}
+
+/// Keep ExitRequested from tearing down extract-only warm idle.
+pub fn should_keep_extract_warm(app: &tauri::AppHandle) -> bool {
+    EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst) && !has_extract_windows(app)
+}
+
 pub fn ensure_main_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
     if let Some(window) = app.get_webview_window("main") {
         return Ok(window);
@@ -541,9 +679,9 @@ pub fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Resul
     }
     let archive = paths
         .first()
-        .map(String::as_str)
+        .cloned()
         .ok_or_else(|| "Extract window requires an archive path.".to_string())?;
-    let destination = derive_extract_destination_path(archive)
+    let destination = derive_extract_destination_path(&archive)
         .ok_or_else(|| "Could not derive an extract destination for this archive.".to_string())?;
 
     let label = format!(
@@ -562,8 +700,13 @@ pub fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Resul
     {
         let bound = app.state::<ExtractBoundDestination>();
         let mut map = bound.0.lock().map_err(|_| "Lock poisoned".to_string())?;
-        map.insert(label.clone(), destination);
+        map.insert(label.clone(), destination.clone());
     }
+
+    // Inject archive + destination before the page script runs so the UI can paint
+    // and start extract without waiting on get_extract_paths.
+    let init_script =
+        extract_session_init_script(&archive, destination.to_string_lossy().as_ref());
 
     let mut builder = tauri::WebviewWindowBuilder::new(
         app,
@@ -574,7 +717,8 @@ pub fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Resul
     .inner_size(440.0, 320.0)
     .resizable(false)
     .minimizable(true)
-    .maximizable(false);
+    .maximizable(false)
+    .initialization_script(init_script);
 
     #[cfg(target_os = "macos")]
     {
@@ -590,11 +734,10 @@ pub fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Resul
     let result = builder.build().map_err(|e| e.to_string());
 
     if result.is_err() {
-        let queue = app.state::<ExtractQueue>();
-        if let Ok(mut q) = queue.0.lock() {
-            q.remove(&label);
-        };
         clear_extract_window_bindings(app, &label);
+    } else {
+        // A live extract window cancels warm-idle auto-quit.
+        bump_extract_warm_idle_generation();
     }
 
     result.map(|_| ())
@@ -714,6 +857,7 @@ fn route_open_request(app: &tauri::AppHandle, paths: Vec<String>, mode: String) 
         // creating a second quick window that can only fail as busy.
         if has_extract_windows(app) {
             EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);
+            leave_extract_warm(app);
             let pending = app.state::<PendingPaths>();
             if let Ok(mut queue) = pending.0.lock() {
                 let total_paths: usize = queue.iter().map(|item| item.paths.len()).sum();
@@ -749,21 +893,22 @@ fn route_open_request(app: &tauri::AppHandle, paths: Vec<String>, mode: String) 
                 eprintln!("Failed to open main window: {main_error}");
             }
             EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);
+            leave_extract_warm(app);
+        } else if had_main_window {
+            // Warm opens must not discard the user's active main workspace.
+            EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);
+            leave_extract_warm(app);
         } else {
-            if had_main_window {
-                // Warm opens must not discard the user's active main workspace.
-                EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);
-            } else {
-                if let Some(main_window) = app.get_webview_window("main") {
-                    let _ = main_window.destroy();
-                }
-                EXTRACT_ONLY_LAUNCH.store(true, Ordering::SeqCst);
+            if let Some(main_window) = app.get_webview_window("main") {
+                let _ = main_window.destroy();
             }
+            EXTRACT_ONLY_LAUNCH.store(true, Ordering::SeqCst);
         }
         return;
     }
 
     EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);
+    leave_extract_warm(app);
 
     if let Ok(mut guard) = FILE_OPEN_SIGNAL.lock() {
         guard.take();
@@ -820,6 +965,24 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    #[test]
+    fn extract_session_init_script_escapes_js_line_separators() {
+        let script = extract_session_init_script("foo\u{2028}bar.zip", "a\u{2029}b");
+        assert!(
+            script.contains("\\u2028"),
+            "U+2028 must be escaped for JS embedding: {script}"
+        );
+        assert!(
+            script.contains("\\u2029"),
+            "U+2029 must be escaped for JS embedding: {script}"
+        );
+        assert!(
+            !script.contains('\u{2028}') && !script.contains('\u{2029}'),
+            "raw line separators must not appear in init script"
+        );
+        assert!(script.contains("__ZINNIA_EXTRACT__"));
+    }
 
     #[test]
     fn derive_extract_destination_matches_frontend_rules() {

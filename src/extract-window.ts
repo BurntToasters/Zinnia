@@ -4,7 +4,6 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { deriveExtractDestinationPath } from "./extract-path";
 import { describe7zError, looksLikePasswordRequiredError } from "./error-hints";
 import { SAFE_EXTRACT_OVERWRITE_MODE } from "./extract-policy";
-import { promptInput } from "./prompt-modal";
 import {
   setProgressIndeterminateClass,
   setProgressPercentClass,
@@ -24,6 +23,17 @@ interface ProgressUpdate {
   currentFile?: string;
 }
 
+interface InjectedExtractSession {
+  archive: string;
+  destination: string;
+}
+
+declare global {
+  interface Window {
+    __ZINNIA_EXTRACT__?: InjectedExtractSession;
+  }
+}
+
 function $(id: string): HTMLElement {
   const el = document.getElementById(id);
   if (!el) throw new Error(`#${id} not found`);
@@ -33,6 +43,18 @@ function $(id: string): HTMLElement {
 function basename(filePath: string): string {
   const sep = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
   return sep >= 0 ? filePath.slice(sep + 1) : filePath;
+}
+
+/** Strip noisy progress junk so status never flashes missing-glyph boxes. */
+export function sanitizeStatusFileName(name: string): string {
+  const cleaned = name
+    .replace(/[\u0000-\u001F\u007F-\u009F\uFEFF\uFFFD]/g, "")
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2064]/g, "")
+    .trim();
+  if (!cleaned) return "";
+  const match = cleaned.match(/[\p{L}\p{N}._~]/u);
+  if (!match || match.index === undefined) return "";
+  return cleaned.slice(match.index).trim();
 }
 
 function withPassword(args: string[], password: string): string[] {
@@ -46,12 +68,27 @@ function withPassword(args: string[], password: string): string[] {
   ];
 }
 
+function readInjectedExtractSession(): InjectedExtractSession | null {
+  const injected = window.__ZINNIA_EXTRACT__;
+  if (
+    !injected ||
+    typeof injected.archive !== "string" ||
+    !injected.archive ||
+    typeof injected.destination !== "string" ||
+    !injected.destination
+  ) {
+    return null;
+  }
+  return injected;
+}
+
 async function runWithPasswordRetry(args: string[]): Promise<Run7zResult> {
   let result = await invoke<Run7zResult>("run_7z", { args });
   if (
     result.code > 1 &&
     looksLikePasswordRequiredError(result.stdout ?? "", result.stderr ?? "")
   ) {
+    const { promptInput } = await import("./prompt-modal");
     const password = await promptInput({
       title: "Password required",
       label: "This archive is encrypted. Enter password:",
@@ -282,8 +319,46 @@ async function run() {
 
   startIndeterminateProgress();
   setButtons(true, false, false);
-  const paths = await invoke<string[]>("get_extract_paths");
-  const archivePath = paths[0];
+
+  const injected = readInjectedExtractSession();
+  // Drain the backend queue even when the session was injected at window create.
+  const claimPaths = invoke<string[]>("get_extract_paths");
+
+  let archivePath = injected?.archive ?? "";
+  destination =
+    injected?.destination ||
+    (archivePath
+      ? deriveExtractDestinationPath(archivePath) || parentDir(archivePath)
+      : "");
+
+  if (injected) {
+    $("archive-name").textContent = basename(archivePath);
+    $("archive-name").title = archivePath;
+    $("extract-dest").textContent = destination;
+    $("extract-dest").title = destination;
+    $("extract-status").textContent = "Starting extraction...";
+    $("extract-error").hidden = true;
+    // Claim is only needed to drain queue ownership; do not block extract start.
+    void claimPaths.catch(() => {});
+  } else {
+    const paths = await claimPaths;
+    archivePath = paths[0] ?? "";
+    if (!archivePath) {
+      $("extract-status").textContent = "No archive specified.";
+      stopProgressAt(0, false);
+      setButtons(false, false, true);
+      operationFinished = true;
+      return;
+    }
+    destination =
+      deriveExtractDestinationPath(archivePath) || parentDir(archivePath);
+    $("archive-name").textContent = basename(archivePath);
+    $("archive-name").title = archivePath;
+    $("extract-dest").textContent = destination;
+    $("extract-dest").title = destination;
+    $("extract-status").textContent = "Starting extraction...";
+    $("extract-error").hidden = true;
+  }
 
   if (!archivePath) {
     $("extract-status").textContent = "No archive specified.";
@@ -293,23 +368,16 @@ async function run() {
     return;
   }
 
-  destination =
-    deriveExtractDestinationPath(archivePath) || parentDir(archivePath);
-
-  $("archive-name").textContent = basename(archivePath);
-  $("archive-name").title = archivePath;
-  $("extract-dest").textContent = destination;
-  $("extract-dest").title = destination;
-  $("extract-status").textContent = "Starting extraction...";
-  $("extract-error").hidden = true;
-
   let sawStructuredPercent = false;
 
   const startedAt = Date.now();
   let lastFile = "";
 
-  const [unlistenStructured, unlistenRaw] = await Promise.all([
-    listen<ProgressUpdate>("7z-progress-structured", (event) => {
+  // Register progress listeners without awaiting confirmation before run_7z —
+  // backend prepare time usually dwarfs listener registration.
+  const structuredListen = listen<ProgressUpdate>(
+    "7z-progress-structured",
+    (event) => {
       const update = event.payload;
       if (update?.currentFile === "Finalizing…") {
         sawStructuredPercent = true;
@@ -324,28 +392,26 @@ async function run() {
         eta = formatEta(Date.now() - startedAt, update.percent);
       }
       if (update?.currentFile) {
-        lastFile = basename(update.currentFile);
+        const clean = sanitizeStatusFileName(basename(update.currentFile));
+        if (clean) lastFile = clean;
       }
       const label = lastFile ? `Extracting ${lastFile}...` : "Extracting...";
       $("extract-status").textContent = eta ? `${label}  ${eta}` : label;
-    }),
-    listen<string>("7z-progress", (event) => {
-      if (sawStructuredPercent) return;
-      const chunk = typeof event.payload === "string" ? event.payload : "";
-      for (const line of chunk.split(/[\r\n]+/)) {
-        const match = line.trim().match(/^-\s+(.+)/);
-        if (match?.[1]) {
-          $("extract-status").textContent =
-            `Extracting ${basename(match[1])}...`;
-        }
+    },
+  );
+  const rawListen = listen<string>("7z-progress", (event) => {
+    if (sawStructuredPercent) return;
+    const chunk = typeof event.payload === "string" ? event.payload : "";
+    for (const line of chunk.split(/[\r\n]+/)) {
+      const match = line.trim().match(/^-\s+(.+)/);
+      if (match?.[1]) {
+        const clean = sanitizeStatusFileName(basename(match[1]));
+        if (!clean) continue;
+        lastFile = clean;
+        $("extract-status").textContent = `Extracting ${clean}...`;
       }
-    }),
-  ]);
-
-  const unlistenProgress = () => {
-    unlistenStructured();
-    unlistenRaw();
-  };
+    }
+  });
 
   $("extract-status").textContent = "Extracting...";
 
@@ -361,7 +427,12 @@ async function run() {
 
   try {
     const result = await runWithPasswordRetry(args);
-    unlistenProgress();
+    const [unlistenStructured, unlistenRaw] = await Promise.all([
+      structuredListen,
+      rawListen,
+    ]);
+    unlistenStructured();
+    unlistenRaw();
 
     if (cancelRequested) {
       finish("Cancelled", 100, false, false, true);
@@ -384,7 +455,16 @@ async function run() {
       }
     }, 1200);
   } catch (err) {
-    unlistenProgress();
+    try {
+      const [unlistenStructured, unlistenRaw] = await Promise.all([
+        structuredListen,
+        rawListen,
+      ]);
+      unlistenStructured();
+      unlistenRaw();
+    } catch {
+      // Listener registration failed; nothing to tear down.
+    }
     if (cancelRequested) {
       finish("Cancelled", 100, false, false, true);
       return;

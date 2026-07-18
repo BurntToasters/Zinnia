@@ -46,6 +46,10 @@ export interface UserSettings {
   workspaceMode: WorkspaceMode;
   uiDensity: UiDensity;
   osIntegrationDismissed: boolean;
+  /** Keep process resident after quick-extract so the next file-open is warm. */
+  quickExtractKeepWarm: boolean;
+  /** Idle minutes before warm-resident quick-extract exits (5/10/30/60). */
+  quickExtractWarmIdleMinutes: number;
   customPresets: CustomPreset[];
   powerWindowWidth: number;
   powerWindowHeight: number;
@@ -81,6 +85,8 @@ export const SETTING_DEFAULTS: UserSettings = {
   workspaceMode: "basic",
   uiDensity: "comfortable",
   osIntegrationDismissed: false,
+  quickExtractKeepWarm: true,
+  quickExtractWarmIdleMinutes: 10,
   customPresets: [],
   powerWindowWidth: 1100,
   powerWindowHeight: 720,
@@ -224,11 +230,27 @@ const USER_SETTING_KEYS = new Set<keyof UserSettings>([
   "workspaceMode",
   "uiDensity",
   "osIntegrationDismissed",
+  "quickExtractKeepWarm",
+  "quickExtractWarmIdleMinutes",
   "customPresets",
   "powerWindowWidth",
   "powerWindowHeight",
   "setupComplete",
 ]);
+
+const WARM_IDLE_MINUTES = new Set([5, 10, 30, 60]);
+
+function asWarmIdleMinutes(value: unknown, fallback: number): number {
+  const n =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number(value)
+        : NaN;
+  if (!Number.isFinite(n)) return fallback;
+  const rounded = Math.round(n);
+  return WARM_IDLE_MINUTES.has(rounded) ? rounded : fallback;
+}
 
 const MAX_CUSTOM_PRESETS = 50;
 
@@ -344,6 +366,14 @@ export function normalizeUserSettings(
     osIntegrationDismissed: asBoolean(
       settings.osIntegrationDismissed,
       fallback.osIntegrationDismissed,
+    ),
+    quickExtractKeepWarm: asBoolean(
+      settings.quickExtractKeepWarm,
+      fallback.quickExtractKeepWarm,
+    ),
+    quickExtractWarmIdleMinutes: asWarmIdleMinutes(
+      settings.quickExtractWarmIdleMinutes,
+      fallback.quickExtractWarmIdleMinutes,
     ),
     customPresets: asCustomPresets(
       settings.customPresets,
