@@ -200,6 +200,7 @@ describe("readSettingsModal", () => {
     setChecked("s-os-integration-dismissed", true);
     setChecked("s-quick-extract-keep-warm", false);
     setSelectValue("s-quick-extract-warm-idle", "30");
+    setChecked("s-basic-window-effects", true);
 
     const settings = readSettingsModal();
     expect(settings.theme).toBe("dark");
@@ -223,6 +224,7 @@ describe("readSettingsModal", () => {
     expect(settings.osIntegrationDismissed).toBe(true);
     expect(settings.quickExtractKeepWarm).toBe(false);
     expect(settings.quickExtractWarmIdleMinutes).toBe(30);
+    expect(settings.basicWindowEffects).toBe(true);
   });
 
   it("disables encryptHeaders for formats that don't support it", () => {

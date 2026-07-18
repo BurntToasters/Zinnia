@@ -50,6 +50,11 @@ export interface UserSettings {
   quickExtractKeepWarm: boolean;
   /** Idle minutes before warm-resident quick-extract exits (5/10/30/60). */
   quickExtractWarmIdleMinutes: number;
+  /**
+   * macOS/Windows: translucent Basic window with OS-native blur.
+   * Ignored on Linux (Basic stays opaque).
+   */
+  basicWindowEffects: boolean;
   customPresets: CustomPreset[];
   powerWindowWidth: number;
   powerWindowHeight: number;
@@ -89,6 +94,7 @@ export const SETTING_DEFAULTS: UserSettings = {
   // Opt in via Settings for faster subsequent file-association opens.
   quickExtractKeepWarm: false,
   quickExtractWarmIdleMinutes: 10,
+  basicWindowEffects: true,
   customPresets: [],
   powerWindowWidth: 1100,
   powerWindowHeight: 720,
@@ -234,6 +240,7 @@ const USER_SETTING_KEYS = new Set<keyof UserSettings>([
   "osIntegrationDismissed",
   "quickExtractKeepWarm",
   "quickExtractWarmIdleMinutes",
+  "basicWindowEffects",
   "customPresets",
   "powerWindowWidth",
   "powerWindowHeight",
@@ -376,6 +383,10 @@ export function normalizeUserSettings(
     quickExtractWarmIdleMinutes: asWarmIdleMinutes(
       settings.quickExtractWarmIdleMinutes,
       fallback.quickExtractWarmIdleMinutes,
+    ),
+    basicWindowEffects: asBoolean(
+      settings.basicWindowEffects,
+      fallback.basicWindowEffects,
     ),
     customPresets: asCustomPresets(
       settings.customPresets,

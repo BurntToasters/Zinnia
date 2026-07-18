@@ -63,6 +63,10 @@
   gap: var(--basic-spacing);
 }
 
+#basic-home.is-active {
+  justify-content: flex-start;
+}
+
 #app[data-workspace-mode="basic"] .basic-view.is-active {
   display: flex;
 }
@@ -95,22 +99,91 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 12px 0 4px;
+  gap: 8px;
+  padding: 8px 0 2px;
+  text-align: center;
+}
+
+.basic-home__mark {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.22));
+  animation: basic-mark-in 420ms ease both;
+}
+
+@keyframes basic-mark-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .basic-home__mark {
+    animation: none;
+  }
 }
 
 .basic-home__title {
-  font-size: 1.375rem;
-  font-weight: 600;
+  font-size: 1.5rem;
+  font-weight: 650;
   margin: 0;
   color: var(--text);
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
 }
 
 .basic-home__subtitle {
   font-size: var(--basic-font);
   color: var(--text-secondary);
   margin: 0;
+  max-width: 28ch;
+  line-height: 1.4;
+}
+
+.basic-home__secondary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 2px 0 4px;
+}
+
+.basic-home__link {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--basic-font);
+  font-weight: 560;
+  padding: 6px 4px;
+  border-radius: 6px;
+  transition:
+    color var(--transition),
+    background var(--transition);
+}
+
+.basic-home__link:hover {
+  color: var(--accent-hover);
+  background: var(--accent-bg);
+}
+
+.basic-home__link:disabled,
+.basic-home__link.is-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.basic-home__sep {
+  color: var(--text-secondary);
+  opacity: 0.55;
+  user-select: none;
 }
 
 .basic-dropzone {
@@ -118,18 +191,20 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  min-height: 190px;
-  padding: 40px 20px;
+  gap: 14px;
+  flex: 1 1 auto;
+  min-height: 240px;
+  padding: 48px 24px;
   border: 2px dashed var(--border-strong);
-  border-radius: var(--basic-radius);
+  border-radius: calc(var(--basic-radius) + 4px);
   background: var(--surface);
   cursor: pointer;
   box-shadow: inset 0 2px 4px var(--shadow);
   transition:
     border-color var(--transition),
     background var(--transition),
-    box-shadow var(--transition);
+    box-shadow var(--transition),
+    transform var(--transition);
 }
 
 .basic-dropzone:hover {
@@ -1589,8 +1664,17 @@ body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
    IYERIS V3 INSPIRED GLASSMORPHISM & NATIVE LOOK & FEEL
    ========================================================================== */
 
-/* 1. Glassmorphism Tokens and Definitions */
+/* 1. Basic brand + glass tokens (Power keeps global --accent) */
 #app[data-workspace-mode="basic"] {
+  --accent: #e25a4a;
+  --accent-hover: #ef6d5c;
+  --accent-bg: rgba(226, 90, 74, 0.14);
+  --accent-bg-strong: rgba(226, 90, 74, 0.22);
+  --accent-pressed: #c44738;
+  --accent-shadow: rgba(226, 90, 74, 0.28);
+  --accent-shadow-hover: rgba(226, 90, 74, 0.4);
+  --drag-bg: rgba(226, 90, 74, 0.1);
+  --drag-shadow: rgba(226, 90, 74, 0.16);
   --basic-glass-bg: color-mix(in srgb, var(--surface) 64%, transparent);
   --basic-glass-blur: 24px;
   --basic-glass-saturate: 145%;
@@ -1600,10 +1684,23 @@ body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
 }
 
 [data-theme="light"] #app[data-workspace-mode="basic"] {
+  --accent: #d14a3b;
+  --accent-hover: #e25a4a;
+  --accent-bg: rgba(209, 74, 59, 0.1);
+  --accent-bg-strong: rgba(209, 74, 59, 0.16);
+  --accent-pressed: #b13c2f;
+  --accent-shadow: rgba(209, 74, 59, 0.18);
+  --accent-shadow-hover: rgba(209, 74, 59, 0.28);
   --basic-glass-bg: rgba(255, 255, 255, 0.72);
   --basic-glass-border: rgba(0, 0, 0, 0.08);
   --basic-glass-shadow:
-    0 8px 24px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    0 8px 24px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+/* Opaque Basic (Linux / effects off): solid surfaces, no desktop bleed */
+html[data-window-fx="opaque"] #app[data-workspace-mode="basic"],
+html:not([data-window-fx]) #app[data-workspace-mode="basic"] {
+  background: var(--bg);
 }
 
 /* 2. Custom Sleek Scrollbars */
@@ -1635,6 +1732,7 @@ body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
 #app[data-workspace-mode="basic"] label,
 #app[data-workspace-mode="basic"] [role="button"],
 #app[data-workspace-mode="basic"] .basic-action-card,
+#app[data-workspace-mode="basic"] .basic-home__link,
 #app[data-workspace-mode="basic"] .basic-dropzone,
 #app[data-workspace-mode="basic"] .basic-preset-pill,
 #app[data-workspace-mode="basic"] .settings-tab,
@@ -1681,7 +1779,12 @@ body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
   border-color: var(--accent) !important;
   box-shadow:
     var(--basic-glass-shadow),
-    0 0 0 3px rgba(0, 120, 212, 0.15) !important;
+    0 0 0 3px var(--accent-shadow) !important;
+}
+
+html[data-window-fx="basic"] #app[data-workspace-mode="basic"] .basic-dropzone {
+  border-width: 2px !important;
+  border-style: dashed !important;
 }
 
 #app[data-workspace-mode="basic"] .basic-action-card {
@@ -1731,7 +1834,7 @@ body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
   border-color: var(--accent) !important;
   box-shadow:
     var(--basic-glass-shadow),
-    0 0 0 3px rgba(0, 120, 212, 0.25) !important;
+    0 0 0 3px var(--accent-shadow) !important;
 }
 
 /* 5. Glassmorphism Settings overlay */

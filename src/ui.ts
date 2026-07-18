@@ -353,6 +353,31 @@ export function setWorkspaceMode(
   }
 
   void resizeWorkspaceWindow(mode);
+  void syncWorkspaceWindowFx();
+}
+
+/** Native Basic glass on macOS/Windows; Linux and Power stay visually opaque. */
+export async function syncWorkspaceWindowFx(): Promise<void> {
+  let supports = false;
+  try {
+    supports = await invoke<boolean>("supports_workspace_window_fx");
+  } catch {
+    supports = false;
+  }
+
+  const enabled =
+    supports &&
+    getWorkspaceMode() === "basic" &&
+    state.currentSettings.basicWindowEffects;
+
+  document.documentElement.dataset.windowFx = enabled ? "basic" : "opaque";
+
+  try {
+    await invoke("set_workspace_window_fx", { enabled });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    devLog(`Unable to update workspace window effects: ${msg}`);
+  }
 }
 
 export function getUiDensity(): UiDensity {

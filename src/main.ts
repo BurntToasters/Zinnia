@@ -84,6 +84,7 @@ import {
   setStatus,
   registerIconRefreshHook,
   resizeWorkspaceWindow,
+  syncWorkspaceWindowFx,
 } from "./ui";
 import {
   runAction,
@@ -724,6 +725,7 @@ function wireEvents() {
     }
     applyTheme(state.currentSettings.theme);
     setWorkspaceMode(state.currentSettings.workspaceMode, { persist: false });
+    void syncWorkspaceWindowFx();
     if (
       state.currentSettings.workspaceMode === "basic" &&
       previous.workspaceMode !== "basic"

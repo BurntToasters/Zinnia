@@ -100,8 +100,15 @@ export function populateSettingsModal() {
   $<HTMLSelectElement>("s-quick-extract-warm-idle").value = String(
     state.currentSettings.quickExtractWarmIdleMinutes,
   );
+  const basicFx = document.getElementById(
+    "s-basic-window-effects",
+  ) as HTMLInputElement | null;
+  if (basicFx) {
+    basicFx.checked = state.currentSettings.basicWindowEffects;
+  }
   syncQuickExtractWarmIdleControl();
   syncSettingsSecurityControlsForFormat(state.currentSettings.format);
+  void syncBasicWindowEffectsVisibility();
 
   const logDir = document.getElementById("s-log-dir");
   if (logDir) {
@@ -163,6 +170,12 @@ export function readSettingsModal(): UserSettings {
       $<HTMLSelectElement>("s-quick-extract-warm-idle").value,
       SETTING_DEFAULTS.quickExtractWarmIdleMinutes,
     ),
+    basicWindowEffects: (() => {
+      const el = document.getElementById(
+        "s-basic-window-effects",
+      ) as HTMLInputElement | null;
+      return el ? el.checked : state.currentSettings.basicWindowEffects;
+    })(),
     customPresets: state.currentSettings.customPresets,
     powerWindowWidth: state.currentSettings.powerWindowWidth,
     powerWindowHeight: state.currentSettings.powerWindowHeight,
@@ -179,6 +192,18 @@ function parseWarmIdleMinutes(raw: string, fallback: number): number {
 export function syncQuickExtractWarmIdleControl(): void {
   const enabled = $<HTMLInputElement>("s-quick-extract-keep-warm").checked;
   $<HTMLSelectElement>("s-quick-extract-warm-idle").disabled = !enabled;
+}
+
+export async function syncBasicWindowEffectsVisibility(): Promise<void> {
+  const row = document.getElementById("setting-basic-window-effects");
+  if (!row) return;
+  let supports = false;
+  try {
+    supports = await invoke<boolean>("supports_workspace_window_fx");
+  } catch {
+    supports = false;
+  }
+  row.hidden = !supports;
 }
 
 export function openSettingsModal() {

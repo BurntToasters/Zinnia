@@ -561,10 +561,22 @@
           "markdownDescription": "Enables the save_settings command without any pre-configured scope."
         },
         {
+          "description": "Enables the set_workspace_window_fx command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-workspace-window-fx",
+          "markdownDescription": "Enables the set_workspace_window_fx command without any pre-configured scope."
+        },
+        {
           "description": "Enables the set_zinnia_default_archiver command without any pre-configured scope.",
           "type": "string",
           "const": "allow-set-zinnia-default-archiver",
           "markdownDescription": "Enables the set_zinnia_default_archiver command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the supports_workspace_window_fx command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-supports-workspace-window-fx",
+          "markdownDescription": "Enables the supports_workspace_window_fx command without any pre-configured scope."
         },
         {
           "description": "Enables the validate_archive_paths command without any pre-configured scope.",
@@ -747,10 +759,22 @@
           "markdownDescription": "Denies the save_settings command without any pre-configured scope."
         },
         {
+          "description": "Denies the set_workspace_window_fx command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-workspace-window-fx",
+          "markdownDescription": "Denies the set_workspace_window_fx command without any pre-configured scope."
+        },
+        {
           "description": "Denies the set_zinnia_default_archiver command without any pre-configured scope.",
           "type": "string",
           "const": "deny-set-zinnia-default-archiver",
           "markdownDescription": "Denies the set_zinnia_default_archiver command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the supports_workspace_window_fx command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-supports-workspace-window-fx",
+          "markdownDescription": "Denies the supports_workspace_window_fx command without any pre-configured scope."
         },
         {
           "description": "Denies the validate_archive_paths command without any pre-configured scope.",

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-supports-workspace-window-fx"
+description = "Enables the supports_workspace_window_fx command without any pre-configured scope."
+commands.allow = ["supports_workspace_window_fx"]
+
+[[permission]]
+identifier = "deny-supports-workspace-window-fx"
+description = "Denies the supports_workspace_window_fx command without any pre-configured scope."
+commands.deny = ["supports_workspace_window_fx"]

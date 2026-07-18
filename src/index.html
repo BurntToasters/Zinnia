@@ -304,6 +304,29 @@
                   </select>
                 </div>
 
+                <div
+                  class="setting-item"
+                  id="setting-basic-window-effects"
+                  hidden
+                >
+                  <div class="setting-info">
+                    <span class="setting-title" id="title-basic-window-effects"
+                      >Translucent Basic window</span
+                    >
+                    <span class="setting-desc"
+                      >Let the desktop show through Basic mode with a soft blur
+                      (macOS and Windows). Uses a little more GPU.</span
+                    >
+                  </div>
+                  <label
+                    class="switch"
+                    aria-labelledby="title-basic-window-effects"
+                  >
+                    <input type="checkbox" id="s-basic-window-effects" />
+                    <span class="switch__track"></span>
+                  </label>
+                </div>
+
                 <div class="setting-item">
                   <div class="setting-info">
                     <span class="setting-title" id="title-ui-density"
@@ -1219,9 +1242,17 @@
 
           <div id="basic-home" class="basic-view is-active">
             <div class="basic-home__hero">
-              <h2 class="basic-home__title">Drop something here</h2>
+              <img
+                class="basic-home__mark"
+                src="/zinnia_default-logo.png"
+                width="48"
+                height="48"
+                alt=""
+                aria-hidden="true"
+              />
+              <h2 class="basic-home__title">Drop a file here</h2>
               <p class="basic-home__subtitle">
-                Zinnia will open archives or compress regular files.
+                Open a zip, or make a new one — Zinnia handles the rest.
               </p>
             </div>
             <div
@@ -1237,30 +1268,25 @@
                 </span>
               </span>
               <span class="basic-dropzone__text">
-                <strong id="basic-dropzone-title"
-                  >Drop files or archives</strong
-                >
+                <strong id="basic-dropzone-title">Drop files here</strong>
                 <span id="basic-dropzone-subtitle">or click to choose</span>
               </span>
             </div>
-            <div class="basic-action-cards">
-              <button class="basic-action-card" id="basic-action-open">
-                <span class="basic-action-card__icon">
-                  <i data-lucide="folder" class="lucide-icon"></i>
-                </span>
-                <span class="basic-action-card__label">Open archive</span>
-                <span class="basic-action-card__desc"
-                  >Browse contents or extract all</span
-                >
+            <div class="basic-home__secondary">
+              <button
+                type="button"
+                class="basic-home__link"
+                id="basic-action-open"
+              >
+                Open a zip
               </button>
-              <button class="basic-action-card" id="basic-action-compress">
-                <span class="basic-action-card__icon">
-                  <i data-lucide="package" class="lucide-icon"></i>
-                </span>
-                <span class="basic-action-card__label">Compress files</span>
-                <span class="basic-action-card__desc"
-                  >Create a new archive from files or folders</span
-                >
+              <span class="basic-home__sep" aria-hidden="true">·</span>
+              <button
+                type="button"
+                class="basic-home__link"
+                id="basic-action-compress"
+              >
+                Make a zip
               </button>
             </div>
             <div class="basic-recent" id="basic-recent" hidden>
@@ -1273,9 +1299,9 @@
             <div class="basic-view-scroll-content">
               <div class="basic-view-header">
                 <div>
-                  <h2 class="basic-section-title">Compress files</h2>
+                  <h2 class="basic-section-title">Make a zip</h2>
                   <p class="basic-section-subtitle">
-                    Pick sources, confirm save location, then compress.
+                    Pick what to include, choose where to save, then go.
                   </p>
                 </div>
               </div>
@@ -1527,7 +1553,7 @@
             <div class="basic-view-scroll-content">
               <div class="basic-view-header">
                 <div>
-                  <h2 class="basic-section-title">Open archive</h2>
+                  <h2 class="basic-section-title">Open a zip</h2>
                   <p class="basic-section-subtitle">
                     Browse contents or extract everything.
                   </p>

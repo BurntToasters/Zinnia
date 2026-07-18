@@ -44,6 +44,7 @@ const mocks = vi.hoisted(() => {
       triggerIconRefresh: vi.fn(),
       registerIconRefreshHook: vi.fn(),
       resizeWorkspaceWindow: vi.fn().mockResolvedValue(undefined),
+      syncWorkspaceWindowFx: vi.fn().mockResolvedValue(undefined),
     },
     archive: {
       runAction: vi.fn().mockResolvedValue(undefined),
@@ -143,6 +144,7 @@ vi.mock("../ui", () => ({
   triggerIconRefresh: mocks.ui.triggerIconRefresh,
   registerIconRefreshHook: mocks.ui.registerIconRefreshHook,
   resizeWorkspaceWindow: mocks.ui.resizeWorkspaceWindow,
+  syncWorkspaceWindowFx: mocks.ui.syncWorkspaceWindowFx,
 }));
 
 vi.mock("../archive", () => ({
@@ -503,6 +505,8 @@ beforeEach(async () => {
   mocks.ui.persistSettingsImmediately.mockReset();
   mocks.ui.persistSettingsImmediately.mockResolvedValue(undefined);
   mocks.ui.resizeWorkspaceWindow.mockReset();
+  mocks.ui.syncWorkspaceWindowFx.mockReset();
+  mocks.ui.syncWorkspaceWindowFx.mockResolvedValue(undefined);
   mocks.ui.resizeWorkspaceWindow.mockResolvedValue(undefined);
 
   mocks.archive.runAction.mockReset();

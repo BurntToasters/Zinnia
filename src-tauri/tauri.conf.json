@@ -10,6 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "create": false,
@@ -20,6 +21,7 @@
         "minHeight": 400,
         "resizable": true,
         "visible": false,
+        "transparent": true,
         "titleBarStyle": "Overlay"
       }
     ],

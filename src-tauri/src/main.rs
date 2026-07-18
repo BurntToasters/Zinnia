@@ -12,6 +12,7 @@ mod progress;
 mod settings_store;
 mod tempdir;
 mod validation;
+mod window_fx;
 
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
@@ -253,7 +254,9 @@ fn main() {
             platform::is_flatpak,
             platform::is_packaged,
             tempdir::create_temp_extract_dir,
-            tempdir::remove_managed_temp_dir
+            tempdir::remove_managed_temp_dir,
+            window_fx::set_workspace_window_fx,
+            window_fx::supports_workspace_window_fx
         ])
         .build(tauri::generate_context!())
         .expect("failed to initialize Tauri application");
