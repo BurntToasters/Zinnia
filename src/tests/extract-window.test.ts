@@ -196,12 +196,42 @@ describe("extract-window", () => {
     vi.advanceTimersByTime(1201);
     await flushAsync();
 
+    expect(invokeMock).toHaveBeenCalledWith("register_extract_open_path", {
+      path: "/tmp/archive",
+    });
     expect(invokeMock).toHaveBeenCalledWith("open_path", {
       path: "/tmp/archive",
     });
     expect(
       invokeMock.mock.calls.some(([name]) => name === "close_extract_window"),
     ).toBe(false);
+  });
+
+  it("cancels a running extraction via cancel_7z", async () => {
+    let resolveRun: ((value: unknown) => void) | null = null;
+    const { invokeMock } = await setupAndRun(async (cmd) => {
+      if (cmd === "get_extract_paths") return ["/tmp/archive.7z"];
+      if (cmd === "run_7z") {
+        return await new Promise((resolve) => {
+          resolveRun = resolve;
+        });
+      }
+      if (cmd === "cancel_7z") {
+        resolveRun?.({ stdout: "", stderr: "", code: -1 });
+        return undefined;
+      }
+      return undefined;
+    });
+
+    expect(
+      (document.getElementById("cancel-btn") as HTMLButtonElement).disabled,
+    ).toBe(false);
+
+    (document.getElementById("cancel-btn") as HTMLButtonElement).click();
+    await flushAsync();
+    await flushAsync();
+
+    expect(invokeMock).toHaveBeenCalledWith("cancel_7z");
   });
 
   it("extracts opened archives into a sibling folder named after the archive", async () => {

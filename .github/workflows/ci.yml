@@ -56,6 +56,62 @@ jobs:
       - run: npm run prepare:7z
       - run: cargo test --manifest-path src-tauri/Cargo.toml
 
+  updater-manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.12
+      - run: npm run validate:updater
+
+  release-dry-run:
+    needs: quality-gate
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            sidecar: 7z-x86_64-unknown-linux-gnu
+            binary: zinnia
+          - os: macos-latest
+            sidecar: 7z-aarch64-apple-darwin
+            binary: zinnia
+          - os: windows-latest
+            sidecar: 7z-x86_64-pc-windows-msvc.exe
+            binary: zinnia.exe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.12
+          cache: npm
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: stable
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+      - run: npm ci
+      - run: npm run sync-version
+      - run: npm run prepare:7z
+      - run: npm run licenses
+      - run: npm run build
+      - name: Unsigned tauri build (no bundle)
+        run: npx tauri build --no-bundle
+      - name: Verify host sidecar and release binary
+        shell: bash
+        run: |
+          test -e "src-tauri/binaries/${{ matrix.sidecar }}"
+          test -e "src-tauri/target/release/${{ matrix.binary }}"
+
   security-audit:
     runs-on: ubuntu-latest
     steps:

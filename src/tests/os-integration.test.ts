@@ -7,7 +7,11 @@ import {
   runDefaultArchiverAction,
   resetPreferredArchiverToSystem,
   setZinniaDefaultArchiver,
+  wireOsIntegrationEvents,
 } from "../os-integration";
+import { message } from "@tauri-apps/plugin-dialog";
+
+const messageMock = vi.mocked(message);
 
 const invokeMock = vi.mocked(invoke);
 
@@ -297,5 +301,79 @@ describe("OS integration UI", () => {
       "reset_preferred_archiver_to_system",
     );
     expect(invokeMock).toHaveBeenNthCalledWith(2, "get_os_integration_status");
+  });
+
+  it("surfaces reset failures and unchanged system results", async () => {
+    messageMock.mockClear();
+    invokeMock.mockRejectedValueOnce(new Error("xdg-mime failed"));
+
+    await resetPreferredArchiverToSystem();
+
+    expect(messageMock).toHaveBeenCalledWith(
+      "xdg-mime failed",
+      expect.objectContaining({ title: "System archive app", kind: "warning" }),
+    );
+
+    invokeMock.mockResolvedValueOnce({
+      platform: "linux",
+      changed: false,
+      message: "nothing changed",
+      results: [
+        {
+          key: "zip",
+          label: "ZIP",
+          extension: "zip",
+          mimeType: "application/zip",
+          currentHandler: "other.desktop",
+          isDefault: false,
+          canChange: true,
+          status: "Other",
+        },
+      ],
+    });
+    invokeMock.mockResolvedValueOnce({
+      platform: "linux",
+      packaged: true,
+      fileAssociationsKnown: false,
+      contextActionsKnown: false,
+      defaultAppHelpAvailable: true,
+      defaultArchiverActionAvailable: true,
+      defaultArchiverActionLabel: "Make Zinnia Default",
+      defaultArchiverHelp: "help",
+      archiveDefaults: [],
+    });
+
+    await resetPreferredArchiverToSystem();
+
+    expect(messageMock).toHaveBeenCalledWith(
+      "nothing changed",
+      expect.objectContaining({ kind: "warning" }),
+    );
+  });
+
+  it("wires refresh/default/reset buttons", async () => {
+    invokeMock.mockResolvedValue({
+      platform: "linux",
+      packaged: true,
+      fileAssociationsKnown: false,
+      contextActionsKnown: false,
+      defaultAppHelpAvailable: true,
+      defaultArchiverActionAvailable: true,
+      defaultArchiverActionLabel: "Make Zinnia Default",
+      defaultArchiverHelp: "help",
+      archiveDefaults: [],
+    });
+
+    wireOsIntegrationEvents();
+
+    (
+      document.getElementById(
+        "refresh-os-integration-status",
+      ) as HTMLButtonElement
+    ).click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(invokeMock).toHaveBeenCalledWith("get_os_integration_status");
   });
 });

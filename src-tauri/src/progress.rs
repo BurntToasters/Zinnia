@@ -1,4 +1,5 @@
-//! Parse 7z stdout progress lines, e.g. ` 23% 5 + path/file.txt`, ` 45%`.
+//! Parse 7z stdout progress lines, e.g. ` 23% 5 + path/file.txt`, ` 45%`,
+//! `Progress: 45%`, `Total percent: 80%`.
 
 #[derive(serde::Serialize, Clone, Debug, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -22,18 +23,10 @@ pub fn parse_progress_line(line: &str) -> Option<ProgressUpdate> {
         .unwrap_or("")
         .trim_start();
 
-    let percent_end = segment.find('%')?;
-    let percent_str = segment[..percent_end].trim();
-    if percent_str.is_empty() || !percent_str.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    let percent: u16 = percent_str.parse().ok()?;
-    if percent > 100 {
-        return None;
-    }
+    let (percent, percent_end) = find_percent_token(segment)?;
 
     let mut update = ProgressUpdate {
-        percent: Some(percent as u8),
+        percent: Some(percent),
         ..Default::default()
     };
 
@@ -46,6 +39,31 @@ pub fn parse_progress_line(line: &str) -> Option<ProgressUpdate> {
     } else {
         Some(update)
     }
+}
+
+/// Locate the first valid `0…100%` token (supports `Progress: 45%` prefixes).
+fn find_percent_token(segment: &str) -> Option<(u8, usize)> {
+    let bytes = segment.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit() {
+            let start = i;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            if i < bytes.len() && bytes[i] == b'%' {
+                let percent_str = &segment[start..i];
+                if let Ok(percent) = percent_str.parse::<u16>() {
+                    if percent <= 100 {
+                        return Some((percent as u8, i));
+                    }
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
+    None
 }
 
 fn parse_files_done<'a>(rest: &'a str, update: &mut ProgressUpdate) -> &'a str {
@@ -102,6 +120,14 @@ mod tests {
         assert_eq!(u.percent, Some(45));
         assert_eq!(u.files_done, None);
         assert_eq!(u.current_file, None);
+    }
+
+    #[test]
+    fn parses_progress_label_shapes() {
+        let u = parse_progress_line("Progress: 45%").expect("should parse");
+        assert_eq!(u.percent, Some(45));
+        let u = parse_progress_line("Total percent: 80%").expect("should parse");
+        assert_eq!(u.percent, Some(80));
     }
 
     #[test]

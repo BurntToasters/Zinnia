@@ -188,6 +188,28 @@ describe("describe7zError", () => {
     expect(describe7zError("", "Unsupported Method")).toMatch(/method/i);
   });
 
+  it("hints for unsupported archive open failures", () => {
+    expect(describe7zError("", "Can not open the file as archive")).toMatch(
+      /not a supported archive|corrupted/i,
+    );
+    expect(describe7zError("", "Can not open file as archive")).toMatch(
+      /not a supported archive|corrupted/i,
+    );
+  });
+
+  it("hints when a path disappeared mid-operation", () => {
+    expect(
+      describe7zError("", "The system cannot find the path specified"),
+    ).toMatch(/no longer exists/i);
+    expect(describe7zError("", "file not found")).toMatch(/no longer exists/i);
+  });
+
+  it("hints for create/permission failures", () => {
+    expect(describe7zError("", "Can not create output file")).toMatch(
+      /permission/i,
+    );
+  });
+
   it("returns empty string for unrecognized output", () => {
     expect(describe7zError("Everything is Ok", "")).toBe("");
   });

@@ -1,0 +1,15 @@
+{
+  "version": "0.5.4-beta.1",
+  "pub_date": "2026-07-17T00:00:00Z",
+  "notes": "Fixture for CI updater schema validation.",
+  "platforms": {
+    "linux-x86_64": {
+      "url": "https://github.com/BurntToasters/zinnia/releases/download/v0.5.4-beta.1/Zinnia_0.5.4-beta.1_amd64.AppImage",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZQp0ZXh0OnBsYWNlaG9sZGVyCg=="
+    },
+    "linux-x86_64-appimage": {
+      "url": "https://github.com/BurntToasters/zinnia/releases/download/v0.5.4-beta.1/Zinnia_0.5.4-beta.1_amd64.AppImage",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZQp0ZXh0OnBsYWNlaG9sZGVyCg=="
+    }
+  }
+}

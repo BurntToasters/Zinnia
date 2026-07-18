@@ -1,14 +1,14 @@
-<!-- > [!NOTE]
-> 🅱️ This is a Beta build. -->
+> [!NOTE]
+> 🅱️ This is a Beta build.
 
 # ⬇️ Downloads
 
 | <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux |
 | :--- | :--- | :--- |
-| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.3/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.3/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.3/Zinnia-macOS.dmg)** | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.3/Zinnia-Linux-x64.AppImage) |
-| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>--> | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.3/Zinnia-macOS.zip)** | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.3/Zinnia-Linux-x64.deb) |
-| <!--*See MSI note below*--> | | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.3/Zinnia-Linux-x64.rpm) |
-| | | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.3/Zinnia-Linux-x64.flatpak) |
+| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.1/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.1/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.1/Zinnia-macOS.dmg)** | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.1/Zinnia-Linux-x64.AppImage) |
+| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>--> | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.1/Zinnia-macOS.zip)** | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.1/Zinnia-Linux-x64.deb) |
+| <!--*See MSI note below*--> | | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.1/Zinnia-Linux-x64.rpm) |
+| | | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.1/Zinnia-Linux-x64.flatpak) |
 
 > [!IMPORTANT]
 The `.sig` files in this repo are NOT normal gpg signatures they are for Tauri V2's updater to verify the integrity of updates before downloading and installing.
@@ -18,6 +18,19 @@ The `.asc` files are my normal GPG signatures which you can verify using my GPG 
 ### ℹ️ Enjoying Zinnia? Consider [❤️ Supporting Me! ❤️](https://rosie.run/support)
 
 Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
+
+## Changes in `v0.5.4-beta.1:`
+
+- **Security:** Hardened extract staging against Windows reparse points (junctions/cloud placeholders), not only classic symlinks.
+- **Security:** Main-window “open folder” is limited to destinations from recent successful compress/extract; extract windows bind `-o` and open-folder to the spawn-time destination.
+- **Security:** Tightened 7z extra-arg allow-lists (dropped `-ssw`, narrowed `-m*`), require a safe extract overwrite policy (`-aou`/`-aos`), and redact `-p` secrets in backend output/logs.
+- **Security:** Interrupted-transaction recovery only accepts strict `.zinnia-extract-` / `.zinnia-archive-` stage directory names.
+- **Windows:** RAR **extraction** stays disabled while bundled 7-Zip remains on `26.02` (CVE-2026-58052); browse/test for RAR remain available. File associations still omit `.rar` on Windows.
+- **Basic mode:** Compress runs force relative path mode and disable update-mode so Power-only options cannot leak into Basic.
+- **UI:** Password sync and browse/extract flows improved across Basic and Power; convert extract uses the same safe overwrite policy as other extract paths.
+- **CI:** Updater manifest JSON fixtures are schema-checked; unsigned release dry-run covers Linux, macOS, and Windows.
+- **Docs:** Clarified Flatpak filesystem access, open-folder allowlists, and the temporary Windows RAR extract restriction in `SECURITY.md`.
+- **Misc:** General bug fixes and reliability improvements around staging, cancel/close, and journal recovery.
 
 ## Changes in `v0.5.3:`
 

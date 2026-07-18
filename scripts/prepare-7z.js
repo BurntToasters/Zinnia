@@ -41,6 +41,27 @@ const mappings = [
   { source: "linux/arm64/7zzs", target: "7z-aarch64-unknown-linux-gnu" },
 ];
 
+const requireAll =
+  process.argv.includes("--all") || process.env.ZINNIA_REQUIRE_ALL_7Z === "1";
+
+function requiredSourcesForHost() {
+  if (requireAll) {
+    return [...new Set(mappings.map((m) => m.source))];
+  }
+  if (process.platform === "win32") {
+    return process.arch === "arm64"
+      ? ["win/arm64/7za.exe"]
+      : ["win/x64/7za.exe"];
+  }
+  if (process.platform === "darwin") {
+    return ["mac/7zz"];
+  }
+  if (process.platform === "linux") {
+    return process.arch === "arm64" ? ["linux/arm64/7zzs"] : ["linux/x64/7zzs"];
+  }
+  return [];
+}
+
 function runTool(command, args) {
   const result = spawnSync(command, args, { stdio: "pipe" });
   if (result.error) {
@@ -104,13 +125,27 @@ const expectedChecksums = loadChecksums();
 const regeneratedChecksums = {};
 
 let copied = 0;
+const requiredSources = new Set(requiredSourcesForHost());
+const missingRequired = [...requiredSources].filter(
+  (source) => !fs.existsSync(path.join(assetsDir, source)),
+);
+if (missingRequired.length > 0) {
+  console.error(
+    `FATAL: Missing required 7-Zip source(s) for this host: ${missingRequired.join(", ")}`,
+  );
+  process.exit(1);
+}
 
 for (const mapping of mappings) {
   const sourcePath = path.join(assetsDir, mapping.source);
   const targetPath = path.join(outDir, mapping.target);
 
   if (!fs.existsSync(sourcePath)) {
-    console.warn(`Missing ${mapping.source}`);
+    if (requiredSources.has(mapping.source)) {
+      console.error(`FATAL: Missing required ${mapping.source}`);
+      process.exit(1);
+    }
+    console.warn(`Missing optional ${mapping.source}`);
     continue;
   }
 

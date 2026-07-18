@@ -96,7 +96,26 @@ The published data for CVE-2026-58052 is currently inconsistent: the NVD/CNA
 affected range was revised to end at 26.01, while the NVD analysis and upstream
 7-Zip ticket still describe 26.02 as affected. Until the exact bundled Windows
 runtime is conclusively verified against the published reproducer, Zinnia
-conservatively rejects RAR extraction on Windows at both archive-validation and
-process-spawn boundaries. Windows packages also omit RAR file associations and
-Explorer verbs while this restriction is active. RAR browsing, testing,
-conversion, and extraction remain available on macOS and Linux.
+conservatively rejects RAR **extraction** on Windows at the `run_7z` spawn
+boundary (command `x`). RAR browse (`l`) and test (`t`) remain available so
+archives can be inspected without writing members to disk. Windows packages also
+omit RAR file associations and Explorer verbs while this restriction is active.
+RAR browsing, testing, conversion, and extraction remain available on macOS and
+Linux.
+
+### Flatpak filesystem access
+
+The Flatpak package grants `--filesystem=home` plus common XDG user dirs because
+the bundled 7-Zip sidecar must read/write arbitrary user-selected archive paths.
+Document portals alone cannot cover sidecar I/O today. This expands the sandbox
+blast radius relative to a portal-only app; treat untrusted archives with the
+same caution as on other platforms.
+
+### Open-folder allowlist
+
+The main window may only `open_path` directories that a recent successful
+compress/extract promoted. Extract-only windows bind their destination folder at
+window spawn (derived from the archive path). They may only extract to that
+folder (`-o`) and may only `open_path` that same folder after registering it.
+This is defense in depth against a compromised webview writing or opening
+arbitrary folders.

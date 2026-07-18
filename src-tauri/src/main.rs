@@ -1,9 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod archive_detect;
+mod fs_secure;
 mod launch;
 mod logging;
 mod output;
+mod path_safety;
 mod platform;
 mod process;
 mod progress;
@@ -18,8 +20,9 @@ use tauri::Manager;
 
 use launch::{
     collect_cli_context, emit_open_paths, emit_open_urls, first_extract_window,
-    has_extract_windows, show_main_window, spawn_extract_window, ExtractQueue, InitialMode,
-    InitialPaths, PendingPaths, EXTRACT_ONLY_LAUNCH, FILE_OPEN_SIGNAL, MAC_FALLBACK_MAIN_PENDING,
+    has_extract_windows, show_main_window, spawn_extract_window, ExtractBoundDestination,
+    ExtractOpenAllowlist, ExtractQueue, InitialMode, InitialPaths, OpenPathAllowlist, PendingPaths,
+    EXTRACT_ONLY_LAUNCH, FILE_OPEN_SIGNAL, MAC_FALLBACK_MAIN_PENDING,
 };
 use logging::LogFileLock;
 use process::RunningProcess;
@@ -116,6 +119,9 @@ fn main() {
         .manage(InitialPaths(Mutex::new(initial_paths.clone())))
         .manage(InitialMode(Mutex::new(initial_mode.clone())))
         .manage(ExtractQueue(Mutex::new(HashMap::new())))
+        .manage(ExtractOpenAllowlist(Mutex::new(HashMap::new())))
+        .manage(ExtractBoundDestination(Mutex::new(HashMap::new())))
+        .manage(OpenPathAllowlist::default())
         .manage(PendingPaths(Mutex::new(Vec::new())))
         .manage(LogFileLock(Mutex::new(())))
         .manage(RunningProcess::new())
@@ -186,6 +192,7 @@ fn main() {
             logging::clear_logs,
             logging::open_log_dir,
             launch::open_path,
+            launch::register_extract_open_path,
             launch::get_initial_paths,
             launch::get_initial_mode,
             launch::drain_pending_paths,

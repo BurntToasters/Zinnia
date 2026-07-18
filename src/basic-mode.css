@@ -485,6 +485,25 @@
   flex-wrap: wrap;
 }
 
+.basic-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 8px;
+  font-size: var(--basic-font);
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.basic-toggle input {
+  margin: 0;
+}
+
+.basic-toggle[hidden] {
+  display: none;
+}
+
 .basic-field {
   display: flex;
   flex-direction: column;
@@ -775,6 +794,11 @@
 .basic-progress__bar-fill.is-indeterminate {
   width: 60%;
   animation: basic-progress-indeterminate 1.8s ease-in-out infinite;
+}
+
+.basic-progress__bar-fill.is-determinate {
+  animation: none;
+  margin-left: 0;
 }
 
 @keyframes basic-progress-indeterminate {

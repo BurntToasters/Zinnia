@@ -1,5 +1,6 @@
 @import "./variables.css";
 @import "./basic-mode.css";
+@import "./progress-pct.css";
 
 .skip-link {
   position: absolute;
@@ -1939,6 +1940,102 @@ input[type="number"] {
 
 .lucide-icon:hover {
   opacity: 1;
+}
+
+.lucide-icon--inline {
+  margin-right: 6px;
+  font-size: 0.9em;
+  vertical-align: middle;
+}
+
+.text-success {
+  color: var(--success);
+}
+
+.text-danger {
+  color: var(--danger);
+}
+
+.cell-break {
+  word-break: break-all;
+}
+
+.cell-tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.cursor-default {
+  cursor: default;
+}
+
+.copy-scratch {
+  position: fixed;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.selective-row--tree[data-depth="0"] {
+  padding-left: 8px;
+}
+.selective-row--tree[data-depth="1"] {
+  padding-left: 26px;
+}
+.selective-row--tree[data-depth="2"] {
+  padding-left: 44px;
+}
+.selective-row--tree[data-depth="3"] {
+  padding-left: 62px;
+}
+.selective-row--tree[data-depth="4"] {
+  padding-left: 80px;
+}
+.selective-row--tree[data-depth="5"] {
+  padding-left: 98px;
+}
+.selective-row--tree[data-depth="6"] {
+  padding-left: 116px;
+}
+.selective-row--tree[data-depth="7"] {
+  padding-left: 134px;
+}
+.selective-row--tree[data-depth="8"] {
+  padding-left: 152px;
+}
+.selective-row--tree[data-depth="9"] {
+  padding-left: 170px;
+}
+.selective-row--tree[data-depth="10"] {
+  padding-left: 188px;
+}
+.selective-row--tree[data-depth="11"] {
+  padding-left: 206px;
+}
+.selective-row--tree[data-depth="12"] {
+  padding-left: 224px;
+}
+.selective-row--tree[data-depth="13"] {
+  padding-left: 242px;
+}
+.selective-row--tree[data-depth="14"] {
+  padding-left: 260px;
+}
+.selective-row--tree[data-depth="15"] {
+  padding-left: 278px;
+}
+.selective-row--tree[data-depth="16"] {
+  padding-left: 296px;
+}
+.selective-row--tree[data-depth="17"] {
+  padding-left: 314px;
+}
+.selective-row--tree[data-depth="18"] {
+  padding-left: 332px;
+}
+.selective-row--tree[data-depth="19"] {
+  padding-left: 350px;
+}
+.selective-row--tree[data-depth="20"] {
+  padding-left: 368px;
 }
 
 .modal--wide {
