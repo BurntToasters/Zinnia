@@ -230,29 +230,32 @@
                 <section class="settings-section">
                   <h3 class="settings-section__title">Updates</h3>
                   <div class="setting-item-pair">
-                    <div class="setting-item">
+                    <div class="setting-item setting-item--switch-wrap">
                       <div class="setting-info">
                         <span
                           class="setting-title"
                           id="title-auto-check-updates"
                           >Auto-updates</span
                         >
-                        <span class="setting-desc"
-                          >Check and download updates when the app opens.</span
-                        >
+                        <div class="setting-desc-wrap">
+                          <label
+                            class="switch"
+                            data-update-ui
+                            aria-labelledby="title-auto-check-updates"
+                          >
+                            <input
+                              type="checkbox"
+                              id="s-auto-check-updates"
+                              checked
+                            />
+                            <span class="switch__track"></span>
+                          </label>
+                          <span class="setting-desc"
+                            >Check and download updates when the app
+                            opens.</span
+                          >
+                        </div>
                       </div>
-                      <label
-                        class="switch"
-                        data-update-ui
-                        aria-labelledby="title-auto-check-updates"
-                      >
-                        <input
-                          type="checkbox"
-                          id="s-auto-check-updates"
-                          checked
-                        />
-                        <span class="switch__track"></span>
-                      </label>
                     </div>
 
                     <div class="setting-item" data-update-ui>

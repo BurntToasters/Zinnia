@@ -1558,7 +1558,7 @@ body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
   flex-direction: column;
   align-items: stretch;
   justify-content: flex-start;
-  gap: 10px;
+  gap: 6px;
   min-width: 0;
   height: 100%;
 }
@@ -1588,41 +1588,9 @@ body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
   .setting-item-pair
   .setting-desc {
   line-height: 1.4;
-  min-height: calc(1.4em * 2);
 }
 
-/* Shared control rail — pins toggles/buttons/selects to one baseline */
-#app[data-workspace-mode="basic"]
-  .modal--settings
-  .setting-item-pair
-  .setting-item
-  > .btn,
-#app[data-workspace-mode="basic"]
-  .modal--settings
-  .setting-item-pair
-  .setting-item
-  > select,
-#app[data-workspace-mode="basic"]
-  .modal--settings
-  .setting-item-pair
-  .setting-item
-  > .setting-select,
-#app[data-workspace-mode="basic"]
-  .modal--settings
-  .setting-item-pair
-  .setting-item
-  > .switch {
-  margin-top: auto;
-  flex-shrink: 0;
-  height: var(--pair-control-h);
-  box-sizing: border-box;
-}
-
-#app[data-workspace-mode="basic"]
-  .modal--settings
-  .setting-item-pair
-  .setting-item
-  > .btn,
+/* Shared control rail for selects (Theme / Workspace) */
 #app[data-workspace-mode="basic"]
   .modal--settings
   .setting-item-pair
@@ -1633,31 +1601,73 @@ body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
   .setting-item-pair
   .setting-item
   > .setting-select {
+  margin-top: auto;
+  flex-shrink: 0;
+  height: var(--pair-control-h);
+  box-sizing: border-box;
   width: 100%;
   max-width: none;
   min-width: 0;
   align-self: stretch;
 }
 
+/* Check now: snug under copy, slimmer than the select rail */
 #app[data-workspace-mode="basic"]
   .modal--settings
   .setting-item-pair
   .setting-item
-  > .switch {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  /* Height is the rail; don’t stretch the track */
-  height: var(--pair-control-h);
+  > .btn {
+  margin-top: 2px;
+  flex-shrink: 0;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  align-self: stretch;
+  height: 28px;
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 0.8125rem;
+  box-sizing: border-box;
+}
+
+/* Switch sits with the description (inset from the column edge) */
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .setting-item--switch-wrap
+  .setting-desc-wrap {
+  display: block;
+  min-height: calc(1.4em * 2);
+  /* Keep the control inside the Auto-updates band, not the pair gutter */
+  padding-right: 18px;
+  box-sizing: border-box;
 }
 
 #app[data-workspace-mode="basic"]
   .modal--settings
-  .setting-item-pair
-  .setting-item
-  > .switch
-  .switch__track {
-  flex-shrink: 0;
+  .setting-item--switch-wrap
+  .setting-desc-wrap
+  > .switch {
+  float: right;
+  margin: 0.15em 4px 0.2em 10px;
+  height: auto;
+}
+
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .setting-item--switch-wrap
+  .setting-desc-wrap
+  > .setting-desc {
+  min-height: 0;
+  display: block;
+}
+
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .setting-item--switch-wrap
+  .setting-desc-wrap::after {
+  content: "";
+  display: table;
+  clear: both;
 }
 
 #app[data-workspace-mode="basic"] .modal--settings .setting-item {
