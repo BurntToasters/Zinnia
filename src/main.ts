@@ -113,7 +113,11 @@ import {
   deleteCustomPreset,
   refreshPresetDropdown,
 } from "./presets";
-import { checkUpdates, autoCheckUpdates } from "./updater";
+import {
+  checkUpdates,
+  autoCheckUpdates,
+  discardPendingUpdate,
+} from "./updater";
 import { openLicensesModal, closeLicensesModal } from "./licenses";
 import { chooseOutput, chooseExtract, addFiles, addFolder } from "./files";
 import {
@@ -715,6 +719,9 @@ function wireEvents() {
   $("save-settings").addEventListener("click", async () => {
     const previous = { ...state.lastPersistedSettings };
     state.currentSettings = readSettingsModal();
+    if (state.currentSettings.updateChannel !== previous.updateChannel) {
+      discardPendingUpdate();
+    }
     applyTheme(state.currentSettings.theme);
     setWorkspaceMode(state.currentSettings.workspaceMode, { persist: false });
     if (
@@ -782,6 +789,7 @@ function wireEvents() {
     if (!confirmed) return;
 
     try {
+      discardPendingUpdate();
       await invoke("reset_settings");
       await invoke("clear_logs").catch((err) => {
         const msg = err instanceof Error ? err.message : String(err);

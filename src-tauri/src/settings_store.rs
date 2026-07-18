@@ -40,7 +40,7 @@ pub struct QuickExtractWarmPrefs {
 impl Default for QuickExtractWarmPrefs {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             idle_secs: 10 * 60,
         }
     }
@@ -53,7 +53,7 @@ pub fn parse_quick_extract_warm_prefs(json: &str) -> QuickExtractWarmPrefs {
     let enabled = map
         .get("quickExtractKeepWarm")
         .and_then(|value| value.as_bool())
-        .unwrap_or(true);
+        .unwrap_or(false);
     let minutes = map
         .get("quickExtractWarmIdleMinutes")
         .and_then(|value| {
@@ -378,12 +378,13 @@ mod tests {
             parse_quick_extract_warm_prefs("{}"),
             QuickExtractWarmPrefs::default()
         );
+        assert!(!QuickExtractWarmPrefs::default().enabled);
         assert_eq!(
             parse_quick_extract_warm_prefs(
-                r#"{"quickExtractKeepWarm":false,"quickExtractWarmIdleMinutes":30}"#
+                r#"{"quickExtractKeepWarm":true,"quickExtractWarmIdleMinutes":30}"#
             ),
             QuickExtractWarmPrefs {
-                enabled: false,
+                enabled: true,
                 idle_secs: 30 * 60,
             }
         );

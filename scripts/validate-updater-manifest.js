@@ -12,11 +12,14 @@ import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
-const defaultFixtures = [
-  path.join(root, "testdata", "updater", "latest-linux-x86_64.json"),
-  path.join(root, "testdata", "updater", "latest-darwin-aarch64.json"),
-  path.join(root, "testdata", "updater", "latest-windows-x86_64.json"),
-];
+const defaultFixturesDir = path.join(root, "testdata", "updater");
+const defaultFixtures = fs.existsSync(defaultFixturesDir)
+  ? fs
+      .readdirSync(defaultFixturesDir)
+      .filter((name) => name.startsWith("latest-") && name.endsWith(".json"))
+      .sort()
+      .map((name) => path.join(defaultFixturesDir, name))
+  : [];
 
 function fail(message) {
   console.error(`updater-manifest: ${message}`);

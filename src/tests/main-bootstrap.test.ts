@@ -76,6 +76,7 @@ const mocks = vi.hoisted(() => {
     updater: {
       checkUpdates: vi.fn().mockResolvedValue(undefined),
       autoCheckUpdates: vi.fn().mockResolvedValue(undefined),
+      discardPendingUpdate: vi.fn(),
     },
     licenses: {
       openLicensesModal: vi.fn(),
@@ -180,6 +181,7 @@ vi.mock("../presets", () => ({
 vi.mock("../updater", () => ({
   checkUpdates: mocks.updater.checkUpdates,
   autoCheckUpdates: mocks.updater.autoCheckUpdates,
+  discardPendingUpdate: mocks.updater.discardPendingUpdate,
 }));
 
 vi.mock("../licenses", () => ({
@@ -531,6 +533,7 @@ beforeEach(async () => {
 
   mocks.updater.checkUpdates.mockReset();
   mocks.updater.autoCheckUpdates.mockReset();
+  mocks.updater.discardPendingUpdate.mockReset();
 
   mocks.licenses.openLicensesModal.mockReset();
   mocks.licenses.closeLicensesModal.mockReset();
@@ -1050,6 +1053,7 @@ describe("main bootstrap", () => {
     await flushAsync();
 
     expect(mocks.ui.persistSettingsImmediately).not.toHaveBeenCalled();
+    expect(mocks.updater.discardPendingUpdate).toHaveBeenCalled();
     expect(invokeMock).toHaveBeenCalledWith("reset_settings");
     expect(invokeMock).toHaveBeenCalledWith("clear_logs");
     expect(relaunchMock).toHaveBeenCalled();

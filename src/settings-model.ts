@@ -85,7 +85,9 @@ export const SETTING_DEFAULTS: UserSettings = {
   workspaceMode: "basic",
   uiDensity: "comfortable",
   osIntegrationDismissed: false,
-  quickExtractKeepWarm: true,
+  // Off by default: quick-extract should fully quit when its window closes.
+  // Opt in via Settings for faster subsequent file-association opens.
+  quickExtractKeepWarm: false,
   quickExtractWarmIdleMinutes: 10,
   customPresets: [],
   powerWindowWidth: 1100,

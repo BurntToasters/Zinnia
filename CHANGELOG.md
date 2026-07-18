@@ -5,10 +5,10 @@
 
 | <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux |
 | :--- | :--- | :--- |
-| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.2/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.2/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.2/Zinnia-macOS.dmg)** | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.2/Zinnia-Linux-x64.AppImage) |
-| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>--> | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.2/Zinnia-macOS.zip)** | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.2/Zinnia-Linux-x64.deb) |
-| <!--*See MSI note below*--> | | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.2/Zinnia-Linux-x64.rpm) |
-| | | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.2/Zinnia-Linux-x64.flatpak) |
+| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.3/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.3/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.3/Zinnia-macOS.dmg)** | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.3/Zinnia-Linux-x64.AppImage) |
+| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>--> | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.3/Zinnia-macOS.zip)** | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.3/Zinnia-Linux-x64.deb) |
+| <!--*See MSI note below*--> | | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.3/Zinnia-Linux-x64.rpm) |
+| | | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.3/Zinnia-Linux-x64.flatpak) |
 
 > [!IMPORTANT]
 The `.sig` files in this repo are NOT normal gpg signatures they are for Tauri V2's updater to verify the integrity of updates before downloading and installing.
@@ -19,10 +19,17 @@ The `.asc` files are my normal GPG signatures which you can verify using my GPG 
 
 Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
+## Changes in `v0.5.4-beta.3:`
+
+- **Fix:** Quick-extract no longer leaves a Dock/app zombie after the window closes. “Keep ready after quick extract” is off by default; when enabled, macOS hides the Dock and uses a menu-bar tray until idle timeout or Quit.
+- **Fix:** Warm-idle exit re-checks on the main thread so a newly opened extract window cannot race an idle quit; waking from warm clears the tray; tray has Open Zinnia (left-click / menu).
+- **Fix:** Extract-window teardown clears bindings on OS close; extract capability no longer allows direct `destroy` (must use cancel-aware close).
+- **Security:** Extract promote rejects sibling writes outside the stage directory; `run_7z` re-validates archive headers for extract/list/test.
+
 ## Changes in `v0.5.4-beta.2:`
 
-- **Performance:** Quick-extract (file association / Open with Zinnia) injects archive + destination at window create, skips recovery lock when no journal exists, lazy-loads the password prompt, and stays warm in the tray so the next double-click reuses the running process.
-- **Settings:** “Keep ready after quick extract” toggle plus idle timeout (5/10/30/60 minutes); turn it off to exit immediately after extract.
+- **Performance:** Quick-extract (file association / Open with Zinnia) injects archive + destination at window create, skips recovery lock when no journal exists, lazy-loads the password prompt, and can stay warm for faster follow-up opens.
+- **Settings:** “Keep ready after quick extract” toggle plus idle timeout (5/10/30/60 minutes).
 - **UI:** Quick-extract status no longer flashes missing-glyph boxes from noisy 7-Zip progress text; `hidden` controls work again in both main and extract windows.
 - **UI:** Prefer system fonts before Segoe so non-Latin glyphs fall back correctly on macOS.
 

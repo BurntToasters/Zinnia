@@ -500,10 +500,6 @@
   margin: 0;
 }
 
-.basic-toggle[hidden] {
-  display: none;
-}
-
 .basic-field {
   display: flex;
   flex-direction: column;

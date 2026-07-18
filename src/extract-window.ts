@@ -54,7 +54,8 @@ export function sanitizeStatusFileName(name: string): string {
   if (!cleaned) return "";
   const match = cleaned.match(/[\p{L}\p{N}._~]/u);
   if (!match || match.index === undefined) return "";
-  return cleaned.slice(match.index).trim();
+  const meaningful = cleaned.slice(match.index).trim();
+  return [...meaningful].slice(0, 200).join("");
 }
 
 function withPassword(args: string[], password: string): string[] {

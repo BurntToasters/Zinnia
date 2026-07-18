@@ -39,6 +39,9 @@ fn defer_close_while_operation_finishes(
             && (process.child.is_some() || process.preparing || process.cancelling)
     });
     if !owns_busy_operation {
+        if launch::is_extract_window_label(label) {
+            launch::clear_extract_window_bindings(app, label);
+        }
         return false;
     }
 
@@ -51,6 +54,7 @@ fn defer_close_while_operation_finishes(
                 let close_handle = handle.clone();
                 let close_label = window_label.clone();
                 let _ = handle.run_on_main_thread(move || {
+                    launch::clear_extract_window_bindings(&close_handle, &close_label);
                     if let Some(window) = close_handle.get_webview_window(&close_label) {
                         let _ = window.destroy();
                     }
@@ -60,6 +64,33 @@ fn defer_close_while_operation_finishes(
         }
     });
     true
+}
+
+fn force_exit_after_busy_teardown(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<RunningProcess>();
+        let owner = {
+            let mut process = match state.0.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            if let Some(child) = process.child.take() {
+                if let Err(error) = child.kill() {
+                    eprintln!("Could not stop archive process during forced exit: {error}");
+                }
+            }
+            process.cancelling = true;
+            process.owner_label.clone()
+        };
+        if let Some(owner) = owner {
+            if let Err(error) = launch::cancel_owner_and_wait(&app, &owner).await {
+                eprintln!("Could not finish archive teardown during forced exit: {error}");
+            }
+        } else {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+        app.exit(0);
+    });
 }
 
 fn defer_exit_while_operation_finishes(
@@ -72,19 +103,30 @@ fn defer_exit_while_operation_finishes(
             process.owner_label.clone()
         }
         Ok(_) => return false,
-        Err(_) => None,
+        Err(poisoned) => {
+            let process = poisoned.into_inner();
+            if process.child.is_some() || process.preparing || process.cancelling {
+                process.owner_label.clone()
+            } else {
+                return false;
+            }
+        }
     };
+    api.prevent_exit();
     let Some(owner) = owner else {
-        api.prevent_exit();
+        eprintln!("Busy archive slot has no owner; forcing teardown before exit.");
+        force_exit_after_busy_teardown(app.clone());
         return true;
     };
 
-    api.prevent_exit();
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
         match launch::cancel_owner_and_wait(&handle, &owner).await {
             Ok(()) => handle.exit(0),
-            Err(error) => eprintln!("Could not safely exit Zinnia: {error}"),
+            Err(error) => {
+                eprintln!("Could not safely exit Zinnia: {error}");
+                force_exit_after_busy_teardown(handle);
+            }
         }
     });
     true
@@ -239,10 +281,11 @@ fn main() {
                     let _ = main_window.destroy();
                 }
                 if let Some(extract_window) = first_extract_window(app_handle) {
+                    launch::restore_foreground_activation(app_handle);
                     let _ = extract_window.show();
                     let _ = extract_window.set_focus();
                 } else {
-                    // Dock click while warm-idle: open the full app instead of quitting.
+                    // Dock/Spotlight activate while warm-idle: open the full app.
                     EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);
                     leave_extract_warm(app_handle);
                     if let Err(e) = show_main_window(app_handle) {
@@ -263,13 +306,19 @@ fn main() {
             defer_close_while_operation_finishes(app_handle, &label, &api);
         }
         tauri::RunEvent::WindowEvent {
+            label,
             event: tauri::WindowEvent::Destroyed,
             ..
-        } if should_keep_extract_warm(app_handle) => {
-            if let Some(main_window) = app_handle.get_webview_window("main") {
-                let _ = main_window.destroy();
+        } => {
+            if launch::is_extract_window_label(&label) {
+                launch::clear_extract_window_bindings(app_handle, &label);
             }
-            let _ = enter_extract_warm_idle(app_handle);
+            if should_keep_extract_warm(app_handle) {
+                if let Some(main_window) = app_handle.get_webview_window("main") {
+                    let _ = main_window.destroy();
+                }
+                let _ = enter_extract_warm_idle(app_handle);
+            }
         }
         _ => {}
     });
@@ -296,10 +345,14 @@ fn main() {
             }
         }
         if let tauri::RunEvent::WindowEvent {
+            label,
             event: tauri::WindowEvent::Destroyed,
             ..
-        } = event
+        } = &event
         {
+            if launch::is_extract_window_label(label) {
+                launch::clear_extract_window_bindings(app_handle, label);
+            }
             if should_keep_extract_warm(app_handle) {
                 if let Some(main_window) = app_handle.get_webview_window("main") {
                     let _ = main_window.destroy();

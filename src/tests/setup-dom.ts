@@ -236,7 +236,6 @@ const soid = addEl("input", "s-os-integration-dismissed") as HTMLInputElement;
 soid.type = "checkbox";
 const sqekw = addEl("input", "s-quick-extract-keep-warm") as HTMLInputElement;
 sqekw.type = "checkbox";
-sqekw.checked = true;
 addSelect("s-quick-extract-warm-idle", ["5", "10", "30", "60"]);
 addEl("div", "s-log-dir");
 addEl("button", "run-benchmark");

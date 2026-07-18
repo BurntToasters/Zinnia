@@ -1326,10 +1326,6 @@ input[type="number"] {
   animation: overlay-in 150ms ease;
 }
 
-.modal-overlay[hidden] {
-  display: none;
-}
-
 .modal {
   background: var(--surface);
   border: 1px solid var(--border-strong);
@@ -1526,10 +1522,6 @@ input[type="number"] {
   backdrop-filter: blur(6px);
 }
 
-.setup-wizard-overlay[hidden] {
-  display: none;
-}
-
 .setup-wizard-card {
   width: min(520px, calc(100vw - 28px));
   max-height: calc(100vh - 28px);
@@ -1561,10 +1553,6 @@ input[type="number"] {
   gap: 12px;
   align-items: center;
   text-align: center;
-}
-
-.setup-wizard-step[hidden] {
-  display: none;
 }
 
 .setup-wizard-step__title {
@@ -1846,10 +1834,6 @@ input[type="number"] {
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-
-.browse-contents[hidden] {
-  display: none;
 }
 
 .browse-summary {

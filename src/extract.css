@@ -173,10 +173,6 @@ body.platform-macos .extract-app {
   gap: 6px;
 }
 
-.extract-error[hidden] {
-  display: none;
-}
-
 .extract-error-title {
   font-size: 0.75rem;
   font-weight: 600;
@@ -191,7 +187,7 @@ body.platform-macos .extract-app {
   word-break: break-word;
   max-height: 120px;
   overflow-y: auto;
-  font-family: "Cascadia Code", "Consolas", monospace;
+  font-family: "Cascadia Code", "SF Mono", "Fira Code", "Consolas", monospace;
   user-select: text;
 }
 
@@ -211,10 +207,6 @@ body.platform-macos .extract-app {
   padding: 20px;
   background: rgb(0 0 0 / 45%);
   z-index: 10;
-}
-
-.extract-input-modal-overlay[hidden] {
-  display: none;
 }
 
 .extract-input-modal {

@@ -158,7 +158,7 @@ describe("populateSettingsModal", () => {
     expect(getSelectValue("s-log-verbosity")).toBe("debug");
     expect(getSelectValue("s-workspace-mode")).toBe("basic");
     expect(getSelectValue("s-ui-density")).toBe("comfortable");
-    expect(getChecked("s-quick-extract-keep-warm")).toBe(true);
+    expect(getChecked("s-quick-extract-keep-warm")).toBe(false);
     expect(getSelectValue("s-quick-extract-warm-idle")).toBe("10");
   });
 

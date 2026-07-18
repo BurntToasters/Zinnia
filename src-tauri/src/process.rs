@@ -42,6 +42,9 @@ struct CleanupPlan {
     // Create/update output is written to a sibling staging basename. This also
     // covers split-volume families (`.001`, `.002`, ...).
     staged_archive: Option<(std::path::PathBuf, std::path::PathBuf)>,
+    /// Sibling names in the extract stage parent after the stage dir is created.
+    /// Used to detect writes that escape the `-o` stage root.
+    extract_parent_names: Option<std::collections::HashSet<std::ffi::OsString>>,
     max_extract_bytes: Option<u64>,
     min_free_bytes: Option<u64>,
 }
@@ -201,15 +204,12 @@ pub fn mark_startup_recovery_done() {
 }
 
 async fn wait_for_startup_recovery() {
-    let deadline =
-        std::time::Instant::now() + std::time::Duration::from_secs(30);
+    // Back off instead of a 1ms spin. Do not force-complete on timeout — that let
+    // run_7z claim the slot then block on RECOVERY_LOCK with a misleading "busy" UI.
+    let mut delay_ms = 10u64;
     while !STARTUP_RECOVERY_DONE.load(std::sync::atomic::Ordering::Acquire) {
-        if std::time::Instant::now() >= deadline {
-            // Avoid hanging the UI forever if startup recovery never reports.
-            mark_startup_recovery_done();
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+        delay_ms = (delay_ms + 10).min(50);
     }
 }
 
@@ -542,11 +542,42 @@ fn rewrite_archive_output(args: &mut [String], staged: &std::path::Path) -> Resu
     Ok(())
 }
 
+fn directory_entry_names(
+    dir: &std::path::Path,
+) -> Result<std::collections::HashSet<std::ffi::OsString>, String> {
+    let mut names = std::collections::HashSet::new();
+    for entry in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        names.insert(entry.file_name());
+    }
+    Ok(names)
+}
+
+fn assert_extract_parent_unchanged(
+    stage: &std::path::Path,
+    expected: &std::collections::HashSet<std::ffi::OsString>,
+) -> Result<(), String> {
+    let parent = stage
+        .parent()
+        .ok_or_else(|| "Staged extract has no parent directory.".to_string())?;
+    let current = directory_entry_names(parent)?;
+    for name in &current {
+        if !expected.contains(name) {
+            return Err(format!(
+                "Extraction wrote outside the staging directory: {}",
+                parent.join(name).display()
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn prepare_cleanup_plan(args: &[String]) -> Result<CleanupPlan, String> {
     let Some(target) = operation_output_path(args) else {
         return Ok(CleanupPlan {
             staged_extract: None,
             staged_archive: None,
+            extract_parent_names: None,
             max_extract_bytes: None,
             min_free_bytes: None,
         });
@@ -581,9 +612,15 @@ fn prepare_cleanup_plan(args: &[String]) -> Result<CleanupPlan, String> {
                 ));
             }
             let max_extract_bytes = ratio_limit.min(disk_limit);
+            let stage = next_extract_stage_path(&destination)?;
+            let parent = stage
+                .parent()
+                .ok_or_else(|| "Staged extract has no parent directory.".to_string())?;
+            let extract_parent_names = directory_entry_names(parent)?;
             Ok(CleanupPlan {
-                staged_extract: Some((next_extract_stage_path(&destination)?, destination)),
+                staged_extract: Some((stage, destination)),
                 staged_archive: None,
+                extract_parent_names: Some(extract_parent_names),
                 max_extract_bytes: Some(max_extract_bytes),
                 min_free_bytes: Some(reserve),
             })
@@ -603,6 +640,7 @@ fn prepare_cleanup_plan(args: &[String]) -> Result<CleanupPlan, String> {
             Ok(CleanupPlan {
                 staged_extract: None,
                 staged_archive: Some((staged, target)),
+                extract_parent_names: None,
                 max_extract_bytes: None,
                 min_free_bytes: None,
             })
@@ -625,6 +663,7 @@ fn prepare_cleanup_plan(args: &[String]) -> Result<CleanupPlan, String> {
             Ok(CleanupPlan {
                 staged_extract: None,
                 staged_archive: Some((staged, target)),
+                extract_parent_names: None,
                 max_extract_bytes: None,
                 min_free_bytes: None,
             })
@@ -632,6 +671,7 @@ fn prepare_cleanup_plan(args: &[String]) -> Result<CleanupPlan, String> {
         _ => Ok(CleanupPlan {
             staged_extract: None,
             staged_archive: None,
+            extract_parent_names: None,
             max_extract_bytes: None,
             min_free_bytes: None,
         }),
@@ -1107,11 +1147,35 @@ fn auto_rename_path(
 const MAX_EXTRACT_ENTRIES: u64 = 1_000_000;
 const MAX_EXTRACTED_BYTES: u64 = 1024 * 1024 * 1024 * 1024;
 
+fn assert_path_under_root(root: &std::path::Path, path: &std::path::Path) -> Result<(), String> {
+    let relative = path.strip_prefix(root).map_err(|_| {
+        format!(
+            "Staged path escaped the extract root: {}",
+            path.display()
+        )
+    })?;
+    if relative.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::ParentDir
+                | std::path::Component::RootDir
+                | std::path::Component::Prefix(_)
+        )
+    }) {
+        return Err(format!(
+            "Staged path escaped the extract root: {}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
 fn validate_staged_tree(root: &std::path::Path, max_bytes: u64) -> Result<(), String> {
     let mut pending = vec![root.to_path_buf()];
     let mut entries = 0u64;
     let mut bytes = 0u64;
     while let Some(directory) = pending.pop() {
+        assert_path_under_root(root, &directory)?;
         let meta = std::fs::symlink_metadata(&directory).map_err(|e| e.to_string())?;
         if crate::path_safety::is_link_or_reparse(&meta) || !meta.is_dir() {
             return Err(format!("Unsafe staged directory: {}", directory.display()));
@@ -1125,6 +1189,7 @@ fn validate_staged_tree(root: &std::path::Path, max_bytes: u64) -> Result<(), St
                 ));
             }
             let path = entry.path();
+            assert_path_under_root(root, &path)?;
             let meta = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
             if crate::path_safety::is_link_or_reparse(&meta) {
                 return Err(format!(
@@ -1360,6 +1425,11 @@ fn merge_staged_extract(
 
 fn commit_cleanup(app: &tauri::AppHandle, plan: &CleanupPlan) -> Result<(), String> {
     if let Some((staged, destination)) = &plan.staged_extract {
+        if let Some(expected) = &plan.extract_parent_names {
+            assert_extract_parent_unchanged(staged, expected).map_err(|e| {
+                format!("Could not promote staged extraction safely: {e}")
+            })?;
+        }
         merge_staged_extract(
             staged,
             destination,
@@ -1469,18 +1539,29 @@ pub async fn run_7z(
 ) -> Result<RunResult, String> {
     validate_run_7z_args(&args)?;
 
-    #[cfg(target_os = "windows")]
-    if args.first().map(String::as_str) == Some("x") {
-        let separator = args
-            .iter()
-            .position(|arg| arg == "--")
-            .ok_or_else(|| "Extraction command is missing '--'.".to_string())?;
-        let archive = args
-            .get(separator + 1)
-            .ok_or_else(|| "Extraction command is missing an archive path.".to_string())?;
-        if crate::archive_detect::is_rar_archive_file(std::path::Path::new(archive))? {
-            return Err("RAR extraction is temporarily disabled on Windows while conflicting CVE-2026-58052 affected-version data is resolved. Install a future Zinnia release after the bundled runtime has been conclusively verified.".to_string());
+    match args.first().map(String::as_str) {
+        Some("x" | "l" | "t") => {
+            let separator = args
+                .iter()
+                .position(|arg| arg == "--")
+                .ok_or_else(|| "Archive command is missing '--'.".to_string())?;
+            let archive = args
+                .get(separator + 1)
+                .ok_or_else(|| "Archive command is missing an archive path.".to_string())?;
+            let validation = crate::archive_detect::validate_archive_path(archive);
+            if !validation.valid {
+                return Err(validation
+                    .reason
+                    .unwrap_or_else(|| "Archive path failed validation.".to_string()));
+            }
+            #[cfg(target_os = "windows")]
+            if args.first().map(String::as_str) == Some("x")
+                && crate::archive_detect::is_rar_archive_file(std::path::Path::new(archive))?
+            {
+                return Err("RAR extraction is temporarily disabled on Windows while conflicting CVE-2026-58052 affected-version data is resolved. Install a future Zinnia release after the bundled runtime has been conclusively verified.".to_string());
+            }
         }
+        _ => {}
     }
     if window.label().starts_with("extract-") {
         if args.first().map(String::as_str) != Some("x") {
@@ -2170,6 +2251,19 @@ mod tests {
         assert!(staged_tree_usage(&root, 1, 100).is_err());
         assert!(staged_tree_usage(&root, 10, 7).is_err());
 
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn extract_parent_snapshot_detects_sibling_escape() {
+        let root = temp_root("zinnia-sibling-escape");
+        std::fs::create_dir_all(&root).expect("root");
+        let stage = root.join(".out.zinnia-extract-abc");
+        std::fs::create_dir_all(&stage).expect("stage");
+        let expected = directory_entry_names(&root).expect("snapshot");
+        std::fs::write(root.join("escaped.txt"), b"leak").expect("escape");
+        let err = assert_extract_parent_unchanged(&stage, &expected).expect_err("leak");
+        assert!(err.contains("outside the staging directory"));
         let _ = std::fs::remove_dir_all(root);
     }
 
