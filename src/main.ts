@@ -891,9 +891,20 @@ function wireEvents() {
       if (e.key === "Escape") {
         return;
       }
-      if (e.key === "?" || (e.key === "Enter" && (e.ctrlKey || e.metaKey))) {
+      if (
+        e.key === "?" ||
+        (e.key === "Enter" && (e.ctrlKey || e.metaKey)) ||
+        (e.key === "," && (e.ctrlKey || e.metaKey))
+      ) {
         return;
       }
+    }
+    if (e.key === "," && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      if ($("settings-overlay").hidden) {
+        openSettingsModal();
+      }
+      return;
     }
     if (e.key === "Escape") {
       if (!$("settings-overlay").hidden) {
@@ -1011,6 +1022,38 @@ async function init() {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Failed to subscribe to Explorer open events: ${msg}`, "error");
+  }
+
+  try {
+    await listen<string>("app-menu", (event) => {
+      const action = typeof event.payload === "string" ? event.payload : "";
+      switch (action) {
+        case "menu-settings":
+          openSettingsModal();
+          break;
+        case "menu-check-updates":
+          void checkUpdates();
+          break;
+        case "menu-shortcuts":
+          openShortcutsModal();
+          break;
+        case "menu-licenses":
+          openLicensesModal();
+          break;
+        case "menu-support":
+          window.open(
+            "https://rosie.run/support",
+            "_blank",
+            "noopener,noreferrer",
+          );
+          break;
+        default:
+          break;
+      }
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Failed to subscribe to app menu events: ${msg}`, "error");
   }
 
   try {

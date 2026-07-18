@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod app_menu;
 mod archive_detect;
 mod fs_secure;
 mod launch;
@@ -205,6 +206,10 @@ fn main() {
             } else {
                 show_main_window(app.handle())
                     .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+            }
+
+            if let Err(e) = app_menu::install_macos_app_menu(app.handle()) {
+                eprintln!("Failed to install macOS app menu: {e}");
             }
 
             // Recovery can traverse and sync directories. Keep it off the setup thread so the

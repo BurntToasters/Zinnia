@@ -693,6 +693,45 @@ describe("main bootstrap", () => {
     expect(document.body.textContent ?? "").not.toContain("Failed to start:");
   });
 
+  it("handles app-menu events from the native menu", async () => {
+    type AppMenuHandler = (event: { payload: string }) => void;
+    let appMenuHandler: AppMenuHandler | null = null;
+    listenMock.mockImplementation(async (event, handler) => {
+      if (event === "app-menu") {
+        appMenuHandler = handler as AppMenuHandler;
+      }
+      return () => {};
+    });
+
+    await loadMainModule();
+    expect(appMenuHandler).toBeTruthy();
+
+    appMenuHandler!({ payload: "menu-settings" });
+    expect(mocks.settings.openSettingsModal).toHaveBeenCalled();
+
+    mocks.updater.checkUpdates.mockClear();
+    appMenuHandler!({ payload: "menu-check-updates" });
+    expect(mocks.updater.checkUpdates).toHaveBeenCalled();
+
+    mocks.licenses.openLicensesModal.mockClear();
+    appMenuHandler!({ payload: "menu-licenses" });
+    expect(mocks.licenses.openLicensesModal).toHaveBeenCalled();
+
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+    appMenuHandler!({ payload: "menu-support" });
+    expect(openSpy).toHaveBeenCalledWith(
+      "https://rosie.run/support",
+      "_blank",
+      "noopener,noreferrer",
+    );
+    openSpy.mockRestore();
+
+    appMenuHandler!({ payload: "menu-shortcuts" });
+    expect(
+      (document.getElementById("shortcuts-overlay") as HTMLElement).hidden,
+    ).toBe(false);
+  });
+
   it("handles keyboard shortcuts for browse, run, and escape overlays", async () => {
     await loadMainModule();
 
@@ -713,10 +752,22 @@ describe("main bootstrap", () => {
 
     expect(mocks.archive.runAction).toHaveBeenCalled();
 
+    mocks.settings.openSettingsModal.mockClear();
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: ",", metaKey: true }),
+    );
+    expect(mocks.settings.openSettingsModal).toHaveBeenCalled();
+
     const settingsOverlay = document.getElementById(
       "settings-overlay",
     ) as HTMLElement;
     settingsOverlay.hidden = false;
+    mocks.settings.openSettingsModal.mockClear();
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: ",", ctrlKey: true }),
+    );
+    expect(mocks.settings.openSettingsModal).not.toHaveBeenCalled();
+
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect(mocks.settings.closeSettingsModal).toHaveBeenCalled();
 
