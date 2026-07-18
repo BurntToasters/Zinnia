@@ -52,6 +52,39 @@ pub fn assert_real_file(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Open a regular file without following the final path component (Unix `O_NOFOLLOW`).
+/// On Windows, falls back to symlink/reparse rejection via `assert_real_file`.
+pub fn open_regular_file_nofollow(path: &Path) -> Result<std::fs::File, String> {
+    #[cfg(unix)]
+    {
+        use std::os::fd::FromRawFd;
+        use std::os::unix::ffi::OsStrExt;
+
+        let c_path = std::ffi::CString::new(path.as_os_str().as_bytes())
+            .map_err(|_| "Path contains interior null bytes.".to_string())?;
+        let flags = libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW;
+        let fd = unsafe { libc::open(c_path.as_ptr(), flags) };
+        if fd < 0 {
+            return Err(format!(
+                "Could not open {}: {}",
+                path.display(),
+                std::io::Error::last_os_error()
+            ));
+        }
+        let file = unsafe { std::fs::File::from_raw_fd(fd) };
+        let meta = file.metadata().map_err(|e| e.to_string())?;
+        if !meta.is_file() {
+            return Err(format!("Path is not a regular file: {}", path.display()));
+        }
+        Ok(file)
+    }
+    #[cfg(not(unix))]
+    {
+        assert_real_file(path)?;
+        std::fs::File::open(path).map_err(|e| e.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,6 +151,11 @@ mod tests {
         let meta = std::fs::symlink_metadata(&link_file).expect("meta");
         assert!(is_link_or_reparse(&meta));
         assert!(reject_link_or_reparse(&link_file, &meta).is_err());
+        let open_err = open_regular_file_nofollow(&link_file).expect_err("nofollow symlink");
+        assert!(!open_err.is_empty());
+
+        let plain = open_regular_file_nofollow(&target_file).expect("plain open");
+        drop(plain);
 
         let _ = std::fs::remove_dir_all(root);
     }

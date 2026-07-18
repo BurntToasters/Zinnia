@@ -371,9 +371,10 @@ export async function syncWorkspaceWindowFx(): Promise<void> {
     state.currentSettings.basicWindowEffects;
 
   document.documentElement.dataset.windowFx = enabled ? "basic" : "opaque";
+  const dark = document.documentElement.getAttribute("data-theme") === "dark";
 
   try {
-    await invoke("set_workspace_window_fx", { enabled });
+    await invoke("set_workspace_window_fx", { enabled, dark });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     devLog(`Unable to update workspace window effects: ${msg}`);

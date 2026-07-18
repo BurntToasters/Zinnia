@@ -471,6 +471,12 @@
           "markdownDescription": "Enables the get_platform_info command without any pre-configured scope."
         },
         {
+          "description": "Enables the get_startup_recovery_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-startup-recovery-status",
+          "markdownDescription": "Enables the get_startup_recovery_status command without any pre-configured scope."
+        },
+        {
           "description": "Enables the is_7z_running command without any pre-configured scope.",
           "type": "string",
           "const": "allow-is-7z-running",
@@ -667,6 +673,12 @@
           "type": "string",
           "const": "deny-get-platform-info",
           "markdownDescription": "Denies the get_platform_info command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_startup_recovery_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-startup-recovery-status",
+          "markdownDescription": "Denies the get_startup_recovery_status command without any pre-configured scope."
         },
         {
           "description": "Denies the is_7z_running command without any pre-configured scope.",

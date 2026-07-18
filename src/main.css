@@ -24,6 +24,23 @@
   top: 8px;
 }
 
+.startup-recovery-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--danger-bg, #3b1d1d);
+  color: var(--text);
+  border-bottom: 1px solid var(--danger, #e25a4a);
+  font-size: 0.8125rem;
+  z-index: 10001;
+}
+
+.startup-recovery-banner[hidden] {
+  display: none !important;
+}
+
 *,
 *::before,
 *::after {

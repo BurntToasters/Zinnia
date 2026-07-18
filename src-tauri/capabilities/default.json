@@ -47,6 +47,7 @@
     "allow-create-temp-extract-dir",
     "allow-remove-managed-temp-dir",
     "allow-set-workspace-window-fx",
-    "allow-supports-workspace-window-fx"
+    "allow-supports-workspace-window-fx",
+    "allow-get-startup-recovery-status"
   ]
 }

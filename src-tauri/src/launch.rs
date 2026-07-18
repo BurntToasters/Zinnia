@@ -1321,4 +1321,13 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(base);
     }
+
+    #[test]
+    fn warm_idle_generation_advances_when_bumped() {
+        let before = EXTRACT_WARM_IDLE_GENERATION.load(Ordering::SeqCst);
+        bump_extract_warm_idle_generation();
+        let after = EXTRACT_WARM_IDLE_GENERATION.load(Ordering::SeqCst);
+        assert!(after > before);
+        EXTRACT_WARM_IDLE_ACTIVE.store(false, Ordering::SeqCst);
+    }
 }

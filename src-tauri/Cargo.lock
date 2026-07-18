@@ -5534,7 +5534,7 @@ dependencies = [
 
 [[package]]
 name = "zinnia"
-version = "0.5.4-beta.3"
+version = "0.6.0-beta.1"
 dependencies = [
  "core-foundation",
  "getrandom 0.3.4",

@@ -19,6 +19,22 @@
   <body>
     <a href="#main-content" class="skip-link">Skip to main content</a>
     <div
+      id="startup-recovery-banner"
+      class="startup-recovery-banner"
+      role="alert"
+      hidden
+    >
+      <span id="startup-recovery-banner-text"></span>
+      <button
+        type="button"
+        class="btn btn--ghost btn--sm"
+        id="startup-recovery-banner-dismiss"
+        aria-label="Dismiss recovery warning"
+      >
+        Dismiss
+      </button>
+    </div>
+    <div
       id="app"
       class="app"
       data-mode="add"
@@ -1203,11 +1219,16 @@
       <main id="main-content">
         <div id="basic-workspace" class="basic-workspace">
           <div class="basic-toolbar" id="basic-toolbar" hidden>
-            <div class="basic-toolbar__nav">
+            <div
+              class="basic-toolbar__nav"
+              role="tablist"
+              aria-label="Basic workspace"
+            >
               <button
                 class="basic-toolbar__tab"
                 id="basic-tab-home"
                 title="Go home"
+                type="button"
               >
                 <i data-lucide="arrow-left" class="lucide-icon"></i>
                 <span>Back</span>
@@ -1217,6 +1238,8 @@
                 class="basic-toolbar__tab"
                 id="basic-tab-compress"
                 data-basic-tab="compress"
+                type="button"
+                role="tab"
               >
                 <i data-lucide="package" class="lucide-icon"></i>
                 <span>Compress</span>
@@ -1225,6 +1248,8 @@
                 class="basic-toolbar__tab"
                 id="basic-tab-extract"
                 data-basic-tab="extract"
+                type="button"
+                role="tab"
               >
                 <i data-lucide="archive-restore" class="lucide-icon"></i>
                 <span>Extract</span>
@@ -1233,6 +1258,8 @@
                 class="basic-toolbar__tab"
                 id="basic-tab-browse"
                 data-basic-tab="browse"
+                type="button"
+                role="tab"
               >
                 <i data-lucide="eye" class="lucide-icon"></i>
                 <span>Browse</span>
@@ -1252,7 +1279,7 @@
               />
               <h2 class="basic-home__title">Drop a file here</h2>
               <p class="basic-home__subtitle">
-                Open a zip, or make a new one: Zinnia handles the rest.
+                Open an archive, or make a new one: Zinnia handles the rest.
               </p>
             </div>
             <div
@@ -1278,7 +1305,7 @@
                 class="basic-home__link"
                 id="basic-action-open"
               >
-                Open a zip
+                Open an archive
               </button>
               <span class="basic-home__sep" aria-hidden="true">·</span>
               <button
@@ -1286,7 +1313,7 @@
                 class="basic-home__link"
                 id="basic-action-compress"
               >
-                Make a zip
+                Make an archive
               </button>
             </div>
             <div class="basic-recent" id="basic-recent" hidden>
@@ -1299,7 +1326,7 @@
             <div class="basic-view-scroll-content">
               <div class="basic-view-header">
                 <div>
-                  <h2 class="basic-section-title">Make a zip</h2>
+                  <h2 class="basic-section-title">Make an archive</h2>
                   <p class="basic-section-subtitle">
                     Pick what to include, choose where to save, then go.
                   </p>
@@ -1482,7 +1509,12 @@
               >
                 Compress
               </button>
-              <div class="basic-progress" id="basic-compress-progress">
+              <div
+                class="basic-progress"
+                id="basic-compress-progress"
+                role="status"
+                aria-live="polite"
+              >
                 <div class="basic-progress__bar-track">
                   <div
                     class="basic-progress__bar-fill is-indeterminate"
@@ -1501,7 +1533,12 @@
                   </button>
                 </div>
               </div>
-              <div class="basic-completion" id="basic-compress-completion">
+              <div
+                class="basic-completion"
+                id="basic-compress-completion"
+                role="status"
+                aria-live="polite"
+              >
                 <button
                   class="basic-completion__close"
                   id="basic-compress-completion-close"
@@ -1553,7 +1590,7 @@
             <div class="basic-view-scroll-content">
               <div class="basic-view-header">
                 <div>
-                  <h2 class="basic-section-title">Open a zip</h2>
+                  <h2 class="basic-section-title">Open an archive</h2>
                   <p class="basic-section-subtitle">
                     Browse contents or extract everything.
                   </p>
@@ -1653,7 +1690,12 @@
                   Browse contents
                 </button>
               </div>
-              <div class="basic-progress" id="basic-extract-progress">
+              <div
+                class="basic-progress"
+                id="basic-extract-progress"
+                role="status"
+                aria-live="polite"
+              >
                 <div class="basic-progress__bar-track">
                   <div
                     class="basic-progress__bar-fill is-indeterminate"
@@ -1672,7 +1714,12 @@
                   </button>
                 </div>
               </div>
-              <div class="basic-completion" id="basic-extract-completion">
+              <div
+                class="basic-completion"
+                id="basic-extract-completion"
+                role="status"
+                aria-live="polite"
+              >
                 <button
                   class="basic-completion__close"
                   id="basic-extract-completion-close"

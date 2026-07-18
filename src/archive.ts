@@ -106,7 +106,7 @@ let commandPreviewTrigger: HTMLElement | null = null;
 let commandPreviewCopyTimer: number | undefined;
 const OUTPUT_TRUNCATION_LIMIT_MIB = 10;
 const RUNTIME_PROBE_TIMEOUT_MS = 7000;
-let runtimeProbePromise: Promise<void> | null = null;
+let runtimeProbePromise: Promise<string> | null = null;
 
 async function withTimeout<T>(
   promise: Promise<T>,
@@ -159,7 +159,7 @@ function logTruncationNotice(result: Run7zResult) {
 async function ensureRuntimeReady(): Promise<boolean> {
   try {
     runtimeProbePromise ??= withTimeout(
-      invoke<void>("probe_7z"),
+      invoke<string>("probe_7z"),
       RUNTIME_PROBE_TIMEOUT_MS,
       `7-Zip runtime probe timed out after ${RUNTIME_PROBE_TIMEOUT_MS / 1000} seconds.`,
     );

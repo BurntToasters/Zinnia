@@ -14,6 +14,14 @@ static RECOVERY_LOCK: Mutex<()> = Mutex::new(());
 /// `run_7z` waits for this so it cannot race startup recovery against a live journal.
 static STARTUP_RECOVERY_DONE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(cfg!(test));
+/// Last startup recovery failure (cleared when recovery succeeds or was a no-op).
+static STARTUP_RECOVERY_ERROR: Mutex<Option<String>> = Mutex::new(None);
+/// Parsed bundled 7-Zip version from the last successful `probe_7z` (e.g. "26.02").
+static PROBED_7Z_VERSION: Mutex<Option<String>> = Mutex::new(None);
+
+/// Windows RAR extract stays blocked for CVE-2026-58052 through this version inclusive.
+#[cfg(target_os = "windows")]
+const WINDOWS_RAR_EXTRACT_BLOCKED_THROUGH: &str = "26.02";
 
 #[derive(serde::Serialize)]
 pub struct RunResult {
@@ -201,6 +209,76 @@ fn rollback_archive_journal(journal: &CleanupJournal) -> Result<(), String> {
 /// Mark the one-shot startup recovery pass complete (success or failure).
 pub fn mark_startup_recovery_done() {
     STARTUP_RECOVERY_DONE.store(true, std::sync::atomic::Ordering::Release);
+}
+
+pub fn set_startup_recovery_error(message: Option<String>) {
+    if let Ok(mut guard) = STARTUP_RECOVERY_ERROR.lock() {
+        *guard = message;
+    }
+}
+
+#[tauri::command]
+pub fn get_startup_recovery_status() -> Option<String> {
+    STARTUP_RECOVERY_ERROR
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone())
+}
+
+fn store_probed_7z_version(version: Option<String>) {
+    if let Ok(mut guard) = PROBED_7Z_VERSION.lock() {
+        *guard = version;
+    }
+}
+
+#[allow(dead_code)] // Attested version for Windows RAR gate and future callers.
+pub fn probed_7z_version() -> Option<String> {
+    PROBED_7Z_VERSION.lock().ok().and_then(|guard| guard.clone())
+}
+
+/// Parse a 7-Zip version token (e.g. "26.02") from `7z i` / banner output.
+pub fn parse_7z_version(output: &str) -> Option<String> {
+    for line in output.lines() {
+        let trimmed = line.trim();
+        // Examples: "7-Zip 26.02 (x64)", "7-Zip (z) 24.09"
+        if let Some(rest) = trimmed.strip_prefix("7-Zip") {
+            let rest = rest.trim_start();
+            let rest = rest
+                .strip_prefix("(z)")
+                .map(str::trim_start)
+                .unwrap_or(rest);
+            let token = rest.split_whitespace().next()?;
+            if token.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+                return Some(token.to_string());
+            }
+        }
+    }
+    None
+}
+
+#[cfg_attr(not(any(test, target_os = "windows")), allow(dead_code))]
+fn version_cmp(a: &str, b: &str) -> Option<std::cmp::Ordering> {
+    let parse = |value: &str| -> Option<Vec<u32>> {
+        value
+            .split('.')
+            .map(|part| part.parse::<u32>().ok())
+            .collect()
+    };
+    Some(parse(a)?.cmp(&parse(b)?))
+}
+
+#[cfg(target_os = "windows")]
+fn windows_rar_extract_blocked() -> bool {
+    match probed_7z_version() {
+        Some(version) => {
+            match version_cmp(&version, WINDOWS_RAR_EXTRACT_BLOCKED_THROUGH) {
+                Some(std::cmp::Ordering::Greater) => false,
+                _ => true,
+            }
+        }
+        // Fail closed until probe attests a safe runtime.
+        None => true,
+    }
 }
 
 async fn wait_for_startup_recovery() {
@@ -943,15 +1021,15 @@ fn publish_file_no_replace(
     source: &std::path::Path,
     target: &std::path::Path,
 ) -> Result<(), String> {
-    std::fs::File::open(source)
-        .and_then(|file| file.sync_all())
-        .map_err(|e| e.to_string())?;
+    let source_file = crate::path_safety::open_regular_file_nofollow(source)?;
+    source_file.sync_all().map_err(|e| e.to_string())?;
+    drop(source_file);
     if std::fs::hard_link(source, target).is_err() {
         // FAT-family and some network filesystems do not support hard links.
         // Reserve the target with create_new and stream the staged file into it;
         // this is slower but retains no-clobber semantics on those filesystems.
         let copy_result = (|| -> Result<(), String> {
-            let mut input = std::fs::File::open(source).map_err(|e| e.to_string())?;
+            let mut input = crate::path_safety::open_regular_file_nofollow(source)?;
             let mut output = std::fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -1557,6 +1635,7 @@ pub async fn run_7z(
             #[cfg(target_os = "windows")]
             if args.first().map(String::as_str) == Some("x")
                 && crate::archive_detect::is_rar_archive_file(std::path::Path::new(archive))?
+                && windows_rar_extract_blocked()
             {
                 return Err("RAR extraction is temporarily disabled on Windows while conflicting CVE-2026-58052 affected-version data is resolved. Install a future Zinnia release after the bundled runtime has been conclusively verified.".to_string());
             }
@@ -1842,7 +1921,7 @@ pub async fn run_7z(
 pub async fn probe_7z(
     app: tauri::AppHandle,
     state: tauri::State<'_, RunningProcess>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
     const PROBE_OUTPUT_LIMIT: usize = 4096;
 
@@ -1870,10 +1949,14 @@ pub async fn probe_7z(
             };
 
             let code = payload.code.unwrap_or(-1);
+            let combined = format!("{}\n{}", collected.stdout, collected.stderr);
             if code == 0 || code == 1 {
-                return Ok(());
+                let version = parse_7z_version(&combined).unwrap_or_else(|| "unknown".to_string());
+                store_probed_7z_version(Some(version.clone()));
+                return Ok(version);
             }
 
+            store_probed_7z_version(None);
             let mut message = format!("7z probe exited with code {code}.");
             let clean_stderr = sanitize_output(collected.stderr.trim());
             let clean_stdout = sanitize_output(collected.stdout.trim());
@@ -1889,6 +1972,7 @@ pub async fn probe_7z(
             Ok(result) => result,
             Err(_) => {
                 let _ = child.kill();
+                store_probed_7z_version(None);
                 Err("7z runtime probe timed out.".to_string())
             }
         }
@@ -2326,5 +2410,45 @@ mod tests {
         rollback_archive_journal(&journal).expect("rollback update");
         assert_eq!(std::fs::read(&destination).unwrap(), b"old");
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn parse_7z_version_reads_common_banners() {
+        assert_eq!(
+            parse_7z_version("7-Zip 26.02 (x64)\n"),
+            Some("26.02".to_string())
+        );
+        assert_eq!(
+            parse_7z_version("7-Zip (z) 24.09 (arm64)\n"),
+            Some("24.09".to_string())
+        );
+        assert_eq!(parse_7z_version("not a banner"), None);
+    }
+
+    #[test]
+    fn version_cmp_orders_numeric_segments() {
+        assert_eq!(
+            version_cmp("26.03", "26.02"),
+            Some(std::cmp::Ordering::Greater)
+        );
+        assert_eq!(
+            version_cmp("26.02", "26.02"),
+            Some(std::cmp::Ordering::Equal)
+        );
+        assert_eq!(
+            version_cmp("25.01", "26.02"),
+            Some(std::cmp::Ordering::Less)
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_rar_extract_blocked_through_attested_26_02() {
+        store_probed_7z_version(Some("26.02".to_string()));
+        assert!(windows_rar_extract_blocked());
+        store_probed_7z_version(Some("26.03".to_string()));
+        assert!(!windows_rar_extract_blocked());
+        store_probed_7z_version(None);
+        assert!(windows_rar_extract_blocked());
     }
 }

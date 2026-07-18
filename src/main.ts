@@ -1107,6 +1107,30 @@ async function init() {
     log(loadedSettings.warning, "error");
   }
 
+  void invoke<string | null>("get_startup_recovery_status")
+    .then((message) => {
+      if (!message) return;
+      const banner = document.getElementById("startup-recovery-banner");
+      const text = document.getElementById("startup-recovery-banner-text");
+      const dismiss = document.getElementById(
+        "startup-recovery-banner-dismiss",
+      );
+      if (!banner || !text) return;
+      text.textContent = `Could not finish recovering an interrupted archive job: ${message}`;
+      banner.hidden = false;
+      dismiss?.addEventListener(
+        "click",
+        () => {
+          banner.hidden = true;
+        },
+        { once: true },
+      );
+    })
+    .catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      devLog(`Unable to read startup recovery status: ${msg}`);
+    });
+
   state.platformName = platform;
   const [versionResult, packagedResult] = await Promise.allSettled([
     getVersion(),

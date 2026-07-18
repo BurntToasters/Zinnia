@@ -214,6 +214,9 @@ fn main() {
             std::thread::spawn(move || {
                 if let Err(e) = process::recover_interrupted_transaction(&maintenance_handle) {
                     eprintln!("Failed to recover an interrupted archive transaction: {e}");
+                    process::set_startup_recovery_error(Some(e));
+                } else {
+                    process::set_startup_recovery_error(None);
                 }
                 // Unblock run_7z before temp cleanup; recovery is what must be serialized.
                 process::mark_startup_recovery_done();
@@ -228,6 +231,7 @@ fn main() {
             process::cancel_7z,
             process::is_7z_running,
             process::probe_7z,
+            process::get_startup_recovery_status,
             archive_detect::validate_archive_paths,
             settings_store::load_settings,
             settings_store::save_settings,

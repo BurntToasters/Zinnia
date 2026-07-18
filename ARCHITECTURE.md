@@ -17,14 +17,16 @@ split into focused modules:
 | Module | Responsibility |
 | --- | --- |
 | `validation.rs` | Allow-list validation of 7z args: the security boundary |
-| `process.rs` | Process lifecycle: single-slot state, shared spawn/drain, `run_7z`/`probe_7z`/`cancel_7z` |
+| `process.rs` | Process lifecycle: single-slot state, shared spawn/drain, `run_7z`/`probe_7z`/`cancel_7z`, startup recovery, 7z version attestation |
 | `progress.rs` | Parse 7z stdout into structured `{percent, filesDone, currentFile}` |
 | `archive_detect.rs` | Magic-byte / TAR detection, extension-vs-header validation |
 | `settings_store.rs` | Atomic settings load/save (preserves reserved `_` keys) |
 | `logging.rs` | Rolling local diagnostics log |
-| `launch.rs` | CLI/file-association routing, extract windows, pending-path queues |
+| `launch.rs` | CLI/file-association routing, extract windows, pending-path queues, quick-extract warm-idle / tray |
 | `platform.rs` | Platform/OS-integration queries |
 | `output.rs` | Byte-bounded, UTF-8-safe output buffering |
+| `window_fx.rs` | Basic-mode native glass (macOS vibrancy, Windows Mica/Acrylic); Linux stays opaque |
+| `path_safety.rs` | Symlink / reparse rejection; Unix `O_NOFOLLOW` opens for promote |
 
 `run_7z` validates args, owns one sidecar operation globally, emits throttled
 raw (`7z-progress`) plus structured (`7z-progress-structured`) progress events,
@@ -38,6 +40,25 @@ Cancellation is a lifecycle state, not just a kill signal: the operation slot
 remains busy until the child has exited and staging has been promoted or rolled
 back. The extract-only window asks the backend to cancel and waits for that
 cleanup before it can be destroyed.
+
+### Window glass and Basic chrome
+
+- Main window is configured with `transparent: true` and `macOSPrivateApi` so
+  Basic can use OS vibrancy. `syncWorkspaceWindowFx` (frontend) +
+  `set_workspace_window_fx` (Rust) enable glass only in Basic when
+  `basicWindowEffects` is on and the platform supports it.
+- Power mode, Linux, and effects-off paint an opaque CSS shell
+  (`data-window-fx="opaque"`) and clear native effects so the desktop does not
+  bleed through.
+- Basic folds Basic/Power, Support, and Settings into the custom titlebar;
+  Power keeps its separate header row.
+
+### Quick-extract warm idle
+
+After a quick-extract window closes, optional warm-idle keeps the process
+resident (tray + idle timer; macOS Dock accessory policy) so the next file open
+is faster. Generation counters and main-thread re-checks prevent idle quit from
+racing a newly opened extract window.
 
 ## Frontend (`src/`)
 

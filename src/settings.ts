@@ -18,6 +18,9 @@ export function applyTheme(pref: string) {
         : "light"
       : pref;
   document.documentElement.setAttribute("data-theme", resolved);
+  void import("./ui").then(({ syncWorkspaceWindowFx }) => {
+    void syncWorkspaceWindowFx();
+  });
 }
 
 export async function loadSettings(): Promise<UserSettings> {
@@ -215,6 +218,18 @@ export function openSettingsModal() {
     keepWarm.dataset.warmIdleBound = "1";
     keepWarm.addEventListener("change", () => {
       syncQuickExtractWarmIdleControl();
+    });
+  }
+  const basicFx = document.getElementById(
+    "s-basic-window-effects",
+  ) as HTMLInputElement | null;
+  if (basicFx && !basicFx.dataset.liveFxBound) {
+    basicFx.dataset.liveFxBound = "1";
+    basicFx.addEventListener("change", () => {
+      state.currentSettings.basicWindowEffects = basicFx.checked;
+      void import("./ui").then(({ syncWorkspaceWindowFx }) => {
+        void syncWorkspaceWindowFx();
+      });
     });
   }
   const overlay = $("settings-overlay");

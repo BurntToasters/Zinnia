@@ -73,6 +73,18 @@
   font-size: 0.75rem;
 }
 
+@media (max-width: 400px) {
+  #app[data-workspace-mode="basic"] .support-btn span {
+    display: none;
+  }
+
+  #app[data-workspace-mode="basic"] .support-btn {
+    width: 30px;
+    padding: 0;
+    justify-content: center;
+  }
+}
+
 body.platform-windows #app[data-workspace-mode="basic"] .header,
 body.platform-linux #app[data-workspace-mode="basic"] .header {
   height: 32px;
@@ -132,6 +144,14 @@ body.platform-linux #app[data-workspace-mode="basic"] .header__actions {
 #basic-home,
 #basic-browse {
   gap: var(--basic-spacing);
+}
+
+#basic-browse.is-active {
+  min-height: 0;
+}
+
+#basic-browse .basic-browse-table-wrap {
+  flex: 1 1 auto;
 }
 
 #basic-home.is-active {
@@ -292,8 +312,7 @@ body.platform-linux #app[data-workspace-mode="basic"] .header__actions {
   box-shadow: 0 0 0 4px var(--accent-shadow);
 }
 
-.basic-dropzone.is-disabled,
-.basic-action-card.is-disabled {
+.basic-dropzone.is-disabled {
   cursor: not-allowed;
   opacity: 0.55;
 }
@@ -366,81 +385,6 @@ body.platform-linux #app[data-workspace-mode="basic"] .header__actions {
 
 .basic-dropzone__text strong {
   color: var(--text);
-}
-
-.basic-action-cards {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.basic-action-card {
-  display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-  padding: 16px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--basic-radius);
-  cursor: pointer;
-  transition:
-    border-color var(--transition),
-    background var(--transition),
-    box-shadow var(--transition),
-    transform var(--transition);
-  font-family: inherit;
-  color: var(--text);
-  box-shadow:
-    0 1px 3px var(--shadow),
-    0 0 1px var(--shadow);
-}
-
-.basic-action-card:hover {
-  border-color: var(--accent);
-  background: var(--accent-bg);
-  box-shadow: 0 6px 20px var(--accent-shadow-hover);
-  transform: translateY(-2px);
-}
-
-.basic-action-card:active {
-  transform: translateY(0);
-  box-shadow: 0 1px 3px var(--shadow);
-}
-
-.basic-action-card__icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 42px;
-  height: 42px;
-  border-radius: 50%;
-  background: var(--accent-bg);
-  transition: background var(--transition);
-}
-
-.basic-action-card__icon .lucide-icon {
-  width: 20px;
-  height: 20px;
-  color: var(--accent);
-}
-
-.basic-action-card:hover .basic-action-card__icon {
-  background: var(--accent-bg-strong);
-}
-
-.basic-action-card__label {
-  font-size: var(--basic-font);
-  font-weight: 600;
-  text-align: left;
-}
-
-.basic-action-card__desc {
-  font-size: var(--basic-label);
-  color: var(--text-secondary);
-  text-align: left;
-  grid-column: 2;
-  margin-top: -6px;
 }
 
 .basic-recent {
@@ -821,11 +765,6 @@ body.platform-linux #app[data-workspace-mode="basic"] .header__actions {
   outline-offset: 2px;
 }
 
-.basic-action-card:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
 .basic-dropzone:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -919,18 +858,22 @@ body.platform-linux #app[data-workspace-mode="basic"] .header__actions {
 
 .basic-progress__bar-track {
   height: 8px;
-  background: rgba(0, 120, 212, 0.1) !important;
+  background: color-mix(in srgb, var(--accent) 14%, transparent) !important;
   border-radius: 4px;
   overflow: hidden;
 }
 
 .basic-progress__bar-fill {
   height: 100%;
-  background: linear-gradient(90deg, #0078d2, #3b82f6) !important;
+  background: linear-gradient(
+    90deg,
+    var(--accent),
+    var(--accent-hover)
+  ) !important;
   border-radius: 4px;
   width: 0%;
   transition: width 300ms cubic-bezier(0.16, 1, 0.3, 1) !important;
-  box-shadow: 0 0 12px rgba(0, 120, 212, 0.35) !important;
+  box-shadow: 0 0 12px var(--accent-shadow) !important;
 }
 
 .basic-progress__bar-fill.is-indeterminate {
@@ -1134,7 +1077,9 @@ body.platform-linux #app[data-workspace-mode="basic"] .header__actions {
 }
 
 .basic-browse-table-wrap {
-  max-height: calc(100vh - 390px);
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
   overflow: auto;
   background: var(--basic-glass-bg) !important;
   border: 1px solid var(--basic-glass-border) !important;
@@ -1186,7 +1131,7 @@ body.platform-linux #app[data-workspace-mode="basic"] .header__actions {
 }
 
 .basic-browse-table-wrap tr:hover td {
-  background: rgba(0, 120, 212, 0.08) !important;
+  background: color-mix(in srgb, var(--accent) 10%, transparent) !important;
 }
 
 .basic-browse-table-wrap .browse-folder td {
@@ -1236,10 +1181,6 @@ body.platform-linux #app[data-workspace-mode="basic"] .header__actions {
 @media (max-width: 560px) {
   #app[data-workspace-mode="basic"] .basic-workspace {
     padding: 16px 14px;
-  }
-
-  .basic-action-cards {
-    grid-template-columns: 1fr;
   }
 
   .basic-field-grid {
@@ -1774,6 +1715,70 @@ html:not([data-window-fx]) #app[data-workspace-mode="basic"] {
   background: var(--bg);
 }
 
+/* Fake CSS glass only when native FX is off; opaque path never blurs. */
+html[data-window-fx="opaque"] #app[data-workspace-mode="basic"] .basic-dropzone,
+html[data-window-fx="opaque"] #app[data-workspace-mode="basic"] .basic-progress,
+html[data-window-fx="opaque"]
+  #app[data-workspace-mode="basic"]
+  .basic-browse-table-wrap,
+html[data-window-fx="opaque"]
+  #app[data-workspace-mode="basic"]
+  .basic-browse-table-wrap
+  th,
+html[data-window-fx="opaque"] #app[data-workspace-mode="basic"] input,
+html[data-window-fx="opaque"] #app[data-workspace-mode="basic"] select,
+html[data-window-fx="opaque"]
+  #app[data-workspace-mode="basic"]
+  .modal--settings,
+html[data-window-fx="opaque"]
+  #app[data-workspace-mode="basic"]
+  .modal--settings
+  .modal__header,
+html[data-window-fx="opaque"]
+  #app[data-workspace-mode="basic"]
+  .modal--settings
+  .modal__footer,
+html:not([data-window-fx]) #app[data-workspace-mode="basic"] .basic-dropzone,
+html:not([data-window-fx]) #app[data-workspace-mode="basic"] .basic-progress,
+html:not([data-window-fx])
+  #app[data-workspace-mode="basic"]
+  .basic-browse-table-wrap,
+html:not([data-window-fx])
+  #app[data-workspace-mode="basic"]
+  .basic-browse-table-wrap
+  th,
+html:not([data-window-fx]) #app[data-workspace-mode="basic"] input,
+html:not([data-window-fx]) #app[data-workspace-mode="basic"] select,
+html:not([data-window-fx]) #app[data-workspace-mode="basic"] .modal--settings,
+html:not([data-window-fx])
+  #app[data-workspace-mode="basic"]
+  .modal--settings
+  .modal__header,
+html:not([data-window-fx])
+  #app[data-workspace-mode="basic"]
+  .modal--settings
+  .modal__footer {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Native glass active: prefer OS vibrancy; skip heavy CSS blur on full surfaces. */
+html[data-window-fx="basic"] #app[data-workspace-mode="basic"] .basic-dropzone,
+html[data-window-fx="basic"] #app[data-workspace-mode="basic"] .basic-progress,
+html[data-window-fx="basic"]
+  #app[data-workspace-mode="basic"]
+  .basic-browse-table-wrap,
+html[data-window-fx="basic"]
+  #app[data-workspace-mode="basic"]
+  .basic-browse-table-wrap
+  th,
+html[data-window-fx="basic"] #app[data-workspace-mode="basic"] input,
+html[data-window-fx="basic"] #app[data-workspace-mode="basic"] select {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background: color-mix(in srgb, var(--surface) 55%, transparent) !important;
+}
+
 /* 2. Custom Sleek Scrollbars */
 #app[data-workspace-mode="basic"] .basic-view-scroll-content::-webkit-scrollbar,
 #app[data-workspace-mode="basic"] .modal__body::-webkit-scrollbar {
@@ -1802,7 +1807,6 @@ html:not([data-window-fx]) #app[data-workspace-mode="basic"] {
 #app[data-workspace-mode="basic"] select,
 #app[data-workspace-mode="basic"] label,
 #app[data-workspace-mode="basic"] [role="button"],
-#app[data-workspace-mode="basic"] .basic-action-card,
 #app[data-workspace-mode="basic"] .basic-home__link,
 #app[data-workspace-mode="basic"] .basic-dropzone,
 #app[data-workspace-mode="basic"] .basic-preset-pill,
@@ -1846,37 +1850,6 @@ html:not([data-window-fx]) #app[data-workspace-mode="basic"] {
 html[data-window-fx="basic"] #app[data-workspace-mode="basic"] .basic-dropzone {
   border-width: 2px !important;
   border-style: dashed !important;
-}
-
-#app[data-workspace-mode="basic"] .basic-action-card {
-  background: var(--basic-glass-bg) !important;
-  backdrop-filter: blur(var(--basic-glass-blur))
-    saturate(var(--basic-glass-saturate)) !important;
-  -webkit-backdrop-filter: blur(var(--basic-glass-blur))
-    saturate(var(--basic-glass-saturate)) !important;
-  border: 1px solid var(--basic-glass-border) !important;
-  border-radius: 12px !important;
-  box-shadow: var(--basic-glass-shadow) !important;
-  transition:
-    transform var(--transition),
-    background var(--transition),
-    box-shadow var(--transition) !important;
-}
-
-#app[data-workspace-mode="basic"] .basic-action-card:hover {
-  background: color-mix(in srgb, var(--surface) 74%, transparent) !important;
-  box-shadow:
-    0 12px 28px rgba(0, 0, 0, 0.22),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
-  transform: translateY(-1px);
-}
-
-[data-theme="light"]
-  #app[data-workspace-mode="basic"]
-  .basic-action-card:hover {
-  box-shadow:
-    0 12px 28px rgba(0, 0, 0, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 0.9) !important;
 }
 
 #app[data-workspace-mode="basic"] input[type="text"],

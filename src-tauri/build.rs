@@ -316,6 +316,7 @@ fn main() {
         "cancel_7z",
         "is_7z_running",
         "probe_7z",
+        "get_startup_recovery_status",
         "validate_archive_paths",
         "load_settings",
         "save_settings",
