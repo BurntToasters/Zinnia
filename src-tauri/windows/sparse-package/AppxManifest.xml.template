@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap2="http://schemas.microsoft.com/appx/manifest/uap/windows10/2"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  xmlns:desktop4="http://schemas.microsoft.com/appx/manifest/desktop/windows10/4"
+  xmlns:desktop5="http://schemas.microsoft.com/appx/manifest/desktop/windows10/5"
+  xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
+  IgnorableNamespaces="uap uap2 uap3 rescap desktop4 desktop5 com">
+
+  <Identity
+    Name="run.rosie.zinnia.contextmenu"
+    ProcessorArchitecture="neutral"
+    Publisher="__PUBLISHER_DN__"
+    Version="__PACKAGE_VERSION__" />
+
+  <Properties>
+    <DisplayName>Zinnia Context Menu</DisplayName>
+    <PublisherDisplayName>BurntToasters</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Resources>
+    <Resource Language="en-US" />
+  </Resources>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.22000.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+
+  <Applications>
+    <Application Id="ZinniaContextMenu" Executable="ZinniaContextMenu.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="Zinnia Context Menu"
+        Description="Zinnia File Explorer context menu"
+        Square150x150Logo="Assets\StoreLogo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png"
+        BackgroundColor="transparent" />
+      <Extensions>
+        <desktop4:Extension Category="windows.fileExplorerContextMenus">
+          <desktop4:FileExplorerContextMenus>
+            <desktop5:ItemType Type="*">
+              <desktop5:Verb Id="ZinniaRoot" Clsid="{B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5C}" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type="Directory">
+              <desktop5:Verb Id="ZinniaRootDir" Clsid="{B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5C}" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".7z">
+              <desktop5:Verb Id="ZinniaExtract7z" Clsid="{B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D}" />
+              <desktop5:Verb Id="ZinniaRoot7z" Clsid="{B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5C}" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".zip">
+              <desktop5:Verb Id="ZinniaExtractZip" Clsid="{B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D}" />
+              <desktop5:Verb Id="ZinniaRootZip" Clsid="{B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5C}" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".tar">
+              <desktop5:Verb Id="ZinniaExtractTar" Clsid="{B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D}" />
+              <desktop5:Verb Id="ZinniaRootTar" Clsid="{B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5C}" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".gz">
+              <desktop5:Verb Id="ZinniaExtractGz" Clsid="{B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D}" />
+              <desktop5:Verb Id="ZinniaRootGz" Clsid="{B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5C}" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".tgz">
+              <desktop5:Verb Id="ZinniaExtractTgz" Clsid="{B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D}" />
+              <desktop5:Verb Id="ZinniaRootTgz" Clsid="{B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5C}" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".bz2">
+              <desktop5:Verb Id="ZinniaExtractBz2" Clsid="{B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D}" />
+              <desktop5:Verb Id="ZinniaRootBz2" Clsid="{B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5C}" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".tbz2">
+              <desktop5:Verb Id="ZinniaExtractTbz2" Clsid="{B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D}" />
+              <desktop5:Verb Id="ZinniaRootTbz2" Clsid="{B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5C}" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".xz">
+              <desktop5:Verb Id="ZinniaExtractXz" Clsid="{B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D}" />
+              <desktop5:Verb Id="ZinniaRootXz" Clsid="{B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5C}" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".txz">
+              <desktop5:Verb Id="ZinniaExtractTxz" Clsid="{B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D}" />
+              <desktop5:Verb Id="ZinniaRootTxz" Clsid="{B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5C}" />
+            </desktop5:ItemType>
+          </desktop4:FileExplorerContextMenus>
+        </desktop4:Extension>
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:SurrogateServer DisplayName="Zinnia Context Menu">
+              <com:Class Id="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5C" Path="zinnia_shell.dll" ThreadingModel="STA" />
+              <com:Class Id="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" Path="zinnia_shell.dll" ThreadingModel="STA" />
+            </com:SurrogateServer>
+          </com:ComServer>
+        </com:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+</Package>

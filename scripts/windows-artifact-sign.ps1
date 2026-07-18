@@ -1,6 +1,10 @@
 #requires -Version 5.1
 [CmdletBinding()]
-param([Parameter(Mandatory = $true)][string]$FilePath)
+param(
+  [Parameter(Mandatory = $true)][string]$FilePath,
+  # Sparse context-menu identity packages (not Store uploads) may be signed.
+  [switch]$AllowSparseMsix
+)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if ($env:SKIP_WIN_CODESIGN -eq '1') {
@@ -14,7 +18,13 @@ $missing = @($required | Where-Object { [string]::IsNullOrWhiteSpace([Environmen
 if ($missing.Count) { throw "Missing Azure Artifact Signing environment variables: $($missing -join ', ')" }
 
 $resolved = (Resolve-Path -LiteralPath $FilePath).Path
-if ([IO.Path]::GetExtension($resolved).ToLowerInvariant() -in @('.appx','.msix','.appxbundle','.msixbundle')) { throw "Microsoft Store package signing is intentionally excluded: $resolved" }
+$ext = [IO.Path]::GetExtension($resolved).ToLowerInvariant()
+if ($ext -in @('.appx','.msix','.appxbundle','.msixbundle')) {
+  $isSparseContextMenu = $AllowSparseMsix -and ([IO.Path]::GetFileName($resolved) -ieq 'ZinniaContextMenu.msix')
+  if (-not $isSparseContextMenu) {
+    throw "Microsoft Store package signing is intentionally excluded: $resolved (pass -AllowSparseMsix for ZinniaContextMenu.msix)"
+  }
+}
 . (Join-Path $PSScriptRoot 'artifact-signing-tools.ps1')
 Import-BundledPowerShellSecurityModule
 $tools = Get-ArtifactSigningTools

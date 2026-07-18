@@ -39,6 +39,7 @@
     "allow-get-platform-info",
     "allow-get-os-integration-status",
     "allow-open-os-integration-settings",
+    "allow-open-finder-services-settings",
     "allow-reset-preferred-archiver-to-system",
     "allow-set-zinnia-default-archiver",
     "allow-get-cpu-count",

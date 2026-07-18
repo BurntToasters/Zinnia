@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity
+    type="win32"
+    name="run.rosie.zinnia.shell"
+    version="0.6.0.0"/>
+  <!-- publisher MUST exactly match AppxManifest Identity Publisher AND the signing cert Subject -->
+  <msix xmlns="urn:schemas-microsoft-com:msix.v1"
+    publisher="__PUBLISHER_DN__"
+    packageName="run.rosie.zinnia.contextmenu"
+    applicationId="ZinniaContextMenu"/>
+</assembly>

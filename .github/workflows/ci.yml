@@ -104,6 +104,8 @@ jobs:
       - run: npm run prepare:7z
       - run: npm run licenses
       - run: npm run build
+      - name: Stub Win11 context-menu resources when absent
+        run: node scripts/ensure-windows-context-menu-stubs.mjs
       - name: Unsigned tauri build (no bundle)
         run: npx tauri build --no-bundle
       - name: Verify host sidecar and release binary

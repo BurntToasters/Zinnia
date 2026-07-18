@@ -4,6 +4,8 @@ mod app_menu;
 mod archive_detect;
 mod fs_secure;
 mod launch;
+#[cfg(target_os = "macos")]
+mod macos_services;
 mod logging;
 mod output;
 mod path_safety;
@@ -212,6 +214,9 @@ fn main() {
                 eprintln!("Failed to install macOS app menu: {e}");
             }
 
+            #[cfg(target_os = "macos")]
+            macos_services::install_macos_services(app.handle());
+
             // Recovery can traverse and sync directories. Keep it off the setup thread so the
             // first window appears immediately. `run_7z` takes the same recovery lock before any
             // new operation, so a fast user action cannot race an interrupted transaction.
@@ -257,6 +262,7 @@ fn main() {
             platform::get_platform_info,
             platform::get_os_integration_status,
             platform::open_os_integration_settings,
+            platform::open_finder_services_settings,
             platform::reset_preferred_archiver_to_system,
             platform::set_zinnia_default_archiver,
             platform::get_cpu_count,

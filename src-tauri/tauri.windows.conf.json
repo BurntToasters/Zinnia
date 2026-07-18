@@ -1,5 +1,10 @@
 {
   "bundle": {
+    "resources": {
+      "windows/shell/out/zinnia_shell.dll": "zinnia_shell.dll",
+      "windows/shell/out/ZinniaContextMenu.msix": "ZinniaContextMenu.msix",
+      "../scripts/register-windows-context-menu.ps1": "register-windows-context-menu.ps1"
+    },
     "fileAssociations": [
       {
         "ext": ["7z"],

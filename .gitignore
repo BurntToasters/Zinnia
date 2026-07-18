@@ -50,3 +50,6 @@ flatpak-repo/
 # Generated files
 public/licenses.json
 public/licenses-cargo.json
+src-tauri/windows/shell/out/
+src-tauri/windows/shell/build-*/
+src-tauri/windows/shell/msix_identity.manifest

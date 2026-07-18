@@ -507,6 +507,12 @@
           "markdownDescription": "Enables the mark_main_window_ready command without any pre-configured scope."
         },
         {
+          "description": "Enables the open_finder_services_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-finder-services-settings",
+          "markdownDescription": "Enables the open_finder_services_settings command without any pre-configured scope."
+        },
+        {
           "description": "Enables the open_log_dir command without any pre-configured scope.",
           "type": "string",
           "const": "allow-open-log-dir",
@@ -709,6 +715,12 @@
           "type": "string",
           "const": "deny-mark-main-window-ready",
           "markdownDescription": "Denies the mark_main_window_ready command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_finder_services_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-finder-services-settings",
+          "markdownDescription": "Denies the open_finder_services_settings command without any pre-configured scope."
         },
         {
           "description": "Denies the open_log_dir command without any pre-configured scope.",

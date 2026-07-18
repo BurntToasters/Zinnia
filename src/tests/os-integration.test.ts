@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import {
   configureDefaultArchiverActionButton,
+  openFinderServicesSettings,
   renderOsIntegrationStatus,
   refreshOsIntegrationStatus,
   runDefaultArchiverAction,
@@ -375,5 +376,87 @@ describe("OS integration UI", () => {
     await Promise.resolve();
 
     expect(invokeMock).toHaveBeenCalledWith("get_os_integration_status");
+  });
+
+  it("shows Finder Services status on macOS and opens System Settings", async () => {
+    renderOsIntegrationStatus({
+      platform: "macos",
+      packaged: true,
+      fileAssociationsKnown: true,
+      contextActionsKnown: true,
+      defaultAppHelpAvailable: true,
+      defaultArchiverActionAvailable: true,
+      defaultArchiverActionLabel: "Make Zinnia Default",
+      defaultArchiverHelp: "macOS may ask you to confirm each archive type.",
+      finderServicesAvailable: true,
+      finderServicesKnown: true,
+      finderServicesEnabled: false,
+      finderServicesHelp:
+        "Turn on Extract with Zinnia and Compress with Zinnia under Keyboard Shortcuts → Services.",
+      archiveDefaults: [],
+    });
+
+    const row = document.getElementById(
+      "os-finder-services-row",
+    ) as HTMLElement;
+    expect(row.hidden).toBe(false);
+    expect(
+      document.getElementById("os-finder-services-status")?.textContent,
+    ).toBe("Off");
+    expect(
+      (
+        document.getElementById(
+          "open-finder-services-settings",
+        ) as HTMLButtonElement
+      ).textContent,
+    ).toBe("Enable…");
+
+    renderOsIntegrationStatus({
+      platform: "macos",
+      packaged: true,
+      fileAssociationsKnown: true,
+      contextActionsKnown: true,
+      defaultAppHelpAvailable: true,
+      finderServicesAvailable: true,
+      finderServicesKnown: false,
+      finderServicesEnabled: false,
+      finderServicesHelp: "Could not verify Services status.",
+      archiveDefaults: [],
+    });
+    expect(
+      document.getElementById("os-finder-services-status")?.textContent,
+    ).toBe("Unknown");
+    expect(
+      document
+        .getElementById("os-finder-services-status")
+        ?.classList.contains("status-pill--unknown"),
+    ).toBe(true);
+
+    invokeMock.mockResolvedValueOnce("");
+    await openFinderServicesSettings();
+    expect(invokeMock).toHaveBeenCalledWith("open_finder_services_settings");
+
+    renderOsIntegrationStatus({
+      platform: "windows",
+      packaged: true,
+      fileAssociationsKnown: true,
+      contextActionsKnown: true,
+      defaultAppHelpAvailable: true,
+      finderServicesAvailable: false,
+      finderServicesEnabled: false,
+      win11ModernMenuAvailable: true,
+      win11ModernMenuKnown: true,
+      win11ModernMenuRegistered: false,
+      win11ModernMenuHelp: "Win11 modern menu is not registered.",
+      archiveDefaults: [],
+    });
+    expect(row.hidden).toBe(true);
+    const win11Row = document.getElementById(
+      "os-win11-menu-row",
+    ) as HTMLElement;
+    expect(win11Row.hidden).toBe(false);
+    expect(document.getElementById("os-win11-menu-status")?.textContent).toBe(
+      "Not registered",
+    );
   });
 });

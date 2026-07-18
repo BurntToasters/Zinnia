@@ -27,6 +27,10 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **UI:** Basic Settings sheet is roomier (sectioned tabs, collapsed title into the tab row); related General rows sit side-by-side (Updates / Appearance) with compact controls.
 - **UI:** `Ctrl`/`⌘` + `,` opens Settings (listed in the keyboard shortcuts help).
 - **UI:** macOS menu bar: About, Check for Updates, Settings (`⌘,`), Edit/Window standards, plus Help (shortcuts, Support, Licenses).
+- **UI:** macOS Finder Services: Extract with Zinnia / Compress with Zinnia; OS Integration tab shows Enabled/Off/Unknown and an Enable button that opens Keyboard Shortcuts → Services.
+- **UI:** Windows 11 modern context menu (signed NSIS): **Zinnia** submenu (Extract / Compress) plus top-level **Extract with Zinnia** on archives; classic Explorer verbs kept for Show more options. Uses a sparse identity MSIX for the shell DLL only — Zinnia remains a normal NSIS install (not a Store/AppX app). OS Integration shows Registered / Not registered.
+- **Fix:** Win11 shell DLL resolves `zinnia.exe` beside itself or in the parent dir; NSIS finds the register script next to the DLL (`$INSTDIR`); Appx remove-before-add with visible install warning on failure; builds require full `AZURE_ARTIFACT_SIGNING_PUBLISHER_DN`.
+- **Fix:** macOS Services Extract no longer forces the main window open (keeps quick-extract); `NSApplicationIdentifier` nested under `NSRequiredContext`; Extract UTIs use `public.archive` (not broad `public.data`).
 - **Fix:** Basic Escape/Enter shortcuts respect overlay `[hidden]` (modals no longer swallow keyboard).
 - **Fix:** Basic Settings category tabs hide inactive panels again (Compression / OS / About no longer stuck under General).
 - **Fix:** Opaque native background when FX are off / unsupported; Windows Acrylic tint follows light/dark theme.
@@ -38,6 +42,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Security:** Base file associations omit `.rar` (macOS/Linux configs re-add); Unix promote opens use `O_NOFOLLOW` where available.
 - **CI:** `validate:changelog` + `validate:updater` run inside `npm run test:all`.
 - **Known:** Windows RAR **extraction** stays disabled while attested 7-Zip remains ≤ `26.02` (CVE-2026-58052); browse/test for RAR remain available.
+- **Known:** Archive passwords are passed to 7-Zip via `-p` and can appear in process listings even when entered in the UI (see `SECURITY.md`).
 
 ## Changes in `v0.5.4-beta.3:`
 
