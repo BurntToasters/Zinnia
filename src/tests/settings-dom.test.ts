@@ -7,6 +7,7 @@ import {
   syncSettingsSecurityControlsForFormat,
   openSettingsModal,
   closeSettingsModal,
+  syncQuickExtractWarmIdleControl,
 } from "../settings";
 import { state } from "../state";
 import { SETTING_DEFAULTS } from "../settings-model";
@@ -157,6 +158,8 @@ describe("populateSettingsModal", () => {
     expect(getSelectValue("s-log-verbosity")).toBe("debug");
     expect(getSelectValue("s-workspace-mode")).toBe("basic");
     expect(getSelectValue("s-ui-density")).toBe("comfortable");
+    expect(getChecked("s-quick-extract-keep-warm")).toBe(true);
+    expect(getSelectValue("s-quick-extract-warm-idle")).toBe("10");
   });
 
   it("sets log directory text", () => {
@@ -195,6 +198,8 @@ describe("readSettingsModal", () => {
     setSelectValue("s-workspace-mode", "power");
     setSelectValue("s-ui-density", "compact");
     setChecked("s-os-integration-dismissed", true);
+    setChecked("s-quick-extract-keep-warm", false);
+    setSelectValue("s-quick-extract-warm-idle", "30");
 
     const settings = readSettingsModal();
     expect(settings.theme).toBe("dark");
@@ -216,6 +221,8 @@ describe("readSettingsModal", () => {
     expect(settings.workspaceMode).toBe("power");
     expect(settings.uiDensity).toBe("compact");
     expect(settings.osIntegrationDismissed).toBe(true);
+    expect(settings.quickExtractKeepWarm).toBe(false);
+    expect(settings.quickExtractWarmIdleMinutes).toBe(30);
   });
 
   it("disables encryptHeaders for formats that don't support it", () => {
@@ -289,6 +296,30 @@ describe("syncSettingsSecurityControlsForFormat", () => {
     syncSettingsSecurityControlsForFormat("tar");
     const el = document.getElementById("s-encrypt-headers") as HTMLInputElement;
     expect(el.disabled).toBe(true);
+  });
+});
+
+describe("syncQuickExtractWarmIdleControl", () => {
+  it("disables idle timeout select when keep-warm is off", () => {
+    setChecked("s-quick-extract-keep-warm", false);
+    syncQuickExtractWarmIdleControl();
+    expect(
+      (
+        document.getElementById(
+          "s-quick-extract-warm-idle",
+        ) as HTMLSelectElement
+      ).disabled,
+    ).toBe(true);
+
+    setChecked("s-quick-extract-keep-warm", true);
+    syncQuickExtractWarmIdleControl();
+    expect(
+      (
+        document.getElementById(
+          "s-quick-extract-warm-idle",
+        ) as HTMLSelectElement
+      ).disabled,
+    ).toBe(false);
   });
 });
 

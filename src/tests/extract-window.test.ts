@@ -32,7 +32,10 @@ async function flushAsync(): Promise<void> {
   await Promise.resolve();
 }
 
-async function setupAndRun(invokeImpl?: AnyInvoke): Promise<{
+async function setupAndRun(
+  invokeImpl?: AnyInvoke,
+  options?: { injected?: { archive: string; destination: string } },
+): Promise<{
   invokeMock: ReturnType<
     typeof vi.mocked<(typeof import("@tauri-apps/api/core"))["invoke"]>
   >;
@@ -44,6 +47,15 @@ async function setupAndRun(invokeImpl?: AnyInvoke): Promise<{
 }> {
   vi.resetModules();
   mountExtractDom();
+  delete (window as Window & { __ZINNIA_EXTRACT__?: unknown })
+    .__ZINNIA_EXTRACT__;
+  if (options?.injected) {
+    (
+      window as Window & {
+        __ZINNIA_EXTRACT__?: { archive: string; destination: string };
+      }
+    ).__ZINNIA_EXTRACT__ = options.injected;
+  }
 
   const core = await import("@tauri-apps/api/core");
   const eventApi = await import("@tauri-apps/api/event");
@@ -105,6 +117,54 @@ describe("extract-window", () => {
     expect(invokeMock.mock.calls.some(([name]) => name === "probe_7z")).toBe(
       false,
     );
+  });
+
+  it("uses injected archive/destination without waiting on get_extract_paths", async () => {
+    const claim = {
+      resolve: null as ((value: string[]) => void) | null,
+    };
+    const { invokeMock } = await setupAndRun(
+      async (cmd) => {
+        if (cmd === "get_extract_paths") {
+          return await new Promise<string[]>((resolve) => {
+            claim.resolve = resolve;
+          });
+        }
+        if (cmd === "run_7z") {
+          return { stdout: "", stderr: "", code: 0 };
+        }
+        return undefined;
+      },
+      {
+        injected: {
+          archive: "/Downloads/packed.7z",
+          destination: "/Downloads/packed",
+        },
+      },
+    );
+
+    await flushAsync();
+
+    expect(
+      (document.getElementById("archive-name") as HTMLElement).textContent,
+    ).toBe("packed.7z");
+    expect(
+      (document.getElementById("extract-dest") as HTMLElement).textContent,
+    ).toBe("/Downloads/packed");
+    expect(invokeMock).toHaveBeenCalledWith("run_7z", {
+      args: [
+        "x",
+        "-o/Downloads/packed",
+        "-aou",
+        "-bb1",
+        "-bsp1",
+        "--",
+        "/Downloads/packed.7z",
+      ],
+    });
+
+    claim.resolve?.([]);
+    await flushAsync();
   });
 
   it("shows error when extraction process fails to start", async () => {
@@ -312,6 +372,29 @@ describe("extract-window", () => {
     expect(
       (document.getElementById("error-detail") as HTMLElement).textContent,
     ).toContain("permission denied");
+  });
+});
+
+describe("sanitizeStatusFileName", () => {
+  it("strips leading symbol junk before the real filename", async () => {
+    mountExtractDom();
+    const { sanitizeStatusFileName } = await import("../extract-window");
+    expect(sanitizeStatusFileName("░░░░ ░░░░- insurance 2026.pdf")).toBe(
+      "insurance 2026.pdf",
+    );
+  });
+
+  it("keeps unicode letters and hidden-style names", async () => {
+    mountExtractDom();
+    const { sanitizeStatusFileName } = await import("../extract-window");
+    expect(sanitizeStatusFileName("报告.pdf")).toBe("报告.pdf");
+    expect(sanitizeStatusFileName(".hidden.txt")).toBe(".hidden.txt");
+  });
+
+  it("returns empty for replacement-only junk", async () => {
+    mountExtractDom();
+    const { sanitizeStatusFileName } = await import("../extract-window");
+    expect(sanitizeStatusFileName("\uFFFD\uFFFD")).toBe("");
   });
 });
 

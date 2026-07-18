@@ -82,6 +82,25 @@ describe("normalizeUserSettings", () => {
     expect(result.updateChannel).toBe("beta");
   });
 
+  it("accepts quick-extract warm-idle prefs and clamps invalid minutes", () => {
+    const ok = normalizeUserSettings({
+      quickExtractKeepWarm: false,
+      quickExtractWarmIdleMinutes: 30,
+    });
+    expect(ok.quickExtractKeepWarm).toBe(false);
+    expect(ok.quickExtractWarmIdleMinutes).toBe(30);
+
+    const clamped = normalizeUserSettings({
+      quickExtractWarmIdleMinutes: 7,
+    });
+    expect(clamped.quickExtractWarmIdleMinutes).toBe(10);
+
+    const fromString = normalizeUserSettings({
+      quickExtractWarmIdleMinutes: "60",
+    });
+    expect(fromString.quickExtractWarmIdleMinutes).toBe(60);
+  });
+
   it("accepts valid working context settings", () => {
     const result = normalizeUserSettings({
       lastMode: "browse",

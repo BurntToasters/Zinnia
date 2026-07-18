@@ -95,6 +95,12 @@ export function populateSettingsModal() {
   $<HTMLSelectElement>("s-ui-density").value = state.currentSettings.uiDensity;
   $<HTMLInputElement>("s-os-integration-dismissed").checked =
     state.currentSettings.osIntegrationDismissed;
+  $<HTMLInputElement>("s-quick-extract-keep-warm").checked =
+    state.currentSettings.quickExtractKeepWarm;
+  $<HTMLSelectElement>("s-quick-extract-warm-idle").value = String(
+    state.currentSettings.quickExtractWarmIdleMinutes,
+  );
+  syncQuickExtractWarmIdleControl();
   syncSettingsSecurityControlsForFormat(state.currentSettings.format);
 
   const logDir = document.getElementById("s-log-dir");
@@ -151,6 +157,12 @@ export function readSettingsModal(): UserSettings {
       .value as UserSettings["uiDensity"],
     osIntegrationDismissed: $<HTMLInputElement>("s-os-integration-dismissed")
       .checked,
+    quickExtractKeepWarm: $<HTMLInputElement>("s-quick-extract-keep-warm")
+      .checked,
+    quickExtractWarmIdleMinutes: parseWarmIdleMinutes(
+      $<HTMLSelectElement>("s-quick-extract-warm-idle").value,
+      SETTING_DEFAULTS.quickExtractWarmIdleMinutes,
+    ),
     customPresets: state.currentSettings.customPresets,
     powerWindowWidth: state.currentSettings.powerWindowWidth,
     powerWindowHeight: state.currentSettings.powerWindowHeight,
@@ -158,8 +170,28 @@ export function readSettingsModal(): UserSettings {
   };
 }
 
+function parseWarmIdleMinutes(raw: string, fallback: number): number {
+  const n = Number(raw);
+  if (n === 5 || n === 10 || n === 30 || n === 60) return n;
+  return fallback;
+}
+
+export function syncQuickExtractWarmIdleControl(): void {
+  const enabled = $<HTMLInputElement>("s-quick-extract-keep-warm").checked;
+  $<HTMLSelectElement>("s-quick-extract-warm-idle").disabled = !enabled;
+}
+
 export function openSettingsModal() {
   populateSettingsModal();
+  const keepWarm = document.getElementById(
+    "s-quick-extract-keep-warm",
+  ) as HTMLInputElement | null;
+  if (keepWarm && !keepWarm.dataset.warmIdleBound) {
+    keepWarm.dataset.warmIdleBound = "1";
+    keepWarm.addEventListener("change", () => {
+      syncQuickExtractWarmIdleControl();
+    });
+  }
   const overlay = $("settings-overlay");
   overlay.hidden = false;
   const modal = overlay.querySelector<HTMLElement>(".modal");

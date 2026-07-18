@@ -89,8 +89,44 @@ fn parse_current_file(rest: &str, update: &mut ProgressUpdate) {
         _ => trimmed,
     };
 
-    if !name.is_empty() {
-        update.current_file = Some(name.to_string());
+    if let Some(clean) = sanitize_progress_filename(name) {
+        update.current_file = Some(clean);
+    }
+}
+
+/// Drop controls/bidi/replacement junk and leading non-name symbols so the UI
+/// never flashes tofu boxes from partial or noisy 7-Zip progress chunks.
+fn sanitize_progress_filename(name: &str) -> Option<String> {
+    let cleaned: String = name
+        .chars()
+        .filter(|c| {
+            !c.is_control()
+                && *c != '\u{fffd}'
+                && *c != '\u{feff}'
+                && !matches!(
+                    *c,
+                    '\u{200b}'..='\u{200f}'
+                        | '\u{202a}'..='\u{202e}'
+                        | '\u{2060}'..='\u{2064}'
+                )
+        })
+        .collect();
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    // Prefer the first path-like character so symbol runs like "░░░░ ░░░░- name"
+    // become "name", while still keeping ".hidden" / "_tmp" names.
+    let start = trimmed
+        .char_indices()
+        .find(|(_, c)| c.is_alphanumeric() || matches!(*c, '.' | '_' | '~'))
+        .map(|(i, _)| i)?;
+    let meaningful = trimmed[start..].trim();
+    if meaningful.is_empty() {
+        None
+    } else {
+        Some(meaningful.to_string())
     }
 }
 
@@ -155,5 +191,25 @@ mod tests {
         let u = parse_progress_line(" 50% 2 + weird%name.txt").expect("should parse");
         assert_eq!(u.percent, Some(50));
         assert_eq!(u.current_file.as_deref(), Some("weird%name.txt"));
+    }
+
+    #[test]
+    fn strips_leading_symbol_junk_before_filename() {
+        let u = parse_progress_line(" 3% - \u{2591}\u{2591}\u{2591}\u{2591} \u{2591}\u{2591}\u{2591}\u{2591}- insurance 2026.pdf")
+            .expect("should parse");
+        assert_eq!(u.current_file.as_deref(), Some("insurance 2026.pdf"));
+    }
+
+    #[test]
+    fn keeps_unicode_letters_in_filenames() {
+        let u = parse_progress_line(" 10% - 报告.pdf").expect("should parse");
+        assert_eq!(u.current_file.as_deref(), Some("报告.pdf"));
+    }
+
+    #[test]
+    fn drops_filenames_that_are_only_junk() {
+        let u = parse_progress_line(" 10% - \u{fffd}\u{fffd}").expect("should parse");
+        assert_eq!(u.percent, Some(10));
+        assert_eq!(u.current_file, None);
     }
 }

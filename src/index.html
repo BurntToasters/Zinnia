@@ -350,6 +350,57 @@
 
                 <div class="setting-item">
                   <div class="setting-info">
+                    <span
+                      class="setting-title"
+                      id="title-quick-extract-keep-warm"
+                      >Keep ready after quick extract</span
+                    >
+                    <span class="setting-desc"
+                      >Stay in the background after Open with Zinnia so the next
+                      archive opens faster. Uses a tray icon (or the Dock on
+                      macOS).</span
+                    >
+                  </div>
+                  <label
+                    class="switch"
+                    aria-labelledby="title-quick-extract-keep-warm"
+                  >
+                    <input
+                      type="checkbox"
+                      id="s-quick-extract-keep-warm"
+                      checked
+                    />
+                    <span class="switch__track"></span>
+                  </label>
+                </div>
+
+                <div class="setting-item">
+                  <div class="setting-info">
+                    <span
+                      class="setting-title"
+                      id="title-quick-extract-warm-idle"
+                      >Quick-extract idle timeout</span
+                    >
+                    <span class="setting-desc"
+                      >How long to stay ready with no extract window open.</span
+                    >
+                  </div>
+                  <select
+                    id="s-quick-extract-warm-idle"
+                    class="setting-select"
+                    aria-labelledby="title-quick-extract-warm-idle"
+                  >
+                    <option value="5">5 minutes</option>
+                    <option value="10" selected>10 minutes</option>
+                    <option value="30">30 minutes</option>
+                    <option value="60">60 minutes</option>
+                  </select>
+                </div>
+
+                <hr class="setting-divider" />
+
+                <div class="setting-item">
+                  <div class="setting-info">
                     <span class="setting-title" id="title-local-logging"
                       >Local diagnostics logging</span
                     >
