@@ -24,7 +24,9 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
 - **UI:** Major Basic mode redesign: drop-first home, warmer floral accent, friendlier copy, and Basic/Power + Support + Settings folded into the custom titlebar.
 - **UI:** Translucent Basic window with OS-native blur on macOS (vibrancy) and Windows (Mica / Acrylic). Linux Basic stays fully opaque. Toggle in Settings (live-applies).
+- **UI:** Basic Settings sheet is roomier (sectioned tabs, collapsed title into the tab row); related General rows sit side-by-side (Updates / Appearance) with compact controls.
 - **Fix:** Basic Escape/Enter shortcuts respect overlay `[hidden]` (modals no longer swallow keyboard).
+- **Fix:** Basic Settings category tabs hide inactive panels again (Compression / OS / About no longer stuck under General).
 - **Fix:** Opaque native background when FX are off / unsupported; Windows Acrylic tint follows light/dark theme.
 - **Fix:** Basic completion surfaces real `errorDetail` text and output/extract path labels; recent archives list on home.
 - **Fix:** Quick-extract no longer leaves a Dock/app zombie after the window closes. “Keep ready after quick extract” is off by default; when enabled, macOS hides the Dock and uses a menu-bar tray until idle timeout or Quit.
