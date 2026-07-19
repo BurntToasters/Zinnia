@@ -100,6 +100,14 @@ fn handle_service(pasteboard: Option<&NSPasteboard>, mode: &str) {
             }
         }
     } else if mode == "compress" {
+        // Cancel cold-start fallback so it cannot later mark this real main as
+        // a disposable fallback window (and get destroyed by a later Extract).
+        if let Ok(mut guard) = FILE_OPEN_SIGNAL.lock() {
+            if let Some(tx) = guard.take() {
+                let _ = tx.send(());
+            }
+        }
+        MAC_FALLBACK_MAIN_PENDING.store(false, Ordering::SeqCst);
         if let Err(err) = show_main_window(app) {
             eprintln!("Zinnia Services: failed to show main window: {err}");
         }

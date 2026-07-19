@@ -6,11 +6,13 @@
 #endif
 
 #include <windows.h>
+#include <shlobj.h>
 #include <shobjidl.h>
 #include <shlwapi.h>
 #include <string>
 #include <vector>
 #include <new>
+#include <algorithm>
 
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "ole32.lib")
@@ -76,6 +78,35 @@ static HRESULT GetSelectedPaths(IShellItemArray* items,
   return out->empty() ? E_FAIL : S_OK;
 }
 
+// Directory\Background often has a null/empty selection; resolve the open folder
+// via the Explorer site (IFolderView).
+static HRESULT GetFolderPathFromSite(IUnknown* site, std::wstring* out) {
+  if (!site || !out) return E_INVALIDARG;
+  out->clear();
+
+  IServiceProvider* sp = nullptr;
+  HRESULT hr = site->QueryInterface(IID_PPV_ARGS(&sp));
+  if (FAILED(hr) || !sp) return FAILED(hr) ? hr : E_FAIL;
+
+  IFolderView* folderView = nullptr;
+  hr = sp->QueryService(SID_SFolderView, IID_PPV_ARGS(&folderView));
+  sp->Release();
+  if (FAILED(hr) || !folderView) return FAILED(hr) ? hr : E_FAIL;
+
+  IShellItem* folder = nullptr;
+  hr = folderView->GetFolder(IID_PPV_ARGS(&folder));
+  folderView->Release();
+  if (FAILED(hr) || !folder) return FAILED(hr) ? hr : E_FAIL;
+
+  PWSTR path = nullptr;
+  hr = folder->GetDisplayName(SIGDN_FILESYSPATH, &path);
+  folder->Release();
+  if (FAILED(hr) || !path) return FAILED(hr) ? hr : E_FAIL;
+  *out = path;
+  CoTaskMemFree(path);
+  return S_OK;
+}
+
 // DLL is usually next to zinnia.exe ($INSTDIR). If mapped under resources\,
 // fall back to the parent directory.
 static std::wstring GetZinniaExePath() {
@@ -133,17 +164,33 @@ static HRESULT LaunchZinnia(const wchar_t* flag,
   return S_OK;
 }
 
-class ExplorerCommand : public IExplorerCommand {
+class ExplorerCommand : public IExplorerCommand, public IObjectWithSite {
  public:
   ExplorerCommand(CommandKind kind) : kind_(kind) { AddRefModule(); }
-  ~ExplorerCommand() { ReleaseModule(); }
+  ~ExplorerCommand() {
+    if (site_) site_->Release();
+    ReleaseModule();
+  }
 
-  // IUnknown
+  void SetSiteFromParent(IUnknown* site) {
+    if (site_) {
+      site_->Release();
+      site_ = nullptr;
+    }
+    site_ = site;
+    if (site_) site_->AddRef();
+  }
+
   IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) override {
     if (!ppv) return E_POINTER;
     *ppv = nullptr;
     if (riid == IID_IUnknown || riid == IID_IExplorerCommand) {
       *ppv = static_cast<IExplorerCommand*>(this);
+      AddRef();
+      return S_OK;
+    }
+    if (riid == IID_IObjectWithSite) {
+      *ppv = static_cast<IObjectWithSite*>(this);
       AddRef();
       return S_OK;
     }
@@ -156,6 +203,17 @@ class ExplorerCommand : public IExplorerCommand {
     ULONG c = InterlockedDecrement(&refs_);
     if (c == 0) delete this;
     return c;
+  }
+
+  IFACEMETHODIMP SetSite(IUnknown* punkSite) override {
+    SetSiteFromParent(punkSite);
+    return S_OK;
+  }
+  IFACEMETHODIMP GetSite(REFIID riid, void** ppvSite) override {
+    if (!ppvSite) return E_POINTER;
+    *ppvSite = nullptr;
+    if (!site_) return E_FAIL;
+    return site_->QueryInterface(riid, ppvSite);
   }
 
   IFACEMETHODIMP GetTitle(IShellItemArray*, LPWSTR* name) override {
@@ -192,10 +250,8 @@ class ExplorerCommand : public IExplorerCommand {
         *guid = CLSID_ZinniaRoot;
         break;
       case CommandKind::ExtractTop:
-        *guid = CLSID_ZinniaExtractTop;
-        break;
       case CommandKind::Extract:
-        *guid = CLSID_ZinniaExtractTop;  // stable-ish id for child
+        *guid = CLSID_ZinniaExtractTop;
         break;
       case CommandKind::Compress: {
         static const GUID kCompress = {
@@ -210,11 +266,25 @@ class ExplorerCommand : public IExplorerCommand {
     return S_OK;
   }
 
+  HRESULT ResolvePaths(IShellItemArray* selection,
+                       std::vector<std::wstring>* paths) {
+    if (!paths) return E_INVALIDARG;
+    if (SUCCEEDED(GetSelectedPaths(selection, paths))) return S_OK;
+    std::wstring folder;
+    if (site_ && SUCCEEDED(GetFolderPathFromSite(site_, &folder)) &&
+        !folder.empty()) {
+      paths->clear();
+      paths->push_back(folder);
+      return S_OK;
+    }
+    return E_FAIL;
+  }
+
   IFACEMETHODIMP GetState(IShellItemArray* selection, BOOL, EXPCMDSTATE* state) override {
     *state = ECS_ENABLED;
     if (kind_ == CommandKind::Extract || kind_ == CommandKind::ExtractTop) {
       std::vector<std::wstring> paths;
-      if (FAILED(GetSelectedPaths(selection, &paths))) {
+      if (FAILED(ResolvePaths(selection, &paths))) {
         *state = ECS_DISABLED;
         return S_OK;
       }
@@ -232,7 +302,7 @@ class ExplorerCommand : public IExplorerCommand {
 
   IFACEMETHODIMP Invoke(IShellItemArray* selection, IBindCtx*) override {
     std::vector<std::wstring> paths;
-    HRESULT hr = GetSelectedPaths(selection, &paths);
+    HRESULT hr = ResolvePaths(selection, &paths);
     if (FAILED(hr)) return hr;
     switch (kind_) {
       case CommandKind::Extract:
@@ -256,14 +326,19 @@ class ExplorerCommand : public IExplorerCommand {
  private:
   LONG refs_ = 1;
   CommandKind kind_;
+  IUnknown* site_ = nullptr;
 };
 
 class EnumCommands : public IEnumExplorerCommand {
  public:
-  EnumCommands() {
+  explicit EnumCommands(IUnknown* site) {
     AddRefModule();
-    commands_.push_back(new ExplorerCommand(CommandKind::Extract));
-    commands_.push_back(new ExplorerCommand(CommandKind::Compress));
+    auto* extract = new ExplorerCommand(CommandKind::Extract);
+    auto* compress = new ExplorerCommand(CommandKind::Compress);
+    extract->SetSiteFromParent(site);
+    compress->SetSiteFromParent(site);
+    commands_.push_back(extract);
+    commands_.push_back(compress);
   }
   ~EnumCommands() {
     for (auto* c : commands_) c->Release();
@@ -321,7 +396,7 @@ class EnumCommands : public IEnumExplorerCommand {
 IFACEMETHODIMP ExplorerCommand::EnumSubCommands(
     IEnumExplorerCommand** enumCommands) {
   if (kind_ != CommandKind::Root) return E_NOTIMPL;
-  *enumCommands = new (std::nothrow) EnumCommands();
+  *enumCommands = new (std::nothrow) EnumCommands(site_);
   return *enumCommands ? S_OK : E_OUTOFMEMORY;
 }
 

@@ -31,7 +31,8 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **UI:** Windows 11 modern context menu (signed NSIS): **Zinnia** submenu (Extract / Compress) plus top-level **Extract with Zinnia** on archives; classic Explorer verbs kept for Show more options. Uses a sparse identity MSIX for the shell DLL only — Zinnia remains a normal NSIS install (not a Store/AppX app). OS Integration shows Registered / Not registered.
 - **Fix:** Win11 shell DLL resolves `zinnia.exe` beside itself or in the parent dir; NSIS finds the register script next to the DLL (`$INSTDIR`); Appx remove-before-add with visible install warning on failure; builds require full `AZURE_ARTIFACT_SIGNING_PUBLISHER_DN`.
 - **Fix:** macOS Services Extract no longer forces the main window open (keeps quick-extract); cold-start fallback is cancelled/hidden to avoid a main-window flash; `NSApplicationIdentifier` nested under `NSRequiredContext`; Extract UTIs use `public.archive` (not broad `public.data`).
-- **Fix:** Win11 modern menu also registers on folder background (`Directory\Background`).
+- **Fix:** Win11 modern menu + classic NSIS verbs register on folder background (`Directory\Background`); shell DLL resolves the open folder via Explorer site when selection is empty.
+- **Fix:** macOS Services Compress cancels the cold-start main-window fallback so a later Extract cannot destroy that workspace.
 - **Fix:** Basic Escape/Enter shortcuts respect overlay `[hidden]` (modals no longer swallow keyboard).
 - **Fix:** Basic Settings category tabs hide inactive panels again (Compression / OS / About no longer stuck under General).
 - **Fix:** Opaque native background when FX are off / unsupported; Windows Acrylic tint follows light/dark theme.

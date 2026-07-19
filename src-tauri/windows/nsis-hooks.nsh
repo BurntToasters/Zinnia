@@ -15,6 +15,7 @@
 !macro ZINNIA_REGISTER_COMPRESS_VERBS
   DeleteRegKey HKCU "Software\Classes\*\shell\Zinnia"
   DeleteRegKey HKCU "Software\Classes\Directory\shell\Zinnia"
+  DeleteRegKey HKCU "Software\Classes\Directory\Background\shell\Zinnia"
 
   WriteRegStr HKCU "Software\Classes\*\shell\ZinniaCompress" "MUIVerb" "Compress with Zinnia"
   WriteRegStr HKCU "Software\Classes\*\shell\ZinniaCompress" "Icon" "$INSTDIR\zinnia.exe"
@@ -22,13 +23,19 @@
   WriteRegStr HKCU "Software\Classes\Directory\shell\ZinniaCompress" "MUIVerb" "Compress folder with Zinnia"
   WriteRegStr HKCU "Software\Classes\Directory\shell\ZinniaCompress" "Icon" "$INSTDIR\zinnia.exe"
   WriteRegStr HKCU "Software\Classes\Directory\shell\ZinniaCompress\command" "" '"$INSTDIR\zinnia.exe" --compress "%1"'
+  ; Empty folder background — %V is the folder path.
+  WriteRegStr HKCU "Software\Classes\Directory\Background\shell\ZinniaCompress" "MUIVerb" "Compress with Zinnia"
+  WriteRegStr HKCU "Software\Classes\Directory\Background\shell\ZinniaCompress" "Icon" "$INSTDIR\zinnia.exe"
+  WriteRegStr HKCU "Software\Classes\Directory\Background\shell\ZinniaCompress\command" "" '"$INSTDIR\zinnia.exe" --compress "%V"'
 !macroend
 
 !macro ZINNIA_UNREGISTER_COMPRESS_VERBS
   DeleteRegKey HKCU "Software\Classes\*\shell\ZinniaCompress"
   DeleteRegKey HKCU "Software\Classes\Directory\shell\ZinniaCompress"
+  DeleteRegKey HKCU "Software\Classes\Directory\Background\shell\ZinniaCompress"
   DeleteRegKey HKCU "Software\Classes\*\shell\Zinnia"
   DeleteRegKey HKCU "Software\Classes\Directory\shell\Zinnia"
+  DeleteRegKey HKCU "Software\Classes\Directory\Background\shell\Zinnia"
 !macroend
 
 !macro ZINNIA_REGISTER_WIN11_CONTEXT_MENU

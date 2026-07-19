@@ -11,9 +11,13 @@ it points at the already-installed shell DLL and does not relocate the app.
 ## Menu shape
 
 - **Zinnia** submenu on files/folders: Extract with Zinnia, Compress with Zinnia
+- **Zinnia** submenu on folder **background** (`Directory\Background`): Compress
+  the current folder (DLL resolves the open folder via `IObjectWithSite` /
+  `IFolderView` when selection is empty)
 - Top-level **Extract with Zinnia** on supported archive extensions
 
-Classic NSIS registry verbs remain for the legacy menu.
+Classic NSIS registry verbs remain for the legacy menu (including
+`Directory\Background\shell\ZinniaCompress` with `%V`).
 
 ## Build (Windows only)
 
