@@ -1,5 +1,8 @@
 name: CI
 
+# Note: CI workflows are only run on the main and beta branches.
+# Additionally, CI workflows only run tests and smoke runs, not actually release builds.
+
 on:
   push:
     branches: [main, beta]
