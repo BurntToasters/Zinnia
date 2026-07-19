@@ -194,15 +194,18 @@ fn main() {
                         }
                         let main_thread_handle = handle.clone();
                         let _ = handle.run_on_main_thread(move || {
-                            // Re-check on the main thread: Services Extract may have
-                            // claimed EXTRACT_ONLY_LAUNCH after the timeout fired.
-                            if !EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst)
-                                && !has_extract_windows(&main_thread_handle)
+                            // Re-check on the main thread: Services may have claimed
+                            // extract-only or already opened a real main (Compress)
+                            // after the timeout fired.
+                            if EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst)
+                                || has_extract_windows(&main_thread_handle)
+                                || main_thread_handle.get_webview_window("main").is_some()
                             {
-                                MAC_FALLBACK_MAIN_PENDING.store(true, Ordering::SeqCst);
-                                if let Err(e) = show_main_window(&main_thread_handle) {
-                                    eprintln!("Failed to open main window: {e}");
-                                }
+                                return;
+                            }
+                            MAC_FALLBACK_MAIN_PENDING.store(true, Ordering::SeqCst);
+                            if let Err(e) = show_main_window(&main_thread_handle) {
+                                eprintln!("Failed to open main window: {e}");
                             }
                         });
                     }
