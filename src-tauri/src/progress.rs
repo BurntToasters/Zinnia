@@ -124,10 +124,11 @@ fn sanitize_progress_filename(name: &str) -> Option<String> {
         .map(|(i, _)| i)?;
     let meaningful = trimmed[start..].trim();
     if meaningful.is_empty() {
-        None
-    } else {
-        Some(meaningful.to_string())
+        return None;
     }
+    const MAX_PROGRESS_FILENAME_CHARS: usize = 200;
+    let capped: String = meaningful.chars().take(MAX_PROGRESS_FILENAME_CHARS).collect();
+    Some(capped)
 }
 
 #[cfg(test)]
@@ -211,5 +212,12 @@ mod tests {
         let u = parse_progress_line(" 10% - \u{fffd}\u{fffd}").expect("should parse");
         assert_eq!(u.percent, Some(10));
         assert_eq!(u.current_file, None);
+    }
+
+    #[test]
+    fn caps_long_progress_filenames() {
+        let long = format!(" 10% - {}", "a".repeat(300));
+        let u = parse_progress_line(&long).expect("should parse");
+        assert_eq!(u.current_file.as_ref().map(String::len), Some(200));
     }
 }

@@ -65,6 +65,72 @@ function parentDirForPath(path: string): string {
   return parent;
 }
 
+const RECENT_ARCHIVES_KEY = "zinnia.basic.recentArchives";
+const MAX_RECENT_ARCHIVES = 5;
+
+function loadRecentArchives(): string[] {
+  try {
+    const raw = localStorage.getItem(RECENT_ARCHIVES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (item): item is string =>
+          typeof item === "string" && item.trim().length > 0,
+      )
+      .slice(0, MAX_RECENT_ARCHIVES);
+  } catch {
+    return [];
+  }
+}
+
+function saveRecentArchives(paths: string[]): void {
+  try {
+    localStorage.setItem(
+      RECENT_ARCHIVES_KEY,
+      JSON.stringify(paths.slice(0, MAX_RECENT_ARCHIVES)),
+    );
+  } catch {
+    // ignore quota / private mode
+  }
+}
+
+function rememberRecentArchive(path: string): void {
+  const trimmed = path.trim();
+  if (!trimmed) return;
+  const next = [
+    trimmed,
+    ...loadRecentArchives().filter((p) => p !== trimmed),
+  ].slice(0, MAX_RECENT_ARCHIVES);
+  saveRecentArchives(next);
+  renderRecentArchives();
+}
+
+function renderRecentArchives(): void {
+  const wrap = document.getElementById("basic-recent");
+  const list = document.getElementById("basic-recent-list");
+  if (!wrap || !list) return;
+  const recent = loadRecentArchives();
+  list.replaceChildren();
+  if (recent.length === 0) {
+    wrap.hidden = true;
+    return;
+  }
+  wrap.hidden = false;
+  for (const path of recent) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "basic-recent__item";
+    btn.textContent = basename(path);
+    btn.title = path;
+    btn.addEventListener("click", () => {
+      void handleBasicDrop([path]);
+    });
+    list.appendChild(btn);
+  }
+}
+
 async function openPathWithFeedback(path: string): Promise<void> {
   if (!path.trim()) return;
   try {
@@ -507,7 +573,10 @@ function updateBasicPasswordField(): void {
 function showBasicProgress(section: "compress" | "extract"): void {
   const progress = document.getElementById(`basic-${section}-progress`);
   const completion = document.getElementById(`basic-${section}-completion`);
-  if (progress) progress.classList.add("is-active");
+  if (progress) {
+    progress.classList.add("is-active");
+    progress.setAttribute("aria-busy", "true");
+  }
   if (completion) completion.classList.remove("is-active");
 
   const runBtn =
@@ -527,6 +596,7 @@ function showBasicCompletion(
   success: boolean,
   title: string,
   message: string,
+  pathLabel?: string,
 ): void {
   const completion = document.getElementById(`basic-${section}-completion`);
   if (!completion) return;
@@ -543,6 +613,7 @@ function showBasicCompletion(
   const iconEl = document.getElementById(`basic-${section}-completion-icon`);
   const titleEl = document.getElementById(`basic-${section}-completion-title`);
   const msgEl = document.getElementById(`basic-${section}-completion-msg`);
+  const pathEl = document.getElementById(`basic-${section}-completion-path`);
 
   if (iconEl) {
     iconEl.innerHTML = success
@@ -551,6 +622,10 @@ function showBasicCompletion(
   }
   if (titleEl) titleEl.textContent = title;
   if (msgEl) msgEl.textContent = message;
+  if (pathEl) {
+    pathEl.textContent = pathLabel?.trim() || "";
+    pathEl.hidden = !pathLabel?.trim();
+  }
 
   // Manage "Open folder" button visibility based on success state
   const openDestBtn = document.getElementById(`basic-${section}-open-dest`);
@@ -682,7 +757,7 @@ export function updateBasicRunningState(active: boolean): void {
   }
 }
 
-export function updateBasicStatus(text: string): void {
+export function updateBasicStatus(text: string, errorDetail?: string): void {
   if (getWorkspaceMode() !== "basic") return;
 
   const section = getMode() === "extract" ? "extract" : "compress";
@@ -691,6 +766,22 @@ export function updateBasicStatus(text: string): void {
 
   if (text === "Done") {
     hideBasicProgress(section);
+    const pathLabel =
+      section === "compress"
+        ? (
+            document.getElementById(
+              "basic-output-path",
+            ) as HTMLInputElement | null
+          )?.value?.trim() ||
+          state.lastAutoOutputPath ||
+          ""
+        : state.lastAutoExtractDestination ||
+          (
+            document.getElementById(
+              "basic-extract-path",
+            ) as HTMLInputElement | null
+          )?.value?.trim() ||
+          "";
     showBasicCompletion(
       section,
       true,
@@ -698,15 +789,19 @@ export function updateBasicStatus(text: string): void {
       section === "compress"
         ? "Your archive has been created successfully."
         : "Files have been extracted successfully.",
+      pathLabel || undefined,
     );
+    if (section === "extract" && state.inputs[0]) {
+      rememberRecentArchive(state.inputs[0]);
+    } else if (section === "compress" && pathLabel) {
+      rememberRecentArchive(pathLabel);
+    }
   } else if (text === "Error") {
     hideBasicProgress(section);
-    showBasicCompletion(
-      section,
-      false,
-      "Operation failed",
-      "Something went wrong. Check the error message for details.",
-    );
+    const detail =
+      errorDetail?.trim() ||
+      "Something went wrong. Check the error message for details.";
+    showBasicCompletion(section, false, "Operation failed", detail);
   } else if (text === "Cancelled") {
     hideBasicProgress(section);
   }
@@ -1247,8 +1342,9 @@ export function initBasicWorkspace(): void {
   registerBasicHooks({
     onRenderInputs: () => renderBasicInputs(),
     onSetRunning: (active) => updateBasicRunningState(active),
-    onSetStatus: (text) => updateBasicStatus(text),
+    onSetStatus: (text, errorDetail) => updateBasicStatus(text, errorDetail),
   });
+  renderRecentArchives();
 }
 
 function wireBasicCompressEvents(): void {
@@ -1667,7 +1763,8 @@ export function handleBasicDragDrop(type: string, paths?: string[]): void {
 function wireBasicKeyboardEvents(): void {
   document.addEventListener("keydown", (e) => {
     if (getWorkspaceMode() !== "basic") return;
-    if (document.querySelector(".modal:not([hidden])")) return;
+    // Overlays use [hidden]; .modal nodes stay in the DOM without that attribute.
+    if (document.querySelector(".modal-overlay:not([hidden])")) return;
 
     if (e.key === "Escape") {
       const activeElement = document.activeElement as HTMLElement;

@@ -152,6 +152,11 @@ fn read_probe_bytes(path: &std::path::Path, max_bytes: usize) -> Result<Vec<u8>,
 
 #[cfg(target_os = "windows")]
 pub fn is_rar_archive_file(path: &std::path::Path) -> Result<bool, String> {
+    let meta = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+    crate::path_safety::reject_link_or_reparse(path, &meta)?;
+    if !meta.is_file() {
+        return Err("Path is not a file.".to_string());
+    }
     let bytes = read_probe_bytes(path, 8)?;
     Ok(detect_archive_signature(&bytes) == Some("rar"))
 }

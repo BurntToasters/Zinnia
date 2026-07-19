@@ -24,6 +24,7 @@ import {
   toggleActivity,
   registerBasicHooks,
   persistSettingsImmediately,
+  syncWorkspaceWindowFx,
 } from "../ui";
 import { state, dom } from "../state";
 import { SETTING_DEFAULTS } from "../settings-model";
@@ -231,6 +232,32 @@ describe("workspace and density", () => {
     setWorkspaceMode("power", { persist: false });
     expect(getWorkspaceMode()).toBe("power");
     expect(state.currentSettings.workspaceMode).toBe("power");
+  });
+
+  it("sets data-window-fx from supports + basic effects", async () => {
+    document.documentElement.setAttribute("data-theme", "dark");
+    state.currentSettings.basicWindowEffects = true;
+    dom.appEl.dataset.workspaceMode = "basic";
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === "supports_workspace_window_fx") return true;
+      if (cmd === "set_workspace_window_fx") return undefined;
+      return undefined;
+    });
+
+    await syncWorkspaceWindowFx();
+    expect(document.documentElement.dataset.windowFx).toBe("basic");
+    expect(invoke).toHaveBeenCalledWith("set_workspace_window_fx", {
+      enabled: true,
+      dark: true,
+    });
+
+    state.currentSettings.basicWindowEffects = false;
+    await syncWorkspaceWindowFx();
+    expect(document.documentElement.dataset.windowFx).toBe("opaque");
+    expect(invoke).toHaveBeenCalledWith("set_workspace_window_fx", {
+      enabled: false,
+      dark: true,
+    });
   });
 
   it("resizes to the basic portrait window size", async () => {

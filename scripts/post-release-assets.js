@@ -134,7 +134,7 @@ function progress(logger, message) {
 /**
  * Copy without fs.cpSync's native recursive fast-path.
  * On Windows mapped drives (Z:), that native path can abort the whole Node
- * process instead of throwing a catchable error — which matched the
+ * process instead of throwing a catchable error, which matched the
  * "banners print, then silent exit, nothing mirrored" failure mode.
  */
 function copyFileForMirror(sourcePath, destinationPath) {

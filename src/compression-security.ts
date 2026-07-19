@@ -1,5 +1,5 @@
 /**
- * Compression security capabilities — maps which archive formats support password
+ * Compression security capabilities: maps which archive formats support password
  * encryption and header encryption. Used to normalize/validate UI form options before
  * building 7z argument lists.
  *

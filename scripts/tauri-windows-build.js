@@ -1,10 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const args = process.argv.slice(2);
 const skipWindowsCodeSigning = process.env.SKIP_WIN_CODESIGN?.trim() === "1";
+const skipContextMenu = process.env.SKIP_WIN_CONTEXT_MENU?.trim() === "1";
 const required = [
   "AZURE_CLIENT_ID",
   "AZURE_TENANT_ID",
@@ -23,6 +24,20 @@ if (missing.length)
   throw new Error(
     `Missing Artifact Signing environment variables: ${missing.join(", ")}`,
   );
+// Full cert Subject is required for sparse MSIX + DLL <msix publisher> identity.
+// CN-only fallback produces 0x8007000B when the Subject has O=/C= fields.
+if (
+  !skipWindowsCodeSigning &&
+  !skipContextMenu &&
+  !process.env.AZURE_ARTIFACT_SIGNING_PUBLISHER_DN?.trim()
+) {
+  throw new Error(
+    "AZURE_ARTIFACT_SIGNING_PUBLISHER_DN is required for the Win11 context menu " +
+      "(full signing certificate Subject). Copy from Azure Artifact Signing " +
+      "profile Subject name, or: (Get-AuthenticodeSignature .\\zinnia.exe).SignerCertificate.Subject. " +
+      "Set SKIP_WIN_CONTEXT_MENU=1 to skip the modern menu package.",
+  );
+}
 if (skipWindowsCodeSigning)
   console.warn(
     "[tauri-windows-build] SKIP_WIN_CODESIGN=1; producing unsigned Windows artifacts.",
@@ -45,9 +60,65 @@ const targetReleaseDir = path.join(
   target,
   "release",
 );
-// Windows command shims (.cmd) cannot be launched directly by spawnSync on
-// current Node releases. Invoke Tauri's installed Node entrypoint instead, so
-// the build is independent of cmd.exe and of whichever npx is on PATH.
+const shellOutDir = path.join(root, "src-tauri", "windows", "shell", "out");
+const shellDll = path.join(shellOutDir, "zinnia_shell.dll");
+const shellMsix = path.join(shellOutDir, "ZinniaContextMenu.msix");
+const signScript = fileURLToPath(
+  new URL("./windows-artifact-sign.ps1", import.meta.url),
+);
+const contextMenuScript = fileURLToPath(
+  new URL("./build-windows-context-menu.ps1", import.meta.url),
+);
+
+const arch = target.includes("aarch64") ? "arm64" : "x64";
+
+function runPowershell(scriptPath, extraArgs = []) {
+  execFileSync(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      scriptPath,
+      ...extraArgs,
+    ],
+    { stdio: "inherit", env: process.env },
+  );
+}
+
+if (!skipContextMenu) {
+  console.log(
+    "[tauri-windows-build] Building Win11 context-menu shell package…",
+  );
+  runPowershell(contextMenuScript, [`-Arch`, arch]);
+  if (!existsSync(shellDll) || !existsSync(shellMsix)) {
+    throw new Error(
+      `Context menu artifacts missing under ${shellOutDir}. Set SKIP_WIN_CONTEXT_MENU=1 to skip.`,
+    );
+  }
+  if (!skipWindowsCodeSigning) {
+    console.log("[tauri-windows-build] Signing zinnia_shell.dll…");
+    runPowershell(signScript, ["-FilePath", shellDll]);
+    console.log("[tauri-windows-build] Signing ZinniaContextMenu.msix…");
+    runPowershell(signScript, ["-FilePath", shellMsix, "-AllowSparseMsix"]);
+  }
+} else {
+  console.warn(
+    "[tauri-windows-build] SKIP_WIN_CONTEXT_MENU=1; embedding empty stub context-menu assets.",
+  );
+  execFileSync(
+    process.execPath,
+    [
+      fileURLToPath(
+        new URL("./ensure-windows-context-menu-stubs.mjs", import.meta.url),
+      ),
+    ],
+    { stdio: "inherit" },
+  );
+}
+
 const tauriCli = fileURLToPath(
   new URL("../node_modules/@tauri-apps/cli/tauri.js", import.meta.url),
 );
@@ -56,9 +127,6 @@ execFileSync(process.execPath, [tauriCli, "build", ...args], {
   env: process.env,
 });
 if (!skipWindowsCodeSigning) {
-  const signScript = fileURLToPath(
-    new URL("./windows-artifact-sign.ps1", import.meta.url),
-  );
   const runtimeExecutables = readdirSync(targetReleaseDir, {
     withFileTypes: true,
   })
@@ -74,20 +142,7 @@ if (!skipWindowsCodeSigning) {
     console.log(
       `[tauri-windows-build] Finalizing Authenticode signature: ${executable}`,
     );
-    execFileSync(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        signScript,
-        "-FilePath",
-        executable,
-      ],
-      { stdio: "inherit", env: process.env },
-    );
+    runPowershell(signScript, ["-FilePath", executable]);
   }
   execFileSync(
     "powershell.exe",

@@ -18,6 +18,9 @@ export function applyTheme(pref: string) {
         : "light"
       : pref;
   document.documentElement.setAttribute("data-theme", resolved);
+  void import("./ui").then(({ syncWorkspaceWindowFx }) => {
+    void syncWorkspaceWindowFx();
+  });
 }
 
 export async function loadSettings(): Promise<UserSettings> {
@@ -100,8 +103,15 @@ export function populateSettingsModal() {
   $<HTMLSelectElement>("s-quick-extract-warm-idle").value = String(
     state.currentSettings.quickExtractWarmIdleMinutes,
   );
+  const basicFx = document.getElementById(
+    "s-basic-window-effects",
+  ) as HTMLInputElement | null;
+  if (basicFx) {
+    basicFx.checked = state.currentSettings.basicWindowEffects;
+  }
   syncQuickExtractWarmIdleControl();
   syncSettingsSecurityControlsForFormat(state.currentSettings.format);
+  void syncBasicWindowEffectsVisibility();
 
   const logDir = document.getElementById("s-log-dir");
   if (logDir) {
@@ -163,6 +173,12 @@ export function readSettingsModal(): UserSettings {
       $<HTMLSelectElement>("s-quick-extract-warm-idle").value,
       SETTING_DEFAULTS.quickExtractWarmIdleMinutes,
     ),
+    basicWindowEffects: (() => {
+      const el = document.getElementById(
+        "s-basic-window-effects",
+      ) as HTMLInputElement | null;
+      return el ? el.checked : state.currentSettings.basicWindowEffects;
+    })(),
     customPresets: state.currentSettings.customPresets,
     powerWindowWidth: state.currentSettings.powerWindowWidth,
     powerWindowHeight: state.currentSettings.powerWindowHeight,
@@ -181,6 +197,18 @@ export function syncQuickExtractWarmIdleControl(): void {
   $<HTMLSelectElement>("s-quick-extract-warm-idle").disabled = !enabled;
 }
 
+export async function syncBasicWindowEffectsVisibility(): Promise<void> {
+  const row = document.getElementById("setting-basic-window-effects");
+  if (!row) return;
+  let supports = false;
+  try {
+    supports = await invoke<boolean>("supports_workspace_window_fx");
+  } catch {
+    supports = false;
+  }
+  row.hidden = !supports;
+}
+
 export function openSettingsModal() {
   populateSettingsModal();
   const keepWarm = document.getElementById(
@@ -190,6 +218,18 @@ export function openSettingsModal() {
     keepWarm.dataset.warmIdleBound = "1";
     keepWarm.addEventListener("change", () => {
       syncQuickExtractWarmIdleControl();
+    });
+  }
+  const basicFx = document.getElementById(
+    "s-basic-window-effects",
+  ) as HTMLInputElement | null;
+  if (basicFx && !basicFx.dataset.liveFxBound) {
+    basicFx.dataset.liveFxBound = "1";
+    basicFx.addEventListener("change", () => {
+      state.currentSettings.basicWindowEffects = basicFx.checked;
+      void import("./ui").then(({ syncWorkspaceWindowFx }) => {
+        void syncWorkspaceWindowFx();
+      });
     });
   }
   const overlay = $("settings-overlay");

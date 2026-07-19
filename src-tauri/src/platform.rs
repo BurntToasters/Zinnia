@@ -106,6 +106,18 @@ pub struct OsIntegrationStatus {
     default_archiver_action_available: bool,
     default_archiver_action_label: String,
     default_archiver_help: String,
+    /// macOS Finder Services (Extract/Compress). Other platforms: false.
+    finder_services_available: bool,
+    /// Whether we successfully determined enabled state (false → Unknown in UI).
+    finder_services_known: bool,
+    /// Whether Services appear enabled (meaningful when `finder_services_known`).
+    finder_services_enabled: bool,
+    finder_services_help: String,
+    /// Windows: sparse identity package for Win11 modern context menu (not a full AppX app).
+    win11_modern_menu_available: bool,
+    win11_modern_menu_known: bool,
+    win11_modern_menu_registered: bool,
+    win11_modern_menu_help: String,
     archive_defaults: Vec<ArchiveDefaultStatus>,
 }
 
@@ -160,19 +172,243 @@ fn fallback_archive_defaults(
         .collect()
 }
 
+struct FinderServicesInfo {
+    available: bool,
+    known: bool,
+    enabled: bool,
+    help: String,
+}
+
+/// Keys used by macOS `pbs` prefs for our NSServices entries.
+const MACOS_FINDER_SERVICE_KEYS: &[&str] = &[
+    "run.rosie.zinnia - Extract with Zinnia - extractWithZinnia",
+    "run.rosie.zinnia - Compress with Zinnia - compressWithZinnia",
+];
+
+/// Parse `NSServicesStatus` from a pbs.plist JSON conversion.
+/// Absent entries default to enabled (Apple’s default for contextual services).
+pub(crate) fn finder_services_enabled_from_pbs(json: &serde_json::Value) -> bool {
+    let Some(status_map) = json.get("NSServicesStatus") else {
+        return true;
+    };
+    let Some(obj) = status_map.as_object() else {
+        return true;
+    };
+
+    let mut saw_any = false;
+    let mut all_enabled = true;
+    for key in MACOS_FINDER_SERVICE_KEYS {
+        let Some(entry) = obj.get(*key) else {
+            continue;
+        };
+        saw_any = true;
+        // Finder right-click / contextual Services use the context-menu flag.
+        let context_on = entry
+            .get("enabled_context_menu")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        if !context_on {
+            all_enabled = false;
+        }
+    }
+
+    if saw_any {
+        all_enabled
+    } else {
+        true
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_read_finder_services_enabled() -> Option<bool> {
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    let home = std::env::var_os("HOME")?;
+    let path = PathBuf::from(home).join("Library/Preferences/pbs.plist");
+    if !path.exists() {
+        return Some(true);
+    }
+
+    let output = Command::new("plutil")
+        .args([
+            "-convert",
+            "json",
+            "-o",
+            "-",
+            &path.to_string_lossy(),
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    Some(finder_services_enabled_from_pbs(&json))
+}
+
+struct Win11ModernMenuInfo {
+    available: bool,
+    known: bool,
+    registered: bool,
+    help: String,
+}
+
+#[cfg(target_os = "windows")]
+fn windows_modern_menu_registered() -> Option<bool> {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+
+    // Sparse identity package name (not the Zinnia app itself).
+    // Use exit codes (not stdout) — PS 5.1 often emits UTF-16 on redirected pipes.
+    const PACKAGE: &str = "run.rosie.zinnia.contextmenu";
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let script = format!(
+        "if (Get-AppxPackage -Name '{PACKAGE}' -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 2 }}"
+    );
+    let status = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &script,
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .ok()?;
+    match status.code() {
+        Some(0) => Some(true),
+        Some(2) => Some(false),
+        _ => None,
+    }
+}
+
+fn win11_modern_menu_status_for(platform: &str, packaged: bool) -> Win11ModernMenuInfo {
+    if platform != "windows" {
+        return Win11ModernMenuInfo {
+            available: false,
+            known: false,
+            registered: false,
+            help: String::new(),
+        };
+    }
+    if !packaged {
+        return Win11ModernMenuInfo {
+            available: true,
+            known: true,
+            registered: false,
+            help: "Install a signed NSIS build to register the Win11 modern context menu (sparse identity package + shell DLL). Classic Explorer verbs still work without it.".to_string(),
+        };
+    }
+
+    #[cfg(target_os = "windows")]
+    let probed = windows_modern_menu_registered();
+    #[cfg(not(target_os = "windows"))]
+    let probed: Option<bool> = None;
+
+    match probed {
+        Some(true) => Win11ModernMenuInfo {
+            available: true,
+            known: true,
+            registered: true,
+            help: "Win11 modern menu package is registered (sparse identity only — Zinnia remains a normal NSIS install). Confirm Extract/Compress actually launch from the primary menu; classic verbs remain under Show more options.".to_string(),
+        },
+        Some(false) => Win11ModernMenuInfo {
+            available: true,
+            known: true,
+            registered: false,
+            help: "Win11 modern menu package is not registered. Classic Explorer verbs still work. Check zinnia-context-menu-register.log in the install folder, or reinstall a signed build.".to_string(),
+        },
+        None => Win11ModernMenuInfo {
+            available: true,
+            known: false,
+            registered: false,
+            help: "Could not verify Win11 modern menu package registration. Classic Explorer verbs should still work if this is a packaged install.".to_string(),
+        },
+    }
+}
+
+fn finder_services_status_for(platform: &str, packaged: bool) -> FinderServicesInfo {
+    if platform != "macos" {
+        return FinderServicesInfo {
+            available: false,
+            known: false,
+            enabled: false,
+            help: String::new(),
+        };
+    }
+
+    if !packaged {
+        return FinderServicesInfo {
+            available: true,
+            known: true,
+            enabled: false,
+            help: "Install a packaged build to register Extract / Compress with Zinnia in Finder's Services menu.".to_string(),
+        };
+    }
+
+    #[cfg(target_os = "macos")]
+    let probed = macos_read_finder_services_enabled();
+    #[cfg(not(target_os = "macos"))]
+    let probed: Option<bool> = Some(true);
+
+    match probed {
+        Some(true) => FinderServicesInfo {
+            available: true,
+            known: true,
+            enabled: true,
+            help: "Extract with Zinnia and Compress with Zinnia are available in Finder's Services menu."
+                .to_string(),
+        },
+        Some(false) => FinderServicesInfo {
+            available: true,
+            known: true,
+            enabled: false,
+            help: "Turn on Extract with Zinnia and Compress with Zinnia under Keyboard Shortcuts → Services."
+                .to_string(),
+        },
+        None => FinderServicesInfo {
+            available: true,
+            known: false,
+            enabled: false,
+            help: "Could not verify Services status. Open Keyboard Shortcuts → Services if menus are missing."
+                .to_string(),
+        },
+    }
+}
+
 pub fn os_integration_status_for(platform: &str, packaged: bool) -> OsIntegrationStatus {
     let action_available = packaged && matches!(platform, "macos" | "linux");
     let default_app_help_available = matches!(platform, "macos" | "windows") || action_available;
+    let finder = finder_services_status_for(platform, packaged);
+    let win11 = win11_modern_menu_status_for(platform, packaged);
+    // macOS: "Open/extract actions" tracks Finder Services, not just packaging.
+    // Windows: classic Explorer verbs are always registered by NSIS when packaged.
+    let context_actions_known = if platform == "macos" {
+        packaged && finder.known && finder.enabled
+    } else {
+        packaged && matches!(platform, "windows")
+    };
     OsIntegrationStatus {
         platform: platform.to_string(),
         packaged,
         file_associations_known: packaged && matches!(platform, "macos" | "windows"),
-        context_actions_known: packaged && matches!(platform, "macos" | "windows"),
+        context_actions_known,
         default_app_help_available,
         default_archiver_action_available: action_available,
         default_archiver_action_label: default_action_label(platform).to_string(),
         default_archiver_help: default_action_help(platform, packaged, action_available)
             .to_string(),
+        finder_services_available: finder.available,
+        finder_services_known: finder.known,
+        finder_services_enabled: finder.enabled,
+        finder_services_help: finder.help,
+        win11_modern_menu_available: win11.available,
+        win11_modern_menu_known: win11.known,
+        win11_modern_menu_registered: win11.registered,
+        win11_modern_menu_help: win11.help,
         archive_defaults: fallback_archive_defaults(platform, packaged, action_available),
     }
 }
@@ -190,6 +426,13 @@ pub fn get_os_integration_status() -> OsIntegrationStatus {
         status.default_archiver_help =
             default_action_help(platform, packaged, status.default_archiver_action_available)
                 .to_string();
+    }
+    if platform == "windows" {
+        let win11 = win11_modern_menu_status_for(platform, packaged);
+        status.win11_modern_menu_available = win11.available;
+        status.win11_modern_menu_known = win11.known;
+        status.win11_modern_menu_registered = win11.registered;
+        status.win11_modern_menu_help = win11.help;
     }
     status
 }
@@ -312,6 +555,29 @@ pub fn open_os_integration_settings(app: tauri::AppHandle) -> Result<(), String>
     {
         let _ = app;
         Err("Default app settings are not available for this platform.".to_string())
+    }
+}
+
+/// Opens System Settings → Keyboard Shortcuts → Services (where Finder Services are toggled).
+#[tauri::command]
+#[allow(deprecated)]
+pub fn open_finder_services_settings(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use tauri_plugin_shell::ShellExt;
+        // Ventura+ System Settings deep link for Keyboard → Keyboard Shortcuts.
+        app.shell()
+            .open(
+                "x-apple.systempreferences:com.apple.Keyboard-Settings.extension?Shortcuts",
+                None,
+            )
+            .map_err(|e| e.to_string())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Err("Finder Services settings are only available on macOS.".to_string())
     }
 }
 
@@ -743,6 +1009,8 @@ mod tests {
         assert!(packaged.file_associations_known);
         assert!(packaged.context_actions_known);
         assert!(packaged.default_app_help_available);
+        assert!(!packaged.finder_services_available);
+        assert!(packaged.win11_modern_menu_available);
         assert_eq!(
             packaged.archive_defaults.len(),
             ARCHIVE_DEFAULT_TARGETS.len() - 1
@@ -756,6 +1024,69 @@ mod tests {
         assert!(!dev.file_associations_known);
         assert!(!dev.context_actions_known);
         assert!(!dev.default_app_help_available);
+        assert!(!dev.finder_services_available);
+
+        let macos_dev = os_integration_status_for("macos", false);
+        assert!(macos_dev.finder_services_available);
+        assert!(macos_dev.finder_services_known);
+        assert!(!macos_dev.finder_services_enabled);
+        assert!(!macos_dev.context_actions_known);
+        assert!(macos_dev.finder_services_help.contains("packaged"));
+
+        // Packaged macOS: Open/extract actions track Finder Services state.
+        let macos_pkg = os_integration_status_for("macos", true);
+        assert!(macos_pkg.finder_services_available);
+        assert_eq!(
+            macos_pkg.context_actions_known,
+            macos_pkg.finder_services_known && macos_pkg.finder_services_enabled
+        );
+    }
+
+    #[test]
+    fn finder_services_pbs_defaults_enabled_when_absent() {
+        let empty = serde_json::json!({});
+        assert!(finder_services_enabled_from_pbs(&empty));
+
+        let other = serde_json::json!({
+            "NSServicesStatus": {
+                "com.example.app - Other - other": {
+                    "enabled_context_menu": false,
+                    "enabled_services_menu": false
+                }
+            }
+        });
+        assert!(finder_services_enabled_from_pbs(&other));
+    }
+
+    #[test]
+    fn finder_services_pbs_detects_disabled_context_menu() {
+        let disabled = serde_json::json!({
+            "NSServicesStatus": {
+                "run.rosie.zinnia - Extract with Zinnia - extractWithZinnia": {
+                    "enabled_context_menu": false,
+                    "enabled_services_menu": true
+                },
+                "run.rosie.zinnia - Compress with Zinnia - compressWithZinnia": {
+                    "enabled_context_menu": true,
+                    "enabled_services_menu": true
+                }
+            }
+        });
+        assert!(!finder_services_enabled_from_pbs(&disabled));
+
+        let enabled = serde_json::json!({
+            "NSServicesStatus": {
+                "run.rosie.zinnia - Extract with Zinnia - extractWithZinnia": {
+                    "enabled_context_menu": true,
+                    "enabled_services_menu": true
+                },
+                "run.rosie.zinnia - Compress with Zinnia - compressWithZinnia": {
+                    "enabled_context_menu": true,
+                    "enabled_services_menu": true
+                }
+            }
+        });
+        assert!(finder_services_enabled_from_pbs(&enabled));
     }
 
     #[test]

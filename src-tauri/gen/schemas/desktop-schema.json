@@ -471,6 +471,12 @@
           "markdownDescription": "Enables the get_platform_info command without any pre-configured scope."
         },
         {
+          "description": "Enables the get_startup_recovery_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-startup-recovery-status",
+          "markdownDescription": "Enables the get_startup_recovery_status command without any pre-configured scope."
+        },
+        {
           "description": "Enables the is_7z_running command without any pre-configured scope.",
           "type": "string",
           "const": "allow-is-7z-running",
@@ -499,6 +505,12 @@
           "type": "string",
           "const": "allow-mark-main-window-ready",
           "markdownDescription": "Enables the mark_main_window_ready command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_finder_services_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-finder-services-settings",
+          "markdownDescription": "Enables the open_finder_services_settings command without any pre-configured scope."
         },
         {
           "description": "Enables the open_log_dir command without any pre-configured scope.",
@@ -561,10 +573,22 @@
           "markdownDescription": "Enables the save_settings command without any pre-configured scope."
         },
         {
+          "description": "Enables the set_workspace_window_fx command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-workspace-window-fx",
+          "markdownDescription": "Enables the set_workspace_window_fx command without any pre-configured scope."
+        },
+        {
           "description": "Enables the set_zinnia_default_archiver command without any pre-configured scope.",
           "type": "string",
           "const": "allow-set-zinnia-default-archiver",
           "markdownDescription": "Enables the set_zinnia_default_archiver command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the supports_workspace_window_fx command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-supports-workspace-window-fx",
+          "markdownDescription": "Enables the supports_workspace_window_fx command without any pre-configured scope."
         },
         {
           "description": "Enables the validate_archive_paths command without any pre-configured scope.",
@@ -657,6 +681,12 @@
           "markdownDescription": "Denies the get_platform_info command without any pre-configured scope."
         },
         {
+          "description": "Denies the get_startup_recovery_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-startup-recovery-status",
+          "markdownDescription": "Denies the get_startup_recovery_status command without any pre-configured scope."
+        },
+        {
           "description": "Denies the is_7z_running command without any pre-configured scope.",
           "type": "string",
           "const": "deny-is-7z-running",
@@ -685,6 +715,12 @@
           "type": "string",
           "const": "deny-mark-main-window-ready",
           "markdownDescription": "Denies the mark_main_window_ready command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_finder_services_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-finder-services-settings",
+          "markdownDescription": "Denies the open_finder_services_settings command without any pre-configured scope."
         },
         {
           "description": "Denies the open_log_dir command without any pre-configured scope.",
@@ -747,10 +783,22 @@
           "markdownDescription": "Denies the save_settings command without any pre-configured scope."
         },
         {
+          "description": "Denies the set_workspace_window_fx command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-workspace-window-fx",
+          "markdownDescription": "Denies the set_workspace_window_fx command without any pre-configured scope."
+        },
+        {
           "description": "Denies the set_zinnia_default_archiver command without any pre-configured scope.",
           "type": "string",
           "const": "deny-set-zinnia-default-archiver",
           "markdownDescription": "Denies the set_zinnia_default_archiver command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the supports_workspace_window_fx command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-supports-workspace-window-fx",
+          "markdownDescription": "Denies the supports_workspace_window_fx command without any pre-configured scope."
         },
         {
           "description": "Denies the validate_archive_paths command without any pre-configured scope.",

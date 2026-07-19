@@ -54,7 +54,8 @@ export function sanitizeStatusFileName(name: string): string {
   if (!cleaned) return "";
   const match = cleaned.match(/[\p{L}\p{N}._~]/u);
   if (!match || match.index === undefined) return "";
-  return cleaned.slice(match.index).trim();
+  const meaningful = cleaned.slice(match.index).trim();
+  return [...meaningful].slice(0, 200).join("");
 }
 
 function withPassword(args: string[], password: string): string[] {
@@ -245,10 +246,10 @@ async function run() {
           : "Extraction complete";
     }
     document.title = asError
-      ? "Zinnia — Failed"
+      ? "Zinnia: Failed"
       : asCancelled
-        ? "Zinnia — Cancelled"
-        : "Zinnia — Done";
+        ? "Zinnia: Cancelled"
+        : "Zinnia: Done";
     stopProgressAt(progressPercent, asError);
     setButtons(false, !asError && allowOpenDestination, true);
     cancelBtn.disabled = false;
@@ -373,7 +374,7 @@ async function run() {
   const startedAt = Date.now();
   let lastFile = "";
 
-  // Register progress listeners without awaiting confirmation before run_7z —
+  // Register progress listeners without awaiting confirmation before run_7z;
   // backend prepare time usually dwarfs listener registration.
   const structuredListen = listen<ProgressUpdate>(
     "7z-progress-structured",

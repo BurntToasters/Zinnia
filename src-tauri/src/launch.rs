@@ -269,7 +269,7 @@ pub fn assert_extract_bound_destination(
     Ok(())
 }
 
-fn clear_extract_window_bindings(app: &tauri::AppHandle, label: &str) {
+pub fn clear_extract_window_bindings(app: &tauri::AppHandle, label: &str) {
     if let Some(state) = app.try_state::<ExtractQueue>() {
         if let Ok(mut guard) = state.0.lock() {
             guard.remove(label);
@@ -417,7 +417,7 @@ pub fn get_extract_paths(
     Ok(queue.remove(&label).unwrap_or_default())
 }
 
-fn is_extract_window_label(label: &str) -> bool {
+pub fn is_extract_window_label(label: &str) -> bool {
     label.starts_with("extract-")
 }
 
@@ -459,19 +459,48 @@ fn extract_session_init_script(archive: &str, destination: &str) -> String {
     )
 }
 
+#[cfg(target_os = "macos")]
+fn set_macos_activation_policy(app: &tauri::AppHandle, policy: tauri::ActivationPolicy) {
+    if let Err(error) = app.set_activation_policy(policy) {
+        eprintln!("Failed to set macOS activation policy: {error}");
+    }
+}
+
+/// Restore a normal Dock/app presence before showing any window again.
+pub fn restore_foreground_activation(app: &tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
+    set_macos_activation_policy(app, tauri::ActivationPolicy::Regular);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+    }
+}
+
+fn open_main_from_extract_warm(app: &tauri::AppHandle) {
+    EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);
+    leave_extract_warm(app);
+    if let Err(error) = show_main_window(app) {
+        eprintln!("Failed to open main window from warm tray: {error}");
+    }
+}
+
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn ensure_extract_warm_tray(app: &tauri::AppHandle) -> bool {
     if app.tray_by_id(EXTRACT_WARM_TRAY_ID).is_some() {
         return true;
     }
     use tauri::menu::{Menu, MenuItem};
-    use tauri::tray::TrayIconBuilder;
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
+    let Ok(open) = MenuItem::with_id(app, "open", "Open Zinnia", true, None::<&str>) else {
+        eprintln!("Failed to create extract warm-tray open item");
+        return false;
+    };
     let Ok(quit) = MenuItem::with_id(app, "quit", "Quit Zinnia", true, None::<&str>) else {
         eprintln!("Failed to create extract warm-tray quit item");
         return false;
     };
-    let Ok(menu) = Menu::with_items(app, &[&quit]) else {
+    let Ok(menu) = Menu::with_items(app, &[&open, &quit]) else {
         eprintln!("Failed to create extract warm-tray menu");
         return false;
     };
@@ -482,12 +511,25 @@ fn ensure_extract_warm_tray(app: &tauri::AppHandle) -> bool {
     match TrayIconBuilder::with_id(EXTRACT_WARM_TRAY_ID)
         .icon(icon)
         .menu(&menu)
-        .tooltip("Zinnia")
-        .on_menu_event(|app, event| {
-            if event.id.as_ref() == "quit" {
+        .show_menu_on_left_click(false)
+        .tooltip("Zinnia (ready for next archive)")
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "open" => open_main_from_extract_warm(app),
+            "quit" => {
                 leave_extract_warm(app);
                 EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);
                 app.exit(0);
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                open_main_from_extract_warm(tray.app_handle());
             }
         })
         .build(app)
@@ -508,10 +550,7 @@ pub fn leave_extract_warm(app: &tauri::AppHandle) {
     {
         let _ = app.remove_tray_by_id(EXTRACT_WARM_TRAY_ID);
     }
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        let _ = app;
-    }
+    restore_foreground_activation(app);
 }
 
 /// After the last quick-extract window closes, stay resident for the next open.
@@ -529,12 +568,17 @@ pub fn enter_extract_warm_idle(app: &tauri::AppHandle) -> bool {
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
-        // macOS can stay warm via the Dock even if tray creation fails.
-        // Windows/Linux need a tray affordance or the process becomes invisible.
-        let tray_ok = ensure_extract_warm_tray(app);
-        if !tray_ok && !cfg!(target_os = "macos") {
+        // Warm-idle requires a tray affordance. Without it the process would be
+        // invisible (or a Dock zombie on macOS) with no clear Quit path.
+        if !ensure_extract_warm_tray(app) {
             return false;
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        // Hide the Dock icon while windowless; tray + single-instance stay alive.
+        set_macos_activation_policy(app, tauri::ActivationPolicy::Accessory);
     }
 
     // Refresh the idle timer when ExitRequested and Destroyed both fire.
@@ -552,11 +596,20 @@ pub fn enter_extract_warm_idle(app: &tauri::AppHandle) -> bool {
             return;
         }
         let exit_handle = handle.clone();
-        let _ = handle.run_on_main_thread(move || {
+        if let Err(error) = handle.run_on_main_thread(move || {
+            // Re-check on the main thread: a file-open may have raced the sleep wake.
+            if EXTRACT_WARM_IDLE_GENERATION.load(Ordering::SeqCst) != generation {
+                return;
+            }
+            if !EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst) || has_extract_windows(&exit_handle) {
+                return;
+            }
             leave_extract_warm(&exit_handle);
             EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);
             exit_handle.exit(0);
-        });
+        }) {
+            eprintln!("Failed to schedule warm-idle exit on main thread: {error}");
+        }
     });
     true
 }
@@ -586,6 +639,7 @@ pub fn ensure_main_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow
 }
 
 pub fn show_main_window(app: &tauri::AppHandle) -> Result<(), String> {
+    restore_foreground_activation(app);
     let window = ensure_main_window(app)?;
 
     #[cfg(not(target_os = "macos"))]
@@ -708,12 +762,14 @@ pub fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Resul
     let init_script =
         extract_session_init_script(&archive, destination.to_string_lossy().as_ref());
 
+    restore_foreground_activation(app);
+
     let mut builder = tauri::WebviewWindowBuilder::new(
         app,
         &label,
         tauri::WebviewUrl::App("extract.html".into()),
     )
-    .title("Zinnia \u{2014} Extracting")
+    .title("Zinnia: Extracting")
     .inner_size(440.0, 320.0)
     .resizable(false)
     .minimizable(true)
@@ -736,8 +792,9 @@ pub fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Resul
     if result.is_err() {
         clear_extract_window_bindings(app, &label);
     } else {
-        // A live extract window cancels warm-idle auto-quit.
-        bump_extract_warm_idle_generation();
+        // Live extract window: drop tray / ACTIVE while keeping EXTRACT_ONLY_LAUNCH
+        // for the caller; warm re-enters when the last extract window closes.
+        leave_extract_warm(app);
     }
 
     result.map(|_| ())
@@ -757,8 +814,7 @@ fn should_use_extract_window(paths: &[String], mode: &str) -> bool {
     looks_like_archive_path(&paths[0])
 }
 
-fn looks_like_archive_path(path: &str) -> bool {
-    let lower = path.to_ascii_lowercase();
+fn looks_like_archive_extension(lower: &str) -> bool {
     // Windows: omit .rar so file-open routing does not land on the temporary
     // RAR extract block (CVE-2026-58052). macOS/Linux still treat RAR as archives.
     let extensions: &[&str] = if cfg!(windows) {
@@ -773,9 +829,46 @@ fn looks_like_archive_path(path: &str) -> bool {
     extensions
         .iter()
         .any(|extension| lower.ends_with(extension))
-        || lower.rsplit_once('.').is_some_and(|(_, suffix)| {
-            suffix.len() == 3 && suffix.bytes().all(|b| b.is_ascii_digit())
-        })
+}
+
+fn looks_like_split_volume_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    let Some((stem, suffix)) = lower.rsplit_once('.') else {
+        return false;
+    };
+    if suffix.len() != 3 || !suffix.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    // Prefer archive.7z.001 / archive.zip.001 over bare notes.001.
+    if looks_like_archive_extension(stem) {
+        return true;
+    }
+    // Bare name.001: only when another volume sibling exists (name.002, …).
+    let fs_path = std::path::Path::new(path);
+    let Some(parent) = fs_path.parent() else {
+        return false;
+    };
+    let Some(stem_os) = fs_path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+    else {
+        return false;
+    };
+    for volume in 1u32..=999 {
+        let candidate = parent.join(format!("{stem_os}.{volume:03}"));
+        if candidate.as_os_str() == fs_path.as_os_str() {
+            continue;
+        }
+        if candidate.exists() {
+            return true;
+        }
+    }
+    false
+}
+
+fn looks_like_archive_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    looks_like_archive_extension(&lower) || looks_like_split_volume_path(path)
 }
 
 fn normalize_open_path_arg(arg: &str) -> Option<String> {
@@ -848,6 +941,12 @@ where
 
 fn route_open_request(app: &tauri::AppHandle, paths: Vec<String>, mode: String) {
     if paths.is_empty() {
+        // Second-instance activation with no paths while warm: reopen the UI.
+        if EXTRACT_WARM_IDLE_ACTIVE.load(Ordering::SeqCst)
+            || (EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst) && !has_extract_windows(app))
+        {
+            open_main_from_extract_warm(app);
+        }
         return;
     }
 
@@ -1200,5 +1299,35 @@ mod tests {
     fn write_zip(path: &std::path::Path) {
         std::fs::write(path, [0x50, 0x4B, 0x03, 0x04, 0x14, 0x00])
             .expect("probe file should be written");
+    }
+
+    #[test]
+    fn looks_like_archive_path_rejects_bare_numeric_suffix() {
+        assert!(!looks_like_archive_path("/downloads/notes.001"));
+        assert!(looks_like_archive_path("/downloads/archive.7z.001"));
+        assert!(looks_like_archive_path("/downloads/archive.zip"));
+    }
+
+    #[test]
+    fn looks_like_split_volume_accepts_sibling_volumes() {
+        let base = temp_base("split-volume");
+        let first = base.join("chunk.001");
+        let second = base.join("chunk.002");
+        std::fs::write(&first, b"a").expect("volume 1");
+        std::fs::write(&second, b"b").expect("volume 2");
+        assert!(looks_like_archive_path(first.to_string_lossy().as_ref()));
+        assert!(!looks_like_archive_path(
+            base.join("lonely.001").to_string_lossy().as_ref()
+        ));
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn warm_idle_generation_advances_when_bumped() {
+        let before = EXTRACT_WARM_IDLE_GENERATION.load(Ordering::SeqCst);
+        bump_extract_warm_idle_generation();
+        let after = EXTRACT_WARM_IDLE_GENERATION.load(Ordering::SeqCst);
+        assert!(after > before);
+        EXTRACT_WARM_IDLE_ACTIVE.store(false, Ordering::SeqCst);
     }
 }

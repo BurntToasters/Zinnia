@@ -31,6 +31,9 @@ function createInitialResults() {
     typecheck: { status: "pending" },
     lint: { status: "pending" },
     format: { status: "pending" },
+    changelog: { status: "pending" },
+    updater: { status: "pending" },
+    flatpak: { status: "pending" },
     test: { status: "pending", passed: null, failed: null, files: null },
     coverage: {
       status: "pending",
@@ -171,6 +174,27 @@ ${colors.reset}`);
     }${colors.reset}`,
   );
   console.log(
+    `${colors.bold}Changelog:${colors.reset}  ${
+      results.changelog.status === "passed"
+        ? `${colors.green}✓ PASS`
+        : `${colors.red}✗ FAIL`
+    }${colors.reset}`,
+  );
+  console.log(
+    `${colors.bold}Updater:${colors.reset}    ${
+      results.updater.status === "passed"
+        ? `${colors.green}✓ PASS`
+        : `${colors.red}✗ FAIL`
+    }${colors.reset}`,
+  );
+  console.log(
+    `${colors.bold}Flatpak:${colors.reset}    ${
+      results.flatpak.status === "passed"
+        ? `${colors.green}✓ PASS`
+        : `${colors.red}✗ FAIL`
+    }${colors.reset}`,
+  );
+  console.log(
     `${colors.bold}Tests:${colors.reset}      ${
       results.test.status === "passed"
         ? `${colors.green}✓ PASS`
@@ -218,6 +242,9 @@ function main() {
   runCommand("typecheck", npm, ["run", "typecheck"], null, results);
   runCommand("lint", npm, ["run", "lint"], null, results);
   runCommand("format", npm, ["run", "format:check"], null, results);
+  runCommand("changelog", npm, ["run", "validate:changelog"], null, results);
+  runCommand("updater", npm, ["run", "validate:updater"], null, results);
+  runCommand("flatpak", npm, ["run", "validate:flatpak"], null, results);
   const testPassed = runCommand(
     "test",
     npm,

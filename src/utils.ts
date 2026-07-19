@@ -80,7 +80,7 @@ export function parseThreads(raw: string, fallback: number): number {
 }
 
 export function formatSize(bytes: number): string {
-  if (bytes === 0) return "\u2014";
+  if (bytes === 0) return "-";
   const units = ["B", "KB", "MB", "GB", "TB"];
   const i = Math.min(
     Math.floor(Math.log(bytes) / Math.log(1024)),

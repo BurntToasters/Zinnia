@@ -50,6 +50,11 @@ export interface UserSettings {
   quickExtractKeepWarm: boolean;
   /** Idle minutes before warm-resident quick-extract exits (5/10/30/60). */
   quickExtractWarmIdleMinutes: number;
+  /**
+   * macOS/Windows: translucent Basic window with OS-native blur.
+   * Ignored on Linux (Basic stays opaque).
+   */
+  basicWindowEffects: boolean;
   customPresets: CustomPreset[];
   powerWindowWidth: number;
   powerWindowHeight: number;
@@ -85,8 +90,11 @@ export const SETTING_DEFAULTS: UserSettings = {
   workspaceMode: "basic",
   uiDensity: "comfortable",
   osIntegrationDismissed: false,
-  quickExtractKeepWarm: true,
+  // Off by default: quick-extract should fully quit when its window closes.
+  // Opt in via Settings for faster subsequent file-association opens.
+  quickExtractKeepWarm: false,
   quickExtractWarmIdleMinutes: 10,
+  basicWindowEffects: true,
   customPresets: [],
   powerWindowWidth: 1100,
   powerWindowHeight: 720,
@@ -142,7 +150,7 @@ const WORKING_MODES = new Set<WorkingMode>(["add", "extract", "browse"]);
 const WORKSPACE_MODES = new Set<WorkspaceMode>(["basic", "power"]);
 const UI_DENSITIES = new Set<UiDensity>(["comfortable", "compact"]);
 
-// Compression parameter allow-sets — reject corrupt/hostile persisted values
+// Compression parameter allow-sets: reject corrupt/hostile persisted values
 // that would otherwise flow into 7z as -mx=, -m0=, -md=, -mfb=, -ms= switches.
 const VALID_LEVELS = new Set(["0", "1", "3", "5", "7", "9"]);
 const VALID_METHODS = new Set([
@@ -232,6 +240,7 @@ const USER_SETTING_KEYS = new Set<keyof UserSettings>([
   "osIntegrationDismissed",
   "quickExtractKeepWarm",
   "quickExtractWarmIdleMinutes",
+  "basicWindowEffects",
   "customPresets",
   "powerWindowWidth",
   "powerWindowHeight",
@@ -374,6 +383,10 @@ export function normalizeUserSettings(
     quickExtractWarmIdleMinutes: asWarmIdleMinutes(
       settings.quickExtractWarmIdleMinutes,
       fallback.quickExtractWarmIdleMinutes,
+    ),
+    basicWindowEffects: asBoolean(
+      settings.basicWindowEffects,
+      fallback.basicWindowEffects,
     ),
     customPresets: asCustomPresets(
       settings.customPresets,

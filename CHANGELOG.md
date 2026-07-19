@@ -5,10 +5,10 @@
 
 | <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux |
 | :--- | :--- | :--- |
-| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.2/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.2/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.2/Zinnia-macOS.dmg)** | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.2/Zinnia-Linux-x64.AppImage) |
-| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>--> | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.2/Zinnia-macOS.zip)** | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.2/Zinnia-Linux-x64.deb) |
-| <!--*See MSI note below*--> | | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.2/Zinnia-Linux-x64.rpm) |
-| | | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.5.4-beta.2/Zinnia-Linux-x64.flatpak) |
+| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.1/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.1/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.1/Zinnia-macOS.dmg)** | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.1/Zinnia-Linux-x64.AppImage) |
+| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>--> | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.1/Zinnia-macOS.zip)** | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.1/Zinnia-Linux-x64.deb) |
+| <!--*See MSI note below*--> | | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.1/Zinnia-Linux-x64.rpm) |
+| | | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.1/Zinnia-Linux-x64.flatpak) |
 
 > [!IMPORTANT]
 The `.sig` files in this repo are NOT normal gpg signatures they are for Tauri V2's updater to verify the integrity of updates before downloading and installing.
@@ -19,10 +19,46 @@ The `.asc` files are my normal GPG signatures which you can verify using my GPG 
 
 Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
+## Changes in `v0.6.0-beta.1:`
+*I had so many new ideas for the UI this turned from version `0.5.4` to `0.6.0`.*
+
+- **UI:** Major Basic mode redesign: drop-first home, warmer floral accent, friendlier copy, and Basic/Power + Support + Settings folded into the custom titlebar.
+- **UI:** Translucent Basic window with OS-native blur on macOS (vibrancy) and Windows (Mica / Acrylic). Linux Basic stays fully opaque. Toggle in Settings (live-applies).
+- **UI:** Basic Settings sheet is roomier (sectioned tabs, collapsed title into the tab row); related General rows sit side-by-side (Updates / Appearance) with compact controls.
+- **UI:** `Ctrl`/`⌘` + `,` opens Settings (listed in the keyboard shortcuts help).
+- **UI:** macOS menu bar: About, Check for Updates, Settings (`⌘,`), Edit/Window standards, plus Help (shortcuts, Support, Licenses).
+- **UI:** macOS Finder Services: Extract with Zinnia / Compress with Zinnia; OS Integration tab shows Enabled/Off/Unknown and an Enable button that opens Keyboard Shortcuts → Services.
+- **UI:** Windows 11 modern context menu (signed NSIS): **Zinnia** submenu (Extract / Compress) plus top-level **Extract with Zinnia** on archives; classic Explorer verbs kept for Show more options. Uses a sparse identity MSIX for the shell DLL only — Zinnia remains a normal NSIS install (not a Store/AppX app). OS Integration shows Registered / Not registered.
+- **Fix:** Win11 shell DLL resolves `zinnia.exe` beside itself or in the parent dir; NSIS finds the register script next to the DLL (`$INSTDIR`); Appx remove-before-add with visible install warning on failure; builds require full `AZURE_ARTIFACT_SIGNING_PUBLISHER_DN`.
+- **Fix:** macOS Services Extract no longer forces the main window open (keeps quick-extract); cold-start fallback is cancelled/hidden to avoid a main-window flash; `NSApplicationIdentifier` nested under `NSRequiredContext`; Extract UTIs use `public.archive` (not broad `public.data`).
+- **Fix:** Win11 modern menu + classic NSIS verbs register on folder background (`Directory\Background`); shell DLL resolves the open folder via Explorer site when selection is empty.
+- **Fix:** macOS Services Compress cancels the cold-start main-window fallback so a later Extract cannot destroy that workspace; the 150ms fallback also skips if main already exists.
+- **Fix:** Basic Escape/Enter shortcuts respect overlay `[hidden]` (modals no longer swallow keyboard).
+- **Fix:** Basic Settings category tabs hide inactive panels again (Compression / OS / About no longer stuck under General).
+- **Fix:** Opaque native background when FX are off / unsupported; Windows Acrylic tint follows light/dark theme.
+- **Fix:** Basic completion surfaces real `errorDetail` text and output/extract path labels; recent archives list on home.
+- **Fix:** Quick-extract no longer leaves a Dock/app zombie after the window closes. “Keep ready after quick extract” is off by default; when enabled, macOS hides the Dock and uses a menu-bar tray until idle timeout or Quit.
+- **Fix:** Warm-idle exit re-checks on the main thread so a newly opened extract window cannot race an idle quit; waking from warm clears the tray; tray has Open Zinnia (left-click / menu).
+- **Fix:** Extract-window teardown clears bindings on OS close; extract capability no longer allows direct `destroy` (must use cancel-aware close).
+- **Security:** Extract promote rejects sibling writes outside the stage directory; `run_7z` re-validates archive headers for extract/list/test; `probe_7z` attests 7-Zip version for the Windows RAR gate.
+- **Security:** Base file associations omit `.rar` (macOS/Linux configs re-add); Unix promote opens use `O_NOFOLLOW` where available.
+- **CI:** `validate:changelog` + `validate:updater` run inside `npm run test:all`.
+- **Known:** Windows RAR **extraction** stays disabled while attested 7-Zip remains ≤ `26.02` (CVE-2026-58052); browse/test for RAR remain available.
+- **Known:** Archive passwords are passed to 7-Zip via `-p` and can appear in process listings even when entered in the UI (see `SECURITY.md`).
+
+## Changes in `v0.5.4-beta.3:`
+
+- **Fix:** Quick-extract no longer leaves a Dock/app zombie after the window closes. “Keep ready after quick extract” is off by default; when enabled, macOS hides the Dock and uses a menu-bar tray until idle timeout or Quit.
+- **Fix:** Warm-idle exit re-checks on the main thread so a newly opened extract window cannot race an idle quit; waking from warm clears the tray; tray has Open Zinnia (left-click / menu).
+- **Fix:** Extract-window teardown clears bindings on OS close; extract capability no longer allows direct `destroy` (must use cancel-aware close).
+- **Security:** Extract promote rejects sibling writes outside the stage directory; `run_7z` re-validates archive headers for extract/list/test.
+- **UI:** Basic mode home redesign (drop-first layout, friendlier copy, warmer floral accent). On macOS/Windows, Basic can use a translucent window with OS-native blur (toggle in Settings); Linux Basic stays opaque.
+- **UI:** In Basic mode, Basic/Power, Support, and Settings sit in the custom titlebar; Power keeps the separate header row.
+
 ## Changes in `v0.5.4-beta.2:`
 
-- **Performance:** Quick-extract (file association / Open with Zinnia) injects archive + destination at window create, skips recovery lock when no journal exists, lazy-loads the password prompt, and stays warm in the tray so the next double-click reuses the running process.
-- **Settings:** “Keep ready after quick extract” toggle plus idle timeout (5/10/30/60 minutes); turn it off to exit immediately after extract.
+- **Performance:** Quick-extract (file association / Open with Zinnia) injects archive + destination at window create, skips recovery lock when no journal exists, lazy-loads the password prompt, and can stay warm for faster follow-up opens.
+- **Settings:** “Keep ready after quick extract” toggle plus idle timeout (5/10/30/60 minutes).
 - **UI:** Quick-extract status no longer flashes missing-glyph boxes from noisy 7-Zip progress text; `hidden` controls work again in both main and extract windows.
 - **UI:** Prefer system fonts before Segoe so non-Latin glyphs fall back correctly on macOS.
 
@@ -47,7 +83,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
 ## Changes in `v0.5.1:`
 * **License menu:** Fixed an issue with the license menu rendering in basic mode.
-- **NEW - Windows code signing:** WOO HOO!! Windows Codesigning is here!
+- **NEW - Windows code signing:** WOO HOO!! Windows Binaries are now signed by Azure Artifact Signing!
   - After a good while of not having it, Windows Binaries are now signed by Azure Artifact Signing!
 - **Windows security:** Temporarily disabled RAR operations and RAR file associations while conflicting CVE-2026-58052 affected-version data is resolved.
 

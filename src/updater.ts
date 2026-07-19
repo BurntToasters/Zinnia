@@ -76,7 +76,7 @@ async function getUpdateCheckTarget(): Promise<string | undefined> {
     const base = await getUpdaterTargetBase();
     return `${base}-beta`;
   }
-  // auto: follow the installed version — beta if version contains a pre-release tag
+  // auto: follow the installed version; beta if version contains a pre-release tag
   const version = await getVersion();
   const isBeta = /-(beta|alpha|rc)/i.test(version);
   if (!isBeta) return undefined;

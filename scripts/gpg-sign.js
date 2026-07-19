@@ -1009,7 +1009,7 @@ async function syncBetaManifestsToLatestStable(
   if (!latestStable?.id || !latestStable?.upload_url) return;
   if (latestStable.id === currentReleaseId) {
     console.warn(
-      "  ! syncBetaManifests: latest stable is the current release — sync skipped. Publish a stable release before running beta builds.",
+      "  ! syncBetaManifests: latest stable is the current release; sync skipped. Publish a stable release before running beta builds.",
     );
     return;
   }
@@ -1025,7 +1025,7 @@ async function syncBetaManifestsToLatestStable(
 }
 
 async function main() {
-  console.log(`\nZinnia ${VERSION} — release pipeline\n`);
+  console.log(`\nZinnia ${VERSION}: release pipeline\n`);
 
   if (EXPECTED_TAG && EXPECTED_TAG !== TAG) {
     throw new Error(
@@ -1063,7 +1063,7 @@ async function main() {
   }
 
   if (!GH_TOKEN) {
-    console.log("\n[5/5] GH_TOKEN not set — skipping GitHub upload.");
+    console.log("\n[5/5] GH_TOKEN not set; skipping GitHub upload.");
     console.log(`Artifacts staged in: ${releaseDir}\n`);
     return;
   }
@@ -1090,7 +1090,7 @@ async function main() {
   }
 
   console.log(
-    `\nDone — ${TAG} uploaded as ${release.draft ? "draft" : "published"}.\n`,
+    `\nDone: ${TAG} uploaded as ${release.draft ? "draft" : "published"}.\n`,
   );
 }
 

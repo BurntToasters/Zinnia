@@ -137,7 +137,7 @@ describe("parseThreads", () => {
 
 describe("formatSize", () => {
   it("returns dash for zero bytes", () => {
-    expect(formatSize(0)).toBe("\u2014");
+    expect(formatSize(0)).toBe("-");
   });
 
   it("formats bytes", () => {

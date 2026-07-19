@@ -106,7 +106,7 @@ let commandPreviewTrigger: HTMLElement | null = null;
 let commandPreviewCopyTimer: number | undefined;
 const OUTPUT_TRUNCATION_LIMIT_MIB = 10;
 const RUNTIME_PROBE_TIMEOUT_MS = 7000;
-let runtimeProbePromise: Promise<void> | null = null;
+let runtimeProbePromise: Promise<string> | null = null;
 
 async function withTimeout<T>(
   promise: Promise<T>,
@@ -159,7 +159,7 @@ function logTruncationNotice(result: Run7zResult) {
 async function ensureRuntimeReady(): Promise<boolean> {
   try {
     runtimeProbePromise ??= withTimeout(
-      invoke<void>("probe_7z"),
+      invoke<string>("probe_7z"),
       RUNTIME_PROBE_TIMEOUT_MS,
       `7-Zip runtime probe timed out after ${RUNTIME_PROBE_TIMEOUT_MS / 1000} seconds.`,
     );
@@ -737,13 +737,11 @@ export function renderBrowseTable(info: ArchiveInfo) {
 
     const tdSize = document.createElement("td");
     tdSize.className = "size-col cell-tabular";
-    tdSize.textContent = entry.isFolder ? "\u2014" : formatSize(entry.size);
+    tdSize.textContent = entry.isFolder ? "-" : formatSize(entry.size);
 
     const tdPacked = document.createElement("td");
     tdPacked.className = "size-col cell-tabular";
-    tdPacked.textContent = entry.isFolder
-      ? "\u2014"
-      : formatSize(entry.packedSize);
+    tdPacked.textContent = entry.isFolder ? "-" : formatSize(entry.packedSize);
 
     const tdModified = document.createElement("td");
     tdModified.textContent = entry.modified;
@@ -771,12 +769,12 @@ export function renderBrowseTable(info: ArchiveInfo) {
 
       const tdSize = document.createElement("td");
       tdSize.classList.add("cell-tabular");
-      tdSize.textContent = entry.isFolder ? "\u2014" : formatSize(entry.size);
+      tdSize.textContent = entry.isFolder ? "-" : formatSize(entry.size);
 
       const tdPacked = document.createElement("td");
       tdPacked.classList.add("cell-tabular");
       tdPacked.textContent = entry.isFolder
-        ? "\u2014"
+        ? "-"
         : formatSize(entry.packedSize);
 
       const tdModified = document.createElement("td");
@@ -848,7 +846,7 @@ function renderSelectiveFlatRow(
   const meta = document.createElement("span");
   meta.className = "selective-row__meta";
   const kind = entry.isFolder ? "Folder" : "File";
-  const size = entry.isFolder ? "\u2014" : formatSize(entry.size);
+  const size = entry.isFolder ? "-" : formatSize(entry.size);
   meta.textContent = `${kind} \u00b7 ${size}`;
 
   row.appendChild(checkbox);
@@ -1412,13 +1410,13 @@ export async function runBatchExtract() {
       setStatus("Batch cancelled", 3000);
       await message("Batch extraction was cancelled.", { title: "Cancelled" });
     } else if (failed === 0) {
-      setStatus(`Done \u2014 ${succeeded} archive(s) extracted`, 3000);
+      setStatus(`Done: ${succeeded} archive(s) extracted`, 3000);
       await message(
         `Successfully extracted ${succeeded} archive${succeeded !== 1 ? "s" : ""}.`,
         { title: "Batch extraction complete" },
       );
     } else {
-      setStatus(`Done \u2014 ${succeeded} succeeded, ${failed} failed`, 4000);
+      setStatus(`Done: ${succeeded} succeeded, ${failed} failed`, 4000);
       await message(`${succeeded} succeeded, ${failed} failed.`, {
         title: "Batch extraction complete",
         kind: "warning",

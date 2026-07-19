@@ -44,6 +44,7 @@ const mocks = vi.hoisted(() => {
       triggerIconRefresh: vi.fn(),
       registerIconRefreshHook: vi.fn(),
       resizeWorkspaceWindow: vi.fn().mockResolvedValue(undefined),
+      syncWorkspaceWindowFx: vi.fn().mockResolvedValue(undefined),
     },
     archive: {
       runAction: vi.fn().mockResolvedValue(undefined),
@@ -76,6 +77,7 @@ const mocks = vi.hoisted(() => {
     updater: {
       checkUpdates: vi.fn().mockResolvedValue(undefined),
       autoCheckUpdates: vi.fn().mockResolvedValue(undefined),
+      discardPendingUpdate: vi.fn(),
     },
     licenses: {
       openLicensesModal: vi.fn(),
@@ -142,6 +144,7 @@ vi.mock("../ui", () => ({
   triggerIconRefresh: mocks.ui.triggerIconRefresh,
   registerIconRefreshHook: mocks.ui.registerIconRefreshHook,
   resizeWorkspaceWindow: mocks.ui.resizeWorkspaceWindow,
+  syncWorkspaceWindowFx: mocks.ui.syncWorkspaceWindowFx,
 }));
 
 vi.mock("../archive", () => ({
@@ -180,6 +183,7 @@ vi.mock("../presets", () => ({
 vi.mock("../updater", () => ({
   checkUpdates: mocks.updater.checkUpdates,
   autoCheckUpdates: mocks.updater.autoCheckUpdates,
+  discardPendingUpdate: mocks.updater.discardPendingUpdate,
 }));
 
 vi.mock("../licenses", () => ({
@@ -501,6 +505,8 @@ beforeEach(async () => {
   mocks.ui.persistSettingsImmediately.mockReset();
   mocks.ui.persistSettingsImmediately.mockResolvedValue(undefined);
   mocks.ui.resizeWorkspaceWindow.mockReset();
+  mocks.ui.syncWorkspaceWindowFx.mockReset();
+  mocks.ui.syncWorkspaceWindowFx.mockResolvedValue(undefined);
   mocks.ui.resizeWorkspaceWindow.mockResolvedValue(undefined);
 
   mocks.archive.runAction.mockReset();
@@ -531,6 +537,7 @@ beforeEach(async () => {
 
   mocks.updater.checkUpdates.mockReset();
   mocks.updater.autoCheckUpdates.mockReset();
+  mocks.updater.discardPendingUpdate.mockReset();
 
   mocks.licenses.openLicensesModal.mockReset();
   mocks.licenses.closeLicensesModal.mockReset();
@@ -686,6 +693,45 @@ describe("main bootstrap", () => {
     expect(document.body.textContent ?? "").not.toContain("Failed to start:");
   });
 
+  it("handles app-menu events from the native menu", async () => {
+    type AppMenuHandler = (event: { payload: string }) => void;
+    let appMenuHandler: AppMenuHandler | null = null;
+    listenMock.mockImplementation(async (event, handler) => {
+      if (event === "app-menu") {
+        appMenuHandler = handler as AppMenuHandler;
+      }
+      return () => {};
+    });
+
+    await loadMainModule();
+    expect(appMenuHandler).toBeTruthy();
+
+    appMenuHandler!({ payload: "menu-settings" });
+    expect(mocks.settings.openSettingsModal).toHaveBeenCalled();
+
+    mocks.updater.checkUpdates.mockClear();
+    appMenuHandler!({ payload: "menu-check-updates" });
+    expect(mocks.updater.checkUpdates).toHaveBeenCalled();
+
+    mocks.licenses.openLicensesModal.mockClear();
+    appMenuHandler!({ payload: "menu-licenses" });
+    expect(mocks.licenses.openLicensesModal).toHaveBeenCalled();
+
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+    appMenuHandler!({ payload: "menu-support" });
+    expect(openSpy).toHaveBeenCalledWith(
+      "https://rosie.run/support",
+      "_blank",
+      "noopener,noreferrer",
+    );
+    openSpy.mockRestore();
+
+    appMenuHandler!({ payload: "menu-shortcuts" });
+    expect(
+      (document.getElementById("shortcuts-overlay") as HTMLElement).hidden,
+    ).toBe(false);
+  });
+
   it("handles keyboard shortcuts for browse, run, and escape overlays", async () => {
     await loadMainModule();
 
@@ -706,10 +752,22 @@ describe("main bootstrap", () => {
 
     expect(mocks.archive.runAction).toHaveBeenCalled();
 
+    mocks.settings.openSettingsModal.mockClear();
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: ",", metaKey: true }),
+    );
+    expect(mocks.settings.openSettingsModal).toHaveBeenCalled();
+
     const settingsOverlay = document.getElementById(
       "settings-overlay",
     ) as HTMLElement;
     settingsOverlay.hidden = false;
+    mocks.settings.openSettingsModal.mockClear();
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: ",", ctrlKey: true }),
+    );
+    expect(mocks.settings.openSettingsModal).not.toHaveBeenCalled();
+
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect(mocks.settings.closeSettingsModal).toHaveBeenCalled();
 
@@ -1050,6 +1108,7 @@ describe("main bootstrap", () => {
     await flushAsync();
 
     expect(mocks.ui.persistSettingsImmediately).not.toHaveBeenCalled();
+    expect(mocks.updater.discardPendingUpdate).toHaveBeenCalled();
     expect(invokeMock).toHaveBeenCalledWith("reset_settings");
     expect(invokeMock).toHaveBeenCalledWith("clear_logs");
     expect(relaunchMock).toHaveBeenCalled();
@@ -1255,7 +1314,7 @@ describe("main bootstrap", () => {
 
     await loadMainModule();
 
-    // Should not crash — app starts without platform class
+    // Should not crash; app starts without platform class
     expect(document.body.textContent ?? "").not.toContain("Failed to start:");
     expect(document.body.classList.contains("platform-windows")).toBe(false);
     expect(document.body.classList.contains("platform-macos")).toBe(false);

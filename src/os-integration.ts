@@ -11,6 +11,17 @@ export interface OsIntegrationStatus {
   defaultArchiverActionAvailable?: boolean;
   defaultArchiverActionLabel?: string;
   defaultArchiverHelp?: string;
+  /** macOS only: Finder Services (Extract/Compress) row is shown when true. */
+  finderServicesAvailable?: boolean;
+  /** false when pbs/plutil probe failed → show Unknown. */
+  finderServicesKnown?: boolean;
+  finderServicesEnabled?: boolean;
+  finderServicesHelp?: string;
+  /** Windows: sparse MSIX identity for Win11 menu (not a full AppX app install). */
+  win11ModernMenuAvailable?: boolean;
+  win11ModernMenuKnown?: boolean;
+  win11ModernMenuRegistered?: boolean;
+  win11ModernMenuHelp?: string;
   archiveDefaults?: ArchiveDefaultStatus[];
 }
 
@@ -52,6 +63,50 @@ function setBadge(
   el.textContent = ok ? ready : action;
   el.classList.toggle("status-pill--ok", ok);
   el.classList.toggle("status-pill--warn", !ok);
+  el.classList.remove("status-pill--unknown");
+}
+
+function setTriStatePill(
+  id: string,
+  known: boolean,
+  ok: boolean,
+  okLabel: string,
+  offLabel: string,
+  unknownLabel = "Unknown",
+): void {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.remove(
+    "status-pill--ok",
+    "status-pill--warn",
+    "status-pill--unknown",
+  );
+  if (!known) {
+    el.textContent = unknownLabel;
+    el.classList.add("status-pill--unknown");
+    return;
+  }
+  if (ok) {
+    el.textContent = okLabel;
+    el.classList.add("status-pill--ok");
+    return;
+  }
+  el.textContent = offLabel;
+  el.classList.add("status-pill--warn");
+}
+
+function setFinderServicesBadge(
+  known: boolean,
+  enabled: boolean,
+  packaged: boolean,
+): void {
+  setTriStatePill(
+    "os-finder-services-status",
+    known,
+    enabled,
+    "Enabled",
+    packaged ? "Off" : "Action needed",
+  );
 }
 
 function setText(id: string, value: string): void {
@@ -140,14 +195,83 @@ export function renderOsIntegrationStatus(status: OsIntegrationStatus): void {
       ? "Verify manually"
       : "Action needed",
   );
-  setBadge(
-    "os-context-status",
-    status.contextActionsKnown,
-    "Ready",
-    status.platform === "linux" && status.packaged
-      ? "Verify manually"
-      : "Action needed",
-  );
+  {
+    let contextReady = "Ready";
+    let contextAction = "Action needed";
+    if (status.platform === "linux" && status.packaged) {
+      contextAction = "Verify manually";
+    } else if (
+      status.platform === "macos" &&
+      status.packaged &&
+      status.finderServicesAvailable
+    ) {
+      if (status.finderServicesKnown === false) {
+        contextAction = "Unknown";
+      } else if (!status.finderServicesEnabled) {
+        contextAction = "Off";
+      }
+    }
+    setBadge(
+      "os-context-status",
+      status.contextActionsKnown,
+      contextReady,
+      contextAction,
+    );
+  }
+
+  const finderRow = document.getElementById(
+    "os-finder-services-row",
+  ) as HTMLElement | null;
+  const finderAvailable = status.finderServicesAvailable === true;
+  if (finderRow) {
+    finderRow.hidden = !finderAvailable;
+  }
+  if (finderAvailable) {
+    const finderKnown = status.finderServicesKnown !== false;
+    const finderEnabled = status.finderServicesEnabled === true;
+    setFinderServicesBadge(finderKnown, finderEnabled, status.packaged);
+    setText(
+      "os-finder-services-help",
+      status.finderServicesHelp ??
+        "Extract / Compress with Zinnia in Finder's Services menu.",
+    );
+    const finderBtn = document.getElementById(
+      "open-finder-services-settings",
+    ) as HTMLButtonElement | null;
+    if (finderBtn) {
+      finderBtn.textContent =
+        finderKnown && finderEnabled ? "Open Services…" : "Enable…";
+      finderBtn.disabled = false;
+      finderBtn.title =
+        finderKnown && finderEnabled
+          ? "Open Keyboard Shortcuts → Services in System Settings"
+          : "Open System Settings so you can turn on Finder Services";
+    }
+  }
+
+  const win11Row = document.getElementById(
+    "os-win11-menu-row",
+  ) as HTMLElement | null;
+  const win11Available = status.win11ModernMenuAvailable === true;
+  if (win11Row) {
+    win11Row.hidden = !win11Available;
+  }
+  if (win11Available) {
+    const win11Known = status.win11ModernMenuKnown !== false;
+    const win11Registered = status.win11ModernMenuRegistered === true;
+    setTriStatePill(
+      "os-win11-menu-status",
+      win11Known,
+      win11Registered,
+      "Registered",
+      status.packaged ? "Not registered" : "Action needed",
+    );
+    setText(
+      "os-win11-menu-help",
+      status.win11ModernMenuHelp ??
+        "Sparse identity package for the primary right-click menu (Zinnia stays a normal NSIS install).",
+    );
+  }
 
   const help = document.getElementById("os-integration-help");
   if (help) {
@@ -157,11 +281,12 @@ export function renderOsIntegrationStatus(status: OsIntegrationStatus): void {
     } else if (status.platform === "macos") {
       help.textContent =
         status.defaultArchiverHelp ??
-        "Use Finder's Open With or Get Info panel to make Zinnia the default archive app.";
+        "Use Finder's Open With or Get Info for defaults. Packaged builds also add Services: Extract / Compress with Zinnia.";
     } else if (status.platform === "windows") {
       help.textContent =
+        status.win11ModernMenuHelp ??
         status.defaultArchiverHelp ??
-        "Use File Explorer or Default Apps to map archive extensions to Zinnia.";
+        "Zinnia installs as a normal NSIS app. Classic Explorer verbs always register; the Win11 modern menu uses a separate sparse identity package (not a Store/AppX app install).";
     } else if (status.platform === "linux") {
       help.textContent =
         status.defaultArchiverHelp ??
@@ -234,6 +359,18 @@ export async function openOsIntegrationSettings(): Promise<void> {
     const msg = err instanceof Error ? err.message : String(err);
     await message(msg, {
       title: "Default app settings",
+      kind: "info",
+    });
+  }
+}
+
+export async function openFinderServicesSettings(): Promise<void> {
+  try {
+    await invoke("open_finder_services_settings");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await message(msg, {
+      title: "Finder Services",
       kind: "info",
     });
   }
@@ -359,4 +496,10 @@ export function wireOsIntegrationEvents(): void {
   $("reset-os-integration-defaults").addEventListener("click", () => {
     void resetPreferredArchiverToSystem();
   });
+  const finderBtn = document.getElementById("open-finder-services-settings");
+  if (finderBtn) {
+    finderBtn.addEventListener("click", () => {
+      void openFinderServicesSettings();
+    });
+  }
 }

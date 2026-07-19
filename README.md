@@ -32,12 +32,20 @@ native build runs.
 
 ## OS integration
 - Zinnia registers common archive file types in packaged builds.
-- Windows NSIS builds add per-user Explorer verbs for `Open with Zinnia` and
-  `Extract with Zinnia`.
+- Windows NSIS builds add per-user Explorer verbs for `Open with Zinnia`,
+  `Extract with Zinnia`, and `Compress with Zinnia` (classic / “Show more options”).
+- Signed Windows NSIS builds also register a Win11 modern context menu via a
+  **sparse identity MSIX** + `zinnia_shell.dll` (`Zinnia` submenu, plus top-level
+  Extract on archives). Zinnia itself stays a normal per-user NSIS Win32 install —
+  the MSIX is not a Store/AppX app package; it only grants package identity so
+  Explorer can load the shell DLL. See `src-tauri/windows/shell/README.md` and
+  `docs/QA-CONTEXT-MENUS.md`.
 - Linux `deb`, `rpm`, and Flatpak bundles include desktop `Open`, `Extract`, and
   `Compress` actions.
 - macOS users can choose Zinnia from Finder's Open With/Get Info default-app
-  flow; Zinnia routes archive launches to the quick extract window.
+  flow; Zinnia routes archive launches to the quick extract window. Packaged
+  builds also expose Finder Services: **Extract with Zinnia** and
+  **Compress with Zinnia**.
 
 ## Builds
 - Windows: `npm run build:win`

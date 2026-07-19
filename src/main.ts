@@ -84,6 +84,7 @@ import {
   setStatus,
   registerIconRefreshHook,
   resizeWorkspaceWindow,
+  syncWorkspaceWindowFx,
 } from "./ui";
 import {
   runAction,
@@ -113,7 +114,11 @@ import {
   deleteCustomPreset,
   refreshPresetDropdown,
 } from "./presets";
-import { checkUpdates, autoCheckUpdates } from "./updater";
+import {
+  checkUpdates,
+  autoCheckUpdates,
+  discardPendingUpdate,
+} from "./updater";
 import { openLicensesModal, closeLicensesModal } from "./licenses";
 import { chooseOutput, chooseExtract, addFiles, addFolder } from "./files";
 import {
@@ -715,8 +720,12 @@ function wireEvents() {
   $("save-settings").addEventListener("click", async () => {
     const previous = { ...state.lastPersistedSettings };
     state.currentSettings = readSettingsModal();
+    if (state.currentSettings.updateChannel !== previous.updateChannel) {
+      discardPendingUpdate();
+    }
     applyTheme(state.currentSettings.theme);
     setWorkspaceMode(state.currentSettings.workspaceMode, { persist: false });
+    void syncWorkspaceWindowFx();
     if (
       state.currentSettings.workspaceMode === "basic" &&
       previous.workspaceMode !== "basic"
@@ -782,6 +791,7 @@ function wireEvents() {
     if (!confirmed) return;
 
     try {
+      discardPendingUpdate();
       await invoke("reset_settings");
       await invoke("clear_logs").catch((err) => {
         const msg = err instanceof Error ? err.message : String(err);
@@ -881,9 +891,20 @@ function wireEvents() {
       if (e.key === "Escape") {
         return;
       }
-      if (e.key === "?" || (e.key === "Enter" && (e.ctrlKey || e.metaKey))) {
+      if (
+        e.key === "?" ||
+        (e.key === "Enter" && (e.ctrlKey || e.metaKey)) ||
+        (e.key === "," && (e.ctrlKey || e.metaKey))
+      ) {
         return;
       }
+    }
+    if (e.key === "," && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      if ($("settings-overlay").hidden) {
+        openSettingsModal();
+      }
+      return;
     }
     if (e.key === "Escape") {
       if (!$("settings-overlay").hidden) {
@@ -1004,6 +1025,38 @@ async function init() {
   }
 
   try {
+    await listen<string>("app-menu", (event) => {
+      const action = typeof event.payload === "string" ? event.payload : "";
+      switch (action) {
+        case "menu-settings":
+          openSettingsModal();
+          break;
+        case "menu-check-updates":
+          void checkUpdates();
+          break;
+        case "menu-shortcuts":
+          openShortcutsModal();
+          break;
+        case "menu-licenses":
+          openLicensesModal();
+          break;
+        case "menu-support":
+          window.open(
+            "https://rosie.run/support",
+            "_blank",
+            "noopener,noreferrer",
+          );
+          break;
+        default:
+          break;
+      }
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Failed to subscribe to app menu events: ${msg}`, "error");
+  }
+
+  try {
     await listen<string>("open-paths-dropped", (event) => {
       const detail =
         typeof event.payload === "string" && event.payload.trim()
@@ -1096,6 +1149,30 @@ async function init() {
   if (loadedSettings.malformed && loadedSettings.warning) {
     log(loadedSettings.warning, "error");
   }
+
+  void invoke<string | null>("get_startup_recovery_status")
+    .then((message) => {
+      if (!message) return;
+      const banner = document.getElementById("startup-recovery-banner");
+      const text = document.getElementById("startup-recovery-banner-text");
+      const dismiss = document.getElementById(
+        "startup-recovery-banner-dismiss",
+      );
+      if (!banner || !text) return;
+      text.textContent = `Could not finish recovering an interrupted archive job: ${message}`;
+      banner.hidden = false;
+      dismiss?.addEventListener(
+        "click",
+        () => {
+          banner.hidden = true;
+        },
+        { once: true },
+      );
+    })
+    .catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      devLog(`Unable to read startup recovery status: ${msg}`);
+    });
 
   state.platformName = platform;
   const [versionResult, packagedResult] = await Promise.allSettled([

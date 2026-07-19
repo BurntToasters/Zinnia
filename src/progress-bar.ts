@@ -8,7 +8,7 @@ export function clearProgressPercentClass(el: HTMLElement): void {
   }
 }
 
-/** Apply determinate progress 0–100 via `pct-N` + `is-determinate`. */
+/** Apply determinate progress 0-100 via `pct-N` + `is-determinate`. */
 export function setProgressPercentClass(
   el: HTMLElement,
   percent: number,

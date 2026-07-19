@@ -1,8 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod app_menu;
 mod archive_detect;
 mod fs_secure;
 mod launch;
+#[cfg(target_os = "macos")]
+mod macos_services;
 mod logging;
 mod output;
 mod path_safety;
@@ -12,6 +15,7 @@ mod progress;
 mod settings_store;
 mod tempdir;
 mod validation;
+mod window_fx;
 
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
@@ -39,6 +43,9 @@ fn defer_close_while_operation_finishes(
             && (process.child.is_some() || process.preparing || process.cancelling)
     });
     if !owns_busy_operation {
+        if launch::is_extract_window_label(label) {
+            launch::clear_extract_window_bindings(app, label);
+        }
         return false;
     }
 
@@ -51,6 +58,7 @@ fn defer_close_while_operation_finishes(
                 let close_handle = handle.clone();
                 let close_label = window_label.clone();
                 let _ = handle.run_on_main_thread(move || {
+                    launch::clear_extract_window_bindings(&close_handle, &close_label);
                     if let Some(window) = close_handle.get_webview_window(&close_label) {
                         let _ = window.destroy();
                     }
@@ -60,6 +68,33 @@ fn defer_close_while_operation_finishes(
         }
     });
     true
+}
+
+fn force_exit_after_busy_teardown(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<RunningProcess>();
+        let owner = {
+            let mut process = match state.0.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            if let Some(child) = process.child.take() {
+                if let Err(error) = child.kill() {
+                    eprintln!("Could not stop archive process during forced exit: {error}");
+                }
+            }
+            process.cancelling = true;
+            process.owner_label.clone()
+        };
+        if let Some(owner) = owner {
+            if let Err(error) = launch::cancel_owner_and_wait(&app, &owner).await {
+                eprintln!("Could not finish archive teardown during forced exit: {error}");
+            }
+        } else {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+        app.exit(0);
+    });
 }
 
 fn defer_exit_while_operation_finishes(
@@ -72,19 +107,30 @@ fn defer_exit_while_operation_finishes(
             process.owner_label.clone()
         }
         Ok(_) => return false,
-        Err(_) => None,
+        Err(poisoned) => {
+            let process = poisoned.into_inner();
+            if process.child.is_some() || process.preparing || process.cancelling {
+                process.owner_label.clone()
+            } else {
+                return false;
+            }
+        }
     };
+    api.prevent_exit();
     let Some(owner) = owner else {
-        api.prevent_exit();
+        eprintln!("Busy archive slot has no owner; forcing teardown before exit.");
+        force_exit_after_busy_teardown(app.clone());
         return true;
     };
 
-    api.prevent_exit();
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
         match launch::cancel_owner_and_wait(&handle, &owner).await {
             Ok(()) => handle.exit(0),
-            Err(error) => eprintln!("Could not safely exit Zinnia: {error}"),
+            Err(error) => {
+                eprintln!("Could not safely exit Zinnia: {error}");
+                force_exit_after_busy_teardown(handle);
+            }
         }
     });
     true
@@ -148,13 +194,18 @@ fn main() {
                         }
                         let main_thread_handle = handle.clone();
                         let _ = handle.run_on_main_thread(move || {
-                            if !EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst)
-                                && !has_extract_windows(&main_thread_handle)
+                            // Re-check on the main thread: Services may have claimed
+                            // extract-only or already opened a real main (Compress)
+                            // after the timeout fired.
+                            if EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst)
+                                || has_extract_windows(&main_thread_handle)
+                                || main_thread_handle.get_webview_window("main").is_some()
                             {
-                                MAC_FALLBACK_MAIN_PENDING.store(true, Ordering::SeqCst);
-                                if let Err(e) = show_main_window(&main_thread_handle) {
-                                    eprintln!("Failed to open main window: {e}");
-                                }
+                                return;
+                            }
+                            MAC_FALLBACK_MAIN_PENDING.store(true, Ordering::SeqCst);
+                            if let Err(e) = show_main_window(&main_thread_handle) {
+                                eprintln!("Failed to open main window: {e}");
                             }
                         });
                     }
@@ -164,6 +215,13 @@ fn main() {
                     .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
             }
 
+            if let Err(e) = app_menu::install_macos_app_menu(app.handle()) {
+                eprintln!("Failed to install macOS app menu: {e}");
+            }
+
+            #[cfg(target_os = "macos")]
+            macos_services::install_macos_services(app.handle());
+
             // Recovery can traverse and sync directories. Keep it off the setup thread so the
             // first window appears immediately. `run_7z` takes the same recovery lock before any
             // new operation, so a fast user action cannot race an interrupted transaction.
@@ -171,8 +229,11 @@ fn main() {
             std::thread::spawn(move || {
                 if let Err(e) = process::recover_interrupted_transaction(&maintenance_handle) {
                     eprintln!("Failed to recover an interrupted archive transaction: {e}");
+                    process::set_startup_recovery_error(Some(e));
+                } else {
+                    process::set_startup_recovery_error(None);
                 }
-                // Unblock run_7z before temp cleanup — recovery is what must be serialized.
+                // Unblock run_7z before temp cleanup; recovery is what must be serialized.
                 process::mark_startup_recovery_done();
                 if let Err(e) = tempdir::cleanup_stale_temp_dirs(&maintenance_handle) {
                     eprintln!("Failed to clean stale conversion directories: {e}");
@@ -185,6 +246,7 @@ fn main() {
             process::cancel_7z,
             process::is_7z_running,
             process::probe_7z,
+            process::get_startup_recovery_status,
             archive_detect::validate_archive_paths,
             settings_store::load_settings,
             settings_store::save_settings,
@@ -205,13 +267,16 @@ fn main() {
             platform::get_platform_info,
             platform::get_os_integration_status,
             platform::open_os_integration_settings,
+            platform::open_finder_services_settings,
             platform::reset_preferred_archiver_to_system,
             platform::set_zinnia_default_archiver,
             platform::get_cpu_count,
             platform::is_flatpak,
             platform::is_packaged,
             tempdir::create_temp_extract_dir,
-            tempdir::remove_managed_temp_dir
+            tempdir::remove_managed_temp_dir,
+            window_fx::set_workspace_window_fx,
+            window_fx::supports_workspace_window_fx
         ])
         .build(tauri::generate_context!())
         .expect("failed to initialize Tauri application");
@@ -239,10 +304,11 @@ fn main() {
                     let _ = main_window.destroy();
                 }
                 if let Some(extract_window) = first_extract_window(app_handle) {
+                    launch::restore_foreground_activation(app_handle);
                     let _ = extract_window.show();
                     let _ = extract_window.set_focus();
                 } else {
-                    // Dock click while warm-idle: open the full app instead of quitting.
+                    // Dock/Spotlight activate while warm-idle: open the full app.
                     EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);
                     leave_extract_warm(app_handle);
                     if let Err(e) = show_main_window(app_handle) {
@@ -263,13 +329,19 @@ fn main() {
             defer_close_while_operation_finishes(app_handle, &label, &api);
         }
         tauri::RunEvent::WindowEvent {
+            label,
             event: tauri::WindowEvent::Destroyed,
             ..
-        } if should_keep_extract_warm(app_handle) => {
-            if let Some(main_window) = app_handle.get_webview_window("main") {
-                let _ = main_window.destroy();
+        } => {
+            if launch::is_extract_window_label(&label) {
+                launch::clear_extract_window_bindings(app_handle, &label);
             }
-            let _ = enter_extract_warm_idle(app_handle);
+            if should_keep_extract_warm(app_handle) {
+                if let Some(main_window) = app_handle.get_webview_window("main") {
+                    let _ = main_window.destroy();
+                }
+                let _ = enter_extract_warm_idle(app_handle);
+            }
         }
         _ => {}
     });
@@ -296,10 +368,14 @@ fn main() {
             }
         }
         if let tauri::RunEvent::WindowEvent {
+            label,
             event: tauri::WindowEvent::Destroyed,
             ..
-        } = event
+        } = &event
         {
+            if launch::is_extract_window_label(label) {
+                launch::clear_extract_window_bindings(app_handle, label);
+            }
             if should_keep_extract_warm(app_handle) {
                 if let Some(main_window) = app_handle.get_webview_window("main") {
                     let _ = main_window.destroy();

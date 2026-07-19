@@ -1,0 +1,4 @@
+LIBRARY zinnia_shell
+EXPORTS
+    DllCanUnloadNow PRIVATE
+    DllGetClassObject PRIVATE

@@ -476,12 +476,16 @@ describe("basic-ui state transitions", () => {
       ).textContent,
     ).toBe("Archive created");
 
-    updateBasicStatus("Error");
+    updateBasicStatus("Error", "disk full");
     expect(
       document
         .getElementById("basic-compress-completion")
         ?.classList.contains("basic-completion--error"),
     ).toBe(true);
+    expect(
+      (document.getElementById("basic-compress-completion-msg") as HTMLElement)
+        .textContent,
+    ).toBe("disk full");
 
     document
       .getElementById("basic-compress-progress")
@@ -761,5 +765,28 @@ describe("basic-ui drag and init wiring", () => {
     expect(uiMocks.runtime.mode).toBe("add");
     expect(getBasicView()).toBe("compress");
     expect(depMocks.browseArchive).not.toHaveBeenCalled();
+  });
+
+  it("Escape returns home when no modal overlay is open", async () => {
+    initBasicWorkspace();
+    setBasicView("compress");
+    const overlay = document.getElementById("settings-overlay") as HTMLElement;
+    overlay.classList.add("modal-overlay");
+    overlay.hidden = true;
+
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    );
+    await flushAsync();
+    expect(getBasicView()).toBe("home");
+
+    setBasicView("compress");
+    overlay.hidden = false;
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    );
+    await flushAsync();
+    expect(getBasicView()).toBe("compress");
+    overlay.hidden = true;
   });
 });

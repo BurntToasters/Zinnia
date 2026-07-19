@@ -86,9 +86,12 @@ describe("normalizeUserSettings", () => {
     const ok = normalizeUserSettings({
       quickExtractKeepWarm: false,
       quickExtractWarmIdleMinutes: 30,
+      basicWindowEffects: false,
     });
     expect(ok.quickExtractKeepWarm).toBe(false);
     expect(ok.quickExtractWarmIdleMinutes).toBe(30);
+    expect(ok.basicWindowEffects).toBe(false);
+    expect(SETTING_DEFAULTS.basicWindowEffects).toBe(true);
 
     const clamped = normalizeUserSettings({
       quickExtractWarmIdleMinutes: 7,
