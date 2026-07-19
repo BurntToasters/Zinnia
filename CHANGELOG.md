@@ -42,7 +42,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Fix:** Extract-window teardown clears bindings on OS close; extract capability no longer allows direct `destroy` (must use cancel-aware close).
 - **Security:** Extract promote rejects sibling writes outside the stage directory; `run_7z` re-validates archive headers for extract/list/test; `probe_7z` attests 7-Zip version for the Windows RAR gate.
 - **Security:** Base file associations omit `.rar` (macOS/Linux configs re-add); Unix promote opens use `O_NOFOLLOW` where available.
-- **CI:** `validate:changelog` + `validate:updater` run inside `npm run test:all`.
+- **CI:** `validate:changelog` + `validate:updater` run inside `npm run test:all`. Job renamed to `smoke-build` (unsigned `--no-bundle` only); signed releases stay on build VMs.
 - **Known:** Windows RAR **extraction** stays disabled while attested 7-Zip remains ≤ `26.02` (CVE-2026-58052); browse/test for RAR remain available.
 - **Known:** Archive passwords are passed to 7-Zip via `-p` and can appear in process listings even when entered in the UI (see `SECURITY.md`).
 

@@ -54,6 +54,8 @@ jobs:
       - run: npm ci
       - run: npm run test:cov
       - run: npm run prepare:7z
+      # Empty stubs only — CI never builds/signs the real Win11 shell package.
+      - run: npm run prepare:win-shell-stubs
       - run: cargo test --manifest-path src-tauri/Cargo.toml
 
   updater-manifest:
@@ -65,7 +67,8 @@ jobs:
           node-version: 22.12
       - run: npm run validate:updater
 
-  release-dry-run:
+  # Unsigned compile smoke only — not a release. Signed NSIS/DMG/AppImage stay on build VMs.
+  smoke-build:
     needs: quality-gate
     strategy:
       matrix:
@@ -104,11 +107,10 @@ jobs:
       - run: npm run prepare:7z
       - run: npm run licenses
       - run: npm run build
-      - name: Stub Win11 context-menu resources when absent
-        run: node scripts/ensure-windows-context-menu-stubs.mjs
+      - run: npm run prepare:win-shell-stubs
       - name: Unsigned tauri build (no bundle)
         run: npx tauri build --no-bundle
-      - name: Verify host sidecar and release binary
+      - name: Verify host sidecar and smoke binary
         shell: bash
         run: |
           test -e "src-tauri/binaries/${{ matrix.sidecar }}"

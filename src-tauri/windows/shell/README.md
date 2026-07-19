@@ -46,9 +46,20 @@ Outputs:
 - `src-tauri/windows/shell/out/zinnia_shell.dll`
 - `src-tauri/windows/shell/out/ZinniaContextMenu.msix`
 
-`npm run build:win:*` runs this automatically (unless `SKIP_WIN_CONTEXT_MENU=1`),
-signs both artifacts with Azure Artifact Signing, then bundles them into the NSIS
-installer. Post-install runs `scripts/register-windows-context-menu.ps1`
+Tauri lists these under `bundle.resources`, so the paths must exist for
+`cargo check` / `tauri dev` / `tauri build`. Empty CI stubs are enough for that:
+
+```powershell
+npm run prepare:win-shell-stubs
+```
+
+`release:prepare`, `tauri:dev`, and `tauri:build` create stubs automatically when
+missing. Real DLL/MSIX: `npm run build:win:context-menu` (or `build:win:*`).
+
+`npm run build:win:*` builds the real package automatically (unless
+`SKIP_WIN_CONTEXT_MENU=1`), signs both artifacts with Azure Artifact Signing,
+then bundles them into the NSIS installer. Post-install runs
+`scripts/register-windows-context-menu.ps1`
 (remove-before-add + `Add-AppxPackage -ExternalLocation`). Failures are written
 to `$INSTDIR\zinnia-context-menu-register.log` without aborting the install
 (classic verbs still work).
