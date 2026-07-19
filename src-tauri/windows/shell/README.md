@@ -21,7 +21,9 @@ Classic NSIS registry verbs remain for the legacy menu (including
 
 ## Build (Windows only)
 
-Requires Visual Studio 2022 (C++), CMake, and the Windows SDK (`makeappx`).
+Requires Visual Studio 2022 or **2026** (C++ workload), CMake (**4.2+** for VS 18),
+and the Windows SDK (`makeappx`). The build script picks
+`Visual Studio 18 2026` when VS 18 is installed, else `Visual Studio 17 2022`.
 
 **Publisher DN is required for signing to succeed.** Azure Artifact Signing’s
 certificate Subject (full DN) must match both:
