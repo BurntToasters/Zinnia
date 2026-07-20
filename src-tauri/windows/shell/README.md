@@ -58,6 +58,10 @@ npm run prepare:win-shell-stubs
 `release:prepare`, `tauri:dev`, and `tauri:build` create stubs automatically when
 missing. Real DLL/MSIX: `npm run build:win:context-menu` (or `build:win:*`).
 
+Sparse MSIX identity requires `uap10:AllowExternalContent` in the Appx
+manifest so `Add-AppxPackage -ExternalLocation` can point at `$INSTDIR`
+(error `0x80073D2E` without it).
+
 `npm run build:win:*` builds the real package automatically (unless
 `SKIP_WIN_CONTEXT_MENU=1`), signs both artifacts with Azure Artifact Signing,
 then bundles them into the NSIS installer. Post-install runs

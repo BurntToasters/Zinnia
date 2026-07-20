@@ -4,11 +4,12 @@
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
   xmlns:uap2="http://schemas.microsoft.com/appx/manifest/uap/windows10/2"
   xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
   xmlns:desktop4="http://schemas.microsoft.com/appx/manifest/desktop/windows10/4"
   xmlns:desktop5="http://schemas.microsoft.com/appx/manifest/desktop/windows10/5"
   xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
-  IgnorableNamespaces="uap uap2 uap3 rescap desktop4 desktop5 com">
+  IgnorableNamespaces="uap uap2 uap3 uap10 rescap desktop4 desktop5 com">
 
   <Identity
     Name="run.rosie.zinnia.contextmenu"
@@ -20,6 +21,8 @@
     <DisplayName>Zinnia Context Menu</DisplayName>
     <PublisherDisplayName>BurntToasters</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
+    <!-- Required for Add-AppxPackage -ExternalLocation (0x80073D2E without this). -->
+    <uap10:AllowExternalContent>true</uap10:AllowExternalContent>
   </Properties>
 
   <Resources>
@@ -27,16 +30,22 @@
   </Resources>
 
   <Dependencies>
-    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.22000.0" MaxVersionTested="10.0.26100.0" />
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
   </Dependencies>
 
   <Capabilities>
     <rescap:Capability Name="runFullTrust" />
+    <rescap:Capability Name="unvirtualizedResources" />
   </Capabilities>
 
   <Applications>
-    <Application Id="ZinniaContextMenu" Executable="ZinniaContextMenu.exe" EntryPoint="Windows.FullTrustApplication">
+    <Application
+      Id="ZinniaContextMenu"
+      Executable="zinnia.exe"
+      uap10:TrustLevel="mediumIL"
+      uap10:RuntimeBehavior="win32App">
       <uap:VisualElements
+        AppListEntry="none"
         DisplayName="Zinnia Context Menu"
         Description="Zinnia File Explorer context menu"
         Square150x150Logo="Assets\StoreLogo.png"

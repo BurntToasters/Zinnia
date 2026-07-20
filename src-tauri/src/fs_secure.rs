@@ -11,7 +11,7 @@ pub fn create_private_dir(path: &Path) -> io::Result<()> {
         use std::os::unix::fs::DirBuilderExt;
         let mut builder = std::fs::DirBuilder::new();
         builder.mode(0o700).create(path)?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(windows)]
@@ -21,7 +21,7 @@ pub fn create_private_dir(path: &Path) -> io::Result<()> {
             let _ = std::fs::remove_dir(path);
             return Err(io::Error::new(io::ErrorKind::Other, error));
         }
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -39,7 +39,7 @@ pub fn sync_directory(path: &Path) -> Result<(), String> {
         std::fs::File::open(path)
             .and_then(|directory| directory.sync_all())
             .map_err(|e| e.to_string())?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(any(unix, windows)))]

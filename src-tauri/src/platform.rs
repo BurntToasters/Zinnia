@@ -180,6 +180,7 @@ struct FinderServicesInfo {
 }
 
 /// Keys used by macOS `pbs` prefs for our NSServices entries.
+#[cfg(any(target_os = "macos", test))]
 const MACOS_FINDER_SERVICE_KEYS: &[&str] = &[
     "run.rosie.zinnia - Extract with Zinnia - extractWithZinnia",
     "run.rosie.zinnia - Compress with Zinnia - compressWithZinnia",
@@ -187,6 +188,7 @@ const MACOS_FINDER_SERVICE_KEYS: &[&str] = &[
 
 /// Parse `NSServicesStatus` from a pbs.plist JSON conversion.
 /// Absent entries default to enabled (Apple’s default for contextual services).
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn finder_services_enabled_from_pbs(json: &serde_json::Value) -> bool {
     let Some(status_map) = json.get("NSServicesStatus") else {
         return true;
@@ -738,7 +740,7 @@ fn linux_query_archive_defaults_parallel(can_change: bool) -> Vec<ArchiveDefault
         .collect()
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(test)]
 fn linux_query_archive_defaults<B: LinuxMimeBackend>(
     backend: &B,
     can_change: bool,
