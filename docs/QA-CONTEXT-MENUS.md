@@ -40,6 +40,7 @@ Requires a **signed** NSIS install with full `AZURE_ARTIFACT_SIGNING_PUBLISHER_D
 | Unsigned / `SKIP_WIN_CODESIGN=1` | Classic verbs only |
 | Stub MSIX (≤1 KiB) | Classic verbs only |
 | CN-only publisher DN | Context-menu build fails |
+| MSIX missing `AllowExternalContent` | Register log shows `0x80073D2E` |
 | Reinstall / upgrade | Remove-before-add (see register log) |
 
 ## Classic Windows verbs
