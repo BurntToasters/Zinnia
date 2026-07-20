@@ -23,12 +23,13 @@ use std::sync::Mutex;
 use tauri::Manager;
 
 use launch::{
-    collect_cli_context, emit_open_paths, emit_open_urls, enter_extract_warm_idle,
-    first_extract_window, has_extract_windows, leave_extract_warm, should_keep_extract_warm,
-    show_main_window, spawn_extract_window, ExtractBoundDestination, ExtractOpenAllowlist,
-    ExtractQueue, InitialMode, InitialPaths, OpenPathAllowlist, PendingPaths, EXTRACT_ONLY_LAUNCH,
-    FILE_OPEN_SIGNAL, MAC_FALLBACK_MAIN_PENDING,
+    collect_cli_context, emit_open_paths, enter_extract_warm_idle, has_extract_windows,
+    should_keep_extract_warm, show_main_window, spawn_extract_window, ExtractBoundDestination,
+    ExtractOpenAllowlist, ExtractQueue, InitialMode, InitialPaths, OpenPathAllowlist, PendingPaths,
+    EXTRACT_ONLY_LAUNCH, FILE_OPEN_SIGNAL, MAC_FALLBACK_MAIN_PENDING,
 };
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use launch::{emit_open_urls, first_extract_window, leave_extract_warm};
 use logging::LogFileLock;
 use process::RunningProcess;
 

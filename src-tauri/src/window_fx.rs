@@ -63,6 +63,7 @@ fn paint_opaque_background(window: &WebviewWindow, dark: bool) {
     let _ = window.set_background_color(Some(color));
 }
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn paint_transparent_background(window: &WebviewWindow) {
     let _ = window.set_background_color(Some(tauri::window::Color(0, 0, 0, 0)));
 }
@@ -72,12 +73,12 @@ pub fn apply_basic_window_fx(window: &WebviewWindow, dark: bool) -> Result<(), S
     {
         let _ = dark;
         paint_transparent_background(window);
-        return apply_macos(window);
+        apply_macos(window)
     }
     #[cfg(target_os = "windows")]
     {
         paint_transparent_background(window);
-        return apply_windows(window, dark);
+        apply_windows(window, dark)
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
@@ -92,13 +93,13 @@ pub fn clear_basic_window_fx(window: &WebviewWindow, dark: bool) -> Result<(), S
     {
         let result = clear_macos(window);
         paint_opaque_background(window, dark);
-        return result;
+        result
     }
     #[cfg(target_os = "windows")]
     {
         let result = clear_windows(window);
         paint_opaque_background(window, dark);
-        return result;
+        result
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {

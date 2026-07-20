@@ -183,13 +183,8 @@ fn split_path_parts(raw_path: &str) -> PathParts {
     let separator = match split_index {
         None if windows_like => '\\',
         None => '/',
-        Some(idx) => {
-            if backslash == Some(idx) {
-                '\\'
-            } else {
-                '/'
-            }
-        }
+        Some(idx) if backslash == Some(idx) => '\\',
+        Some(_) => '/',
     };
     let Some(idx) = split_index else {
         return PathParts {
@@ -427,6 +422,7 @@ pub fn has_extract_windows(app: &tauri::AppHandle) -> bool {
         .any(|label| is_extract_window_label(label))
 }
 
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 pub fn first_extract_window(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
     app.webview_windows()
         .into_iter()
@@ -1039,6 +1035,7 @@ fn route_open_request(app: &tauri::AppHandle, paths: Vec<String>, mode: String) 
     }
 }
 
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 pub fn emit_open_urls(app: &tauri::AppHandle, urls: Vec<Url>) {
     let paths: Vec<String> = urls
         .into_iter()

@@ -1617,30 +1617,27 @@ pub async fn run_7z(
 ) -> Result<RunResult, String> {
     validate_run_7z_args(&args)?;
 
-    match args.first().map(String::as_str) {
-        Some("x" | "l" | "t") => {
-            let separator = args
-                .iter()
-                .position(|arg| arg == "--")
-                .ok_or_else(|| "Archive command is missing '--'.".to_string())?;
-            let archive = args
-                .get(separator + 1)
-                .ok_or_else(|| "Archive command is missing an archive path.".to_string())?;
-            let validation = crate::archive_detect::validate_archive_path(archive);
-            if !validation.valid {
-                return Err(validation
-                    .reason
-                    .unwrap_or_else(|| "Archive path failed validation.".to_string()));
-            }
-            #[cfg(target_os = "windows")]
-            if args.first().map(String::as_str) == Some("x")
-                && crate::archive_detect::is_rar_archive_file(std::path::Path::new(archive))?
-                && windows_rar_extract_blocked()
-            {
-                return Err("RAR extraction is temporarily disabled on Windows while conflicting CVE-2026-58052 affected-version data is resolved. Install a future Zinnia release after the bundled runtime has been conclusively verified.".to_string());
-            }
+    if let Some("x" | "l" | "t") = args.first().map(String::as_str) {
+        let separator = args
+            .iter()
+            .position(|arg| arg == "--")
+            .ok_or_else(|| "Archive command is missing '--'.".to_string())?;
+        let archive = args
+            .get(separator + 1)
+            .ok_or_else(|| "Archive command is missing an archive path.".to_string())?;
+        let validation = crate::archive_detect::validate_archive_path(archive);
+        if !validation.valid {
+            return Err(validation
+                .reason
+                .unwrap_or_else(|| "Archive path failed validation.".to_string()));
         }
-        _ => {}
+        #[cfg(target_os = "windows")]
+        if args.first().map(String::as_str) == Some("x")
+            && crate::archive_detect::is_rar_archive_file(std::path::Path::new(archive))?
+            && windows_rar_extract_blocked()
+        {
+            return Err("RAR extraction is temporarily disabled on Windows while conflicting CVE-2026-58052 affected-version data is resolved. Install a future Zinnia release after the bundled runtime has been conclusively verified.".to_string());
+        }
     }
     if window.label().starts_with("extract-") {
         if args.first().map(String::as_str) != Some("x") {
