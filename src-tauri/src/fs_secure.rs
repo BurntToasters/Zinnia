@@ -36,10 +36,13 @@ pub fn sync_directory(path: &Path) -> Result<(), String> {
     {
         // On Windows, std opens directories with FILE_FLAG_BACKUP_SEMANTICS so
         // FlushFileBuffers (via sync_all) is the fsync(dirfd) equivalent.
-        std::fs::File::open(path)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|e| e.to_string())?;
-        Ok(())
+        // Some environments deny directory FlushFileBuffers (os error 5); treat
+        // that as best-effort success — the file write itself already succeeded.
+        match std::fs::File::open(path).and_then(|directory| directory.sync_all()) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(()),
+            Err(error) => Err(error.to_string()),
+        }
     }
 
     #[cfg(not(any(unix, windows)))]

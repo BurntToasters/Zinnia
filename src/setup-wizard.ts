@@ -62,8 +62,15 @@ export async function markSetupComplete(): Promise<void> {
   state.currentSettings.setupComplete = true;
   state.settingsExtras._setupComplete = true;
   state.settingsExtras._setupWizardVersion = SETUP_WIZARD_VERSION;
-  await saveSettings(state.currentSettings, state.settingsExtras);
-  state.lastPersistedSettings = { ...state.currentSettings };
+  try {
+    await saveSettings(state.currentSettings, state.settingsExtras);
+    state.lastPersistedSettings = { ...state.currentSettings };
+  } catch (err) {
+    // Keep in-memory completion so Skip/finish still dismisses the wizard this
+    // session even if disk persistence fails (e.g. Windows dir fsync denied).
+    state.lastPersistedSettings = { ...state.currentSettings };
+    throw err;
+  }
 }
 
 export function showSetupWizard(): Promise<SetupWizardResult | null> {

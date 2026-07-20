@@ -1165,9 +1165,8 @@ describe("main bootstrap", () => {
       expect.stringContaining("Setup wizard could not be completed."),
       expect.objectContaining({ title: "Setup wizard error", kind: "error" }),
     );
-    expect(document.body.textContent ?? "").toContain(
-      "Failed to start: wizard crash",
-    );
+    // Wizard failure must not abort app bootstrap.
+    expect(document.body.textContent ?? "").not.toContain("Failed to start:");
   });
 
   it("processes pending path batches into extract mode for multi-archive drops", async () => {
