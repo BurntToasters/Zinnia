@@ -376,8 +376,12 @@ async function runSetupWizardFlow(): Promise<void> {
     }
   }
 
-  await markSetupComplete();
-  state.lastPersistedSettings = { ...state.currentSettings };
+  let persistError: unknown = null;
+  try {
+    await markSetupComplete();
+  } catch (err) {
+    persistError = err;
+  }
 
   applyTheme(state.currentSettings.theme);
   setWorkspaceMode(state.currentSettings.workspaceMode, { persist: false });
@@ -385,6 +389,10 @@ async function runSetupWizardFlow(): Promise<void> {
   applySettingsToForm();
   updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
   onCompressionOptionChange();
+
+  if (persistError) {
+    throw persistError;
+  }
 }
 
 function resetRuntimeStateForFirstRun(): void {
@@ -1105,11 +1113,11 @@ async function init() {
       await runSetupWizardFlow();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      // Don't abort app startup — Skip / finish should still leave a usable UI.
       await message(`Setup wizard could not be completed.\n\n${msg}`, {
         title: "Setup wizard error",
         kind: "error",
       });
-      throw err;
     }
   }
 
