@@ -38,25 +38,60 @@ static HINSTANCE g_hInst = nullptr;
 static void AddRefModule() { InterlockedIncrement(&g_moduleRefs); }
 static void ReleaseModule() { InterlockedDecrement(&g_moduleRefs); }
 
-static bool LooksLikeArchive(const std::wstring& path) {
+static bool EndsWithIgnoreCase(const std::wstring& value, const wchar_t* suffix) {
+  const size_t n = wcslen(suffix);
+  return value.size() >= n &&
+         _wcsicmp(value.c_str() + (value.size() - n), suffix) == 0;
+}
+
+static bool LooksLikeArchiveExtension(const std::wstring& lower_or_path) {
   static const wchar_t* kExts[] = {L".7z",  L".zip", L".tar", L".gz",
                                    L".tgz", L".bz2", L".tbz2", L".xz",
                                    L".txz"};
-  const wchar_t* ext = PathFindExtensionW(path.c_str());
-  if (!ext || !*ext) return false;
   for (const wchar_t* candidate : kExts) {
-    if (_wcsicmp(ext, candidate) == 0) return true;
+    if (EndsWithIgnoreCase(lower_or_path, candidate)) return true;
   }
-  // .tar.gz / .tar.xz style
+  return EndsWithIgnoreCase(lower_or_path, L".tar.gz") ||
+         EndsWithIgnoreCase(lower_or_path, L".tar.xz") ||
+         EndsWithIgnoreCase(lower_or_path, L".tar.bz2");
+}
+
+// Match launch/open_routing.rs: archive.7z.001 / archive.zip.001, or bare
+// name.001 when a sibling volume exists.
+static bool LooksLikeSplitVolume(const std::wstring& path) {
   std::wstring lower = path;
   for (auto& ch : lower) ch = static_cast<wchar_t>(towlower(ch));
-  auto ends_with = [](const std::wstring& value, const wchar_t* suffix) {
-    const size_t n = wcslen(suffix);
-    return value.size() >= n &&
-           _wcsicmp(value.c_str() + (value.size() - n), suffix) == 0;
-  };
-  return ends_with(lower, L".tar.gz") || ends_with(lower, L".tar.xz") ||
-         ends_with(lower, L".tar.bz2");
+  const size_t dot = lower.find_last_of(L'.');
+  if (dot == std::wstring::npos || dot + 1 >= lower.size()) return false;
+  const std::wstring suffix = lower.substr(dot + 1);
+  if (suffix.size() != 3) return false;
+  for (wchar_t ch : suffix) {
+    if (ch < L'0' || ch > L'9') return false;
+  }
+  const std::wstring stem = lower.substr(0, dot);
+  if (LooksLikeArchiveExtension(stem)) return true;
+
+  // Bare name.001: accept only when another volume sibling exists.
+  std::filesystem::path fs_path(path);
+  const auto parent = fs_path.parent_path();
+  const auto stem_os = fs_path.stem().wstring();
+  if (stem_os.empty()) return false;
+  for (unsigned volume = 1; volume <= 999; ++volume) {
+    wchar_t vol[16];
+    swprintf_s(vol, L".%03u", volume);
+    auto candidate = parent / (stem_os + vol);
+    if (_wcsicmp(candidate.c_str(), fs_path.c_str()) == 0) continue;
+    std::error_code ec;
+    if (std::filesystem::exists(candidate, ec) && !ec) return true;
+  }
+  return false;
+}
+
+static bool LooksLikeArchive(const std::wstring& path) {
+  // Keep .rar omitted on Windows (CVE-2026-58052 extract gate in the app).
+  std::wstring lower = path;
+  for (auto& ch : lower) ch = static_cast<wchar_t>(towlower(ch));
+  return LooksLikeArchiveExtension(lower) || LooksLikeSplitVolume(path);
 }
 
 static bool AllPathsAreArchives(const std::vector<std::wstring>& paths) {
@@ -340,12 +375,23 @@ class ExplorerCommand : public IExplorerCommand, public IObjectWithSite {
     if (!state) return E_POINTER;
     *state = ECS_ENABLED;
     if (kind_ == CommandKind::ExtractTop) {
-      // Registered on Type="*" so it can appear without package FTAs. Hide when
-      // the selection is known to include non-archives; stay enabled if Explorer
-      // has not handed us paths yet (modern menu often probes with a thin selection).
+      // Registered on Type="*". Hide thin probes (no selection) so Extract does
+      // not flash on every file type. When Explorer has a selection but paths
+      // cannot be resolved (cloud/virtual items), disable instead of hide so
+      // the verb stays visible but inert. Invoke still rejects non-archives.
       std::vector<std::wstring> paths;
-      if (SUCCEEDED(ResolvePaths(selection, &paths)) && !paths.empty() &&
-          !AllPathsAreArchives(paths)) {
+      const bool resolved =
+          SUCCEEDED(ResolvePaths(selection, &paths)) && !paths.empty();
+      if (!resolved) {
+        DWORD count = 0;
+        if (selection && SUCCEEDED(selection->GetCount(&count)) && count > 0) {
+          *state = ECS_DISABLED;
+        } else {
+          *state = ECS_HIDDEN;
+        }
+        return S_OK;
+      }
+      if (!AllPathsAreArchives(paths)) {
         *state = ECS_HIDDEN;
       }
       return S_OK;

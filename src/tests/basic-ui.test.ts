@@ -94,7 +94,7 @@ import {
   syncBasicWorkspaceFromPower,
   updateBasicRunningState,
   updateBasicStatus,
-} from "../basic-ui";
+} from "../basic";
 
 const openMock = vi.mocked(open);
 const invokeMock = vi.mocked(invoke);

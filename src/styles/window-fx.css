@@ -1,0 +1,19 @@
+/* Basic glass (macOS/Windows): let OS vibrancy show through. */
+html[data-window-fx="basic"],
+html[data-window-fx="basic"] body {
+  background: transparent;
+}
+
+html[data-window-fx="basic"] #app[data-workspace-mode="basic"] {
+  background: color-mix(in srgb, var(--bg) 42%, transparent);
+}
+
+html[data-window-fx="basic"] #app[data-workspace-mode="power"] {
+  background: var(--bg);
+}
+
+/* Linux / Power / effects off: solid opaque shell. */
+html[data-window-fx="opaque"] body,
+html:not([data-window-fx]) body {
+  background: var(--bg);
+}

@@ -23,7 +23,7 @@
   WriteRegStr HKCU "Software\Classes\Directory\shell\ZinniaCompress" "MUIVerb" "Compress folder with Zinnia"
   WriteRegStr HKCU "Software\Classes\Directory\shell\ZinniaCompress" "Icon" "$INSTDIR\zinnia.exe"
   WriteRegStr HKCU "Software\Classes\Directory\shell\ZinniaCompress\command" "" '"$INSTDIR\zinnia.exe" --compress "%1"'
-  ; Empty folder background — %V is the folder path.
+  ; Empty folder background: %V is the folder path.
   WriteRegStr HKCU "Software\Classes\Directory\Background\shell\ZinniaCompress" "MUIVerb" "Compress with Zinnia"
   WriteRegStr HKCU "Software\Classes\Directory\Background\shell\ZinniaCompress" "Icon" "$INSTDIR\zinnia.exe"
   WriteRegStr HKCU "Software\Classes\Directory\Background\shell\ZinniaCompress\command" "" '"$INSTDIR\zinnia.exe" --compress "%V"'

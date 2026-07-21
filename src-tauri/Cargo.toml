@@ -1,6 +1,6 @@
 [package]
 name = "zinnia"
-version = "0.6.0-beta.7"
+version = "0.6.0-beta.8"
 description = "Cross-platform 7z GUI built with Tauri."
 authors = ["BurntToasters <code@rosie.run>"]
 edition = "2021"
@@ -34,7 +34,13 @@ objc2-uniform-type-identifiers = "0.3"
 block2 = "0.6"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Threading",
+] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -1,6 +1,6 @@
 {
   "name": "zinnia",
-  "version": "0.6.0-beta.7",
+  "version": "0.6.0-beta.8",
   "private": true,
   "description": "Cross-platform 7z GUI built with Tauri.",
   "type": "module",
@@ -20,6 +20,7 @@
     "test:all": "node scripts/test-all.js",
     "typecheck": "tsc --noEmit",
     "validate:updater": "node scripts/validate-updater-manifest.js",
+    "validate:updater:live": "node scripts/validate-updater-live.js",
     "validate:changelog": "node scripts/validate-changelog-version.js",
     "validate:flatpak": "node scripts/validate-flatpak-dry-run.js",
     "lint": "eslint src/ scripts/",

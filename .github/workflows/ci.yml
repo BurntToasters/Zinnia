@@ -64,7 +64,7 @@ jobs:
       - run: npm ci
       - run: npm run test:cov
       - run: npm run prepare:7z
-      # Empty stubs only — CI never builds/signs the real Win11 shell package.
+      # Empty stubs only: CI never builds/signs the real Win11 shell package.
       - run: npm run prepare:win-shell-stubs
       - run: cargo test --manifest-path src-tauri/Cargo.toml --all-targets
 
@@ -76,8 +76,10 @@ jobs:
         with:
           node-version: 22.12
       - run: npm run validate:updater
+      # Read-only fetch of published latest-*.json (not a release build).
+      - run: npm run validate:updater:live
 
-  # Unsigned compile smoke only — not a release. Signed NSIS/DMG/AppImage stay on build VMs.
+  # Unsigned compile smoke only: not a release. Signed NSIS/DMG/AppImage stay on build VMs.
   smoke-build:
     needs: quality-gate
     strategy:

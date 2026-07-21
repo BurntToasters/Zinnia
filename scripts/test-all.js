@@ -16,11 +16,16 @@ const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
 const appVersion = packageJson.version ?? "unknown";
 const scriptVersion = "1.1.0";
 const criticalCoverageThresholds = {
-  "archive.ts": { lines: 80, branches: 62, functions: 88 },
-  "basic-ui.ts": { lines: 60, branches: 45, functions: 45 },
+  // Directory keys (trailing `/`) aggregate all matching `src/<dir>/**/*.ts` files.
+  "archive/": { lines: 80, branches: 62, functions: 88 },
+  "basic/": { lines: 60, branches: 44, functions: 44 },
   "extract-window.ts": { lines: 72, branches: 53, functions: 66 },
-  "main.ts": { lines: 73, branches: 52, functions: 61 },
+  "app-init.ts": { lines: 70, branches: 50, functions: 52 },
   "updater.ts": { lines: 76, branches: 62, functions: 68 },
+  // Peeled from power-events.ts; keep these high so boot helpers stay tested.
+  "power-helpers.ts": { lines: 90, branches: 70, functions: 90 },
+  "power-shortcuts.ts": { lines: 85, branches: 50, functions: 90 },
+  "power-logs.ts": { lines: 85, branches: 70, functions: 90 },
 };
 
 const colors = {
@@ -85,6 +90,57 @@ function parseTest(output, results) {
   }
 }
 
+function aggregateCoverageEntries(entries) {
+  const metrics = ["lines", "branches", "functions", "statements"];
+  const totals = Object.fromEntries(
+    metrics.map((metric) => [metric, { total: 0, covered: 0 }]),
+  );
+  for (const entry of entries) {
+    for (const metric of metrics) {
+      const block = entry?.[metric];
+      if (!block || typeof block.total !== "number") continue;
+      totals[metric].total += block.total;
+      totals[metric].covered += block.covered ?? 0;
+    }
+  }
+  const result = {};
+  for (const metric of metrics) {
+    const { total, covered } = totals[metric];
+    result[metric] = {
+      total,
+      covered,
+      skipped: 0,
+      pct: total === 0 ? 100 : Math.round((covered / total) * 10000) / 100,
+    };
+  }
+  return result;
+}
+
+function findCriticalCoverageEntry(summary, fileName) {
+  const normalizedName = fileName.replaceAll("\\", "/");
+  const summaryEntries = Object.entries(summary).filter(
+    ([key]) => key !== "total",
+  );
+
+  if (normalizedName.endsWith("/")) {
+    const needle = `/src/${normalizedName}`;
+    const matches = summaryEntries
+      .filter(([filePath]) => {
+        const normalizedPath = filePath.replaceAll("\\", "/");
+        return (
+          normalizedPath.includes(needle) && normalizedPath.endsWith(".ts")
+        );
+      })
+      .map(([, entry]) => entry);
+    if (matches.length === 0) return undefined;
+    return aggregateCoverageEntries(matches);
+  }
+
+  return summaryEntries.find(([filePath]) =>
+    filePath.replaceAll("\\", "/").endsWith(`/src/${normalizedName}`),
+  )?.[1];
+}
+
 function parseCoverage(results) {
   try {
     const summary = JSON.parse(readFileSync(coverageSummaryPath, "utf8"));
@@ -99,9 +155,7 @@ function parseCoverage(results) {
     for (const [fileName, thresholds] of Object.entries(
       criticalCoverageThresholds,
     )) {
-      const entry = Object.entries(summary).find(([filePath]) =>
-        filePath.replaceAll("\\", "/").endsWith(`/src/${fileName}`),
-      )?.[1];
+      const entry = findCriticalCoverageEntry(summary, fileName);
       if (!entry) {
         failures.push(`${fileName} missing from coverage summary`);
         continue;

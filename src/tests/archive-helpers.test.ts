@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { listen } from "@tauri-apps/api/event";
 import {
   isEncryptedFlag,
   methodLooksEncrypted,
@@ -8,6 +9,7 @@ import {
   withPassword,
   formatBatchEta,
 } from "../archive";
+import { withLiveProgress } from "../archive/runtime";
 
 describe("isEncryptedFlag", () => {
   it('returns true for "+"', () => {
@@ -256,5 +258,34 @@ describe("formatBatchEta", () => {
   it("estimates seconds and minutes", () => {
     expect(formatBatchEta(10_000, 50)).toBe("~10s left");
     expect(formatBatchEta(18_000, 10)).toBe("~2m 42s left");
+  });
+});
+
+describe("withLiveProgress", () => {
+  it("renders file progress and removes its listener after completion", async () => {
+    let handler: ((event: { payload: unknown }) => void) | undefined;
+    const unlisten = vi.fn();
+    vi.mocked(listen).mockImplementation(async (_eventName, callback) => {
+      handler = callback as (event: { payload: unknown }) => void;
+      return unlisten;
+    });
+
+    let complete: ((value: string) => void) | undefined;
+    const action = new Promise<string>((resolve) => {
+      complete = resolve;
+    });
+    const result = withLiveProgress(() => action);
+    await Promise.resolve();
+
+    handler?.({
+      payload: { percent: 50, currentFile: "/tmp/nested/archive.7z" },
+    });
+    expect(document.getElementById("progress")?.textContent).toContain(
+      "archive.7z",
+    );
+
+    complete?.("done");
+    await expect(result).resolves.toBe("done");
+    expect(unlisten).toHaveBeenCalledOnce();
   });
 });

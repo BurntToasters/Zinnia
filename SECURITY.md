@@ -133,11 +133,16 @@ does not expand filesystem or network reach.
 
 ### Flatpak filesystem access
 
-The Flatpak package grants `--filesystem=home` plus common XDG user dirs because
-the bundled 7-Zip sidecar must read/write arbitrary user-selected archive paths.
-Document portals alone cannot cover sidecar I/O today. This expands the sandbox
-blast radius relative to a portal-only app; treat untrusted archives with the
-same caution as on other platforms.
+The Flatpak package grants `--filesystem=home`, `--filesystem=xdg-download`,
+`--filesystem=/run/media`, and `--filesystem=/mnt` because the bundled 7-Zip
+sidecar must read/write user-selected archive paths, including common USB and
+download locations outside `$HOME`. Document portals alone cannot cover sidecar
+I/O today. This expands the sandbox blast radius relative to a portal-only app;
+treat untrusted archives with the same caution as on other platforms.
+
+There is intentionally no `--share=network`. Flatpak builds do not use the
+in-app GitHub updater (Settings update UI is hidden); refresh via Flathub or a
+reinstalled sideload bundle instead.
 
 ### Upstream Rust advisory review
 
@@ -152,11 +157,18 @@ must not be treated as resolved merely because `cargo audit` allows it.
 ### Same-user filesystem race boundary
 
 Zinnia re-checks extraction ancestors immediately before publishing staged
-output. A same-user process can still race the final rename or hard-link after
+output. A same-user process can still race the final rename or hard_link after
 that check. Fully eliminating that residual race requires platform-specific
 no-follow directory handles; it is tracked as architectural security debt.
 The current staging, canonical-path, symlink/reparse, and post-extraction
 validation checks remain mandatory defense in depth.
+
+On Unix, promote opens use `O_NOFOLLOW` for the final path component. On
+Windows, `open_regular_file_nofollow` opens with `FILE_FLAG_OPEN_REPARSE_POINT`
+and rejects reparse tags on the opened handle. Archive publish prefers
+`hard_link` while that handle is held and falls back to copying from the same
+handle (no path re-open). Residual same-user TOCTOU remains for the hard_link
+path name lookup itself.
 
 ### Open-folder allowlist
 

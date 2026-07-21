@@ -223,7 +223,7 @@ vi.mock("../extract-path", () => ({
   resolveOutputArchiveAutofill: mocks.extractPath.resolveOutputArchiveAutofill,
 }));
 
-vi.mock("../basic-ui", () => ({
+vi.mock("../basic", () => ({
   initBasicWorkspace: mocks.basicUi.initBasicWorkspace,
   setBasicView: mocks.basicUi.setBasicView,
   handleBasicDragDrop: mocks.basicUi.handleBasicDragDrop,

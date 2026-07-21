@@ -50,7 +50,7 @@ native build runs.
   `Extract with Zinnia`, and `Compress with Zinnia` (classic / “Show more options”).
 - Signed Windows NSIS builds also register a Win11 modern context menu via a
   **sparse identity MSIX** + `zinnia_shell.dll` (`Zinnia` submenu, plus top-level
-  Extract on archives). Zinnia itself stays a normal per-user NSIS Win32 install —
+  Extract on archives). Zinnia itself stays a normal per-user NSIS Win32 install;
   the MSIX is not a Store/AppX app package; it only grants package identity so
   Explorer can load the shell DLL. See `src-tauri/windows/shell/README.md` and
   `docs/QA-CONTEXT-MENUS.md`.
