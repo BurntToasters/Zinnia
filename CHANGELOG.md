@@ -24,7 +24,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 ## Changes in `v0.6.0-beta.4:`
 
 - **CI:** macOS rust-check and smoke-build runners pin `macos-26` (not `macos-latest` / macOS 15) so bundled 7-Zip and `minimumSystemVersion` 26.0+ can execute.
-- **Reliability:** Archive commit/rollback finalization runs on `spawn_blocking` so large extract trees do not stall the async runtime.
+- **Reliability:** Archive commit/rollback finalization runs on `spawn_blocking` so large extract trees do not stall the async runtime; the operation slot is cleared even if that task panics (avoids soft-lock until restart).
 - **Reliability:** Timed-out OS integration commands kill the process group (Unix) or process tree (`taskkill /T`, Windows) so descendant pipe holders cannot leave reader threads blocked.
 - **Compatibility:** macOS builds require macOS 26 or later because the official bundled 7-Zip 26.02 binary has a native macOS 26 deployment floor; the bundle and release checks enforce 26.0+.
 - **Security:** Extract preflights archive member paths (`7z l -slt`) and rejects `..` / absolute paths that could write into existing sibling folders; sibling name snapshot still catches new top-level escapes.

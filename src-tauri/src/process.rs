@@ -2354,7 +2354,7 @@ pub async fn run_7z(
     let finalize_plan = cleanup_plan.clone();
     let finalize_window = window.clone();
     let finalize_emit = emit_window.clone();
-    let finalize_result = tokio::task::spawn_blocking(move || {
+    let finalize_join = tokio::task::spawn_blocking(move || {
         if was_cancelled || exit_code != 0 {
             if let Err(error) = rollback_cleanup(&finalize_plan) {
                 Err(format!("7z operation ended, but rollback failed: {error}"))
@@ -2376,9 +2376,10 @@ pub async fn run_7z(
             commit_cleanup(&finalize_app, &finalize_plan)
         }
     })
-    .await
-    .map_err(|error| format!("Archive finalization task failed: {error}"))?;
+    .await;
 
+    // Always clear the operation slot, including when the blocking task panics.
+    // Leaving `cancelling` set would soft-lock every later run_7z until restart.
     if let Ok(mut process) = lock_process(&state) {
         process.child = None;
         process.preparing = false;
@@ -2387,6 +2388,11 @@ pub async fn run_7z(
         process.abort_reason = None;
         process.cleanup_plan = None;
     }
+
+    let finalize_result = match finalize_join {
+        Ok(result) => result,
+        Err(error) => Err(format!("Archive finalization task failed: {error}")),
+    };
     finalize_result?;
     journal_guard.clear()?;
     if let Some(reason) = abort_reason {
