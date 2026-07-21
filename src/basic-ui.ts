@@ -33,6 +33,7 @@ import { chooseOutput, chooseExtract, addFiles, addFolder } from "./files";
 import {
   deriveOutputArchivePath,
   isPreferredCompressParent,
+  fallbackCompressParent,
   resolveOutputArchiveAutofill,
   resolveExtractDestinationAutofill,
 } from "./extract-path";
@@ -926,6 +927,12 @@ async function handleBasicCompressAction(): Promise<void> {
       defaultPath = parent.endsWith(sep)
         ? `${parent}Archive.${format}`
         : `${parent}${sep}Archive.${format}`;
+    } else {
+      const fallback = fallbackCompressParent(state.inputs[0]);
+      if (fallback) {
+        const sep = fallback.includes("\\") ? "\\" : "/";
+        defaultPath = `${fallback}${sep}Archive.${format}`;
+      }
     }
   }
 

@@ -237,12 +237,14 @@ class ExplorerCommand : public IExplorerCommand, public IObjectWithSite {
     if (!name) return E_POINTER;
     const wchar_t* title = L"Zinnia";
     switch (kind_) {
-      case CommandKind::Extract:
       case CommandKind::ExtractTop:
         title = L"Extract with Zinnia";
         break;
+      case CommandKind::Extract:
+        title = L"Extract";
+        break;
       case CommandKind::Compress:
-        title = L"Compress with Zinnia";
+        title = L"Compress";
         break;
       case CommandKind::Root:
       default:
@@ -271,9 +273,18 @@ class ExplorerCommand : public IExplorerCommand, public IObjectWithSite {
         *guid = CLSID_ZinniaRoot;
         break;
       case CommandKind::ExtractTop:
-      case CommandKind::Extract:
         *guid = CLSID_ZinniaExtractTop;
         break;
+      case CommandKind::Extract: {
+        // Distinct from ExtractTop so Explorer does not merge the two commands.
+        static const GUID kExtractSub = {
+            0xb7e2a91c,
+            0x6d4f,
+            0x4a3e,
+            {0x9c, 0x1b, 0x8f, 0x0e, 0x2d, 0x3a, 0x4b, 0x5f}};
+        *guid = kExtractSub;
+        break;
+      }
       case CommandKind::Compress: {
         static const GUID kCompress = {
             0xb7e2a91c,

@@ -1410,28 +1410,39 @@ export async function runBatchExtract() {
     }
 
     hideProgress();
+    const basic = getWorkspaceMode() === "basic";
     if (state.batchCancelled || state.cancelRequested) {
-      setStatus("Batch cancelled", 3000);
-      await message("Batch extraction was cancelled.", { title: "Cancelled" });
+      setStatus("Cancelled", 3000);
+      if (!basic) {
+        await message("Batch extraction was cancelled.", {
+          title: "Cancelled",
+        });
+      }
     } else if (failed === 0) {
-      setStatus(`Done: ${succeeded} archive(s) extracted`, 3000);
-      await message(
-        `Successfully extracted ${succeeded} archive${succeeded !== 1 ? "s" : ""}.`,
-        { title: "Batch extraction complete" },
-      );
+      setStatus("Done", 3000);
+      if (!basic) {
+        await message(
+          `Successfully extracted ${succeeded} archive${succeeded !== 1 ? "s" : ""}.`,
+          { title: "Batch extraction complete" },
+        );
+      }
     } else {
-      setStatus(`Done: ${succeeded} succeeded, ${failed} failed`, 4000);
-      await message(`${succeeded} succeeded, ${failed} failed.`, {
-        title: "Batch extraction complete",
-        kind: "warning",
-      });
+      setStatus("Error", 4000, `${succeeded} succeeded, ${failed} failed.`);
+      if (!basic) {
+        await message(`${succeeded} succeeded, ${failed} failed.`, {
+          title: "Batch extraction complete",
+          kind: "warning",
+        });
+      }
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Error: ${msg}`);
     setStatus("Error", 3000, msg);
     hideProgress();
-    await message(msg, { title: "Extraction error", kind: "error" });
+    if (getWorkspaceMode() !== "basic") {
+      await message(msg, { title: "Extraction error", kind: "error" });
+    }
   } finally {
     if (unlistenProgress) unlistenProgress();
     clearPasswordFields();

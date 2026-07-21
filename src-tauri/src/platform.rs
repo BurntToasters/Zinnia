@@ -408,8 +408,8 @@ pub(crate) fn finder_services_override_from_pbs(
     FinderServicesOverride::Absent
 }
 
-/// Legacy helper: `Some(true)` only when both services are explicitly enabled.
-#[cfg(any(target_os = "macos", test))]
+/// Test helper: `Some(true)` only when both services are explicitly enabled.
+#[cfg(test)]
 pub(crate) fn finder_services_enabled_from_pbs(json: &serde_json::Value) -> Option<bool> {
     match finder_services_override_from_pbs(json) {
         FinderServicesOverride::Enabled => Some(true),

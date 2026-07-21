@@ -183,24 +183,27 @@ fn run_hidden_output(program: &str, args: &[&str]) -> io::Result<std::process::O
 #[cfg(windows)]
 fn current_user_identity() -> Result<WindowsUserIdentity, String> {
     use std::sync::OnceLock;
-    static CACHED: OnceLock<Result<WindowsUserIdentity, String>> = OnceLock::new();
-    CACHED
-        .get_or_init(|| {
-            // Prefer the process token identity over the mutable USERNAME environment
-            // variable. whoami /user reads the logon token; fail closed if unavailable.
-            let output = run_hidden_output("whoami", &["/user", "/fo", "csv", "/nh"])
-                .map_err(|e| format!("whoami failed to start: {e}"))?;
-            if !output.status.success() {
-                return Err(format!(
-                    "whoami failed: {}",
-                    String::from_utf8_lossy(&output.stderr).trim()
-                ));
-            }
-            let stdout = decode_windows_command_file(&output.stdout)?;
-            let line = stdout.lines().next().unwrap_or("").trim();
-            parse_whoami_user_csv(line)
-        })
-        .clone()
+    // Cache only successful lookups — a transient whoami failure must not
+    // permanently break staging ACL for the process lifetime.
+    static CACHED: OnceLock<WindowsUserIdentity> = OnceLock::new();
+    if let Some(identity) = CACHED.get() {
+        return Ok(identity.clone());
+    }
+    // Prefer the process token identity over the mutable USERNAME environment
+    // variable. whoami /user reads the logon token; fail closed if unavailable.
+    let output = run_hidden_output("whoami", &["/user", "/fo", "csv", "/nh"])
+        .map_err(|e| format!("whoami failed to start: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "whoami failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let stdout = decode_windows_command_file(&output.stdout)?;
+    let line = stdout.lines().next().unwrap_or("").trim();
+    let identity = parse_whoami_user_csv(line)?;
+    let _ = CACHED.set(identity.clone());
+    Ok(identity)
 }
 
 #[cfg(windows)]
