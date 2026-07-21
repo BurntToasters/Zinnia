@@ -10,6 +10,7 @@ import {
   isDirectExecution,
   pathsEqual,
   run,
+  verifyCopiedPath,
 } from "../../scripts/post-release-assets.js";
 
 const temporaryDirectories: string[] = [];
@@ -106,6 +107,29 @@ describe("post-release assets", () => {
         "utf8",
       ),
     ).toBe("hash");
+  });
+
+  it("fails before cleanup when the mirror destination is missing", () => {
+    const root = makeTemporaryDirectory();
+    const releaseDir = path.join(root, "release");
+    fs.mkdirSync(path.join(releaseDir, "nsis"), { recursive: true });
+    const buildOnly = path.join(releaseDir, "nsis", "build-only.exe");
+    fs.writeFileSync(buildOnly, "build");
+
+    expect(() => run({ releaseDir, env: {} })).toThrow(
+      /AFTER_PACK_LOC is empty/,
+    );
+    expect(fs.existsSync(buildOnly)).toBe(true);
+  });
+
+  it("detects same-size mirror corruption by hash", () => {
+    const root = makeTemporaryDirectory();
+    const source = path.join(root, "source.bin");
+    const destination = path.join(root, "destination.bin");
+    fs.writeFileSync(source, "good");
+    fs.writeFileSync(destination, "evil");
+
+    expect(() => verifyCopiedPath(source, destination)).toThrow(/hash differs/);
   });
 
   it("dedicated runner executes finalization without an argv guard", () => {

@@ -84,8 +84,8 @@ import {
   setStatus,
   registerIconRefreshHook,
   resizeWorkspaceWindow,
-  syncWorkspaceWindowFx,
 } from "./ui";
+import { syncWorkspaceWindowFx } from "./window-fx";
 import {
   runAction,
   cancelAction,
@@ -141,6 +141,8 @@ import {
   syncBasicBeforeRun,
   syncBasicWorkspaceFromPower,
 } from "./basic-ui";
+
+const BASIC_RECENT_ARCHIVES_KEY = "zinnia.basic.recentArchives";
 import {
   refreshOsIntegrationStatus,
   wireOsIntegrationEvents,
@@ -720,8 +722,8 @@ function wireEvents() {
   });
 
   $("open-settings").addEventListener("click", openSettingsModal);
-  $("close-settings").addEventListener("click", closeSettingsModal);
-  $("cancel-settings").addEventListener("click", closeSettingsModal);
+  $("close-settings").addEventListener("click", () => closeSettingsModal());
+  $("cancel-settings").addEventListener("click", () => closeSettingsModal());
   $("settings-overlay").addEventListener("click", (e) => {
     if (e.target === e.currentTarget) closeSettingsModal();
   });
@@ -750,7 +752,7 @@ function wireEvents() {
         state.settingsExtras,
       );
       log("Settings saved successfully.");
-      closeSettingsModal();
+      closeSettingsModal({ preserveLivePreview: true });
     } catch (err) {
       state.currentSettings = previous;
       applyTheme(state.currentSettings.theme);
@@ -805,6 +807,14 @@ function wireEvents() {
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(`Failed to clear logs during reset: ${msg}`);
       });
+      // Basic-mode recents are local UI state, not backend settings. Reset them
+      // alongside the persisted settings and diagnostics history.
+      try {
+        localStorage.removeItem(BASIC_RECENT_ARCHIVES_KEY);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`Failed to clear recent archives during reset: ${msg}`);
+      }
       resetRuntimeStateForFirstRun();
       await relaunch();
     } catch (err) {

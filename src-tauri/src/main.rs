@@ -4,9 +4,9 @@ mod app_menu;
 mod archive_detect;
 mod fs_secure;
 mod launch;
+mod logging;
 #[cfg(target_os = "macos")]
 mod macos_services;
-mod logging;
 mod output;
 mod path_safety;
 mod platform;
@@ -233,6 +233,9 @@ fn main() {
                     process::set_startup_recovery_error(Some(e));
                 } else {
                     process::set_startup_recovery_error(None);
+                    if let Err(e) = process::cleanup_orphan_stages(&maintenance_handle) {
+                        eprintln!("Failed to clean orphan staging directories: {e}");
+                    }
                 }
                 // Unblock run_7z before temp cleanup; recovery is what must be serialized.
                 process::mark_startup_recovery_done();

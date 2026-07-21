@@ -207,6 +207,25 @@ fn load_checksums(path: &Path) -> std::collections::HashMap<String, String> {
     map
 }
 
+fn validate_provenance(path: &Path, checksums: &std::collections::HashMap<String, String>) {
+    let contents = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("failed to read provenance manifest {}: {e}", path.display()));
+    assert!(
+        contents.contains("\"officialDownloadPage\": \"https://www.7-zip.org/download.html\""),
+        "7z-provenance.json must identify the official download page"
+    );
+    assert!(
+        contents.contains("\"sourceArchives\"") && contents.contains("\"artifacts\""),
+        "7z-provenance.json must record source archives and extracted artifacts"
+    );
+    for source in checksums.keys() {
+        assert!(
+            contents.contains(&format!("\"{source}\"")),
+            "7z-provenance.json has no record for {source}"
+        );
+    }
+}
+
 fn required_sidecar_for_target(target_triple: &str) -> Option<&'static str> {
     match target_triple {
         "x86_64-pc-windows-msvc" => Some("7z-x86_64-pc-windows-msvc.exe"),
@@ -230,14 +249,17 @@ fn prepare_7z_binaries() {
     let assets_dir = root.join("assets");
     let out_dir = tauri_dir.join("binaries");
     let checksums_path = root.join("assets").join("7z-checksums.json");
+    let provenance_path = root.join("assets").join("7z-provenance.json");
     // Cargo always sets TARGET for build scripts; HOST is a last-resort fallback.
     let target_triple = std::env::var("TARGET")
         .or_else(|_| std::env::var("HOST"))
         .unwrap_or_default();
 
     println!("cargo:rerun-if-changed={}", checksums_path.display());
+    println!("cargo:rerun-if-changed={}", provenance_path.display());
     println!("cargo:rerun-if-env-changed=TARGET");
     let checksums = load_checksums(&checksums_path);
+    validate_provenance(&provenance_path, &checksums);
 
     std::fs::create_dir_all(&out_dir).expect("failed to create src-tauri/binaries");
 
@@ -265,13 +287,13 @@ fn prepare_7z_binaries() {
         if let Some(expected) = checksums.get(*source) {
             if actual_hash != *expected {
                 panic!(
-                    "Checksum mismatch for {}\n  expected: {}\n  actual:   {}\nRun `node scripts/prepare-7z.js --update-checksums` after verifying the binary.",
+                    "Checksum mismatch for {}\n  expected: {}\n  actual:   {}\nRun `node scripts/prepare-7z.js --update-checksums --version <verified-version> --verify-downloads <directory>` after verifying the official archives.",
                     source, expected, actual_hash
                 );
             }
         } else {
             panic!(
-                "No checksum entry for {} in 7z-checksums.json. Run `node scripts/prepare-7z.js --update-checksums` after verifying the binary.",
+                "No checksum entry for {} in 7z-checksums.json. Run `node scripts/prepare-7z.js --update-checksums --version <verified-version> --verify-downloads <directory>` after verifying the official archives.",
                 source
             );
         }
@@ -337,6 +359,7 @@ fn main() {
         "get_platform_info",
         "get_os_integration_status",
         "open_os_integration_settings",
+        "open_finder_services_settings",
         "reset_preferred_archiver_to_system",
         "set_zinnia_default_archiver",
         "get_cpu_count",
@@ -344,6 +367,8 @@ fn main() {
         "is_packaged",
         "create_temp_extract_dir",
         "remove_managed_temp_dir",
+        "set_workspace_window_fx",
+        "supports_workspace_window_fx",
     ];
     tauri_build::try_build(
         tauri_build::Attributes::new()

@@ -2284,6 +2284,24 @@ input[type="number"] {
   margin-bottom: 0;
 }
 
+.license-card__text {
+  margin: 10px 0 0;
+  padding: 10px;
+  max-height: 18rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font:
+    0.6875rem/1.45 ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
+}
+
 @media (max-width: 860px) {
   .header {
     flex-direction: column;

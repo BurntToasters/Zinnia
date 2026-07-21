@@ -35,10 +35,7 @@ pub fn assert_real_directory(path: &Path) -> Result<(), String> {
     let meta = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
     reject_link_or_reparse(path, &meta)?;
     if !meta.is_dir() {
-        return Err(format!(
-            "Path is not a real directory: {}",
-            path.display()
-        ));
+        return Err(format!("Path is not a real directory: {}", path.display()));
     }
     Ok(())
 }

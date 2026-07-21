@@ -663,14 +663,6 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
   gap: 10px;
 }
 
-.basic-hidden-select {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
-}
-
 .basic-preset-pills {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

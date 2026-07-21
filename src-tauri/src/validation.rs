@@ -65,10 +65,7 @@ fn is_allowed_method_switch(lower: &str) -> bool {
         }
         return rest.is_empty()
             || rest.starts_with('=')
-            || rest
-                .chars()
-                .next()
-                .is_some_and(|ch| ch.is_ascii_digit());
+            || rest.chars().next().is_some_and(|ch| ch.is_ascii_digit());
     }
     false
 }
@@ -84,7 +81,6 @@ fn is_allowed_switch(cmd: &str, arg: &str) -> bool {
             (lower.starts_with("-t") && lower.len() > 2)
                 || is_allowed_method_switch(&lower)
                 || (lower.starts_with("-p") && lower.len() > 2)
-                || lower == "-spf"
                 || lower == "-r"
                 || lower == "-r-"
                 || lower == "-r0"
@@ -128,8 +124,29 @@ fn is_allowed_switch(cmd: &str, arg: &str) -> bool {
 }
 
 // True if any path component is exactly "..". Substrings like "name..bak" are fine.
-fn has_parent_dir_component(path: &str) -> bool {
+pub(crate) fn has_parent_dir_component(path: &str) -> bool {
     path.split(['/', '\\']).any(|component| component == "..")
+}
+
+/// True when an archive member path could escape an extract `-o` root
+/// (`..`, absolute POSIX, drive-letter, or UNC).
+pub(crate) fn archive_member_path_is_unsafe(path: &str) -> bool {
+    let path = path.trim();
+    if path.is_empty() {
+        return false;
+    }
+    if has_parent_dir_component(path) {
+        return true;
+    }
+    let bytes = path.as_bytes();
+    if bytes[0] == b'/' || bytes[0] == b'\\' {
+        return true;
+    }
+    // Windows drive-absolute: `C:\...` or `C:/...`
+    if bytes.len() >= 2 && bytes[1] == b':' {
+        return true;
+    }
+    false
 }
 
 fn switch_contains_parent_traversal(arg: &str) -> bool {
@@ -676,6 +693,23 @@ mod tests {
     }
 
     #[test]
+    fn validate_run_7z_args_rejects_absolute_path_storage_for_create_and_update() {
+        for command in ["a", "u"] {
+            let args = vec![
+                command.to_string(),
+                "-spf".to_string(),
+                "out.7z".to_string(),
+                "--".to_string(),
+                "input.txt".to_string(),
+            ];
+            assert!(
+                validate_run_7z_args(&args).is_err(),
+                "expected -spf to be rejected for {command}"
+            );
+        }
+    }
+
+    #[test]
     fn validate_run_7z_args_rejects_overwrite_all_extract_modes() {
         for bad in ["-aoa", "-aot"] {
             let args = vec![
@@ -725,5 +759,16 @@ mod tests {
             ];
             assert!(validate_run_7z_args(&args).is_err(), "accepted {switch}");
         }
+    }
+
+    #[test]
+    fn archive_member_path_is_unsafe_detects_traversal_and_absolutes() {
+        assert!(!archive_member_path_is_unsafe("folder/file.txt"));
+        assert!(!archive_member_path_is_unsafe("name..bak.txt"));
+        assert!(archive_member_path_is_unsafe("../sibling/file.txt"));
+        assert!(archive_member_path_is_unsafe("a/../../b"));
+        assert!(archive_member_path_is_unsafe("/etc/passwd"));
+        assert!(archive_member_path_is_unsafe(r"C:\Windows\evil.dll"));
+        assert!(archive_member_path_is_unsafe(r"\\server\share\file"));
     }
 }

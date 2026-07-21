@@ -19,15 +19,8 @@ banner(`AFTER_PACK_LOC=${JSON.stringify(getAfterPackLocation())}`);
 
 try {
   const result = finalizeReleaseAssets({ logger: console });
-  if (result.mirrored) {
-    banner(
-      `finished ok; copied=${result.copiedEntries}; dest=${result.destination}`,
-    );
-    process.exit(0);
-  }
-
   banner(
-    "finished with mirror skipped (AFTER_PACK_LOC empty/unset in this process)",
+    `finished ok; copied=${result.copiedEntries}; dest=${result.destination}`,
   );
   process.exit(0);
 } catch (error) {

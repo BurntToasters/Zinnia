@@ -32,6 +32,20 @@ function uniqueArchivePath(prefix: string): string {
   return `/tmp/${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}.7z`;
 }
 
+function pathsFromValidationPayload(payload: unknown): string[] {
+  const pathsJson = (payload as { pathsJson?: unknown } | undefined)?.pathsJson;
+  if (typeof pathsJson !== "string") return [];
+  try {
+    const parsed: unknown = JSON.parse(pathsJson);
+    return Array.isArray(parsed) &&
+      parsed.every((path) => typeof path === "string")
+      ? parsed
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 function ensureElement<T extends HTMLElement>(id: string, factory: () => T): T {
   const existing = document.getElementById(id) as T | null;
   if (existing) return existing;
@@ -157,8 +171,7 @@ describe("archive test/browse/selective flows", () => {
 
     setInvokeRouter((command, payload) => {
       if (command === "validate_archive_paths") {
-        const paths =
-          (payload as { paths?: string[] } | undefined)?.paths ?? [];
+        const paths = pathsFromValidationPayload(payload);
         return paths.map((path) => ({ path, valid: true }));
       }
       if (command === "probe_7z") return undefined;
@@ -181,8 +194,7 @@ describe("archive test/browse/selective flows", () => {
 
     setInvokeRouter((command, payload) => {
       if (command === "validate_archive_paths") {
-        const paths =
-          (payload as { paths?: string[] } | undefined)?.paths ?? [];
+        const paths = pathsFromValidationPayload(payload);
         return paths.map((path) => ({ path, valid: true }));
       }
       if (command === "probe_7z") return undefined;
@@ -214,8 +226,7 @@ describe("archive test/browse/selective flows", () => {
 
     setInvokeRouter((command, payload) => {
       if (command === "validate_archive_paths") {
-        const paths =
-          (payload as { paths?: string[] } | undefined)?.paths ?? [];
+        const paths = pathsFromValidationPayload(payload);
         return paths.map((path) => ({ path, valid: true }));
       }
       if (command === "probe_7z") return undefined;
@@ -268,8 +279,7 @@ describe("archive test/browse/selective flows", () => {
 
     setInvokeRouter((command, payload) => {
       if (command === "validate_archive_paths") {
-        const paths =
-          (payload as { paths?: string[] } | undefined)?.paths ?? [];
+        const paths = pathsFromValidationPayload(payload);
         return paths.map((path) => ({ path, valid: true }));
       }
       return undefined;
@@ -289,8 +299,7 @@ describe("archive test/browse/selective flows", () => {
 
     setInvokeRouter((command, payload) => {
       if (command === "validate_archive_paths") {
-        const paths =
-          (payload as { paths?: string[] } | undefined)?.paths ?? [];
+        const paths = pathsFromValidationPayload(payload);
         return paths.map((path) => ({ path, valid: true }));
       }
       if (command === "probe_7z") return undefined;
@@ -330,8 +339,7 @@ describe("archive test/browse/selective flows", () => {
 
     setInvokeRouter((command, payload) => {
       if (command === "validate_archive_paths") {
-        const paths =
-          (payload as { paths?: string[] } | undefined)?.paths ?? [];
+        const paths = pathsFromValidationPayload(payload);
         return paths.map((path) => ({ path, valid: true }));
       }
       if (command === "probe_7z") return undefined;
@@ -395,8 +403,7 @@ describe("archive test/browse/selective flows", () => {
 
     setInvokeRouter((command, payload) => {
       if (command === "validate_archive_paths") {
-        const paths =
-          (payload as { paths?: string[] } | undefined)?.paths ?? [];
+        const paths = pathsFromValidationPayload(payload);
         return paths.map((path) => ({
           path,
           valid: false,
@@ -421,8 +428,7 @@ describe("archive test/browse/selective flows", () => {
 
     setInvokeRouter((command, payload) => {
       if (command === "validate_archive_paths") {
-        const paths =
-          (payload as { paths?: string[] } | undefined)?.paths ?? [];
+        const paths = pathsFromValidationPayload(payload);
         return paths.map((path) => ({ path, valid: true }));
       }
       if (command === "probe_7z") return undefined;
@@ -458,8 +464,7 @@ describe("archive test/browse/selective flows", () => {
 
     setInvokeRouter((command, payload) => {
       if (command === "validate_archive_paths") {
-        const paths =
-          (payload as { paths?: string[] } | undefined)?.paths ?? [];
+        const paths = pathsFromValidationPayload(payload);
         return paths.map((path) => ({ path, valid: true }));
       }
       if (command === "probe_7z") return undefined;
@@ -550,8 +555,7 @@ describe("archive test/browse/selective flows", () => {
 
     setInvokeRouter((command, payload) => {
       if (command === "validate_archive_paths") {
-        const paths =
-          (payload as { paths?: string[] } | undefined)?.paths ?? [];
+        const paths = pathsFromValidationPayload(payload);
         return paths.map((path) => ({ path, valid: true }));
       }
       if (command === "probe_7z") return undefined;
@@ -636,8 +640,7 @@ describe("archive test/browse/selective flows", () => {
 
     setInvokeRouter((command, payload) => {
       if (command === "validate_archive_paths") {
-        const paths =
-          (payload as { paths?: string[] } | undefined)?.paths ?? [];
+        const paths = pathsFromValidationPayload(payload);
         return paths.map((path) => ({ path, valid: true }));
       }
       if (command === "probe_7z") return undefined;
@@ -667,8 +670,7 @@ describe("archive test/browse/selective flows", () => {
     let runCount = 0;
     setInvokeRouter((command, payload) => {
       if (command === "validate_archive_paths") {
-        const paths =
-          (payload as { paths?: string[] } | undefined)?.paths ?? [];
+        const paths = pathsFromValidationPayload(payload);
         return paths.map((path) => ({ path, valid: true }));
       }
       if (command === "probe_7z") return undefined;

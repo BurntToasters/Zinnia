@@ -1,10 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<component type="desktop">
+<component type="desktop-application">
   <id>run.rosie.zinnia</id>
   <name>Zinnia</name>
   <summary>Cross-platform 7z GUI</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MPL-2.0</project_license>
+  <developer id="run.rosie">
+    <name>BurntToasters</name>
+  </developer>
   <description>
     <p>Zinnia is a fast, focused GUI for 7z archives on Windows, macOS, and Linux.</p>
   </description>
@@ -29,6 +32,7 @@
   </provides>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.6.0-beta.4" date="2026-07-20"/>
     <release version="0.6.0-beta.3" date="2026-07-20"/>
     <release version="0.6.0-beta.2" date="2026-07-20"/>
     <release version="0.6.0-beta.1" date="2026-07-17"/>

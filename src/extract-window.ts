@@ -53,7 +53,7 @@ export function sanitizeStatusFileName(name: string): string {
     .trim();
   if (!cleaned) return "";
   const match = cleaned.match(/[\p{L}\p{N}._~]/u);
-  if (!match || match.index === undefined) return "";
+  if (match?.index === undefined) return "";
   const meaningful = cleaned.slice(match.index).trim();
   return [...meaningful].slice(0, 200).join("");
 }
@@ -326,11 +326,16 @@ async function run() {
   const claimPaths = invoke<string[]>("get_extract_paths");
 
   let archivePath = injected?.archive ?? "";
+  const derivedDestination = archivePath
+    ? deriveExtractDestinationPath(archivePath)
+    : "";
   destination =
-    injected?.destination ||
-    (archivePath
-      ? deriveExtractDestinationPath(archivePath) || parentDir(archivePath)
-      : "");
+    injected?.destination ??
+    (derivedDestination.length > 0
+      ? derivedDestination
+      : archivePath
+        ? parentDir(archivePath)
+        : "");
 
   if (injected) {
     $("archive-name").textContent = basename(archivePath);
@@ -376,9 +381,15 @@ async function run() {
 
   // Register progress listeners without awaiting confirmation before run_7z;
   // backend prepare time usually dwarfs listener registration.
-  const structuredListen = listen<ProgressUpdate>(
-    "7z-progress-structured",
-    (event) => {
+  const registerProgressListener = <T>(registration: Promise<T>) =>
+    registration.catch((err) => {
+      console.warn(
+        `Could not register extraction progress listener: ${String(err)}`,
+      );
+      return null;
+    });
+  const structuredListen = registerProgressListener(
+    listen<ProgressUpdate>("7z-progress-structured", (event) => {
       const update = event.payload;
       if (update?.currentFile === "Finalizing…") {
         sawStructuredPercent = true;
@@ -398,21 +409,39 @@ async function run() {
       }
       const label = lastFile ? `Extracting ${lastFile}...` : "Extracting...";
       $("extract-status").textContent = eta ? `${label}  ${eta}` : label;
-    },
+    }),
   );
-  const rawListen = listen<string>("7z-progress", (event) => {
-    if (sawStructuredPercent) return;
-    const chunk = typeof event.payload === "string" ? event.payload : "";
-    for (const line of chunk.split(/[\r\n]+/)) {
-      const match = line.trim().match(/^-\s+(.+)/);
-      if (match?.[1]) {
-        const clean = sanitizeStatusFileName(basename(match[1]));
-        if (!clean) continue;
-        lastFile = clean;
-        $("extract-status").textContent = `Extracting ${clean}...`;
+  const rawListen = registerProgressListener(
+    listen<string>("7z-progress", (event) => {
+      if (sawStructuredPercent) return;
+      const chunk = typeof event.payload === "string" ? event.payload : "";
+      for (const line of chunk.split(/[\r\n]+/)) {
+        const match = line.trim().match(/^-\s+(.+)/);
+        if (match?.[1]) {
+          const clean = sanitizeStatusFileName(basename(match[1]));
+          if (!clean) continue;
+          lastFile = clean;
+          $("extract-status").textContent = `Extracting ${clean}...`;
+        }
+      }
+    }),
+  );
+
+  async function removeProgressListeners() {
+    const [unlistenStructured, unlistenRaw] = await Promise.all([
+      structuredListen,
+      rawListen,
+    ]);
+    for (const unlisten of [unlistenStructured, unlistenRaw]) {
+      try {
+        unlisten?.();
+      } catch (err) {
+        console.warn(
+          `Could not remove extraction progress listener: ${String(err)}`,
+        );
       }
     }
-  });
+  }
 
   $("extract-status").textContent = "Extracting...";
 
@@ -428,12 +457,7 @@ async function run() {
 
   try {
     const result = await runWithPasswordRetry(args);
-    const [unlistenStructured, unlistenRaw] = await Promise.all([
-      structuredListen,
-      rawListen,
-    ]);
-    unlistenStructured();
-    unlistenRaw();
+    await removeProgressListeners();
 
     if (cancelRequested) {
       finish("Cancelled", 100, false, false, true);
@@ -456,16 +480,7 @@ async function run() {
       }
     }, 1200);
   } catch (err) {
-    try {
-      const [unlistenStructured, unlistenRaw] = await Promise.all([
-        structuredListen,
-        rawListen,
-      ]);
-      unlistenStructured();
-      unlistenRaw();
-    } catch {
-      // Listener registration failed; nothing to tear down.
-    }
+    await removeProgressListeners();
     if (cancelRequested) {
       finish("Cancelled", 100, false, false, true);
       return;

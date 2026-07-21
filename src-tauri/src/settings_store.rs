@@ -389,13 +389,11 @@ mod tests {
             }
         );
         assert_eq!(
-            parse_quick_extract_warm_prefs(r#"{"quickExtractWarmIdleMinutes":7}"#)
-                .idle_secs,
+            parse_quick_extract_warm_prefs(r#"{"quickExtractWarmIdleMinutes":7}"#).idle_secs,
             10 * 60
         );
         assert_eq!(
-            parse_quick_extract_warm_prefs(r#"{"quickExtractWarmIdleMinutes":"60"}"#)
-                .idle_secs,
+            parse_quick_extract_warm_prefs(r#"{"quickExtractWarmIdleMinutes":"60"}"#).idle_secs,
             60 * 60
         );
     }

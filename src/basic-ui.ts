@@ -76,8 +76,7 @@ function loadRecentArchives(): string[] {
     if (!Array.isArray(parsed)) return [];
     return parsed
       .filter(
-        (item): item is string =>
-          typeof item === "string" && item.trim().length > 0,
+        (item): item is string => typeof item === "string" && item.length > 0,
       )
       .slice(0, MAX_RECENT_ARCHIVES);
   } catch {
@@ -97,12 +96,11 @@ function saveRecentArchives(paths: string[]): void {
 }
 
 function rememberRecentArchive(path: string): void {
-  const trimmed = path.trim();
-  if (!trimmed) return;
-  const next = [
-    trimmed,
-    ...loadRecentArchives().filter((p) => p !== trimmed),
-  ].slice(0, MAX_RECENT_ARCHIVES);
+  if (!path) return;
+  const next = [path, ...loadRecentArchives().filter((p) => p !== path)].slice(
+    0,
+    MAX_RECENT_ARCHIVES,
+  );
   saveRecentArchives(next);
   renderRecentArchives();
 }
@@ -132,7 +130,7 @@ function renderRecentArchives(): void {
 }
 
 async function openPathWithFeedback(path: string): Promise<void> {
-  if (!path.trim()) return;
+  if (!path) return;
   try {
     await invoke("open_path", { path });
   } catch (err) {
@@ -623,8 +621,8 @@ function showBasicCompletion(
   if (titleEl) titleEl.textContent = title;
   if (msgEl) msgEl.textContent = message;
   if (pathEl) {
-    pathEl.textContent = pathLabel?.trim() || "";
-    pathEl.hidden = !pathLabel?.trim();
+    pathEl.textContent = pathLabel?.trim() ?? "";
+    pathEl.hidden = !(pathLabel?.trim() ?? "");
   }
 
   // Manage "Open folder" button visibility based on success state
@@ -766,22 +764,19 @@ export function updateBasicStatus(text: string, errorDetail?: string): void {
 
   if (text === "Done") {
     hideBasicProgress(section);
-    const pathLabel =
+    const outputPath = (
+      document.getElementById("basic-output-path") as HTMLInputElement | null
+    )?.value?.trim();
+    const extractPath = (
+      document.getElementById("basic-extract-path") as HTMLInputElement | null
+    )?.value?.trim();
+    const pathCandidates =
       section === "compress"
-        ? (
-            document.getElementById(
-              "basic-output-path",
-            ) as HTMLInputElement | null
-          )?.value?.trim() ||
-          state.lastAutoOutputPath ||
-          ""
-        : state.lastAutoExtractDestination ||
-          (
-            document.getElementById(
-              "basic-extract-path",
-            ) as HTMLInputElement | null
-          )?.value?.trim() ||
-          "";
+        ? [outputPath, state.lastAutoOutputPath]
+        : [state.lastAutoExtractDestination, extractPath];
+    const pathLabel =
+      pathCandidates.find((candidate) => (candidate?.length ?? 0) > 0) ??
+      undefined;
     showBasicCompletion(
       section,
       true,
@@ -789,7 +784,7 @@ export function updateBasicStatus(text: string, errorDetail?: string): void {
       section === "compress"
         ? "Your archive has been created successfully."
         : "Files have been extracted successfully.",
-      pathLabel || undefined,
+      pathLabel,
     );
     if (section === "extract" && state.inputs[0]) {
       rememberRecentArchive(state.inputs[0]);
@@ -798,9 +793,12 @@ export function updateBasicStatus(text: string, errorDetail?: string): void {
     }
   } else if (text === "Error") {
     hideBasicProgress(section);
-    const detail =
-      errorDetail?.trim() ||
-      "Something went wrong. Check the error message for details.";
+    let detail = errorDetail?.trim();
+    // Empty user-visible detail needs the fallback too, not only null/undefined.
+    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+    if (!detail) {
+      detail = "Something went wrong. Check the error message for details.";
+    }
     showBasicCompletion(section, false, "Operation failed", detail);
   } else if (text === "Cancelled") {
     hideBasicProgress(section);
@@ -812,11 +810,11 @@ async function partitionByArchive(
 ): Promise<{ archives: string[]; others: string[] }> {
   try {
     const results = await validateArchivePaths(paths);
-    const validByPath = new Map(results.map((r) => [r.path.trim(), r.valid]));
+    const validByPath = new Map(results.map((r) => [r.path, r.valid]));
     const archives: string[] = [];
     const others: string[] = [];
     for (const p of paths) {
-      if (validByPath.get(p.trim())) archives.push(p);
+      if (validByPath.get(p)) archives.push(p);
       else others.push(p);
     }
     return { archives, others };
@@ -1714,14 +1712,14 @@ export function syncBasicBeforeRun(): void {
   if (mode === "add") {
     syncBasicToPower();
     // Basic mode does not expose these Power-only controls; force safe defaults
-    // so a prior Power session cannot leak update/absolute-path into Basic runs.
+    // so a prior Power session cannot leak update behavior into Basic runs.
     const updateMode = document.getElementById(
       "update-mode",
     ) as HTMLInputElement | null;
     if (updateMode) updateMode.checked = false;
     const pathMode = document.getElementById(
       "path-mode",
-    ) as HTMLSelectElement | null;
+    ) as HTMLInputElement | null;
     if (pathMode) pathMode.value = "relative";
   } else if (mode === "extract") {
     syncBasicExtractToPower();

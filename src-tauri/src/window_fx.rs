@@ -6,8 +6,7 @@ use tauri::{AppHandle, Manager, WebviewWindow};
 #[cfg(target_os = "macos")]
 fn apply_macos(window: &WebviewWindow) -> Result<(), String> {
     use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
-    apply_vibrancy(window, NSVisualEffectMaterial::HudWindow, None, None)
-        .map_err(|e| e.to_string())
+    apply_vibrancy(window, NSVisualEffectMaterial::HudWindow, None, None).map_err(|e| e.to_string())
 }
 
 #[cfg(target_os = "macos")]

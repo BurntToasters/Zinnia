@@ -32,15 +32,23 @@ pub fn create_private_dir(path: &Path) -> io::Result<()> {
 
 /// Flush directory metadata so rename/create durability survives a crash where possible.
 pub fn sync_directory(path: &Path) -> Result<(), String> {
-    #[cfg(any(unix, windows))]
+    #[cfg(windows)]
     {
-        // On Windows, std opens directories with FILE_FLAG_BACKUP_SEMANTICS so
+        // std opens directories with FILE_FLAG_BACKUP_SEMANTICS so
         // FlushFileBuffers (via sync_all) is the fsync(dirfd) equivalent.
         // Some environments deny directory FlushFileBuffers (os error 5); treat
         // that as best-effort success — the file write itself already succeeded.
         match std::fs::File::open(path).and_then(|directory| directory.sync_all()) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(()),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    #[cfg(unix)]
+    {
+        match std::fs::File::open(path).and_then(|directory| directory.sync_all()) {
+            Ok(()) => Ok(()),
             Err(error) => Err(error.to_string()),
         }
     }
@@ -52,11 +60,104 @@ pub fn sync_directory(path: &Path) -> Result<(), String> {
     }
 }
 
+#[cfg(any(windows, test))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WindowsUserIdentity {
+    /// SID string, e.g. `S-1-5-21-...`
+    sid: String,
+    /// Account from whoami, e.g. `DESKTOP\dev` (kept for ACL listing match).
+    account: String,
+}
+
+#[cfg(any(windows, test))]
+fn parse_whoami_user_csv(line: &str) -> Result<WindowsUserIdentity, String> {
+    // CSV: "DOMAIN\user","S-1-5-21-...". Account names can contain
+    // commas and quotes, so this must be a real CSV parser rather than split(',').
+    let mut fields = Vec::new();
+    let mut field = String::new();
+    let mut chars = line.trim().chars().peekable();
+    let mut quoted = false;
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' if quoted && chars.peek() == Some(&'"') => {
+                chars.next();
+                field.push('"');
+            }
+            '"' => quoted = !quoted,
+            ',' if !quoted => {
+                fields.push(field.trim().to_string());
+                field.clear();
+            }
+            _ => field.push(ch),
+        }
+    }
+    if quoted {
+        return Err(format!("Could not parse unterminated whoami CSV: {line}"));
+    }
+    fields.push(field.trim().to_string());
+
+    let account = fields.first().map(String::as_str).unwrap_or("");
+    let sid = fields.get(1).map(String::as_str).unwrap_or("");
+    if account.is_empty() {
+        return Err(format!("Could not parse account from whoami: {line}"));
+    }
+    if !sid.starts_with("S-1-") || sid.len() < 7 {
+        return Err(format!(
+            "Could not parse current user SID from whoami: {line}"
+        ));
+    }
+    Ok(WindowsUserIdentity {
+        sid: sid.to_string(),
+        account: account.to_string(),
+    })
+}
+
+#[cfg(any(windows, test))]
+fn decode_windows_command_file(bytes: &[u8]) -> Result<String, String> {
+    fn decode_utf16(payload: &[u8], little_endian: bool) -> Result<String, String> {
+        if !payload.len().is_multiple_of(2) {
+            return Err("UTF-16 command output has an odd byte count".to_string());
+        }
+        let words: Vec<u16> = payload
+            .chunks_exact(2)
+            .map(|pair| {
+                if little_endian {
+                    u16::from_le_bytes([pair[0], pair[1]])
+                } else {
+                    u16::from_be_bytes([pair[0], pair[1]])
+                }
+            })
+            .collect();
+        String::from_utf16(&words)
+            .map_err(|error| format!("Could not decode UTF-16 command output: {error}"))
+    }
+
+    if let Some(payload) = bytes.strip_prefix(&[0xff, 0xfe]) {
+        return decode_utf16(payload, true);
+    }
+    if let Some(payload) = bytes.strip_prefix(&[0xfe, 0xff]) {
+        return decode_utf16(payload, false);
+    }
+    // Some Windows command-line tools emit UTF-16LE without a BOM when stdout
+    // is redirected. SDDL and path output is predominantly ASCII, producing a
+    // reliable zero high-byte pattern.
+    if bytes.len() >= 4 && bytes.len().is_multiple_of(2) {
+        let sample = bytes.chunks_exact(2).take(256);
+        let total = sample.len();
+        let zero_high_bytes = sample.filter(|pair| pair[1] == 0).count();
+        if zero_high_bytes * 4 >= total * 3 {
+            return decode_utf16(bytes, true);
+        }
+    }
+    let payload = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
+    String::from_utf8(payload.to_vec())
+        .map_err(|error| format!("Could not decode command output as UTF-8: {error}"))
+}
+
 #[cfg(windows)]
-fn current_user_sid() -> Result<String, String> {
+fn current_user_identity() -> Result<WindowsUserIdentity, String> {
     // Prefer the process token identity over the mutable USERNAME environment
     // variable. whoami /user reads the logon token; fail closed if unavailable.
-    // (A future Win32 GetTokenInformation path would avoid the helper binary.)
     let output = std::process::Command::new("whoami")
         .args(["/user", "/fo", "csv", "/nh"])
         .output()
@@ -69,26 +170,15 @@ fn current_user_sid() -> Result<String, String> {
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
     let line = stdout.lines().next().unwrap_or("").trim();
-    // CSV: "DOMAIN\user","S-1-5-21-..."
-    let sid = line
-        .rsplit(',')
-        .next()
-        .unwrap_or("")
-        .trim()
-        .trim_matches('"')
-        .trim();
-    if !sid.starts_with("S-1-") || sid.len() < 7 {
-        return Err(format!("Could not parse current user SID from whoami: {line}"));
-    }
-    Ok(sid.to_string())
+    parse_whoami_user_csv(line)
 }
 
 #[cfg(windows)]
 fn restrict_directory_acl(path: &Path) -> Result<(), String> {
     let path_str = path.to_string_lossy();
-    let sid = current_user_sid()?;
+    let identity = current_user_identity()?;
     // icacls accepts SID grants as *S-1-5-...
-    let grant_user = format!("*{sid}:(OI)(CI)F");
+    let grant_user = format!("*{}:(OI)(CI)F", identity.sid);
 
     run_icacls(&[
         path_str.as_ref(),
@@ -99,45 +189,86 @@ fn restrict_directory_acl(path: &Path) -> Result<(), String> {
         "SYSTEM:(OI)(CI)F",
     ])?;
 
+    // Remove broad principals by well-known SID (locale-independent).
     for principal in [
-        "Everyone",
-        "Users",
-        "Authenticated Users",
-        r"BUILTIN\Users",
+        "*S-1-1-0",      // Everyone
+        "*S-1-5-11",     // Authenticated Users
+        "*S-1-5-32-545", // BUILTIN\Users
     ] {
         // Removals are best-effort when the principal was never present.
         let _ = run_icacls(&[path_str.as_ref(), "/remove", principal]);
     }
 
-    verify_restricted_acl(path)?;
+    verify_restricted_acl(path, &identity)?;
     Ok(())
 }
 
 #[cfg(windows)]
-fn verify_restricted_acl(path: &Path) -> Result<(), String> {
+fn read_directory_sddl(path: &Path) -> Result<String, String> {
+    let mut random = [0u8; 8];
+    getrandom::fill(&mut random).map_err(|e| format!("Could not name ACL save file: {e}"))?;
+    let token: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+    let save_path = std::env::temp_dir().join(format!("zinnia-acl-{token}.txt"));
     let path_str = path.to_string_lossy();
-    let output = std::process::Command::new("icacls")
-        .arg(path_str.as_ref())
-        .output()
-        .map_err(|e| format!("icacls verify failed to start: {e}"))?;
-    if !output.status.success() {
+    let save_str = save_path.to_string_lossy();
+    let save_result = run_icacls(&[path_str.as_ref(), "/save", save_str.as_ref()]);
+    let content = std::fs::read(&save_path);
+    let _ = std::fs::remove_file(&save_path);
+    save_result?;
+    let content = content.map_err(|e| format!("Could not read saved ACL: {e}"))?;
+    let content = decode_windows_command_file(&content)?;
+    // icacls /save writes: <path>\n<SDDL>\n
+    let sddl = content.lines().nth(1).unwrap_or("").trim().to_string();
+    if sddl.is_empty() {
         return Err(format!(
-            "icacls verify failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
+            "Saved ACL for {} did not include an SDDL line.",
+            path.display()
         ));
     }
-    let listing = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase();
-    for forbidden in ["everyone", "authenticated users", r"builtin\users"] {
-        if listing.contains(forbidden) {
-            return Err(format!(
-                "Staging directory ACL still grants {forbidden}: {}",
-                path.display()
-            ));
+    Ok(sddl)
+}
+
+/// True when SDDL contains an Allow ACE whose trustee is `sid`
+/// (bare SID, `*SID`, or a matching SDDL short alias).
+#[cfg(any(windows, test))]
+fn sddl_has_allow_trustee(sddl: &str, trustees: &[&str]) -> bool {
+    let sddl_upper = sddl.to_ascii_uppercase();
+    let trustees_upper: Vec<String> = trustees
+        .iter()
+        .map(|t| t.trim_start_matches('*').to_ascii_uppercase())
+        .collect();
+    for chunk in sddl_upper.split('(').skip(1) {
+        let ace = chunk.trim_end_matches(')');
+        let mut parts = ace.split(';');
+        let Some(ace_type) = parts.next() else {
+            continue;
+        };
+        if ace_type != "A" {
+            continue;
+        }
+        // A;flags;rights;objectguid;inheritedobjectguid;trustee
+        let trustee = parts.nth(4).unwrap_or("");
+        let trustee = trustee.trim_start_matches('*');
+        if trustees_upper.iter().any(|t| t == trustee) {
+            return true;
         }
     }
-    // Require that some ACE for the current SID survived.
-    let sid = current_user_sid()?.to_ascii_lowercase();
-    if !listing.contains(&sid) {
+    false
+}
+
+#[cfg(windows)]
+fn verify_restricted_acl(path: &Path, identity: &WindowsUserIdentity) -> Result<(), String> {
+    let sddl = read_directory_sddl(path)?;
+    if sddl_has_allow_trustee(
+        &sddl,
+        &["WD", "AU", "BU", "S-1-1-0", "S-1-5-11", "S-1-5-32-545"],
+    ) {
+        return Err(format!(
+            "Staging directory ACL still grants a broad principal: {}",
+            path.display()
+        ));
+    }
+    if !sddl_has_allow_trustee(&sddl, &[&identity.sid]) {
         return Err(format!(
             "Staging directory ACL missing current user SID after restrict: {}",
             path.display()
@@ -163,4 +294,59 @@ fn run_icacls(args: &[&str]) -> Result<(), String> {
         stdout.trim()
     };
     Err(format!("icacls {} failed: {detail}", args.join(" ")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_whoami_user_csv_extracts_account_and_sid() {
+        let identity =
+            parse_whoami_user_csv(r#""DESKTOP-ABC\dev","S-1-5-21-1-2-3-1001""#).expect("parse");
+        assert_eq!(identity.account, r"DESKTOP-ABC\dev");
+        assert_eq!(identity.sid, "S-1-5-21-1-2-3-1001");
+    }
+
+    #[test]
+    fn parse_whoami_user_csv_handles_escaped_fields() {
+        let identity =
+            parse_whoami_user_csv(r#""DOMAIN,user ""dev""","S-1-5-21-1-2-3-1001""#).expect("parse");
+        assert_eq!(identity.account, r#"DOMAIN,user "dev""#);
+        assert_eq!(identity.sid, "S-1-5-21-1-2-3-1001");
+    }
+
+    #[test]
+    fn decode_windows_command_file_accepts_utf8_and_utf16() {
+        assert_eq!(
+            decode_windows_command_file(b"path\r\nD:P(A;;FA;;;SY)\r\n").unwrap(),
+            "path\r\nD:P(A;;FA;;;SY)\r\n"
+        );
+        let expected = "path\r\nD:P(A;;FA;;;SY)\r\n";
+        let mut utf16le = vec![0xff, 0xfe];
+        for word in expected.encode_utf16() {
+            utf16le.extend_from_slice(&word.to_le_bytes());
+        }
+        assert_eq!(decode_windows_command_file(&utf16le).unwrap(), expected);
+        assert_eq!(
+            decode_windows_command_file(&utf16le[2..]).unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn sddl_detects_user_sid_allow_ace() {
+        let sddl = "D:P(A;OICI;FA;;;S-1-5-21-1-2-3-1001)(A;OICI;FA;;;SY)";
+        assert!(sddl_has_allow_trustee(sddl, &["S-1-5-21-1-2-3-1001"]));
+        assert!(sddl_has_allow_trustee(sddl, &["SY"]));
+        assert!(!sddl_has_allow_trustee(sddl, &["WD", "AU", "BU"]));
+    }
+
+    #[test]
+    fn sddl_detects_broad_principal_aliases() {
+        let sddl = "D:P(A;OICI;FA;;;WD)(A;OICI;FA;;;S-1-5-21-1-2-3-1001)";
+        assert!(sddl_has_allow_trustee(sddl, &["WD", "S-1-1-0"]));
+        let sddl_au = "D:P(A;OICI;FR;;;AU)";
+        assert!(sddl_has_allow_trustee(sddl_au, &["AU", "S-1-5-11"]));
+    }
 }

@@ -39,6 +39,13 @@ describe("licenses modal", () => {
             "pkg-cargo": {
               licenses: "Apache-2.0",
               repository: "https://example.com/cargo",
+              licenseTextStatus: "not-packaged",
+              licenseReferences: [
+                {
+                  identifier: "Apache-2.0",
+                  url: "https://spdx.org/licenses/Apache-2.0.html",
+                },
+              ],
             },
           }),
         };
@@ -65,6 +72,10 @@ describe("licenses modal", () => {
     expect(list.textContent).toContain("7-Zip");
     expect(list.textContent).toContain("pkg-npm");
     expect(list.textContent).toContain("pkg-cargo");
+    expect(list.textContent).toContain("did not include license text");
+    expect(
+      list.querySelector('a[href="https://spdx.org/licenses/Apache-2.0.html"]'),
+    ).not.toBeNull();
     expect(list.querySelectorAll("details.license-card").length).toBe(3);
 
     closeLicensesModal();

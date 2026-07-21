@@ -107,7 +107,7 @@ Copy-Item -LiteralPath $dll.FullName -Destination (Join-Path $outDir 'zinnia_she
 $staging = Join-Path $buildDir 'sparse-staging'
 if (Test-Path $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
 New-Item -ItemType Directory -Force -Path (Join-Path $staging 'Assets') | Out-Null
-Copy-Item -LiteralPath (Join-Path $sparseDir 'Assets\*') -Destination (Join-Path $staging 'Assets') -Force
+Copy-Item -Path (Join-Path $sparseDir 'Assets\*') -Destination (Join-Path $staging 'Assets') -Force
 $appxTemplate = Join-Path $sparseDir 'AppxManifest.xml.template'
 $appxText = (Get-Content -LiteralPath $appxTemplate -Raw).
   Replace('__PUBLISHER_DN__', $PublisherDnXml).
@@ -122,7 +122,7 @@ if (-not $makeAppx) { throw 'makeappx.exe not found. Install the Windows SDK.' }
 
 $msixPath = Join-Path $outDir 'ZinniaContextMenu.msix'
 if (Test-Path $msixPath) { Remove-Item -LiteralPath $msixPath -Force }
-& $makeAppx.FullName pack /o /d $staging /nv /p $msixPath
+& $makeAppx.FullName pack /o /d $staging /p $msixPath
 if ($LASTEXITCODE -ne 0) { throw "makeappx failed: $LASTEXITCODE" }
 
 Write-Host "Built $(Join-Path $outDir 'zinnia_shell.dll')"

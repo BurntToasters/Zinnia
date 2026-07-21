@@ -15,6 +15,13 @@ const coverageSummaryPath = resolve(
 const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
 const appVersion = packageJson.version ?? "unknown";
 const scriptVersion = "1.1.0";
+const criticalCoverageThresholds = {
+  "archive.ts": { lines: 80, branches: 62, functions: 88 },
+  "basic-ui.ts": { lines: 60, branches: 45, functions: 45 },
+  "extract-window.ts": { lines: 72, branches: 53, functions: 66 },
+  "main.ts": { lines: 73, branches: 52, functions: 61 },
+  "updater.ts": { lines: 76, branches: 62, functions: 68 },
+};
 
 const colors = {
   reset: "\x1b[0m",
@@ -84,11 +91,34 @@ function parseCoverage(results) {
     const total = summary?.total;
     if (!total) throw new Error("Missing total coverage block");
 
-    results.coverage.status = "passed";
     results.coverage.lines = total.lines?.pct ?? null;
     results.coverage.statements = total.statements?.pct ?? null;
     results.coverage.functions = total.functions?.pct ?? null;
     results.coverage.branches = total.branches?.pct ?? null;
+    const failures = [];
+    for (const [fileName, thresholds] of Object.entries(
+      criticalCoverageThresholds,
+    )) {
+      const entry = Object.entries(summary).find(([filePath]) =>
+        filePath.replaceAll("\\", "/").endsWith(`/src/${fileName}`),
+      )?.[1];
+      if (!entry) {
+        failures.push(`${fileName} missing from coverage summary`);
+        continue;
+      }
+      for (const [metric, minimum] of Object.entries(thresholds)) {
+        const actual = entry[metric]?.pct;
+        if (typeof actual !== "number" || actual < minimum) {
+          failures.push(
+            `${fileName} ${metric} ${actual ?? "n/a"}% < ${minimum}%`,
+          );
+        }
+      }
+    }
+    if (failures.length > 0) {
+      throw new Error(`critical coverage regression: ${failures.join("; ")}`);
+    }
+    results.coverage.status = "passed";
   } catch (err) {
     results.coverage.status = "failed";
     const reason = err instanceof Error ? err.message : String(err);
@@ -260,7 +290,7 @@ function main() {
   runCommand(
     "rust",
     "cargo",
-    ["test", "--manifest-path", "src-tauri/Cargo.toml"],
+    ["test", "--manifest-path", "src-tauri/Cargo.toml", "--all-targets"],
     null,
     results,
     { timeout: rustTimeoutMs },

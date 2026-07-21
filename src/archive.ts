@@ -536,7 +536,6 @@ export function buildArgs() {
     state.inputs.length,
   );
   if (inputShapeError) throw new Error(inputShapeError);
-  const pathMode = $<HTMLSelectElement>("path-mode").value;
   const rawPassword = $<HTMLInputElement>("password").value;
   const rawEncryptHeaders = $<HTMLInputElement>("encrypt-headers").checked;
   const updateMode = $<HTMLInputElement>("update-mode").checked;
@@ -559,7 +558,6 @@ export function buildArgs() {
   );
 
   const switches = ["-sse", ...buildCompressionMethodSwitches(format)];
-  if (pathMode === "absolute") switches.push("-spf");
   if (password) switches.push(`-p${password}`);
   // ZIP defaults to weak ZipCrypto; upgrade to AES-256 when a password is set.
   if (password && format === "zip") switches.push("-mem=AES256");

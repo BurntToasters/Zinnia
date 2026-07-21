@@ -181,12 +181,18 @@ describe("safeHref", () => {
   it("allows http/https URLs", () => {
     expect(safeHref("https://example.com")).toBe("https://example.com");
     expect(safeHref("http://example.com")).toBe("http://example.com");
+    expect(safeHref("https://example.com?a=1&b=2")).toBe(
+      "https://example.com?a=1&b=2",
+    );
   });
 
   it("blocks non-http schemes", () => {
     expect(safeHref("javascript:alert(1)")).toBe("#");
     expect(safeHref("data:text/html,test")).toBe("#");
     expect(safeHref("file:///etc/passwd")).toBe("#");
+    expect(safeHref("https://user:secret@example.com")).toBe("#");
+    expect(safeHref("https://")).toBe("#");
+    expect(safeHref("https://example.com\njavascript:alert(1)")).toBe("#");
   });
 
   it("blocks empty strings", () => {
@@ -252,5 +258,29 @@ describe("focus trap helpers", () => {
     releaseFocusTrap(container);
 
     container.remove();
+  });
+
+  it("makes modal siblings inert and restores their prior state", () => {
+    const background = document.createElement("main");
+    const alreadyInert = document.createElement("aside");
+    alreadyInert.inert = true;
+    const overlay = document.createElement("div");
+    const container = document.createElement("div");
+    const button = document.createElement("button");
+    container.appendChild(button);
+    overlay.appendChild(container);
+    document.body.append(background, alreadyInert, overlay);
+    setVisibleForFocus(button, container);
+
+    trapFocus(container);
+    expect(background.inert).toBe(true);
+    expect(alreadyInert.inert).toBe(true);
+
+    releaseFocusTrap(container);
+    expect(background.inert).toBe(false);
+    expect(alreadyInert.inert).toBe(true);
+    background.remove();
+    alreadyInert.remove();
+    overlay.remove();
   });
 });

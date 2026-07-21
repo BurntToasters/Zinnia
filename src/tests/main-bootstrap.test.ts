@@ -146,6 +146,9 @@ vi.mock("../ui", () => ({
   resizeWorkspaceWindow: mocks.ui.resizeWorkspaceWindow,
   syncWorkspaceWindowFx: mocks.ui.syncWorkspaceWindowFx,
 }));
+vi.mock("../window-fx", () => ({
+  syncWorkspaceWindowFx: mocks.ui.syncWorkspaceWindowFx,
+}));
 
 vi.mock("../archive", () => ({
   runAction: mocks.archive.runAction,
@@ -1089,6 +1092,10 @@ describe("main bootstrap", () => {
 
   it("resets settings to default and relaunches the app on reset confirmation", async () => {
     await loadMainModule();
+    localStorage.setItem(
+      "zinnia.basic.recentArchives",
+      JSON.stringify(["/private/archive.zip"]),
+    );
 
     // 1. User cancels reset
     askMock.mockResolvedValueOnce(false);
@@ -1111,7 +1118,29 @@ describe("main bootstrap", () => {
     expect(mocks.updater.discardPendingUpdate).toHaveBeenCalled();
     expect(invokeMock).toHaveBeenCalledWith("reset_settings");
     expect(invokeMock).toHaveBeenCalledWith("clear_logs");
+    expect(localStorage.getItem("zinnia.basic.recentArchives")).toBeNull();
     expect(relaunchMock).toHaveBeenCalled();
+  });
+
+  it("relaunches after reset even when localStorage cannot clear basic recents", async () => {
+    await loadMainModule();
+    const { relaunch } = await import("@tauri-apps/plugin-process");
+    const relaunchMock = vi.mocked(relaunch);
+    relaunchMock.mockReset();
+    relaunchMock.mockResolvedValue(undefined);
+    const removeItem = vi
+      .spyOn(Storage.prototype, "removeItem")
+      .mockImplementationOnce(() => {
+        throw new DOMException("Storage unavailable", "SecurityError");
+      });
+
+    askMock.mockResolvedValueOnce(true);
+    (document.getElementById("reset-settings") as HTMLButtonElement).click();
+    await flushAsync();
+
+    expect(invokeMock).toHaveBeenCalledWith("reset_settings");
+    expect(relaunchMock).toHaveBeenCalled();
+    removeItem.mockRestore();
   });
 
   it("does not trigger global run shortcut while input modal is open", async () => {

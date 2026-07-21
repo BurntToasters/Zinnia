@@ -1,7 +1,151 @@
 //! Platform/environment queries and OS integration helpers.
 
-#[cfg(target_os = "linux")]
-use std::process::Command;
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+use std::process::{Command, Output, Stdio};
+
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+const MAX_OS_COMMAND_OUTPUT_BYTES: usize = 1024 * 1024;
+
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+fn command_output_reader<R>(pipe: R) -> std::sync::mpsc::Receiver<std::io::Result<(Vec<u8>, bool)>>
+where
+    R: std::io::Read + Send + 'static,
+{
+    use std::io::Read as _;
+
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let result = pipe
+            .take((MAX_OS_COMMAND_OUTPUT_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)
+            .map(|_| {
+                let overflowed = bytes.len() > MAX_OS_COMMAND_OUTPUT_BYTES;
+                bytes.truncate(MAX_OS_COMMAND_OUTPUT_BYTES);
+                (bytes, overflowed)
+            });
+        let _ = sender.send(result);
+    });
+    receiver
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+fn receive_command_output(
+    receiver: std::sync::mpsc::Receiver<std::io::Result<(Vec<u8>, bool)>>,
+    deadline: std::time::Instant,
+    stream_name: &str,
+) -> std::io::Result<Vec<u8>> {
+    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+    let (bytes, overflowed) = receiver
+        .recv_timeout(remaining)
+        .map_err(|error| match error {
+            std::sync::mpsc::RecvTimeoutError::Timeout => std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("OS integration command {stream_name} did not close before timeout"),
+            ),
+            std::sync::mpsc::RecvTimeoutError::Disconnected => std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                format!("OS integration command {stream_name} reader stopped unexpectedly"),
+            ),
+        })??;
+    if overflowed {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "OS integration command {stream_name} exceeded the {} KiB output limit",
+                MAX_OS_COMMAND_OUTPUT_BYTES / 1024
+            ),
+        ));
+    }
+    Ok(bytes)
+}
+
+/// Kill the spawned command and any descendants that may still hold stdout/stderr
+/// pipes open (e.g. `sh -c 'sleep 5 & exit 0'`).
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+fn kill_command_process_tree(pid: u32, child: &mut std::process::Child) {
+    #[cfg(unix)]
+    {
+        // Negative PID signals the process group created via `process_group(0)`.
+        let _ = unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
+    }
+    #[cfg(windows)]
+    {
+        // /T terminates the full tree; trusted OS helpers only.
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+fn command_output_with_timeout(
+    command: &mut Command,
+    timeout: std::time::Duration,
+) -> std::io::Result<Output> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        // Own process group so timeout can reap background grandchildren that
+        // inherit the pipes after the shell exits.
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let mut child = command.spawn()?;
+    let pid = child.id();
+    let stdout = child
+        .stdout
+        .take()
+        .map(command_output_reader)
+        .ok_or_else(|| std::io::Error::other("Could not capture OS command stdout"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .map(command_output_reader)
+        .ok_or_else(|| std::io::Error::other("Could not capture OS command stderr"))?;
+    let deadline = std::time::Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {}
+            Err(error) => {
+                kill_command_process_tree(pid, &mut child);
+                return Err(error);
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            kill_command_process_tree(pid, &mut child);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "OS integration command timed out",
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    };
+    let stdout = match receive_command_output(stdout, deadline, "stdout") {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            kill_command_process_tree(pid, &mut child);
+            return Err(error);
+        }
+    };
+    let stderr = match receive_command_output(stderr, deadline, "stderr") {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            kill_command_process_tree(pid, &mut child);
+            return Err(error);
+        }
+    };
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
 
 const ZINNIA_BUNDLE_ID: &str = "run.rosie.zinnia";
 const ZINNIA_DESKTOP_ID: &str = "run.rosie.zinnia.desktop";
@@ -187,66 +331,51 @@ const MACOS_FINDER_SERVICE_KEYS: &[&str] = &[
 ];
 
 /// Parse `NSServicesStatus` from a pbs.plist JSON conversion.
-/// Absent entries default to enabled (Apple’s default for contextual services).
+/// `None` means pbs did not report Zinnia, so the UI must not claim it is enabled.
 #[cfg(any(target_os = "macos", test))]
-pub(crate) fn finder_services_enabled_from_pbs(json: &serde_json::Value) -> bool {
-    let Some(status_map) = json.get("NSServicesStatus") else {
-        return true;
-    };
-    let Some(obj) = status_map.as_object() else {
-        return true;
-    };
+pub(crate) fn finder_services_enabled_from_pbs(json: &serde_json::Value) -> Option<bool> {
+    let status_map = json.get("NSServicesStatus")?;
+    let obj = status_map.as_object()?;
 
-    let mut saw_any = false;
     let mut all_enabled = true;
     for key in MACOS_FINDER_SERVICE_KEYS {
         let Some(entry) = obj.get(*key) else {
-            continue;
+            // Partial registration must not be shown as both context actions
+            // being available. The user can still enable/re-register Services.
+            return None;
         };
-        saw_any = true;
         // Finder right-click / contextual Services use the context-menu flag.
         let context_on = entry
             .get("enabled_context_menu")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
+            .and_then(|v| v.as_bool())?;
         if !context_on {
             all_enabled = false;
         }
     }
 
-    if saw_any {
-        all_enabled
-    } else {
-        true
-    }
+    Some(all_enabled)
 }
 
 #[cfg(target_os = "macos")]
 fn macos_read_finder_services_enabled() -> Option<bool> {
     use std::path::PathBuf;
-    use std::process::Command;
 
     let home = std::env::var_os("HOME")?;
     let path = PathBuf::from(home).join("Library/Preferences/pbs.plist");
     if !path.exists() {
-        return Some(true);
+        return None;
     }
 
-    let output = Command::new("plutil")
-        .args([
-            "-convert",
-            "json",
-            "-o",
-            "-",
-            &path.to_string_lossy(),
-        ])
-        .output()
-        .ok()?;
+    let output = command_output_with_timeout(
+        Command::new("plutil").args(["-convert", "json", "-o", "-", &path.to_string_lossy()]),
+        std::time::Duration::from_secs(5),
+    )
+    .ok()?;
     if !output.status.success() {
         return None;
     }
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
-    Some(finder_services_enabled_from_pbs(&json))
+    finder_services_enabled_from_pbs(&json)
 }
 
 struct Win11ModernMenuInfo {
@@ -259,7 +388,6 @@ struct Win11ModernMenuInfo {
 #[cfg(target_os = "windows")]
 fn windows_modern_menu_registered() -> Option<bool> {
     use std::os::windows::process::CommandExt;
-    use std::process::Command;
 
     // Sparse identity package name (not the Zinnia app itself).
     // Use exit codes (not stdout) — PS 5.1 often emits UTF-16 on redirected pipes.
@@ -268,19 +396,21 @@ fn windows_modern_menu_registered() -> Option<bool> {
     let script = format!(
         "if (Get-AppxPackage -Name '{PACKAGE}' -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 2 }}"
     );
-    let status = Command::new("powershell.exe")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            &script,
-        ])
-        .creation_flags(CREATE_NO_WINDOW)
-        .status()
-        .ok()?;
-    match status.code() {
+    let output = command_output_with_timeout(
+        Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                &script,
+            ])
+            .creation_flags(CREATE_NO_WINDOW),
+        std::time::Duration::from_secs(10),
+    )
+    .ok()?;
+    match output.status.code() {
         Some(0) => Some(true),
         Some(2) => Some(false),
         _ => None,
@@ -415,8 +545,7 @@ pub fn os_integration_status_for(platform: &str, packaged: bool) -> OsIntegratio
     }
 }
 
-#[tauri::command]
-pub fn get_os_integration_status() -> OsIntegrationStatus {
+fn get_os_integration_status_blocking() -> OsIntegrationStatus {
     let platform = std::env::consts::OS;
     let packaged = is_packaged();
     let mut status = os_integration_status_for(platform, packaged);
@@ -440,7 +569,15 @@ pub fn get_os_integration_status() -> OsIntegrationStatus {
 }
 
 #[tauri::command]
-pub fn set_zinnia_default_archiver(app: tauri::AppHandle) -> Result<DefaultArchiverResult, String> {
+pub async fn get_os_integration_status() -> Result<OsIntegrationStatus, String> {
+    tokio::task::spawn_blocking(get_os_integration_status_blocking)
+        .await
+        .map_err(|error| format!("OS integration status worker failed: {error}"))
+}
+
+fn set_zinnia_default_archiver_blocking(
+    app: tauri::AppHandle,
+) -> Result<DefaultArchiverResult, String> {
     let platform = std::env::consts::OS;
     let packaged = is_packaged();
 
@@ -483,6 +620,15 @@ pub fn set_zinnia_default_archiver(app: tauri::AppHandle) -> Result<DefaultArchi
 
     let _ = app;
     Err("Default archiver changes are not available for this platform.".to_string())
+}
+
+#[tauri::command]
+pub async fn set_zinnia_default_archiver(
+    app: tauri::AppHandle,
+) -> Result<DefaultArchiverResult, String> {
+    tokio::task::spawn_blocking(move || set_zinnia_default_archiver_blocking(app))
+        .await
+        .map_err(|error| format!("Default-archiver worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -669,10 +815,11 @@ struct XdgMimeBackend;
 #[cfg(target_os = "linux")]
 impl LinuxMimeBackend for XdgMimeBackend {
     fn query_default(&self, mime_type: &str) -> Result<Option<String>, String> {
-        let output = Command::new("xdg-mime")
-            .args(["query", "default", mime_type])
-            .output()
-            .map_err(|e| format!("Unable to run xdg-mime: {e}"))?;
+        let output = command_output_with_timeout(
+            Command::new("xdg-mime").args(["query", "default", mime_type]),
+            std::time::Duration::from_secs(5),
+        )
+        .map_err(|e| format!("Unable to run xdg-mime: {e}"))?;
         if !output.status.success() {
             return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
         }
@@ -685,10 +832,11 @@ impl LinuxMimeBackend for XdgMimeBackend {
     }
 
     fn set_default(&mut self, desktop_id: &str, mime_type: &str) -> Result<(), String> {
-        let output = Command::new("xdg-mime")
-            .args(["default", desktop_id, mime_type])
-            .output()
-            .map_err(|e| format!("Unable to run xdg-mime: {e}"))?;
+        let output = command_output_with_timeout(
+            Command::new("xdg-mime").args(["default", desktop_id, mime_type]),
+            std::time::Duration::from_secs(5),
+        )
+        .map_err(|e| format!("Unable to run xdg-mime: {e}"))?;
         if output.status.success() {
             Ok(())
         } else {
@@ -790,69 +938,34 @@ mod macos_defaults {
         archive_status, ArchiveDefaultStatus, ArchiveDefaultTarget, ARCHIVE_DEFAULT_TARGETS,
         ZINNIA_BUNDLE_ID,
     };
-    use core_foundation::base::TCFType;
-    use core_foundation::string::{CFString, CFStringRef};
+    use block2::RcBlock;
+    use objc2_app_kit::NSWorkspace;
+    use objc2_foundation::{NSBundle, NSError, NSString};
+    use objc2_uniform_type_identifiers::UTType;
 
-    type OSStatus = i32;
-
-    const LS_ROLES_ALL: u32 = 0xFFFF_FFFF;
-
-    #[link(name = "CoreServices", kind = "framework")]
-    extern "C" {
-        fn LSSetDefaultRoleHandlerForContentType(
-            in_content_type: CFStringRef,
-            in_role: u32,
-            in_handler_bundle_id: CFStringRef,
-        ) -> OSStatus;
-        fn LSCopyDefaultRoleHandlerForContentType(
-            in_content_type: CFStringRef,
-            in_role: u32,
-        ) -> CFStringRef;
-        fn UTTypeCreatePreferredIdentifierForTag(
-            tag_class: CFStringRef,
-            tag: CFStringRef,
-            conforming_to_uti: CFStringRef,
-        ) -> CFStringRef;
-    }
-
-    fn uti_for_extension(extension: &str) -> Option<CFString> {
-        let tag_class = CFString::new("public.filename-extension");
-        let tag = CFString::new(extension);
-        let uti = unsafe {
-            UTTypeCreatePreferredIdentifierForTag(
-                tag_class.as_concrete_TypeRef(),
-                tag.as_concrete_TypeRef(),
-                std::ptr::null(),
-            )
-        };
-        if uti.is_null() {
-            None
-        } else {
-            Some(unsafe { CFString::wrap_under_create_rule(uti) })
-        }
+    fn uti_for_extension(extension: &str) -> Option<objc2::rc::Retained<UTType>> {
+        UTType::typeWithFilenameExtension(&NSString::from_str(extension))
     }
 
     #[cfg(test)]
     pub fn uti_identifier_for_extension(extension: &str) -> Option<String> {
-        uti_for_extension(extension).map(|uti| uti.to_string())
+        uti_for_extension(extension).map(|uti| uti.identifier().to_string())
     }
 
-    fn current_handler_for_uti(uti: &CFString) -> Option<String> {
-        let handler = unsafe {
-            LSCopyDefaultRoleHandlerForContentType(uti.as_concrete_TypeRef(), LS_ROLES_ALL)
-        };
-        if handler.is_null() {
-            None
-        } else {
-            Some(unsafe { CFString::wrap_under_create_rule(handler) }.to_string())
-        }
+    fn current_handler_for_uti(workspace: &NSWorkspace, uti: &UTType) -> Option<String> {
+        let application_url = workspace.URLForApplicationToOpenContentType(uti)?;
+        let bundle = NSBundle::bundleWithURL(&application_url)?;
+        bundle
+            .bundleIdentifier()
+            .map(|identifier| identifier.to_string())
     }
 
     fn query_target(target: ArchiveDefaultTarget, can_change: bool) -> ArchiveDefaultStatus {
         let Some(uti) = uti_for_extension(target.extension) else {
             return archive_status(target, None, can_change, "Unknown file type");
         };
-        let current_handler = current_handler_for_uti(&uti);
+        let workspace = NSWorkspace::sharedWorkspace();
+        let current_handler = current_handler_for_uti(&workspace, &uti);
         let status = if current_handler.as_deref() == Some(ZINNIA_BUNDLE_ID) {
             "Default"
         } else {
@@ -865,29 +978,55 @@ mod macos_defaults {
         target: ArchiveDefaultTarget,
         bundle_id_value: &str,
         changed_status: &str,
+        deadline: std::time::Instant,
     ) -> ArchiveDefaultStatus {
+        if std::time::Instant::now() >= deadline {
+            return archive_status(
+                target,
+                None,
+                true,
+                "Default-app operation reached its overall timeout",
+            );
+        }
         let Some(uti) = uti_for_extension(target.extension) else {
             return archive_status(target, None, true, "Unknown file type");
         };
-        let bundle_id = CFString::new(bundle_id_value);
-        let status = unsafe {
-            LSSetDefaultRoleHandlerForContentType(
-                uti.as_concrete_TypeRef(),
-                LS_ROLES_ALL,
-                bundle_id.as_concrete_TypeRef(),
-            )
+        let workspace = NSWorkspace::sharedWorkspace();
+        let bundle_id = NSString::from_str(bundle_id_value);
+        let Some(application_url) = workspace.URLForApplicationWithBundleIdentifier(&bundle_id)
+        else {
+            return archive_status(target, None, true, "Installed app bundle not found");
         };
-        let current_handler = current_handler_for_uti(&uti);
-        if status == 0 && current_handler.as_deref() == Some(bundle_id_value) {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let completion = RcBlock::new(move |error: *mut NSError| {
+            let message = if error.is_null() {
+                None
+            } else {
+                // SAFETY: AppKit guarantees a valid NSError for the duration of
+                // the completion callback when the operation fails.
+                Some(unsafe { &*error }.localizedDescription().to_string())
+            };
+            let _ = sender.send(message);
+        });
+        workspace.setDefaultApplicationAtURL_toOpenContentType_completionHandler(
+            &application_url,
+            &uti,
+            Some(&completion),
+        );
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        let completion_error = match receiver.recv_timeout(remaining) {
+            Ok(error) => error,
+            Err(_) => Some("macOS did not finish the default-app request".to_string()),
+        };
+        let current_handler = current_handler_for_uti(&workspace, &uti);
+        if completion_error.is_none() && current_handler.as_deref() == Some(bundle_id_value) {
             archive_status(target, current_handler, true, changed_status)
-        } else if status == 0 {
-            archive_status(target, current_handler, true, "Not changed")
         } else {
             archive_status(
                 target,
                 current_handler,
                 true,
-                format!("Not changed ({status})"),
+                completion_error.unwrap_or_else(|| "Not changed".to_string()),
             )
         }
     }
@@ -900,9 +1039,12 @@ mod macos_defaults {
     }
 
     pub fn set_archive_defaults() -> Vec<ArchiveDefaultStatus> {
+        // Bound the whole operation, rather than allowing every content type
+        // to consume a separate timeout interval.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
         ARCHIVE_DEFAULT_TARGETS
             .iter()
-            .map(|target| set_target(*target, ZINNIA_BUNDLE_ID, "Default"))
+            .map(|target| set_target(*target, ZINNIA_BUNDLE_ID, "Default", deadline))
             .collect()
     }
 }
@@ -964,6 +1106,46 @@ mod tests {
     use super::*;
     use std::cell::RefCell;
     use std::collections::HashMap;
+
+    #[cfg(unix)]
+    #[test]
+    fn os_command_capture_collects_bounded_stdout_and_stderr() {
+        let output = command_output_with_timeout(
+            Command::new("sh").args(["-c", "printf ok; printf warning >&2"]),
+            std::time::Duration::from_secs(2),
+        )
+        .expect("command output");
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"ok");
+        assert_eq!(output.stderr, b"warning");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn os_command_capture_rejects_oversized_output() {
+        let error = command_output_with_timeout(
+            Command::new("dd").args(["if=/dev/zero", "bs=1048577", "count=1"]),
+            std::time::Duration::from_secs(5),
+        )
+        .expect_err("oversized output must fail");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("output limit"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn os_command_capture_does_not_wait_forever_for_inherited_pipes() {
+        let started = std::time::Instant::now();
+        let error = command_output_with_timeout(
+            Command::new("sh").args(["-c", "sleep 5 & exit 0"]),
+            std::time::Duration::from_millis(200),
+        )
+        .expect_err("inherited pipe must respect timeout");
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        // Process-group kill should reap the background sleep so this returns
+        // promptly instead of waiting out the full sleep.
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    }
 
     struct FakeLinuxMimeBackend {
         defaults: RefCell<HashMap<String, String>>,
@@ -1045,9 +1227,9 @@ mod tests {
     }
 
     #[test]
-    fn finder_services_pbs_defaults_enabled_when_absent() {
+    fn finder_services_pbs_is_unknown_when_absent() {
         let empty = serde_json::json!({});
-        assert!(finder_services_enabled_from_pbs(&empty));
+        assert_eq!(finder_services_enabled_from_pbs(&empty), None);
 
         let other = serde_json::json!({
             "NSServicesStatus": {
@@ -1057,7 +1239,7 @@ mod tests {
                 }
             }
         });
-        assert!(finder_services_enabled_from_pbs(&other));
+        assert_eq!(finder_services_enabled_from_pbs(&other), None);
     }
 
     #[test]
@@ -1074,7 +1256,7 @@ mod tests {
                 }
             }
         });
-        assert!(!finder_services_enabled_from_pbs(&disabled));
+        assert_eq!(finder_services_enabled_from_pbs(&disabled), Some(false));
 
         let enabled = serde_json::json!({
             "NSServicesStatus": {
@@ -1088,7 +1270,33 @@ mod tests {
                 }
             }
         });
-        assert!(finder_services_enabled_from_pbs(&enabled));
+        assert_eq!(finder_services_enabled_from_pbs(&enabled), Some(true));
+    }
+
+    #[test]
+    fn finder_services_pbs_is_unknown_when_only_one_service_is_registered() {
+        let partial = serde_json::json!({
+            "NSServicesStatus": {
+                "run.rosie.zinnia - Extract with Zinnia - extractWithZinnia": {
+                    "enabled_context_menu": true,
+                    "enabled_services_menu": true
+                }
+            }
+        });
+        assert_eq!(finder_services_enabled_from_pbs(&partial), None);
+    }
+
+    #[test]
+    fn finder_services_pbs_is_unknown_when_context_menu_flag_is_malformed() {
+        let malformed = serde_json::json!({
+            "NSServicesStatus": {
+                "run.rosie.zinnia - Extract with Zinnia - extractWithZinnia": {
+                    "enabled_context_menu": "true"
+                },
+                "run.rosie.zinnia - Compress with Zinnia - compressWithZinnia": {}
+            }
+        });
+        assert_eq!(finder_services_enabled_from_pbs(&malformed), None);
     }
 
     #[test]

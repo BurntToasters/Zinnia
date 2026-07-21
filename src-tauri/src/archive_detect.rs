@@ -3,6 +3,13 @@
 use std::io::Read;
 
 const ARCHIVE_SIGNATURE_SCAN_BYTES: usize = 512;
+/// Keep aligned with `src/archive-rules.ts` MAX_ARCHIVE_PATHS and the 7-Zip
+/// argument ceiling in `validation.rs`.
+const MAX_ARCHIVE_PATHS: usize = 4096;
+/// Keep aligned with `src/archive-rules.ts` MAX_ARCHIVE_PATHS_IPC_BYTES. The
+/// command accepts one JSON string so this check occurs before allocating a
+/// `Vec<String>` from an untrusted IPC request.
+const MAX_ARCHIVE_PATHS_IPC_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(serde::Serialize, Clone, Debug)]
 pub struct ArchivePathValidation {
@@ -41,6 +48,7 @@ pub fn detect_archive_signature(bytes: &[u8]) -> Option<&'static str> {
     }
     if starts_with_bytes(bytes, &[0x50, 0x4B, 0x03, 0x04])
         || starts_with_bytes(bytes, &[0x50, 0x4B, 0x05, 0x06])
+        || starts_with_bytes(bytes, &[0x50, 0x4B, 0x07, 0x08])
     {
         return Some("zip");
     }
@@ -172,27 +180,57 @@ fn extension_mismatch_reason(expected: &str, detected: Option<&str>, tar: bool) 
     }
 }
 
+fn resolve_ascii_case_insensitive_sibling(
+    expected: &std::path::Path,
+) -> Result<Option<std::path::PathBuf>, String> {
+    let parent = expected
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let expected_name = expected
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "Archive volume has an invalid file name.".to_string())?;
+    let mut matched = None;
+    for entry in std::fs::read_dir(parent).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if !name.eq_ignore_ascii_case(expected_name) {
+            continue;
+        }
+        if matched.is_some() {
+            return Err(format!(
+                "Archive volume name is ambiguous when matched case-insensitively: {}",
+                expected.display()
+            ));
+        }
+        matched = Some(entry.path());
+    }
+    Ok(matched)
+}
+
 pub fn validate_archive_path(path: &str) -> ArchivePathValidation {
-    let trimmed = path.trim();
+    let candidate = path;
 
     let invalid = |reason: &str| ArchivePathValidation {
-        path: trimmed.to_string(),
+        path: candidate.to_string(),
         valid: false,
         reason: Some(reason.to_string()),
     };
 
-    if trimmed.is_empty() {
+    if candidate.is_empty() {
         return invalid("Path is empty.");
     }
-    if trimmed.contains('\0') {
+    if candidate.contains('\0') {
         return invalid("Path contains invalid characters.");
     }
-    if trimmed.len() > 4096 {
+    if candidate.len() > 4096 {
         return invalid("Path exceeds maximum length.");
     }
 
-    let lower = trimmed.to_lowercase();
-    let fs_path = std::path::Path::new(trimmed);
+    let lower = candidate.to_lowercase();
+    let fs_path = std::path::Path::new(candidate);
 
     let meta = match std::fs::symlink_metadata(fs_path) {
         Ok(meta) => meta,
@@ -203,7 +241,7 @@ pub fn validate_archive_path(path: &str) -> ArchivePathValidation {
                 format!("Unable to read file metadata: {}", err)
             };
             return ArchivePathValidation {
-                path: trimmed.to_string(),
+                path: candidate.to_string(),
                 valid: false,
                 reason: Some(reason),
             };
@@ -220,7 +258,7 @@ pub fn validate_archive_path(path: &str) -> ArchivePathValidation {
         Ok(bytes) => bytes,
         Err(err) => {
             return ArchivePathValidation {
-                path: trimmed.to_string(),
+                path: candidate.to_string(),
                 valid: false,
                 reason: Some(format!("Unable to read file contents: {}", err)),
             };
@@ -232,9 +270,26 @@ pub fn validate_archive_path(path: &str) -> ArchivePathValidation {
 
     // Windows RAR extract is blocked at run_7z (command `x`) for CVE-2026-58052.
     // Browse/test remain allowed so users can inspect archives without extracting.
+    let split_zip_header_valid = || {
+        let base = fs_path.with_extension("");
+        let first = std::path::PathBuf::from(format!("{}.z01", base.to_string_lossy()));
+        let Ok(Some(first)) = resolve_ascii_case_insensitive_sibling(&first) else {
+            return false;
+        };
+        let Ok(metadata) = std::fs::symlink_metadata(&first) else {
+            return false;
+        };
+        if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_file() {
+            return false;
+        }
+        read_probe_bytes(&first, ARCHIVE_SIGNATURE_SCAN_BYTES)
+            .ok()
+            .is_some_and(|probe| detect_archive_signature(&probe) == Some("zip"))
+    };
+
     let valid = match expected_archive_family(&lower) {
         Some("7z") => signature == Some("7z"),
-        Some("zip") => signature == Some("zip"),
+        Some("zip") => signature == Some("zip") || split_zip_header_valid(),
         Some("rar") => signature == Some("rar"),
         Some("gzip") => signature == Some("gzip"),
         Some("bzip2") => signature == Some("bzip2"),
@@ -245,7 +300,7 @@ pub fn validate_archive_path(path: &str) -> ArchivePathValidation {
 
     if valid {
         return ArchivePathValidation {
-            path: trimmed.to_string(),
+            path: candidate.to_string(),
             valid: true,
             reason: None,
         };
@@ -265,18 +320,42 @@ pub fn validate_archive_path(path: &str) -> ArchivePathValidation {
     };
 
     ArchivePathValidation {
-        path: trimmed.to_string(),
+        path: candidate.to_string(),
         valid: false,
         reason: Some(reason),
     }
 }
 
-#[tauri::command]
-pub fn validate_archive_paths(paths: Vec<String>) -> Result<Vec<ArchivePathValidation>, String> {
+fn validate_archive_paths_blocking(
+    paths_json: String,
+) -> Result<Vec<ArchivePathValidation>, String> {
+    if paths_json.len() > MAX_ARCHIVE_PATHS_IPC_BYTES {
+        return Err(format!(
+            "Archive-path validation request exceeds the {} MiB safety limit.",
+            MAX_ARCHIVE_PATHS_IPC_BYTES / (1024 * 1024)
+        ));
+    }
+    let paths: Vec<String> = serde_json::from_str(&paths_json).map_err(|_| {
+        "Archive-path validation request must be a JSON array of paths.".to_string()
+    })?;
+    if paths.len() > MAX_ARCHIVE_PATHS {
+        return Err(format!(
+            "At most {MAX_ARCHIVE_PATHS} paths can be validated at once."
+        ));
+    }
     Ok(paths
         .into_iter()
         .map(|path| validate_archive_path(&path))
         .collect())
+}
+
+#[tauri::command]
+pub async fn validate_archive_paths(
+    paths_json: String,
+) -> Result<Vec<ArchivePathValidation>, String> {
+    tokio::task::spawn_blocking(move || validate_archive_paths_blocking(paths_json))
+        .await
+        .map_err(|error| format!("Archive-path validation worker failed: {error}"))?
 }
 
 #[cfg(test)]
@@ -289,12 +368,31 @@ mod tests {
             detect_archive_signature(&[0x50, 0x4B, 0x03, 0x04]),
             Some("zip")
         );
+        assert_eq!(
+            detect_archive_signature(&[0x50, 0x4B, 0x07, 0x08]),
+            Some("zip")
+        );
         assert_eq!(detect_archive_signature(&[0x1F, 0x8B, 0x08]), Some("gzip"));
         assert_eq!(
             detect_archive_signature(&[0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x01, 0x00]),
             Some("rar")
         );
         assert_eq!(detect_archive_signature(b"plain-text"), None);
+    }
+
+    #[test]
+    fn validate_archive_paths_rejects_oversized_batches() {
+        let paths_json = serde_json::to_string(&vec![String::new(); MAX_ARCHIVE_PATHS + 1])
+            .expect("test paths should serialize");
+        let result = validate_archive_paths_blocking(paths_json);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("At most 4096 paths"));
+    }
+
+    #[test]
+    fn validation_rejects_oversized_ipc_payload_before_json_deserialization() {
+        let result = validate_archive_paths_blocking("x".repeat(MAX_ARCHIVE_PATHS_IPC_BYTES + 1));
+        assert!(result.is_err_and(|error| error.contains("safety limit")));
     }
 
     #[test]
@@ -371,6 +469,50 @@ mod tests {
             .reason
             .unwrap_or_default()
             .contains("Extension indicates zip"));
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn validate_archive_path_accepts_split_zip_from_first_volume_header() {
+        let base = std::env::temp_dir().join(format!(
+            "zinnia-split-zip-probe-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time should work")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).expect("temp directory should be created");
+        let first = base.join("archive.z01");
+        let final_volume = base.join("archive.zip");
+        std::fs::write(&first, [0x50, 0x4B, 0x07, 0x08, 0x14, 0x00])
+            .expect("first volume should be written");
+        std::fs::write(&final_volume, b"continuation bytes")
+            .expect("final volume should be written");
+
+        assert!(validate_archive_path(&final_volume.to_string_lossy()).valid);
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn validate_archive_path_accepts_uppercase_split_zip_volume() {
+        let base = std::env::temp_dir().join(format!(
+            "zinnia-uppercase-split-zip-probe-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time should work")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).expect("temp directory should be created");
+        let first = base.join("archive.Z01");
+        let final_volume = base.join("archive.ZIP");
+        std::fs::write(&first, [0x50, 0x4B, 0x07, 0x08, 0x14, 0x00])
+            .expect("first volume should be written");
+        std::fs::write(&final_volume, b"continuation bytes")
+            .expect("final volume should be written");
+
+        assert!(validate_archive_path(&final_volume.to_string_lossy()).valid);
 
         let _ = std::fs::remove_dir_all(base);
     }

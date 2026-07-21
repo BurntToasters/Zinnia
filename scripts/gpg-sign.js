@@ -6,6 +6,10 @@ import crypto from "crypto";
 import { execSync, spawnSync } from "child_process";
 import https from "https";
 import { fileURLToPath } from "url";
+import {
+  normalizeUpdaterSignature,
+  verifyUpdaterSignatures,
+} from "./updater-signature-verifier.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -388,27 +392,6 @@ function releaseAssetUrl(fileName, baseUrl = RELEASE_DOWNLOAD_BASE_URL) {
   return `${baseUrl}/${encodeURIComponent(fileName)}`;
 }
 
-function normalizeUpdaterSignature(sigPath) {
-  const trimmed = fs.readFileSync(sigPath, "utf8").trim();
-  if (!trimmed) {
-    return trimmed;
-  }
-
-  // Tauri v2 `.sig` files are base64
-  try {
-    const decoded = Buffer.from(trimmed, "base64").toString("utf8");
-    if (decoded.includes("untrusted comment:")) {
-      return trimmed;
-    }
-  } catch {}
-
-  if (trimmed.includes("untrusted comment:")) {
-    return Buffer.from(trimmed, "utf8").toString("base64");
-  }
-
-  return trimmed;
-}
-
 function generateUpdaterManifests(files) {
   const byName = new Map();
   for (const filePath of files) {
@@ -422,6 +405,13 @@ function generateUpdaterManifests(files) {
       signatureByBaseName.set(name.slice(0, -4), filePath);
     }
   }
+  verifyUpdaterSignatures({
+    root,
+    releaseDir,
+    byName,
+    signatureByBaseName,
+    resolveUpdaterTargets,
+  });
 
   const manifests = new Map();
   const requiredTargetKeys = new Set();
@@ -553,6 +543,18 @@ function generateUpdaterManifests(files) {
   if (missingLinuxTargets.length > 0) {
     throw new Error(
       `Missing required Linux AppImage updater target(s): ${missingLinuxTargets.join(", ")}.`,
+    );
+  }
+
+  const validation = spawnSync(
+    process.execPath,
+    [path.join(root, "scripts", "validate-updater-manifest.js"), ...generated],
+    { cwd: root, encoding: "utf8" },
+  );
+  if (validation.error) throw validation.error;
+  if (validation.status !== 0) {
+    throw new Error(
+      `Generated updater manifest validation failed: ${validation.stderr || validation.stdout}`,
     );
   }
 

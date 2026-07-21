@@ -204,6 +204,33 @@ describe("checkUpdates", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  it("discards an update whose channel changes during download", async () => {
+    let resolveDownload: (() => void) | undefined;
+    const close = vi.fn().mockResolvedValue(undefined);
+    const download = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveDownload = resolve;
+        }),
+    );
+    checkMock.mockResolvedValue({
+      version: "0.5.0",
+      download,
+      install: vi.fn().mockResolvedValue(undefined),
+      close,
+    } as unknown as Awaited<ReturnType<typeof check>>);
+
+    const checking = checkUpdates();
+    await vi.waitFor(() => expect(download).toHaveBeenCalledOnce());
+    mockState.currentSettings.updateChannel = "beta";
+    discardPendingUpdate();
+    resolveDownload?.();
+    await checking;
+
+    expect(close).toHaveBeenCalledOnce();
+    expect(askMock).not.toHaveBeenCalled();
+  });
+
   it("logs a pending-update resource cleanup failure", async () => {
     const close = vi.fn().mockRejectedValue(new Error("close failed"));
     checkMock.mockResolvedValue({

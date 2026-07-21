@@ -2,7 +2,7 @@ import { parseThreads } from "./utils.ts";
 
 export type ThemePreference = "system" | "light" | "dark";
 export type ArchiveFormat = "7z" | "zip" | "tar" | "gzip" | "bzip2" | "xz";
-export type PathMode = "relative" | "absolute";
+export type PathMode = "relative";
 export type LogVerbosity = "info" | "debug";
 export type UpdateChannel = "auto" | "stable" | "beta";
 export type WorkingMode = "add" | "extract" | "browse";
@@ -143,7 +143,7 @@ const FORMATS = new Set<ArchiveFormat>([
   "bzip2",
   "xz",
 ]);
-const PATH_MODES = new Set<PathMode>(["relative", "absolute"]);
+const PATH_MODES = new Set<PathMode>(["relative"]);
 const LOG_VERBOSITY = new Set<LogVerbosity>(["info", "debug"]);
 const UPDATE_CHANNELS = new Set<UpdateChannel>(["auto", "stable", "beta"]);
 const WORKING_MODES = new Set<WorkingMode>(["add", "extract", "browse"]);

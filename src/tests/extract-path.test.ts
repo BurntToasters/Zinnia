@@ -48,8 +48,17 @@ describe("deriveExtractDestinationPath", () => {
   });
 
   it("returns empty for blank input", () => {
-    expect(deriveExtractDestinationPath("   ")).toBe("");
+    expect(deriveExtractDestinationPath("")).toBe("");
     expect(deriveExtractFolderName("")).toBe("");
+  });
+
+  it("preserves leading and trailing whitespace in legitimate file names", () => {
+    expect(deriveExtractDestinationPath("/downloads/ archive.zip")).toBe(
+      "/downloads/ archive",
+    );
+    expect(deriveExtractDestinationPath("/downloads/archive.zip ")).toBe(
+      "/downloads/archive.zip _extracted",
+    );
   });
 });
 
@@ -146,8 +155,10 @@ describe("deriveOutputArchivePath", () => {
     expect(deriveOutputArchivePath([], "7z")).toBeNull();
   });
 
-  it("returns null when first input is whitespace", () => {
-    expect(deriveOutputArchivePath(["  "], "7z")).toBeNull();
+  it("preserves whitespace-only names rather than rewriting them", () => {
+    expect(deriveOutputArchivePath(["/home/user/  "], "7z")).toBe(
+      "/home/user/  .7z",
+    );
   });
 });
 

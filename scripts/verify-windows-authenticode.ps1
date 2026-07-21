@@ -9,6 +9,7 @@ $ErrorActionPreference = 'Stop'
 if ($env:SKIP_WIN_CODESIGN -eq '1') { Write-Host 'SKIP_WIN_CODESIGN=1; skipping Authenticode verification.'; exit 0 }
 if ($env:OS -ne 'Windows_NT') { throw 'Authenticode verification must run on Windows.' }
 if ([string]::IsNullOrWhiteSpace($env:AZURE_ARTIFACT_SIGNING_PUBLISHER)) { throw 'AZURE_ARTIFACT_SIGNING_PUBLISHER is required for Authenticode verification.' }
+if ([string]::IsNullOrWhiteSpace($env:AZURE_ARTIFACT_SIGNING_PUBLISHER_DN)) { throw 'AZURE_ARTIFACT_SIGNING_PUBLISHER_DN is required for full Authenticode identity verification.' }
 . (Join-Path $PSScriptRoot 'artifact-signing-tools.ps1')
 Import-BundledPowerShellSecurityModule
 $releaseDir = (Resolve-Path -LiteralPath $TargetReleaseDir).Path
@@ -42,6 +43,7 @@ foreach ($extra in $ExtraFiles) {
 $files = @($files | Sort-Object FullName -Unique)
 if (-not $files.Count) { throw "No Windows runtime or installer artifacts were found under $releaseDir" }
 $expected = $env:AZURE_ARTIFACT_SIGNING_PUBLISHER.Trim()
+$expectedSubject = $env:AZURE_ARTIFACT_SIGNING_PUBLISHER_DN.Trim()
 foreach ($file in $files) {
   $signature = Get-AuthenticodeSignature -LiteralPath $file.FullName
   if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
@@ -50,7 +52,9 @@ foreach ($file in $files) {
   if (-not $signature.SignerCertificate) { throw "Missing signer certificate: $($file.FullName)" }
   $publisher = $signature.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
   if ($publisher -ne $expected) { throw "Unexpected publisher for $($file.FullName): '$publisher'" }
+  $subject = $signature.SignerCertificate.Subject.Trim()
+  if ($subject -ne $expectedSubject) { throw "Unexpected certificate Subject for $($file.FullName). Expected '$expectedSubject', got '$subject'." }
   if (-not $signature.TimeStamperCertificate) { throw "Missing RFC3161 timestamp: $($file.FullName)" }
   Write-Host "Verified: $($file.FullName)"
 }
-Write-Host "Verified $($files.Count) timestamped Windows artifact(s) from '$expected'."
+Write-Host "Verified $($files.Count) timestamped Windows artifact(s) from '$expectedSubject'."

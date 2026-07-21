@@ -23,14 +23,8 @@ pub fn install_macos_app_menu(app: &AppHandle) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
 
-    let settings = MenuItem::with_id(
-        app,
-        MENU_SETTINGS,
-        "Settings…",
-        true,
-        Some("CmdOrCtrl+,"),
-    )
-    .map_err(|e| e.to_string())?;
+    let settings = MenuItem::with_id(app, MENU_SETTINGS, "Settings…", true, Some("CmdOrCtrl+,"))
+        .map_err(|e| e.to_string())?;
 
     let shortcuts = MenuItem::with_id(
         app,
@@ -114,11 +108,7 @@ pub fn install_macos_app_menu(app: &AppHandle) -> Result<(), String> {
     app.on_menu_event(|app, event| {
         let id = event.id().as_ref();
         match id {
-            MENU_CHECK_UPDATES
-            | MENU_SETTINGS
-            | MENU_SHORTCUTS
-            | MENU_SUPPORT
-            | MENU_LICENSES => {
+            MENU_CHECK_UPDATES | MENU_SETTINGS | MENU_SHORTCUTS | MENU_SUPPORT | MENU_LICENSES => {
                 if let Err(error) = crate::launch::show_main_window(app) {
                     eprintln!("Failed to show main window for menu action: {error}");
                 }

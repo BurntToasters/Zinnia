@@ -25,7 +25,7 @@ function looksLikeWindowsPath(path: string): boolean {
 }
 
 function splitPathParts(rawPath: string): PathParts {
-  const archivePath = rawPath.trim();
+  const archivePath = rawPath;
   if (!archivePath) return { parent: "", name: "", separator: "/" };
 
   const windowsLike = looksLikeWindowsPath(archivePath);
@@ -74,7 +74,7 @@ function stripKnownArchiveSuffix(fileName: string): string {
 }
 
 export function deriveExtractFolderName(archiveName: string): string {
-  const cleanedName = archiveName.trim();
+  const cleanedName = archiveName;
   if (!cleanedName) return "";
 
   const stripped = stripKnownArchiveSuffix(cleanedName);
@@ -108,7 +108,7 @@ export function resolveExtractDestinationAutofill(
   lastAutoValue: string | null,
   primaryArchivePath: string | null | undefined,
 ): string | null {
-  const archive = primaryArchivePath?.trim() ?? "";
+  const archive = primaryArchivePath ?? "";
   if (!archive) return null;
   if (!shouldAutofillExtractDestination(currentValue, lastAutoValue))
     return null;
@@ -134,7 +134,7 @@ export function deriveOutputArchivePath(
   format: string,
   customName?: string,
 ): string | null {
-  const firstRaw = inputs[0]?.trim() ?? "";
+  const firstRaw = inputs[0] ?? "";
   const first = (() => {
     if (!firstRaw) return "";
     if (firstRaw === "/" || firstRaw === "\\") return firstRaw;

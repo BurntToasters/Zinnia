@@ -1,4 +1,5 @@
 # Zinnia
+
 A cross-platform 7z GUI built with Tauri.
 
 <div align="center">
@@ -21,7 +22,19 @@ A cross-platform 7z GUI built with Tauri.
 See [ARCHITECTURE.md](ARCHITECTURE.md), [CONTRIBUTING.md](CONTRIBUTING.md), and
 [SECURITY.md](SECURITY.md).
 
+## System requirements
+
+- macOS 26 or later. The universal build supports Intel and Apple silicon Macs
+  that can run macOS 26+.
+- Windows 10 version 2004 (build 19041) or later, on x64 or ARM64. The modern
+  Explorer integration requires a signed NSIS install.
+- Linux x64: Ubuntu 24.04+, Debian 13+, or Fedora 43+ (or a compatible
+  distribution with the required WebKitGTK runtime). The public release ships
+  x64 AppImage, DEB, RPM, and sideloaded Flatpak bundles; ARM64 packages are
+  published only when explicitly built for that release.
+
 ## Dev
+
 - `npm install`
 - `npm run tauri:dev`
 - `cargo doc --manifest-path src-tauri/Cargo.toml`
@@ -31,6 +44,7 @@ build script refreshes ignored sidecar binaries from tracked assets before the
 native build runs.
 
 ## OS integration
+
 - Zinnia registers common archive file types in packaged builds.
 - Windows NSIS builds add per-user Explorer verbs for `Open with Zinnia`,
   `Extract with Zinnia`, and `Compress with Zinnia` (classic / “Show more options”).
@@ -48,15 +62,18 @@ native build runs.
   **Compress with Zinnia**.
 
 ## Builds
+
 - Windows: `npm run build:win`
 - macOS: `npm run build:mac:universal` then `npm run build:mac:zip`
 - Linux: `npm run build:linux`
 - Flatpak: `npm run flatpak:bundle`
 
 ## Release signing
+
 - `npm run release:sign:gpg`
 
 ## Updater setup
+
 - Updater is already configured in `src-tauri/tauri.conf.json`.
 - CI runs tests and checks on Linux, Windows, and macOS. It never builds release
   binaries, publishes releases, or consumes release signing secrets.
@@ -64,5 +81,8 @@ native build runs.
   `release:win`, `release:mac`, and `release:linux` scripts for the same version.
   They stage updater manifests, artifacts, checksum files, and detached `.asc`
   signatures in the matching draft GitHub release.
+- After changing the package version, run `node scripts/update-metainfo.js` and
+  commit the new AppStream release entry before starting a platform release.
+  Release preparation validates this metadata without rewriting the worktree.
 - Do not push a release tag until every platform artifact is present and its
   updater signature and checksum have been verified.

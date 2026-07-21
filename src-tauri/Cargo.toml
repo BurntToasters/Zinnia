@@ -1,6 +1,6 @@
 [package]
 name = "zinnia"
-version = "0.6.0-beta.3"
+version = "0.6.0-beta.4"
 description = "Cross-platform 7z GUI built with Tauri."
 authors = ["BurntToasters <code@rosie.run>"]
 edition = "2021"
@@ -18,20 +18,29 @@ tauri-plugin-process = "2"
 tauri-plugin-notification = "2"
 tokio = { version = "1", features = ["time"] }
 getrandom = "0.3"
-window-vibrancy = "0.7"
+# Tauri 2 already uses 0.6. Keeping one version avoids duplicate Objective-C
+# class symbols in the final macOS bundle.
+window-vibrancy = "0.6"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-core-foundation = "0.10"
 objc2 = "0.6"
 objc2-foundation = "0.3"
-objc2-app-kit = "0.3"
+objc2-app-kit = { version = "0.3", features = ["block2", "objc2-uniform-type-identifiers"] }
+objc2-uniform-type-identifiers = "0.3"
+block2 = "0.6"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[dev-dependencies]
+minisign-verify = "0.2.5"
 
 [profile.release]
 panic = "abort"

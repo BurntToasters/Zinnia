@@ -1,5 +1,25 @@
 # QA: OS context menus
 
+## Stable-release platform matrix
+
+Record the package hash, OS build, CPU architecture, install/upgrade/uninstall
+result, archive association result, and one successful compress/extract cycle
+for every applicable row:
+
+| Platform | Architecture | Required artifact/integration |
+| --- | --- | --- |
+| macOS 26+ | Apple silicon | Universal DMG and ZIP; Gatekeeper, notarization, Finder Services, updater |
+| macOS 26+ | Intel, while supported by macOS 26 | Universal DMG and ZIP; launch, Finder Services, updater |
+| Windows 11 | x64 | Signed NSIS, modern and classic Explorer menus, updater |
+| Windows 11 | ARM64 | Signed ARM64 NSIS, native shell DLL, modern and classic menus, updater |
+| Windows 10 | x64 | Signed NSIS, classic Explorer verbs, updater |
+| Ubuntu 24.04 | x64 | AppImage, DEB, sideload Flatpak; Wayland and X11 |
+| Debian 13 | x64 | Ubuntu-built AppImage and DEB |
+| Fedora 43 | x64 | RPM and AppImage |
+
+The release scripts remain platform-local. This matrix is the packaged OS
+integration gate that compile smoke tests cannot replace.
+
 ## macOS Finder Services
 
 1. Install a packaged `.app` / DMG build (not a bare `cargo run` binary).
@@ -9,6 +29,10 @@
 5. With Zinnia not running, use **Compress with Zinnia** from Finder — main opens for compress; later Extract must not destroy that workspace.
 6. Settings → **OS Integration** → **Finder Services**: Enabled / Off / Unknown; **Enable…** opens Keyboard Shortcuts → Services.
 7. Dev tip after Info.plist changes: `/System/Library/CoreServices/pbs -flush`
+
+> **Release gate:** On a clean macOS 26+ machine, install the signed and
+> notarized universal artifact; verify both Finder Services, archive Open With,
+> a signed updater check, and `spctl --assess` before publishing.
 
 ## Windows 11 modern menu
 
@@ -35,13 +59,13 @@ Requires a **signed** NSIS install with full `AZURE_ARTIFACT_SIGNING_PUBLISHER_D
 
 ### Failure modes
 
-| Scenario | Expect |
-|---|---|
-| Unsigned / `SKIP_WIN_CODESIGN=1` | Classic verbs only |
-| Stub MSIX (≤1 KiB) | Classic verbs only |
-| CN-only publisher DN | Context-menu build fails |
-| MSIX missing `AllowExternalContent` | Register log shows `0x80073D2E` |
-| Reinstall / upgrade | Remove-before-add (see register log) |
+| Scenario                            | Expect                               |
+| ----------------------------------- | ------------------------------------ |
+| Unsigned / `SKIP_WIN_CODESIGN=1`    | Classic verbs only                   |
+| Stub MSIX (≤1 KiB)                  | Classic verbs only                   |
+| CN-only publisher DN                | Context-menu build fails             |
+| MSIX missing `AllowExternalContent` | Register log shows `0x80073D2E`      |
+| Reinstall / upgrade                 | Remove-before-add (see register log) |
 
 ## Classic Windows verbs
 
@@ -50,3 +74,26 @@ Always registered by NSIS (HKCU):
 - Archives: **Open with Zinnia**, **Extract with Zinnia**
 - Files/folders: **Compress with Zinnia** / **Compress folder with Zinnia**
 - Folder background: **Compress with Zinnia** (`%V`)
+
+## Linux desktop integration
+
+Build the AppImage and DEB on Ubuntu 24.04. Test the AppImage on Ubuntu 24.04,
+the DEB on Ubuntu 24.04 and Debian 13, and the RPM on Fedora 43. Exercise both
+Wayland and X11 where the desktop environment supports them.
+
+1. Install the matching DEB/RPM or launch the AppImage. For Flatpak, install
+   the locally produced bundle (Zinnia is intentionally sideload-only).
+2. Confirm the launcher entry, icon, archive MIME association, and desktop
+   actions **Open**, **Extract**, and **Compress** appear in the file manager.
+3. Exercise each action with a ZIP and 7z archive, a normal file, a folder, and
+   an encrypted archive. Confirm the destination is correct and no action
+   prompts for network access.
+4. On Flatpak, confirm the selected archive and destination work through the
+   intentional home-filesystem permission, then inspect
+   `flatpak info --show-permissions run.rosie.zinnia` for only the documented filesystem, display,
+   IPC, and DRI permissions.
+5. Confirm the Ubuntu 24.04-built AppImage starts on Ubuntu 24.04; this catches
+   accidental glibc drift from a newer build host.
+
+> **Release gate:** Complete the package-specific matrix above before publishing
+> a stable Linux artifact. One distro is not a substitute for the others.
