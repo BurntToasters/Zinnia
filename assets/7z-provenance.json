@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "product": "7-Zip",
+  "version": "26.02",
+  "recordedOn": "2026-07-20",
+  "officialDownloadPage": "https://www.7-zip.org/download.html",
+  "sourceArchives": {
+    "linux-arm64": {
+      "url": "https://www.7-zip.org/a/7z2602-linux-arm64.tar.xz",
+      "sha256": "70ea6cc737ae1495ea2d7eb20ef3120fe579bd3f1a83a9d2362b62ec5bde2bba"
+    },
+    "linux-x64": {
+      "url": "https://www.7-zip.org/a/7z2602-linux-x64.tar.xz",
+      "sha256": "41aaba7b1235304ab5aa0624530c67ae829496cd29e875925271efdccc28c03e"
+    },
+    "mac": {
+      "url": "https://www.7-zip.org/a/7z2602-mac.tar.xz",
+      "sha256": "1cf6760579502f87e591ff5c73a005ec50b3e4d6f507e8b038382d563c3175b9"
+    },
+    "windows-extra": {
+      "url": "https://www.7-zip.org/a/7z2602-extra.7z",
+      "sha256": "081df9e9311dfd9c9e0e98c1c80180b99bb51e4cb24156b5f3057fe3c259d70a"
+    }
+  },
+  "artifacts": {
+    "linux/arm64/7zz": { "source": "linux-arm64", "member": "7zz" },
+    "linux/arm64/7zzs": { "source": "linux-arm64", "member": "7zzs" },
+    "linux/x64/7zz": { "source": "linux-x64", "member": "7zz" },
+    "linux/x64/7zzs": { "source": "linux-x64", "member": "7zzs" },
+    "mac/7zz": { "source": "mac", "member": "7zz" },
+    "win/arm64/7-ZipFar.dll": { "source": "windows-extra", "member": "arm64/7-ZipFar.dll" },
+    "win/arm64/7za.dll": { "source": "windows-extra", "member": "arm64/7za.dll" },
+    "win/arm64/7za.exe": { "source": "windows-extra", "member": "arm64/7za.exe" },
+    "win/arm64/7zxa.dll": { "source": "windows-extra", "member": "arm64/7zxa.dll" },
+    "win/x64/7za.dll": { "source": "windows-extra", "member": "x64/7za.dll" },
+    "win/x64/7za.exe": { "source": "windows-extra", "member": "x64/7za.exe" },
+    "win/x64/7zxa.dll": { "source": "windows-extra", "member": "x64/7zxa.dll" }
+  }
+}

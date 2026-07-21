@@ -127,7 +127,10 @@ fn sanitize_progress_filename(name: &str) -> Option<String> {
         return None;
     }
     const MAX_PROGRESS_FILENAME_CHARS: usize = 200;
-    let capped: String = meaningful.chars().take(MAX_PROGRESS_FILENAME_CHARS).collect();
+    let capped: String = meaningful
+        .chars()
+        .take(MAX_PROGRESS_FILENAME_CHARS)
+        .collect();
     Some(capped)
 }
 

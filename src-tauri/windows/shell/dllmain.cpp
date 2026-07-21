@@ -14,6 +14,7 @@
 #include <vector>
 #include <new>
 #include <algorithm>
+#include <filesystem>
 
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "ole32.lib")
@@ -55,6 +56,11 @@ static bool LooksLikeArchive(const std::wstring& path) {
   };
   return ends_with(lower, L".tar.gz") || ends_with(lower, L".tar.xz") ||
          ends_with(lower, L".tar.bz2");
+}
+
+static bool AllPathsAreArchives(const std::vector<std::wstring>& paths) {
+  return !paths.empty() &&
+         std::all_of(paths.begin(), paths.end(), LooksLikeArchive);
 }
 
 static HRESULT GetSelectedPaths(IShellItemArray* items,
@@ -111,31 +117,41 @@ static HRESULT GetFolderPathFromSite(IUnknown* site, std::wstring* out) {
 // DLL is usually next to zinnia.exe ($INSTDIR). If mapped under resources\,
 // fall back to the parent directory.
 static std::wstring GetZinniaExePath() {
-  wchar_t moduleDir[MAX_PATH] = {};
-  GetModuleFileNameW(g_hInst, moduleDir, MAX_PATH);
-  PathRemoveFileSpecW(moduleDir);
+  std::vector<wchar_t> buffer(512);
+  DWORD length = 0;
+  for (;;) {
+    SetLastError(ERROR_SUCCESS);
+    length = GetModuleFileNameW(g_hInst, buffer.data(),
+                                static_cast<DWORD>(buffer.size()));
+    if (length == 0) return L"zinnia.exe";
+    if (length < buffer.size()) break;
+    buffer.resize(buffer.size() * 2);
+  }
 
-  wchar_t candidate[MAX_PATH] = {};
-  PathCombineW(candidate, moduleDir, L"zinnia.exe");
-  if (PathFileExistsW(candidate)) return candidate;
+  const std::filesystem::path modulePath(
+      std::wstring(buffer.data(), static_cast<size_t>(length)));
+  const auto moduleDir = modulePath.parent_path();
+  auto candidate = moduleDir / L"zinnia.exe";
+  if (GetFileAttributesW(candidate.c_str()) != INVALID_FILE_ATTRIBUTES) {
+    return candidate.wstring();
+  }
 
-  wchar_t parentDir[MAX_PATH] = {};
-  lstrcpynW(parentDir, moduleDir, MAX_PATH);
-  if (PathRemoveFileSpecW(parentDir)) {
-    PathCombineW(candidate, parentDir, L"zinnia.exe");
-    if (PathFileExistsW(candidate)) return candidate;
+  candidate = moduleDir.parent_path() / L"zinnia.exe";
+  if (GetFileAttributesW(candidate.c_str()) != INVALID_FILE_ATTRIBUTES) {
+    return candidate.wstring();
   }
 
   // Last resort: return same-dir path for error reporting.
-  PathCombineW(candidate, moduleDir, L"zinnia.exe");
-  return candidate;
+  return (moduleDir / L"zinnia.exe").wstring();
 }
 
 static HRESULT LaunchZinnia(const wchar_t* flag,
                             const std::vector<std::wstring>& paths) {
   if (paths.empty()) return E_FAIL;
   std::wstring exe = GetZinniaExePath();
-  if (!PathFileExistsW(exe.c_str())) return HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
+  if (GetFileAttributesW(exe.c_str()) == INVALID_FILE_ATTRIBUTES) {
+    return HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
+  }
 
   std::wstring params = flag;
   for (const auto& path : paths) {
@@ -218,6 +234,7 @@ class ExplorerCommand : public IExplorerCommand, public IObjectWithSite {
   }
 
   IFACEMETHODIMP GetTitle(IShellItemArray*, LPWSTR* name) override {
+    if (!name) return E_POINTER;
     const wchar_t* title = L"Zinnia";
     switch (kind_) {
       case CommandKind::Extract:
@@ -236,16 +253,19 @@ class ExplorerCommand : public IExplorerCommand, public IObjectWithSite {
   }
 
   IFACEMETHODIMP GetIcon(IShellItemArray*, LPWSTR* icon) override {
+    if (!icon) return E_POINTER;
     std::wstring exe = GetZinniaExePath();
     return SHStrDupW(exe.c_str(), icon);
   }
 
   IFACEMETHODIMP GetToolTip(IShellItemArray*, LPWSTR* tip) override {
+    if (!tip) return E_POINTER;
     *tip = nullptr;
     return E_NOTIMPL;
   }
 
   IFACEMETHODIMP GetCanonicalName(GUID* guid) override {
+    if (!guid) return E_POINTER;
     switch (kind_) {
       case CommandKind::Root:
         *guid = CLSID_ZinniaRoot;
@@ -282,6 +302,7 @@ class ExplorerCommand : public IExplorerCommand, public IObjectWithSite {
   }
 
   IFACEMETHODIMP GetState(IShellItemArray* selection, BOOL, EXPCMDSTATE* state) override {
+    if (!state) return E_POINTER;
     *state = ECS_ENABLED;
     if (kind_ == CommandKind::Extract || kind_ == CommandKind::ExtractTop) {
       std::vector<std::wstring> paths;
@@ -289,14 +310,7 @@ class ExplorerCommand : public IExplorerCommand, public IObjectWithSite {
         *state = ECS_DISABLED;
         return S_OK;
       }
-      bool anyArchive = false;
-      for (const auto& p : paths) {
-        if (LooksLikeArchive(p)) {
-          anyArchive = true;
-          break;
-        }
-      }
-      if (!anyArchive) *state = ECS_DISABLED;
+      if (!AllPathsAreArchives(paths)) *state = ECS_DISABLED;
     }
     return S_OK;
   }
@@ -308,6 +322,7 @@ class ExplorerCommand : public IExplorerCommand, public IObjectWithSite {
     switch (kind_) {
       case CommandKind::Extract:
       case CommandKind::ExtractTop:
+        if (!AllPathsAreArchives(paths)) return E_INVALIDARG;
         return LaunchZinnia(L"--extract", paths);
       case CommandKind::Compress:
         return LaunchZinnia(L"--compress", paths);
@@ -318,6 +333,7 @@ class ExplorerCommand : public IExplorerCommand, public IObjectWithSite {
   }
 
   IFACEMETHODIMP GetFlags(EXPCMDFLAGS* flags) override {
+    if (!flags) return E_POINTER;
     *flags = (kind_ == CommandKind::Root) ? ECF_HASSUBCOMMANDS : ECF_DEFAULT;
     return S_OK;
   }
@@ -332,14 +348,28 @@ class ExplorerCommand : public IExplorerCommand, public IObjectWithSite {
 
 class EnumCommands : public IEnumExplorerCommand {
  public:
-  explicit EnumCommands(IUnknown* site) {
-    AddRefModule();
-    auto* extract = new ExplorerCommand(CommandKind::Extract);
-    auto* compress = new ExplorerCommand(CommandKind::Compress);
+  EnumCommands() { AddRefModule(); }
+
+  HRESULT Initialize(IUnknown* site) {
+    auto* extract = new (std::nothrow) ExplorerCommand(CommandKind::Extract);
+    if (!extract) return E_OUTOFMEMORY;
+    auto* compress = new (std::nothrow) ExplorerCommand(CommandKind::Compress);
+    if (!compress) {
+      extract->Release();
+      return E_OUTOFMEMORY;
+    }
     extract->SetSiteFromParent(site);
     compress->SetSiteFromParent(site);
-    commands_.push_back(extract);
-    commands_.push_back(compress);
+    try {
+      commands_.reserve(2);
+      commands_.push_back(extract);
+      commands_.push_back(compress);
+    } catch (const std::bad_alloc&) {
+      extract->Release();
+      compress->Release();
+      return E_OUTOFMEMORY;
+    }
+    return S_OK;
   }
   ~EnumCommands() {
     for (auto* c : commands_) c->Release();
@@ -366,6 +396,7 @@ class EnumCommands : public IEnumExplorerCommand {
   }
 
   IFACEMETHODIMP Next(ULONG celt, IExplorerCommand** rgelt, ULONG* fetched) override {
+    if (!rgelt || (celt != 1 && !fetched)) return E_POINTER;
     ULONG got = 0;
     while (got < celt && index_ < commands_.size()) {
       rgelt[got] = commands_[index_++];
@@ -384,6 +415,7 @@ class EnumCommands : public IEnumExplorerCommand {
     return S_OK;
   }
   IFACEMETHODIMP Clone(IEnumExplorerCommand** ppenum) override {
+    if (!ppenum) return E_POINTER;
     *ppenum = nullptr;
     return E_NOTIMPL;
   }
@@ -396,9 +428,18 @@ class EnumCommands : public IEnumExplorerCommand {
 
 IFACEMETHODIMP ExplorerCommand::EnumSubCommands(
     IEnumExplorerCommand** enumCommands) {
+  if (!enumCommands) return E_POINTER;
+  *enumCommands = nullptr;
   if (kind_ != CommandKind::Root) return E_NOTIMPL;
-  *enumCommands = new (std::nothrow) EnumCommands(site_);
-  return *enumCommands ? S_OK : E_OUTOFMEMORY;
+  auto* commands = new (std::nothrow) EnumCommands();
+  if (!commands) return E_OUTOFMEMORY;
+  HRESULT hr = commands->Initialize(site_);
+  if (FAILED(hr)) {
+    commands->Release();
+    return hr;
+  }
+  *enumCommands = commands;
+  return S_OK;
 }
 
 class ClassFactory : public IClassFactory {

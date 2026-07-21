@@ -1,20 +1,29 @@
 # Build prerequisites for Zinnia
 
 ## Windows
+
 - Windows 10/11 x64 or ARM64
 - PowerShell 7.x
-- Developer PowerShell / Command Prompt for VS18 
+- Developer PowerShell / Command Prompt for VS18
 - Node.js 22.12 through 24.x
 - Rust (rustup) + Visual Studio Build Tools (clang: x64 and arm64)
 
 ## macOS
-- macOS Sonoma or later
+
+- macOS 26 or later
 - Xcode Command Line Tools
 - Node.js 22.12 through 24.x
 - Rust (rustup)
 
 ## Linux
-- Ubuntu 24.04+/Debian 13+/Fedora 43+
+
+- Build public AppImage and DEB artifacts on Ubuntu 24.04. It is the oldest
+  supported glibc baseline, so an AppImage built there remains compatible with
+  the documented Ubuntu 24.04+ support floor. Do not build AppImages on Debian
+  13, Fedora 43, or an unpinned newer host.
+- Build and test RPM artifacts on Fedora 43. Test the DEB/AppImage on Debian
+  13 and the RPM on Fedora 43; these distributions are runtime targets, not
+  interchangeable AppImage build baselines.
 - Node.js 22.12 through 24.x
 - Rust (rustup)
 - Build essentials (gcc, g++, make)
@@ -42,12 +51,26 @@ npx tauri build --no-bundle
 CI runs tests and checks only. It must never invoke `release:*` scripts or build
 release binaries; signed bundles are produced on isolated platform build VMs.
 
+Before a stable release, run the packaged-artifact QA matrix in
+[`docs/QA-CONTEXT-MENUS.md`](docs/QA-CONTEXT-MENUS.md) on those platform build
+VMs. CI compile smoke does not prove operating-system shell registration,
+notarization, updater behavior, or desktop-environment MIME integration.
+
 ## Release artifact freshness
 
 Always run `npm run release:prepare` before a platform release build. It removes
 old bundles and creates a versioned build-session marker. The GPG staging script
 rejects artifacts older than that marker, including versionless canonical
 installer names, so a stale bundle cannot be signed accidentally.
+
+Flatpak packaging additionally exports the exact clean `HEAD` tree into an
+ignored staging directory. It refuses tracked working-tree changes; commit the
+intended release state before running `npm run flatpak:bundle`. npm and Cargo
+downloads remain integrity-locked for this sideload-only build.
+
+Updater manifests are generated only after each Tauri Minisign signature has
+been cryptographically matched to its artifact with the public key in
+`tauri.conf.json`. The generated manifests are schema-validated before upload.
 
 The `b`, `r`, and `release:*` scripts intentionally reset and clean their Git
 worktrees. Run them only on disposable, isolated build VMs. Before publishing,

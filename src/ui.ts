@@ -24,6 +24,8 @@ import {
   resolveExtractDestinationAutofill,
   resolveOutputArchiveAutofill,
 } from "./extract-path";
+import { syncWorkspaceWindowFx } from "./window-fx";
+export { syncWorkspaceWindowFx } from "./window-fx";
 
 let iconRefreshHook: (() => void) | null = null;
 
@@ -219,9 +221,7 @@ export function devLog(line: string) {
 }
 
 function syncValidationMapForInputs(paths: string[]): void {
-  const normalized = paths
-    .map((path) => path.trim())
-    .filter((path) => path.length > 0);
+  const normalized = paths.filter((path) => path.length > 0);
   const keep = new Set(normalized);
 
   for (const existing of state.inputValidationByPath.keys()) {
@@ -252,12 +252,12 @@ function startInputValidation(paths: string[]): void {
       if (requestId !== state.inputValidationRequestId) return;
       const next = new Map<string, InputValidationInfo>();
       for (const result of results) {
-        const key = result.path.trim();
+        const key = result.path;
         if (!key) continue;
         next.set(key, mapArchiveValidationResult(result));
       }
       for (const path of paths) {
-        const key = path.trim();
+        const key = path;
         if (!key || next.has(key)) continue;
         next.set(key, {
           state: "invalid",
@@ -273,7 +273,7 @@ function startInputValidation(paths: string[]): void {
       const msg = err instanceof Error ? err.message : String(err);
       devLog(`Background archive validation failed: ${msg}`);
       for (const path of paths) {
-        const key = path.trim();
+        const key = path;
         if (!key) continue;
         const current = state.inputValidationByPath.get(key);
         if (!current) {
@@ -354,31 +354,6 @@ export function setWorkspaceMode(
 
   void resizeWorkspaceWindow(mode);
   void syncWorkspaceWindowFx();
-}
-
-/** Native Basic glass on macOS/Windows; Linux and Power stay visually opaque. */
-export async function syncWorkspaceWindowFx(): Promise<void> {
-  let supports = false;
-  try {
-    supports = await invoke<boolean>("supports_workspace_window_fx");
-  } catch {
-    supports = false;
-  }
-
-  const enabled =
-    supports &&
-    getWorkspaceMode() === "basic" &&
-    state.currentSettings.basicWindowEffects;
-
-  document.documentElement.dataset.windowFx = enabled ? "basic" : "opaque";
-  const dark = document.documentElement.getAttribute("data-theme") === "dark";
-
-  try {
-    await invoke("set_workspace_window_fx", { enabled, dark });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    devLog(`Unable to update workspace window effects: ${msg}`);
-  }
 }
 
 export function getUiDensity(): UiDensity {
@@ -528,9 +503,7 @@ export function renderInputs() {
       state.inputValidationByPath.clear();
     }
   } else if (signatureChanged || modeChangedForValidation) {
-    const normalized = state.inputs
-      .map((path) => path.trim())
-      .filter((path) => path.length > 0);
+    const normalized = state.inputs.filter((path) => path.length > 0);
     startInputValidation(normalized);
   } else {
     syncValidationMapForInputs(state.inputs);
@@ -612,7 +585,7 @@ export function renderInputs() {
     content.appendChild(pathEl);
 
     if (mode !== "add") {
-      const validation = state.inputValidationByPath.get(path.trim()) ?? {
+      const validation = state.inputValidationByPath.get(path) ?? {
         state: "unknown" as const,
       };
       const badge = document.createElement("span");

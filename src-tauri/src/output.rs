@@ -140,10 +140,7 @@ fn redact_key_value_secrets(input: &str) -> String {
     let mut i = 0usize;
     while i < input.len() {
         let slice = &lower[i..];
-        let matched = keys
-            .iter()
-            .find(|key| slice.starts_with(*key))
-            .copied();
+        let matched = keys.iter().find(|key| slice.starts_with(*key)).copied();
         if let Some(key) = matched {
             let boundary_ok = i == 0
                 || input[..i]
@@ -157,13 +154,7 @@ fn redact_key_value_secrets(input: &str) -> String {
                 let sep_ch = sep.unwrap();
                 redacted.push(sep_ch);
                 i = after_key + sep_ch.len_utf8();
-                while i < input.len()
-                    && !input[i..]
-                        .chars()
-                        .next()
-                        .unwrap()
-                        .is_whitespace()
-                {
+                while i < input.len() && !input[i..].chars().next().unwrap().is_whitespace() {
                     i += input[i..].chars().next().unwrap().len_utf8();
                 }
                 redacted.push_str("***");

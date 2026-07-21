@@ -187,38 +187,29 @@ const MACOS_FINDER_SERVICE_KEYS: &[&str] = &[
 ];
 
 /// Parse `NSServicesStatus` from a pbs.plist JSON conversion.
-/// Absent entries default to enabled (Apple’s default for contextual services).
+/// `None` means pbs did not report Zinnia, so the UI must not claim it is enabled.
 #[cfg(any(target_os = "macos", test))]
-pub(crate) fn finder_services_enabled_from_pbs(json: &serde_json::Value) -> bool {
-    let Some(status_map) = json.get("NSServicesStatus") else {
-        return true;
-    };
-    let Some(obj) = status_map.as_object() else {
-        return true;
-    };
+pub(crate) fn finder_services_enabled_from_pbs(json: &serde_json::Value) -> Option<bool> {
+    let status_map = json.get("NSServicesStatus")?;
+    let obj = status_map.as_object()?;
 
-    let mut saw_any = false;
     let mut all_enabled = true;
     for key in MACOS_FINDER_SERVICE_KEYS {
         let Some(entry) = obj.get(*key) else {
-            continue;
+            // Partial registration must not be shown as both context actions
+            // being available. The user can still enable/re-register Services.
+            return None;
         };
-        saw_any = true;
         // Finder right-click / contextual Services use the context-menu flag.
         let context_on = entry
             .get("enabled_context_menu")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
+            .and_then(|v| v.as_bool())?;
         if !context_on {
             all_enabled = false;
         }
     }
 
-    if saw_any {
-        all_enabled
-    } else {
-        true
-    }
+    Some(all_enabled)
 }
 
 #[cfg(target_os = "macos")]
@@ -229,24 +220,18 @@ fn macos_read_finder_services_enabled() -> Option<bool> {
     let home = std::env::var_os("HOME")?;
     let path = PathBuf::from(home).join("Library/Preferences/pbs.plist");
     if !path.exists() {
-        return Some(true);
+        return None;
     }
 
     let output = Command::new("plutil")
-        .args([
-            "-convert",
-            "json",
-            "-o",
-            "-",
-            &path.to_string_lossy(),
-        ])
+        .args(["-convert", "json", "-o", "-", &path.to_string_lossy()])
         .output()
         .ok()?;
     if !output.status.success() {
         return None;
     }
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
-    Some(finder_services_enabled_from_pbs(&json))
+    finder_services_enabled_from_pbs(&json)
 }
 
 struct Win11ModernMenuInfo {
@@ -790,69 +775,34 @@ mod macos_defaults {
         archive_status, ArchiveDefaultStatus, ArchiveDefaultTarget, ARCHIVE_DEFAULT_TARGETS,
         ZINNIA_BUNDLE_ID,
     };
-    use core_foundation::base::TCFType;
-    use core_foundation::string::{CFString, CFStringRef};
+    use block2::RcBlock;
+    use objc2_app_kit::NSWorkspace;
+    use objc2_foundation::{NSBundle, NSError, NSString};
+    use objc2_uniform_type_identifiers::UTType;
 
-    type OSStatus = i32;
-
-    const LS_ROLES_ALL: u32 = 0xFFFF_FFFF;
-
-    #[link(name = "CoreServices", kind = "framework")]
-    extern "C" {
-        fn LSSetDefaultRoleHandlerForContentType(
-            in_content_type: CFStringRef,
-            in_role: u32,
-            in_handler_bundle_id: CFStringRef,
-        ) -> OSStatus;
-        fn LSCopyDefaultRoleHandlerForContentType(
-            in_content_type: CFStringRef,
-            in_role: u32,
-        ) -> CFStringRef;
-        fn UTTypeCreatePreferredIdentifierForTag(
-            tag_class: CFStringRef,
-            tag: CFStringRef,
-            conforming_to_uti: CFStringRef,
-        ) -> CFStringRef;
-    }
-
-    fn uti_for_extension(extension: &str) -> Option<CFString> {
-        let tag_class = CFString::new("public.filename-extension");
-        let tag = CFString::new(extension);
-        let uti = unsafe {
-            UTTypeCreatePreferredIdentifierForTag(
-                tag_class.as_concrete_TypeRef(),
-                tag.as_concrete_TypeRef(),
-                std::ptr::null(),
-            )
-        };
-        if uti.is_null() {
-            None
-        } else {
-            Some(unsafe { CFString::wrap_under_create_rule(uti) })
-        }
+    fn uti_for_extension(extension: &str) -> Option<objc2::rc::Retained<UTType>> {
+        UTType::typeWithFilenameExtension(&NSString::from_str(extension))
     }
 
     #[cfg(test)]
     pub fn uti_identifier_for_extension(extension: &str) -> Option<String> {
-        uti_for_extension(extension).map(|uti| uti.to_string())
+        uti_for_extension(extension).map(|uti| uti.identifier().to_string())
     }
 
-    fn current_handler_for_uti(uti: &CFString) -> Option<String> {
-        let handler = unsafe {
-            LSCopyDefaultRoleHandlerForContentType(uti.as_concrete_TypeRef(), LS_ROLES_ALL)
-        };
-        if handler.is_null() {
-            None
-        } else {
-            Some(unsafe { CFString::wrap_under_create_rule(handler) }.to_string())
-        }
+    fn current_handler_for_uti(workspace: &NSWorkspace, uti: &UTType) -> Option<String> {
+        let application_url = workspace.URLForApplicationToOpenContentType(uti)?;
+        let bundle = NSBundle::bundleWithURL(&application_url)?;
+        bundle
+            .bundleIdentifier()
+            .map(|identifier| identifier.to_string())
     }
 
     fn query_target(target: ArchiveDefaultTarget, can_change: bool) -> ArchiveDefaultStatus {
         let Some(uti) = uti_for_extension(target.extension) else {
             return archive_status(target, None, can_change, "Unknown file type");
         };
-        let current_handler = current_handler_for_uti(&uti);
+        let workspace = NSWorkspace::sharedWorkspace();
+        let current_handler = current_handler_for_uti(&workspace, &uti);
         let status = if current_handler.as_deref() == Some(ZINNIA_BUNDLE_ID) {
             "Default"
         } else {
@@ -869,25 +819,41 @@ mod macos_defaults {
         let Some(uti) = uti_for_extension(target.extension) else {
             return archive_status(target, None, true, "Unknown file type");
         };
-        let bundle_id = CFString::new(bundle_id_value);
-        let status = unsafe {
-            LSSetDefaultRoleHandlerForContentType(
-                uti.as_concrete_TypeRef(),
-                LS_ROLES_ALL,
-                bundle_id.as_concrete_TypeRef(),
-            )
+        let workspace = NSWorkspace::sharedWorkspace();
+        let bundle_id = NSString::from_str(bundle_id_value);
+        let Some(application_url) = workspace.URLForApplicationWithBundleIdentifier(&bundle_id)
+        else {
+            return archive_status(target, None, true, "Installed app bundle not found");
         };
-        let current_handler = current_handler_for_uti(&uti);
-        if status == 0 && current_handler.as_deref() == Some(bundle_id_value) {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let completion = RcBlock::new(move |error: *mut NSError| {
+            let message = if error.is_null() {
+                None
+            } else {
+                // SAFETY: AppKit guarantees a valid NSError for the duration of
+                // the completion callback when the operation fails.
+                Some(unsafe { &*error }.localizedDescription().to_string())
+            };
+            let _ = sender.send(message);
+        });
+        workspace.setDefaultApplicationAtURL_toOpenContentType_completionHandler(
+            &application_url,
+            &uti,
+            Some(&completion),
+        );
+        let completion_error = match receiver.recv_timeout(std::time::Duration::from_secs(15)) {
+            Ok(error) => error,
+            Err(_) => Some("macOS did not finish the default-app request".to_string()),
+        };
+        let current_handler = current_handler_for_uti(&workspace, &uti);
+        if completion_error.is_none() && current_handler.as_deref() == Some(bundle_id_value) {
             archive_status(target, current_handler, true, changed_status)
-        } else if status == 0 {
-            archive_status(target, current_handler, true, "Not changed")
         } else {
             archive_status(
                 target,
                 current_handler,
                 true,
-                format!("Not changed ({status})"),
+                completion_error.unwrap_or_else(|| "Not changed".to_string()),
             )
         }
     }
@@ -1045,9 +1011,9 @@ mod tests {
     }
 
     #[test]
-    fn finder_services_pbs_defaults_enabled_when_absent() {
+    fn finder_services_pbs_is_unknown_when_absent() {
         let empty = serde_json::json!({});
-        assert!(finder_services_enabled_from_pbs(&empty));
+        assert_eq!(finder_services_enabled_from_pbs(&empty), None);
 
         let other = serde_json::json!({
             "NSServicesStatus": {
@@ -1057,7 +1023,7 @@ mod tests {
                 }
             }
         });
-        assert!(finder_services_enabled_from_pbs(&other));
+        assert_eq!(finder_services_enabled_from_pbs(&other), None);
     }
 
     #[test]
@@ -1074,7 +1040,7 @@ mod tests {
                 }
             }
         });
-        assert!(!finder_services_enabled_from_pbs(&disabled));
+        assert_eq!(finder_services_enabled_from_pbs(&disabled), Some(false));
 
         let enabled = serde_json::json!({
             "NSServicesStatus": {
@@ -1088,7 +1054,33 @@ mod tests {
                 }
             }
         });
-        assert!(finder_services_enabled_from_pbs(&enabled));
+        assert_eq!(finder_services_enabled_from_pbs(&enabled), Some(true));
+    }
+
+    #[test]
+    fn finder_services_pbs_is_unknown_when_only_one_service_is_registered() {
+        let partial = serde_json::json!({
+            "NSServicesStatus": {
+                "run.rosie.zinnia - Extract with Zinnia - extractWithZinnia": {
+                    "enabled_context_menu": true,
+                    "enabled_services_menu": true
+                }
+            }
+        });
+        assert_eq!(finder_services_enabled_from_pbs(&partial), None);
+    }
+
+    #[test]
+    fn finder_services_pbs_is_unknown_when_context_menu_flag_is_malformed() {
+        let malformed = serde_json::json!({
+            "NSServicesStatus": {
+                "run.rosie.zinnia - Extract with Zinnia - extractWithZinnia": {
+                    "enabled_context_menu": "true"
+                },
+                "run.rosie.zinnia - Compress with Zinnia - compressWithZinnia": {}
+            }
+        });
+        assert_eq!(finder_services_enabled_from_pbs(&malformed), None);
     }
 
     #[test]

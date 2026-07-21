@@ -30,6 +30,35 @@ function isNonEmptyString(value) {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function decodeStrictBase64(value) {
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value) || value.length % 4 !== 0) {
+    return null;
+  }
+  const decoded = Buffer.from(value, "base64");
+  return decoded.toString("base64") === value ? decoded : null;
+}
+
+function hasMinisignEnvelope(value) {
+  const outer = decodeStrictBase64(value);
+  if (!outer) return false;
+  const lines = outer.toString("utf8").trim().split(/\r?\n/);
+  if (
+    lines.length !== 4 ||
+    !lines[0].startsWith("untrusted comment:") ||
+    !lines[2].startsWith("trusted comment:")
+  ) {
+    return false;
+  }
+  const signaturePacket = decodeStrictBase64(lines[1]);
+  const globalSignature = decodeStrictBase64(lines[3]);
+  return (
+    signaturePacket?.length === 74 &&
+    signaturePacket[0] === 0x45 &&
+    signaturePacket[1] === 0x64 &&
+    globalSignature?.length === 64
+  );
+}
+
 function validateManifest(filePath) {
   const raw = fs.readFileSync(filePath, "utf8");
   let data;
@@ -46,9 +75,16 @@ function validateManifest(filePath) {
   }
   if (!isNonEmptyString(data.version)) {
     fail(`${filePath}: missing string "version"`);
+  } else if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(data.version)) {
+    fail(`${filePath}: version must be SemVer without a leading v`);
   }
   if (!isNonEmptyString(data.pub_date)) {
     fail(`${filePath}: missing string "pub_date"`);
+  } else if (
+    Number.isNaN(Date.parse(data.pub_date)) ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(data.pub_date)
+  ) {
+    fail(`${filePath}: pub_date must be a normalized ISO-8601 UTC timestamp`);
   }
   if (!data.platforms || typeof data.platforms !== "object") {
     fail(`${filePath}: missing object "platforms"`);
@@ -59,17 +95,47 @@ function validateManifest(filePath) {
   if (entries.length === 0) {
     fail(`${filePath}: platforms must not be empty`);
   }
+  const expectedTarget = path
+    .basename(filePath, ".json")
+    .replace(/^latest-/, "");
+  const betaFallbackTarget = expectedTarget.includes("-beta-")
+    ? expectedTarget.replace(/-(?:aarch64|x86_64)$/i, "")
+    : null;
   for (const [key, platform] of entries) {
+    if (
+      key !== expectedTarget &&
+      !key.startsWith(`${expectedTarget}-`) &&
+      key !== betaFallbackTarget
+    ) {
+      fail(
+        `${filePath}: platform key ${key} does not match manifest target ${expectedTarget}`,
+      );
+    }
     if (!platform || typeof platform !== "object") {
       fail(`${filePath}: platforms.${key} must be an object`);
       continue;
     }
-    if (!isNonEmptyString(platform.url) || !/^https:\/\//i.test(platform.url)) {
+    let parsedUrl = null;
+    try {
+      parsedUrl = new URL(platform.url);
+    } catch {}
+    if (
+      !isNonEmptyString(platform.url) ||
+      parsedUrl?.protocol !== "https:" ||
+      parsedUrl.hostname !== "github.com" ||
+      !parsedUrl.pathname.includes("/releases/") ||
+      parsedUrl.username ||
+      parsedUrl.password ||
+      parsedUrl.hash
+    ) {
       fail(`${filePath}: platforms.${key}.url must be an https URL`);
     }
-    if (!isNonEmptyString(platform.signature)) {
+    if (
+      !isNonEmptyString(platform.signature) ||
+      !hasMinisignEnvelope(platform.signature)
+    ) {
       fail(
-        `${filePath}: platforms.${key}.signature must be a non-empty string`,
+        `${filePath}: platforms.${key}.signature must be a base64-encoded minisign envelope`,
       );
     }
   }

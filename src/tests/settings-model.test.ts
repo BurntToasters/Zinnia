@@ -40,13 +40,13 @@ describe("normalizeUserSettings", () => {
     expect(result.theme).toBe(SETTING_DEFAULTS.theme);
   });
 
-  it("accepts valid format and pathMode", () => {
+  it("migrates unsafe absolute pathMode to relative", () => {
     const result = normalizeUserSettings({
       format: "zip",
       pathMode: "absolute",
     });
     expect(result.format).toBe("zip");
-    expect(result.pathMode).toBe("absolute");
+    expect(result.pathMode).toBe("relative");
   });
 
   it("rejects wrong types for boolean fields", () => {

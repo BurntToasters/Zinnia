@@ -110,14 +110,13 @@ fn normalize_destination_path(path: &std::path::Path) -> Result<std::path::PathB
 
 /// Keep aligned with `src/extract-path.ts` deriveExtractDestinationPath + parent fallback.
 pub fn derive_extract_destination_path(archive_path: &str) -> Option<std::path::PathBuf> {
-    let trimmed = archive_path.trim();
-    if trimmed.is_empty() {
+    if archive_path.is_empty() {
         return None;
     }
-    if let Some(derived) = derive_extract_folder_destination(trimmed) {
+    if let Some(derived) = derive_extract_folder_destination(archive_path) {
         return Some(derived);
     }
-    parent_dir_path(trimmed)
+    parent_dir_path(archive_path)
 }
 
 fn parent_dir_path(path: &str) -> Option<std::path::PathBuf> {
@@ -160,7 +159,7 @@ fn looks_like_windows_path(path: &str) -> bool {
 }
 
 fn split_path_parts(raw_path: &str) -> PathParts {
-    let archive_path = raw_path.trim();
+    let archive_path = raw_path;
     if archive_path.is_empty() {
         return PathParts {
             parent: String::new(),
@@ -225,7 +224,7 @@ fn derive_extract_folder_name(archive_name: &str) -> Option<String> {
         ".tar.gz", ".tar.bz2", ".tar.xz", ".tbz2", ".tgz", ".txz", ".7z", ".zip", ".rar", ".tar",
         ".gz", ".bz2", ".xz",
     ];
-    let cleaned = archive_name.trim();
+    let cleaned = archive_name;
     if cleaned.is_empty() {
         return None;
     }
@@ -755,8 +754,7 @@ pub fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Resul
 
     // Inject archive + destination before the page script runs so the UI can paint
     // and start extract without waiting on get_extract_paths.
-    let init_script =
-        extract_session_init_script(&archive, destination.to_string_lossy().as_ref());
+    let init_script = extract_session_init_script(&archive, destination.to_string_lossy().as_ref());
 
     restore_foreground_activation(app);
 
@@ -868,16 +866,15 @@ fn looks_like_archive_path(path: &str) -> bool {
 }
 
 fn normalize_open_path_arg(arg: &str) -> Option<String> {
-    let trimmed = arg.trim().trim_matches('"');
-    if trimmed.is_empty() || trimmed == "--" {
+    if arg.is_empty() || arg == "--" {
         return None;
     }
-    if trimmed.contains('\0') {
+    if arg.contains('\0') {
         return None;
     }
 
-    if trimmed.to_ascii_lowercase().starts_with("file://") {
-        if let Ok(url) = Url::parse(trimmed) {
+    if arg.to_ascii_lowercase().starts_with("file://") {
+        if let Ok(url) = Url::parse(arg) {
             if let Ok(path) = url.to_file_path() {
                 return Some(path.to_string_lossy().to_string());
             }
@@ -885,7 +882,7 @@ fn normalize_open_path_arg(arg: &str) -> Option<String> {
         }
     }
 
-    Some(trimmed.to_string())
+    Some(arg.to_string())
 }
 
 fn parse_open_request_args<I>(args: I) -> (Vec<String>, String)
@@ -1096,7 +1093,9 @@ mod tests {
         );
         assert_eq!(
             derive_extract_destination_path("/downloads/example.custom"),
-            Some(std::path::PathBuf::from("/downloads/example.custom_extracted"))
+            Some(std::path::PathBuf::from(
+                "/downloads/example.custom_extracted"
+            ))
         );
         assert_eq!(
             derive_extract_destination_path("/example.zip"),
@@ -1106,7 +1105,10 @@ mod tests {
             derive_extract_destination_path(r"C:\example.zip"),
             Some(std::path::PathBuf::from(r"C:\example"))
         );
-        assert_eq!(derive_extract_destination_path("   "), None);
+        assert_eq!(
+            derive_extract_destination_path("   "),
+            Some(std::path::PathBuf::from("   _extracted"))
+        );
     }
 
     #[test]
@@ -1181,6 +1183,20 @@ mod tests {
 
         assert_eq!(paths.len(), 1);
         assert_eq!(paths[0], file_path.to_string_lossy().to_string());
+        assert_eq!(mode, "extract");
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn parse_open_request_args_preserves_whitespace_in_file_names() {
+        let base = temp_base("open-args-spaces");
+        let file_path = base.join(" archive.zip");
+        write_zip(&file_path);
+
+        let (paths, mode) = parse_open_request_args(vec![file_path.to_string_lossy().to_string()]);
+
+        assert_eq!(paths, vec![file_path.to_string_lossy().to_string()]);
         assert_eq!(mode, "extract");
 
         let _ = std::fs::remove_dir_all(base);

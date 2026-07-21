@@ -1,8 +1,14 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -64,17 +70,82 @@ function computeReachablePackageIds(metadata) {
   return { reachable, workspaceMembers };
 }
 
+function readLicenseTexts(pkg) {
+  const packageDir = dirname(pkg.manifest_path);
+  const names = new Set(
+    readdirSync(packageDir).filter((name) =>
+      /^(license|copying|notice|authors|copyright)(?:[._-].*)?$/i.test(name),
+    ),
+  );
+  if (typeof pkg.license_file === "string" && pkg.license_file.trim()) {
+    const filePath = resolve(packageDir, pkg.license_file);
+    const rel = relative(packageDir, filePath);
+    if (
+      !rel.startsWith("..") &&
+      !rel.includes("../") &&
+      !rel.includes("..\\") &&
+      existsSync(filePath)
+    ) {
+      names.add(rel);
+    }
+  }
+  const sections = [];
+  for (const name of [...names].sort()) {
+    const text = readFileSync(join(packageDir, name), "utf8").trim();
+    // AUTHORS/COPYRIGHT files are useful only when they also carry the
+    // package's license terms. Do not surface an unrelated contributor list.
+    const attributionOnly = /^(authors|copyright)(?:[._-].*)?$/i.test(name);
+    const hasLicenseTerms =
+      /permission is hereby granted|licensed under|gnu (?:lesser )?general public license|mozilla public license|redistribution and use/i.test(
+        text,
+      );
+    if (text && (!attributionOnly || hasLicenseTerms)) {
+      sections.push(`--- ${name} ---\n${text}`);
+    }
+  }
+  return sections.length > 0 ? sections.join("\n\n") : null;
+}
+
+function spdxReferences(licenses) {
+  const identifiers = licenses.match(/[A-Za-z0-9.-]+(?:\+)?/g) ?? [];
+  return [...new Set(identifiers)]
+    .filter(
+      (identifier) =>
+        !["AND", "OR", "WITH", "LicenseRef"].includes(identifier) &&
+        !identifier.startsWith("DocumentRef-"),
+    )
+    .map((identifier) => ({
+      identifier,
+      url: `https://spdx.org/licenses/${encodeURIComponent(identifier)}.html`,
+    }));
+}
+
 function toLicenseEntry(pkg) {
+  const licenses =
+    typeof pkg.license === "string" && pkg.license.trim()
+      ? pkg.license.trim()
+      : "UNKNOWN";
+  if (licenses === "UNKNOWN") {
+    throw new Error(
+      `Cargo dependency ${pkg.name}@${pkg.version} does not declare an SPDX license.`,
+    );
+  }
+
+  const bundledText = readLicenseTexts(pkg);
   const entry = {
-    licenses:
-      typeof pkg.license === "string" && pkg.license.trim()
-        ? pkg.license.trim()
-        : "UNKNOWN",
+    licenses,
     repository:
       typeof pkg.repository === "string" && pkg.repository.trim()
         ? pkg.repository.trim()
         : null,
     packageManager: "cargo",
+    // Never borrow a license blob from another crate: copyright notices and
+    // SPDX AND/OR expressions are package-specific. If a published crate does
+    // not include its own text, preserve that fact and link to the declared
+    // SPDX identifiers instead of fabricating attribution.
+    licenseText: bundledText,
+    licenseTextStatus: bundledText ? "bundled" : "not-packaged",
+    licenseReferences: bundledText ? [] : spdxReferences(licenses),
   };
 
   if (Array.isArray(pkg.authors) && pkg.authors.length > 0) {
@@ -97,13 +168,17 @@ function buildCargoLicenses(metadata) {
   const { reachable, workspaceMembers } = computeReachablePackageIds(metadata);
   const packages = Array.isArray(metadata.packages) ? metadata.packages : [];
 
+  const reachablePackages = packages.filter(
+    (pkg) =>
+      pkg &&
+      typeof pkg.id === "string" &&
+      reachable.has(pkg.id) &&
+      !workspaceMembers.has(pkg.id) &&
+      typeof pkg.name === "string" &&
+      typeof pkg.version === "string",
+  );
   const entries = {};
-  for (const pkg of packages) {
-    if (!pkg || typeof pkg.id !== "string") continue;
-    if (!reachable.has(pkg.id) || workspaceMembers.has(pkg.id)) continue;
-    if (typeof pkg.name !== "string" || typeof pkg.version !== "string")
-      continue;
-
+  for (const pkg of reachablePackages) {
     const key = `cargo:${pkg.name}@${pkg.version}`;
     entries[key] = toLicenseEntry(pkg);
   }
@@ -116,11 +191,14 @@ function buildCargoLicenses(metadata) {
 function main() {
   const metadata = runCargoMetadata();
   const licenses = buildCargoLicenses(metadata);
+  const missingText = Object.values(licenses).filter(
+    (entry) => entry.licenseTextStatus === "not-packaged",
+  ).length;
 
   mkdirSync(dirname(outputPath), { recursive: true });
   writeFileSync(outputPath, `${JSON.stringify(licenses, null, 2)}\n`, "utf8");
   console.log(
-    `[licenses:cargo] Wrote ${Object.keys(licenses).length} cargo entries to ${outputPath}`,
+    `[licenses:cargo] Wrote ${Object.keys(licenses).length} cargo entries to ${outputPath} (${missingText} package license texts unavailable; SPDX references included)`,
   );
 }
 

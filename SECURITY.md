@@ -39,9 +39,15 @@ operations:
 
 - Create/update writes to a sibling staging basename. Only a successful process
   promotes the complete output family, including split volumes.
-- Extraction writes to a contained staging directory. Before promotion, Zinnia
-  walks the entire tree, rejects symbolic links and unsupported file types, and
-  applies entry-count and expanded-size ceilings.
+- Extraction writes to a contained staging directory. Before extraction, Zinnia
+  copies the complete input volume family into a private, recovery-tracked
+  snapshot. Member listing and extraction both use that same snapshot, so an
+  ordinary source-file replacement cannot change what is extracted after
+  preflight. Zinnia lists members (`7z l -slt`) and rejects paths with `..` or absolute
+  forms that could escape the `-o` root into an existing sibling folder. Before
+  promotion, Zinnia also snapshots sibling names in the stage parent (new names
+  outside the stage fail closed), walks the staged tree, rejects symbolic links
+  and unsupported file types, and applies entry-count and expanded-size ceilings.
 - Promotion resolves file/directory conflicts without overwriting unrelated
   destination content. A durable move plan and transaction journal allow an
   interrupted merge or split-archive promotion to be rolled back on restart.
@@ -71,7 +77,9 @@ Mitigations in place:
 
 A full fix requires linking 7-Zip as a library (e.g. `sevenz-rust2`) for the
 encrypted paths so the password never reaches a process command line. This is
-tracked as planned work and is out of scope for the CLI sidecar today.
+tracked as release-security debt and is out of scope for the CLI sidecar today.
+Do not represent encrypted-archive passwords as protected from other same-user
+processes until that architecture changes.
 
 Avoid sharing screen recordings or process listings while an encrypted
 operation is running.
@@ -79,7 +87,9 @@ operation is running.
 ### Vendored 7-Zip binaries
 
 The 7-Zip binaries in `assets/` are committed to the repository and checksummed
-in `assets/7z-checksums.json`. Because they are bundled, a 7-Zip CVE fix
+in `assets/7z-checksums.json`. Exact official source URLs, downloaded archive
+hashes, versions, and extracted members are recorded in
+`assets/7z-provenance.json`. Because they are bundled, a 7-Zip CVE fix
 requires manually updating the binaries, regenerating checksums, and shipping a
 new Zinnia release; there is no OS-level automatic update mechanism.
 
@@ -87,8 +97,12 @@ new Zinnia release; there is no OS-level automatic update mechanism.
 and [NVD vendor page](https://nvd.nist.gov/vuln/search/results?form_type=Basic&results_type=overview&query=7-zip&search_type=all)
 for new advisories. When a new 7-Zip version addresses a security issue, update
 `assets/` with the new binaries, run
-`node scripts/prepare-7z.js --update-checksums` to regenerate
-`assets/7z-checksums.json`, and cut a Zinnia release.
+`assets/7z-provenance.json` with the exact official archive URLs, archive
+SHA-256 values, and extracted member mapping, then run
+`node scripts/prepare-7z.js --update-checksums --version <verified-version> --verify-downloads <download-directory>`
+and cut a Zinnia release. The update command refuses to run when its explicit
+version does not match the reviewed provenance manifest or the downloaded
+archives and extracted members do not match that manifest.
 
 #### Temporary Windows RAR restriction
 
@@ -124,6 +138,25 @@ the bundled 7-Zip sidecar must read/write arbitrary user-selected archive paths.
 Document portals alone cannot cover sidecar I/O today. This expands the sandbox
 blast radius relative to a portal-only app; treat untrusted archives with the
 same caution as on other platforms.
+
+### Upstream Rust advisory review
+
+`src-tauri/.cargo/audit.toml` contains a deliberately narrow, documented list
+of transitive Tauri/wry/GTK3 advisories. CI fails for every advisory outside
+that list. Before each stable release, review the ignored list against the
+resolved dependency tree and remove an ignore as soon as Tauri provides an
+upgrade path. In particular, the GTK `glib` `VariantStrIter` soundness advisory
+is not reached by Zinnia's code, but it remains a Linux runtime dependency and
+must not be treated as resolved merely because `cargo audit` allows it.
+
+### Same-user filesystem race boundary
+
+Zinnia re-checks extraction ancestors immediately before publishing staged
+output. A same-user process can still race the final rename or hard-link after
+that check. Fully eliminating that residual race requires platform-specific
+no-follow directory handles; it is tracked as architectural security debt.
+The current staging, canonical-path, symlink/reparse, and post-extraction
+validation checks remain mandatory defense in depth.
 
 ### Open-folder allowlist
 

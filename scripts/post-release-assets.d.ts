@@ -28,13 +28,11 @@ export function copyReleaseAssets(
   options?: { logger?: Pick<Console, "log" | "warn" | "error"> },
 ): number;
 
-export type FinalizeResult =
-  | { mirrored: false; destination: null }
-  | {
-      mirrored: true;
-      destination: string;
-      copiedEntries: number;
-    };
+export type FinalizeResult = {
+  mirrored: true;
+  destination: string;
+  copiedEntries: number;
+};
 
 export function run(options?: {
   releaseDir?: string;

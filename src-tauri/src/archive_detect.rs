@@ -3,6 +3,13 @@
 use std::io::Read;
 
 const ARCHIVE_SIGNATURE_SCAN_BYTES: usize = 512;
+/// Keep aligned with `src/archive-rules.ts` MAX_ARCHIVE_PATHS and the 7-Zip
+/// argument ceiling in `validation.rs`.
+const MAX_ARCHIVE_PATHS: usize = 4096;
+/// Keep aligned with `src/archive-rules.ts` MAX_ARCHIVE_PATHS_IPC_BYTES. The
+/// command accepts one JSON string so this check occurs before allocating a
+/// `Vec<String>` from an untrusted IPC request.
+const MAX_ARCHIVE_PATHS_IPC_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(serde::Serialize, Clone, Debug)]
 pub struct ArchivePathValidation {
@@ -173,26 +180,26 @@ fn extension_mismatch_reason(expected: &str, detected: Option<&str>, tar: bool) 
 }
 
 pub fn validate_archive_path(path: &str) -> ArchivePathValidation {
-    let trimmed = path.trim();
+    let candidate = path;
 
     let invalid = |reason: &str| ArchivePathValidation {
-        path: trimmed.to_string(),
+        path: candidate.to_string(),
         valid: false,
         reason: Some(reason.to_string()),
     };
 
-    if trimmed.is_empty() {
+    if candidate.is_empty() {
         return invalid("Path is empty.");
     }
-    if trimmed.contains('\0') {
+    if candidate.contains('\0') {
         return invalid("Path contains invalid characters.");
     }
-    if trimmed.len() > 4096 {
+    if candidate.len() > 4096 {
         return invalid("Path exceeds maximum length.");
     }
 
-    let lower = trimmed.to_lowercase();
-    let fs_path = std::path::Path::new(trimmed);
+    let lower = candidate.to_lowercase();
+    let fs_path = std::path::Path::new(candidate);
 
     let meta = match std::fs::symlink_metadata(fs_path) {
         Ok(meta) => meta,
@@ -203,7 +210,7 @@ pub fn validate_archive_path(path: &str) -> ArchivePathValidation {
                 format!("Unable to read file metadata: {}", err)
             };
             return ArchivePathValidation {
-                path: trimmed.to_string(),
+                path: candidate.to_string(),
                 valid: false,
                 reason: Some(reason),
             };
@@ -220,7 +227,7 @@ pub fn validate_archive_path(path: &str) -> ArchivePathValidation {
         Ok(bytes) => bytes,
         Err(err) => {
             return ArchivePathValidation {
-                path: trimmed.to_string(),
+                path: candidate.to_string(),
                 valid: false,
                 reason: Some(format!("Unable to read file contents: {}", err)),
             };
@@ -245,7 +252,7 @@ pub fn validate_archive_path(path: &str) -> ArchivePathValidation {
 
     if valid {
         return ArchivePathValidation {
-            path: trimmed.to_string(),
+            path: candidate.to_string(),
             valid: true,
             reason: None,
         };
@@ -265,14 +272,28 @@ pub fn validate_archive_path(path: &str) -> ArchivePathValidation {
     };
 
     ArchivePathValidation {
-        path: trimmed.to_string(),
+        path: candidate.to_string(),
         valid: false,
         reason: Some(reason),
     }
 }
 
 #[tauri::command]
-pub fn validate_archive_paths(paths: Vec<String>) -> Result<Vec<ArchivePathValidation>, String> {
+pub fn validate_archive_paths(paths_json: String) -> Result<Vec<ArchivePathValidation>, String> {
+    if paths_json.len() > MAX_ARCHIVE_PATHS_IPC_BYTES {
+        return Err(format!(
+            "Archive-path validation request exceeds the {} MiB safety limit.",
+            MAX_ARCHIVE_PATHS_IPC_BYTES / (1024 * 1024)
+        ));
+    }
+    let paths: Vec<String> = serde_json::from_str(&paths_json).map_err(|_| {
+        "Archive-path validation request must be a JSON array of paths.".to_string()
+    })?;
+    if paths.len() > MAX_ARCHIVE_PATHS {
+        return Err(format!(
+            "At most {MAX_ARCHIVE_PATHS} paths can be validated at once."
+        ));
+    }
     Ok(paths
         .into_iter()
         .map(|path| validate_archive_path(&path))
@@ -295,6 +316,21 @@ mod tests {
             Some("rar")
         );
         assert_eq!(detect_archive_signature(b"plain-text"), None);
+    }
+
+    #[test]
+    fn validate_archive_paths_rejects_oversized_batches() {
+        let paths_json = serde_json::to_string(&vec![String::new(); MAX_ARCHIVE_PATHS + 1])
+            .expect("test paths should serialize");
+        let result = validate_archive_paths(paths_json);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("At most 4096 paths"));
+    }
+
+    #[test]
+    fn validation_rejects_oversized_ipc_payload_before_json_deserialization() {
+        let result = validate_archive_paths("x".repeat(MAX_ARCHIVE_PATHS_IPC_BYTES + 1));
+        assert!(result.is_err_and(|error| error.contains("safety limit")));
     }
 
     #[test]

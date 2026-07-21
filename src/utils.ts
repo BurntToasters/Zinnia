@@ -33,6 +33,58 @@ const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
 
 const activeFocusTraps = new Map<HTMLElement, (e: KeyboardEvent) => void>();
+const isolatedForModal = new Map<HTMLElement, HTMLElement[]>();
+const activatedAncestorsForModal = new Map<HTMLElement, HTMLElement[]>();
+const isolationState = new Map<
+  HTMLElement,
+  { count: number; wasInert: boolean }
+>();
+
+function isolateModalBackground(container: HTMLElement): void {
+  const isolated: HTMLElement[] = [];
+  const activatedAncestors: HTMLElement[] = [];
+  let branch: HTMLElement = container;
+  while (branch.parentElement && branch !== document.body) {
+    if (branch.inert && isolationState.has(branch)) {
+      branch.inert = false;
+      activatedAncestors.push(branch);
+    }
+    for (const sibling of branch.parentElement.children) {
+      if (!(sibling instanceof HTMLElement) || sibling === branch) continue;
+      const existing = isolationState.get(sibling);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        isolationState.set(sibling, {
+          count: 1,
+          wasInert: sibling.inert === true,
+        });
+        sibling.inert = true;
+      }
+      isolated.push(sibling);
+    }
+    branch = branch.parentElement;
+  }
+  isolatedForModal.set(container, isolated);
+  activatedAncestorsForModal.set(container, activatedAncestors);
+}
+
+function restoreModalBackground(container: HTMLElement): void {
+  for (const element of isolatedForModal.get(container) ?? []) {
+    const state = isolationState.get(element);
+    if (!state) continue;
+    state.count -= 1;
+    if (state.count === 0) {
+      element.inert = state.wasInert;
+      isolationState.delete(element);
+    }
+  }
+  for (const element of activatedAncestorsForModal.get(container) ?? []) {
+    if (isolationState.has(element)) element.inert = true;
+  }
+  isolatedForModal.delete(container);
+  activatedAncestorsForModal.delete(container);
+}
 
 export function trapFocus(container: HTMLElement): void {
   if (activeFocusTraps.has(container)) {
@@ -60,6 +112,7 @@ export function trapFocus(container: HTMLElement): void {
   };
   activeFocusTraps.set(container, handler);
   document.addEventListener("keydown", handler);
+  isolateModalBackground(container);
   const first = container.querySelector<HTMLElement>(FOCUSABLE);
   if (first) first.focus();
 }
@@ -70,6 +123,7 @@ export function releaseFocusTrap(container: HTMLElement): void {
     document.removeEventListener("keydown", handler);
     activeFocusTraps.delete(container);
   }
+  restoreModalBackground(container);
 }
 
 export function parseThreads(raw: string, fallback: number): number {
@@ -124,7 +178,23 @@ export function redactSensitiveText(input: string): string {
 }
 
 export function safeHref(url: string): string {
-  return SAFE_URL_PATTERN.test(url) ? escapeHtml(url) : "#";
+  if (
+    !SAFE_URL_PATTERN.test(url) ||
+    url.trim() !== url ||
+    /[\u0000-\u001F]/.test(url)
+  ) {
+    return "#";
+  }
+  try {
+    const parsed = new URL(url);
+    return (parsed.protocol === "https:" || parsed.protocol === "http:") &&
+      !parsed.username &&
+      !parsed.password
+      ? url
+      : "#";
+  } catch {
+    return "#";
+  }
 }
 
 export function isArchiveFile(path: string): boolean {

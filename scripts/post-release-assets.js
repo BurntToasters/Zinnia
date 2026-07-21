@@ -1,6 +1,5 @@
-#!/usr/bin/env node
-
 import fs from "fs";
+import crypto from "crypto";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -25,6 +24,23 @@ const BUILD_ONLY_FILES = [
   ".build-session.json",
 ];
 const CLI_FLAG = "--finalize-release-assets";
+const HASH_BUFFER_BYTES = 1024 * 1024;
+
+function sha256File(filePath) {
+  const hash = crypto.createHash("sha256");
+  const buffer = Buffer.allocUnsafe(HASH_BUFFER_BYTES);
+  const fd = fs.openSync(filePath, "r");
+  try {
+    let bytesRead;
+    do {
+      bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
+      if (bytesRead > 0) hash.update(buffer.subarray(0, bytesRead));
+    } while (bytesRead > 0);
+  } finally {
+    fs.closeSync(fd);
+  }
+  return hash.digest("hex");
+}
 
 function removePath(targetPath) {
   fs.rmSync(targetPath, {
@@ -108,10 +124,17 @@ function verifyCopiedPath(sourcePath, destinationPath) {
   if (source.isDirectory() !== destination.isDirectory()) {
     throw new Error(`mirrored path type differs: ${destinationPath}`);
   }
-  if (source.isFile() && source.size !== destination.size) {
-    throw new Error(
-      `mirrored file size differs: ${destinationPath} (${destination.size} bytes; expected ${source.size})`,
-    );
+  if (source.isFile()) {
+    if (source.size !== destination.size) {
+      throw new Error(
+        `mirrored file size differs: ${destinationPath} (${destination.size} bytes; expected ${source.size})`,
+      );
+    }
+    const sourceDigest = sha256File(sourcePath);
+    const destinationDigest = sha256File(destinationPath);
+    if (sourceDigest !== destinationDigest) {
+      throw new Error(`mirrored file hash differs: ${destinationPath}`);
+    }
   }
 
   if (source.isDirectory()) {
@@ -231,14 +254,16 @@ function run({
   env = process.env,
   logger = console,
 } = {}) {
+  const destination = getAfterPackLocation(env);
+  if (!destination) {
+    throw new Error(
+      "AFTER_PACK_LOC is empty; refusing to clean release assets before a verified mirror.",
+    );
+  }
+
   progress(logger, "cleaning build-only release artifacts");
   cleanReleaseArtifacts(releaseDir);
   progress(logger, "clean complete");
-
-  const destination = getAfterPackLocation(env);
-  if (!destination) {
-    return { mirrored: false, destination: null };
-  }
 
   const copiedEntries = copyReleaseAssets(releaseDir, destination, { logger });
   return {
@@ -254,15 +279,9 @@ function finalizeReleaseAssets({
   logger = console,
 } = {}) {
   const result = run({ releaseDir, env, logger });
-  if (result.mirrored) {
-    logger.log(
-      `Mirrored and verified ${result.copiedEntries} cleaned release entries to: ${result.destination}`,
-    );
-  } else {
-    logger.warn(
-      "WARNING: Cleaned release assets, but AFTER_PACK_LOC is not set; mirror intentionally skipped.",
-    );
-  }
+  logger.log(
+    `Mirrored and verified ${result.copiedEntries} cleaned release entries to: ${result.destination}`,
+  );
   return result;
 }
 

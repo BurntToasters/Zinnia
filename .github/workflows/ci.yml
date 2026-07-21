@@ -20,23 +20,28 @@ jobs:
   quality-gate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 22.12
           cache: npm
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           toolchain: stable
+          components: rustfmt
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            appstream \
+            desktop-file-utils \
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
             patchelf
       - run: npm ci
+      - name: Rust format check
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
       - run: npm run test:all
 
   rust-check:
@@ -46,8 +51,8 @@ jobs:
         os: [windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 22.12
           cache: npm
@@ -59,13 +64,13 @@ jobs:
       - run: npm run prepare:7z
       # Empty stubs only — CI never builds/signs the real Win11 shell package.
       - run: npm run prepare:win-shell-stubs
-      - run: cargo test --manifest-path src-tauri/Cargo.toml
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --all-targets
 
   updater-manifest:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 22.12
       - run: npm run validate:updater
@@ -88,8 +93,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 22.12
           cache: npm
@@ -110,6 +115,15 @@ jobs:
       - run: npm run prepare:7z
       - run: npm run licenses
       - run: npm run build
+      - name: Native Windows shell compile smoke
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $template = Get-Content src-tauri/windows/shell/msix_identity.manifest.in -Raw
+          $template.Replace('__PUBLISHER_DN__', 'CN=Zinnia CI') |
+            Set-Content src-tauri/windows/shell/msix_identity.manifest -Encoding UTF8
+          cmake -S src-tauri/windows/shell -B src-tauri/windows/shell/build-ci -A x64
+          cmake --build src-tauri/windows/shell/build-ci --config Release
       - run: npm run prepare:win-shell-stubs
       - name: Unsigned tauri build (no bundle)
         run: npx tauri build --no-bundle
@@ -122,8 +136,8 @@ jobs:
   security-audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 22.12
           cache: npm

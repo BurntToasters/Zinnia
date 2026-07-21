@@ -9,6 +9,9 @@ import {
   parseSettingsRaw,
 } from "./settings-model";
 import { getCompressionSecuritySupport } from "./compression-security";
+import { syncWorkspaceWindowFx } from "./window-fx";
+
+let settingsModalBasicWindowEffects: boolean | null = null;
 
 export function applyTheme(pref: string) {
   const resolved =
@@ -18,9 +21,7 @@ export function applyTheme(pref: string) {
         : "light"
       : pref;
   document.documentElement.setAttribute("data-theme", resolved);
-  void import("./ui").then(({ syncWorkspaceWindowFx }) => {
-    void syncWorkspaceWindowFx();
-  });
+  void syncWorkspaceWindowFx();
 }
 
 export async function loadSettings(): Promise<UserSettings> {
@@ -60,7 +61,7 @@ export function applySettingsToForm() {
   $<HTMLSelectElement>("word-size").value = state.currentSettings.wordSize;
   $<HTMLSelectElement>("solid").value = state.currentSettings.solid;
   $<HTMLInputElement>("threads").value = String(state.currentSettings.threads);
-  $<HTMLSelectElement>("path-mode").value = state.currentSettings.pathMode;
+  $<HTMLInputElement>("path-mode").value = "relative";
   $<HTMLInputElement>("sfx").checked = false;
   $<HTMLInputElement>("sfx").disabled = true;
   $<HTMLInputElement>("encrypt-headers").checked =
@@ -79,7 +80,7 @@ export function populateSettingsModal() {
   $<HTMLInputElement>("s-threads").value = String(
     state.currentSettings.threads,
   );
-  $<HTMLSelectElement>("s-path-mode").value = state.currentSettings.pathMode;
+  $<HTMLInputElement>("s-path-mode").value = "relative";
   $<HTMLInputElement>("s-sfx").checked = false;
   $<HTMLInputElement>("s-sfx").disabled = true;
   $<HTMLInputElement>("s-encrypt-headers").checked =
@@ -146,8 +147,9 @@ export function readSettingsModal(): UserSettings {
       $<HTMLInputElement>("s-threads").value,
       SETTING_DEFAULTS.threads,
     ),
-    pathMode: $<HTMLSelectElement>("s-path-mode")
-      .value as UserSettings["pathMode"],
+    // Absolute member paths make archives non-relocatable and fail Zinnia's
+    // secure extraction preflight. Preserve the setting only for migration.
+    pathMode: "relative",
     sfx: false,
     encryptHeaders:
       securitySupport.encryptHeaders &&
@@ -210,6 +212,7 @@ export async function syncBasicWindowEffectsVisibility(): Promise<void> {
 }
 
 export function openSettingsModal() {
+  settingsModalBasicWindowEffects ??= state.currentSettings.basicWindowEffects;
   populateSettingsModal();
   const keepWarm = document.getElementById(
     "s-quick-extract-keep-warm",
@@ -227,9 +230,7 @@ export function openSettingsModal() {
     basicFx.dataset.liveFxBound = "1";
     basicFx.addEventListener("change", () => {
       state.currentSettings.basicWindowEffects = basicFx.checked;
-      void import("./ui").then(({ syncWorkspaceWindowFx }) => {
-        void syncWorkspaceWindowFx();
-      });
+      void syncWorkspaceWindowFx();
     });
   }
   const overlay = $("settings-overlay");
@@ -244,7 +245,17 @@ export function openSettingsModal() {
   }
 }
 
-export function closeSettingsModal() {
+export function closeSettingsModal(
+  options: { preserveLivePreview?: boolean } = {},
+) {
+  if (
+    !options.preserveLivePreview &&
+    settingsModalBasicWindowEffects !== null
+  ) {
+    state.currentSettings.basicWindowEffects = settingsModalBasicWindowEffects;
+    void syncWorkspaceWindowFx();
+  }
+  settingsModalBasicWindowEffects = null;
   const overlay = $("settings-overlay");
   overlay.hidden = true;
   const modal = overlay.querySelector<HTMLElement>(".modal");

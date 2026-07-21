@@ -8,8 +8,7 @@
     <!-- Do not add allow-unsigned-executable-memory or disable-library-validation:
          WKWebView uses Apple-signed system frameworks, and neither broad hardened-
          runtime exception is required by Zinnia's executable 7z sidecar. -->
-    <!-- network.client: required for the updater to reach GitHub releases -->
-    <key>com.apple.security.network.client</key>
-    <true/>
+    <!-- Zinnia is not App Sandbox-enabled, so updater network access needs no
+         App Sandbox networking entitlement. -->
   </dict>
 </plist>

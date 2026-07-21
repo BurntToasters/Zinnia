@@ -47,9 +47,14 @@ export type ProbeArchivePaths = (
 ) => Promise<ArchivePathValidation[]>;
 
 const SWITCH_PATH_PREFIXES = ["-i", "-x", "-w", "-o"];
+export const MAX_ARCHIVE_PATHS = 4096;
+/** Keep in sync with `archive_detect.rs`; bound serialized IPC payloads too. */
+export const MAX_ARCHIVE_PATHS_IPC_BYTES = 4 * 1024 * 1024;
 
 function normalizePath(path: string): string {
-  return path.trim();
+  // File names may legally start or end with whitespace. File-dialog and OS
+  // launch paths are already tokenized, so preserve them exactly.
+  return path;
 }
 
 function hasParentDirComponent(path: string): boolean {
@@ -93,6 +98,13 @@ export async function validateArchivePaths(
   paths: string[],
 ): Promise<ArchivePathValidation[]> {
   const normalized = paths.map(normalizePath);
+  if (normalized.length > MAX_ARCHIVE_PATHS) {
+    return normalized.map((path) => ({
+      path,
+      valid: false,
+      reason: `At most ${MAX_ARCHIVE_PATHS} paths can be validated at once.`,
+    }));
+  }
   const byPath = new Map<string, ArchivePathValidation>();
   const toProbe = new Set<string>();
 
@@ -106,9 +118,20 @@ export async function validateArchivePaths(
 
   if (toProbe.size > 0) {
     const probeList = [...toProbe];
+    const pathsJson = JSON.stringify(probeList);
+    if (
+      new TextEncoder().encode(pathsJson).byteLength >
+      MAX_ARCHIVE_PATHS_IPC_BYTES
+    ) {
+      return normalized.map((path) => ({
+        path,
+        valid: false,
+        reason: `The archive-path validation request exceeds the ${MAX_ARCHIVE_PATHS_IPC_BYTES / (1024 * 1024)} MiB safety limit.`,
+      }));
+    }
     const probed = await invoke<ArchivePathValidation[]>(
       "validate_archive_paths",
-      { paths: probeList },
+      { pathsJson },
     );
     for (const result of probed) {
       const normalizedPath = normalizePath(result.path);

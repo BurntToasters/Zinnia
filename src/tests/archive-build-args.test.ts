@@ -209,16 +209,7 @@ describe("buildArgs (add mode)", () => {
     expect(args).toContain("-mta=on");
   });
 
-  it("includes absolute path mode switch", () => {
-    state.inputs = ["a.txt"];
-    setInputValue("output-path", "out.7z");
-    setSelectValue("path-mode", "absolute");
-
-    const args = buildArgs();
-    expect(args).toContain("-spf");
-  });
-
-  it("omits path mode switch for relative", () => {
+  it("always creates relocatable archives without absolute member paths", () => {
     state.inputs = ["a.txt"];
     setInputValue("output-path", "out.7z");
     setSelectValue("path-mode", "relative");

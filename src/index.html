@@ -663,13 +663,9 @@
                         value="8"
                       />
                     </div>
-                    <div class="field">
-                      <label for="s-path-mode">Path mode</label>
-                      <select id="s-path-mode">
-                        <option value="relative">Relative</option>
-                        <option value="absolute">Absolute</option>
-                      </select>
-                    </div>
+                    <!-- Compatibility state for settings saved before 0.6.0-beta.4.
+                         Zinnia now creates only safely relocatable archives. -->
+                    <input id="s-path-mode" type="hidden" value="relative" />
                   </div>
                 </section>
 
@@ -1490,7 +1486,8 @@
                   <i data-lucide="sliders" class="lucide-icon"></i>
                   <h3>Options</h3>
                 </div>
-                <select id="basic-preset" class="basic-hidden-select">
+                <!-- State holder for the visible preset buttons; never expose a second control. -->
+                <select id="basic-preset" hidden>
                   <option value="quick">Fast</option>
                   <option value="balanced" selected>Balanced</option>
                   <option value="ultra">Smallest</option>
@@ -2467,13 +2464,9 @@
                           value="8"
                         />
                       </div>
-                      <div class="field">
-                        <label for="path-mode">Path mode</label>
-                        <select id="path-mode">
-                          <option value="relative" selected>Relative</option>
-                          <option value="absolute">Absolute</option>
-                        </select>
-                      </div>
+                      <!-- Absolute archive members cannot be extracted safely.
+                           Keep this state holder while migrating saved settings. -->
+                      <input id="path-mode" type="hidden" value="relative" />
                     </div>
                     <div class="grid-split">
                       <div class="field">

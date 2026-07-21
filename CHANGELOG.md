@@ -3,31 +3,51 @@
 
 # ⬇️ Downloads
 
-| <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux |
-| :--- | :--- | :--- |
-| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.3/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.3/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.3/Zinnia-macOS.dmg)** | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.3/Zinnia-Linux-x64.AppImage) |
-| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>--> | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.3/Zinnia-macOS.zip)** | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.3/Zinnia-Linux-x64.deb) |
-| <!--*See MSI note below*--> | | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.3/Zinnia-Linux-x64.rpm) |
-| | | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.3/Zinnia-Linux-x64.flatpak) |
+| <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                                          | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux        |
+| :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------- |
+| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.4/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.4/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.4/Zinnia-macOS.dmg)**   | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.4/Zinnia-Linux-x64.AppImage) |
+| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>-->                     | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.4/Zinnia-macOS.zip)**   | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.4/Zinnia-Linux-x64.deb)           |
+| <!--*See MSI note below*-->                                                                                                                                                                                                |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.4/Zinnia-Linux-x64.rpm)           |
+|                                                                                                                                                                                                                            |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.4/Zinnia-Linux-x64.flatpak)   |
+
+> macOS downloads require macOS 26 or later.
 
 > [!IMPORTANT]
-The `.sig` files in this repo are NOT normal gpg signatures they are for Tauri V2's updater to verify the integrity of updates before downloading and installing.
-The `.asc` files are my normal GPG signatures which you can verify using my GPG Public Key: https://tuxedo.rosie.run/GPG/BurntToasters_0xF2FBC20F_public.asc.
-⚠️ Arm64 Linux Binaries are *NOT* available at the moment. Its something I may get around to in the future but its not a priority. However, I do have the logic setup in the repo in-case people would like to build their own :)
+> The `.sig` files in this repo are NOT normal gpg signatures they are for Tauri V2's updater to verify the integrity of updates before downloading and installing.
+> The `.asc` files are my normal GPG signatures which you can verify using my GPG Public Key: https://tuxedo.rosie.run/GPG/BurntToasters_0xF2FBC20F_public.asc.
+> ⚠️ Arm64 Linux Binaries are _NOT_ available at the moment. Its something I may get around to in the future but its not a priority. However, I do have the logic setup in the repo in-case people would like to build their own :)
 
 ### ℹ️ Enjoying Zinnia? Consider [❤️ Supporting Me! ❤️](https://rosie.run/support)
 
 Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
+## Changes in `v0.6.0-beta.4:`
+
+- **Compatibility:** macOS builds require macOS 26 or later because the official bundled 7-Zip 26.02 binary has a native macOS 26 deployment floor; the bundle and release checks enforce 26.0+.
+- **Security:** Extract preflights archive member paths (`7z l -slt`) and rejects `..` / absolute paths that could write into existing sibling folders; sibling name snapshot still catches new top-level escapes.
+- **Security:** Windows staging ACL verify uses SID/SDDL (`icacls /save`) instead of locale-specific account-name matching; broad principals are removed by well-known SID (unblocks Desktop compress where name-only verify failed).
+- **Fix:** Directory fsync `PermissionDenied` is ignored only on Windows (Unix still surfaces the error).
+- **Fix:** Pending stage registry cleans orphan `.zinnia-*` dirs after a crash before the transaction journal is written; recovery journal is written immediately after staging is created.
+- **Fix:** Removed Absolute path archive creation because those unsafe member paths correctly fail Zinnia's extraction preflight; all new archives are relocatable.
+- **Security:** Extraction preflight and extraction now use the same private snapshot of the complete input volume family, closing the normal source-path mutation window.
+- **Security:** Updater publication cryptographically verifies every artifact/Minisign pair with Zinnia's embedded public key and validates the generated manifests before upload.
+- **Security:** 7-Zip provenance records the exact official 26.02 archives, archive hashes, and extracted members; checksum updates require an explicit reviewed version.
+- **macOS:** Default-archiver integration now uses macOS 26 `NSWorkspace` and `UTType` APIs instead of deprecated Launch Services/CoreServices calls; signed artifacts enforce an exact entitlement allowlist.
+- **Windows:** Authenticode verification now checks the full certificate Subject DN in addition to the publisher Common Name.
+- **Linux:** Flatpak builds consume an exact clean Git commit export so dirty or untracked workspace files cannot enter sideload bundles.
+
 ## Changes in `v0.6.0-beta.3:`
+
 - **Fix:** Setup wizard Skip no longer fails with Windows `Access is denied (os error 5)` from AppData directory fsync; startup continues if settings persistence warns.
 - **Fix:** Basic-mode titlebar no longer meshes brand text with Support/Settings on Windows (hide centered logo while chrome overlays the strip).
 
 ## Changes in `v0.6.0-beta.2:`
+
 - **Fix:** Sparse context-menu MSIX declares `uap10:AllowExternalContent` (fixes `Add-AppxPackage -ExternalLocation` `0x80073D2E`).
 
 ## Changes in `v0.6.0-beta.1:`
-*I had so many new ideas for the UI this turned from version `0.5.4` to `0.6.0`.*
+
+_I had so many new ideas for the UI this turned from version `0.5.4` to `0.6.0`._
 
 - **UI:** Major Basic mode redesign: drop-first home, warmer floral accent, friendlier copy, and Basic/Power + Support + Settings folded into the custom titlebar.
 - **UI:** Translucent Basic window with OS-native blur on macOS (vibrancy) and Windows (Mica / Acrylic). Linux Basic stays fully opaque. Toggle in Settings (live-applies).
@@ -89,10 +109,12 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Dependencies:** Updated JavaScript and Rust dependencies using the current stable toolchain.
 
 ## Changes in `v0.5.1:`
-* **License menu:** Fixed an issue with the license menu rendering in basic mode.
-- **NEW - Windows code signing:** WOO HOO!! Windows Binaries are now signed by Azure Artifact Signing!
+
+- **License menu:** Fixed an issue with the license menu rendering in basic mode.
+
+* **NEW - Windows code signing:** WOO HOO!! Windows Binaries are now signed by Azure Artifact Signing!
   - After a good while of not having it, Windows Binaries are now signed by Azure Artifact Signing!
-- **Windows security:** Temporarily disabled RAR operations and RAR file associations while conflicting CVE-2026-58052 affected-version data is resolved.
+* **Windows security:** Temporarily disabled RAR operations and RAR file associations while conflicting CVE-2026-58052 affected-version data is resolved.
 
 ## Changes in `v0.5.0:`
 

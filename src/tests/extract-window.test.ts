@@ -34,7 +34,10 @@ async function flushAsync(): Promise<void> {
 
 async function setupAndRun(
   invokeImpl?: AnyInvoke,
-  options?: { injected?: { archive: string; destination: string } },
+  options?: {
+    injected?: { archive: string; destination: string };
+    listenerRegistrations?: Array<Promise<() => void>>;
+  },
 ): Promise<{
   invokeMock: ReturnType<
     typeof vi.mocked<(typeof import("@tauri-apps/api/core"))["invoke"]>
@@ -68,7 +71,10 @@ async function setupAndRun(
     destroy: vi.fn().mockResolvedValue(undefined),
   };
 
-  vi.mocked(eventApi.listen).mockImplementation(async () => progressUnlisten);
+  const listenerRegistrations = [...(options?.listenerRegistrations ?? [])];
+  vi.mocked(eventApi.listen).mockImplementation(
+    () => listenerRegistrations.shift() ?? Promise.resolve(progressUnlisten),
+  );
   vi.mocked(webviewApi.getCurrentWebviewWindow).mockReturnValue(
     appWindow as never,
   );
@@ -292,6 +298,46 @@ describe("extract-window", () => {
     await flushAsync();
 
     expect(invokeMock).toHaveBeenCalledWith("cancel_7z");
+  });
+
+  it("removes a registered progress listener when its sibling registration fails", async () => {
+    const unlistenStructured = vi.fn();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await setupAndRun(undefined, {
+      listenerRegistrations: [
+        Promise.resolve(unlistenStructured),
+        Promise.reject(new Error("raw listener unavailable")),
+      ],
+    });
+
+    expect(unlistenStructured).toHaveBeenCalledOnce();
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringContaining("raw listener unavailable"),
+    );
+    warning.mockRestore();
+  });
+
+  it("removes every registered progress listener when one cleanup throws", async () => {
+    const failingUnlisten = vi.fn(() => {
+      throw new Error("structured cleanup unavailable");
+    });
+    const rawUnlisten = vi.fn();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await setupAndRun(undefined, {
+      listenerRegistrations: [
+        Promise.resolve(failingUnlisten),
+        Promise.resolve(rawUnlisten),
+      ],
+    });
+
+    expect(failingUnlisten).toHaveBeenCalledOnce();
+    expect(rawUnlisten).toHaveBeenCalledOnce();
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringContaining("structured cleanup unavailable"),
+    );
+    warning.mockRestore();
   });
 
   it("extracts opened archives into a sibling folder named after the archive", async () => {

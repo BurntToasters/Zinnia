@@ -7,7 +7,15 @@ use tauri_plugin_shell::ShellExt;
 
 use crate::output::{append_limited_output, sanitize_output, Utf8StreamDecoder, MAX_OUTPUT_BYTES};
 use crate::progress::parse_progress_line;
-use crate::validation::validate_run_7z_args;
+use crate::validation::{archive_member_path_is_unsafe, validate_run_7z_args};
+
+mod archive_snapshot;
+#[cfg(test)]
+use archive_snapshot::archive_input_family;
+use archive_snapshot::{
+    archive_file_identity, assert_archive_identity_unchanged, stage_extract_input,
+    ArchiveFileIdentity,
+};
 
 static RECOVERY_LOCK: Mutex<()> = Mutex::new(());
 /// Set after the startup maintenance thread finishes its one-shot recovery pass.
@@ -50,9 +58,15 @@ struct CleanupPlan {
     // Create/update output is written to a sibling staging basename. This also
     // covers split-volume families (`.001`, `.002`, ...).
     staged_archive: Option<(std::path::PathBuf, std::path::PathBuf)>,
+    /// Private snapshot used by both member preflight and extraction. This
+    /// avoids reopening a user-controlled source path between the two steps.
+    staged_input_archive: Option<std::path::PathBuf>,
     /// Sibling names in the extract stage parent after the stage dir is created.
-    /// Used to detect writes that escape the `-o` stage root.
+    /// Used to detect *new* names that escape the `-o` stage root. Writes into
+    /// existing siblings are blocked by archive-member path preflight.
     extract_parent_names: Option<std::collections::HashSet<std::ffi::OsString>>,
+    /// App cache dir used to register pending stage paths for orphan cleanup.
+    cache_dir: Option<std::path::PathBuf>,
     max_extract_bytes: Option<u64>,
     min_free_bytes: Option<u64>,
 }
@@ -146,6 +160,132 @@ fn clear_cleanup_journal(app: &tauri::AppHandle) -> Result<(), String> {
     }
 }
 
+fn pending_stages_path(cache_dir: &std::path::Path) -> std::path::PathBuf {
+    cache_dir.join("pending-stages.json")
+}
+
+fn read_pending_stages(cache_dir: &std::path::Path) -> Result<Vec<String>, String> {
+    let path = pending_stages_path(cache_dir);
+    match std::fs::read_to_string(&path) {
+        Ok(json) => serde_json::from_str(&json).map_err(|e| e.to_string()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn write_pending_stages(cache_dir: &std::path::Path, stages: &[String]) -> Result<(), String> {
+    let path = pending_stages_path(cache_dir);
+    if stages.is_empty() {
+        match std::fs::remove_file(&path) {
+            Ok(()) => crate::settings_store::sync_parent_directory(&path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.to_string()),
+        }
+    } else {
+        let json = serde_json::to_string(stages).map_err(|e| e.to_string())?;
+        crate::settings_store::atomic_write_text(&path, &json)
+    }
+}
+
+fn register_pending_stage(
+    cache_dir: &std::path::Path,
+    stage: &std::path::Path,
+) -> Result<(), String> {
+    let key = stage.to_string_lossy().to_string();
+    let mut stages = read_pending_stages(cache_dir)?;
+    if !stages.iter().any(|existing| existing == &key) {
+        stages.push(key);
+        write_pending_stages(cache_dir, &stages)?;
+    }
+    Ok(())
+}
+
+fn unregister_pending_stage(
+    cache_dir: &std::path::Path,
+    stage: &std::path::Path,
+) -> Result<(), String> {
+    let key = stage.to_string_lossy().to_string();
+    let mut stages = read_pending_stages(cache_dir)?;
+    let before = stages.len();
+    stages.retain(|existing| existing != &key);
+    if stages.len() != before {
+        write_pending_stages(cache_dir, &stages)?;
+    }
+    Ok(())
+}
+
+fn plan_stage_dirs(plan: &CleanupPlan) -> Vec<std::path::PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some((staged, _)) = &plan.staged_extract {
+        dirs.push(staged.clone());
+    }
+    if let Some((staged, _)) = &plan.staged_archive {
+        if let Some(parent) = staged.parent() {
+            dirs.push(parent.to_path_buf());
+        }
+    }
+    if let Some(staged) = &plan.staged_input_archive {
+        if let Some(parent) = staged.parent() {
+            dirs.push(parent.to_path_buf());
+        }
+    }
+    dirs
+}
+
+fn unregister_plan_stages(plan: &CleanupPlan) {
+    let Some(cache_dir) = &plan.cache_dir else {
+        return;
+    };
+    for stage in plan_stage_dirs(plan) {
+        let _ = unregister_pending_stage(cache_dir, &stage);
+    }
+}
+
+/// Remove stage directories left behind when a crash happened after create but
+/// before (or without) a durable transaction journal. Safe names only.
+pub fn cleanup_orphan_stages(app: &tauri::AppHandle) -> Result<(), String> {
+    let cache_dir = app.path().app_cache_dir().map_err(|e| e.to_string())?;
+    let stages = read_pending_stages(&cache_dir)?;
+    if stages.is_empty() {
+        return Ok(());
+    }
+    let mut remaining = Vec::new();
+    for stage in stages {
+        let path = std::path::PathBuf::from(&stage);
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        if !is_safe_stage_dir_name(name) {
+            remaining.push(stage);
+            continue;
+        }
+        match std::fs::symlink_metadata(&path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => {
+                remaining.push(stage);
+            }
+            Ok(meta) if crate::path_safety::is_link_or_reparse(&meta) || !meta.is_dir() => {
+                remaining.push(stage);
+            }
+            Ok(_) => {
+                if let Err(error) = std::fs::remove_dir_all(&path) {
+                    eprintln!(
+                        "Failed to remove orphan staging directory {}: {error}",
+                        path.display()
+                    );
+                    remaining.push(stage);
+                    continue;
+                }
+                if let Some(parent) = path.parent() {
+                    let _ = sync_directory(parent);
+                }
+            }
+        }
+    }
+    write_pending_stages(&cache_dir, &remaining)
+}
+
 fn sync_directory(path: &std::path::Path) -> Result<(), String> {
     crate::fs_secure::sync_directory(path)
 }
@@ -233,7 +373,10 @@ fn store_probed_7z_version(version: Option<String>) {
 
 #[allow(dead_code)] // Attested version for Windows RAR gate and future callers.
 pub fn probed_7z_version() -> Option<String> {
-    PROBED_7Z_VERSION.lock().ok().and_then(|guard| guard.clone())
+    PROBED_7Z_VERSION
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone())
 }
 
 /// Parse a 7-Zip version token (e.g. "26.02") from `7z i` / banner output.
@@ -270,12 +413,10 @@ fn version_cmp(a: &str, b: &str) -> Option<std::cmp::Ordering> {
 #[cfg(target_os = "windows")]
 fn windows_rar_extract_blocked() -> bool {
     match probed_7z_version() {
-        Some(version) => {
-            match version_cmp(&version, WINDOWS_RAR_EXTRACT_BLOCKED_THROUGH) {
-                Some(std::cmp::Ordering::Greater) => false,
-                _ => true,
-            }
-        }
+        Some(version) => match version_cmp(&version, WINDOWS_RAR_EXTRACT_BLOCKED_THROUGH) {
+            Some(std::cmp::Ordering::Greater) => false,
+            _ => true,
+        },
         // Fail closed until probe attests a safe runtime.
         None => true,
     }
@@ -313,8 +454,7 @@ pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), Str
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("");
-    if journal.stage.parent() != journal.destination.parent()
-        || !is_safe_stage_dir_name(stage_name)
+    if journal.stage.parent() != journal.destination.parent() || !is_safe_stage_dir_name(stage_name)
     {
         return Err("Refusing unsafe interrupted-transaction recovery path.".to_string());
     }
@@ -349,12 +489,12 @@ pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), Str
     clear_cleanup_journal(app)
 }
 
-/// Stage dirs are created as `.<basename>.zinnia-(extract|archive)-<32 hex>`.
+/// Stage dirs are created as `.<basename>.zinnia-(extract|archive|input)-<32 hex>`.
 fn is_safe_stage_dir_name(name: &str) -> bool {
     let Some(rest) = name.strip_prefix('.') else {
         return false;
     };
-    for marker in [".zinnia-extract-", ".zinnia-archive-"] {
+    for marker in [".zinnia-extract-", ".zinnia-archive-", ".zinnia-input-"] {
         if let Some(idx) = rest.rfind(marker) {
             let token = &rest[idx + marker.len()..];
             return token.len() == 32 && token.chars().all(|c| c.is_ascii_hexdigit());
@@ -490,7 +630,10 @@ fn path_entry_exists(path: &std::path::Path) -> Result<bool, String> {
 fn assert_real_directory(path: &std::path::Path) -> Result<(), String> {
     crate::path_safety::assert_real_directory(path).map_err(|error| {
         if error.starts_with("Path is not a real directory") {
-            format!("Extraction path is not a real directory: {}", path.display())
+            format!(
+                "Extraction path is not a real directory: {}",
+                path.display()
+            )
         } else {
             error
         }
@@ -559,6 +702,7 @@ fn resolve_existing_target(
 fn create_private_stage_dir(
     target: &std::path::Path,
     purpose: &str,
+    cache_dir: Option<&std::path::Path>,
 ) -> Result<std::path::PathBuf, String> {
     let parent = target.parent().unwrap_or_else(|| std::path::Path::new("."));
     let name = target
@@ -568,7 +712,17 @@ fn create_private_stage_dir(
     for _ in 0..32 {
         let candidate = parent.join(format!(".{name}.zinnia-{purpose}-{}", random_token()?));
         match crate::fs_secure::create_private_dir(&candidate) {
-            Ok(()) => return Ok(candidate),
+            Ok(()) => {
+                if let Some(cache_dir) = cache_dir {
+                    if let Err(error) = register_pending_stage(cache_dir, &candidate) {
+                        let _ = std::fs::remove_dir_all(&candidate);
+                        return Err(format!(
+                            "Could not register staging directory for recovery: {error}"
+                        ));
+                    }
+                }
+                return Ok(candidate);
+            }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => {
                 return Err(format!(
@@ -580,7 +734,10 @@ fn create_private_stage_dir(
     Err("Could not reserve a unique staging directory.".to_string())
 }
 
-fn next_extract_stage_path(target: &std::path::Path) -> Result<std::path::PathBuf, String> {
+fn next_extract_stage_path(
+    target: &std::path::Path,
+    cache_dir: Option<&std::path::Path>,
+) -> Result<std::path::PathBuf, String> {
     if path_entry_exists(target)? {
         let meta = std::fs::symlink_metadata(target).map_err(|e| e.to_string())?;
         crate::path_safety::reject_link_or_reparse(target, &meta).map_err(|_| {
@@ -590,7 +747,7 @@ fn next_extract_stage_path(target: &std::path::Path) -> Result<std::path::PathBu
             return Err("Extraction destination is not a directory.".to_string());
         }
     }
-    create_private_stage_dir(target, "extract")
+    create_private_stage_dir(target, "extract", cache_dir)
 }
 
 fn rewrite_extract_output(args: &mut [String], staged_dir: &std::path::Path) -> Result<(), String> {
@@ -602,6 +759,21 @@ fn rewrite_extract_output(args: &mut [String], staged_dir: &std::path::Path) -> 
         return Err("Extraction command is missing an output directory.".to_string());
     };
     *arg = output;
+    Ok(())
+}
+
+fn rewrite_extract_archive(
+    args: &mut [String],
+    staged_archive: &std::path::Path,
+) -> Result<(), String> {
+    let separator = args
+        .iter()
+        .position(|arg| arg == "--")
+        .ok_or_else(|| "Extraction command is missing '--'.".to_string())?;
+    let archive = args
+        .get_mut(separator + 1)
+        .ok_or_else(|| "Extraction command is missing an archive path.".to_string())?;
+    *archive = staged_archive.to_string_lossy().to_string();
     Ok(())
 }
 
@@ -650,12 +822,156 @@ fn assert_extract_parent_unchanged(
     Ok(())
 }
 
-fn prepare_cleanup_plan(args: &[String]) -> Result<CleanupPlan, String> {
+/// Build `7z l -slt -ba` args from an extract command, copying switches that
+/// affect whether/how the archive can be opened.
+fn extract_member_list_args(args: &[String]) -> Result<Vec<String>, String> {
+    let separator = args
+        .iter()
+        .position(|arg| arg == "--")
+        .ok_or_else(|| "Extraction command is missing '--'.".to_string())?;
+    let archive = args
+        .get(separator + 1)
+        .ok_or_else(|| "Extraction command is missing an archive path.".to_string())?;
+    let mut list_args = vec!["l".to_string(), "-slt".to_string(), "-ba".to_string()];
+    for arg in &args[1..separator] {
+        let lower = arg.to_ascii_lowercase();
+        if lower.starts_with("-p") || lower.starts_with("-t") {
+            list_args.push(arg.clone());
+        }
+    }
+    list_args.push("--".to_string());
+    list_args.push(archive.clone());
+    Ok(list_args)
+}
+
+/// Inspect `7z l -slt` output and reject members that could escape `-o`.
+fn assert_slt_archive_members_safe(slt_output: &str, archive_path: &str) -> Result<(), String> {
+    let archive_name = std::path::Path::new(archive_path)
+        .file_name()
+        .and_then(|name| name.to_str());
+    let mut seen_member = false;
+    for line in slt_output.lines() {
+        let Some(path) = line.strip_prefix("Path = ") else {
+            continue;
+        };
+        let path = path.trim();
+        if path.is_empty() {
+            continue;
+        }
+        // `-ba` suppresses the archive-container record, so every Path entry is
+        // normally a member. Keep exact-container tolerance for older/future
+        // sidecars without ever skipping an arbitrary first member.
+        if path == archive_path || archive_name == Some(path) {
+            continue;
+        }
+        seen_member = true;
+        if archive_member_path_is_unsafe(path) {
+            return Err(format!(
+                "Archive contains an unsafe member path that could escape the extract folder: {path}"
+            ));
+        }
+    }
+    // Empty archives legitimately produce no records. Non-empty output with no
+    // Path records means the machine-readable schema was not understood; fail
+    // closed instead of silently bypassing the safety check.
+    if !seen_member && !slt_output.trim().is_empty() {
+        return Err("Could not parse archive member paths from 7-Zip listing.".to_string());
+    }
+    Ok(())
+}
+
+async fn assert_extract_archive_members_safe(
+    app: &tauri::AppHandle,
+    state: &tauri::State<'_, RunningProcess>,
+    args: &[String],
+) -> Result<(std::path::PathBuf, ArchiveFileIdentity), String> {
+    let list_args = extract_member_list_args(args)?;
+    let archive = list_args
+        .last()
+        .cloned()
+        .ok_or_else(|| "Extraction member list is missing an archive path.".to_string())?;
+    let archive_path = std::path::PathBuf::from(&archive);
+    let identity = archive_file_identity(&archive_path)?;
+    let command = app
+        .shell()
+        .sidecar("7z")
+        .map_err(|e| e.to_string())?
+        .args(list_args);
+    let (mut rx, child) = command.spawn().map_err(|e| e.to_string())?;
+    {
+        let mut process = lock_process(state)?;
+        if process.cancelling {
+            let _ = child.kill();
+            return Err("Operation cancelled.".to_string());
+        }
+        process.child = Some(child);
+    }
+    const LIST_OUTPUT_LIMIT: usize = 32 * 1024 * 1024;
+    const LIST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+    let collected = match tokio::time::timeout(
+        LIST_TIMEOUT,
+        collect_command_output(&mut rx, LIST_OUTPUT_LIMIT, |_| {}),
+    )
+    .await
+    {
+        Ok(collected) => collected,
+        Err(_) => {
+            if let Ok(mut process) = lock_process(state) {
+                if let Some(child) = process.child.take() {
+                    let _ = child.kill();
+                }
+            }
+            return Err("Archive member-safety preflight timed out after 120 seconds.".to_string());
+        }
+    };
+    {
+        let mut process = lock_process(state)?;
+        process.child = None;
+        if process.cancelling {
+            return Err("Operation cancelled.".to_string());
+        }
+    }
+    let code = collected
+        .exit
+        .as_ref()
+        .and_then(|payload| payload.code)
+        .unwrap_or(-1);
+    if collected.stdout_truncated || collected.stderr_truncated {
+        return Err(
+            "Archive member-safety listing exceeded its output limit; extraction was cancelled."
+                .to_string(),
+        );
+    }
+    // 7-Zip uses exit code 1 for warnings (e.g. recoverable issues); still parse.
+    if code != 0 && code != 1 {
+        let detail = sanitize_output(collected.stderr.trim());
+        let detail = if detail.is_empty() {
+            sanitize_output(collected.stdout.trim())
+        } else {
+            detail
+        };
+        return Err(if detail.is_empty() {
+            format!("Could not list archive members for path safety (exit {code}).")
+        } else {
+            format!("Could not list archive members for path safety: {detail}")
+        });
+    }
+    assert_slt_archive_members_safe(&collected.stdout, &archive)?;
+    Ok((archive_path, identity))
+}
+
+fn prepare_cleanup_plan(
+    args: &[String],
+    cache_dir: Option<std::path::PathBuf>,
+) -> Result<CleanupPlan, String> {
+    let cache_ref = cache_dir.as_deref();
     let Some(target) = operation_output_path(args) else {
         return Ok(CleanupPlan {
             staged_extract: None,
             staged_archive: None,
+            staged_input_archive: None,
             extract_parent_names: None,
+            cache_dir,
             max_extract_bytes: None,
             min_free_bytes: None,
         });
@@ -690,7 +1006,21 @@ fn prepare_cleanup_plan(args: &[String]) -> Result<CleanupPlan, String> {
                 ));
             }
             let max_extract_bytes = ratio_limit.min(disk_limit);
-            let stage = next_extract_stage_path(&destination)?;
+            let stage = next_extract_stage_path(&destination, cache_ref)?;
+            let archive = args
+                .get(separator + 1)
+                .ok_or_else(|| "Extraction command is missing an archive path.".to_string())?;
+            let staged_input_archive =
+                match stage_extract_input(std::path::Path::new(archive), cache_ref) {
+                    Ok(snapshot) => snapshot,
+                    Err(error) => {
+                        let _ = std::fs::remove_dir_all(&stage);
+                        if let Some(cache) = cache_ref {
+                            let _ = unregister_pending_stage(cache, &stage);
+                        }
+                        return Err(error);
+                    }
+                };
             let parent = stage
                 .parent()
                 .ok_or_else(|| "Staged extract has no parent directory.".to_string())?;
@@ -698,7 +1028,9 @@ fn prepare_cleanup_plan(args: &[String]) -> Result<CleanupPlan, String> {
             Ok(CleanupPlan {
                 staged_extract: Some((stage, destination)),
                 staged_archive: None,
+                staged_input_archive: Some(staged_input_archive),
                 extract_parent_names: Some(extract_parent_names),
+                cache_dir,
                 max_extract_bytes: Some(max_extract_bytes),
                 min_free_bytes: Some(reserve),
             })
@@ -709,7 +1041,7 @@ fn prepare_cleanup_plan(args: &[String]) -> Result<CleanupPlan, String> {
             } else {
                 resolve_new_target(&target)?
             };
-            let stage_dir = create_private_stage_dir(&target, "archive")?;
+            let stage_dir = create_private_stage_dir(&target, "archive", cache_ref)?;
             let staged = stage_dir.join(
                 target
                     .file_name()
@@ -718,7 +1050,9 @@ fn prepare_cleanup_plan(args: &[String]) -> Result<CleanupPlan, String> {
             Ok(CleanupPlan {
                 staged_extract: None,
                 staged_archive: Some((staged, target)),
+                staged_input_archive: None,
                 extract_parent_names: None,
+                cache_dir,
                 max_extract_bytes: None,
                 min_free_bytes: None,
             })
@@ -728,7 +1062,7 @@ fn prepare_cleanup_plan(args: &[String]) -> Result<CleanupPlan, String> {
                 return Err("Update requires an existing output archive file.".to_string());
             }
             let target = resolve_existing_target(&target, false)?;
-            let stage_dir = create_private_stage_dir(&target, "archive")?;
+            let stage_dir = create_private_stage_dir(&target, "archive", cache_ref)?;
             let staged = stage_dir.join(
                 target
                     .file_name()
@@ -736,12 +1070,17 @@ fn prepare_cleanup_plan(args: &[String]) -> Result<CleanupPlan, String> {
             );
             if let Err(error) = std::fs::copy(&target, &staged) {
                 let _ = std::fs::remove_dir_all(&stage_dir);
+                if let Some(cache_dir) = cache_ref {
+                    let _ = unregister_pending_stage(cache_dir, &stage_dir);
+                }
                 return Err(format!("Could not stage the archive for update: {error}"));
             }
             Ok(CleanupPlan {
                 staged_extract: None,
                 staged_archive: Some((staged, target)),
+                staged_input_archive: None,
                 extract_parent_names: None,
+                cache_dir,
                 max_extract_bytes: None,
                 min_free_bytes: None,
             })
@@ -749,7 +1088,9 @@ fn prepare_cleanup_plan(args: &[String]) -> Result<CleanupPlan, String> {
         _ => Ok(CleanupPlan {
             staged_extract: None,
             staged_archive: None,
+            staged_input_archive: None,
             extract_parent_names: None,
+            cache_dir,
             max_extract_bytes: None,
             min_free_bytes: None,
         }),
@@ -915,10 +1256,10 @@ async fn monitor_extract_quota(
                 } else {
                     std::time::Duration::from_secs(8)
                 };
-                let scan_delay = scan_started.elapsed().saturating_mul(multiplier).clamp(
-                    std::time::Duration::from_secs(2),
-                    max_delay,
-                );
+                let scan_delay = scan_started
+                    .elapsed()
+                    .saturating_mul(multiplier)
+                    .clamp(std::time::Duration::from_secs(2), max_delay);
                 next_tree_scan = std::time::Instant::now() + scan_delay;
                 None
             }
@@ -1189,7 +1530,19 @@ fn rollback_cleanup(plan: &CleanupPlan) -> Result<(), String> {
             }
         }
     }
+    if let Some(staged) = &plan.staged_input_archive {
+        let stage_dir = staged.parent().unwrap_or(staged);
+        if let Err(e) = std::fs::remove_dir_all(stage_dir) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                failures.push(format!(
+                    "Could not remove archive input snapshot {}: {e}",
+                    stage_dir.display()
+                ));
+            }
+        }
+    }
     if failures.is_empty() {
+        unregister_plan_stages(plan);
         Ok(())
     } else {
         Err(failures.join("; "))
@@ -1226,12 +1579,9 @@ const MAX_EXTRACT_ENTRIES: u64 = 1_000_000;
 const MAX_EXTRACTED_BYTES: u64 = 1024 * 1024 * 1024 * 1024;
 
 fn assert_path_under_root(root: &std::path::Path, path: &std::path::Path) -> Result<(), String> {
-    let relative = path.strip_prefix(root).map_err(|_| {
-        format!(
-            "Staged path escaped the extract root: {}",
-            path.display()
-        )
-    })?;
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|_| format!("Staged path escaped the extract root: {}", path.display()))?;
     if relative.components().any(|component| {
         matches!(
             component,
@@ -1502,11 +1852,14 @@ fn merge_staged_extract(
 }
 
 fn commit_cleanup(app: &tauri::AppHandle, plan: &CleanupPlan) -> Result<(), String> {
+    if let Some(staged) = &plan.staged_input_archive {
+        std::fs::remove_dir_all(staged.parent().unwrap_or(staged))
+            .map_err(|e| format!("Could not remove archive input snapshot: {e}"))?;
+    }
     if let Some((staged, destination)) = &plan.staged_extract {
         if let Some(expected) = &plan.extract_parent_names {
-            assert_extract_parent_unchanged(staged, expected).map_err(|e| {
-                format!("Could not promote staged extraction safely: {e}")
-            })?;
+            assert_extract_parent_unchanged(staged, expected)
+                .map_err(|e| format!("Could not promote staged extraction safely: {e}"))?;
         }
         merge_staged_extract(
             staged,
@@ -1523,6 +1876,7 @@ fn commit_cleanup(app: &tauri::AppHandle, plan: &CleanupPlan) -> Result<(), Stri
             crate::launch::remember_openable_directory(app, parent);
         }
     }
+    unregister_plan_stages(plan);
     Ok(())
 }
 
@@ -1671,45 +2025,40 @@ pub async fn run_7z(
     }
 
     let plan_args = args.clone();
-    let cleanup_plan =
-        match tokio::task::spawn_blocking(move || prepare_cleanup_plan(&plan_args)).await {
-            Ok(Ok(plan)) => plan,
-            Ok(Err(error)) => {
-                if let Ok(mut process) = lock_process(&state) {
-                    process.preparing = false;
-                    process.owner_label = None;
-                }
-                return Err(error);
+    let cache_dir = match app.path().app_cache_dir() {
+        Ok(dir) => Some(dir),
+        Err(error) => {
+            if let Ok(mut process) = lock_process(&state) {
+                process.preparing = false;
+                process.owner_label = None;
             }
-            Err(error) => {
-                if let Ok(mut process) = lock_process(&state) {
-                    process.preparing = false;
-                    process.owner_label = None;
-                }
-                return Err(format!("Archive preparation task failed: {error}"));
-            }
-        };
-
-    let mut execution_args = args.clone();
-    let rewrite_result = if let Some((staged, _)) = &cleanup_plan.staged_extract {
-        rewrite_extract_output(&mut execution_args, staged)
-    } else if let Some((staged, _)) = &cleanup_plan.staged_archive {
-        rewrite_archive_output(&mut execution_args, staged)
-    } else {
-        Ok(())
-    };
-    if let Err(error) = rewrite_result {
-        let rollback_error = rollback_cleanup(&cleanup_plan).err();
-        if let Ok(mut process) = lock_process(&state) {
-            process.preparing = false;
-            process.owner_label = None;
+            return Err(format!("Could not resolve app cache directory: {error}"));
         }
-        return Err(match rollback_error {
-            Some(rollback_error) => format!("{error}; rollback also failed: {rollback_error}"),
-            None => error,
-        });
-    }
+    };
+    let cleanup_plan = match tokio::task::spawn_blocking(move || {
+        prepare_cleanup_plan(&plan_args, cache_dir)
+    })
+    .await
+    {
+        Ok(Ok(plan)) => plan,
+        Ok(Err(error)) => {
+            if let Ok(mut process) = lock_process(&state) {
+                process.preparing = false;
+                process.owner_label = None;
+            }
+            return Err(error);
+        }
+        Err(error) => {
+            if let Ok(mut process) = lock_process(&state) {
+                process.preparing = false;
+                process.owner_label = None;
+            }
+            return Err(format!("Archive preparation task failed: {error}"));
+        }
+    };
 
+    // Persist the journal as soon as staging exists so a crash during rewrite
+    // or member preflight can still recover the stage path.
     let journal_active = match write_cleanup_journal(&app, &cleanup_plan) {
         Ok(active) => active,
         Err(error) => {
@@ -1727,6 +2076,117 @@ pub async fn run_7z(
         }
     };
     let mut journal_guard = CleanupJournalGuard::new(app.clone(), journal_active);
+
+    let mut snapshot_args = args.clone();
+    if let Some(staged_archive) = &cleanup_plan.staged_input_archive {
+        if let Err(error) = rewrite_extract_archive(&mut snapshot_args, staged_archive) {
+            let _ = rollback_cleanup(&cleanup_plan);
+            if let Ok(mut process) = lock_process(&state) {
+                process.preparing = false;
+                process.owner_label = None;
+            }
+            return Err(error);
+        }
+    }
+    let extract_archive_identity = if cleanup_plan.staged_extract.is_some() {
+        match assert_extract_archive_members_safe(&app, &state, &snapshot_args).await {
+            Ok(identity) => Some(identity),
+            Err(error) => {
+                let rollback_error = rollback_cleanup(&cleanup_plan).err();
+                let journal_error = if rollback_error.is_none() {
+                    journal_guard.clear().err()
+                } else {
+                    None
+                };
+                if let Ok(mut process) = lock_process(&state) {
+                    process.preparing = false;
+                    process.owner_label = None;
+                    process.child = None;
+                }
+                return Err(match rollback_error {
+                    Some(rollback_error) => {
+                        format!("{error}; staging cleanup also failed: {rollback_error}")
+                    }
+                    None => {
+                        match journal_error {
+                            Some(journal_error) => {
+                                format!("{error}; recovery journal cleanup also failed: {journal_error}")
+                            }
+                            None => error,
+                        }
+                    }
+                });
+            }
+        }
+    } else {
+        None
+    };
+
+    let mut execution_args = args.clone();
+    if let Some(staged_archive) = &cleanup_plan.staged_input_archive {
+        if let Err(error) = rewrite_extract_archive(&mut execution_args, staged_archive) {
+            let _ = rollback_cleanup(&cleanup_plan);
+            if let Ok(mut process) = lock_process(&state) {
+                process.preparing = false;
+                process.owner_label = None;
+            }
+            return Err(error);
+        }
+    }
+    let rewrite_result = if let Some((staged, _)) = &cleanup_plan.staged_extract {
+        rewrite_extract_output(&mut execution_args, staged)
+    } else if let Some((staged, _)) = &cleanup_plan.staged_archive {
+        rewrite_archive_output(&mut execution_args, staged)
+    } else {
+        Ok(())
+    };
+    if let Err(error) = rewrite_result {
+        let rollback_error = rollback_cleanup(&cleanup_plan).err();
+        let journal_error = if rollback_error.is_none() {
+            journal_guard.clear().err()
+        } else {
+            None
+        };
+        if let Ok(mut process) = lock_process(&state) {
+            process.preparing = false;
+            process.owner_label = None;
+        }
+        return Err(match rollback_error {
+            Some(rollback_error) => format!("{error}; rollback also failed: {rollback_error}"),
+            None => match journal_error {
+                Some(journal_error) => {
+                    format!("{error}; recovery journal cleanup also failed: {journal_error}")
+                }
+                None => error,
+            },
+        });
+    }
+
+    if let Some((archive, expected_identity)) = &extract_archive_identity {
+        if let Err(error) = assert_archive_identity_unchanged(archive, expected_identity) {
+            let rollback_error = rollback_cleanup(&cleanup_plan).err();
+            let journal_error = if rollback_error.is_none() {
+                journal_guard.clear().err()
+            } else {
+                None
+            };
+            if let Ok(mut process) = lock_process(&state) {
+                process.preparing = false;
+                process.owner_label = None;
+            }
+            return Err(match rollback_error {
+                Some(rollback_error) => {
+                    format!("{error}; staging cleanup also failed: {rollback_error}")
+                }
+                None => match journal_error {
+                    Some(journal_error) => {
+                        format!("{error}; recovery journal cleanup also failed: {journal_error}")
+                    }
+                    None => error,
+                },
+            });
+        }
+    }
 
     let mut rx = {
         let command = match app.shell().sidecar("7z") {
@@ -2069,6 +2529,9 @@ mod tests {
         assert!(is_safe_stage_dir_name(
             ".archive.7z.zinnia-archive-fedcba9876543210fedcba9876543210"
         ));
+        assert!(is_safe_stage_dir_name(
+            ".archive.7z.zinnia-input-fedcba9876543210fedcba9876543210"
+        ));
         assert!(!is_safe_stage_dir_name("photos.zinnia-extract-evil"));
         assert!(!is_safe_stage_dir_name(
             ".out.zinnia-extract-0123456789abcdef0123456789abcd"
@@ -2117,16 +2580,18 @@ mod tests {
     fn extraction_uses_a_staging_directory() {
         let root = temp_root("zinnia-extract-plan-test");
         std::fs::create_dir_all(&root).expect("test directory");
+        let archive = root.join("archive.7z");
+        std::fs::write(&archive, b"archive").expect("test archive");
         let args = vec![
             "x".to_string(),
             format!("-o{}", root.display()),
             "--".to_string(),
-            "archive.7z".to_string(),
+            archive.to_string_lossy().to_string(),
         ];
-        let plan = prepare_cleanup_plan(&args).expect("cleanup plan");
-        let (staged, target) = plan.staged_extract.expect("staging plan");
+        let plan = prepare_cleanup_plan(&args, None).expect("cleanup plan");
+        let (staged, target) = plan.staged_extract.clone().expect("staging plan");
         assert_ne!(staged, target);
-        let _ = std::fs::remove_dir_all(staged);
+        rollback_cleanup(&plan).expect("rollback");
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -2144,7 +2609,7 @@ mod tests {
             "--".to_string(),
             "input.txt".to_string(),
         ];
-        let plan = prepare_cleanup_plan(&args).expect("cleanup plan");
+        let plan = prepare_cleanup_plan(&args, None).expect("cleanup plan");
         let staged = plan
             .staged_archive
             .as_ref()
@@ -2346,6 +2811,122 @@ mod tests {
         let err = assert_extract_parent_unchanged(&stage, &expected).expect_err("leak");
         assert!(err.contains("outside the staging directory"));
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn slt_member_preflight_rejects_parent_and_absolute_paths() {
+        // Real `7z l -slt -ba` output starts with the first member; it has no
+        // leading archive-container Path record.
+        let first_member_unsafe = "\
+Path = ../sibling/evil.txt
+Size = 4
+";
+        let err = assert_slt_archive_members_safe(first_member_unsafe, "/tmp/archive.7z")
+            .expect_err("parent escape");
+        assert!(err.contains("../sibling/evil.txt"));
+
+        let absolute = "\
+Path = C:\\Users\\a\\a.7z
+----------
+Path = C:\\Windows\\system32\\evil.dll
+Size = 1
+";
+        let err = assert_slt_archive_members_safe(absolute, r"C:\Users\a\a.7z")
+            .expect_err("absolute escape");
+        assert!(err.contains("evil.dll"));
+
+        let safe = "\
+Path = /tmp/archive.7z
+----------
+Path = folder/file.txt
+Size = 1
+";
+        assert_slt_archive_members_safe(safe, "/tmp/archive.7z").expect("safe members");
+
+        assert_slt_archive_members_safe("", "/tmp/empty.7z").expect("empty archive");
+        assert!(assert_slt_archive_members_safe("unexpected schema", "/tmp/archive.7z").is_err());
+    }
+
+    #[test]
+    fn extract_member_list_preserves_password_and_archive_type() {
+        let args = vec![
+            "x".to_string(),
+            "-y".to_string(),
+            "-psecret".to_string(),
+            "-ttar".to_string(),
+            "-o/tmp/out".to_string(),
+            "--".to_string(),
+            "/tmp/archive.custom".to_string(),
+        ];
+        assert_eq!(
+            extract_member_list_args(&args).expect("list args"),
+            vec![
+                "l",
+                "-slt",
+                "-ba",
+                "-psecret",
+                "-ttar",
+                "--",
+                "/tmp/archive.custom",
+            ]
+        );
+    }
+
+    #[test]
+    fn archive_identity_detects_replacement() {
+        let root = temp_root("zinnia-archive-identity");
+        std::fs::create_dir_all(&root).expect("root");
+        let archive = root.join("archive.7z");
+        std::fs::write(&archive, b"first").expect("first archive");
+        let identity = archive_file_identity(&archive).expect("identity");
+        std::fs::write(&archive, b"replacement-content").expect("replacement archive");
+        assert!(assert_archive_identity_unchanged(&archive, &identity).is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn extraction_uses_a_private_archive_snapshot() {
+        let root = temp_root("zinnia-archive-snapshot");
+        std::fs::create_dir_all(&root).expect("root");
+        let archive = root.join("archive.7z");
+        std::fs::write(&archive, b"original").expect("archive");
+        let snapshot = stage_extract_input(&archive, None).expect("snapshot");
+        std::fs::write(&archive, b"changed!").expect("mutate source");
+        assert_eq!(
+            std::fs::read(&snapshot).expect("snapshot data"),
+            b"original"
+        );
+        let _ = std::fs::remove_dir_all(snapshot.parent().expect("stage"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn archive_snapshot_collects_split_volume_family() {
+        let root = temp_root("zinnia-volume-snapshot");
+        std::fs::create_dir_all(&root).expect("root");
+        let first = root.join("archive.7z.001");
+        let second = root.join("archive.7z.002");
+        std::fs::write(&first, b"first").expect("first");
+        std::fs::write(&second, b"second").expect("second");
+        assert_eq!(
+            archive_input_family(&first).expect("family"),
+            vec![first.clone(), second.clone()]
+        );
+        assert!(archive_input_family(&second).is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn pending_stage_registry_round_trips() {
+        let cache = temp_root("zinnia-pending-stages");
+        std::fs::create_dir_all(&cache).expect("cache");
+        let stage = cache.join(".out.zinnia-extract-0123456789abcdef0123456789abcdef");
+        register_pending_stage(&cache, &stage).expect("register");
+        let listed = read_pending_stages(&cache).expect("read");
+        assert_eq!(listed, vec![stage.to_string_lossy().to_string()]);
+        unregister_pending_stage(&cache, &stage).expect("unregister");
+        assert!(read_pending_stages(&cache).expect("read empty").is_empty());
+        let _ = std::fs::remove_dir_all(cache);
     }
 
     #[test]

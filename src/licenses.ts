@@ -5,6 +5,9 @@ export interface LicenseEntry {
   repository?: string;
   licenseUrl?: string;
   parents?: string;
+  licenseText?: string | null;
+  licenseTextStatus?: "bundled" | "not-packaged";
+  licenseReferences?: Array<{ identifier: string; url: string }>;
 }
 
 let licensesTrigger: HTMLElement | null = null;
@@ -36,9 +39,10 @@ async function renderLicenses() {
   container.textContent = "Loading\u2026";
 
   try {
-    const [npmLicenses, cargoLicenses] = await Promise.all([
+    const [npmLicenses, cargoLicenses, sevenZipLicense] = await Promise.all([
       loadLicenseFile("/licenses.json"),
       loadLicenseFile("/licenses-cargo.json"),
+      loadTextFile("/7zip-license.txt"),
     ]);
     const data = { ...(npmLicenses ?? {}), ...(cargoLicenses ?? {}) };
     container.innerHTML = "";
@@ -51,16 +55,23 @@ async function renderLicenses() {
       `</summary>` +
       `<div class="license-card__body">` +
       `<p><a href="https://7-zip.org/" target="_blank" rel="noopener">7-Zip</a> by Igor Pavlov.</p>` +
-      `<p>Most of the code is under the GNU LGPL license. Some parts are under the BSD 3-clause license. ` +
-      `There is also unRAR license restriction for some parts of the code.</p>` +
+      `<p>Most code is GNU LGPL; portions use BSD-3-Clause and the unRAR restriction.</p>` +
       `</div>`;
+    if (sevenZipLicense) {
+      const pre = document.createElement("pre");
+      pre.className = "license-card__text";
+      pre.textContent = sevenZipLicense;
+      sevenZipCard.querySelector(".license-card__body")?.appendChild(pre);
+    }
     container.appendChild(sevenZipCard);
 
     for (const [key, entry] of Object.entries(data)) {
       const card = document.createElement("details");
       card.className = "license-card";
 
-      const href = entry.repository ? safeHref(entry.repository) : "";
+      const href = entry.repository
+        ? escapeHtml(safeHref(entry.repository))
+        : "";
       const repoLink =
         href && href !== "#"
           ? `<a href="${href}" target="_blank" rel="noopener">${escapeHtml(entry.repository!)}</a>`
@@ -72,10 +83,40 @@ async function renderLicenses() {
         `</summary>` +
         `<div class="license-card__body">${repoLink}</div>`;
       container.appendChild(card);
+      if (entry.licenseText) {
+        const pre = document.createElement("pre");
+        pre.className = "license-card__text";
+        pre.textContent = entry.licenseText;
+        card.querySelector(".license-card__body")?.appendChild(pre);
+      } else if (entry.licenseTextStatus === "not-packaged") {
+        const note = document.createElement("p");
+        note.textContent =
+          "This crate package did not include license text. Declared SPDX terms: ";
+        const body = card.querySelector(".license-card__body");
+        for (const [index, reference] of (
+          entry.licenseReferences ?? []
+        ).entries()) {
+          if (index > 0) note.append(", ");
+          const link = document.createElement("a");
+          link.href = safeHref(reference.url);
+          link.target = "_blank";
+          link.rel = "noopener";
+          link.textContent = reference.identifier;
+          note.appendChild(link);
+        }
+        body?.appendChild(note);
+      }
     }
   } catch {
     container.textContent = "Failed to load licenses.";
   }
+}
+
+async function loadTextFile(path: string): Promise<string | null> {
+  const resp = await fetch(path);
+  if (resp.status === 404) return null;
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return resp.text();
 }
 
 async function loadLicenseFile(

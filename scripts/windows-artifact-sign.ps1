@@ -13,7 +13,7 @@ if ($env:SKIP_WIN_CODESIGN -eq '1') {
 }
 if ($env:OS -ne 'Windows_NT') { throw 'Azure Artifact Signing must run on Windows.' }
 
-$required = @('AZURE_CLIENT_ID','AZURE_TENANT_ID','AZURE_CLIENT_SECRET','AZURE_ARTIFACT_SIGNING_ENDPOINT','AZURE_ARTIFACT_SIGNING_ACCOUNT','AZURE_ARTIFACT_SIGNING_PROFILE','AZURE_ARTIFACT_SIGNING_PUBLISHER')
+$required = @('AZURE_CLIENT_ID','AZURE_TENANT_ID','AZURE_CLIENT_SECRET','AZURE_ARTIFACT_SIGNING_ENDPOINT','AZURE_ARTIFACT_SIGNING_ACCOUNT','AZURE_ARTIFACT_SIGNING_PROFILE','AZURE_ARTIFACT_SIGNING_PUBLISHER','AZURE_ARTIFACT_SIGNING_PUBLISHER_DN')
 $missing = @($required | Where-Object { [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_)) })
 if ($missing.Count) { throw "Missing Azure Artifact Signing environment variables: $($missing -join ', ')" }
 
@@ -51,5 +51,8 @@ if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid)
 if (-not $signature.SignerCertificate) { throw "Missing signer certificate: $resolved" }
 $publisher = $signature.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
 if ($publisher -ne $env:AZURE_ARTIFACT_SIGNING_PUBLISHER.Trim()) { throw "Unexpected Authenticode publisher for $resolved. Expected '$($env:AZURE_ARTIFACT_SIGNING_PUBLISHER.Trim())', got '$publisher'." }
+$subject = $signature.SignerCertificate.Subject.Trim()
+$expectedSubject = $env:AZURE_ARTIFACT_SIGNING_PUBLISHER_DN.Trim()
+if ($subject -ne $expectedSubject) { throw "Unexpected Authenticode Subject for $resolved. Expected '$expectedSubject', got '$subject'." }
 if (-not $signature.TimeStamperCertificate) { throw "Missing RFC3161 timestamp: $resolved" }
-Write-Host "Verified Authenticode signature: $publisher ($resolved)"
+Write-Host "Verified Authenticode signature: $subject ($resolved)"

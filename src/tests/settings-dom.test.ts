@@ -82,7 +82,7 @@ describe("applySettingsToForm", () => {
       wordSize: "128",
       solid: "solid",
       threads: 4,
-      pathMode: "absolute",
+      pathMode: "relative",
       sfx: true,
       encryptHeaders: true,
       deleteAfter: true,
@@ -97,7 +97,7 @@ describe("applySettingsToForm", () => {
     expect(getSelectValue("word-size")).toBe("128");
     expect(getSelectValue("solid")).toBe("solid");
     expect(getInputValue("threads")).toBe("4");
-    expect(getSelectValue("path-mode")).toBe("absolute");
+    expect(getSelectValue("path-mode")).toBe("relative");
     expect(getChecked("sfx")).toBe(false);
     expect(getChecked("encrypt-headers")).toBe(true);
     expect(getChecked("delete-after")).toBe(false);
@@ -127,7 +127,7 @@ describe("populateSettingsModal", () => {
       wordSize: "32",
       solid: "4g",
       threads: 8,
-      pathMode: "absolute",
+      pathMode: "relative",
       sfx: true,
       encryptHeaders: false,
       deleteAfter: true,
@@ -148,7 +148,7 @@ describe("populateSettingsModal", () => {
     expect(getSelectValue("s-word-size")).toBe("32");
     expect(getSelectValue("s-solid")).toBe("4g");
     expect(getInputValue("s-threads")).toBe("8");
-    expect(getSelectValue("s-path-mode")).toBe("absolute");
+    expect(getSelectValue("s-path-mode")).toBe("relative");
     expect(getChecked("s-sfx")).toBe(false);
     expect(getChecked("s-encrypt-headers")).toBe(false);
     expect(getChecked("s-delete-after")).toBe(false);
@@ -338,5 +338,20 @@ describe("openSettingsModal / closeSettingsModal", () => {
     overlay.hidden = false;
     closeSettingsModal();
     expect(overlay.hidden).toBe(true);
+  });
+
+  it("restores the live window-effects preview when settings are cancelled", () => {
+    state.currentSettings.basicWindowEffects = true;
+    openSettingsModal();
+    const basicFx = document.getElementById(
+      "s-basic-window-effects",
+    ) as HTMLInputElement;
+    basicFx.checked = false;
+    basicFx.dispatchEvent(new Event("change"));
+
+    expect(state.currentSettings.basicWindowEffects).toBe(false);
+    closeSettingsModal();
+
+    expect(state.currentSettings.basicWindowEffects).toBe(true);
   });
 });

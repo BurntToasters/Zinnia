@@ -130,7 +130,11 @@ fn read_paths_from_pasteboard(pasteboard: &NSPasteboard) -> Result<Vec<String>, 
             let Some(ns_path) = url.path() else {
                 continue;
             };
-            let c_str = CStr::from_ptr(ns_path.UTF8String());
+            let utf8 = ns_path.UTF8String();
+            if utf8.is_null() {
+                return Err("path could not be represented as UTF-8".to_string());
+            }
+            let c_str = CStr::from_ptr(utf8);
             let path = c_str
                 .to_str()
                 .map_err(|_| "path was not valid UTF-8".to_string())?;
@@ -152,12 +156,12 @@ pub fn install_macos_services(app: &AppHandle) {
     };
 
     let provider = ZinniaServicesProvider::alloc(mtm).set_ivars(ServiceIvars);
-    let provider: Retained<ZinniaServicesProvider> =
-        unsafe { msg_send![super(provider), init] };
+    let provider: Retained<ZinniaServicesProvider> = unsafe { msg_send![super(provider), init] };
 
     let ns_app = NSApplication::sharedApplication(mtm);
     unsafe {
-        let as_any: &AnyObject = &*((&*provider) as *const ZinniaServicesProvider as *const AnyObject);
+        let as_any: &AnyObject =
+            &*((&*provider) as *const ZinniaServicesProvider as *const AnyObject);
         ns_app.setServicesProvider(Some(as_any));
     }
     // Keep the provider alive for the process lifetime.
