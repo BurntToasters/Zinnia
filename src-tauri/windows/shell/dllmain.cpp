@@ -15,6 +15,7 @@
 #include <new>
 #include <algorithm>
 #include <filesystem>
+#include "resource.h"
 
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "ole32.lib")
@@ -145,6 +146,31 @@ static std::wstring GetZinniaExePath() {
   return (moduleDir / L"zinnia.exe").wstring();
 }
 
+// Win11 expects the classic "path,-resourceId" icon resource string.
+static HRESULT GetZinniaIconRef(LPWSTR* icon) {
+  if (!icon) return E_POINTER;
+  std::vector<wchar_t> buffer(MAX_PATH);
+  DWORD length = 0;
+  for (;;) {
+    SetLastError(ERROR_SUCCESS);
+    length = GetModuleFileNameW(g_hInst, buffer.data(),
+                                static_cast<DWORD>(buffer.size()));
+    if (length == 0) break;
+    if (length < buffer.size()) {
+      std::wstring ref(buffer.data(), static_cast<size_t>(length));
+      ref += L",-";
+      ref += std::to_wstring(IDI_ZINNIA);
+      return SHStrDupW(ref.c_str(), icon);
+    }
+    buffer.resize(buffer.size() * 2);
+  }
+
+  // Fallback: first icon group in zinnia.exe.
+  std::wstring exe = GetZinniaExePath();
+  exe += L",0";
+  return SHStrDupW(exe.c_str(), icon);
+}
+
 static HRESULT LaunchZinnia(const wchar_t* flag,
                             const std::vector<std::wstring>& paths) {
   if (paths.empty()) return E_FAIL;
@@ -255,9 +281,7 @@ class ExplorerCommand : public IExplorerCommand, public IObjectWithSite {
   }
 
   IFACEMETHODIMP GetIcon(IShellItemArray*, LPWSTR* icon) override {
-    if (!icon) return E_POINTER;
-    std::wstring exe = GetZinniaExePath();
-    return SHStrDupW(exe.c_str(), icon);
+    return GetZinniaIconRef(icon);
   }
 
   IFACEMETHODIMP GetToolTip(IShellItemArray*, LPWSTR* tip) override {
@@ -315,7 +339,18 @@ class ExplorerCommand : public IExplorerCommand, public IObjectWithSite {
   IFACEMETHODIMP GetState(IShellItemArray* selection, BOOL, EXPCMDSTATE* state) override {
     if (!state) return E_POINTER;
     *state = ECS_ENABLED;
-    if (kind_ == CommandKind::Extract || kind_ == CommandKind::ExtractTop) {
+    if (kind_ == CommandKind::ExtractTop) {
+      // Registered on Type="*" so it can appear without package FTAs. Hide when
+      // the selection is known to include non-archives; stay enabled if Explorer
+      // has not handed us paths yet (modern menu often probes with a thin selection).
+      std::vector<std::wstring> paths;
+      if (SUCCEEDED(ResolvePaths(selection, &paths)) && !paths.empty() &&
+          !AllPathsAreArchives(paths)) {
+        *state = ECS_HIDDEN;
+      }
+      return S_OK;
+    }
+    if (kind_ == CommandKind::Extract) {
       std::vector<std::wstring> paths;
       if (FAILED(ResolvePaths(selection, &paths))) {
         *state = ECS_DISABLED;

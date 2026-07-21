@@ -1,6 +1,6 @@
 {
   "name": "zinnia",
-  "version": "0.6.0-beta.6",
+  "version": "0.6.0-beta.7",
   "private": true,
   "description": "Cross-platform 7z GUI built with Tauri.",
   "type": "module",
@@ -69,7 +69,7 @@
     "rust:targets:linux": "rustup target add --toolchain stable x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu",
     "rust:target:linux:x64": "rustup target add --toolchain stable x86_64-unknown-linux-gnu",
     "rust:target:linux:arm64": "rustup target add --toolchain stable aarch64-unknown-linux-gnu",
-    "release:prepare": "npm run rust:update && npm ci && npm run sync-version && npm run prepare:7z:all && npm run prepare:win-shell-stubs && cargo check --manifest-path src-tauri/Cargo.toml -q && npm run dist:clean-release-artifacts && node scripts/update-metainfo.js --check",
+    "release:prepare": "npm run rust:update && npm ci && npm run sync-version && npm run prepare:7z:all && npm run prepare:win-shell-stubs && cargo check --manifest-path src-tauri/Cargo.toml -q && npm run dist:clean-release-artifacts && node scripts/update-metainfo.js",
     "release:draft": "dotenv -e .env -- node scripts/ensure-draft-release.cjs",
     "release:wait-draft": "dotenv -e .env -- node scripts/ensure-draft-release.cjs --wait",
     "prerelease:prepare": "node scripts/release-warning.js",

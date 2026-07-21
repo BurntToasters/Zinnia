@@ -10,13 +10,16 @@ it points at the already-installed shell DLL and does not relocate the app.
 
 ## Menu shape
 
-- **Zinnia** submenu on files/folders: **Extract**, **Compress**
+- **Zinnia** submenu on files/folders: **Extract**, **Compress** (DLL icon via
+  embedded `icon.ico` resource string `zinnia_shell.dll,-101`)
 - **Zinnia** submenu on folder **background** (`Directory\Background`): Compress
   the current folder (DLL resolves the open folder via `IObjectWithSite` /
   `IFolderView` when selection is empty)
-- Top-level **Extract with Zinnia** on supported archive extensions
-  (archives must **not** also register a second Root verb — that made Win11 nest
-  duplicate “Zinnia” submenus under “Zinnia Context Menu”)
+- Top-level **Extract with Zinnia** on archives (same `Type="*"` registration as
+  Root; `GetState` returns `ECS_HIDDEN` for non-archives). Per-extension ItemTypes
+  alone were unreliable without package FileTypeAssociations, and archives must
+  **not** also register a second Root verb (that nested duplicate “Zinnia”
+  submenus under “Zinnia Context Menu”).
 
 Classic NSIS registry verbs remain for the legacy menu (including
 `Directory\Background\shell\ZinniaCompress` with `%V`).

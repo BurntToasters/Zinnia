@@ -81,8 +81,9 @@ native build runs.
   `release:win`, `release:mac`, and `release:linux` scripts for the same version.
   They stage updater manifests, artifacts, checksum files, and detached `.asc`
   signatures in the matching draft GitHub release.
-- After changing the package version, run `node scripts/update-metainfo.js` and
-  commit the new AppStream release entry before starting a platform release.
-  Release preparation validates this metadata without rewriting the worktree.
+- After changing the package version, `release:prepare` / `npm run u` / `u2`
+  write the AppStream release entry via `node scripts/update-metainfo.js`
+  (commit the XML change with the version bump). You can also run that script
+  alone. `--check` remains available if you only want validation.
 - Do not push a release tag until every platform artifact is present and its
   updater signature and checksum have been verified.

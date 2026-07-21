@@ -476,15 +476,15 @@ fn macos_finder_services_info() -> FinderServicesInfo {
 
     let help = match (&override_state, registered) {
         (Some(FinderServicesOverride::Disabled), _) => {
-            "Extract / Compress with Zinnia are turned off. Enable them under Keyboard Shortcuts → Services."
+            "Extract / Compress with Zinnia are turned off. In Keyboard Shortcuts, click Services (not Login Items & Extensions) and enable both."
                 .to_string()
         }
         (_, Some(true)) => {
-            "Services are registered but not enabled yet. Turn on Extract with Zinnia and Compress with Zinnia under Keyboard Shortcuts → Services."
+            "Services are registered but not enabled yet. In Keyboard Shortcuts, click Services and turn on Extract with Zinnia and Compress with Zinnia."
                 .to_string()
         }
         (_, Some(false)) => {
-            "Services are not enabled. Launch Zinnia once if menus are missing, then enable Extract / Compress with Zinnia under Keyboard Shortcuts → Services."
+            "Services are not enabled. Launch Zinnia once if menus are missing, then enable them under Keyboard Shortcuts → Services (not File Providers)."
                 .to_string()
         }
         _ => {
@@ -879,14 +879,56 @@ pub fn open_os_integration_settings(app: tauri::AppHandle) -> Result<(), String>
     }
 }
 
-/// Opens System Settings → Keyboard Shortcuts → Services (where Finder Services are toggled).
+/// Opens System Settings → Keyboard → Keyboard Shortcuts → **Services**.
+///
+/// Zinnia registers **Finder Services** (`NSServices`), not a Finder Sync /
+/// File Provider appex. Those show under Login Items & Extensions (Keka-style);
+/// ours are toggled under Keyboard Shortcuts → Services.
 #[tauri::command]
 #[allow(deprecated)]
 pub fn open_finder_services_settings(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
+        // URL alone often leaves Modifier Keys selected. Reveal Shortcuts, then
+        // select the Services row by name (fragile UI scripting, with URL fallback).
+        const SCRIPT: &str = r#"
+tell application "System Settings"
+  activate
+  reveal anchor "Shortcuts" of pane id "com.apple.Keyboard-Settings.extension"
+end tell
+delay 0.9
+tell application "System Events"
+  tell process "System Settings"
+    set frontmost to true
+    if not (exists sheet 1 of window 1) then error "shortcuts sheet missing"
+    tell sheet 1 of window 1
+      set theOutline to outline 1 of scroll area 1 of group 1 of splitter group 1 of group 1
+      repeat with r in rows of theOutline
+        try
+          set rowLabel to name of UI element 1 of r
+          if rowLabel is "Services" then
+            set selected of r to true
+            return "ok"
+          end if
+        end try
+      end repeat
+    end tell
+  end tell
+end tell
+error "Services row not found"
+"#;
+        let script_ok = command_output_with_timeout(
+            Command::new("osascript").arg("-e").arg(SCRIPT),
+            std::time::Duration::from_secs(8),
+        )
+        .map(|output| output.status.success())
+        .unwrap_or(false);
+        if script_ok {
+            return Ok(());
+        }
+        // Accessibility may be denied or the sheet layout changed — still
+        // open Keyboard Shortcuts so the user can click Services manually.
         use tauri_plugin_shell::ShellExt;
-        // Ventura+ System Settings deep link for Keyboard → Keyboard Shortcuts.
         app.shell()
             .open(
                 "x-apple.systempreferences:com.apple.Keyboard-Settings.extension?Shortcuts",

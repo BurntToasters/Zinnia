@@ -30,7 +30,9 @@ integration gate that compile smoke tests cannot replace.
 6. Settings → **OS Integration** → **Finder Services**: **Enabled** only when both
    services have an explicit enable toggle in `pbs` prefs; otherwise **Not enabled**
    (not Unknown). Registration is confirmed via `pbs -dump_cache` for help text.
-   **Enable…** opens Keyboard Shortcuts → Services.
+   **Enable…** opens Keyboard Shortcuts and selects **Services** (not Login Items &
+   Extensions / File Providers — that UI is for Finder Sync appexes like Keka;
+   Zinnia uses `NSServices`).
 7. Dev tip after Info.plist changes: `/System/Library/CoreServices/pbs -flush`
    Inspect registration: `/System/Library/CoreServices/pbs -dump_cache`
 
@@ -53,9 +55,10 @@ Requires a **signed** NSIS install with full `AZURE_ARTIFACT_SIGNING_PUBLISHER_D
 2. If registration failed, check `$INSTDIR\zinnia-context-menu-register.log`.
 3. Right-click a `.zip` / `.7z` (primary menu, not “Show more options”).
 4. Expect top-level **Extract with Zinnia** and **Zinnia** ▸ Extract / Compress
-   (not “Zinnia Context Menu”, and not nested duplicate Zinnia arrows).
+   (not “Zinnia Context Menu”, and not nested duplicate Zinnia arrows). Both
+   entries should show the Zinnia logo (not an empty icon slot).
 5. **Click** Extract and Compress — Zinnia must launch. Settings “Registered” only means the package is present.
-6. Right-click a file/folder → **Zinnia** ▸ Compress; Extract disabled on non-archives.
+6. Right-click a non-archive file/folder → **Zinnia** ▸ Compress only (no top-level Extract; submenu Extract disabled).
 7. Right-click **empty folder background** → **Zinnia** ▸ Compress (current folder).
 8. “Show more options” still shows classic verbs (including background Compress).
 9. Uninstall → Appx package gone; HKCU `ZinniaCompress` keys gone.
