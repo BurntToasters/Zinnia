@@ -27,7 +27,7 @@ import {
   togglePasswordVisibility,
   parentDirForPath,
 } from "./actions";
-import { renderRecentArchives, setRecentArchiveHandler } from "./recent";
+import { refreshRecentArchives, setRecentArchiveHandler } from "./recent";
 import { wireBasicBrowseEvents } from "./browse-events";
 import { wireBasicKeyboardEvents } from "./keyboard-events";
 import { wireBasicExtractEvents } from "./extract-events";
@@ -238,7 +238,7 @@ export function initBasicWorkspace(): void {
     onSetRunning: (active) => updateBasicRunningState(active),
     onSetStatus: (text, errorDetail) => updateBasicStatus(text, errorDetail),
   });
-  renderRecentArchives();
+  void refreshRecentArchives();
 }
 
 export function wireBasicCompressEvents(): void {

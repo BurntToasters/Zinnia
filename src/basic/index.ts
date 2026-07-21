@@ -51,6 +51,8 @@ export {
   saveRecentArchives,
   rememberRecentArchive,
   renderRecentArchives,
+  refreshRecentArchives,
+  pruneMissingRecentArchives,
   setRecentArchiveHandler,
 } from "./recent";
 
