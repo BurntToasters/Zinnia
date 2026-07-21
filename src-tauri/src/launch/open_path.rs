@@ -50,7 +50,9 @@ pub(crate) fn normalize_shell_open_path(path: std::path::PathBuf) -> std::path::
     path
 }
 
-pub(crate) fn normalize_destination_path(path: &std::path::Path) -> Result<std::path::PathBuf, String> {
+pub(crate) fn normalize_destination_path(
+    path: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
     match std::fs::symlink_metadata(path) {
         Ok(meta) => {
             crate::path_safety::reject_link_or_reparse(path, &meta)?;

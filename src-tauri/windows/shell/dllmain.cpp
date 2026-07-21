@@ -71,20 +71,15 @@ static bool LooksLikeSplitVolume(const std::wstring& path) {
   const std::wstring stem = lower.substr(0, dot);
   if (LooksLikeArchiveExtension(stem)) return true;
 
-  // Bare name.001: accept only when another volume sibling exists.
+  // Bare name.001: the manifest only activates Extract for first volumes, so
+  // one .002 probe proves a split set without stalling Explorer on 999 stats.
   std::filesystem::path fs_path(path);
   const auto parent = fs_path.parent_path();
   const auto stem_os = fs_path.stem().wstring();
   if (stem_os.empty()) return false;
-  for (unsigned volume = 1; volume <= 999; ++volume) {
-    wchar_t vol[16];
-    swprintf_s(vol, L".%03u", volume);
-    auto candidate = parent / (stem_os + vol);
-    if (_wcsicmp(candidate.c_str(), fs_path.c_str()) == 0) continue;
-    std::error_code ec;
-    if (std::filesystem::exists(candidate, ec) && !ec) return true;
-  }
-  return false;
+  const auto second_volume = parent / (stem_os + L".002");
+  std::error_code ec;
+  return std::filesystem::exists(second_volume, ec) && !ec;
 }
 
 static bool LooksLikeArchive(const std::wstring& path) {
@@ -375,10 +370,10 @@ class ExplorerCommand : public IExplorerCommand, public IObjectWithSite {
     if (!state) return E_POINTER;
     *state = ECS_ENABLED;
     if (kind_ == CommandKind::ExtractTop) {
-      // Registered on Type="*". Hide thin probes (no selection) so Extract does
-      // not flash on every file type. When Explorer has a selection but paths
-      // cannot be resolved (cloud/virtual items), disable instead of hide so
-      // the verb stays visible but inert. Invoke still rejects non-archives.
+      // Manifest registration already limits this command to archive-associated
+      // extensions. Keep thin Explorer probes enabled so the modern menu does
+      // not discard the verb before handing us its real selection. Dynamic state
+      // still hides false-positive .001 files and rejects non-archives in Invoke.
       std::vector<std::wstring> paths;
       const bool resolved =
           SUCCEEDED(ResolvePaths(selection, &paths)) && !paths.empty();
@@ -386,8 +381,6 @@ class ExplorerCommand : public IExplorerCommand, public IObjectWithSite {
         DWORD count = 0;
         if (selection && SUCCEEDED(selection->GetCount(&count)) && count > 0) {
           *state = ECS_DISABLED;
-        } else {
-          *state = ECS_HIDDEN;
         }
         return S_OK;
       }

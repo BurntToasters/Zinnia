@@ -4,8 +4,8 @@ use std::sync::Mutex;
 use tauri_plugin_shell::process::CommandChild;
 
 mod archive_snapshot;
-mod commit;
 mod commands;
+mod commit;
 mod journal;
 mod quota;
 mod recovery;
@@ -47,6 +47,10 @@ pub(crate) use quota::available_space_for_path;
 pub(crate) use staging::{create_private_stage_dir, resolve_existing_target};
 
 #[cfg(test)]
+pub(crate) use commands::version_cmp;
+#[cfg(all(test, target_os = "windows"))]
+pub(crate) use commands::{store_probed_7z_version, windows_rar_extract_blocked};
+#[cfg(test)]
 pub(crate) use commit::{
     archive_stage_has_recovery_backups, assert_safe_extract_target_ancestors,
     commit_failure_should_scrub_staging, merge_staged_extract, promote_archive_family,
@@ -57,10 +61,6 @@ pub(crate) use journal::{
     is_safe_stage_dir_name, read_pending_stages, register_pending_stage, unregister_plan_stages,
     CleanupJournal, MoveRecord,
 };
-#[cfg(all(test, target_os = "windows"))]
-pub(crate) use commands::{store_probed_7z_version, windows_rar_extract_blocked};
-#[cfg(test)]
-pub(crate) use commands::version_cmp;
 #[cfg(test)]
 pub(crate) use quota::staged_tree_usage;
 #[cfg(test)]

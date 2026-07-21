@@ -54,6 +54,8 @@ function createInitialResults() {
       functions: null,
       branches: null,
     },
+    rustfmt: { status: "pending" },
+    clippy: { status: "pending" },
     rust: { status: "pending" },
   };
 }
@@ -297,6 +299,20 @@ ${colors.reset}`);
     }${colors.reset} (lines ${results.coverage.lines ?? "n/a"}%, statements ${results.coverage.statements ?? "n/a"}%, functions ${results.coverage.functions ?? "n/a"}%, branches ${results.coverage.branches ?? "n/a"}%)`,
   );
   console.log(
+    `${colors.bold}Rust Format:${colors.reset} ${
+      results.rustfmt.status === "passed"
+        ? `${colors.green}✓ PASS`
+        : `${colors.red}✗ FAIL`
+    }${colors.reset}`,
+  );
+  console.log(
+    `${colors.bold}Clippy:${colors.reset}      ${
+      results.clippy.status === "passed"
+        ? `${colors.green}✓ PASS`
+        : `${colors.red}✗ FAIL`
+    }${colors.reset}`,
+  );
+  console.log(
     `${colors.bold}Rust Tests:${colors.reset} ${
       results.rust.status === "passed"
         ? `${colors.green}✓ PASS`
@@ -341,6 +357,37 @@ function main() {
   } else {
     results.coverage.status = "failed";
   }
+  runCommand(
+    "rustfmt",
+    "cargo",
+    [
+      "fmt",
+      "--manifest-path",
+      "src-tauri/Cargo.toml",
+      "--all",
+      "--",
+      "--check",
+    ],
+    null,
+    results,
+    { timeout: rustTimeoutMs },
+  );
+  runCommand(
+    "clippy",
+    "cargo",
+    [
+      "clippy",
+      "--manifest-path",
+      "src-tauri/Cargo.toml",
+      "--all-targets",
+      "--",
+      "-D",
+      "warnings",
+    ],
+    null,
+    results,
+    { timeout: rustTimeoutMs },
+  );
   runCommand(
     "rust",
     "cargo",

@@ -1,13 +1,10 @@
 //! Promote/merge staged outputs, commit and rollback cleanup.
 
 use super::journal::{
-    sync_directory, unregister_plan_stages, update_archive_journal, MoveRecord,
-    MOVE_PLAN_FILE_NAME,
+    sync_directory, unregister_plan_stages, update_archive_journal, MoveRecord, MOVE_PLAN_FILE_NAME,
 };
 use super::quota::MAX_EXTRACT_ENTRIES;
-use super::staging::{
-    assert_extract_parent_unchanged, assert_real_directory, path_entry_exists,
-};
+use super::staging::{assert_extract_parent_unchanged, assert_real_directory, path_entry_exists};
 use super::CleanupPlan;
 
 pub(crate) fn assert_safe_extract_target_ancestors(
@@ -301,12 +298,9 @@ pub(crate) fn promote_archive_family(
 /// Fail closed: if the directory cannot be listed, assume backups may exist.
 pub(crate) fn archive_stage_has_recovery_backups(stage_dir: &std::path::Path) -> bool {
     match std::fs::read_dir(stage_dir) {
-        Ok(entries) => entries.flatten().any(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with("backup-")
-        }),
+        Ok(entries) => entries
+            .flatten()
+            .any(|entry| entry.file_name().to_string_lossy().starts_with("backup-")),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
         Err(_) => true,
     }
@@ -399,7 +393,10 @@ pub(crate) fn auto_rename_path(
 
 pub(crate) const MAX_EXTRACTED_BYTES: u64 = 1024 * 1024 * 1024 * 1024;
 
-pub(crate) fn assert_path_under_root(root: &std::path::Path, path: &std::path::Path) -> Result<(), String> {
+pub(crate) fn assert_path_under_root(
+    root: &std::path::Path,
+    path: &std::path::Path,
+) -> Result<(), String> {
     let relative = path
         .strip_prefix(root)
         .map_err(|_| format!("Staged path escaped the extract root: {}", path.display()))?;

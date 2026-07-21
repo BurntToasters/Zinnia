@@ -3,14 +3,14 @@
 #[cfg(target_os = "macos")]
 use std::process::Command;
 
-#[cfg(target_os = "macos")]
-use super::os_command::command_output_with_timeout;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use super::default_archiver_result;
 #[cfg(target_os = "linux")]
 use super::linux_defaults::{linux_set_archive_defaults, XdgMimeBackend};
 #[cfg(target_os = "macos")]
 use super::macos_defaults::macos_set_archive_defaults;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-use super::default_archiver_result;
+#[cfg(target_os = "macos")]
+use super::os_command::command_output_with_timeout;
 use super::{fallback_archive_defaults, is_packaged, DefaultArchiverResult};
 #[cfg(target_os = "linux")]
 use super::{is_flatpak, linux_desktop_session_available};

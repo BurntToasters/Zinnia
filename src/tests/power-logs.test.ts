@@ -74,4 +74,33 @@ describe("power-logs", () => {
       expect.objectContaining({ kind: "error" }),
     );
   });
+
+  it("surfaces open-folder failures", async () => {
+    vi.mocked(invoke).mockRejectedValue("folder unavailable");
+    const { openLogsFolder } = await import("../power-logs");
+    await openLogsFolder();
+    expect(uiMocks.log).toHaveBeenCalledWith(
+      expect.stringContaining("folder unavailable"),
+      "error",
+    );
+    expect(message).toHaveBeenCalledWith(
+      expect.stringContaining("folder unavailable"),
+      expect.objectContaining({ kind: "error" }),
+    );
+  });
+
+  it("surfaces clear failures", async () => {
+    vi.mocked(ask).mockResolvedValue(true);
+    vi.mocked(invoke).mockRejectedValue(new Error("locked"));
+    const { clearLocalLogs } = await import("../power-logs");
+    await clearLocalLogs();
+    expect(uiMocks.log).toHaveBeenCalledWith(
+      expect.stringContaining("Failed to clear logs"),
+      "error",
+    );
+    expect(message).toHaveBeenCalledWith(
+      expect.stringContaining("locked"),
+      expect.objectContaining({ kind: "error" }),
+    );
+  });
 });

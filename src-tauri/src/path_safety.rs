@@ -246,7 +246,9 @@ mod tests {
             Ok(()) => {
                 let err = open_regular_file_nofollow(&link).expect_err("symlink");
                 assert!(
-                    err.contains("reparse") || err.contains("symbolic") || err.contains("Could not")
+                    err.contains("reparse")
+                        || err.contains("symbolic")
+                        || err.contains("Could not")
                 );
             }
             Err(_) => {

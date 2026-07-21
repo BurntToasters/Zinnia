@@ -1,11 +1,10 @@
 //! Unit tests for the process module.
 
-use super::*;
 use super::archive_snapshot::{
     archive_file_identity, archive_input_family, assert_archive_identity_unchanged,
     stage_extract_input,
 };
-
+use super::*;
 
 fn temp_root(prefix: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!(
@@ -140,8 +139,7 @@ fn nested_extract_merge_does_not_double_remove_directories() {
     std::fs::create_dir_all(destination.join("nested")).expect("destination tree");
     std::fs::write(staged.join("nested/new.txt"), b"new").expect("staged file");
 
-    merge_staged_extract(&staged, &destination, MAX_EXTRACTED_BYTES)
-        .expect("merge should succeed");
+    merge_staged_extract(&staged, &destination, MAX_EXTRACTED_BYTES).expect("merge should succeed");
     assert_eq!(
         std::fs::read(destination.join("nested/new.txt")).expect("promoted file"),
         b"new"
@@ -270,8 +268,7 @@ fn split_archive_family_is_promoted_as_one_set() {
     std::fs::write(root.join("output.7z.001"), b"old-1").expect("old volume 1");
     std::fs::write(root.join("output.7z.002"), b"old-2").expect("old volume 2");
     std::fs::write(root.join("output.7z.003"), b"stale-3").expect("stale volume");
-    std::fs::write(root.join("output.7z.2024"), b"unrelated")
-        .expect("unrelated numeric suffix");
+    std::fs::write(root.join("output.7z.2024"), b"unrelated").expect("unrelated numeric suffix");
 
     promote_archive_family(&staged, &destination).expect("promote volume set");
     assert_eq!(std::fs::read(root.join("output.7z.001")).unwrap(), b"new-1");
@@ -336,8 +333,8 @@ Path = C:\\Users\\a\\a.7z
 Path = C:\\Windows\\system32\\evil.dll
 Size = 1
 ";
-    let err = assert_slt_archive_members_safe(absolute, r"C:\Users\a\a.7z")
-        .expect_err("absolute escape");
+    let err =
+        assert_slt_archive_members_safe(absolute, r"C:\Users\a\a.7z").expect_err("absolute escape");
     assert!(err.contains("evil.dll"));
 
     let safe = "\

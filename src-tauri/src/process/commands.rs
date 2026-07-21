@@ -10,9 +10,7 @@ use crate::progress::parse_progress_line;
 use crate::validation::validate_run_7z_args;
 
 use super::archive_snapshot::assert_archive_identity_unchanged;
-use super::commit::{
-    commit_cleanup, commit_failure_should_scrub_staging, rollback_cleanup,
-};
+use super::commit::{commit_cleanup, commit_failure_should_scrub_staging, rollback_cleanup};
 use super::journal::{write_cleanup_journal, CleanupJournalGuard};
 use super::quota::monitor_extract_quota;
 use super::recovery::{recover_interrupted_transaction, wait_for_startup_recovery};

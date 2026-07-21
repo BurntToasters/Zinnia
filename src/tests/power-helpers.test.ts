@@ -78,4 +78,35 @@ describe("power-shortcuts", () => {
     document.getElementById("close-shortcuts")!.click();
     expect(overlay.hidden).toBe(true);
   });
+
+  it("wires footer and backdrop close handlers", async () => {
+    const { wireShortcutsEvents, openShortcutsModal } =
+      await import("../power-shortcuts");
+    const overlay = document.getElementById("shortcuts-overlay") as HTMLElement;
+    wireShortcutsEvents();
+
+    openShortcutsModal();
+    document.getElementById("close-shortcuts-footer")!.click();
+    expect(overlay.hidden).toBe(true);
+
+    openShortcutsModal();
+    overlay.click();
+    expect(overlay.hidden).toBe(true);
+  });
+
+  it("ignores duplicate close and backdrop clicks from modal children", async () => {
+    const { wireShortcutsEvents, openShortcutsModal, closeShortcutsModal } =
+      await import("../power-shortcuts");
+    const overlay = document.getElementById("shortcuts-overlay") as HTMLElement;
+    const modal = overlay.querySelector<HTMLElement>(".modal")!;
+    wireShortcutsEvents();
+
+    closeShortcutsModal();
+    expect(overlay.hidden).toBe(true);
+
+    openShortcutsModal();
+    modal.click();
+    expect(overlay.hidden).toBe(false);
+    closeShortcutsModal();
+  });
 });

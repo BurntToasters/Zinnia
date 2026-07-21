@@ -43,27 +43,27 @@ pub fn is_extract_window_label(label: &str) -> bool {
 }
 
 // Public API re-exports (stable `launch::…` paths for main.rs / process / macos_services).
-#[allow(unused_imports)]
-pub use extract_window::{
-    cancel_owner_and_wait, clear_extract_window_bindings, close_extract_window,
-    enter_extract_warm_idle, ensure_main_window, get_extract_paths, has_extract_windows,
-    leave_extract_warm, mark_main_window_ready, restore_foreground_activation,
-    should_keep_extract_warm, show_main_window, spawn_extract_window,
-};
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 #[allow(unused_imports)]
 pub use extract_window::first_extract_window;
+#[allow(unused_imports)]
+pub use extract_window::{
+    cancel_owner_and_wait, clear_extract_window_bindings, close_extract_window, ensure_main_window,
+    enter_extract_warm_idle, get_extract_paths, has_extract_windows, leave_extract_warm,
+    mark_main_window_ready, restore_foreground_activation, should_keep_extract_warm,
+    show_main_window, spawn_extract_window,
+};
 #[allow(unused_imports)]
 pub use open_path::{
     assert_extract_bound_destination, derive_extract_destination_path, drain_pending_paths,
     get_initial_mode, get_initial_paths, open_path, register_extract_open_path,
     remember_openable_directory,
 };
-#[allow(unused_imports)]
-pub use open_routing::{collect_cli_context, emit_open_paths};
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 #[allow(unused_imports)]
 pub use open_routing::emit_open_urls;
+#[allow(unused_imports)]
+pub use open_routing::{collect_cli_context, emit_open_paths};
 
 #[doc(hidden)]
 pub use extract_window::{
@@ -73,8 +73,8 @@ pub use extract_window::{
 };
 #[doc(hidden)]
 pub use open_path::{
-    __cmd__drain_pending_paths, __cmd__get_initial_mode, __cmd__get_initial_paths, __cmd__open_path,
-    __cmd__register_extract_open_path, __tauri_command_name_drain_pending_paths,
+    __cmd__drain_pending_paths, __cmd__get_initial_mode, __cmd__get_initial_paths,
+    __cmd__open_path, __cmd__register_extract_open_path, __tauri_command_name_drain_pending_paths,
     __tauri_command_name_get_initial_mode, __tauri_command_name_get_initial_paths,
     __tauri_command_name_open_path, __tauri_command_name_register_extract_open_path,
 };

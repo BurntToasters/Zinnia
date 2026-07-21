@@ -59,8 +59,7 @@ fn set_target(
     };
     let workspace = NSWorkspace::sharedWorkspace();
     let bundle_id = NSString::from_str(bundle_id_value);
-    let Some(application_url) = workspace.URLForApplicationWithBundleIdentifier(&bundle_id)
-    else {
+    let Some(application_url) = workspace.URLForApplicationWithBundleIdentifier(&bundle_id) else {
         return archive_status(target, None, true, "Installed app bundle not found");
     };
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);

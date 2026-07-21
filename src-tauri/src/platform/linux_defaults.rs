@@ -6,9 +6,7 @@ use std::process::Command;
 #[cfg(target_os = "linux")]
 use super::os_command::command_output_with_timeout;
 #[cfg(any(target_os = "linux", test))]
-use super::{
-    archive_status, ArchiveDefaultStatus, ARCHIVE_DEFAULT_TARGETS, ZINNIA_DESKTOP_ID,
-};
+use super::{archive_status, ArchiveDefaultStatus, ARCHIVE_DEFAULT_TARGETS, ZINNIA_DESKTOP_ID};
 
 #[cfg(any(target_os = "linux", test))]
 pub(crate) trait LinuxMimeBackend {
@@ -117,7 +115,9 @@ fn linux_query_archive_defaults<B: LinuxMimeBackend>(
 }
 
 #[cfg(any(target_os = "linux", test))]
-pub(crate) fn linux_set_archive_defaults<B: LinuxMimeBackend>(backend: &mut B) -> Vec<ArchiveDefaultStatus> {
+pub(crate) fn linux_set_archive_defaults<B: LinuxMimeBackend>(
+    backend: &mut B,
+) -> Vec<ArchiveDefaultStatus> {
     ARCHIVE_DEFAULT_TARGETS
         .iter()
         .map(
