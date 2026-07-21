@@ -81,7 +81,6 @@ fn is_allowed_switch(cmd: &str, arg: &str) -> bool {
             (lower.starts_with("-t") && lower.len() > 2)
                 || is_allowed_method_switch(&lower)
                 || (lower.starts_with("-p") && lower.len() > 2)
-                || lower == "-spf"
                 || lower == "-r"
                 || lower == "-r-"
                 || lower == "-r0"
@@ -691,6 +690,23 @@ mod tests {
             "archive.7z".to_string(),
         ];
         assert!(validate_run_7z_args(&args).is_err());
+    }
+
+    #[test]
+    fn validate_run_7z_args_rejects_absolute_path_storage_for_create_and_update() {
+        for command in ["a", "u"] {
+            let args = vec![
+                command.to_string(),
+                "-spf".to_string(),
+                "out.7z".to_string(),
+                "--".to_string(),
+                "input.txt".to_string(),
+            ];
+            assert!(
+                validate_run_7z_args(&args).is_err(),
+                "expected -spf to be rejected for {command}"
+            );
+        }
     }
 
     #[test]

@@ -989,46 +989,64 @@ fn prepare_cleanup_plan(
                 .iter()
                 .position(|arg| arg == "--")
                 .unwrap_or(args.len());
-            let archive_size = args
-                .get(separator + 1)
-                .and_then(|path| std::fs::metadata(path).ok())
-                .map_or(0, |metadata| metadata.len());
             const MAX_EXTRACT_BYTES: u64 = 1024 * 1024 * 1024 * 1024;
             const MIN_DISK_RESERVE_BYTES: u64 = 512 * 1024 * 1024;
-            let ratio_limit = archive_size.saturating_mul(1000).min(MAX_EXTRACT_BYTES);
-            let free_space = available_space_for_path(&destination)?;
-            let reserve = (free_space / 10).max(MIN_DISK_RESERVE_BYTES);
-            let disk_limit = free_space.saturating_sub(reserve);
-            if disk_limit == 0 {
-                return Err(format!(
-                    "Not enough free space to extract safely ({} MiB available).",
-                    free_space / (1024 * 1024)
-                ));
-            }
-            let max_extract_bytes = ratio_limit.min(disk_limit);
             let stage = next_extract_stage_path(&destination, cache_ref)?;
             let archive = args
                 .get(separator + 1)
                 .ok_or_else(|| "Extraction command is missing an archive path.".to_string())?;
-            let staged_input_archive =
-                match stage_extract_input(std::path::Path::new(archive), cache_ref) {
-                    Ok(snapshot) => snapshot,
-                    Err(error) => {
-                        let _ = std::fs::remove_dir_all(&stage);
-                        if let Some(cache) = cache_ref {
-                            let _ = unregister_pending_stage(cache, &stage);
-                        }
-                        return Err(error);
+            let staged_input = match stage_extract_input(std::path::Path::new(archive), cache_ref) {
+                Ok(snapshot) => snapshot,
+                Err(error) => {
+                    let _ = std::fs::remove_dir_all(&stage);
+                    if let Some(cache) = cache_ref {
+                        let _ = unregister_pending_stage(cache, &stage);
                     }
-                };
-            let parent = stage
-                .parent()
-                .ok_or_else(|| "Staged extract has no parent directory.".to_string())?;
-            let extract_parent_names = directory_entry_names(parent)?;
+                    return Err(error);
+                }
+            };
+            let preparation = (|| {
+                let ratio_limit = staged_input
+                    .total_len
+                    .saturating_mul(1000)
+                    .min(MAX_EXTRACT_BYTES);
+                let free_space = available_space_for_path(&destination)?;
+                let reserve = (free_space / 10).max(MIN_DISK_RESERVE_BYTES);
+                let disk_limit = free_space.saturating_sub(reserve);
+                if disk_limit == 0 {
+                    return Err(format!(
+                        "Not enough free space to extract safely ({} MiB available).",
+                        free_space / (1024 * 1024)
+                    ));
+                }
+                let max_extract_bytes = ratio_limit.min(disk_limit);
+                let parent = stage
+                    .parent()
+                    .ok_or_else(|| "Staged extract has no parent directory.".to_string())?;
+                let extract_parent_names = directory_entry_names(parent)?;
+                Ok((max_extract_bytes, reserve, extract_parent_names))
+            })();
+            let (max_extract_bytes, reserve, extract_parent_names) = match preparation {
+                Ok(preparation) => preparation,
+                Err(error) => {
+                    let input_stage = staged_input.path.parent().map(std::path::Path::to_path_buf);
+                    let _ = std::fs::remove_dir_all(&stage);
+                    if let Some(input_stage) = &input_stage {
+                        let _ = std::fs::remove_dir_all(input_stage);
+                    }
+                    if let Some(cache) = cache_ref {
+                        let _ = unregister_pending_stage(cache, &stage);
+                        if let Some(input_stage) = &input_stage {
+                            let _ = unregister_pending_stage(cache, input_stage);
+                        }
+                    }
+                    return Err(error);
+                }
+            };
             Ok(CleanupPlan {
                 staged_extract: Some((stage, destination)),
                 staged_archive: None,
-                staged_input_archive: Some(staged_input_archive),
+                staged_input_archive: Some(staged_input.path),
                 extract_parent_names: Some(extract_parent_names),
                 cache_dir,
                 max_extract_bytes: Some(max_extract_bytes),
@@ -2330,26 +2348,36 @@ pub async fn run_7z(
         }
     };
 
-    let finalize_result = if was_cancelled || exit_code != 0 {
-        if let Err(error) = rollback_cleanup(&cleanup_plan) {
-            Err(format!("7z operation ended, but rollback failed: {error}"))
-        } else {
-            if was_cancelled {
-                let _ = window.emit("7z-cancelled", ());
+    // Commit/rollback can walk, rename, sync, and delete large trees. Keep that
+    // off the async runtime so other Tauri tasks are not blocked.
+    let finalize_app = app.clone();
+    let finalize_plan = cleanup_plan.clone();
+    let finalize_window = window.clone();
+    let finalize_emit = emit_window.clone();
+    let finalize_result = tokio::task::spawn_blocking(move || {
+        if was_cancelled || exit_code != 0 {
+            if let Err(error) = rollback_cleanup(&finalize_plan) {
+                Err(format!("7z operation ended, but rollback failed: {error}"))
+            } else {
+                if was_cancelled {
+                    let _ = finalize_window.emit("7z-cancelled", ());
+                }
+                Ok(())
             }
-            Ok(())
+        } else {
+            let _ = finalize_emit.emit(
+                "7z-progress-structured",
+                crate::progress::ProgressUpdate {
+                    percent: Some(100),
+                    files_done: None,
+                    current_file: Some("Finalizing…".to_string()),
+                },
+            );
+            commit_cleanup(&finalize_app, &finalize_plan)
         }
-    } else {
-        let _ = emit_window.emit(
-            "7z-progress-structured",
-            crate::progress::ProgressUpdate {
-                percent: Some(100),
-                files_done: None,
-                current_file: Some("Finalizing…".to_string()),
-            },
-        );
-        commit_cleanup(&app, &cleanup_plan)
-    };
+    })
+    .await
+    .map_err(|error| format!("Archive finalization task failed: {error}"))?;
 
     if let Ok(mut process) = lock_process(&state) {
         process.child = None;
@@ -2893,10 +2921,11 @@ Size = 1
         let snapshot = stage_extract_input(&archive, None).expect("snapshot");
         std::fs::write(&archive, b"changed!").expect("mutate source");
         assert_eq!(
-            std::fs::read(&snapshot).expect("snapshot data"),
+            std::fs::read(&snapshot.path).expect("snapshot data"),
             b"original"
         );
-        let _ = std::fs::remove_dir_all(snapshot.parent().expect("stage"));
+        assert_eq!(snapshot.total_len, 8);
+        let _ = std::fs::remove_dir_all(snapshot.path.parent().expect("stage"));
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -2913,6 +2942,161 @@ Size = 1
             vec![first.clone(), second.clone()]
         );
         assert!(archive_input_family(&second).is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn archive_snapshot_collects_part_rar_family() {
+        let root = temp_root("zinnia-part-rar-snapshot");
+        std::fs::create_dir_all(&root).expect("root");
+        let first = root.join("archive.part01.rar");
+        let second = root.join("archive.part02.rar");
+        std::fs::write(&first, b"first").expect("first");
+        std::fs::write(&second, b"second").expect("second");
+        assert_eq!(
+            archive_input_family(&first).expect("family"),
+            vec![first.clone(), second.clone()]
+        );
+        assert!(archive_input_family(&second).is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn archive_snapshot_collects_split_zip_family_and_total_size() {
+        let root = temp_root("zinnia-split-zip-snapshot");
+        std::fs::create_dir_all(&root).expect("root");
+        let first = root.join("archive.z01");
+        let second = root.join("archive.z02");
+        let final_volume = root.join("archive.zip");
+        std::fs::write(&first, b"first").expect("first");
+        std::fs::write(&second, b"second").expect("second");
+        std::fs::write(&final_volume, b"final").expect("final");
+        assert_eq!(
+            archive_input_family(&final_volume).expect("family"),
+            vec![first.clone(), second.clone(), final_volume.clone()]
+        );
+        assert!(archive_input_family(&first).is_err());
+
+        let snapshot = stage_extract_input(&final_volume, None).expect("snapshot");
+        assert_eq!(snapshot.total_len, 16);
+        let stage = snapshot.path.parent().expect("stage").to_path_buf();
+        assert!(stage.join("archive.z01").is_file());
+        assert!(stage.join("archive.z02").is_file());
+        assert!(stage.join("archive.zip").is_file());
+        let _ = std::fs::remove_dir_all(stage);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn archive_snapshot_collects_uppercase_split_zip_family() {
+        let root = temp_root("zinnia-uppercase-split-zip-snapshot");
+        std::fs::create_dir_all(&root).expect("root");
+        let first = root.join("archive.Z01");
+        let second = root.join("archive.Z02");
+        let final_volume = root.join("archive.ZIP");
+        std::fs::write(&first, b"first").expect("first");
+        std::fs::write(&second, b"second").expect("second");
+        std::fs::write(&final_volume, b"final").expect("final");
+
+        let family = archive_input_family(&final_volume).expect("family");
+        assert_eq!(family.len(), 3);
+        assert_eq!(
+            family[0].canonicalize().unwrap(),
+            first.canonicalize().unwrap()
+        );
+        assert_eq!(
+            family[1].canonicalize().unwrap(),
+            second.canonicalize().unwrap()
+        );
+        assert_eq!(
+            family[2].canonicalize().unwrap(),
+            final_volume.canonicalize().unwrap()
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn archive_snapshot_rejects_ambiguous_case_folded_volumes() {
+        let root = temp_root("zinnia-ambiguous-split-zip-snapshot");
+        std::fs::create_dir_all(&root).expect("root");
+        let lower = root.join("archive.z01");
+        let upper = root.join("archive.Z01");
+        let final_volume = root.join("archive.zip");
+        std::fs::write(&lower, b"lower").expect("lower");
+        std::fs::write(&upper, b"upper").expect("upper");
+        std::fs::write(&final_volume, b"final").expect("final");
+
+        let error = archive_input_family(&final_volume).expect_err("ambiguous family");
+        assert!(error.contains("ambiguous"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn extraction_quota_uses_complete_split_archive_size() {
+        let root = temp_root("zinnia-split-family-quota");
+        std::fs::create_dir_all(&root).expect("root");
+        let first = root.join("archive.z01");
+        let final_volume = root.join("archive.zip");
+        std::fs::write(&first, b"12345").expect("first");
+        std::fs::write(&final_volume, b"67890").expect("final");
+        let destination = root.join("output");
+        let args = vec![
+            "x".to_string(),
+            format!("-o{}", destination.display()),
+            "--".to_string(),
+            final_volume.to_string_lossy().to_string(),
+        ];
+
+        let plan = prepare_cleanup_plan(&args, None).expect("cleanup plan");
+        assert_eq!(plan.max_extract_bytes, Some(10_000));
+        rollback_cleanup(&plan).expect("rollback");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn archive_snapshot_collects_legacy_rar_family() {
+        let root = temp_root("zinnia-legacy-rar-snapshot");
+        std::fs::create_dir_all(&root).expect("root");
+        let first = root.join("archive.rar");
+        let second = root.join("archive.r00");
+        let third = root.join("archive.r01");
+        std::fs::write(&first, b"first").expect("first");
+        std::fs::write(&second, b"second").expect("second");
+        std::fs::write(&third, b"third").expect("third");
+        assert_eq!(
+            archive_input_family(&first).expect("family"),
+            vec![first.clone(), second.clone(), third.clone()]
+        );
+        assert!(archive_input_family(&second).is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn archive_snapshot_collects_uppercase_legacy_rar_family() {
+        let root = temp_root("zinnia-uppercase-legacy-rar-snapshot");
+        std::fs::create_dir_all(&root).expect("root");
+        let first = root.join("archive.RAR");
+        let second = root.join("archive.R00");
+        let third = root.join("archive.R01");
+        std::fs::write(&first, b"first").expect("first");
+        std::fs::write(&second, b"second").expect("second");
+        std::fs::write(&third, b"third").expect("third");
+
+        let family = archive_input_family(&first).expect("family");
+        assert_eq!(family.len(), 3);
+        assert_eq!(
+            family[0].canonicalize().unwrap(),
+            first.canonicalize().unwrap()
+        );
+        assert_eq!(
+            family[1].canonicalize().unwrap(),
+            second.canonicalize().unwrap()
+        );
+        assert_eq!(
+            family[2].canonicalize().unwrap(),
+            third.canonicalize().unwrap()
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 

@@ -70,10 +70,9 @@ fn is_direct_managed_child(base: &std::path::Path, target: &std::path::Path) -> 
             .is_some_and(|name| name.starts_with("tmp-") && name.len() > 4)
 }
 
-#[tauri::command]
-pub fn remove_managed_temp_dir(app: tauri::AppHandle, path: String) -> Result<(), String> {
-    let base = managed_base(&app)?;
-    let target = std::path::PathBuf::from(&path);
+fn remove_managed_temp_dir_blocking(app: &tauri::AppHandle, path: &str) -> Result<(), String> {
+    let base = managed_base(app)?;
+    let target = std::path::PathBuf::from(path);
 
     let raw_meta = std::fs::symlink_metadata(&target).map_err(|e| e.to_string())?;
     crate::path_safety::reject_link_or_reparse(&target, &raw_meta)
@@ -90,6 +89,13 @@ pub fn remove_managed_temp_dir(app: tauri::AppHandle, path: String) -> Result<()
     }
 
     std::fs::remove_dir_all(&canonical_target).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn remove_managed_temp_dir(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || remove_managed_temp_dir_blocking(&app, &path))
+        .await
+        .map_err(|error| format!("Temp-directory cleanup worker failed: {error}"))?
 }
 
 #[cfg(test)]

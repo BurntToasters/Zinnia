@@ -17,18 +17,23 @@ function formatDate(date) {
   return `${year}-${month}-${day}`;
 }
 
-function run({ now = new Date() } = {}) {
-  if (!fs.existsSync(pkgPath)) {
-    throw new Error(`package.json not found at ${pkgPath}`);
+function run({
+  now = new Date(),
+  packagePath = pkgPath,
+  metadataPath = xmlPath,
+  check = false,
+} = {}) {
+  if (!fs.existsSync(packagePath)) {
+    throw new Error(`package.json not found at ${packagePath}`);
   }
 
-  if (!fs.existsSync(xmlPath)) {
-    throw new Error(`AppStream metadata not found at ${xmlPath}`);
+  if (!fs.existsSync(metadataPath)) {
+    throw new Error(`AppStream metadata not found at ${metadataPath}`);
   }
 
   let pkg;
   try {
-    pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+    pkg = JSON.parse(fs.readFileSync(packagePath, "utf8"));
   } catch (error) {
     throw new Error(
       `Failed to parse package.json: ${
@@ -45,7 +50,7 @@ function run({ now = new Date() } = {}) {
   }
 
   const dateStr = formatDate(now);
-  const xml = fs.readFileSync(xmlPath, "utf8");
+  const xml = fs.readFileSync(metadataPath, "utf8");
 
   const releasesLineMatch = xml.match(/^(\s*)<releases>\s*$/m);
   if (!releasesLineMatch) {
@@ -70,24 +75,33 @@ function run({ now = new Date() } = {}) {
 
   let updatedSection = releasesSectionMatch[0];
   if (existingReleaseMatch) {
-    // The current version can be prepared over several days. Update only its
-    // date, preserving any release notes/details URL and all older entries.
+    // A release date is historical metadata, not the build date. Once a
+    // version exists, preserve its date so repeated release preparation stays
+    // deterministic and does not dirty a clean source export.
     const currentDateMatch = existingReleaseMatch[0].match(/date="([^"]+)"/);
-    if (currentDateMatch?.[1] === dateStr) {
-      return { updated: false, version, date: dateStr };
+    if (currentDateMatch) {
+      return { updated: false, version, date: currentDateMatch[1] };
+    }
+    if (check) {
+      throw new Error(
+        `AppStream release ${version} must have a committed release date`,
+      );
     }
 
-    const updatedRelease = currentDateMatch
-      ? existingReleaseMatch[0].replace(/date="[^"]*"/, `date="${dateStr}"`)
-      : existingReleaseMatch[0].replace(
-          /<release\b/,
-          `<release date="${dateStr}"`,
-        );
+    const updatedRelease = existingReleaseMatch[0].replace(
+      /<release\b/,
+      `<release date="${dateStr}"`,
+    );
     updatedSection = updatedSection.replace(
       existingReleaseMatch[0],
       updatedRelease,
     );
   } else {
+    if (check) {
+      throw new Error(
+        `AppStream release ${version} is missing; add and commit it before release preparation`,
+      );
+    }
     // AppStream keeps release history newest-first. Never replace the previous
     // entry: software centers use it to show users what changed between versions.
     updatedSection = updatedSection.replace(
@@ -101,13 +115,13 @@ function run({ now = new Date() } = {}) {
   }
 
   const updatedXml = xml.replace(releasesSectionRegex, updatedSection);
-  fs.writeFileSync(xmlPath, updatedXml, "utf8");
+  fs.writeFileSync(metadataPath, updatedXml, "utf8");
   return { updated: true, version, date: dateStr };
 }
 
 if (import.meta.main) {
   try {
-    const result = run();
+    const result = run({ check: process.argv.slice(2).includes("--check") });
     if (result.updated) {
       console.log(
         `Updated AppStream release to ${result.version} (${result.date})`,
