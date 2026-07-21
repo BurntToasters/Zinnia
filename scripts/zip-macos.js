@@ -163,7 +163,10 @@ if (
 verifySignedEntitlements(appPath, {
   "com.apple.security.cs.allow-jit": true,
 });
-verifySignedEntitlements(sidecarPath, {});
+// Tauri signs externalBin sidecars with the same entitlements.plist as the app.
+verifySignedEntitlements(sidecarPath, {
+  "com.apple.security.cs.allow-jit": true,
+});
 execFileSync("xcrun", ["stapler", "validate", appPath], { stdio: "inherit" });
 execFileSync(
   "spctl",

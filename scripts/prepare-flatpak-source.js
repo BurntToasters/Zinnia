@@ -22,7 +22,23 @@ function run(command, args, options = {}) {
       `${command} ${args.join(" ")} failed: ${result.stderr || result.stdout}`,
     );
   }
-  return result.stdout.trim();
+  // Keep leading spaces — git porcelain uses " M path" / "M  path" and trim()
+  // would turn the first into "M path", breaking XY/path parsing.
+  return result.stdout.replace(/\r?\n$/, "");
+}
+
+function porcelainPaths(statusText) {
+  return statusText
+    .split("\n")
+    .map((line) => line.replace(/\r$/, ""))
+    .filter(Boolean)
+    .map((line) => {
+      // XY PATH  or  XY ORIG -> PATH  (XY is always two status columns)
+      const pathPart = line.length >= 3 ? line.slice(3) : line;
+      return pathPart.includes(" -> ")
+        ? pathPart.split(" -> ").at(-1)
+        : pathPart;
+    });
 }
 
 const dirtyEntries = run("git", [
@@ -33,18 +49,9 @@ const dirtyEntries = run("git", [
 // `tauri build` rewrites generated ACL schemas under src-tauri/gen/schemas/.
 // Flatpak exports `git archive HEAD`, so those dirty generated files never enter
 // the bundle — only refuse unexpected workspace dirt.
-const blockingDirty = dirtyEntries
-  .split("\n")
-  .map((line) => line.trimEnd())
-  .filter(Boolean)
-  .filter((line) => {
-    // Porcelain: XY PATH  or  XY ORIG -> PATH
-    const pathPart = line.slice(3);
-    const filePath = pathPart.includes(" -> ")
-      ? pathPart.split(" -> ").at(-1)
-      : pathPart;
-    return !filePath.startsWith("src-tauri/gen/schemas/");
-  });
+const blockingDirty = porcelainPaths(dirtyEntries).filter(
+  (filePath) => !filePath.startsWith("src-tauri/gen/schemas/"),
+);
 if (blockingDirty.length) {
   throw new Error(
     `Flatpak source export requires a clean committed tree:\n${blockingDirty.join("\n")}`,

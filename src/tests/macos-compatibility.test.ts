@@ -66,9 +66,10 @@ describe("macOS compatibility", () => {
     expect(entitlements).not.toContain("com.apple.security.network.client");
     expect(entitlements).not.toContain("com.apple.security.get-task-allow");
     expect(releaseVerifier).toContain("verifySignedEntitlements(appPath");
-    expect(releaseVerifier).toContain(
-      "verifySignedEntitlements(sidecarPath, {})",
-    );
+    expect(releaseVerifier).toContain("verifySignedEntitlements(sidecarPath");
     expect(releaseVerifier).toContain('"--xml"');
+    expect(releaseVerifier).toMatch(
+      /verifySignedEntitlements\(\s*sidecarPath[\s\S]*?allow-jit/,
+    );
   });
 });
