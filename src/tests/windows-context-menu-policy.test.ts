@@ -36,6 +36,17 @@ function itemTypeBody(type: string): string {
 }
 
 describe("Windows 11 context-menu manifest", () => {
+  it("uses schema-valid base UAP file associations", () => {
+    expect(manifest).toContain(
+      '<uap:Extension Category="windows.fileTypeAssociation">',
+    );
+    expect(manifest).toContain(
+      '<uap:FileTypeAssociation Name="zinnia-archives">',
+    );
+    expect(manifest).not.toMatch(/FileTypeAssociation[^>]*\bParameters=/);
+    expect(manifest).not.toContain("<uap3:FileTypeAssociation");
+  });
+
   it("keeps wildcard registration to one root verb", () => {
     const wildcard = itemTypeBody("*");
     expect(wildcard).toContain('Id="ZinniaRoot"');

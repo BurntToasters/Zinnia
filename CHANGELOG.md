@@ -31,6 +31,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Release:** Release VMs now refuse dirty, unpushed, or wrong-branch source and rerun the complete local suite before building artifacts.
 - **Fix:** Enforced LF text checkouts, tolerated existing Windows line endings in Prettier, and removed shebangs from importable scripts so Vitest parses them correctly on Windows.
 - **Fix:** Windows extraction disk-space checks now resolve an existing directory and pass a directory-form path to the native API, fixing four release-VM Rust test failures.
+- **Fix:** Corrected the sparse-package file-association schema so MakeAppx accepts the Windows 11 context-menu manifest.
 - **Test:** Fixed Windows-only Rust warnings/Clippy failures and added Clippy to the Windows/macOS CI matrix.
 
 ## Changes in `v0.6.0-beta.9:`
