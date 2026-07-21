@@ -233,7 +233,7 @@ export function renderOsIntegrationStatus(status: OsIntegrationStatus): void {
     setText(
       "os-finder-services-help",
       status.finderServicesHelp ??
-        "Extract / Compress with Zinnia in Finder's Services menu.",
+        "Extract / Compress with Zinnia under Keyboard Shortcuts → Services (not Login Items & Extensions).",
     );
     const finderBtn = document.getElementById(
       "open-finder-services-settings",
@@ -244,8 +244,8 @@ export function renderOsIntegrationStatus(status: OsIntegrationStatus): void {
       finderBtn.disabled = false;
       finderBtn.title =
         finderKnown && finderEnabled
-          ? "Open Keyboard Shortcuts → Services in System Settings"
-          : "Open System Settings so you can turn on Finder Services";
+          ? "Open Keyboard Shortcuts → Services (Zinnia is not a File Provider extension)"
+          : "Open Keyboard Shortcuts and select Services to enable Extract / Compress with Zinnia";
     }
   }
 

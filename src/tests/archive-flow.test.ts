@@ -139,6 +139,7 @@ beforeEach(() => {
 
   const app = document.getElementById("app") as HTMLElement;
   app.dataset.mode = "extract";
+  app.dataset.workspaceMode = "power";
 
   (document.getElementById("browse-password-field") as HTMLElement).hidden =
     true;
@@ -693,6 +694,115 @@ describe("archive test/browse/selective flows", () => {
       title: "Batch extraction complete",
       kind: "warning",
     });
+  });
+
+  it("skips native dialogs for basic-mode batch extract outcomes", async () => {
+    const archiveA = uniqueArchivePath("basic-batch-a");
+    const archiveB = uniqueArchivePath("basic-batch-b");
+    const app = document.getElementById("app") as HTMLElement;
+    app.dataset.workspaceMode = "basic";
+    state.inputs = [archiveA, archiveB];
+    (document.getElementById("extract-path") as HTMLInputElement).value =
+      "/tmp/out";
+
+    setInvokeRouter((command, payload) => {
+      if (command === "validate_archive_paths") {
+        const paths = pathsFromValidationPayload(payload);
+        return paths.map((path) => ({ path, valid: true }));
+      }
+      if (command === "probe_7z") return undefined;
+      if (command === "run_7z") return { stdout: "", stderr: "", code: 0 };
+      return undefined;
+    });
+
+    await runBatchExtract();
+
+    expect(messageMock).not.toHaveBeenCalled();
+  });
+
+  it("skips native dialogs for basic-mode batch extract failures and cancel", async () => {
+    const archiveA = uniqueArchivePath("basic-fail-a");
+    const archiveB = uniqueArchivePath("basic-fail-b");
+    const app = document.getElementById("app") as HTMLElement;
+    app.dataset.workspaceMode = "basic";
+    state.inputs = [archiveA, archiveB];
+    (document.getElementById("extract-path") as HTMLInputElement).value =
+      "/tmp/out";
+
+    let runCount = 0;
+    setInvokeRouter((command, payload) => {
+      if (command === "validate_archive_paths") {
+        const paths = pathsFromValidationPayload(payload);
+        return paths.map((path) => ({ path, valid: true }));
+      }
+      if (command === "probe_7z") return undefined;
+      if (command === "run_7z") {
+        runCount += 1;
+        if (runCount === 1) return { stdout: "", stderr: "bad", code: 2 };
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      return undefined;
+    });
+
+    await runBatchExtract();
+    expect(messageMock).not.toHaveBeenCalled();
+
+    messageMock.mockClear();
+    runCount = 0;
+    state.inputs = [archiveA, archiveB];
+    setInvokeRouter((command, payload) => {
+      if (command === "validate_archive_paths") {
+        const paths = pathsFromValidationPayload(payload);
+        return paths.map((path) => ({ path, valid: true }));
+      }
+      if (command === "probe_7z") return undefined;
+      if (command === "run_7z") {
+        state.batchCancelled = true;
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      return undefined;
+    });
+
+    await runBatchExtract();
+    expect(messageMock).not.toHaveBeenCalled();
+  });
+
+  it("skips native dialogs for basic-mode operation and batch errors", async () => {
+    const app = document.getElementById("app") as HTMLElement;
+    app.dataset.mode = "add";
+    app.dataset.workspaceMode = "basic";
+    state.inputs = ["/tmp/input.txt"];
+    (document.getElementById("output-path") as HTMLInputElement).value =
+      "/tmp/output.7z";
+    (document.getElementById("delete-after") as HTMLInputElement).checked =
+      false;
+
+    setInvokeRouter((command) => {
+      if (command === "probe_7z") return undefined;
+      if (command === "run_7z") {
+        return { stdout: "", stderr: "fail", code: 2 };
+      }
+      return undefined;
+    });
+
+    await runAction();
+    expect(messageMock).not.toHaveBeenCalled();
+
+    messageMock.mockClear();
+    setInvokeRouter((command) => {
+      if (command === "probe_7z") return undefined;
+      if (command === "run_7z") throw new Error("backend down");
+      return undefined;
+    });
+    await runAction();
+    expect(messageMock).not.toHaveBeenCalled();
+
+    messageMock.mockClear();
+    app.dataset.mode = "extract";
+    state.inputs = [uniqueArchivePath("basic-err")];
+    (document.getElementById("extract-path") as HTMLInputElement).value = "";
+    await runBatchExtract();
+    expect(messageMock).not.toHaveBeenCalled();
   });
 
   it("resets cancellation state and reports backend errors", async () => {

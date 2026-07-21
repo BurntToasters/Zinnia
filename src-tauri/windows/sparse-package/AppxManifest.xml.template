@@ -54,44 +54,19 @@
       <Extensions>
         <desktop4:Extension Category="windows.fileExplorerContextMenus">
           <desktop4:FileExplorerContextMenus>
-            <!-- Root "Zinnia" submenu for all files/folders (Extract + Compress). -->
+            <!-- Root "Zinnia" submenu + top-level Extract (hidden for non-archives).
+                 Extract is on Type="*" (not per-extension) so it appears without
+                 package FileTypeAssociation entries; do not also register Root on
+                 archive extensions or Win11 nests duplicate Zinnia menus. -->
             <desktop5:ItemType Type="*">
               <desktop5:Verb Id="ZinniaRoot" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5C" />
+              <desktop5:Verb Id="ZinniaExtractTop" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
             </desktop5:ItemType>
             <desktop5:ItemType Type="Directory">
               <desktop5:Verb Id="ZinniaRootDir" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5C" />
             </desktop5:ItemType>
             <desktop5:ItemType Type="Directory\Background">
               <desktop5:Verb Id="ZinniaRootBg" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5C" />
-            </desktop5:ItemType>
-            <!-- Archives: top-level Extract only. Root comes from Type="*" above —
-                 do not re-register Root here or Win11 nests duplicate Zinnia menus. -->
-            <desktop5:ItemType Type=".7z">
-              <desktop5:Verb Id="ZinniaExtract7z" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
-            </desktop5:ItemType>
-            <desktop5:ItemType Type=".zip">
-              <desktop5:Verb Id="ZinniaExtractZip" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
-            </desktop5:ItemType>
-            <desktop5:ItemType Type=".tar">
-              <desktop5:Verb Id="ZinniaExtractTar" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
-            </desktop5:ItemType>
-            <desktop5:ItemType Type=".gz">
-              <desktop5:Verb Id="ZinniaExtractGz" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
-            </desktop5:ItemType>
-            <desktop5:ItemType Type=".tgz">
-              <desktop5:Verb Id="ZinniaExtractTgz" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
-            </desktop5:ItemType>
-            <desktop5:ItemType Type=".bz2">
-              <desktop5:Verb Id="ZinniaExtractBz2" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
-            </desktop5:ItemType>
-            <desktop5:ItemType Type=".tbz2">
-              <desktop5:Verb Id="ZinniaExtractTbz2" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
-            </desktop5:ItemType>
-            <desktop5:ItemType Type=".xz">
-              <desktop5:Verb Id="ZinniaExtractXz" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
-            </desktop5:ItemType>
-            <desktop5:ItemType Type=".txz">
-              <desktop5:Verb Id="ZinniaExtractTxz" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
             </desktop5:ItemType>
           </desktop4:FileExplorerContextMenus>
         </desktop4:Extension>

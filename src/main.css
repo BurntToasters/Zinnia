@@ -2458,8 +2458,10 @@ body.platform-linux #titlebar {
   display: flex;
 }
 
+/* Basic glass: same seamless strip as macOS — let Mica/Acrylic show through. */
 html[data-window-fx="basic"] body.platform-windows #titlebar {
-  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  background: transparent;
+  border-bottom: none;
 }
 
 .titlebar-logo {
