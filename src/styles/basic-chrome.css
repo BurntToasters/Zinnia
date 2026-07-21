@@ -398,40 +398,69 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
   color: var(--text);
 }
 
-.basic-recent {
+/* Compact Recent control in the Basic titlebar strip. */
+#app[data-workspace-mode="power"] .header-recent {
+  display: none;
+}
+
+#app[data-workspace-mode="basic"] .header-recent:not([hidden]) {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+#app[data-workspace-mode="basic"] .header-recent__btn {
+  height: 30px;
+  padding: 0 8px;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+#app[data-workspace-mode="basic"] .header-recent__btn:hover,
+#app[data-workspace-mode="basic"] .header-recent.is-open .header-recent__btn {
+  color: var(--text);
+  background: var(--hover-overlay);
+}
+
+.header-recent__menu:not([hidden]) {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 10001;
+  min-width: 160px;
+  max-width: min(280px, 70vw);
+  padding: 4px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--basic-radius);
-  padding: 12px;
-}
-
-.basic-recent__header {
-  margin-bottom: 8px;
-  font-size: var(--basic-label);
-  font-weight: 600;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.basic-recent__list {
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
 }
 
-.basic-recent__item {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 10px;
+.header-recent__item {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
   color: var(--text);
-  background: var(--surface-alt);
-  border: 1px solid var(--border);
-  border-radius: var(--basic-radius-input);
   font-family: inherit;
-  font-size: var(--basic-label);
+  font-size: 0.8125rem;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   cursor: pointer;
+}
+
+.header-recent__item:hover,
+.header-recent__item:focus-visible {
+  background: var(--hover-overlay);
+  outline: none;
 }
 
 .basic-back-link {

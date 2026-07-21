@@ -113,6 +113,24 @@
               Power
             </button>
           </div>
+          <div class="header-recent" id="header-recent" hidden>
+            <button
+              type="button"
+              class="btn btn--ghost btn--sm header-recent__btn"
+              id="header-recent-btn"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="header-recent-menu"
+            >
+              Recent
+            </button>
+            <div
+              class="header-recent__menu"
+              id="header-recent-menu"
+              role="menu"
+              hidden
+            ></div>
+          </div>
           <button class="btn btn--ghost btn--sm" id="toggle-density">
             Compact
           </button>
@@ -1401,10 +1419,6 @@
               >
                 Make an archive
               </button>
-            </div>
-            <div class="basic-recent" id="basic-recent" hidden>
-              <div class="basic-recent__header">Recent</div>
-              <div class="basic-recent__list" id="basic-recent-list"></div>
             </div>
           </div>
 
