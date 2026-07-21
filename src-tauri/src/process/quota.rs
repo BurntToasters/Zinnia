@@ -9,7 +9,7 @@ pub(crate) const MAX_EXTRACT_ENTRIES: u64 = 1_000_000;
 pub(crate) fn available_space_for_path(path: &std::path::Path) -> Result<u64, String> {
     let existing = path
         .ancestors()
-        .find(|candidate| candidate.exists())
+        .find(|candidate| candidate.is_dir())
         .ok_or_else(|| "Could not find an existing extraction parent directory.".to_string())?;
     available_space(existing)
 }
@@ -36,11 +36,14 @@ pub(crate) fn available_space(path: &std::path::Path) -> Result<u64, String> {
 #[cfg(windows)]
 pub(crate) fn available_space(path: &std::path::Path) -> Result<u64, String> {
     use std::os::windows::ffi::OsStrExt;
-    let wide: Vec<u16> = path
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
+    let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+    let has_trailing_separator = wide
+        .last()
+        .is_some_and(|last| *last == u16::from(b'\\') || *last == u16::from(b'/'));
+    if !has_trailing_separator {
+        wide.push(b'\\' as u16);
+    }
+    wide.push(0);
     let mut available = 0u64;
     #[link(name = "kernel32")]
     extern "system" {
@@ -198,5 +201,34 @@ pub(crate) fn stop_extract_for_quota(app: &tauri::AppHandle, reason: String) {
                 ));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::available_space_for_path;
+
+    fn temp_root() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "zinnia-free-space-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ))
+    }
+
+    #[test]
+    fn free_space_probe_uses_an_existing_directory_ancestor() {
+        let root = temp_root();
+        std::fs::create_dir_all(&root).expect("root");
+        let file = root.join("archive.7z");
+        std::fs::write(&file, b"archive").expect("archive");
+
+        assert!(available_space_for_path(&file).is_ok());
+        assert!(available_space_for_path(&root.join("missing/output")).is_ok());
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }
