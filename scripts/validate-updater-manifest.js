@@ -51,10 +51,15 @@ function hasMinisignEnvelope(value) {
   }
   const signaturePacket = decodeStrictBase64(lines[1]);
   const globalSignature = decodeStrictBase64(lines[3]);
-  return (
-    signaturePacket?.length === 74 &&
+  // Minisign binary alg IDs: "Ed" (legacy) or "ED" (prehashed; Tauri updater).
+  const algorithm =
+    signaturePacket &&
+    signaturePacket.length >= 2 &&
     signaturePacket[0] === 0x45 &&
-    signaturePacket[1] === 0x64 &&
+    (signaturePacket[1] === 0x64 || signaturePacket[1] === 0x44);
+  return (
+    Boolean(algorithm) &&
+    signaturePacket.length === 74 &&
     globalSignature?.length === 64
   );
 }

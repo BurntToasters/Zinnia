@@ -35,7 +35,9 @@ fn main() -> Result<(), String> {
         })?;
         let mut file = std::fs::File::open(artifact)
             .map_err(|error| format!("could not open {}: {error}", artifact.display()))?;
-        let mut buffer = [0_u8; 1024 * 1024];
+        // Heap buffer — a 1 MiB stack array overflows Windows' default ~1 MiB stack
+        // (STATUS_STACK_OVERFLOW / exit 3221225725) when verifying large installers.
+        let mut buffer = vec![0_u8; 64 * 1024];
         loop {
             let read = file
                 .read(&mut buffer)

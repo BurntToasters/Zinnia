@@ -23,6 +23,8 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
 ## Changes in `v0.6.0-beta.4:`
 
+- **Fix:** Updater manifest validation accepts Tauri’s prehashed Minisign alg id (`ED`) as well as legacy `Ed`.
+- **Fix:** Updater signature verifier uses a heap read buffer (avoids Windows stack overflow / exit `3221225725` on large installers).
 - **Fix:** Flatpak source export keeps git porcelain leading spaces (so ` M gen/schemas…` is recognized) and allows dirty generated ACL schemas after `tauri build`.
 - **Fix:** macOS zip verifier expects the 7z sidecar to carry the same `allow-jit` entitlement Tauri applies from `entitlements.plist`.
 - **Fix:** Windows sparse context-menu MSIX packing uses `makeappx /nv` and UTF-8-without-BOM manifests (fixes “manifest is not valid”).
