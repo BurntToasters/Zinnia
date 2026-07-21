@@ -237,7 +237,27 @@ fn unregister_plan_stages(plan: &CleanupPlan) {
         return;
     };
     for stage in plan_stage_dirs(plan) {
-        let _ = unregister_pending_stage(cache_dir, &stage);
+        // After successful publish, promote may leave the stage (undeletable
+        // backup-* / PermissionDenied). Keep the pending registration so
+        // cleanup_orphan_stages can retry on the next launch — never drop
+        // tracking while the directory may still exist.
+        match path_entry_exists(&stage) {
+            Ok(false) => {
+                let _ = unregister_pending_stage(cache_dir, &stage);
+            }
+            Ok(true) => {
+                eprintln!(
+                    "Keeping pending-stage registration for {}; startup orphan cleanup will retry.",
+                    stage.display()
+                );
+            }
+            Err(error) => {
+                eprintln!(
+                    "Keeping pending-stage registration for {} (could not probe: {error}).",
+                    stage.display()
+                );
+            }
+        }
     }
 }
 
@@ -609,6 +629,12 @@ fn random_token() -> Result<String, String> {
 }
 
 fn resolve_new_target(target: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    if !target.is_absolute() {
+        return Err(
+            "Choose a full output path (for example Desktop or Documents). Relative paths stage under the working directory and often fail with Access Denied."
+                .to_string(),
+        );
+    }
     let parent = target.parent().unwrap_or_else(|| std::path::Path::new("."));
     let canonical_parent = parent
         .canonicalize()
@@ -1381,7 +1407,8 @@ fn publish_file_no_replace(
     target: &std::path::Path,
 ) -> Result<(), String> {
     let source_file = crate::path_safety::open_regular_file_nofollow(source)?;
-    source_file.sync_all().map_err(|e| e.to_string())?;
+    // Same as directory fsync: some Windows setups deny FlushFileBuffers.
+    sync_file_best_effort(&source_file)?;
     drop(source_file);
     if std::fs::hard_link(source, target).is_err() {
         // FAT-family and some network filesystems do not support hard links.
@@ -1397,11 +1424,11 @@ fn publish_file_no_replace(
                     format!("Could not reserve archive output {}: {e}", target.display())
                 })?;
             std::io::copy(&mut input, &mut output).map_err(|e| e.to_string())?;
-            output.sync_all().map_err(|e| e.to_string())?;
-            let permissions = std::fs::metadata(source)
-                .map_err(|e| e.to_string())?
-                .permissions();
-            std::fs::set_permissions(target, permissions).map_err(|e| e.to_string())?;
+            sync_file_best_effort(&output)?;
+            // Best-effort: copying permissions can be denied on Desktop / CFA.
+            if let Ok(permissions) = std::fs::metadata(source).map(|meta| meta.permissions()) {
+                let _ = std::fs::set_permissions(target, permissions);
+            }
             Ok(())
         })();
         if let Err(error) = copy_result {
@@ -1417,6 +1444,17 @@ fn publish_file_no_replace(
         ));
     }
     Ok(())
+}
+
+/// Flush file data; on Windows, PermissionDenied from FlushFileBuffers is ignored
+/// (same policy as [`crate::fs_secure::sync_directory`]).
+fn sync_file_best_effort(file: &std::fs::File) -> Result<(), String> {
+    match file.sync_all() {
+        Ok(()) => Ok(()),
+        #[cfg(windows)]
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 fn promote_archive_family(
@@ -1500,29 +1538,90 @@ fn promote_archive_family(
         };
     }
 
+    // Destination already holds the new archive(s). Nothing after this point may
+    // return Err — leftover backups/stage dirs are cleaned best-effort only.
     if let Some(parent) = destination.parent() {
-        sync_directory(parent)?;
+        if let Err(error) = sync_directory(parent) {
+            eprintln!(
+                "Archive published; destination parent sync failed for {}: {error}",
+                parent.display()
+            );
+        }
     }
 
     for (backup, _) in backups {
-        std::fs::remove_file(&backup).map_err(|e| {
-            format!(
-                "Archive was published, but backup cleanup failed for {}: {e}",
+        if let Err(error) = std::fs::remove_file(&backup) {
+            eprintln!(
+                "Archive published; leftover backup cleanup failed for {}: {error}",
                 backup.display()
-            )
-        })?;
+            );
+        }
     }
-    sync_directory(stage_dir)?;
-    std::fs::remove_dir(stage_dir).map_err(|e| {
-        format!(
-            "Archive was published, but staging directory cleanup failed for {}: {e}",
+    if let Err(error) = sync_directory(stage_dir) {
+        eprintln!(
+            "Archive published; staging directory sync failed for {}: {error}",
             stage_dir.display()
-        )
-    })?;
+        );
+    }
+    // Never remove_dir_all while recovery backups may remain — that can partially
+    // wipe a multi-volume restore set while the journal still looks in-flight.
+    // Leave the dir in place; unregister_plan_stages keeps pending-stages tracking
+    // so cleanup_orphan_stages retries after the journal is cleared.
+    if archive_stage_has_recovery_backups(stage_dir) {
+        eprintln!(
+            "Archive published; leaving staging directory {} for later cleanup (recovery backups remain).",
+            stage_dir.display()
+        );
+    } else if let Err(error) = std::fs::remove_dir(stage_dir) {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            // Empty-dir remove failed (e.g. PermissionDenied). Try a full scrub only
+            // when we already know there are no backup-* files.
+            if let Err(scrub_error) = std::fs::remove_dir_all(stage_dir) {
+                if scrub_error.kind() != std::io::ErrorKind::NotFound {
+                    eprintln!(
+                        "Archive published; staging directory cleanup failed for {}: {scrub_error}",
+                        stage_dir.display()
+                    );
+                }
+            }
+        }
+    }
     if let Some(parent) = destination.parent() {
-        sync_directory(parent)?;
+        let _ = sync_directory(parent);
     }
     Ok(())
+}
+
+/// True when the archive stage still holds `backup-*` files needed for journal recovery.
+/// Fail closed: if the directory cannot be listed, assume backups may exist.
+fn archive_stage_has_recovery_backups(stage_dir: &std::path::Path) -> bool {
+    match std::fs::read_dir(stage_dir) {
+        Ok(entries) => entries.flatten().any(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("backup-")
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(_) => true,
+    }
+}
+
+/// After a failed commit, only scrub staging when it cannot be needed for recovery.
+fn commit_failure_should_scrub_staging(plan: &CleanupPlan, error: &str) -> bool {
+    // Extract merge/journal recovery needs the stage; never wipe it here.
+    if plan.staged_extract.is_some() {
+        return false;
+    }
+    if let Some((staged, _)) = &plan.staged_archive {
+        let stage_dir = staged.parent().unwrap_or(staged);
+        if archive_stage_has_recovery_backups(stage_dir) {
+            return false;
+        }
+    }
+    // Add-mode orphan (no backups) or post-publish leftover — safe to remove.
+    let _ = error;
+    true
 }
 
 fn rollback_cleanup(plan: &CleanupPlan) -> Result<(), String> {
@@ -2373,7 +2472,25 @@ pub async fn run_7z(
                     current_file: Some("Finalizing…".to_string()),
                 },
             );
-            commit_cleanup(&finalize_app, &finalize_plan)
+            match commit_cleanup(&finalize_app, &finalize_plan) {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    if commit_failure_should_scrub_staging(&finalize_plan, &error) {
+                        // Safe orphan scrub (add-mode / no recovery backups).
+                        match rollback_cleanup(&finalize_plan) {
+                            Ok(()) => Err(error),
+                            Err(rollback_error) => Err(format!(
+                                "{error}; also failed to clean staging: {rollback_error}"
+                            )),
+                        }
+                    } else {
+                        // Keep stage for journal recovery (update backups / extract merge).
+                        Err(format!(
+                            "{error} Staging was kept for recovery; restart Zinnia if output looks wrong."
+                        ))
+                    }
+                }
+            }
         }
     })
     .await;
@@ -3120,6 +3237,40 @@ Size = 1
     }
 
     #[test]
+    fn unregister_plan_stages_keeps_present_archive_stage() {
+        let cache = temp_root("zinnia-keep-pending-cache");
+        let root = temp_root("zinnia-keep-pending-stage");
+        std::fs::create_dir_all(&cache).expect("cache");
+        let stage = root.join(".out.7z.zinnia-archive-0123456789abcdef0123456789abcdef");
+        let staged = stage.join("out.7z");
+        std::fs::create_dir_all(&stage).expect("stage");
+        std::fs::write(stage.join("backup-0"), b"old").expect("backup");
+        register_pending_stage(&cache, &stage).expect("register");
+
+        let plan = CleanupPlan {
+            staged_extract: None,
+            staged_archive: Some((staged, root.join("out.7z"))),
+            staged_input_archive: None,
+            extract_parent_names: None,
+            cache_dir: Some(cache.clone()),
+            max_extract_bytes: None,
+            min_free_bytes: None,
+        };
+        unregister_plan_stages(&plan);
+        assert_eq!(
+            read_pending_stages(&cache).expect("still registered"),
+            vec![stage.to_string_lossy().to_string()]
+        );
+
+        std::fs::remove_dir_all(&stage).expect("remove stage");
+        unregister_plan_stages(&plan);
+        assert!(read_pending_stages(&cache).expect("cleared").is_empty());
+
+        let _ = std::fs::remove_dir_all(cache);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn archive_journal_committed_when_promote_finished_and_stage_empty() {
         let root = temp_root("zinnia-journal-committed");
         let stage = root.join(".zinnia-archive-abc");
@@ -3191,6 +3342,57 @@ Size = 1
             Some("24.09".to_string())
         );
         assert_eq!(parse_7z_version("not a banner"), None);
+    }
+
+    #[test]
+    fn commit_failure_scrub_skips_stages_with_recovery_backups() {
+        let root = temp_root("zinnia-scrub-policy");
+        let stage = root.join(".out.7z.zinnia-archive-abc");
+        let staged = stage.join("out.7z");
+        let destination = root.join("out.7z");
+        std::fs::create_dir_all(&stage).expect("stage");
+        std::fs::write(&staged, b"new").expect("staged");
+        std::fs::write(stage.join("backup-0"), b"old").expect("backup");
+
+        let plan_with_backup = CleanupPlan {
+            staged_extract: None,
+            staged_archive: Some((staged.clone(), destination.clone())),
+            staged_input_archive: None,
+            extract_parent_names: None,
+            cache_dir: None,
+            max_extract_bytes: None,
+            min_free_bytes: None,
+        };
+        assert!(archive_stage_has_recovery_backups(&stage));
+        assert!(!commit_failure_should_scrub_staging(
+            &plan_with_backup,
+            "Could not publish archive"
+        ));
+
+        std::fs::remove_file(stage.join("backup-0")).expect("remove backup");
+        assert!(!archive_stage_has_recovery_backups(&stage));
+        assert!(commit_failure_should_scrub_staging(
+            &plan_with_backup,
+            "Could not publish archive"
+        ));
+
+        let extract_stage = root.join(".zinnia-extract-abc");
+        std::fs::create_dir_all(&extract_stage).expect("extract stage");
+        let plan_extract = CleanupPlan {
+            staged_extract: Some((extract_stage, root.join("dest"))),
+            staged_archive: None,
+            staged_input_archive: None,
+            extract_parent_names: None,
+            cache_dir: None,
+            max_extract_bytes: None,
+            min_free_bytes: None,
+        };
+        assert!(!commit_failure_should_scrub_staging(
+            &plan_extract,
+            "Could not promote staged extraction"
+        ));
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

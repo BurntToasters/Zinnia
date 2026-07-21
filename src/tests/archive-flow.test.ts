@@ -636,6 +636,7 @@ describe("archive test/browse/selective flows", () => {
     const archiveB = uniqueArchivePath("batch-b");
     const app = document.getElementById("app") as HTMLElement;
     app.dataset.mode = "extract";
+    app.dataset.workspaceMode = "power";
     state.inputs = [archiveA, archiveB];
     (document.getElementById("extract-path") as HTMLInputElement).value =
       "/tmp/out";
@@ -665,6 +666,8 @@ describe("archive test/browse/selective flows", () => {
   it("reports mixed batch extraction outcomes", async () => {
     const archiveA = uniqueArchivePath("mixed-a");
     const archiveB = uniqueArchivePath("mixed-b");
+    const app = document.getElementById("app") as HTMLElement;
+    app.dataset.workspaceMode = "power";
     state.inputs = [archiveA, archiveB];
     (document.getElementById("extract-path") as HTMLInputElement).value =
       "/tmp/out";

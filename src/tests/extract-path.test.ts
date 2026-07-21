@@ -3,6 +3,7 @@ import {
   deriveExtractDestinationPath,
   deriveExtractFolderName,
   deriveOutputArchivePath,
+  isPreferredCompressParent,
   resolveExtractDestinationAutofill,
   resolveOutputArchiveAutofill,
   shouldAutofillExtractDestination,
@@ -169,13 +170,21 @@ describe("deriveOutputArchivePath", () => {
         ],
         "7z",
       ),
-    ).toBe("GitHub Desktop.lnk.7z");
+    ).toBe("C:\\Users\\dev\\Desktop\\GitHub Desktop.lnk.7z");
     expect(
       deriveOutputArchivePath(
         ["C:\\Program Files\\Some App\\readme.txt"],
         "zip",
       ),
     ).toBe("readme.txt.zip");
+  });
+
+  it("still allows paths under Microsoft\\Windows user folders", () => {
+    expect(
+      isPreferredCompressParent(
+        "C:\\Users\\dev\\AppData\\Local\\Microsoft\\Windows\\Fonts",
+      ),
+    ).toBe(true);
   });
 });
 

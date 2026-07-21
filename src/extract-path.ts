@@ -135,9 +135,20 @@ export function isPreferredCompressParent(parent: string): boolean {
   if (normalized.includes("\\system32") || normalized.includes("\\syswow64")) {
     return false;
   }
-  // Drive-root Windows directory, e.g. C:\Windows
-  if (/(^|\\)windows(\\|$)/.test(normalized)) return false;
+  // Only the OS Windows directory (e.g. C:\Windows), not …\Microsoft\Windows\….
+  if (/^[a-z]:\\windows(\\|$)/.test(normalized)) return false;
   return true;
+}
+
+/** Prefer Desktop under the user's profile when the source parent is protected. */
+export function fallbackCompressParent(sourcePath: string): string | null {
+  const windowsUser = sourcePath.match(/^([A-Za-z]:)\\Users\\([^\\/]+)/i);
+  if (windowsUser) {
+    return `${windowsUser[1]}\\Users\\${windowsUser[2]}\\Desktop`;
+  }
+  const unixHome = sourcePath.match(/^(\/Users\/[^/]+|\/home\/[^/]+)/);
+  if (unixHome) return unixHome[1];
+  return null;
 }
 
 /**
@@ -147,8 +158,8 @@ export function isPreferredCompressParent(parent: string): boolean {
  * separator is stripped so both `/folder` and `/folder/` work correctly.
  *
  * When `customName` is provided it replaces the auto-derived stem.
- * Protected parents (Start Menu, Program Files, …) yield a bare filename so
- * the save dialog opens in a writable folder instead of Access Denied.
+ * Protected parents (Start Menu, Program Files, …) fall back to the user's
+ * Desktop (or home) so staging never lands under a relative CWD / install dir.
  */
 export function deriveOutputArchivePath(
   inputs: string[],
@@ -172,8 +183,16 @@ export function deriveOutputArchivePath(
       : name;
   if (!archiveStem) return null;
   const fileName = `${archiveStem}.${format}`;
-  if (!isPreferredCompressParent(parent)) return fileName;
-  return joinPath(parent, fileName, separator);
+  if (isPreferredCompressParent(parent)) {
+    return joinPath(parent, fileName, separator);
+  }
+  const fallback = fallbackCompressParent(first);
+  if (fallback) {
+    const fallbackSep = fallback.includes("\\") ? "\\" : "/";
+    return joinPath(fallback, fileName, fallbackSep);
+  }
+  // Last resort: bare name for OS save dialogs only — never for silent Run.
+  return fileName;
 }
 
 export function shouldAutofillOutputPath(
