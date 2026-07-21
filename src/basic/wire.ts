@@ -1,20 +1,13 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { $ } from "../utils";
 import { state } from "../state";
-import {
-  getWorkspaceMode,
-  setMode,
-  renderInputs,
-  registerBasicHooks,
-} from "../ui";
-import { applyPreset } from "../presets";
-import { cancelAction, testArchive } from "../archive";
-import { chooseOutput, chooseExtract, addFiles, addFolder } from "../files";
+import { setMode, renderInputs, registerBasicHooks } from "../ui";
+import { cancelAction } from "../archive";
+import { chooseOutput, addFiles, addFolder } from "../files";
 import { deriveOutputArchivePath } from "../extract-path";
 import {
   setBasicView,
   syncBasicToPower,
-  syncBasicBrowsePasswordToPower,
   syncBasicOutputAutofill,
   updateBasicPasswordField,
   updateBasicSplitCustomVisibility,
@@ -28,7 +21,6 @@ import {
 } from "./progress";
 import {
   handleBasicCompressAction,
-  handleBasicExtractAction,
   handleBasicDrop,
   runBasicBrowseArchive,
   openPathWithFeedback,
@@ -36,6 +28,13 @@ import {
   parentDirForPath,
 } from "./actions";
 import { renderRecentArchives, setRecentArchiveHandler } from "./recent";
+import { wireBasicBrowseEvents } from "./browse-events";
+import { wireBasicKeyboardEvents } from "./keyboard-events";
+import { wireBasicExtractEvents } from "./extract-events";
+
+export { wireBasicBrowseEvents } from "./browse-events";
+export { wireBasicKeyboardEvents } from "./keyboard-events";
+export { wireBasicExtractEvents } from "./extract-events";
 
 export function initBasicWorkspace(): void {
   setRecentArchiveHandler((path) => {
@@ -419,234 +418,4 @@ export function wireBasicCompressEvents(): void {
       hideBasicCompletion("compress");
     });
   }
-}
-
-export function wireBasicExtractEvents(): void {
-  const chooseExtractBtn = document.getElementById("basic-choose-extract");
-  if (chooseExtractBtn) {
-    chooseExtractBtn.addEventListener("click", async () => {
-      await chooseExtract();
-      const extractVal = $<HTMLInputElement>("extract-path").value;
-      const basicExtract = document.getElementById(
-        "basic-extract-path",
-      ) as HTMLInputElement | null;
-      if (basicExtract && extractVal) basicExtract.value = extractVal;
-    });
-  }
-
-  const runBtn = document.getElementById("basic-run-extract");
-  if (runBtn) {
-    runBtn.addEventListener("click", () => void handleBasicExtractAction());
-  }
-
-  const cancelBtn = document.getElementById("basic-extract-cancel");
-  if (cancelBtn) {
-    cancelBtn.addEventListener("click", cancelAction);
-  }
-
-  const browseContentsBtn = document.getElementById("basic-browse-contents");
-  if (browseContentsBtn) {
-    browseContentsBtn.addEventListener("click", async () => {
-      setMode("browse");
-      setBasicBrowsePasswordVisible(false);
-      setBasicView("browse");
-      await runBasicBrowseArchive();
-    });
-  }
-
-  const toggleBrowsePwBtn = document.getElementById(
-    "basic-toggle-browse-password",
-  );
-  if (toggleBrowsePwBtn) {
-    toggleBrowsePwBtn.addEventListener("click", () => {
-      togglePasswordVisibility(
-        "basic-browse-password",
-        "basic-toggle-browse-password",
-      );
-    });
-  }
-
-  const basicBrowsePassword = document.getElementById("basic-browse-password");
-  if (basicBrowsePassword) {
-    basicBrowsePassword.addEventListener("change", () => {
-      syncBasicBrowsePasswordToPower();
-    });
-    basicBrowsePassword.addEventListener("keydown", (event) => {
-      if ((event as KeyboardEvent).key === "Enter") {
-        void runBasicBrowseArchive();
-      }
-    });
-  }
-
-  const togglePwBtn = document.getElementById("basic-toggle-extract-password");
-  if (togglePwBtn) {
-    togglePwBtn.addEventListener("click", () => {
-      togglePasswordVisibility(
-        "basic-extract-password",
-        "basic-toggle-extract-password",
-      );
-    });
-  }
-
-  const openDestBtn = document.getElementById("basic-extract-open-dest");
-  if (openDestBtn) {
-    openDestBtn.addEventListener("click", () => {
-      const extractPath =
-        (
-          document.getElementById(
-            "basic-extract-path",
-          ) as HTMLInputElement | null
-        )?.value ?? "";
-      if (extractPath) {
-        void openPathWithFeedback(extractPath);
-      }
-    });
-  }
-
-  document
-    .querySelectorAll<HTMLButtonElement>(".basic-preset-pill")
-    .forEach((pill) => {
-      pill.addEventListener("click", () => {
-        document.querySelectorAll(".basic-preset-pill").forEach((p) => {
-          p.classList.remove("is-active");
-          p.setAttribute("aria-pressed", "false");
-        });
-        pill.classList.add("is-active");
-        pill.setAttribute("aria-pressed", "true");
-
-        const preset = pill.dataset.basicPreset;
-        const select = document.getElementById(
-          "basic-preset",
-        ) as HTMLSelectElement | null;
-        if (select && preset) {
-          select.value = preset;
-          applyPreset(preset);
-        }
-      });
-    });
-
-  const compressAnotherBtn = document.getElementById("basic-compress-another");
-  if (compressAnotherBtn) {
-    compressAnotherBtn.addEventListener("click", () => {
-      state.inputs.length = 0;
-      state.lastAutoOutputPath = null;
-      renderInputs();
-      hideBasicCompletion("compress");
-      setBasicView("home");
-    });
-  }
-
-  const compressHomeBtn = document.getElementById("basic-compress-home");
-  if (compressHomeBtn) {
-    compressHomeBtn.addEventListener("click", () => {
-      state.inputs.length = 0;
-      state.lastAutoOutputPath = null;
-      renderInputs();
-      hideBasicCompletion("compress");
-      setBasicView("home");
-    });
-  }
-
-  const extractAnotherBtn = document.getElementById("basic-extract-another");
-  if (extractAnotherBtn) {
-    extractAnotherBtn.addEventListener("click", () => {
-      const isFailure = extractAnotherBtn.textContent?.trim() === "Close";
-      if (isFailure) {
-        hideBasicCompletion("extract");
-      } else {
-        state.inputs.length = 0;
-        state.lastAutoExtractDestination = null;
-        renderInputs();
-        hideBasicCompletion("extract");
-        setBasicView("home");
-      }
-    });
-  }
-
-  const extractCloseBtn = document.getElementById(
-    "basic-extract-completion-close",
-  );
-  if (extractCloseBtn) {
-    extractCloseBtn.addEventListener("click", () => {
-      hideBasicCompletion("extract");
-    });
-  }
-
-  const extractHomeBtn = document.getElementById("basic-extract-home");
-  if (extractHomeBtn) {
-    extractHomeBtn.addEventListener("click", () => {
-      state.inputs.length = 0;
-      state.lastAutoExtractDestination = null;
-      renderInputs();
-      hideBasicCompletion("extract");
-      setBasicView("home");
-    });
-  }
-}
-
-export function wireBasicBrowseEvents(): void {
-  const extractAllBtn = document.getElementById("basic-browse-extract-all");
-  if (extractAllBtn) {
-    extractAllBtn.addEventListener("click", () => {
-      setMode("extract");
-      setBasicView("extract");
-      void handleBasicExtractAction();
-    });
-  }
-
-  const testBtn = document.getElementById("basic-browse-test");
-  if (testBtn) {
-    testBtn.addEventListener("click", () => {
-      syncBasicBrowsePasswordToPower();
-      void testArchive();
-    });
-  }
-}
-
-export function wireBasicKeyboardEvents(): void {
-  document.addEventListener("keydown", (e) => {
-    if (getWorkspaceMode() !== "basic") return;
-    // Overlays use [hidden]; .modal nodes stay in the DOM without that attribute.
-    if (document.querySelector(".modal-overlay:not([hidden])")) return;
-
-    if (e.key === "Escape") {
-      const activeElement = document.activeElement as HTMLElement;
-      if (
-        activeElement &&
-        ["INPUT", "TEXTAREA", "SELECT"].includes(activeElement.tagName)
-      ) {
-        activeElement.blur();
-        return;
-      }
-      if (
-        document
-          .getElementById("basic-compress")
-          ?.classList.contains("is-active") ||
-        document
-          .getElementById("basic-extract")
-          ?.classList.contains("is-active") ||
-        document.getElementById("basic-browse")?.classList.contains("is-active")
-      ) {
-        setBasicView("home");
-      }
-    } else if (e.key === "Enter") {
-      const activeElement = document.activeElement as HTMLElement;
-      if (activeElement && ["BUTTON", "A"].includes(activeElement.tagName))
-        return;
-
-      if (
-        document
-          .getElementById("basic-compress")
-          ?.classList.contains("is-active")
-      ) {
-        document.getElementById("basic-run-compress")?.click();
-      } else if (
-        document
-          .getElementById("basic-extract")
-          ?.classList.contains("is-active")
-      ) {
-        document.getElementById("basic-run-extract")?.click();
-      }
-    }
-  });
 }

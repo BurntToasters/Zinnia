@@ -34,12 +34,18 @@ import {
   ensureRuntimeReady,
   withLiveProgress,
   runWithPasswordRetry,
-  showOperationError,
   logCommandResult,
   logTruncationNotice,
-  clearPasswordFields,
-  browseArchive,
-} from "./ops";
+} from "./runtime";
+
+let browseArchiveLoader: (() => Promise<ArchiveInfo | null>) | null = null;
+
+export function registerBrowseArchiveLoader(
+  loader: () => Promise<ArchiveInfo | null>,
+): void {
+  browseArchiveLoader = loader;
+}
+import { clearPasswordFields, showOperationError } from "./runtime";
 
 export function renderBrowseTable(info: ArchiveInfo) {
   const container = document.getElementById("browse-contents");
@@ -376,7 +382,10 @@ async function ensureArchiveInfoForPicker(
   if (state.inputs[0] !== archive) {
     state.inputs[0] = archive;
   }
-  return await browseArchive();
+  if (!browseArchiveLoader) {
+    throw new Error("Archive browsing is not initialized.");
+  }
+  return await browseArchiveLoader();
 }
 
 export function closeSelectiveExtractModal(): void {
