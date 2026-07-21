@@ -184,7 +184,9 @@ fn run_hidden_output(program: &str, args: &[&str]) -> io::Result<std::process::O
 fn current_user_sid_from_token() -> Result<String, String> {
     use std::mem::{align_of, size_of};
     use std::ptr;
-    use windows_sys::Win32::Foundation::{CloseHandle, LocalFree, ERROR_INSUFFICIENT_BUFFER};
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, LocalFree, ERROR_INSUFFICIENT_BUFFER, HANDLE,
+    };
     use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
     use windows_sys::Win32::Security::{
         GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER,
@@ -192,7 +194,7 @@ fn current_user_sid_from_token() -> Result<String, String> {
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
     unsafe {
-        let mut token = 0;
+        let mut token: HANDLE = ptr::null_mut();
         if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
             return Err(format!(
                 "OpenProcessToken failed: {}",
@@ -234,7 +236,7 @@ fn current_user_sid_from_token() -> Result<String, String> {
         CloseHandle(token);
 
         let token_user = &*(buffer.as_ptr() as *const TOKEN_USER);
-        let mut sid_str: *mut u16 = ptr::null_mut();
+        let mut sid_str: windows_sys::core::PWSTR = ptr::null_mut();
         if ConvertSidToStringSidW(token_user.User.Sid, &mut sid_str) == 0 || sid_str.is_null() {
             return Err(format!(
                 "ConvertSidToStringSidW failed: {}",
