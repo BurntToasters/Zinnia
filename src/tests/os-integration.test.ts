@@ -402,7 +402,7 @@ describe("OS integration UI", () => {
     expect(row.hidden).toBe(false);
     expect(
       document.getElementById("os-finder-services-status")?.textContent,
-    ).toBe("Off");
+    ).toBe("Not enabled");
     expect(
       (
         document.getElementById(

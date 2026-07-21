@@ -27,8 +27,12 @@ integration gate that compile smoke tests cannot replace.
 3. Select an archive in Finder → right-click → **Services**.
 4. Confirm **Extract with Zinnia** launches quick extract (no lingering main-window flash).
 5. With Zinnia not running, use **Compress with Zinnia** from Finder — main opens for compress; later Extract must not destroy that workspace.
-6. Settings → **OS Integration** → **Finder Services**: Enabled / Off / Unknown; **Enable…** opens Keyboard Shortcuts → Services.
+6. Settings → **OS Integration** → **Finder Services**: **Enabled** only when both
+   services have an explicit enable toggle in `pbs` prefs; otherwise **Not enabled**
+   (not Unknown). Registration is confirmed via `pbs -dump_cache` for help text.
+   **Enable…** opens Keyboard Shortcuts → Services.
 7. Dev tip after Info.plist changes: `/System/Library/CoreServices/pbs -flush`
+   Inspect registration: `/System/Library/CoreServices/pbs -dump_cache`
 
 > **Release gate:** On a clean macOS 26+ machine, install the signed and
 > notarized universal artifact; verify both Finder Services, archive Open With,

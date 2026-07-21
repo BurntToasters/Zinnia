@@ -573,6 +573,7 @@ describe("archive test/browse/selective flows", () => {
   it("rejects runAction when delete-after is checked", async () => {
     const app = document.getElementById("app") as HTMLElement;
     app.dataset.mode = "add";
+    app.dataset.workspaceMode = "power";
     state.inputs = ["/tmp/input.txt"];
     (document.getElementById("output-path") as HTMLInputElement).value =
       "/tmp/output.7z";
@@ -599,6 +600,7 @@ describe("archive test/browse/selective flows", () => {
   it("rolls back add-mode output on warning exit code", async () => {
     const app = document.getElementById("app") as HTMLElement;
     app.dataset.mode = "add";
+    app.dataset.workspaceMode = "power";
     state.inputs = ["/tmp/input.txt"];
     (document.getElementById("output-path") as HTMLInputElement).value =
       "/tmp/output.7z";

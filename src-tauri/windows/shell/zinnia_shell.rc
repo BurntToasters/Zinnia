@@ -4,8 +4,8 @@
 1 RT_MANIFEST "msix_identity.manifest"
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 0,6,0,4
- PRODUCTVERSION 0,6,0,4
+ FILEVERSION 0,6,0,5
+ PRODUCTVERSION 0,6,0,5
  FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
 #ifdef _DEBUG
  FILEFLAGS VS_FF_DEBUG | VS_FF_PRERELEASE
@@ -22,12 +22,12 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "BurntToasters\0"
       VALUE "FileDescription", "Zinnia File Explorer context menu\0"
-      VALUE "FileVersion", "0.6.0-beta.4\0"
+      VALUE "FileVersion", "0.6.0-beta.5\0"
       VALUE "InternalName", "zinnia_shell.dll\0"
       VALUE "LegalCopyright", "Copyright (c) 2025-2026 BurntToasters\0"
       VALUE "OriginalFilename", "zinnia_shell.dll\0"
       VALUE "ProductName", "Zinnia\0"
-      VALUE "ProductVersion", "0.6.0-beta.4\0"
+      VALUE "ProductVersion", "0.6.0-beta.5\0"
     END
   END
   BLOCK "VarFileInfo"
