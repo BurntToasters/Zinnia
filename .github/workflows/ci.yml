@@ -66,6 +66,7 @@ jobs:
       - run: npm run prepare:7z
       # Empty stubs only: CI never builds/signs the real Win11 shell package.
       - run: npm run prepare:win-shell-stubs
+      - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml --all-targets
 
   updater-manifest:

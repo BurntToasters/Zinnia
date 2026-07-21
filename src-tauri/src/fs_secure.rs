@@ -34,7 +34,7 @@ pub fn create_private_dir(path: &Path) -> io::Result<()> {
         })?;
         if let Err(error) = restrict_directory_acl(path) {
             let _ = std::fs::remove_dir(path);
-            return Err(io::Error::new(io::ErrorKind::Other, error));
+            return Err(io::Error::other(error));
         }
         Ok(())
     }

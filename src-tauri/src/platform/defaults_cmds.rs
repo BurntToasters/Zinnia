@@ -116,10 +116,9 @@ pub fn open_os_integration_settings(app: tauri::AppHandle) -> Result<(), String>
     #[cfg(target_os = "windows")]
     {
         use tauri_plugin_shell::ShellExt;
-        return app
-            .shell()
+        app.shell()
             .open("ms-settings:defaultapps", None)
-            .map_err(|e| e.to_string());
+            .map_err(|e| e.to_string())
     }
 
     #[cfg(target_os = "macos")]

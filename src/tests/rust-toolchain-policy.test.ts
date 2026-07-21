@@ -29,6 +29,9 @@ describe("Rust toolchain policy", () => {
     expect(workflowToolchains.every((line) => line.endsWith("stable"))).toBe(
       true,
     );
+    expect(workflow).toMatch(
+      /rust-check:[\s\S]*cargo clippy --manifest-path src-tauri\/Cargo\.toml --all-targets -- -D warnings/,
+    );
 
     expect(readRepositoryFile("run.rosie.zinnia.yml")).toMatch(
       /^\s+RUSTUP_TOOLCHAIN: stable$/m,

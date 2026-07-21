@@ -68,11 +68,12 @@ function stripAnsi(value) {
   return value.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "");
 }
 
-function printTail(output) {
+function printTail(output, label) {
   const cleanOutput = stripAnsi(output).trim();
   if (!cleanOutput) return;
   const lines = cleanOutput.split("\n");
   const tail = lines.slice(-20).join("\n");
+  console.log(`${colors.red}${label}:${colors.reset}`);
   console.log(`${colors.red}${tail}${colors.reset}`);
 }
 
@@ -196,7 +197,9 @@ function runCommand(name, command, args, parser, results, options = {}) {
     timeout,
   });
 
-  const output = `${run.stdout || ""}${run.stderr || ""}`;
+  const stdout = run.stdout || "";
+  const stderr = run.stderr || "";
+  const output = `${stdout}${stderr}`;
   if (parser) parser(output, results);
 
   if (!run.error && run.status === 0) {
@@ -212,7 +215,8 @@ function runCommand(name, command, args, parser, results, options = {}) {
       ? `signal ${run.signal || "unknown"}`
       : `exit code ${run.status}`;
   console.log(`${colors.red}✗ ${name} failed (${reason})${colors.reset}`);
-  printTail(output);
+  printTail(stdout, "stdout tail");
+  printTail(stderr, "stderr tail");
   console.log("");
   return false;
 }

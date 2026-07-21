@@ -208,6 +208,7 @@ pub(crate) fn default_action_help(
     }
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(crate) fn default_archiver_result(
     platform: &str,
     results: Vec<ArchiveDefaultStatus>,
