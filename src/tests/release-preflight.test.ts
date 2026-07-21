@@ -18,6 +18,15 @@ describe("release preflight policy", () => {
       "release:preflight",
     );
     expect(packageJson.scripts["release:prepare"]).toContain("test:all");
+    // Metainfo must be written before test:all (flatpak validates the version).
+    const prepare = packageJson.scripts["release:prepare"];
+    expect(prepare.indexOf("update-metainfo.js")).toBeLessThan(
+      prepare.indexOf("test:all"),
+    );
+    // Branch/clean-tree gates stay on publish entry points only, not u/u2.
+    expect(packageJson.scripts.u).not.toContain("release:preflight");
+    expect(packageJson.scripts.u2).not.toContain("release:preflight");
+    expect(packageJson.scripts["release:win"]).toContain("prerelease:prepare");
     expect(testRunner).toContain('"rustfmt"');
     expect(testRunner).toContain('"clippy"');
   });
