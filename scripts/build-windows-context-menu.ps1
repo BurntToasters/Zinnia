@@ -60,6 +60,14 @@ $appxVersion = ($parts[0..3] -join '.')
 function Escape-XmlAttribute([string]$Value) {
   return ($Value -replace '&', '&amp;' -replace '"', '&quot;' -replace "'", '&apos;' -replace '<', '&lt;' -replace '>', '&gt;')
 }
+
+function Write-Utf8NoBom([string]$Path, [string]$Text) {
+  # Windows PowerShell's Set-Content -Encoding UTF8 writes a BOM; makeappx
+  # rejects BOM-prefixed AppxManifest.xml as "manifest is not valid".
+  $encoding = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllText($Path, $Text, $encoding)
+}
+
 $PublisherDnXml = Escape-XmlAttribute $PublisherDn
 
 # DLL side-by-side identity and Appx Identity.Publisher MUST be identical strings.
@@ -67,7 +75,7 @@ $PublisherDnXml = Escape-XmlAttribute $PublisherDn
 $identityIn = Join-Path $shellDir 'msix_identity.manifest.in'
 $identityOut = Join-Path $shellDir 'msix_identity.manifest'
 $identityText = (Get-Content -LiteralPath $identityIn -Raw).Replace('__PUBLISHER_DN__', $PublisherDnXml)
-Set-Content -LiteralPath $identityOut -Value $identityText -Encoding UTF8
+Write-Utf8NoBom $identityOut $identityText
 
 function Resolve-ZinniaCmakeVsGenerator {
   $cmakeHelp = & cmake --help 2>&1 | Out-String
@@ -109,10 +117,11 @@ if (Test-Path $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
 New-Item -ItemType Directory -Force -Path (Join-Path $staging 'Assets') | Out-Null
 Copy-Item -Path (Join-Path $sparseDir 'Assets\*') -Destination (Join-Path $staging 'Assets') -Force
 $appxTemplate = Join-Path $sparseDir 'AppxManifest.xml.template'
+$appxPath = Join-Path $staging 'AppxManifest.xml'
 $appxText = (Get-Content -LiteralPath $appxTemplate -Raw).
   Replace('__PUBLISHER_DN__', $PublisherDnXml).
   Replace('__PACKAGE_VERSION__', $appxVersion)
-Set-Content -LiteralPath (Join-Path $staging 'AppxManifest.xml') -Value $appxText -Encoding UTF8
+Write-Utf8NoBom $appxPath $appxText
 
 $makeAppx = @(
   Get-ChildItem -Path ${env:ProgramFiles(x86)}, $env:ProgramFiles -Filter 'makeappx.exe' -Recurse -ErrorAction SilentlyContinue |
@@ -122,8 +131,13 @@ if (-not $makeAppx) { throw 'makeappx.exe not found. Install the Windows SDK.' }
 
 $msixPath = Join-Path $outDir 'ZinniaContextMenu.msix'
 if (Test-Path $msixPath) { Remove-Item -LiteralPath $msixPath -Force }
-& $makeAppx.FullName pack /o /d $staging /p $msixPath
-if ($LASTEXITCODE -ne 0) { throw "makeappx failed: $LASTEXITCODE" }
+# /nv is required for sparse packages: payload (zinnia.exe / shell DLL) lives
+# outside the MSIX via AllowExternalContent + Add-AppxPackage -ExternalLocation.
+Write-Host "Packing sparse MSIX with $($makeAppx.FullName) ..."
+& $makeAppx.FullName pack /o /nv /d $staging /p $msixPath
+if ($LASTEXITCODE -ne 0) {
+  throw "makeappx failed: $LASTEXITCODE (manifest=$appxPath publisher=$PublisherDn version=$appxVersion)"
+}
 
 Write-Host "Built $(Join-Path $outDir 'zinnia_shell.dll')"
 Write-Host "Built $msixPath"

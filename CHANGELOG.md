@@ -23,6 +23,9 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
 ## Changes in `v0.6.0-beta.4:`
 
+- **Fix:** Windows sparse context-menu MSIX packing uses `makeappx /nv` and UTF-8-without-BOM manifests (fixes “manifest is not valid”).
+- **Fix:** macOS release entitlement verify requests `codesign --xml` so plutil can parse modern entitlements dumps (not `[Dict]` text).
+- **Fix:** Flatpak source export allows dirty `src-tauri/gen/schemas/*` left by `tauri build` (still archives clean `HEAD` only).
 - **CI:** macOS rust-check and smoke-build runners pin `macos-26` (not `macos-latest` / macOS 15) so bundled 7-Zip and `minimumSystemVersion` 26.0+ can execute.
 - **Reliability:** Archive commit/rollback finalization runs on `spawn_blocking` so large extract trees do not stall the async runtime; the operation slot is cleared even if that task panics (avoids soft-lock until restart).
 - **Reliability:** Timed-out OS integration commands kill the process group (Unix) or process tree (`taskkill /T`, Windows) so descendant pipe holders cannot leave reader threads blocked.

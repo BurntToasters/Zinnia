@@ -60,7 +60,9 @@ missing. Real DLL/MSIX: `npm run build:win:context-menu` (or `build:win:*`).
 
 Sparse MSIX identity requires `uap10:AllowExternalContent` in the Appx
 manifest so `Add-AppxPackage -ExternalLocation` can point at `$INSTDIR`
-(error `0x80073D2E` without it).
+(error `0x80073D2E` without it). Packaging uses `makeappx pack /nv` because
+payload files live outside the MSIX; AppxManifest.xml is written UTF-8
+without a BOM (PowerShell's default UTF-8 encoding breaks makeappx).
 
 `npm run build:win:*` builds the real package automatically (unless
 `SKIP_WIN_CONTEXT_MENU=1`), signs both artifacts with Azure Artifact Signing,
