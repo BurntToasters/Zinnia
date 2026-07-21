@@ -24,6 +24,7 @@ import {
   hideProgress,
   setRunning,
   getMode,
+  getWorkspaceMode,
   setBrowsePasswordFieldVisible,
   triggerIconRefresh,
 } from "./ui";
@@ -427,6 +428,8 @@ async function showOperationError(
   stdout: string,
   stderr: string,
 ): Promise<void> {
+  // Basic mode already surfaces failures in the in-app completion panel.
+  if (getWorkspaceMode() === "basic") return;
   const hint = describe7zError(stdout, stderr);
   const detail = stderr.trim() ? `\n\n${truncateForDialog(stderr.trim())}` : "";
   const hintLine = hint ? `\n\n${hint}` : "";
@@ -1320,7 +1323,10 @@ export async function runAction() {
     log(`Error: ${messageText}`);
     setStatus("Error", 3000, messageText);
     hideProgress();
-    await message(messageText, { title: "Error", kind: "error" });
+    // Basic mode already shows the in-app completion panel for failures.
+    if (getWorkspaceMode() !== "basic") {
+      await message(messageText, { title: "Error", kind: "error" });
+    }
   } finally {
     clearPasswordFields();
     setRunning(false);

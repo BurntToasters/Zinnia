@@ -71,9 +71,13 @@ fn kill_command_process_tree(pid: u32, child: &mut std::process::Child) {
     }
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
         // /T terminates the full tree; trusted OS helpers only.
+        // CREATE_NO_WINDOW avoids a console flash in the GUI subsystem app.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         let _ = Command::new("taskkill")
             .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .creation_flags(CREATE_NO_WINDOW)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
@@ -94,6 +98,13 @@ fn command_output_with_timeout(
         // inherit the pipes after the shell exits.
         use std::os::unix::process::CommandExt;
         command.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        // GUI subsystem: hide console windows for whoami/powershell/icacls helpers.
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
     }
     let mut child = command.spawn()?;
     let pid = child.id();
@@ -330,40 +341,91 @@ const MACOS_FINDER_SERVICE_KEYS: &[&str] = &[
     "run.rosie.zinnia - Compress with Zinnia - compressWithZinnia",
 ];
 
-/// Parse `NSServicesStatus` from a pbs.plist JSON conversion.
-/// `None` means pbs did not report Zinnia, so the UI must not claim it is enabled.
+/// User override for Finder Services context-menu toggles in `pbs` prefs.
+///
+/// Empty `NSServicesStatus` is common. The UI treats that as **Not enabled**
+/// until both services have an explicit enable override (safer than Unknown).
 #[cfg(any(target_os = "macos", test))]
-pub(crate) fn finder_services_enabled_from_pbs(json: &serde_json::Value) -> Option<bool> {
-    let status_map = json.get("NSServicesStatus")?;
-    let obj = status_map.as_object()?;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FinderServicesOverride {
+    /// Every Zinnia override entry has context menu enabled.
+    Enabled,
+    /// At least one Zinnia service has context menu disabled.
+    Disabled,
+    /// No Zinnia keys present (empty map or unrelated apps only).
+    Absent,
+    /// Present but unreadable (malformed bool / unexpected shape).
+    Indeterminate,
+}
 
-    let mut all_enabled = true;
+#[cfg(any(target_os = "macos", test))]
+fn finder_service_context_menu_enabled(entry: &serde_json::Value) -> Option<bool> {
+    if let Some(flag) = entry
+        .get("enabled_context_menu")
+        .and_then(serde_json::Value::as_bool)
+    {
+        return Some(flag);
+    }
+    // Sequoia+ may store presentation_modes instead of the legacy bool.
+    entry
+        .get("presentation_modes")
+        .and_then(|modes| modes.get("ContextMenu"))
+        .and_then(serde_json::Value::as_bool)
+}
+
+/// Parse `NSServicesStatus` from a pbs.plist JSON conversion.
+///
+/// Enabled requires **both** Zinnia services to have an explicit context-menu
+/// enable override. Empty/missing keys mean Not enabled (not Unknown).
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn finder_services_override_from_pbs(
+    json: &serde_json::Value,
+) -> FinderServicesOverride {
+    let Some(status_map) = json.get("NSServicesStatus").and_then(|v| v.as_object()) else {
+        return FinderServicesOverride::Absent;
+    };
+
+    let mut enabled_count = 0usize;
+    let mut disabled_count = 0usize;
     for key in MACOS_FINDER_SERVICE_KEYS {
-        let Some(entry) = obj.get(*key) else {
-            // Partial registration must not be shown as both context actions
-            // being available. The user can still enable/re-register Services.
-            return None;
+        let Some(entry) = status_map.get(*key) else {
+            continue;
         };
-        // Finder right-click / contextual Services use the context-menu flag.
-        let context_on = entry
-            .get("enabled_context_menu")
-            .and_then(|v| v.as_bool())?;
-        if !context_on {
-            all_enabled = false;
+        match finder_service_context_menu_enabled(entry) {
+            Some(true) => enabled_count += 1,
+            Some(false) => disabled_count += 1,
+            None => return FinderServicesOverride::Indeterminate,
         }
     }
 
-    Some(all_enabled)
+    if disabled_count > 0 {
+        return FinderServicesOverride::Disabled;
+    }
+    if enabled_count == MACOS_FINDER_SERVICE_KEYS.len() {
+        return FinderServicesOverride::Enabled;
+    }
+    // Empty map, unrelated apps only, or only one service toggled on.
+    FinderServicesOverride::Absent
+}
+
+/// Legacy helper: `Some(true)` only when both services are explicitly enabled.
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn finder_services_enabled_from_pbs(json: &serde_json::Value) -> Option<bool> {
+    match finder_services_override_from_pbs(json) {
+        FinderServicesOverride::Enabled => Some(true),
+        FinderServicesOverride::Disabled => Some(false),
+        FinderServicesOverride::Absent | FinderServicesOverride::Indeterminate => None,
+    }
 }
 
 #[cfg(target_os = "macos")]
-fn macos_read_finder_services_enabled() -> Option<bool> {
+fn macos_read_pbs_plist_json() -> Option<serde_json::Value> {
     use std::path::PathBuf;
 
     let home = std::env::var_os("HOME")?;
     let path = PathBuf::from(home).join("Library/Preferences/pbs.plist");
     if !path.exists() {
-        return None;
+        return Some(serde_json::json!({}));
     }
 
     let output = command_output_with_timeout(
@@ -374,8 +436,69 @@ fn macos_read_finder_services_enabled() -> Option<bool> {
     if !output.status.success() {
         return None;
     }
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
-    finder_services_enabled_from_pbs(&json)
+    serde_json::from_slice(&output.stdout).ok()
+}
+
+/// True when `pbs -dump_cache` lists both Zinnia Services (registration proof).
+#[cfg(target_os = "macos")]
+fn macos_finder_services_registered() -> Option<bool> {
+    let output = command_output_with_timeout(
+        Command::new("/System/Library/CoreServices/pbs").args(["-dump_cache"]),
+        std::time::Duration::from_secs(8),
+    )
+    .ok()?;
+    if !output.status.success() && output.stdout.is_empty() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let registered = text.contains("run.rosie.zinnia")
+        && text.contains("extractWithZinnia")
+        && text.contains("compressWithZinnia");
+    Some(registered)
+}
+
+/// Packaged Finder Services status. Prefer **Not enabled** over Unknown:
+/// Enabled only with an explicit pbs enable override for both services.
+#[cfg(target_os = "macos")]
+fn macos_finder_services_info() -> FinderServicesInfo {
+    let override_state = macos_read_pbs_plist_json().map(|json| finder_services_override_from_pbs(&json));
+    let registered = macos_finder_services_registered();
+
+    if matches!(override_state, Some(FinderServicesOverride::Enabled)) {
+        return FinderServicesInfo {
+            available: true,
+            known: true,
+            enabled: true,
+            help: "Extract with Zinnia and Compress with Zinnia are enabled in Finder's Services menu."
+                .to_string(),
+        };
+    }
+
+    let help = match (&override_state, registered) {
+        (Some(FinderServicesOverride::Disabled), _) => {
+            "Extract / Compress with Zinnia are turned off. Enable them under Keyboard Shortcuts → Services."
+                .to_string()
+        }
+        (_, Some(true)) => {
+            "Services are registered but not enabled yet. Turn on Extract with Zinnia and Compress with Zinnia under Keyboard Shortcuts → Services."
+                .to_string()
+        }
+        (_, Some(false)) => {
+            "Services are not enabled. Launch Zinnia once if menus are missing, then enable Extract / Compress with Zinnia under Keyboard Shortcuts → Services."
+                .to_string()
+        }
+        _ => {
+            "Services are not enabled. Open Keyboard Shortcuts → Services and turn on Extract with Zinnia and Compress with Zinnia."
+                .to_string()
+        }
+    };
+
+    FinderServicesInfo {
+        available: true,
+        known: true,
+        enabled: false,
+        help,
+    }
 }
 
 struct Win11ModernMenuInfo {
@@ -415,6 +538,33 @@ fn windows_modern_menu_registered() -> Option<bool> {
         Some(2) => Some(false),
         _ => None,
     }
+}
+
+/// Probe classic Explorer verbs written by NSIS (HKCU SystemFileAssociations).
+#[cfg(target_os = "windows")]
+fn windows_classic_verbs_registered() -> Option<bool> {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    // Representative keys from nsis-hooks.nsh — enough to tell install registration ran.
+    const KEYS: &[&str] = &[
+        r"HKCU\Software\Classes\SystemFileAssociations\.7z\shell\ZinniaExtract",
+        r"HKCU\Software\Classes\*\shell\ZinniaCompress",
+    ];
+    let mut found = 0usize;
+    for key in KEYS {
+        let output = command_output_with_timeout(
+            Command::new("reg")
+                .args(["query", key])
+                .creation_flags(CREATE_NO_WINDOW),
+            std::time::Duration::from_secs(5),
+        )
+        .ok()?;
+        if output.status.success() {
+            found += 1;
+        }
+    }
+    Some(found == KEYS.len())
 }
 
 fn win11_modern_menu_status_for(platform: &str, packaged: bool) -> Win11ModernMenuInfo {
@@ -482,32 +632,19 @@ fn finder_services_status_for(platform: &str, packaged: bool) -> FinderServicesI
     }
 
     #[cfg(target_os = "macos")]
-    let probed = macos_read_finder_services_enabled();
+    {
+        return macos_finder_services_info();
+    }
     #[cfg(not(target_os = "macos"))]
-    let probed: Option<bool> = Some(true);
-
-    match probed {
-        Some(true) => FinderServicesInfo {
+    {
+        // Cross-compiled / non-mac unit tests: packaged build is assumed enabled.
+        FinderServicesInfo {
             available: true,
             known: true,
             enabled: true,
-            help: "Extract with Zinnia and Compress with Zinnia are available in Finder's Services menu."
+            help: "Extract with Zinnia and Compress with Zinnia are enabled in Finder's Services menu."
                 .to_string(),
-        },
-        Some(false) => FinderServicesInfo {
-            available: true,
-            known: true,
-            enabled: false,
-            help: "Turn on Extract with Zinnia and Compress with Zinnia under Keyboard Shortcuts → Services."
-                .to_string(),
-        },
-        None => FinderServicesInfo {
-            available: true,
-            known: false,
-            enabled: false,
-            help: "Could not verify Services status. Open Keyboard Shortcuts → Services if menus are missing."
-                .to_string(),
-        },
+        }
     }
 }
 
@@ -557,6 +694,15 @@ fn get_os_integration_status_blocking() -> OsIntegrationStatus {
         status.default_archiver_help =
             default_action_help(platform, packaged, status.default_archiver_action_available)
                 .to_string();
+        // xdg-mime query succeeded for at least one format → associations are known.
+        if packaged
+            && status
+                .archive_defaults
+                .iter()
+                .any(|entry| entry.current_handler.is_some())
+        {
+            status.file_associations_known = true;
+        }
     }
     if platform == "windows" {
         let win11 = win11_modern_menu_status_for(platform, packaged);
@@ -564,6 +710,32 @@ fn get_os_integration_status_blocking() -> OsIntegrationStatus {
         status.win11_modern_menu_known = win11.known;
         status.win11_modern_menu_registered = win11.registered;
         status.win11_modern_menu_help = win11.help;
+
+        #[cfg(target_os = "windows")]
+        {
+            match windows_classic_verbs_registered() {
+                Some(true) => {
+                    status.context_actions_known = true;
+                }
+                Some(false) => {
+                    status.context_actions_known = false;
+                }
+                None => {
+                    // Keep packaged assumption from os_integration_status_for.
+                }
+            }
+        }
+    }
+    if platform == "macos" {
+        // Use live default-handler query for the Ready badge when possible.
+        if packaged
+            && status
+                .archive_defaults
+                .iter()
+                .any(|entry| entry.current_handler.is_some() || entry.is_default)
+        {
+            status.file_associations_known = true;
+        }
     }
     status
 }
@@ -685,9 +857,10 @@ pub fn open_os_integration_settings(app: tauri::AppHandle) -> Result<(), String>
     #[cfg(target_os = "macos")]
     {
         use tauri_plugin_shell::ShellExt;
+        // Desktop & Dock → Default Apps (not Extensions).
         app.shell()
             .open(
-                "x-apple.systempreferences:com.apple.ExtensionsPreferences",
+                "x-apple.systempreferences:com.apple.Desktop-Settings.extension?com.apple.desktopsettings.apps",
                 None,
             )
             .map_err(|e| e.to_string())
@@ -1227,8 +1400,12 @@ mod tests {
     }
 
     #[test]
-    fn finder_services_pbs_is_unknown_when_absent() {
+    fn finder_services_override_absent_when_empty_or_unrelated() {
         let empty = serde_json::json!({});
+        assert_eq!(
+            finder_services_override_from_pbs(&empty),
+            FinderServicesOverride::Absent
+        );
         assert_eq!(finder_services_enabled_from_pbs(&empty), None);
 
         let other = serde_json::json!({
@@ -1239,7 +1416,17 @@ mod tests {
                 }
             }
         });
+        assert_eq!(
+            finder_services_override_from_pbs(&other),
+            FinderServicesOverride::Absent
+        );
         assert_eq!(finder_services_enabled_from_pbs(&other), None);
+
+        let empty_map = serde_json::json!({ "NSServicesStatus": {} });
+        assert_eq!(
+            finder_services_override_from_pbs(&empty_map),
+            FinderServicesOverride::Absent
+        );
     }
 
     #[test]
@@ -1257,6 +1444,10 @@ mod tests {
             }
         });
         assert_eq!(finder_services_enabled_from_pbs(&disabled), Some(false));
+        assert_eq!(
+            finder_services_override_from_pbs(&disabled),
+            FinderServicesOverride::Disabled
+        );
 
         let enabled = serde_json::json!({
             "NSServicesStatus": {
@@ -1271,11 +1462,15 @@ mod tests {
             }
         });
         assert_eq!(finder_services_enabled_from_pbs(&enabled), Some(true));
+        assert_eq!(
+            finder_services_override_from_pbs(&enabled),
+            FinderServicesOverride::Enabled
+        );
     }
 
     #[test]
-    fn finder_services_pbs_is_unknown_when_only_one_service_is_registered() {
-        let partial = serde_json::json!({
+    fn finder_services_partial_override_is_not_fully_enabled() {
+        let partial_on = serde_json::json!({
             "NSServicesStatus": {
                 "run.rosie.zinnia - Extract with Zinnia - extractWithZinnia": {
                     "enabled_context_menu": true,
@@ -1283,11 +1478,44 @@ mod tests {
                 }
             }
         });
-        assert_eq!(finder_services_enabled_from_pbs(&partial), None);
+        assert_eq!(
+            finder_services_override_from_pbs(&partial_on),
+            FinderServicesOverride::Absent
+        );
+
+        let partial_off = serde_json::json!({
+            "NSServicesStatus": {
+                "run.rosie.zinnia - Compress with Zinnia - compressWithZinnia": {
+                    "enabled_context_menu": false
+                }
+            }
+        });
+        assert_eq!(
+            finder_services_override_from_pbs(&partial_off),
+            FinderServicesOverride::Disabled
+        );
     }
 
     #[test]
-    fn finder_services_pbs_is_unknown_when_context_menu_flag_is_malformed() {
+    fn finder_services_reads_presentation_modes_context_menu() {
+        let modes = serde_json::json!({
+            "NSServicesStatus": {
+                "run.rosie.zinnia - Extract with Zinnia - extractWithZinnia": {
+                    "presentation_modes": { "ContextMenu": false }
+                },
+                "run.rosie.zinnia - Compress with Zinnia - compressWithZinnia": {
+                    "presentation_modes": { "ContextMenu": true }
+                }
+            }
+        });
+        assert_eq!(
+            finder_services_override_from_pbs(&modes),
+            FinderServicesOverride::Disabled
+        );
+    }
+
+    #[test]
+    fn finder_services_pbs_is_indeterminate_when_context_menu_flag_is_malformed() {
         let malformed = serde_json::json!({
             "NSServicesStatus": {
                 "run.rosie.zinnia - Extract with Zinnia - extractWithZinnia": {
@@ -1296,6 +1524,10 @@ mod tests {
                 "run.rosie.zinnia - Compress with Zinnia - compressWithZinnia": {}
             }
         });
+        assert_eq!(
+            finder_services_override_from_pbs(&malformed),
+            FinderServicesOverride::Indeterminate
+        );
         assert_eq!(finder_services_enabled_from_pbs(&malformed), None);
     }
 

@@ -32,6 +32,7 @@ import {
 import { chooseOutput, chooseExtract, addFiles, addFolder } from "./files";
 import {
   deriveOutputArchivePath,
+  isPreferredCompressParent,
   resolveOutputArchiveAutofill,
   resolveExtractDestinationAutofill,
 } from "./extract-path";
@@ -915,10 +916,12 @@ async function handleBasicCompressAction(): Promise<void> {
   ) as HTMLSelectElement | null;
   const format = formatSelect?.value ?? "7z";
 
+  // Prefer saving next to the source, but not under Start Menu / Program Files
+  // (common for .lnk shortcuts) where staging dirs get Access Denied.
   let defaultPath = `Archive.${format}`;
   if (state.inputs[0]) {
     const parent = parentDirForPath(state.inputs[0]);
-    if (parent) {
+    if (parent && isPreferredCompressParent(parent)) {
       const sep = state.inputs[0].includes("\\") ? "\\" : "/";
       defaultPath = parent.endsWith(sep)
         ? `${parent}Archive.${format}`

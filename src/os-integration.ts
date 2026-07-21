@@ -13,7 +13,7 @@ export interface OsIntegrationStatus {
   defaultArchiverHelp?: string;
   /** macOS only: Finder Services (Extract/Compress) row is shown when true. */
   finderServicesAvailable?: boolean;
-  /** false when pbs/plutil probe failed → show Unknown. */
+  /** false when registration/prefs probes both fail → show Unknown. */
   finderServicesKnown?: boolean;
   finderServicesEnabled?: boolean;
   finderServicesHelp?: string;
@@ -105,7 +105,7 @@ function setFinderServicesBadge(
     known,
     enabled,
     "Enabled",
-    packaged ? "Off" : "Action needed",
+    packaged ? "Not enabled" : "Action needed",
   );
 }
 
@@ -208,7 +208,7 @@ export function renderOsIntegrationStatus(status: OsIntegrationStatus): void {
       if (status.finderServicesKnown === false) {
         contextAction = "Unknown";
       } else if (!status.finderServicesEnabled) {
-        contextAction = "Off";
+        contextAction = "Not enabled";
       }
     }
     setBadge(

@@ -122,12 +122,33 @@ export function resolveExtractDestinationAutofill(
 // ---------------------------------------------------------------------------
 
 /**
+ * True when `parent` is a reasonable default save location for a new archive.
+ * Start Menu shortcuts, Program Files, and other protected Windows folders
+ * often deny creating Zinnia's staging directory beside the source.
+ */
+export function isPreferredCompressParent(parent: string): boolean {
+  if (!parent) return false;
+  const normalized = parent.replace(/\//g, "\\").toLowerCase();
+  if (normalized.includes("\\start menu\\")) return false;
+  if (normalized.includes("\\program files")) return false;
+  if (normalized.includes("\\programdata\\")) return false;
+  if (normalized.includes("\\system32") || normalized.includes("\\syswow64")) {
+    return false;
+  }
+  // Drive-root Windows directory, e.g. C:\Windows
+  if (/(^|\\)windows(\\|$)/.test(normalized)) return false;
+  return true;
+}
+
+/**
  * Derives the default output archive path from the first input and the chosen
  * format.  For files the full filename is kept as the stem (so `file.exe`
  * becomes `file.exe.7z`).  For folders the folder name is used.  A trailing
  * separator is stripped so both `/folder` and `/folder/` work correctly.
  *
  * When `customName` is provided it replaces the auto-derived stem.
+ * Protected parents (Start Menu, Program Files, …) yield a bare filename so
+ * the save dialog opens in a writable folder instead of Access Denied.
  */
 export function deriveOutputArchivePath(
   inputs: string[],
@@ -150,7 +171,9 @@ export function deriveOutputArchivePath(
       ? trimmedCustomName
       : name;
   if (!archiveStem) return null;
-  return joinPath(parent, `${archiveStem}.${format}`, separator);
+  const fileName = `${archiveStem}.${format}`;
+  if (!isPreferredCompressParent(parent)) return fileName;
+  return joinPath(parent, fileName, separator);
 }
 
 export function shouldAutofillOutputPath(

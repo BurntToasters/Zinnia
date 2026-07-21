@@ -3,6 +3,9 @@
 use std::io;
 use std::path::Path;
 
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 /// Create a new directory that is private to the current user when the OS allows it.
 /// Unix: mode 0o700. Windows: disable inheritance and grant only the current user + SYSTEM.
 pub fn create_private_dir(path: &Path) -> io::Result<()> {
@@ -16,7 +19,19 @@ pub fn create_private_dir(path: &Path) -> io::Result<()> {
 
     #[cfg(windows)]
     {
-        std::fs::create_dir(path)?;
+        std::fs::create_dir(path).map_err(|error| {
+            if error.kind() == io::ErrorKind::PermissionDenied {
+                io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!(
+                        "Access is denied creating staging directory under {}. Choose a writable folder such as Desktop or Documents.",
+                        path.parent().unwrap_or(path).display()
+                    ),
+                )
+            } else {
+                error
+            }
+        })?;
         if let Err(error) = restrict_directory_acl(path) {
             let _ = std::fs::remove_dir(path);
             return Err(io::Error::new(io::ErrorKind::Other, error));
@@ -155,22 +170,37 @@ fn decode_windows_command_file(bytes: &[u8]) -> Result<String, String> {
 }
 
 #[cfg(windows)]
-fn current_user_identity() -> Result<WindowsUserIdentity, String> {
-    // Prefer the process token identity over the mutable USERNAME environment
-    // variable. whoami /user reads the logon token; fail closed if unavailable.
-    let output = std::process::Command::new("whoami")
-        .args(["/user", "/fo", "csv", "/nh"])
+fn run_hidden_output(program: &str, args: &[&str]) -> io::Result<std::process::Output> {
+    use std::os::windows::process::CommandExt;
+    // Zinnia is a windows_subsystem app; without CREATE_NO_WINDOW every helper
+    // (whoami/icacls) flashes a console during staging ACL setup.
+    std::process::Command::new(program)
+        .args(args)
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
-        .map_err(|e| format!("whoami failed to start: {e}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "whoami failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let line = stdout.lines().next().unwrap_or("").trim();
-    parse_whoami_user_csv(line)
+}
+
+#[cfg(windows)]
+fn current_user_identity() -> Result<WindowsUserIdentity, String> {
+    use std::sync::OnceLock;
+    static CACHED: OnceLock<Result<WindowsUserIdentity, String>> = OnceLock::new();
+    CACHED
+        .get_or_init(|| {
+            // Prefer the process token identity over the mutable USERNAME environment
+            // variable. whoami /user reads the logon token; fail closed if unavailable.
+            let output = run_hidden_output("whoami", &["/user", "/fo", "csv", "/nh"])
+                .map_err(|e| format!("whoami failed to start: {e}"))?;
+            if !output.status.success() {
+                return Err(format!(
+                    "whoami failed: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ));
+            }
+            let stdout = decode_windows_command_file(&output.stdout)?;
+            let line = stdout.lines().next().unwrap_or("").trim();
+            parse_whoami_user_csv(line)
+        })
+        .clone()
 }
 
 #[cfg(windows)]
@@ -189,15 +219,16 @@ fn restrict_directory_acl(path: &Path) -> Result<(), String> {
         "SYSTEM:(OI)(CI)F",
     ])?;
 
-    // Remove broad principals by well-known SID (locale-independent).
-    for principal in [
-        "*S-1-1-0",      // Everyone
-        "*S-1-5-11",     // Authenticated Users
+    // One call for all broad-principal removals (best-effort).
+    let _ = run_icacls(&[
+        path_str.as_ref(),
+        "/remove",
+        "*S-1-1-0", // Everyone
+        "/remove",
+        "*S-1-5-11", // Authenticated Users
+        "/remove",
         "*S-1-5-32-545", // BUILTIN\Users
-    ] {
-        // Removals are best-effort when the principal was never present.
-        let _ = run_icacls(&[path_str.as_ref(), "/remove", principal]);
-    }
+    ]);
 
     verify_restricted_acl(path, &identity)?;
     Ok(())
@@ -279,10 +310,8 @@ fn verify_restricted_acl(path: &Path, identity: &WindowsUserIdentity) -> Result<
 
 #[cfg(windows)]
 fn run_icacls(args: &[&str]) -> Result<(), String> {
-    let output = std::process::Command::new("icacls")
-        .args(args)
-        .output()
-        .map_err(|e| format!("icacls failed to start: {e}"))?;
+    let output =
+        run_hidden_output("icacls", args).map_err(|e| format!("icacls failed to start: {e}"))?;
     if output.status.success() {
         return Ok(());
     }

@@ -160,6 +160,23 @@ describe("deriveOutputArchivePath", () => {
       "/home/user/  .7z",
     );
   });
+
+  it("avoids Start Menu and Program Files parents (Windows .lnk defaults)", () => {
+    expect(
+      deriveOutputArchivePath(
+        [
+          "C:\\Users\\dev\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\GitHub Desktop.lnk",
+        ],
+        "7z",
+      ),
+    ).toBe("GitHub Desktop.lnk.7z");
+    expect(
+      deriveOutputArchivePath(
+        ["C:\\Program Files\\Some App\\readme.txt"],
+        "zip",
+      ),
+    ).toBe("readme.txt.zip");
+  });
 });
 
 describe("shouldAutofillOutputPath", () => {
