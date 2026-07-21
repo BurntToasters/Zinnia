@@ -2,7 +2,7 @@
 #include <winver.h>
 #include "resource.h"
 
-1 RT_MANIFEST "msix_identity.manifest"
+1 RT_MANIFEST "msix_extract_identity.manifest"
 
 IDI_ZINNIA ICON "..\\..\\icons\\icon.ico"
 
@@ -24,11 +24,11 @@ BEGIN
     BLOCK "040904B0"
     BEGIN
       VALUE "CompanyName", "BurntToasters\0"
-      VALUE "FileDescription", "Zinnia File Explorer context menu\0"
+      VALUE "FileDescription", "Zinnia archive extraction context menu\0"
       VALUE "FileVersion", "0.6.0-beta.11\0"
-      VALUE "InternalName", "zinnia_shell.dll\0"
+      VALUE "InternalName", "zinnia_extract_shell.dll\0"
       VALUE "LegalCopyright", "Copyright (c) 2025-2026 BurntToasters\0"
-      VALUE "OriginalFilename", "zinnia_shell.dll\0"
+      VALUE "OriginalFilename", "zinnia_extract_shell.dll\0"
       VALUE "ProductName", "Zinnia\0"
       VALUE "ProductVersion", "0.6.0-beta.11\0"
     END

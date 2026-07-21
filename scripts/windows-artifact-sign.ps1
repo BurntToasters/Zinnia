@@ -20,9 +20,10 @@ if ($missing.Count) { throw "Missing Azure Artifact Signing environment variable
 $resolved = (Resolve-Path -LiteralPath $FilePath).Path
 $ext = [IO.Path]::GetExtension($resolved).ToLowerInvariant()
 if ($ext -in @('.appx','.msix','.appxbundle','.msixbundle')) {
-  $isSparseContextMenu = $AllowSparseMsix -and ([IO.Path]::GetFileName($resolved) -ieq 'ZinniaContextMenu.msix')
+  $sparseContextMenus = @('ZinniaContextMenu.msix', 'ZinniaExtractContextMenu.msix')
+  $isSparseContextMenu = $AllowSparseMsix -and ([IO.Path]::GetFileName($resolved) -iin $sparseContextMenus)
   if (-not $isSparseContextMenu) {
-    throw "Microsoft Store package signing is intentionally excluded: $resolved (pass -AllowSparseMsix for ZinniaContextMenu.msix)"
+    throw "Microsoft Store package signing is intentionally excluded: $resolved (pass -AllowSparseMsix for a Zinnia sparse context-menu MSIX)"
   }
 }
 . (Join-Path $PSScriptRoot 'artifact-signing-tools.ps1')

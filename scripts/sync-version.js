@@ -73,27 +73,23 @@ if (windowsVersion.some((part) => Number(part) > 65535)) {
   console.error(`Windows resource version component exceeds 65535: ${version}`);
   process.exit(1);
 }
-const rcPath = path.join(
-  root,
-  "src-tauri",
-  "windows",
-  "shell",
-  "zinnia_shell.rc",
-);
-const rc = fs.readFileSync(rcPath, "utf8");
 const numericVersion = windowsVersion.join(",");
-const updatedRc = updateWindowsResourceFlags(rc, version)
-  .replace(/^ FILEVERSION .+$/m, ` FILEVERSION ${numericVersion}`)
-  .replace(/^ PRODUCTVERSION .+$/m, ` PRODUCTVERSION ${numericVersion}`)
-  .replace(
-    /^      VALUE "FileVersion", ".*\\0"$/m,
-    `      VALUE "FileVersion", "${version}\\0"`,
-  )
-  .replace(
-    /^      VALUE "ProductVersion", ".*\\0"$/m,
-    `      VALUE "ProductVersion", "${version}\\0"`,
-  );
-if (updatedRc !== rc) {
-  fs.writeFileSync(rcPath, updatedRc);
-  console.log(`zinnia_shell.rc → ${version}`);
+for (const rcName of ["zinnia_shell.rc", "zinnia_extract_shell.rc"]) {
+  const rcPath = path.join(root, "src-tauri", "windows", "shell", rcName);
+  const rc = fs.readFileSync(rcPath, "utf8");
+  const updatedRc = updateWindowsResourceFlags(rc, version)
+    .replace(/^ FILEVERSION .+$/m, ` FILEVERSION ${numericVersion}`)
+    .replace(/^ PRODUCTVERSION .+$/m, ` PRODUCTVERSION ${numericVersion}`)
+    .replace(
+      /^      VALUE "FileVersion", ".*\\0"$/m,
+      `      VALUE "FileVersion", "${version}\\0"`,
+    )
+    .replace(
+      /^      VALUE "ProductVersion", ".*\\0"$/m,
+      `      VALUE "ProductVersion", "${version}\\0"`,
+    );
+  if (updatedRc !== rc) {
+    fs.writeFileSync(rcPath, updatedRc);
+    console.log(`${rcName} → ${version}`);
+  }
 }

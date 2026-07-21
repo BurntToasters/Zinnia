@@ -76,6 +76,10 @@ $identityIn = Join-Path $shellDir 'msix_identity.manifest.in'
 $identityOut = Join-Path $shellDir 'msix_identity.manifest'
 $identityText = (Get-Content -LiteralPath $identityIn -Raw).Replace('__PUBLISHER_DN__', $PublisherDnXml)
 Write-Utf8NoBom $identityOut $identityText
+$extractIdentityIn = Join-Path $shellDir 'msix_extract_identity.manifest.in'
+$extractIdentityOut = Join-Path $shellDir 'msix_extract_identity.manifest'
+$extractIdentityText = (Get-Content -LiteralPath $extractIdentityIn -Raw).Replace('__PUBLISHER_DN__', $PublisherDnXml)
+Write-Utf8NoBom $extractIdentityOut $extractIdentityText
 
 function Resolve-ZinniaCmakeVsGenerator {
   $cmakeHelp = & cmake --help 2>&1 | Out-String
@@ -111,6 +115,9 @@ if ($LASTEXITCODE -ne 0) { throw "cmake build failed: $LASTEXITCODE" }
 $dll = Get-ChildItem -Path $buildDir -Recurse -Filter 'zinnia_shell.dll' | Select-Object -First 1
 if (-not $dll) { throw 'zinnia_shell.dll was not produced.' }
 Copy-Item -LiteralPath $dll.FullName -Destination (Join-Path $outDir 'zinnia_shell.dll') -Force
+$extractDll = Get-ChildItem -Path $buildDir -Recurse -Filter 'zinnia_extract_shell.dll' | Select-Object -First 1
+if (-not $extractDll) { throw 'zinnia_extract_shell.dll was not produced.' }
+Copy-Item -LiteralPath $extractDll.FullName -Destination (Join-Path $outDir 'zinnia_extract_shell.dll') -Force
 
 $staging = Join-Path $buildDir 'sparse-staging'
 if (Test-Path $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
@@ -122,6 +129,17 @@ $appxText = (Get-Content -LiteralPath $appxTemplate -Raw).
   Replace('__PUBLISHER_DN__', $PublisherDnXml).
   Replace('__PACKAGE_VERSION__', $appxVersion)
 Write-Utf8NoBom $appxPath $appxText
+
+$extractStaging = Join-Path $buildDir 'extract-sparse-staging'
+if (Test-Path $extractStaging) { Remove-Item -LiteralPath $extractStaging -Recurse -Force }
+New-Item -ItemType Directory -Force -Path (Join-Path $extractStaging 'Assets') | Out-Null
+Copy-Item -Path (Join-Path $sparseDir 'Assets\*') -Destination (Join-Path $extractStaging 'Assets') -Force
+$extractAppxTemplate = Join-Path $sparseDir 'ExtractAppxManifest.xml.template'
+$extractAppxPath = Join-Path $extractStaging 'AppxManifest.xml'
+$extractAppxText = (Get-Content -LiteralPath $extractAppxTemplate -Raw).
+  Replace('__PUBLISHER_DN__', $PublisherDnXml).
+  Replace('__PACKAGE_VERSION__', $appxVersion)
+Write-Utf8NoBom $extractAppxPath $extractAppxText
 
 $makeAppx = @(
   Get-ChildItem -Path ${env:ProgramFiles(x86)}, $env:ProgramFiles -Filter 'makeappx.exe' -Recurse -ErrorAction SilentlyContinue |
@@ -139,7 +157,17 @@ if ($LASTEXITCODE -ne 0) {
   throw "makeappx failed: $LASTEXITCODE (manifest=$appxPath publisher=$PublisherDn version=$appxVersion)"
 }
 
+$extractMsixPath = Join-Path $outDir 'ZinniaExtractContextMenu.msix'
+if (Test-Path $extractMsixPath) { Remove-Item -LiteralPath $extractMsixPath -Force }
+Write-Host "Packing Extract sparse MSIX with $($makeAppx.FullName) ..."
+& $makeAppx.FullName pack /o /nv /d $extractStaging /p $extractMsixPath
+if ($LASTEXITCODE -ne 0) {
+  throw "makeappx failed: $LASTEXITCODE (manifest=$extractAppxPath publisher=$PublisherDn version=$appxVersion)"
+}
+
 Write-Host "Built $(Join-Path $outDir 'zinnia_shell.dll')"
+Write-Host "Built $(Join-Path $outDir 'zinnia_extract_shell.dll')"
 Write-Host "Built $msixPath"
+Write-Host "Built $extractMsixPath"
 Write-Host "Publisher DN (DLL identity + Appx Identity): $PublisherDn"
 Write-Host "Package version: $appxVersion"

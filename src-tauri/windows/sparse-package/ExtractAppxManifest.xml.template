@@ -10,16 +10,15 @@
   IgnorableNamespaces="uap uap10 rescap desktop4 desktop5 com">
 
   <Identity
-    Name="run.rosie.zinnia.contextmenu"
+    Name="run.rosie.zinnia.extractmenu"
     ProcessorArchitecture="neutral"
     Publisher="__PUBLISHER_DN__"
     Version="__PACKAGE_VERSION__" />
 
   <Properties>
-    <DisplayName>Zinnia</DisplayName>
+    <DisplayName>Extract with Zinnia</DisplayName>
     <PublisherDisplayName>BurntToasters</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
-    <!-- Required for Add-AppxPackage -ExternalLocation (0x80073D2E without this). -->
     <uap10:AllowExternalContent>true</uap10:AllowExternalContent>
   </Properties>
 
@@ -38,37 +37,56 @@
 
   <Applications>
     <Application
-      Id="ZinniaContextMenu"
+      Id="ZinniaExtractMenu"
       Executable="zinnia.exe"
       uap10:TrustLevel="mediumIL"
       uap10:RuntimeBehavior="win32App">
       <uap:VisualElements
         AppListEntry="none"
-        DisplayName="Zinnia"
-        Description="Zinnia File Explorer context menu"
+        DisplayName="Extract with Zinnia"
+        Description="Extract archives with Zinnia"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png"
         BackgroundColor="transparent" />
       <Extensions>
         <desktop4:Extension Category="windows.fileExplorerContextMenus">
           <desktop4:FileExplorerContextMenus>
-            <!-- This package exposes exactly one verb. Windows 11 groups multiple
-                 verbs from one app identity into an attributed flyout. -->
-            <desktop5:ItemType Type="*">
-              <desktop5:Verb Id="ZinniaRoot" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5C" />
+            <desktop5:ItemType Type=".7z">
+              <desktop5:Verb Id="ZinniaExtract7z" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
             </desktop5:ItemType>
-            <desktop5:ItemType Type="Directory">
-              <desktop5:Verb Id="ZinniaRootDir" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5C" />
+            <desktop5:ItemType Type=".zip">
+              <desktop5:Verb Id="ZinniaExtractZip" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
             </desktop5:ItemType>
-            <desktop5:ItemType Type="Directory\Background">
-              <desktop5:Verb Id="ZinniaRootBg" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5C" />
+            <desktop5:ItemType Type=".tar">
+              <desktop5:Verb Id="ZinniaExtractTar" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".gz">
+              <desktop5:Verb Id="ZinniaExtractGz" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".tgz">
+              <desktop5:Verb Id="ZinniaExtractTgz" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".bz2">
+              <desktop5:Verb Id="ZinniaExtractBz2" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".tbz2">
+              <desktop5:Verb Id="ZinniaExtractTbz2" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".xz">
+              <desktop5:Verb Id="ZinniaExtractXz" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".txz">
+              <desktop5:Verb Id="ZinniaExtractTxz" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".001">
+              <desktop5:Verb Id="ZinniaExtractSplit" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
             </desktop5:ItemType>
           </desktop4:FileExplorerContextMenus>
         </desktop4:Extension>
         <com:Extension Category="windows.comServer">
           <com:ComServer>
-            <com:SurrogateServer DisplayName="Zinnia">
-              <com:Class Id="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5C" Path="zinnia_shell.dll" ThreadingModel="STA" />
+            <com:SurrogateServer DisplayName="Extract with Zinnia">
+              <com:Class Id="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" Path="zinnia_extract_shell.dll" ThreadingModel="STA" />
             </com:SurrogateServer>
           </com:ComServer>
         </com:Extension>

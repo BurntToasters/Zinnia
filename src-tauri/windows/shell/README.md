@@ -1,12 +1,12 @@
 # Windows 11 modern context menu (`zinnia_shell`)
 
-`IExplorerCommand` DLL + **sparse MSIX identity package** so Zinnia appears in the
+`IExplorerCommand` DLLs + **sparse MSIX identity packages** so Zinnia appears in the
 Windows 11 primary right-click menu (not only under “Show more options”).
 
 Zinnia does **not** install as a Store/AppX application. The NSIS installer places
-`zinnia.exe` like a normal Win32 app. The sparse MSIX (`ZinniaContextMenu.msix`)
-is identity-only metadata registered with `Add-AppxPackage -ExternalLocation`;
-it points at the already-installed shell DLL and does not relocate the app.
+`zinnia.exe` like a normal Win32 app. The sparse MSIX files are identity-only
+metadata registered with `Add-AppxPackage -ExternalLocation`; they point at the
+already-installed shell DLLs and do not relocate the app.
 
 ## Menu shape
 
@@ -15,15 +15,15 @@ it points at the already-installed shell DLL and does not relocate the app.
 - **Zinnia** submenu on folder **background** (`Directory\Background`): Compress
   the current folder (DLL resolves the open folder via `IObjectWithSite` /
   `IFolderView` when selection is empty)
-- Top-level **Extract with Zinnia** on supported archives. Sparse-package file
-  type associations make per-extension `ItemType` registrations reliable;
-  `.001` remains dynamically checked for a split-volume sibling.
+- Top-level **Extract with Zinnia** on supported archive `ItemType`s. Its
+  separate sparse identity prevents Windows 11 from grouping it with the
+  **Zinnia** submenu; `.001` remains dynamically checked for a split-volume
+  sibling. The Extract identity is not registered as a file opener.
 
-Keep exactly one command on `ItemType Type="*"`: the Root command. Putting both
-Root and Extract there makes Explorer add its own app-attributed **Zinnia**
-flyout around Root's **Zinnia** flyout, producing the redundant
-**Zinnia > Zinnia** nesting. Archive `ItemType`s register only Extract; Root is
-already inherited from `Type="*"`.
+Windows 11 groups multiple verbs from one app identity into an attributed
+flyout. Root and Extract therefore use separate sparse packages and DLLs, with
+one command identity in each package. This produces sibling root entries instead
+of the redundant **Zinnia > Zinnia** nesting.
 
 Classic NSIS registry verbs remain for the legacy menu (including
 `Directory\Background\shell\ZinniaCompress` with `%V`).
@@ -35,10 +35,10 @@ and the Windows SDK (`makeappx`). The build script picks
 `Visual Studio 18 2026` when VS 18 is installed, else `Visual Studio 17 2022`.
 
 **Publisher DN is required for signing to succeed.** Azure Artifact Signing’s
-certificate Subject (full DN) must match both:
+certificate Subject (full DN) must match every:
 
-1. `AppxManifest.xml` `<Identity Publisher="…">`
-2. The DLL’s embedded `<msix publisher="…">` identity
+1. Sparse manifest `<Identity Publisher="…">`
+2. DLL embedded `<msix publisher="…">` identity
 
 ```powershell
 # Best: copy Subject from a previously signed zinnia.exe
@@ -55,7 +55,9 @@ the cert Subject includes extra fields (`O=`, `C=`, …).
 Outputs:
 
 - `src-tauri/windows/shell/out/zinnia_shell.dll`
+- `src-tauri/windows/shell/out/zinnia_extract_shell.dll`
 - `src-tauri/windows/shell/out/ZinniaContextMenu.msix`
+- `src-tauri/windows/shell/out/ZinniaExtractContextMenu.msix`
 
 Tauri lists these under `bundle.resources`, so the paths must exist for
 `cargo check` / `tauri dev` / `tauri build`. Empty CI stubs are enough for that:
@@ -73,7 +75,7 @@ manifest so `Add-AppxPackage -ExternalLocation` can point at `$INSTDIR`
 payload files live outside the MSIX; AppxManifest.xml is written UTF-8
 without a BOM (PowerShell's default UTF-8 encoding breaks makeappx).
 
-`npm run build:win:*` builds the real package automatically (unless
+`npm run build:win:*` builds the real packages automatically (unless
 `SKIP_WIN_CONTEXT_MENU=1`), signs both artifacts with Azure Artifact Signing,
 then bundles them into the NSIS installer. Post-install runs
 `scripts/register-windows-context-menu.ps1`
@@ -82,17 +84,17 @@ to `$INSTDIR\zinnia-context-menu-register.log` without aborting the install
 (classic verbs still work).
 
 On Windows, Tauri’s resource directory is `$INSTDIR` (next to `zinnia.exe`).
-The DLL looks for `zinnia.exe` in the same folder first, then the parent
-(if the package is ever mapped under `resources\`). NSIS registration looks for
-`zinnia_shell.dll` / MSIX / `register-windows-context-menu.ps1` in `$INSTDIR`,
-then `$INSTDIR\resources`.
+The DLLs look for `zinnia.exe` in the same folder first, then the parent
+(if the packages are ever mapped under `resources\`). NSIS registration looks
+for both DLLs, both MSIX files, and `register-windows-context-menu.ps1` in
+`$INSTDIR`, then `$INSTDIR\resources`.
 
 Signed builds **require** `AZURE_ARTIFACT_SIGNING_PUBLISHER_DN` (full Subject).
 CN-only is rejected. `verify-windows-authenticode.ps1` also checks the signed
-DLL and MSIX (skipping empty CI stubs).
+DLLs and MSIX files (skipping empty CI stubs).
 
 Azure Artifact Signing **does** work for this flow: trusted Authenticode on the
-DLL + signed sparse MSIX is what Win11 requires. Classic NSIS verbs still work
+DLLs + signed sparse MSIX files are what Win11 requires. Classic NSIS verbs still work
 without the modern menu if packaging is skipped.
 
 ## CLSIDs

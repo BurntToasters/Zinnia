@@ -62,7 +62,12 @@ const targetReleaseDir = path.join(
 );
 const shellOutDir = path.join(root, "src-tauri", "windows", "shell", "out");
 const shellDll = path.join(shellOutDir, "zinnia_shell.dll");
+const extractShellDll = path.join(shellOutDir, "zinnia_extract_shell.dll");
 const shellMsix = path.join(shellOutDir, "ZinniaContextMenu.msix");
+const extractShellMsix = path.join(
+  shellOutDir,
+  "ZinniaExtractContextMenu.msix",
+);
 const signScript = fileURLToPath(
   new URL("./windows-artifact-sign.ps1", import.meta.url),
 );
@@ -93,7 +98,12 @@ if (!skipContextMenu) {
     "[tauri-windows-build] Building Win11 context-menu shell package…",
   );
   runPowershell(contextMenuScript, [`-Arch`, arch]);
-  if (!existsSync(shellDll) || !existsSync(shellMsix)) {
+  if (
+    !existsSync(shellDll) ||
+    !existsSync(extractShellDll) ||
+    !existsSync(shellMsix) ||
+    !existsSync(extractShellMsix)
+  ) {
     throw new Error(
       `Context menu artifacts missing under ${shellOutDir}. Set SKIP_WIN_CONTEXT_MENU=1 to skip.`,
     );
@@ -101,8 +111,16 @@ if (!skipContextMenu) {
   if (!skipWindowsCodeSigning) {
     console.log("[tauri-windows-build] Signing zinnia_shell.dll…");
     runPowershell(signScript, ["-FilePath", shellDll]);
+    console.log("[tauri-windows-build] Signing zinnia_extract_shell.dll…");
+    runPowershell(signScript, ["-FilePath", extractShellDll]);
     console.log("[tauri-windows-build] Signing ZinniaContextMenu.msix…");
     runPowershell(signScript, ["-FilePath", shellMsix, "-AllowSparseMsix"]);
+    console.log("[tauri-windows-build] Signing ZinniaExtractContextMenu.msix…");
+    runPowershell(signScript, [
+      "-FilePath",
+      extractShellMsix,
+      "-AllowSparseMsix",
+    ]);
   }
 } else {
   console.warn(
