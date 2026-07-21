@@ -1,0 +1,685 @@
+/* --- Basic Mode settings modal redesign --- */
+#app[data-workspace-mode="basic"] #settings-overlay {
+  background: var(--bg) !important;
+  backdrop-filter: none !important;
+  padding: 0 !important;
+  display: none;
+  align-items: stretch;
+  justify-content: stretch;
+  z-index: 1000;
+  width: 100vw;
+  height: 100vh;
+  position: fixed;
+  top: 0;
+  left: 0;
+}
+
+/* Account for titlebar height in basic mode fullscreen settings */
+body.platform-windows #app[data-workspace-mode="basic"] #settings-overlay {
+  top: 32px;
+  height: calc(100vh - 32px);
+}
+
+body.platform-macos #app[data-workspace-mode="basic"] #settings-overlay {
+  top: 38px;
+  height: calc(100vh - 38px);
+}
+
+body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
+  top: 32px;
+  height: calc(100vh - 32px);
+}
+
+#app[data-workspace-mode="basic"] #settings-overlay:not([hidden]) {
+  display: flex;
+}
+
+#app[data-workspace-mode="basic"] #licenses-overlay {
+  z-index: 1001;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings {
+  --basic-settings-max: 440px;
+  --basic-settings-pad-x: 20px;
+  --basic-btn-height: 42px;
+  --basic-radius-btn: 10px;
+  --basic-radius-input: 8px;
+  position: relative;
+  width: 100% !important;
+  height: 100% !important;
+  max-height: 100vh !important;
+  max-width: 100vw !important;
+  margin: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg) !important;
+  animation: basic-settings-slide-in 240ms cubic-bezier(0.16, 1, 0.3, 1)
+    forwards;
+}
+
+/* Collapse "Settings" header into the tab row; close sits on the tabline. */
+#app[data-workspace-mode="basic"] .modal--settings .modal__header {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 6;
+  height: 48px;
+  padding: 0 var(--basic-settings-pad-x);
+  margin: 0;
+  border: none;
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  pointer-events: none;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .modal__header h2 {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .modal__header button {
+  pointer-events: auto;
+  font-size: 1.375rem;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 6px 8px;
+  line-height: 1;
+  border-radius: 8px;
+  transition:
+    color var(--transition),
+    background var(--transition);
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .modal__header button:hover {
+  color: var(--text);
+  background: var(--hover-overlay);
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .modal__main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg);
+}
+
+/* Tab list navigation (top chrome; close overlays the right edge) */
+#app[data-workspace-mode="basic"] .modal--settings .settings-tabs {
+  flex-direction: row;
+  width: 100%;
+  border-right: none;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-alt);
+  padding: 0 calc(var(--basic-settings-pad-x) + 36px) 0
+    var(--basic-settings-pad-x);
+  gap: 20px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex-shrink: 0;
+  min-height: 48px;
+  align-items: stretch;
+}
+
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .settings-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .settings-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 0;
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 0.8125rem;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+  transition:
+    color var(--transition),
+    border-color var(--transition);
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .settings-tab:hover {
+  color: var(--text);
+  background: transparent;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .settings-tab.is-active {
+  color: var(--accent);
+  background: transparent;
+  border-bottom-color: var(--accent);
+  border-left-color: transparent;
+}
+
+/* Body: centered column, section rhythm */
+#app[data-workspace-mode="basic"] .modal--settings .modal__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px var(--basic-settings-pad-x) 28px;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .settings-panel {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: var(--basic-settings-max);
+  margin: 0 auto;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .settings-panel.is-active {
+  display: flex;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .settings-section {
+  padding: 20px 0 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+}
+
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .settings-section:last-child {
+  border-bottom: none;
+  padding-bottom: 4px;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .settings-section__title {
+  margin: 0 0 10px;
+  font-size: 0.6875rem;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .setting-divider {
+  display: none;
+}
+
+#app[data-workspace-mode="basic"] #setting-ui-density {
+  display: none !important;
+}
+
+/* Related preference rows share one horizontal band */
+#app[data-workspace-mode="basic"] .modal--settings .setting-item-pair {
+  --pair-control-h: 34px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px 20px;
+  padding: 8px 0 4px;
+  align-items: stretch;
+}
+
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .setting-item-pair
+  .setting-item {
+  padding: 0;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 6px;
+  min-width: 0;
+  height: 100%;
+}
+
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .setting-item-pair
+  .setting-info {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* Reserve two description lines so titles/controls share baselines */
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .setting-item-pair
+  .setting-title {
+  line-height: 1.25;
+  min-height: 1.25em;
+}
+
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .setting-item-pair
+  .setting-desc {
+  line-height: 1.4;
+}
+
+/* Shared control rail for selects (Theme / Workspace) */
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .setting-item-pair
+  .setting-item
+  > select,
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .setting-item-pair
+  .setting-item
+  > .setting-select {
+  margin-top: auto;
+  flex-shrink: 0;
+  height: var(--pair-control-h);
+  box-sizing: border-box;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  align-self: stretch;
+}
+
+/* Check now: snug under copy, slimmer than the select rail */
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .setting-item-pair
+  .setting-item
+  > .btn {
+  margin-top: 2px;
+  flex-shrink: 0;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  align-self: stretch;
+  height: 28px;
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 0.8125rem;
+  box-sizing: border-box;
+}
+
+/* Switch sits with the description (inset from the column edge) */
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .setting-item--switch-wrap
+  .setting-desc-wrap {
+  display: block;
+  min-height: calc(1.4em * 2);
+  /* Keep the control inside the Auto-updates band, not the pair gutter */
+  padding-right: 18px;
+  box-sizing: border-box;
+}
+
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .setting-item--switch-wrap
+  .setting-desc-wrap
+  > .switch {
+  float: right;
+  margin: 0.15em 4px 0.2em 10px;
+  height: auto;
+}
+
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .setting-item--switch-wrap
+  .setting-desc-wrap
+  > .setting-desc {
+  min-height: 0;
+  display: block;
+}
+
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .setting-item--switch-wrap
+  .setting-desc-wrap::after {
+  content: "";
+  display: table;
+  clear: both;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .setting-item {
+  padding: 12px 0;
+  margin: 0;
+  border-bottom: none;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+/* Keep full-width row controls on a shared right edge */
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .settings-section
+  > .setting-item
+  > select,
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .settings-section
+  > .setting-item
+  > .setting-select,
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .settings-section
+  > .setting-item
+  > .btn {
+  width: 148px;
+  min-width: 148px;
+  max-width: 148px;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .setting-item .setting-info {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .setting-item .switch {
+  flex-shrink: 0;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .setting-title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .setting-desc {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .setting-item select,
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .setting-item
+  input[type="text"],
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .setting-item
+  input[type="number"] {
+  width: auto;
+  min-width: 140px;
+  max-width: 180px;
+  flex-shrink: 0;
+  height: 34px;
+  font-family: inherit;
+  font-size: 0.875rem;
+  color: var(--text);
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--basic-radius-input);
+  padding: 6px 10px;
+  box-sizing: border-box;
+  transition: border-color var(--transition);
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .setting-item select:focus,
+#app[data-workspace-mode="basic"] .modal--settings .setting-item input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .setting-item
+  .setting-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: auto;
+  flex-shrink: 0;
+  justify-content: flex-end;
+  margin-top: 0;
+}
+
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .setting-item
+  .setting-actions
+  button {
+  width: auto;
+  min-width: 0;
+  flex: 0 0 auto;
+  height: 34px;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .setting-item > .btn {
+  height: 34px;
+  width: auto;
+  align-self: center;
+  flex-shrink: 0;
+}
+
+/* Compression / OS / About parity */
+#app[data-workspace-mode="basic"] .modal--settings .grid-split {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 8px 0 12px;
+  border-bottom: none;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .grid-split .field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .grid-split .field label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .grid-split .field select,
+#app[data-workspace-mode="basic"] .modal--settings .grid-split .field input {
+  width: 100%;
+  height: 34px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--basic-radius-input);
+  color: var(--text);
+  padding: 6px 10px;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .settings-hint {
+  padding: 0 0 12px;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  background: transparent;
+  margin: 0;
+  border-bottom: none;
+  line-height: 1.45;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .os-status-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 4px 0 16px;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .os-status-card {
+  padding: 12px 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .settings-actions--left {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 16px;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .settings-note {
+  margin-top: 8px;
+  padding: 0;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .about-header {
+  padding: 4px 0 16px;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .about-rows {
+  margin-bottom: 16px;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .about-licenses-btn {
+  width: 100%;
+  height: 34px;
+  margin-bottom: 4px;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .about-notices {
+  margin-top: 0;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .about-notice {
+  padding: 0;
+  background: transparent;
+  border: none;
+}
+
+/* Footer: Cancel secondary, Save primary (not equal slabs) */
+#app[data-workspace-mode="basic"] .modal--settings .modal__footer {
+  flex-shrink: 0;
+  padding: 12px var(--basic-settings-pad-x) 20px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  margin-top: auto;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .modal__footer button {
+  flex: 0 1 auto;
+  min-width: 108px;
+  height: var(--basic-btn-height);
+  font-size: 0.875rem;
+  font-weight: 600;
+  border-radius: var(--basic-radius-btn);
+}
+
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .modal__footer
+  #cancel-settings {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .modal__footer
+  #cancel-settings:hover {
+  background: var(--hover-overlay);
+  color: var(--text);
+}
+
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .modal__footer
+  #save-settings {
+  background: var(--accent);
+  border: 1px solid transparent;
+  color: var(--text-on-accent);
+  min-width: 128px;
+}
+
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .modal__footer
+  #save-settings:hover {
+  background: var(--accent-hover);
+}
+
+@media (max-width: 400px) {
+  #app[data-workspace-mode="basic"] .modal--settings .setting-item-pair {
+    grid-template-columns: 1fr;
+  }
+
+  #app[data-workspace-mode="basic"] .modal--settings .setting-item {
+    flex-wrap: wrap;
+  }
+
+  #app[data-workspace-mode="basic"] .modal--settings .setting-item select,
+  #app[data-workspace-mode="basic"]
+    .modal--settings
+    .setting-item
+    input[type="text"],
+  #app[data-workspace-mode="basic"]
+    .modal--settings
+    .setting-item
+    input[type="number"] {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+
+  #app[data-workspace-mode="basic"]
+    .modal--settings
+    .setting-item
+    .setting-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  #app[data-workspace-mode="basic"] .modal--settings .setting-item > .btn {
+    width: 100%;
+  }
+
+  #app[data-workspace-mode="basic"] .modal--settings .modal__footer {
+    justify-content: stretch;
+  }
+
+  #app[data-workspace-mode="basic"] .modal--settings .modal__footer button {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+@keyframes basic-settings-slide-in {
+  from {
+    transform: translateY(100%);
+    opacity: 0.8;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}

@@ -41,7 +41,13 @@ describe("macOS compatibility", () => {
 
   it("uses modern default-application APIs", () => {
     const platformSource = fs.readFileSync(
-      path.resolve(process.cwd(), "src-tauri", "src", "platform.rs"),
+      path.resolve(
+        process.cwd(),
+        "src-tauri",
+        "src",
+        "platform",
+        "macos_defaults.rs",
+      ),
       "utf8",
     );
     expect(platformSource).toContain(

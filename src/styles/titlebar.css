@@ -1,0 +1,209 @@
+/* Custom Titlebar Styles */
+#titlebar {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.75rem;
+  font-weight: 500;
+  user-select: none;
+  border-bottom: 1px solid var(--border);
+  position: relative;
+  z-index: 9999;
+  -webkit-app-region: drag !important;
+}
+
+/* Display titlebar on platforms with custom window chrome */
+body.platform-windows #titlebar,
+body.platform-macos #titlebar,
+body.platform-linux #titlebar {
+  display: flex;
+}
+
+/* Basic glass: same seamless strip as macOS — let Mica/Acrylic show through. */
+html[data-window-fx="basic"] body.platform-windows #titlebar {
+  background: transparent;
+  border-bottom: none;
+}
+
+.titlebar-logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.titlebar-icon {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+
+.titlebar-text {
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+#titlebar-controls {
+  display: flex;
+  height: 100%;
+  position: absolute;
+  right: 0;
+  top: 0;
+  -webkit-app-region: no-drag !important;
+}
+
+.titlebar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: default !important;
+  transition:
+    background 150ms ease,
+    color 150ms ease;
+  -webkit-app-region: no-drag !important;
+}
+
+.titlebar-btn svg {
+  display: block;
+}
+
+.titlebar-btn:hover {
+  background: var(--hover-overlay);
+  color: var(--text);
+}
+
+.titlebar-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.titlebar-btn--close:hover {
+  background: #e81123 !important;
+  color: #fff !important;
+}
+
+/* Platform Adjustments */
+body.platform-macos #titlebar {
+  height: 38px;
+  background: transparent !important;
+  border-bottom: none !important;
+}
+
+body.platform-macos .titlebar-logo {
+  display: flex !important;
+}
+
+body.platform-macos #titlebar-controls {
+  display: none !important;
+}
+
+/* Make sure dragging header doesn't conflict when titlebar is active */
+body.platform-windows .header,
+body.platform-macos .header,
+body.platform-linux .header {
+  -webkit-app-region: no-drag !important;
+}
+
+/* Hide redundant branding when custom titlebar is showing */
+body.platform-windows .header__brand,
+body.platform-macos .header__brand,
+body.platform-linux .header__brand {
+  display: none;
+}
+
+/* Offset modal overlays below the custom titlebar */
+body.platform-windows .modal-overlay,
+body.platform-windows .setup-wizard-overlay {
+  top: 32px;
+}
+
+body.platform-macos .modal-overlay,
+body.platform-macos .setup-wizard-overlay {
+  top: 38px;
+}
+
+body.platform-linux .modal-overlay,
+body.platform-linux .setup-wizard-overlay {
+  top: 32px;
+}
+
+/* Windows High Contrast / forced-colors support */
+@media (forced-colors: active) {
+  #titlebar {
+    border-bottom: 1px solid ButtonText;
+  }
+
+  .titlebar-btn {
+    color: ButtonText;
+  }
+
+  .titlebar-btn:hover {
+    background: Highlight;
+    color: HighlightText;
+  }
+
+  .titlebar-btn:focus-visible {
+    outline: 2px solid Highlight;
+  }
+
+  .titlebar-btn--close:hover {
+    background: LinkText;
+    color: HighlightText;
+  }
+
+  .btn,
+  .segmented__btn,
+  .settings-tab {
+    border: 1px solid ButtonText;
+  }
+
+  .btn:focus-visible,
+  .segmented__btn:focus-visible,
+  .settings-tab:focus-visible {
+    outline: 2px solid Highlight;
+  }
+
+  input,
+  select {
+    border: 1px solid ButtonText;
+  }
+
+  input:focus-visible,
+  select:focus-visible {
+    outline: 2px solid Highlight;
+  }
+
+  .switch__track {
+    border: 1px solid ButtonText;
+  }
+
+  .switch input:checked + .switch__track {
+    background: Highlight;
+    border-color: Highlight;
+  }
+
+  .modal {
+    border: 1px solid ButtonText;
+  }
+
+  .header {
+    border-bottom: 1px solid ButtonText;
+  }
+
+  .statusbar {
+    border-top: 1px solid ButtonText;
+  }
+}

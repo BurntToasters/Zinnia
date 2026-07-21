@@ -14,19 +14,19 @@ frontend (src/, TS)  ──invoke()──▶  Rust commands (src-tauri/src/)  �
 `main.rs` is glue only (state registration, builder, command registry). Logic is
 split into focused modules:
 
-| Module | Responsibility |
-| --- | --- |
-| `validation.rs` | Allow-list validation of 7z args: the security boundary |
-| `process.rs` | Process lifecycle: single-slot state, shared spawn/drain, `run_7z`/`probe_7z`/`cancel_7z`, startup recovery, 7z version attestation |
-| `progress.rs` | Parse 7z stdout into structured `{percent, filesDone, currentFile}` |
-| `archive_detect.rs` | Magic-byte / TAR detection, extension-vs-header validation |
-| `settings_store.rs` | Atomic settings load/save (preserves reserved `_` keys) |
-| `logging.rs` | Rolling local diagnostics log |
-| `launch.rs` | CLI/file-association routing, extract windows, pending-path queues, quick-extract warm-idle / tray |
-| `platform.rs` | Platform/OS-integration queries |
-| `output.rs` | Byte-bounded, UTF-8-safe output buffering |
-| `window_fx.rs` | Basic-mode native glass (macOS vibrancy, Windows Mica/Acrylic); Linux stays opaque |
-| `path_safety.rs` | Symlink / reparse rejection; Unix `O_NOFOLLOW` opens for promote |
+| Module              | Responsibility                                                                                              |
+| ------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `validation.rs`     | Allow-list validation of 7z args: the security boundary                                                     |
+| `process/`          | Process lifecycle: journal/recovery/staging/commit, `run_7z`/`probe_7z`/`cancel_7z`, 7z version attestation |
+| `progress.rs`       | Parse 7z stdout into structured `{percent, filesDone, currentFile}`                                         |
+| `archive_detect.rs` | Magic-byte / TAR detection, extension-vs-header validation                                                  |
+| `settings_store.rs` | Atomic settings load/save (preserves reserved `_` keys)                                                     |
+| `logging.rs`        | Rolling local diagnostics log                                                                               |
+| `launch/`           | CLI/file-association routing, extract windows, pending-path queues, quick-extract warm-idle / tray          |
+| `platform/`         | Platform/OS-integration queries, defaults commands, xdg-mime / macOS UTI                                    |
+| `output.rs`         | Byte-bounded, UTF-8-safe output buffering                                                                   |
+| `window_fx.rs`      | Basic-mode native glass (macOS vibrancy, Windows Mica/Acrylic); Linux stays opaque                          |
+| `path_safety.rs`    | Symlink / reparse rejection; Unix `O_NOFOLLOW` opens for promote                                            |
 
 `run_7z` validates args, owns one sidecar operation globally, emits throttled
 raw (`7z-progress`) plus structured (`7z-progress-structured`) progress events,
@@ -65,11 +65,34 @@ racing a newly opened extract window.
 No framework. State is a single mutable object in `state.ts`; modules
 communicate via direct calls and a few custom DOM events.
 
-- **Two workspaces**: Basic (guided, `basic-ui.ts`) and Power (3-panel,
-  `ui.ts`), toggled and persisted in settings.
+### Module layout (target)
+
+| Path                   | Responsibility                                                                           |
+| ---------------------- | ---------------------------------------------------------------------------------------- |
+| `archive/`             | 7z arg building, ops (`runAction` / batch extract), browse/selective UI, command preview |
+| `basic/`               | Basic workspace UI, Basic↔Power sync, recent archives, progress chrome                   |
+| `ui/`                  | Shared Power/Basic chrome: hooks, logging, workspace mode, status/progress, inputs       |
+| `main.ts`              | Thin entry; boot orchestration lives in `app-init.ts` / `power-events.ts`                |
+| `selective-extract.ts` | Pure tree/selection model for the picker                                                 |
+| `extract-window.ts`    | Dedicated extract progress window                                                        |
+| `os-integration.ts`    | Settings → OS Integration tab                                                            |
+
+### Backend layout (target)
+
+| Path        | Responsibility                                                         |
+| ----------- | ---------------------------------------------------------------------- |
+| `process/`  | Journal, recovery, staging, commit/promote, `run_7z` / cancel / probe  |
+| `platform/` | OS integration status, defaults commands, xdg-mime / macOS UTI helpers |
+| `launch/`   | Open-path routing, extract window lifecycle, pending paths             |
+
+Public Tauri command paths stay `process::run_7z`, `platform::…`, `launch::…` via
+re-exports from each crate module root.
+
+- **Two workspaces**: Basic (guided, `basic/`) and Power (3-panel, `ui/`),
+  toggled and persisted in settings.
 - **Two windows**: the main window (`index.html` → `main.ts`) and a dedicated
   extract progress window (`extract.html` → `extract-window.ts`).
-- `archive.ts` builds 7z arg lists and runs operations; `selective-extract.ts`
+- `archive/` builds 7z arg lists and runs operations; `selective-extract.ts`
   holds the pure tree/selection model for the picker.
 - `error-hints.ts` maps 7z failures to recovery hints; `toast.ts` shows
   non-blocking success/info notifications; blocking dialogs are reserved for
