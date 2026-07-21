@@ -50,11 +50,13 @@ pub(crate) use staging::{create_private_stage_dir, resolve_existing_target};
 pub(crate) use commands::version_cmp;
 #[cfg(all(test, target_os = "windows"))]
 pub(crate) use commands::{store_probed_7z_version, windows_rar_extract_blocked};
+#[cfg(all(test, unix))]
+pub(crate) use commit::assert_safe_extract_target_ancestors;
 #[cfg(test)]
 pub(crate) use commit::{
-    archive_stage_has_recovery_backups, assert_safe_extract_target_ancestors,
-    commit_failure_should_scrub_staging, merge_staged_extract, promote_archive_family,
-    rollback_cleanup, rollback_persisted_move_plan, write_move_plan, MAX_EXTRACTED_BYTES,
+    archive_stage_has_recovery_backups, commit_failure_should_scrub_staging, merge_staged_extract,
+    promote_archive_family, rollback_cleanup, rollback_persisted_move_plan, write_move_plan,
+    MAX_EXTRACTED_BYTES,
 };
 #[cfg(test)]
 pub(crate) use journal::{

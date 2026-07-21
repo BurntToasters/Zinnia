@@ -29,6 +29,8 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Test:** Added manifest regression coverage enforcing one wildcard Root verb and one archive-only Extract verb per supported type.
 - **Release:** Expanded the full gate to include Rust formatting and warning-free Clippy checks.
 - **Release:** Release VMs now refuse dirty, unpushed, or wrong-branch source and rerun the complete local suite before building artifacts.
+- **Fix:** Enforced LF text checkouts so Windows release VMs no longer report every Prettier file changed or break JavaScript shebang parsing.
+- **Test:** Fixed Windows-only Rust warnings/Clippy failures and added Clippy to the Windows/macOS CI matrix.
 
 ## Changes in `v0.6.0-beta.9:`
 - **Recents:** Moved to a compact titlebar dropdown in Basic mode; missing (deleted) paths are dropped automatically.

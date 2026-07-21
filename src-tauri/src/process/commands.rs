@@ -75,10 +75,10 @@ pub(crate) fn version_cmp(a: &str, b: &str) -> Option<std::cmp::Ordering> {
 #[cfg(target_os = "windows")]
 pub(crate) fn windows_rar_extract_blocked() -> bool {
     match probed_7z_version() {
-        Some(version) => match version_cmp(&version, WINDOWS_RAR_EXTRACT_BLOCKED_THROUGH) {
-            Some(std::cmp::Ordering::Greater) => false,
-            _ => true,
-        },
+        Some(version) => !matches!(
+            version_cmp(&version, WINDOWS_RAR_EXTRACT_BLOCKED_THROUGH),
+            Some(std::cmp::Ordering::Greater)
+        ),
         // Fail closed until probe attests a safe runtime.
         None => true,
     }

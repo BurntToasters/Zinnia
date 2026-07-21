@@ -160,7 +160,7 @@ pub(crate) fn command_output_with_timeout(
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::process::Command;
