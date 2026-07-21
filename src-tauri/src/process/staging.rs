@@ -5,9 +5,7 @@ use tauri_plugin_shell::ShellExt;
 use crate::output::sanitize_output;
 use crate::validation::archive_member_path_is_unsafe;
 
-use super::archive_snapshot::{
-    archive_file_identity, stage_extract_input, ArchiveFileIdentity,
-};
+use super::archive_snapshot::{archive_file_identity, stage_extract_input, ArchiveFileIdentity};
 use super::commands::collect_command_output;
 use super::journal::{register_pending_stage, unregister_pending_stage};
 use super::quota::available_space_for_path;
@@ -80,7 +78,6 @@ pub(crate) fn assert_real_directory(path: &std::path::Path) -> Result<(), String
         }
     })
 }
-
 
 pub(crate) fn resolve_existing_target(
     target: &std::path::Path,
@@ -161,7 +158,10 @@ pub(crate) fn next_extract_stage_path(
     create_private_stage_dir(target, "extract", cache_dir)
 }
 
-pub(crate) fn rewrite_extract_output(args: &mut [String], staged_dir: &std::path::Path) -> Result<(), String> {
+pub(crate) fn rewrite_extract_output(
+    args: &mut [String],
+    staged_dir: &std::path::Path,
+) -> Result<(), String> {
     let output = format!("-o{}", staged_dir.to_string_lossy());
     let Some(arg) = args
         .iter_mut()
@@ -188,7 +188,10 @@ pub(crate) fn rewrite_extract_archive(
     Ok(())
 }
 
-pub(crate) fn rewrite_archive_output(args: &mut [String], staged: &std::path::Path) -> Result<(), String> {
+pub(crate) fn rewrite_archive_output(
+    args: &mut [String],
+    staged: &std::path::Path,
+) -> Result<(), String> {
     let separator = args
         .iter()
         .position(|arg| arg == "--")
@@ -256,7 +259,10 @@ pub(crate) fn extract_member_list_args(args: &[String]) -> Result<Vec<String>, S
 }
 
 /// Inspect `7z l -slt` output and reject members that could escape `-o`.
-pub(crate) fn assert_slt_archive_members_safe(slt_output: &str, archive_path: &str) -> Result<(), String> {
+pub(crate) fn assert_slt_archive_members_safe(
+    slt_output: &str,
+    archive_path: &str,
+) -> Result<(), String> {
     let archive_name = std::path::Path::new(archive_path)
         .file_name()
         .and_then(|name| name.to_str());

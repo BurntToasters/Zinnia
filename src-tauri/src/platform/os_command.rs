@@ -7,7 +7,9 @@ use std::process::{Command, Output, Stdio};
 const MAX_OS_COMMAND_OUTPUT_BYTES: usize = 1024 * 1024;
 
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
-pub(crate) fn command_output_reader<R>(pipe: R) -> std::sync::mpsc::Receiver<std::io::Result<(Vec<u8>, bool)>>
+pub(crate) fn command_output_reader<R>(
+    pipe: R,
+) -> std::sync::mpsc::Receiver<std::io::Result<(Vec<u8>, bool)>>
 where
     R: std::io::Read + Send + 'static,
 {

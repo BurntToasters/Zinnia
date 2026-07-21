@@ -32,7 +32,10 @@ pub(crate) fn cleanup_journal_path(app: &tauri::AppHandle) -> Result<std::path::
         .join("active-transaction.json"))
 }
 
-pub(crate) fn write_cleanup_journal(app: &tauri::AppHandle, plan: &CleanupPlan) -> Result<bool, String> {
+pub(crate) fn write_cleanup_journal(
+    app: &tauri::AppHandle,
+    plan: &CleanupPlan,
+) -> Result<bool, String> {
     let journal = if let Some((stage, destination)) = &plan.staged_extract {
         Some(CleanupJournal {
             stage: stage.clone(),
@@ -63,7 +66,10 @@ pub(crate) fn write_cleanup_journal(app: &tauri::AppHandle, plan: &CleanupPlan) 
     Ok(true)
 }
 
-pub(crate) fn update_archive_journal(app: &tauri::AppHandle, plan: &CleanupPlan) -> Result<(), String> {
+pub(crate) fn update_archive_journal(
+    app: &tauri::AppHandle,
+    plan: &CleanupPlan,
+) -> Result<(), String> {
     let Some((staged, destination)) = &plan.staged_archive else {
         return Ok(());
     };
@@ -108,7 +114,10 @@ pub(crate) fn read_pending_stages(cache_dir: &std::path::Path) -> Result<Vec<Str
     }
 }
 
-pub(crate) fn write_pending_stages(cache_dir: &std::path::Path, stages: &[String]) -> Result<(), String> {
+pub(crate) fn write_pending_stages(
+    cache_dir: &std::path::Path,
+    stages: &[String],
+) -> Result<(), String> {
     let path = pending_stages_path(cache_dir);
     if stages.is_empty() {
         match std::fs::remove_file(&path) {

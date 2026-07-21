@@ -2,7 +2,7 @@
 
 use super::commit::{archive_family, rollback_persisted_move_plan};
 use super::journal::{
-    clear_cleanup_journal, cleanup_journal_path, is_safe_stage_dir_name, sync_directory,
+    cleanup_journal_path, clear_cleanup_journal, is_safe_stage_dir_name, sync_directory,
     CleanupJournal,
 };
 

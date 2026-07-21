@@ -144,7 +144,8 @@ fn macos_finder_services_registered() -> Option<bool> {
 /// Enabled only with an explicit pbs enable override for both services.
 #[cfg(target_os = "macos")]
 fn macos_finder_services_info() -> FinderServicesInfo {
-    let override_state = macos_read_pbs_plist_json().map(|json| finder_services_override_from_pbs(&json));
+    let override_state =
+        macos_read_pbs_plist_json().map(|json| finder_services_override_from_pbs(&json));
     let registered = macos_finder_services_registered();
 
     if matches!(override_state, Some(FinderServicesOverride::Enabled)) {
@@ -316,7 +317,7 @@ fn finder_services_status_for(platform: &str, packaged: bool) -> FinderServicesI
 
     #[cfg(target_os = "macos")]
     {
-        return macos_finder_services_info();
+        macos_finder_services_info()
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -432,11 +433,11 @@ pub async fn get_os_integration_status() -> Result<OsIntegrationStatus, String> 
 
 #[cfg(test)]
 mod tests {
+    use super::super::ARCHIVE_DEFAULT_TARGETS;
     use super::*;
     use super::{
         finder_services_enabled_from_pbs, finder_services_override_from_pbs, FinderServicesOverride,
     };
-    use super::super::ARCHIVE_DEFAULT_TARGETS;
 
     #[test]
     fn os_integration_status_reflects_packaged_support() {

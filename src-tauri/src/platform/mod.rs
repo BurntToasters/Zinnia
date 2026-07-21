@@ -8,10 +8,10 @@ mod os_command;
 #[cfg(target_os = "macos")]
 mod macos_defaults;
 
-#[cfg(target_os = "macos")]
-use macos_defaults::macos_query_archive_defaults;
 #[cfg(target_os = "linux")]
 use linux_defaults::linux_query_archive_defaults_parallel;
+#[cfg(target_os = "macos")]
+use macos_defaults::macos_query_archive_defaults;
 
 pub(crate) const ZINNIA_BUNDLE_ID: &str = "run.rosie.zinnia";
 pub(crate) const ZINNIA_DESKTOP_ID: &str = "run.rosie.zinnia.desktop";
@@ -189,7 +189,11 @@ pub(crate) fn default_action_label(platform: &str) -> &'static str {
     }
 }
 
-pub(crate) fn default_action_help(platform: &str, packaged: bool, action_available: bool) -> &'static str {
+pub(crate) fn default_action_help(
+    platform: &str,
+    packaged: bool,
+    action_available: bool,
+) -> &'static str {
     if !packaged {
         return "Install a packaged build to register archive file types and menu actions.";
     }
@@ -296,12 +300,11 @@ pub fn get_cpu_count() -> usize {
         .unwrap_or(8)
 }
 
-
 // Public API + tauri command companions (needed by generate_handler!).
 #[allow(unused_imports)]
 pub use defaults_cmds::{
-    open_finder_services_settings, open_os_integration_settings, reset_preferred_archiver_to_system,
-    set_zinnia_default_archiver,
+    open_finder_services_settings, open_os_integration_settings,
+    reset_preferred_archiver_to_system, set_zinnia_default_archiver,
 };
 #[allow(unused_imports)]
 pub use integration_status::{get_os_integration_status, os_integration_status_for};

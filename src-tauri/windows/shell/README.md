@@ -15,11 +15,15 @@ it points at the already-installed shell DLL and does not relocate the app.
 - **Zinnia** submenu on folder **background** (`Directory\Background`): Compress
   the current folder (DLL resolves the open folder via `IObjectWithSite` /
   `IFolderView` when selection is empty)
-- Top-level **Extract with Zinnia** on archives (same `Type="*"` registration as
-  Root; `GetState` returns `ECS_HIDDEN` for non-archives). Per-extension ItemTypes
-  alone were unreliable without package FileTypeAssociations, and archives must
-  **not** also register a second Root verb (that nested duplicate “Zinnia”
-  submenus under “Zinnia Context Menu”).
+- Top-level **Extract with Zinnia** on supported archives. Sparse-package file
+  type associations make per-extension `ItemType` registrations reliable;
+  `.001` remains dynamically checked for a split-volume sibling.
+
+Keep exactly one command on `ItemType Type="*"`: the Root command. Putting both
+Root and Extract there makes Explorer add its own app-attributed **Zinnia**
+flyout around Root's **Zinnia** flyout, producing the redundant
+**Zinnia > Zinnia** nesting. Archive `ItemType`s register only Extract; Root is
+already inherited from `Type="*"`.
 
 Classic NSIS registry verbs remain for the legacy menu (including
 `Directory\Background\shell\ZinniaCompress` with `%V`).

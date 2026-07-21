@@ -52,21 +52,69 @@
         Square44x44Logo="Assets\Square44x44Logo.png"
         BackgroundColor="transparent" />
       <Extensions>
+        <!-- These associations make extension-specific modern-menu ItemTypes
+             resolvable without taking over users' default archive app. -->
+        <uap3:Extension Category="windows.fileTypeAssociation">
+          <uap3:FileTypeAssociation Name="zinnia-archives" Parameters="&quot;%1&quot;">
+            <uap:SupportedFileTypes>
+              <uap:FileType>.7z</uap:FileType>
+              <uap:FileType>.zip</uap:FileType>
+              <uap:FileType>.tar</uap:FileType>
+              <uap:FileType>.gz</uap:FileType>
+              <uap:FileType>.tgz</uap:FileType>
+              <uap:FileType>.bz2</uap:FileType>
+              <uap:FileType>.tbz2</uap:FileType>
+              <uap:FileType>.xz</uap:FileType>
+              <uap:FileType>.txz</uap:FileType>
+              <uap:FileType>.001</uap:FileType>
+            </uap:SupportedFileTypes>
+          </uap3:FileTypeAssociation>
+        </uap3:Extension>
         <desktop4:Extension Category="windows.fileExplorerContextMenus">
           <desktop4:FileExplorerContextMenus>
-            <!-- Root "Zinnia" submenu + top-level Extract (hidden for non-archives).
-                 Extract is on Type="*" (not per-extension) so it appears without
-                 package FileTypeAssociation entries; do not also register Root on
-                 archive extensions or Win11 nests duplicate Zinnia menus. -->
+            <!-- Keep exactly one wildcard verb. Registering Extract here too makes
+                 Explorer add an app-attributed Zinnia flyout around this command's
+                 own Zinnia flyout, producing the broken Zinnia > Zinnia menu. -->
             <desktop5:ItemType Type="*">
               <desktop5:Verb Id="ZinniaRoot" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5C" />
-              <desktop5:Verb Id="ZinniaExtractTop" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
             </desktop5:ItemType>
             <desktop5:ItemType Type="Directory">
               <desktop5:Verb Id="ZinniaRootDir" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5C" />
             </desktop5:ItemType>
             <desktop5:ItemType Type="Directory\Background">
               <desktop5:Verb Id="ZinniaRootBg" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5C" />
+            </desktop5:ItemType>
+            <!-- Root remains inherited from Type="*". Only Extract is repeated
+                 for archive associations, keeping both commands at one menu level. -->
+            <desktop5:ItemType Type=".7z">
+              <desktop5:Verb Id="ZinniaExtract7z" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".zip">
+              <desktop5:Verb Id="ZinniaExtractZip" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".tar">
+              <desktop5:Verb Id="ZinniaExtractTar" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".gz">
+              <desktop5:Verb Id="ZinniaExtractGz" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".tgz">
+              <desktop5:Verb Id="ZinniaExtractTgz" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".bz2">
+              <desktop5:Verb Id="ZinniaExtractBz2" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".tbz2">
+              <desktop5:Verb Id="ZinniaExtractTbz2" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".xz">
+              <desktop5:Verb Id="ZinniaExtractXz" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".txz">
+              <desktop5:Verb Id="ZinniaExtractTxz" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type=".001">
+              <desktop5:Verb Id="ZinniaExtractSplit" Clsid="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" />
             </desktop5:ItemType>
           </desktop4:FileExplorerContextMenus>
         </desktop4:Extension>

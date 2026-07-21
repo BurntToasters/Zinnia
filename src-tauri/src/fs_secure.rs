@@ -188,9 +188,7 @@ fn current_user_sid_from_token() -> Result<String, String> {
         CloseHandle, LocalFree, ERROR_INSUFFICIENT_BUFFER, HANDLE,
     };
     use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
-    use windows_sys::Win32::Security::{
-        GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER,
-    };
+    use windows_sys::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
     unsafe {
@@ -216,7 +214,9 @@ fn current_user_sid_from_token() -> Result<String, String> {
         let size = needed as usize;
         if size < size_of::<TOKEN_USER>() {
             CloseHandle(token);
-            return Err("GetTokenInformation reported an undersized TOKEN_USER buffer.".to_string());
+            return Err(
+                "GetTokenInformation reported an undersized TOKEN_USER buffer.".to_string(),
+            );
         }
         let mut raw = vec![0u8; size + align];
         let offset = raw.as_ptr().align_offset(align);
@@ -274,8 +274,10 @@ fn current_user_identity() -> Result<WindowsUserIdentity, String> {
             account: String::new(),
         },
         Err(token_error) => {
-            let output = run_hidden_output("whoami", &["/user", "/fo", "csv", "/nh"])
-                .map_err(|e| format!("token SID unavailable ({token_error}); whoami failed to start: {e}"))?;
+            let output =
+                run_hidden_output("whoami", &["/user", "/fo", "csv", "/nh"]).map_err(|e| {
+                    format!("token SID unavailable ({token_error}); whoami failed to start: {e}")
+                })?;
             if !output.status.success() {
                 return Err(format!(
                     "token SID unavailable ({token_error}); whoami failed: {}",
