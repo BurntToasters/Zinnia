@@ -80,11 +80,12 @@ pub fn open_regular_file_nofollow(path: &Path) -> Result<std::fs::File, String> 
     {
         use std::os::windows::ffi::OsStrExt;
         use std::os::windows::io::FromRawHandle;
-        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+        use std::ptr;
+        use windows_sys::Win32::Foundation::{CloseHandle, GENERIC_READ, INVALID_HANDLE_VALUE};
         use windows_sys::Win32::Storage::FileSystem::{
             CreateFileW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
             FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_OPEN_REPARSE_POINT,
-            FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_SHARE_DELETE, GENERIC_READ, OPEN_EXISTING,
+            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
         };
 
         let wide: Vec<u16> = path
@@ -97,10 +98,10 @@ pub fn open_regular_file_nofollow(path: &Path) -> Result<std::fs::File, String> 
                 wide.as_ptr(),
                 GENERIC_READ,
                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                std::ptr::null(),
+                ptr::null(),
                 OPEN_EXISTING,
                 FILE_FLAG_OPEN_REPARSE_POINT,
-                0,
+                ptr::null_mut(),
             )
         };
         if handle == INVALID_HANDLE_VALUE {

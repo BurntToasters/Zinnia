@@ -1,7 +1,9 @@
 //! Argv / file:// parsing and open-request routing.
 
 use std::sync::atomic::Ordering;
-use tauri::{Emitter, Manager, Url};
+use tauri::{Emitter, Manager};
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use tauri::Url;
 
 use super::extract_window::{
     has_extract_windows, leave_extract_warm, open_main_from_extract_warm, show_main_window,
