@@ -3,13 +3,12 @@
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
   xmlns:uap2="http://schemas.microsoft.com/appx/manifest/uap/windows10/2"
-  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
   xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
   xmlns:desktop4="http://schemas.microsoft.com/appx/manifest/desktop/windows10/4"
   xmlns:desktop5="http://schemas.microsoft.com/appx/manifest/desktop/windows10/5"
   xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
-  IgnorableNamespaces="uap uap2 uap3 uap10 rescap desktop4 desktop5 com">
+  IgnorableNamespaces="uap uap2 uap10 rescap desktop4 desktop5 com">
 
   <Identity
     Name="run.rosie.zinnia.contextmenu"
@@ -54,8 +53,8 @@
       <Extensions>
         <!-- These associations make extension-specific modern-menu ItemTypes
              resolvable without taking over users' default archive app. -->
-        <uap3:Extension Category="windows.fileTypeAssociation">
-          <uap3:FileTypeAssociation Name="zinnia-archives" Parameters="&quot;%1&quot;">
+        <uap:Extension Category="windows.fileTypeAssociation">
+          <uap:FileTypeAssociation Name="zinnia-archives">
             <uap:SupportedFileTypes>
               <uap:FileType>.7z</uap:FileType>
               <uap:FileType>.zip</uap:FileType>
@@ -68,8 +67,8 @@
               <uap:FileType>.txz</uap:FileType>
               <uap:FileType>.001</uap:FileType>
             </uap:SupportedFileTypes>
-          </uap3:FileTypeAssociation>
-        </uap3:Extension>
+          </uap:FileTypeAssociation>
+        </uap:Extension>
         <desktop4:Extension Category="windows.fileExplorerContextMenus">
           <desktop4:FileExplorerContextMenus>
             <!-- Keep exactly one wildcard verb. Registering Extract here too makes
