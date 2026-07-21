@@ -17,6 +17,12 @@ finish-args:
   # read/write user-selected paths. Portals alone are not enough today.
   # See SECURITY.md "Flatpak filesystem access".
   - --filesystem=home
+  # Common download / removable mount points outside $HOME (USB, etc.).
+  - --filesystem=xdg-download
+  - --filesystem=/run/media
+  - --filesystem=/mnt
+  # No --share=network: Flatpak builds update via the host store / reinstall,
+  # not the in-app GitHub updater (UI is hidden under .platform-flatpak).
 
 environment:
   GTK_USE_PORTAL: "1"

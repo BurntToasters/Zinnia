@@ -174,7 +174,7 @@ pub(crate) fn unregister_plan_stages(plan: &CleanupPlan) {
     for stage in plan_stage_dirs(plan) {
         // After successful publish, promote may leave the stage (undeletable
         // backup-* / PermissionDenied). Keep the pending registration so
-        // cleanup_orphan_stages can retry on the next launch — never drop
+        // cleanup_orphan_stages can retry on the next launch; never drop
         // tracking while the directory may still exist.
         match path_entry_exists(&stage) {
             Ok(false) => {

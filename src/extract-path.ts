@@ -191,7 +191,7 @@ export function deriveOutputArchivePath(
     const fallbackSep = fallback.includes("\\") ? "\\" : "/";
     return joinPath(fallback, fileName, fallbackSep);
   }
-  // Last resort: bare name for OS save dialogs only — never for silent Run.
+  // Last resort: bare name for OS save dialogs only, never for silent Run.
   return fileName;
 }
 

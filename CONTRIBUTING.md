@@ -62,7 +62,7 @@ branch:
 | Basic workspace UI / sync          | `src/basic/`                             |
 | 7z arg building or archive ops     | `src/archive/`                           |
 | Shared status/progress/mode chrome | `src/ui/`                                |
-| App boot / Power event wiring      | `src/app-init.ts`, `src/power-events.ts` |
+| App boot / Power event wiring      | `src/app-init.ts`, `src/power-events.ts`, `src/power-helpers.ts`, `src/power-shortcuts.ts`, `src/power-logs.ts` |
 | Staging, journal, `run_7z`         | `src-tauri/src/process/`                 |
 | OS integration / defaults          | `src-tauri/src/platform/`                |
 | File-open / extract window routing | `src-tauri/src/launch/`                  |

@@ -52,7 +52,7 @@ pub fn sync_directory(path: &Path) -> Result<(), String> {
         // std opens directories with FILE_FLAG_BACKUP_SEMANTICS so
         // FlushFileBuffers (via sync_all) is the fsync(dirfd) equivalent.
         // Some environments deny directory FlushFileBuffers (os error 5); treat
-        // that as best-effort success — the file write itself already succeeded.
+        // that as best-effort success; the file write itself already succeeded.
         match std::fs::File::open(path).and_then(|directory| directory.sync_all()) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(()),
@@ -181,27 +181,112 @@ fn run_hidden_output(program: &str, args: &[&str]) -> io::Result<std::process::O
 }
 
 #[cfg(windows)]
+fn current_user_sid_from_token() -> Result<String, String> {
+    use std::mem::{align_of, size_of};
+    use std::ptr;
+    use windows_sys::Win32::Foundation::{CloseHandle, LocalFree, ERROR_INSUFFICIENT_BUFFER};
+    use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
+    use windows_sys::Win32::Security::{
+        GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    unsafe {
+        let mut token = 0;
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            return Err(format!(
+                "OpenProcessToken failed: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        let mut needed = 0u32;
+        let first = GetTokenInformation(token, TokenUser, ptr::null_mut(), 0, &mut needed);
+        if first != 0
+            || std::io::Error::last_os_error().raw_os_error()
+                != Some(ERROR_INSUFFICIENT_BUFFER as i32)
+        {
+            let err = std::io::Error::last_os_error();
+            CloseHandle(token);
+            return Err(format!("GetTokenInformation size probe failed: {err}"));
+        }
+        // Align the TOKEN_USER view; Vec<u8> alone is not guaranteed pointer-aligned.
+        let align = align_of::<TOKEN_USER>().max(align_of::<usize>());
+        let size = needed as usize;
+        if size < size_of::<TOKEN_USER>() {
+            CloseHandle(token);
+            return Err("GetTokenInformation reported an undersized TOKEN_USER buffer.".to_string());
+        }
+        let mut raw = vec![0u8; size + align];
+        let offset = raw.as_ptr().align_offset(align);
+        let buffer = &mut raw[offset..offset + size];
+        if GetTokenInformation(
+            token,
+            TokenUser,
+            buffer.as_mut_ptr().cast(),
+            needed,
+            &mut needed,
+        ) == 0
+        {
+            let err = std::io::Error::last_os_error();
+            CloseHandle(token);
+            return Err(format!("GetTokenInformation failed: {err}"));
+        }
+        CloseHandle(token);
+
+        let token_user = &*(buffer.as_ptr() as *const TOKEN_USER);
+        let mut sid_str: *mut u16 = ptr::null_mut();
+        if ConvertSidToStringSidW(token_user.User.Sid, &mut sid_str) == 0 || sid_str.is_null() {
+            return Err(format!(
+                "ConvertSidToStringSidW failed: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        let mut len = 0usize;
+        while *sid_str.add(len) != 0 {
+            len += 1;
+        }
+        let wide = std::slice::from_raw_parts(sid_str, len);
+        let sid = String::from_utf16_lossy(wide);
+        LocalFree(sid_str.cast());
+        if !sid.starts_with("S-1-") || sid.len() < 7 {
+            return Err(format!("Process token returned an invalid SID: {sid}"));
+        }
+        Ok(sid)
+    }
+}
+
+#[cfg(windows)]
 fn current_user_identity() -> Result<WindowsUserIdentity, String> {
     use std::sync::OnceLock;
-    // Cache only successful lookups — a transient whoami failure must not
+    // Cache only successful lookups: a transient identity failure must not
     // permanently break staging ACL for the process lifetime.
     static CACHED: OnceLock<WindowsUserIdentity> = OnceLock::new();
     if let Some(identity) = CACHED.get() {
         return Ok(identity.clone());
     }
-    // Prefer the process token identity over the mutable USERNAME environment
-    // variable. whoami /user reads the logon token; fail closed if unavailable.
-    let output = run_hidden_output("whoami", &["/user", "/fo", "csv", "/nh"])
-        .map_err(|e| format!("whoami failed to start: {e}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "whoami failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    let stdout = decode_windows_command_file(&output.stdout)?;
-    let line = stdout.lines().next().unwrap_or("").trim();
-    let identity = parse_whoami_user_csv(line)?;
+    // Prefer the process token SID (Win32) over whoami / USERNAME env.
+    // whoami remains a documented fallback when token APIs are unavailable.
+    let identity = match current_user_sid_from_token() {
+        Ok(sid) => WindowsUserIdentity {
+            sid,
+            account: String::new(),
+        },
+        Err(token_error) => {
+            let output = run_hidden_output("whoami", &["/user", "/fo", "csv", "/nh"])
+                .map_err(|e| format!("token SID unavailable ({token_error}); whoami failed to start: {e}"))?;
+            if !output.status.success() {
+                return Err(format!(
+                    "token SID unavailable ({token_error}); whoami failed: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ));
+            }
+            let stdout = decode_windows_command_file(&output.stdout)?;
+            let line = stdout.lines().next().unwrap_or("").trim();
+            parse_whoami_user_csv(line).map_err(|e| {
+                format!("token SID unavailable ({token_error}); whoami parse failed: {e}")
+            })?
+        }
+    };
     let _ = CACHED.set(identity.clone());
     Ok(identity)
 }
@@ -380,5 +465,23 @@ mod tests {
         assert!(sddl_has_allow_trustee(sddl, &["WD", "S-1-1-0"]));
         let sddl_au = "D:P(A;OICI;FR;;;AU)";
         assert!(sddl_has_allow_trustee(sddl_au, &["AU", "S-1-5-11"]));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn current_user_sid_from_token_returns_sid_string() {
+        let sid = current_user_sid_from_token().expect("process token SID");
+        assert!(
+            sid.starts_with("S-1-") && sid.len() >= 7,
+            "unexpected SID: {sid}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn current_user_identity_prefers_token_sid() {
+        let identity = current_user_identity().expect("identity");
+        assert!(identity.sid.starts_with("S-1-"));
+        assert!(identity.sid.len() >= 7);
     }
 }

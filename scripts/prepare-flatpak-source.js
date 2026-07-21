@@ -22,7 +22,7 @@ function run(command, args, options = {}) {
       `${command} ${args.join(" ")} failed: ${result.stderr || result.stdout}`,
     );
   }
-  // Keep leading spaces — git porcelain uses " M path" / "M  path" and trim()
+  // Keep leading spaces: git porcelain uses " M path" / "M  path" and trim()
   // would turn the first into "M path", breaking XY/path parsing.
   return result.stdout.replace(/\r?\n$/, "");
 }
@@ -48,7 +48,7 @@ const dirtyEntries = run("git", [
 ]);
 // `tauri build` rewrites generated ACL schemas under src-tauri/gen/schemas/.
 // Flatpak exports `git archive HEAD`, so those dirty generated files never enter
-// the bundle — only refuse unexpected workspace dirt.
+// the bundle; only refuse unexpected workspace dirt.
 const blockingDirty = porcelainPaths(dirtyEntries).filter(
   (filePath) => !filePath.startsWith("src-tauri/gen/schemas/"),
 );

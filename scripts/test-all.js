@@ -22,6 +22,10 @@ const criticalCoverageThresholds = {
   "extract-window.ts": { lines: 72, branches: 53, functions: 66 },
   "app-init.ts": { lines: 70, branches: 50, functions: 52 },
   "updater.ts": { lines: 76, branches: 62, functions: 68 },
+  // Peeled from power-events.ts; keep these high so boot helpers stay tested.
+  "power-helpers.ts": { lines: 90, branches: 70, functions: 90 },
+  "power-shortcuts.ts": { lines: 85, branches: 50, functions: 90 },
+  "power-logs.ts": { lines: 85, branches: 70, functions: 90 },
 };
 
 const colors = {

@@ -50,7 +50,8 @@ pub fn assert_real_file(path: &Path) -> Result<(), String> {
 }
 
 /// Open a regular file without following the final path component (Unix `O_NOFOLLOW`).
-/// On Windows, falls back to symlink/reparse rejection via `assert_real_file`.
+/// On Windows, opens with `FILE_FLAG_OPEN_REPARSE_POINT` and rejects reparse tags
+/// on the opened handle so junctions/cloud placeholders cannot be followed.
 pub fn open_regular_file_nofollow(path: &Path) -> Result<std::fs::File, String> {
     #[cfg(unix)]
     {
@@ -75,7 +76,67 @@ pub fn open_regular_file_nofollow(path: &Path) -> Result<std::fs::File, String> 
         }
         Ok(file)
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use std::os::windows::io::FromRawHandle;
+        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::Storage::FileSystem::{
+            CreateFileW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+            FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_OPEN_REPARSE_POINT,
+            FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_SHARE_DELETE, GENERIC_READ, OPEN_EXISTING,
+        };
+
+        let wide: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let handle = unsafe {
+            CreateFileW(
+                wide.as_ptr(),
+                GENERIC_READ,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                FILE_FLAG_OPEN_REPARSE_POINT,
+                0,
+            )
+        };
+        if handle == INVALID_HANDLE_VALUE {
+            return Err(format!(
+                "Could not open {}: {}",
+                path.display(),
+                std::io::Error::last_os_error()
+            ));
+        }
+        let mut info = unsafe { std::mem::zeroed::<BY_HANDLE_FILE_INFORMATION>() };
+        let ok = unsafe { GetFileInformationByHandle(handle, &mut info) };
+        if ok == 0 {
+            let err = std::io::Error::last_os_error();
+            unsafe {
+                CloseHandle(handle);
+            }
+            return Err(format!("Could not inspect {}: {err}", path.display()));
+        }
+        if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            unsafe {
+                CloseHandle(handle);
+            }
+            return Err(format!(
+                "Refusing symbolic link or reparse point: {}",
+                path.display()
+            ));
+        }
+        if info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
+            unsafe {
+                CloseHandle(handle);
+            }
+            return Err(format!("Path is not a regular file: {}", path.display()));
+        }
+        Ok(unsafe { std::fs::File::from_raw_handle(handle as _) })
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         assert_real_file(path)?;
         std::fs::File::open(path).map_err(|e| e.to_string())
@@ -154,6 +215,43 @@ mod tests {
         let plain = open_regular_file_nofollow(&target_file).expect("plain open");
         drop(plain);
 
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn open_regular_file_nofollow_opens_plain_windows_file() {
+        let root = temp_root("win-plain");
+        std::fs::create_dir_all(&root).expect("dir");
+        let file = root.join("plain.txt");
+        std::fs::write(&file, b"ok").expect("write");
+        let opened = open_regular_file_nofollow(&file).expect("plain open");
+        drop(opened);
+        let dir_err = open_regular_file_nofollow(&root).expect_err("directory");
+        assert!(dir_err.contains("not a regular file") || dir_err.contains("Could not open"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn open_regular_file_nofollow_rejects_windows_symlink() {
+        use std::os::windows::fs::symlink_file;
+        let root = temp_root("win-symlink");
+        std::fs::create_dir_all(&root).expect("dir");
+        let target = root.join("target.txt");
+        let link = root.join("link.txt");
+        std::fs::write(&target, b"ok").expect("write");
+        match symlink_file(&target, &link) {
+            Ok(()) => {
+                let err = open_regular_file_nofollow(&link).expect_err("symlink");
+                assert!(
+                    err.contains("reparse") || err.contains("symbolic") || err.contains("Could not")
+                );
+            }
+            Err(_) => {
+                // Symlink creation may require Developer Mode; skip quietly.
+            }
+        }
         let _ = std::fs::remove_dir_all(root);
     }
 }

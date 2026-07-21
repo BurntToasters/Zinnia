@@ -23,15 +23,19 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
 ## Changes in `v0.6.0-beta.8:`
 
-- **Misc:** Modular refactor — split large frontend (`archive/`, `basic/`, `ui/`) and Rust (`process/`, `platform/`, `launch/`) modules for maintainability; behavior unchanged.
-
-## Changes in `v0.6.0-beta.8 (RC1):`
-
+- **Misc:** Modular refactor: split large frontend (`archive/`, `basic/`, `ui/`) and Rust (`process/`, `platform/`, `launch/`) modules for maintainability; behavior unchanged.
 - **Fix:** Win11 modern menu shows the Zinnia icon on **Zinnia** / **Extract with Zinnia** (`GetIcon` uses embedded `zinnia_shell.dll,-101`); top-level **Extract with Zinnia** is registered on `Type="*"` and hidden for non-archives (per-extension verbs alone often never appeared without package FTAs); package DisplayName stays **Zinnia**, submenu children are Extract/Compress.
-- **Fix:** macOS **Enable…** for Finder Services opens Keyboard Shortcuts and selects **Services** (URL alone often left Modifier Keys selected); copy clarifies this is not Login Items & Extensions / File Providers (Keka-style Finder Sync appex — Zinnia uses `NSServices`).
+- **Fix:** macOS **Enable…** for Finder Services opens Keyboard Shortcuts and selects **Services** (URL alone often left Modifier Keys selected); copy clarifies this is not Login Items & Extensions / File Providers (Keka-style Finder Sync appex; Zinnia uses `NSServices`).
 - **Fix:** Windows Basic titlebar is transparent under native glass so it matches the blurred body (no solid chrome strip).
 - **Fix:** `release:prepare` / `npm run u` write AppStream metainfo again (no longer `--check`-only).
-- **Test:** Basic-mode batch/single extract paths cover the no-native-dialog branches (archive.ts coverage gate).
+- **Test:** Basic-mode batch/single extract paths cover the no-native-dialog branches (`archive/` coverage gate).
+- **Fix:** Flatpak grants `xdg-download`, `/run/media`, and `/mnt` (aligned with SECURITY.md); ExtractTop stays hidden until Explorer supplies archive paths.
+- **Misc:** Peeled Power helpers/shortcuts/logs from `power-events.ts`; live updater manifest CI check (read-only, not a release); Windows promote open uses `FILE_FLAG_OPEN_REPARSE_POINT`; staging ACL prefers process-token SID.
+- **Fix:** Win11 shell treats split volumes (`.7z.001`) like open routing; ExtractTop disables (not hides) when a selection cannot resolve filesystem paths.
+- **Fix:** Archive promote copies from the held nofollow handle when hard links are unavailable; Windows open shares `FILE_SHARE_DELETE`.
+- **Test:** `power-logs` coverage gate; Windows nofollow/token-SID unit tests.
+
+
 
 ## Changes in `v0.6.0-beta.6:`
 
@@ -92,7 +96,7 @@ _I had so many new ideas for the UI this turned from version `0.5.4` to `0.6.0`.
 - **UI:** `Ctrl`/`⌘` + `,` opens Settings (listed in the keyboard shortcuts help).
 - **UI:** macOS menu bar: About, Check for Updates, Settings (`⌘,`), Edit/Window standards, plus Help (shortcuts, Support, Licenses).
 - **UI:** macOS Finder Services: Extract with Zinnia / Compress with Zinnia; OS Integration tab shows Enabled/Off/Unknown and an Enable button that opens Keyboard Shortcuts → Services.
-- **UI:** Windows 11 modern context menu (signed NSIS): **Zinnia** submenu (Extract / Compress) plus top-level **Extract with Zinnia** on archives; classic Explorer verbs kept for Show more options. Uses a sparse identity MSIX for the shell DLL only — Zinnia remains a normal NSIS install (not a Store/AppX app). OS Integration shows Registered / Not registered.
+- **UI:** Windows 11 modern context menu (signed NSIS): **Zinnia** submenu (Extract / Compress) plus top-level **Extract with Zinnia** on archives; classic Explorer verbs kept for Show more options. Uses a sparse identity MSIX for the shell DLL only; Zinnia remains a normal NSIS install (not a Store/AppX app). OS Integration shows Registered / Not registered.
 - **Fix:** Win11 shell DLL resolves `zinnia.exe` beside itself or in the parent dir; NSIS finds the register script next to the DLL (`$INSTDIR`); Appx remove-before-add with visible install warning on failure; builds require full `AZURE_ARTIFACT_SIGNING_PUBLISHER_DN`.
 - **Fix:** macOS Services Extract no longer forces the main window open (keeps quick-extract); cold-start fallback is cancelled/hidden to avoid a main-window flash; `NSApplicationIdentifier` nested under `NSRequiredContext`; Extract UTIs use `public.archive` (not broad `public.data`).
 - **Fix:** Win11 modern menu + classic NSIS verbs register on folder background (`Directory\Background`); shell DLL resolves the open folder via Explorer site when selection is empty.

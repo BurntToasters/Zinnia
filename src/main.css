@@ -6,4 +6,5 @@
 @import "./styles/main-base.css";
 @import "./styles/settings.css";
 @import "./styles/main-mid.css";
+@import "./styles/platform.css";
 @import "./styles/titlebar.css";

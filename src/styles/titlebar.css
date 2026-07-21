@@ -22,7 +22,7 @@ body.platform-linux #titlebar {
   display: flex;
 }
 
-/* Basic glass: same seamless strip as macOS — let Mica/Acrylic show through. */
+/* Basic glass: same seamless strip as macOS; let Mica/Acrylic show through. */
 html[data-window-fx="basic"] body.platform-windows #titlebar {
   background: transparent;
   border-bottom: none;

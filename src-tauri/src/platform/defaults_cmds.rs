@@ -194,7 +194,7 @@ error "Services row not found"
         if script_ok {
             return Ok(());
         }
-        // Accessibility may be denied or the sheet layout changed — still
+        // Accessibility may be denied or the sheet layout changed; still
         // open Keyboard Shortcuts so the user can click Services manually.
         use tauri_plugin_shell::ShellExt;
         app.shell()

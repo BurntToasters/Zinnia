@@ -1,9 +1,9 @@
 import { ask, message } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { $, trapFocus, releaseFocusTrap } from "./utils";
+import { $ } from "./utils";
 import { promptInput } from "./prompt-modal";
-import { SETTING_DEFAULTS, state, dom } from "./state";
+import { state, dom } from "./state";
 import {
   applyTheme,
   readSettingsModal,
@@ -72,100 +72,21 @@ import {
 } from "./basic";
 import { wireOsIntegrationEvents } from "./os-integration";
 import { runBenchmark } from "./benchmark";
+import {
+  isEditableTarget,
+  resetRuntimeStateForFirstRun,
+  wirePasswordToggle,
+} from "./power-helpers";
+import {
+  openShortcutsModal,
+  closeShortcutsModal,
+  wireShortcutsEvents,
+} from "./power-shortcuts";
+import { exportLocalLogs, openLogsFolder, clearLocalLogs } from "./power-logs";
+
+export { openShortcutsModal } from "./power-shortcuts";
 
 const BASIC_RECENT_ARCHIVES_KEY = "zinnia.basic.recentArchives";
-
-let shortcutsTrigger: HTMLElement | null = null;
-
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  const tag = target.tagName;
-  return (
-    tag === "INPUT" ||
-    tag === "TEXTAREA" ||
-    tag === "SELECT" ||
-    target.isContentEditable
-  );
-}
-
-export function openShortcutsModal(): void {
-  shortcutsTrigger = document.activeElement as HTMLElement | null;
-  const overlay = $("shortcuts-overlay");
-  overlay.hidden = false;
-  const modal = overlay.querySelector<HTMLElement>(".modal");
-  if (modal) trapFocus(modal);
-  $("close-shortcuts").focus();
-}
-
-function closeShortcutsModal(): void {
-  const overlay = $("shortcuts-overlay");
-  if (overlay.hidden) return;
-  const modal = overlay.querySelector<HTMLElement>(".modal");
-  if (modal) releaseFocusTrap(modal);
-  overlay.hidden = true;
-  shortcutsTrigger?.focus();
-  shortcutsTrigger = null;
-}
-
-async function exportLocalLogs() {
-  try {
-    const exported = await invoke<boolean>("export_logs");
-    if (!exported) return;
-    log("Logs exported successfully.");
-    await message("Logs exported successfully.", {
-      title: "Logs exported",
-    });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log(`Failed to export logs: ${msg}`, "error");
-    await message(`Failed to export logs.\n\n${msg}`, {
-      title: "Export failed",
-      kind: "error",
-    });
-  }
-}
-
-async function openLogsFolder() {
-  try {
-    await invoke("open_log_dir");
-    log("Opened local logs folder.");
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log(`Failed to open logs folder: ${msg}`, "error");
-    await message(`Failed to open logs folder.\n\n${msg}`, {
-      title: "Open folder failed",
-      kind: "error",
-    });
-  }
-}
-
-async function clearLocalLogs() {
-  const confirmed = await ask(
-    "Clear local diagnostics logs? This cannot be undone.",
-    {
-      title: "Clear logs",
-      kind: "warning",
-      okLabel: "Clear logs",
-      cancelLabel: "Cancel",
-    },
-  );
-  if (!confirmed) return;
-
-  try {
-    await invoke("clear_logs");
-    log("Local diagnostics logs cleared.");
-    await message("Local diagnostics logs were cleared.", {
-      title: "Logs cleared",
-    });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log(`Failed to clear logs: ${msg}`, "error");
-    await message(`Failed to clear logs.\n\n${msg}`, {
-      title: "Clear logs failed",
-      kind: "error",
-    });
-  }
-}
 
 export async function runSetupWizardFlow(): Promise<void> {
   await resizeWorkspaceWindow("power");
@@ -198,26 +119,6 @@ export async function runSetupWizardFlow(): Promise<void> {
   if (persistError) {
     throw persistError;
   }
-}
-
-function resetRuntimeStateForFirstRun(): void {
-  state.currentSettings = { ...SETTING_DEFAULTS };
-  state.lastPersistedSettings = { ...SETTING_DEFAULTS };
-  state.settingsExtras = {};
-  state.inputs = [];
-  state.lastAutoExtractDestination = null;
-  state.lastAutoOutputPath = null;
-  state.browseArchiveInfoByPath.clear();
-  state.browseSelectionsByArchive.clear();
-  state.selectiveSearchQuery = "";
-  state.selectiveActiveArchive = null;
-  state.selectiveVisiblePaths = [];
-  state.selectiveExpandedFolders.clear();
-  state.inputValidationByPath.clear();
-  state.inputValidationRequestId += 1;
-  state.lastInputsSignature = "";
-  state.lastQuickActionByMode = {};
-  dom.logEl.textContent = "";
 }
 
 let eventsWired = false;
@@ -295,11 +196,7 @@ export function wireEvents() {
     if (e.target === e.currentTarget) closeCommandPreviewModal();
   });
 
-  $("close-shortcuts").addEventListener("click", closeShortcutsModal);
-  $("close-shortcuts-footer").addEventListener("click", closeShortcutsModal);
-  $("shortcuts-overlay").addEventListener("click", (e) => {
-    if (e.target === e.currentTarget) closeShortcutsModal();
-  });
+  wireShortcutsEvents();
 
   $("test-integrity").addEventListener("click", testArchive);
 
@@ -337,23 +234,7 @@ export function wireEvents() {
     syncDestinationWhilePickerOpen($<HTMLInputElement>("selective-dest").value);
   });
 
-  const browsePasswordToggle = $<HTMLButtonElement>("toggle-browse-password");
-  if (!browsePasswordToggle.dataset.zinniaWired) {
-    browsePasswordToggle.dataset.zinniaWired = "true";
-    browsePasswordToggle.addEventListener("click", () => {
-      const input = $<HTMLInputElement>("browse-password");
-      const btn = $<HTMLButtonElement>("toggle-browse-password");
-      if (input.type === "password") {
-        input.type = "text";
-        btn.textContent = "Hide";
-        btn.setAttribute("aria-pressed", "true");
-      } else {
-        input.type = "password";
-        btn.textContent = "Show";
-        btn.setAttribute("aria-pressed", "false");
-      }
-    });
-  }
+  wirePasswordToggle("browse-password", "toggle-browse-password");
 
   const updateDeletePresetButton = () => {
     const isCustom = $<HTMLSelectElement>("preset").value.startsWith("custom:");
@@ -454,41 +335,9 @@ export function wireEvents() {
     if (isCustom) $<HTMLInputElement>("split-custom").focus();
   });
 
-  const passwordToggle = $<HTMLButtonElement>("toggle-password");
-  if (!passwordToggle.dataset.zinniaWired) {
-    passwordToggle.dataset.zinniaWired = "true";
-    passwordToggle.addEventListener("click", () => {
-      const input = $<HTMLInputElement>("password");
-      const btn = $<HTMLButtonElement>("toggle-password");
-      if (input.type === "password") {
-        input.type = "text";
-        btn.textContent = "Hide";
-        btn.setAttribute("aria-pressed", "true");
-      } else {
-        input.type = "password";
-        btn.textContent = "Show";
-        btn.setAttribute("aria-pressed", "false");
-      }
-    });
-  }
+  wirePasswordToggle("password", "toggle-password");
 
-  const extractPasswordToggle = $<HTMLButtonElement>("toggle-extract-password");
-  if (!extractPasswordToggle.dataset.zinniaWired) {
-    extractPasswordToggle.dataset.zinniaWired = "true";
-    extractPasswordToggle.addEventListener("click", () => {
-      const input = $<HTMLInputElement>("extract-password");
-      const btn = $<HTMLButtonElement>("toggle-extract-password");
-      if (input.type === "password") {
-        input.type = "text";
-        btn.textContent = "Hide";
-        btn.setAttribute("aria-pressed", "true");
-      } else {
-        input.type = "password";
-        btn.textContent = "Show";
-        btn.setAttribute("aria-pressed", "false");
-      }
-    });
-  }
+  wirePasswordToggle("extract-password", "toggle-extract-password");
 
   $("extract-path").addEventListener("input", () => {
     const value = $<HTMLInputElement>("extract-path").value.trim();

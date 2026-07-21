@@ -80,7 +80,7 @@ fn handle_service(pasteboard: Option<&NSPasteboard>, mode: &str) {
     }
     argv.extend(paths);
 
-    // Compress needs the main workspace. Extract must NOT show main first —
+    // Compress needs the main workspace. Extract must NOT show main first;
     // that would defeat extract-only / quick-extract routing in launch.rs.
     if mode == "extract" {
         // Claim extract-only before any queued main-thread fallback runs, and

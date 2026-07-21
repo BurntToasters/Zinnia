@@ -188,7 +188,7 @@ export async function init() {
       await runSetupWizardFlow();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      // Don't abort app startup — Skip / finish should still leave a usable UI.
+      // Don't abort app startup: Skip / finish should still leave a usable UI.
       await message(`Setup wizard could not be completed.\n\n${msg}`, {
         title: "Setup wizard error",
         kind: "error",

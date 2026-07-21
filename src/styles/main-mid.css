@@ -1362,11 +1362,6 @@ input[type="number"] {
   color: var(--text-secondary);
   font-size: 0.75rem;
 }
-
-.platform-flatpak [data-update-ui] {
-  display: none;
-}
-
 .lucide-icon {
   width: 1.1em;
   height: 1.1em;

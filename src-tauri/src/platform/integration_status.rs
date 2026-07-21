@@ -196,7 +196,7 @@ fn windows_modern_menu_registered() -> Option<bool> {
     use std::os::windows::process::CommandExt;
 
     // Sparse identity package name (not the Zinnia app itself).
-    // Use exit codes (not stdout) — PS 5.1 often emits UTF-16 on redirected pipes.
+    // Use exit codes (not stdout): PS 5.1 often emits UTF-16 on redirected pipes.
     const PACKAGE: &str = "run.rosie.zinnia.contextmenu";
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let script = format!(
@@ -229,7 +229,7 @@ fn windows_classic_verbs_registered() -> Option<bool> {
     use std::os::windows::process::CommandExt;
 
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    // Representative keys from nsis-hooks.nsh — enough to tell install registration ran.
+    // Representative keys from nsis-hooks.nsh: enough to tell install registration ran.
     const KEYS: &[&str] = &[
         r"HKCU\Software\Classes\SystemFileAssociations\.7z\shell\ZinniaExtract",
         r"HKCU\Software\Classes\*\shell\ZinniaCompress",
@@ -278,7 +278,7 @@ fn win11_modern_menu_status_for(platform: &str, packaged: bool) -> Win11ModernMe
             available: true,
             known: true,
             registered: true,
-            help: "Win11 modern menu package is registered (sparse identity only — Zinnia remains a normal NSIS install). Confirm Extract/Compress actually launch from the primary menu; classic verbs remain under Show more options.".to_string(),
+            help: "Win11 modern menu package is registered (sparse identity only; Zinnia remains a normal NSIS install). Confirm Extract/Compress actually launch from the primary menu; classic verbs remain under Show more options.".to_string(),
         },
         Some(false) => Win11ModernMenuInfo {
             available: true,

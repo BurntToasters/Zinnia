@@ -97,7 +97,7 @@ body.platform-linux #app[data-workspace-mode="basic"] .header__actions {
   padding-right: 138px;
 }
 
-/* Basic folds controls into the titlebar strip — hide the centered brand so it
+/* Basic folds controls into the titlebar strip: hide the centered brand so it
    does not mesh with Support / Settings (common on narrow Windows windows). */
 body.platform-windows #app[data-workspace-mode="basic"] .titlebar-logo,
 body.platform-linux #app[data-workspace-mode="basic"] .titlebar-logo {

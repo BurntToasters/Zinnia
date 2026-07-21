@@ -105,16 +105,21 @@ pub(crate) fn publish_file_no_replace(
     source: &std::path::Path,
     target: &std::path::Path,
 ) -> Result<(), String> {
-    let source_file = crate::path_safety::open_regular_file_nofollow(source)?;
+    use std::io::{Seek, SeekFrom};
+
+    let mut source_file = crate::path_safety::open_regular_file_nofollow(source)?;
     // Same as directory fsync: some Windows setups deny FlushFileBuffers.
     sync_file_best_effort(&source_file)?;
-    drop(source_file);
-    if std::fs::hard_link(source, target).is_err() {
-        // FAT-family and some network filesystems do not support hard links.
-        // Reserve the target with create_new and stream the staged file into it;
-        // this is slower but retains no-clobber semantics on those filesystems.
+
+    // Prefer hard_link while the nofollow handle is still held (narrows same-user
+    // unlink windows on Unix). If hard links are unsupported, stream from this
+    // handle so we never re-open the source by path (closes the copy-path TOCTOU).
+    let linked = std::fs::hard_link(source, target).is_ok();
+    if !linked {
         let copy_result = (|| -> Result<(), String> {
-            let mut input = crate::path_safety::open_regular_file_nofollow(source)?;
+            source_file
+                .seek(SeekFrom::Start(0))
+                .map_err(|e| e.to_string())?;
             let mut output = std::fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -122,7 +127,7 @@ pub(crate) fn publish_file_no_replace(
                 .map_err(|e| {
                     format!("Could not reserve archive output {}: {e}", target.display())
                 })?;
-            std::io::copy(&mut input, &mut output).map_err(|e| e.to_string())?;
+            std::io::copy(&mut source_file, &mut output).map_err(|e| e.to_string())?;
             sync_file_best_effort(&output)?;
             // Best-effort: copying permissions can be denied on Desktop / CFA.
             if let Ok(permissions) = std::fs::metadata(source).map(|meta| meta.permissions()) {
@@ -135,6 +140,7 @@ pub(crate) fn publish_file_no_replace(
             return Err(error);
         }
     }
+    drop(source_file);
     if let Err(error) = std::fs::remove_file(source) {
         let _ = std::fs::remove_file(target);
         return Err(format!(
@@ -238,7 +244,7 @@ pub(crate) fn promote_archive_family(
     }
 
     // Destination already holds the new archive(s). Nothing after this point may
-    // return Err — leftover backups/stage dirs are cleaned best-effort only.
+    // return Err: leftover backups/stage dirs are cleaned best-effort only.
     if let Some(parent) = destination.parent() {
         if let Err(error) = sync_directory(parent) {
             eprintln!(
@@ -262,7 +268,7 @@ pub(crate) fn promote_archive_family(
             stage_dir.display()
         );
     }
-    // Never remove_dir_all while recovery backups may remain — that can partially
+    // Never remove_dir_all while recovery backups may remain; that can partially
     // wipe a multi-volume restore set while the journal still looks in-flight.
     // Leave the dir in place; unregister_plan_stages keeps pending-stages tracking
     // so cleanup_orphan_stages retries after the journal is cleared.
@@ -318,7 +324,7 @@ pub(crate) fn commit_failure_should_scrub_staging(plan: &CleanupPlan, error: &st
             return false;
         }
     }
-    // Add-mode orphan (no backups) or post-publish leftover — safe to remove.
+    // Add-mode orphan (no backups) or post-publish leftover: safe to remove.
     let _ = error;
     true
 }

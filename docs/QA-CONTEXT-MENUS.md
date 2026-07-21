@@ -20,18 +20,24 @@ for every applicable row:
 The release scripts remain platform-local. This matrix is the packaged OS
 integration gate that compile smoke tests cannot replace.
 
+**CI scope:** GitHub Actions runs quality gates, unit/coverage tests, and
+unsigned `--no-bundle` smoke builds only. It does **not** produce signed NSIS,
+DMG, AppImage, or sparse context-menu packages. Signed Windows modern-menu and
+macOS Services behavior must be verified on release VMs using the checklists
+below before publishing.
+
 ## macOS Finder Services
 
 1. Install a packaged `.app` / DMG build (not a bare `cargo run` binary).
 2. Launch Zinnia once so Services register (`NSUpdateDynamicServices`).
 3. Select an archive in Finder → right-click → **Services**.
 4. Confirm **Extract with Zinnia** launches quick extract (no lingering main-window flash).
-5. With Zinnia not running, use **Compress with Zinnia** from Finder — main opens for compress; later Extract must not destroy that workspace.
+5. With Zinnia not running, use **Compress with Zinnia** from Finder: main opens for compress; later Extract must not destroy that workspace.
 6. Settings → **OS Integration** → **Finder Services**: **Enabled** only when both
    services have an explicit enable toggle in `pbs` prefs; otherwise **Not enabled**
    (not Unknown). Registration is confirmed via `pbs -dump_cache` for help text.
    **Enable…** opens Keyboard Shortcuts and selects **Services** (not Login Items &
-   Extensions / File Providers — that UI is for Finder Sync appexes like Keka;
+   Extensions / File Providers: that UI is for Finder Sync appexes like Keka;
    Zinnia uses `NSServices`).
 7. Dev tip after Info.plist changes: `/System/Library/CoreServices/pbs -flush`
    Inspect registration: `/System/Library/CoreServices/pbs -dump_cache`
@@ -57,13 +63,19 @@ Requires a **signed** NSIS install with full `AZURE_ARTIFACT_SIGNING_PUBLISHER_D
 4. Expect top-level **Extract with Zinnia** and **Zinnia** ▸ Extract / Compress
    (not “Zinnia Context Menu”, and not nested duplicate Zinnia arrows). Both
    entries should show the Zinnia logo (not an empty icon slot).
-5. **Click** Extract and Compress — Zinnia must launch. Settings “Registered” only means the package is present.
+5. **Click** Extract and Compress: Zinnia must launch. Settings “Registered” only means the package is present.
 6. Right-click a non-archive file/folder → **Zinnia** ▸ Compress only (no top-level Extract; submenu Extract disabled).
 7. Right-click **empty folder background** → **Zinnia** ▸ Compress (current folder).
 8. “Show more options” still shows classic verbs (including background Compress).
 9. Uninstall → Appx package gone; HKCU `ZinniaCompress` keys gone.
 
-> **Release gate:** Steps 5–7 are required before publishing a signed Windows beta.
+> **Release gate:** Steps 5-7 are required before publishing a signed Windows
+> beta. CI unsigned shell compile smoke does **not** satisfy this gate.
+>
+> Optional (not a release): after publishing updater artifacts, run
+> `REQUIRE_UPDATER_LIVE=1 npm run validate:updater:live` on a networked machine
+> so missing `latest-*.json` (including `*-beta-*`) fails the gate. Default CI
+> fixture validation remains the pre-publish check.
 
 ### Failure modes
 

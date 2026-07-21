@@ -73,6 +73,9 @@ communicate via direct calls and a few custom DOM events.
 | `basic/`               | Basic workspace UI, Basic↔Power sync, recent archives, progress chrome                   |
 | `ui/`                  | Shared Power/Basic chrome: hooks, logging, workspace mode, status/progress, inputs       |
 | `main.ts`              | Thin entry; boot orchestration lives in `app-init.ts` / `power-events.ts`                |
+| `power-helpers.ts`     | Shared Power helpers (password toggles, editable-target, reset-for-first-run)            |
+| `power-shortcuts.ts`   | Keyboard shortcuts modal                                                                |
+| `power-logs.ts`        | Diagnostics log export / open / clear                                                   |
 | `selective-extract.ts` | Pure tree/selection model for the picker                                                 |
 | `extract-window.ts`    | Dedicated extract progress window                                                        |
 | `os-integration.ts`    | Settings → OS Integration tab                                                            |
@@ -107,5 +110,26 @@ re-exports from each crate module root.
 - Sidecar integration: `src-tauri/tests/sidecar_roundtrip.rs` exercises create,
   list, test, extract, and encrypted-archive failure against bundled 7-Zip.
 - CI runs tests and checks on Linux, Windows, and macOS; Clippy and dependency
-  audits run as separate security gates. Release binaries are built only by the
-  intentionally destructive platform release scripts on isolated build VMs.
+  audits run as separate security gates. CI also validates updater fixtures and
+  optionally fetches published `latest-*.json` manifests (read-only). Release
+  binaries are built only by the intentionally destructive platform release
+  scripts on isolated build VMs; never by CI.
+
+### Archive extension allowlists
+
+Three lists must stay intentionally aligned (with platform filters):
+
+| Layer | File | Notes |
+| --- | --- | --- |
+| Frontend UI | `src/utils.ts` `ARCHIVE_EXTENSIONS` | Includes `.rar` on all platforms (Windows extract still blocked in Rust) |
+| Open routing | `src-tauri/src/launch/open_routing.rs` | Omits `.rar` on Windows so file-open does not hit the CVE extract gate |
+| Win11 shell | `src-tauri/windows/shell/dllmain.cpp` `LooksLikeArchive` | Same Windows `.rar` omit; includes `*.7z.001` / split-volume siblings (aligned with open routing) |
+
+When adding a format, update all three (and file associations / NSIS verbs as needed).
+
+### Remaining size hotspots
+
+Prefer peeling before growing these further: `src/styles/main-mid.css`,
+`src/power-events.ts` (`wireEvents`), `src-tauri/src/process/commands.rs`.
+Critical coverage gates in `scripts/test-all.js` cover `archive/`, `basic/`,
+`power-helpers.ts`, `power-shortcuts.ts`, and other high-risk modules.
