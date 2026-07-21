@@ -370,7 +370,7 @@ class ExplorerCommand : public IExplorerCommand, public IObjectWithSite {
     if (!state) return E_POINTER;
     *state = ECS_ENABLED;
     if (kind_ == CommandKind::ExtractTop) {
-      // Manifest registration already limits this command to archive-associated
+      // Manifest ItemType registration already limits this command to archive
       // extensions. Keep thin Explorer probes enabled so the modern menu does
       // not discard the verb before handing us its real selection. Dynamic state
       // still hides false-positive .001 files and rejects non-archives in Invoke.

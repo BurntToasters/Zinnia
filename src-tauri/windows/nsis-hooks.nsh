@@ -45,14 +45,22 @@
   StrCpy $R9 "$INSTDIR"
   IfFileExists "$R9\ZinniaContextMenu.msix" 0 zinnia_menu_try_resources
   IfFileExists "$R9\zinnia_shell.dll" 0 zinnia_menu_try_resources
+  IfFileExists "$R9\ZinniaExtractContextMenu.msix" 0 zinnia_menu_try_resources
+  IfFileExists "$R9\zinnia_extract_shell.dll" 0 zinnia_menu_try_resources
   Goto zinnia_menu_register
   zinnia_menu_try_resources:
   StrCpy $R9 "$INSTDIR\resources"
   IfFileExists "$R9\ZinniaContextMenu.msix" 0 zinnia_skip_win11_menu
   IfFileExists "$R9\zinnia_shell.dll" 0 zinnia_skip_win11_menu
+  IfFileExists "$R9\ZinniaExtractContextMenu.msix" 0 zinnia_skip_win11_menu
+  IfFileExists "$R9\zinnia_extract_shell.dll" 0 zinnia_skip_win11_menu
   zinnia_menu_register:
   ; Skip empty CI stubs (real packages are much larger than 1 KiB).
   FileOpen $R8 "$R9\ZinniaContextMenu.msix" r
+  FileSeek $R8 0 END $R7
+  FileClose $R8
+  IntCmp $R7 1024 zinnia_skip_win11_menu zinnia_skip_win11_menu 0
+  FileOpen $R8 "$R9\ZinniaExtractContextMenu.msix" r
   FileSeek $R8 0 END $R7
   FileClose $R8
   IntCmp $R7 1024 zinnia_skip_win11_menu zinnia_skip_win11_menu 0
@@ -66,7 +74,7 @@
   IfFileExists "$R8" 0 zinnia_menu_no_script
   zinnia_menu_run_script:
   DetailPrint "Registering Win11 context menu package…"
-  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$R8" -MsixPath "$R9\ZinniaContextMenu.msix" -ExternalLocation "$R9" -LogPath "$INSTDIR\zinnia-context-menu-register.log"'
+  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$R8" -MsixPath "$R9\ZinniaContextMenu.msix" -ExtractMsixPath "$R9\ZinniaExtractContextMenu.msix" -ExternalLocation "$R9" -LogPath "$INSTDIR\zinnia-context-menu-register.log"'
   Pop $0
   IntCmp $0 0 zinnia_menu_registered 0 0
   DetailPrint "WARNING: Win11 context menu registration failed (exit $0). Classic verbs still work. See $INSTDIR\zinnia-context-menu-register.log"
@@ -84,6 +92,8 @@
 
 !macro ZINNIA_UNREGISTER_WIN11_CONTEXT_MENU
   nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Get-AppxPackage -Name run.rosie.zinnia.contextmenu -ErrorAction SilentlyContinue | Remove-AppxPackage -ErrorAction SilentlyContinue"'
+  Pop $0
+  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Get-AppxPackage -Name run.rosie.zinnia.extractmenu -ErrorAction SilentlyContinue | Remove-AppxPackage -ErrorAction SilentlyContinue"'
   Pop $0
 !macroend
 

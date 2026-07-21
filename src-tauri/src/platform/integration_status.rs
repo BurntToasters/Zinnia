@@ -198,10 +198,11 @@ fn windows_modern_menu_registered() -> Option<bool> {
 
     // Sparse identity package name (not the Zinnia app itself).
     // Use exit codes (not stdout): PS 5.1 often emits UTF-16 on redirected pipes.
-    const PACKAGE: &str = "run.rosie.zinnia.contextmenu";
+    const ROOT_PACKAGE: &str = "run.rosie.zinnia.contextmenu";
+    const EXTRACT_PACKAGE: &str = "run.rosie.zinnia.extractmenu";
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let script = format!(
-        "if (Get-AppxPackage -Name '{PACKAGE}' -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 2 }}"
+        "if ((Get-AppxPackage -Name '{ROOT_PACKAGE}' -ErrorAction SilentlyContinue) -and (Get-AppxPackage -Name '{EXTRACT_PACKAGE}' -ErrorAction SilentlyContinue)) {{ exit 0 }} else {{ exit 2 }}"
     );
     let output = command_output_with_timeout(
         Command::new("powershell.exe")

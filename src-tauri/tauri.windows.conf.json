@@ -2,7 +2,9 @@
   "bundle": {
     "resources": {
       "windows/shell/out/zinnia_shell.dll": "zinnia_shell.dll",
+      "windows/shell/out/zinnia_extract_shell.dll": "zinnia_extract_shell.dll",
       "windows/shell/out/ZinniaContextMenu.msix": "ZinniaContextMenu.msix",
+      "windows/shell/out/ZinniaExtractContextMenu.msix": "ZinniaExtractContextMenu.msix",
       "../scripts/register-windows-context-menu.ps1": "register-windows-context-menu.ps1"
     },
     "fileAssociations": [

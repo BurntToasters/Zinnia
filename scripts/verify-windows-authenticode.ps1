@@ -25,7 +25,9 @@ if (Test-Path -LiteralPath $bundleDir) {
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
 $shellCandidates = @(
   (Join-Path $repoRoot 'src-tauri\windows\shell\out\zinnia_shell.dll'),
-  (Join-Path $repoRoot 'src-tauri\windows\shell\out\ZinniaContextMenu.msix')
+  (Join-Path $repoRoot 'src-tauri\windows\shell\out\zinnia_extract_shell.dll'),
+  (Join-Path $repoRoot 'src-tauri\windows\shell\out\ZinniaContextMenu.msix'),
+  (Join-Path $repoRoot 'src-tauri\windows\shell\out\ZinniaExtractContextMenu.msix')
 )
 foreach ($candidate in $shellCandidates) {
   if (Test-Path -LiteralPath $candidate) {
