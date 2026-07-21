@@ -28,7 +28,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Performance:** Split-volume detection performs one `.002` sibling probe on Explorer's UI path instead of scanning up to 999 possible volumes.
 - **Test:** Added manifest regression coverage enforcing one wildcard Root verb and one archive-only Extract verb per supported type.
 - **Release:** Expanded the full gate to include Rust formatting and warning-free Clippy checks.
-- **Release:** Release VMs now refuse dirty, unpushed, wrong-branch, or red-CI source and rerun the complete local suite before building artifacts.
+- **Release:** Release VMs now refuse dirty, unpushed, or wrong-branch source and rerun the complete local suite before building artifacts.
 
 ## Changes in `v0.6.0-beta.9:`
 - **Recents:** Moved to a compact titlebar dropdown in Basic mode; missing (deleted) paths are dropped automatically.

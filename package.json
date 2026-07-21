@@ -73,7 +73,7 @@
     "release:prepare": "npm run rust:update && npm ci && npm run sync-version && npm run prepare:7z:all && npm run prepare:win-shell-stubs && npm run test:all && npm run dist:clean-release-artifacts && node scripts/update-metainfo.js",
     "release:draft": "dotenv -e .env -- node scripts/ensure-draft-release.cjs",
     "release:wait-draft": "dotenv -e .env -- node scripts/ensure-draft-release.cjs --wait",
-    "release:preflight": "dotenv -e .env -- node scripts/release-preflight.js",
+    "release:preflight": "node scripts/release-preflight.js",
     "prerelease:prepare": "node scripts/release-warning.js && npm run release:preflight",
     "release:mirror": "dotenv -e .env -- node scripts/finalize-release-assets.js",
     "release:finalize": "npm run release:mirror && git fetch origin && git reset --hard @{u} && git clean -fd",
