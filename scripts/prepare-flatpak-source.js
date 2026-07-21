@@ -30,9 +30,24 @@ const dirtyEntries = run("git", [
   "--porcelain=v1",
   "--untracked-files=all",
 ]);
-if (dirtyEntries) {
+// `tauri build` rewrites generated ACL schemas under src-tauri/gen/schemas/.
+// Flatpak exports `git archive HEAD`, so those dirty generated files never enter
+// the bundle — only refuse unexpected workspace dirt.
+const blockingDirty = dirtyEntries
+  .split("\n")
+  .map((line) => line.trimEnd())
+  .filter(Boolean)
+  .filter((line) => {
+    // Porcelain: XY PATH  or  XY ORIG -> PATH
+    const pathPart = line.slice(3);
+    const filePath = pathPart.includes(" -> ")
+      ? pathPart.split(" -> ").at(-1)
+      : pathPart;
+    return !filePath.startsWith("src-tauri/gen/schemas/");
+  });
+if (blockingDirty.length) {
   throw new Error(
-    `Flatpak source export requires a clean committed tree:\n${dirtyEntries}`,
+    `Flatpak source export requires a clean committed tree:\n${blockingDirty.join("\n")}`,
   );
 }
 const commit = run("git", ["rev-parse", "--verify", "HEAD"]);

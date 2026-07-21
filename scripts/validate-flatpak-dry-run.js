@@ -35,6 +35,7 @@ if (fs.existsSync(sourceExporter)) {
     "archive",
     "--porcelain=v1",
     ".zinnia-source-commit",
+    "src-tauri/gen/schemas/",
   ]) {
     if (!source.includes(marker)) {
       console.error(`flatpak-dry-run: source exporter missing ${marker}`);

@@ -69,5 +69,6 @@ describe("macOS compatibility", () => {
     expect(releaseVerifier).toContain(
       "verifySignedEntitlements(sidecarPath, {})",
     );
+    expect(releaseVerifier).toContain('"--xml"');
   });
 });

@@ -86,9 +86,11 @@ function verifySignedEntitlements(targetPath, expected) {
   );
   const plistPath = path.join(temporaryDirectory, "entitlements.plist");
   try {
+    // Without --xml, modern codesign writes a textual DER dump that starts
+    // with "[Dict]" and cannot be parsed by plutil.
     const inspection = spawnSync(
       "codesign",
-      ["--display", "--entitlements", plistPath, targetPath],
+      ["--display", "--entitlements", plistPath, "--xml", targetPath],
       { encoding: "utf8" },
     );
     if (inspection.error || inspection.status !== 0) {
