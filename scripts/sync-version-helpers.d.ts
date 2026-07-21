@@ -1,3 +1,9 @@
+export function updateCargoLockPackageVersion(
+  lockfile: string,
+  packageName: string,
+  version: string,
+): string;
+
 export function updateWindowsResourceFlags(
   resource: string,
   version: string,

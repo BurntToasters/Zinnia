@@ -1,3 +1,20 @@
+/**
+ * Keep the root crate's version in Cargo.lock aligned with Cargo.toml.
+ * Cargo rewrites this on the next build; leaving it stale dirties the tree
+ * mid-release and breaks Flatpak's clean `git archive` + `--locked` build.
+ */
+export function updateCargoLockPackageVersion(lockfile, packageName, version) {
+  const pattern = new RegExp(
+    `(\\[\\[package\\]\\]\\r?\\nname = "${packageName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"\\r?\\nversion = )"[^"]*"`,
+  );
+  if (!pattern.test(lockfile)) {
+    throw new Error(
+      `Cargo.lock is missing [[package]] name = "${packageName}"`,
+    );
+  }
+  return lockfile.replace(pattern, `$1"${version}"`);
+}
+
 export function updateWindowsResourceFlags(resource, version) {
   const prerelease = version.includes("-");
   const debugFlags = prerelease

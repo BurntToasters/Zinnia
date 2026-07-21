@@ -5,6 +5,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import {
   macBundleVersionFromSemver,
+  updateCargoLockPackageVersion,
   updateWindowsResourceFlags,
 } from "./sync-version-helpers.js";
 
@@ -52,6 +53,28 @@ if (updated !== cargo) {
     process.exit(1);
   }
   console.log(`Cargo.toml      → ${version}`);
+}
+
+const cargoLockPath = path.join(root, "src-tauri", "Cargo.lock");
+const cargoLock = fs.readFileSync(cargoLockPath, "utf-8");
+let updatedLock;
+try {
+  updatedLock = updateCargoLockPackageVersion(cargoLock, "zinnia", version);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
+if (updatedLock !== cargoLock) {
+  fs.writeFileSync(cargoLockPath, updatedLock);
+  const lockVerify = fs.readFileSync(cargoLockPath, "utf-8");
+  if (
+    !lockVerify.includes(`name = "zinnia"\nversion = "${version}"`) &&
+    !lockVerify.includes(`name = "zinnia"\r\nversion = "${version}"`)
+  ) {
+    console.error(`Cargo.lock write verification failed`);
+    process.exit(1);
+  }
+  console.log(`Cargo.lock      → ${version}`);
 }
 
 const windowsVersionMatch = version.match(
