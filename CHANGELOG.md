@@ -23,8 +23,10 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
 ## Changes in `v0.6.0-beta.14:`
 
-- **Release candidate:** RC1.
-- **Performance:** Release commands reuse prepared versions, licenses, and sidecars; commit-bound `release:*:resume` commands avoid repeating the full suite after a separate successful `release:prepare`.
+- **Release Canidate:** RC1
+- **Feature:** Added the Zinnia logo icon to macOS Finder context menu items (**Extract with Zinnia** / **Compress with Zinnia**), styled as an adaptive system template image (Keka-style).
+- **Performance & Automation:** Optimized `release:*` scripts with `:continue` and `:resume` pipelines to reuse prepared versions, licenses, and sidecars without repeating redundant preparation steps.
+- **Security & Quality Gate:** Introduced a commit-bound release build session proof system (`release-session.js`), ensuring quality gates pass on a clean working tree prior to artifact creation and GPG signing.
 
 ## Changes in `v0.6.0-beta.13:`
 

@@ -31,6 +31,16 @@ if (process.env.ZINNIA_FINDERSYNC_ALREADY_PREPARED === "1") {
       "build",
       "ZinniaFinderSync.entitlements",
     ),
+    path.join(
+      root,
+      "src-tauri",
+      "macos",
+      "build",
+      "ZinniaFinderSync.appex",
+      "Contents",
+      "Resources",
+      "zinnia-menu.png",
+    ),
   ];
   const missing = requiredOutputs.filter((output) => !fs.existsSync(output));
   if (missing.length > 0) {
