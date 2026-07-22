@@ -308,6 +308,7 @@ struct FinderSyncInfo {
     help: String,
 }
 
+#[cfg(target_os = "macos")]
 pub(crate) const MACOS_FINDER_SYNC_BUNDLE_ID: &str = "run.rosie.zinnia.findersync";
 
 // Load FinderSync in the containing app so its public management/status APIs
