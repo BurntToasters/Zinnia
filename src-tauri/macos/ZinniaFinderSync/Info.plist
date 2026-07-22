@@ -19,11 +19,16 @@
 	<key>CFBundleShortVersionString</key>
 	<string>0.6.0</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>0.6.43</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>26.0</string>
+	<!-- Set by the build script. Both the app and this extension must use it. -->
+	<key>ZinniaAppGroupIdentifier</key>
+	<string>group.run.rosie.zinnia.findersync</string>
 	<key>NSExtension</key>
 	<dict>
+		<key>NSExtensionAttributes</key>
+		<dict/>
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.FinderSync</string>
 		<key>NSExtensionPrincipalClass</key>

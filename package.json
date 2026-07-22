@@ -58,7 +58,7 @@
     "build:win": "npm run build:win:x64 && npm run build:win:arm64",
     "build:macos:finder-sync": "bash scripts/build-macos-finder-sync.sh",
     "prepare:macos:finder-sync": "node scripts/prepare-macos-finder-sync.js",
-    "build:mac:universal": "npm run sync-version && npm run licenses && npm run prepare:7z && npm run prepare:macos:finder-sync && dotenv -e .env -- tauri build --target universal-apple-darwin --bundles dmg,app && dotenv -e .env -- node scripts/resign-macos-finder-sync.js",
+    "build:mac:universal": "npm run sync-version && npm run licenses && npm run prepare:7z && npm run prepare:macos:finder-sync && dotenv -e .env -- tauri build --target universal-apple-darwin --bundles dmg,app",
     "build:mac:zip": "node scripts/zip-macos.js",
     "mac:ssh:keychain": "bash scripts/mac-keychain-ssh.sh",
     "build:linux:x64": "npm run sync-version && npm run licenses && npm run prepare:7z && dotenv -e .env -- tauri build --target x86_64-unknown-linux-gnu --bundles appimage,deb,rpm",

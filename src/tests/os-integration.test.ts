@@ -431,6 +431,52 @@ describe("OS integration UI", () => {
     );
   });
 
+  it("opens Login Items & Extensions when pluginkit does not enable Finder Sync", async () => {
+    renderOsIntegrationStatus({
+      platform: "macos",
+      packaged: true,
+      fileAssociationsKnown: true,
+      contextActionsKnown: false,
+      defaultAppHelpAvailable: true,
+      finderServicesAvailable: true,
+      finderServicesKnown: true,
+      finderServicesEnabled: false,
+      finderSyncAvailable: true,
+      finderSyncKnown: true,
+      finderSyncEnabled: false,
+      archiveDefaults: [],
+    });
+
+    invokeMock.mockReset();
+    invokeMock
+      .mockResolvedValueOnce("")
+      .mockResolvedValueOnce({
+        platform: "macos",
+        packaged: true,
+        fileAssociationsKnown: true,
+        contextActionsKnown: false,
+        defaultAppHelpAvailable: true,
+        finderServicesAvailable: true,
+        finderServicesKnown: true,
+        finderServicesEnabled: false,
+        finderSyncAvailable: true,
+        finderSyncKnown: true,
+        finderSyncEnabled: false,
+        archiveDefaults: [],
+      })
+      .mockResolvedValueOnce("");
+
+    await openFinderSyncSettings();
+
+    expect(invokeMock).toHaveBeenNthCalledWith(1, "enable_finder_sync");
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "get_os_integration_status");
+    expect(invokeMock).toHaveBeenNthCalledWith(3, "open_finder_sync_settings");
+    expect(messageMock).toHaveBeenCalledWith(
+      expect.stringContaining("System Settings will open"),
+      expect.objectContaining({ title: "Enable Finder context menu" }),
+    );
+  });
+
   it("shows Finder Services status on macOS and opens System Settings", async () => {
     renderOsIntegrationStatus({
       platform: "macos",

@@ -68,3 +68,16 @@ export function macBundleVersionFromSemver(version) {
 
   return `${major}.${minor}.${build}`;
 }
+
+/** Apple's CFBundleShortVersionString accepts exactly three numeric fields. */
+export function macMarketingVersionFromSemver(version) {
+  const match = version.match(
+    /^(\d+)\.(\d+)\.(\d+)(?:-(?:alpha|beta|rc)\.\d+)?$/,
+  );
+  if (!match) {
+    throw new Error(
+      `Version cannot be represented as a macOS marketing version: ${version}`,
+    );
+  }
+  return `${match[1]}.${match[2]}.${match[3]}`;
+}

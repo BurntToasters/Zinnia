@@ -172,6 +172,9 @@ pub fn open_finder_services_settings(app: tauri::AppHandle) -> Result<(), String
 pub fn open_finder_sync_settings(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
+        if super::integration_status::show_finder_sync_management_interface(&app) {
+            return Ok(());
+        }
         use tauri_plugin_shell::ShellExt;
         app.shell()
             .open(
@@ -188,20 +191,19 @@ pub fn open_finder_sync_settings(app: tauri::AppHandle) -> Result<(), String> {
     }
 }
 
-/// Elect the embedded Finder Sync extension via pluginkit (`-e use`).
-/// Falls back to opening Login Items & Extensions when election fails.
+/// Best-effort election of the embedded Finder Sync extension via pluginkit
+/// (`-e use`). The frontend refreshes status and opens Apple's management UI
+/// once if explicit user approval is still required.
 #[tauri::command]
 pub fn enable_finder_sync(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        use super::integration_status::{
-            register_macos_finder_sync, MACOS_FINDER_SYNC_BUNDLE_ID,
-        };
+        use super::integration_status::{register_macos_finder_sync, MACOS_FINDER_SYNC_BUNDLE_ID};
         use super::os_command::command_output_with_timeout;
         use std::process::Command;
 
         register_macos_finder_sync();
-        let elected = command_output_with_timeout(
+        let _ = command_output_with_timeout(
             Command::new("/usr/bin/pluginkit").args([
                 "-e",
                 "use",
@@ -209,14 +211,10 @@ pub fn enable_finder_sync(app: tauri::AppHandle) -> Result<(), String> {
                 MACOS_FINDER_SYNC_BUNDLE_ID,
             ]),
             std::time::Duration::from_secs(8),
-        )
-        .map(|output| output.status.success())
-        .unwrap_or(false);
+        );
 
-        if elected {
-            return Ok(());
-        }
-        open_finder_sync_settings(app)
+        let _ = app;
+        Ok(())
     }
 
     #[cfg(not(target_os = "macos"))]

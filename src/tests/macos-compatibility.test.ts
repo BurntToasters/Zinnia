@@ -2,7 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { macBundleVersionFromSemver } from "../../scripts/sync-version-helpers.js";
+import {
+  macBundleVersionFromSemver,
+  macMarketingVersionFromSemver,
+} from "../../scripts/sync-version-helpers.js";
 
 describe("macOS compatibility", () => {
   it("requires macOS 26+ and a numeric bundle build version", () => {
@@ -22,6 +25,13 @@ describe("macOS compatibility", () => {
     expect(config.bundle?.macOS?.bundleVersion).toMatch(/^\d+(?:\.\d+){0,2}$/);
     expect(config.bundle?.macOS?.bundleVersion).toBe(
       macBundleVersionFromSemver(config.version ?? ""),
+    );
+    const infoPlist = fs.readFileSync(
+      path.resolve(process.cwd(), "src-tauri", "Info.plist"),
+      "utf8",
+    );
+    expect(infoPlist).toContain(
+      `<string>${macMarketingVersionFromSemver(config.version ?? "")}</string>`,
     );
   });
 
@@ -74,8 +84,42 @@ describe("macOS compatibility", () => {
     expect(releaseVerifier).toContain("verifySignedEntitlements(appPath");
     expect(releaseVerifier).toContain("verifySignedEntitlements(sidecarPath");
     expect(releaseVerifier).toContain('"--xml"');
-    expect(releaseVerifier).toMatch(
-      /verifySignedEntitlements\(\s*sidecarPath[\s\S]*?allow-jit/,
+    expect(releaseVerifier).toContain("const hostEntitlements");
+    expect(releaseVerifier).toContain("ZinniaFinderSync.entitlements");
+    expect(releaseVerifier).toContain("Zinnia.entitlements");
+    expect(releaseVerifier).toContain("TeamIdentifier");
+    expect(releaseVerifier).toContain("expectedAppGroup");
+    expect(releaseVerifier).toContain("hostTeam !== extensionTeam");
+    expect(releaseVerifier).toContain("sidecarTeam !== hostTeam");
+  });
+
+  it("uses an App Group instead of sandbox-incompatible Finder Sync launch arguments", () => {
+    const finderSync = fs.readFileSync(
+      path.resolve(
+        process.cwd(),
+        "src-tauri",
+        "macos",
+        "ZinniaFinderSync",
+        "FinderSync.swift",
+      ),
+      "utf8",
     );
+    const finderSyncPlist = fs.readFileSync(
+      path.resolve(
+        process.cwd(),
+        "src-tauri",
+        "macos",
+        "ZinniaFinderSync",
+        "Info.plist",
+      ),
+      "utf8",
+    );
+    expect(finderSync).toContain("containerURL(");
+    expect(finderSync).toContain("FinderSyncRequests");
+    expect(finderSync).toContain("createdAtMs");
+    expect(finderSync).toContain("1,000-item safety limit");
+    expect(finderSync).not.toContain("configuration.arguments");
+    expect(finderSyncPlist).toContain("NSExtensionAttributes");
+    expect(finderSyncPlist).toContain("ZinniaAppGroupIdentifier");
   });
 });

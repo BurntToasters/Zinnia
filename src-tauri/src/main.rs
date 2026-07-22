@@ -2,6 +2,8 @@
 
 mod app_menu;
 mod archive_detect;
+#[cfg(target_os = "macos")]
+mod finder_sync_requests;
 mod fs_secure;
 mod launch;
 mod logging;
@@ -174,9 +176,17 @@ fn main() {
         .manage(LogFileLock(Mutex::new(())))
         .manage(RunningProcess::new())
         .setup(move |app| {
+            #[cfg(target_os = "macos")]
+            let finder_sync_routed = finder_sync_requests::route_pending_requests(app.handle());
+            #[cfg(not(target_os = "macos"))]
+            let finder_sync_routed = false;
+
             let launch_extract_window = initial_mode == "extract" && initial_paths.len() == 1;
 
-            if launch_extract_window {
+            if finder_sync_routed {
+                // The queued request already created the appropriate Extract or
+                // Compress UI. Do not race it with the empty-launch fallback.
+            } else if launch_extract_window {
                 spawn_extract_window(app.handle(), initial_paths.clone())
                     .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
                 EXTRACT_ONLY_LAUNCH.store(true, Ordering::SeqCst);
@@ -224,6 +234,7 @@ fn main() {
             {
                 macos_services::install_macos_services(app.handle());
                 platform::register_macos_finder_sync();
+                finder_sync_requests::start_request_monitor(app.handle().clone());
             }
 
             // Recovery can traverse and sync directories. Keep it off the setup thread so the
@@ -309,6 +320,10 @@ fn main() {
             has_visible_windows,
             ..
         } => {
+            #[cfg(target_os = "macos")]
+            if finder_sync_requests::route_pending_requests(app_handle) {
+                return;
+            }
             if EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst) {
                 if let Some(main_window) = app_handle.get_webview_window("main") {
                     let _ = main_window.destroy();

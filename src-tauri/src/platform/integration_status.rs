@@ -1,5 +1,9 @@
 //! Finder PBS / Win11 modern menu / classic verbs / OS integration status.
 
+#[cfg(target_os = "macos")]
+use objc2::msg_send;
+#[cfg(target_os = "macos")]
+use objc2::runtime::AnyClass;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::process::Command;
 
@@ -306,13 +310,37 @@ struct FinderSyncInfo {
 
 pub(crate) const MACOS_FINDER_SYNC_BUNDLE_ID: &str = "run.rosie.zinnia.findersync";
 
+// Load FinderSync in the containing app so its public management/status APIs
+// are usable even before pluginkit discovers the embedded extension.
+#[cfg(target_os = "macos")]
+#[link(name = "FinderSync", kind = "framework")]
+unsafe extern "C" {}
+
+#[cfg(target_os = "macos")]
+fn finder_sync_controller_class() -> Option<&'static AnyClass> {
+    AnyClass::get(c"FIFinderSyncController")
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn show_finder_sync_management_interface(app: &tauri::AppHandle) -> bool {
+    if finder_sync_controller_class().is_none() {
+        return false;
+    }
+    app.run_on_main_thread(|| {
+        if let Some(controller) = finder_sync_controller_class() {
+            // `showExtensionManagementInterface` is FinderSync's documented
+            // route to the system-managed enablement interface.
+            unsafe { msg_send![controller, showExtensionManagementInterface] }
+        }
+    })
+    .is_ok()
+}
+
 #[cfg(target_os = "macos")]
 fn macos_finder_sync_appex_path() -> Option<std::path::PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let contents = exe.parent()?.parent()?;
-    let appex = contents
-        .join("PlugIns")
-        .join("ZinniaFinderSync.appex");
+    let appex = contents.join("PlugIns").join("ZinniaFinderSync.appex");
     appex.exists().then_some(appex)
 }
 
@@ -323,24 +351,21 @@ pub fn register_macos_finder_sync() {
         return;
     };
     let _ = command_output_with_timeout(
-        Command::new("/usr/bin/pluginkit").args([
-            "-a",
-            &appex.to_string_lossy(),
-        ]),
+        Command::new("/usr/bin/pluginkit").args(["-a", &appex.to_string_lossy()]),
         std::time::Duration::from_secs(8),
     );
 }
 
 #[cfg(target_os = "macos")]
-fn macos_finder_sync_enabled() -> Option<bool> {
+pub(crate) fn macos_finder_sync_enabled() -> Option<bool> {
+    if let Some(controller) = finder_sync_controller_class() {
+        // `isExtensionEnabled` is the public FinderSync status API. Retain the
+        // pluginkit query below only for compatibility if the framework loads.
+        return Some(unsafe { msg_send![controller, isExtensionEnabled] });
+    }
     // `+` election means the user (or pluginkit -e use) enabled the extension.
     let output = command_output_with_timeout(
-        Command::new("/usr/bin/pluginkit").args([
-            "-m",
-            "-v",
-            "-i",
-            MACOS_FINDER_SYNC_BUNDLE_ID,
-        ]),
+        Command::new("/usr/bin/pluginkit").args(["-m", "-v", "-i", MACOS_FINDER_SYNC_BUNDLE_ID]),
         std::time::Duration::from_secs(8),
     )
     .ok()?;
@@ -463,9 +488,7 @@ pub fn os_integration_status_for(platform: &str, packaged: bool) -> OsIntegratio
     // macOS: primary context menu tracks Finder Sync; Services remain a fallback.
     // Windows: classic Explorer verbs are always registered by NSIS when packaged.
     let context_actions_known = if platform == "macos" {
-        packaged
-            && ((finder_sync.known && finder_sync.enabled)
-                || (finder.known && finder.enabled))
+        packaged && ((finder_sync.known && finder_sync.enabled) || (finder.known && finder.enabled))
     } else {
         packaged && matches!(platform, "windows")
     };

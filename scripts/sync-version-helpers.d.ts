@@ -10,3 +10,5 @@ export function updateWindowsResourceFlags(
 ): string;
 
 export function macBundleVersionFromSemver(version: string): string;
+
+export function macMarketingVersionFromSemver(version: string): string;

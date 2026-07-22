@@ -2,6 +2,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { execFileSync, spawnSync } from "child_process";
+import { isDeepStrictEqual } from "util";
 
 if (process.platform !== "darwin") {
   console.log("zip-macos can only run on macOS.");
@@ -37,9 +38,15 @@ const tauriConfig = JSON.parse(
 );
 const requiredMacOS = tauriConfig.bundle?.macOS?.minimumSystemVersion;
 const expectedBundleVersion = tauriConfig.bundle?.macOS?.bundleVersion;
-if (!requiredMacOS || !expectedBundleVersion) {
+const marketingVersionMatch = tauriConfig.version?.match(
+  /^(\d+)\.(\d+)\.(\d+)(?:-(?:alpha|beta|rc)\.\d+)?$/,
+);
+const expectedMarketingVersion = marketingVersionMatch
+  ? `${marketingVersionMatch[1]}.${marketingVersionMatch[2]}.${marketingVersionMatch[3]}`
+  : undefined;
+if (!requiredMacOS || !expectedBundleVersion || !expectedMarketingVersion) {
   throw new Error(
-    "tauri.conf.json must define bundle.macOS.minimumSystemVersion and bundleVersion",
+    "tauri.conf.json must define a supported version, bundle.macOS.minimumSystemVersion, and bundleVersion",
   );
 }
 
@@ -108,7 +115,7 @@ function verifySignedEntitlements(targetPath, expected) {
           }),
         )
       : {};
-    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    if (!isDeepStrictEqual(actual, expected)) {
       throw new Error(
         `Unexpected signed entitlements for ${targetPath}: ${JSON.stringify(actual)}`,
       );
@@ -118,18 +125,73 @@ function verifySignedEntitlements(targetPath, expected) {
   }
 }
 
+function verifyDeveloperIdSignature(targetPath, label) {
+  const inspection = spawnSync(
+    "codesign",
+    ["--display", "--verbose=4", targetPath],
+    { encoding: "utf8" },
+  );
+  if (inspection.error || inspection.status !== 0) {
+    throw inspection.error ?? new Error(inspection.stderr);
+  }
+  const details = `${inspection.stdout}${inspection.stderr}`;
+  if (
+    /Signature=adhoc/i.test(details) ||
+    !/Authority=Developer ID Application:/i.test(details)
+  ) {
+    throw new Error(
+      `${label} is not signed with a Developer ID Application certificate.`,
+    );
+  }
+  const teamIdentifier = details.match(/^TeamIdentifier=(.+)$/m)?.[1]?.trim();
+  if (!teamIdentifier || teamIdentifier === "not set") {
+    throw new Error(`${label} signature has no TeamIdentifier.`);
+  }
+  return teamIdentifier;
+}
+
+function readEntitlementsTemplate(templatePath) {
+  return JSON.parse(
+    execFileSync("plutil", ["-convert", "json", "-o", "-", templatePath], {
+      encoding: "utf8",
+    }),
+  );
+}
+
+function readPlistValue(plistPath, key) {
+  return execFileSync(
+    "/usr/libexec/PlistBuddy",
+    ["-c", `Print:${key}`, plistPath],
+    { encoding: "utf8" },
+  ).trim();
+}
+
+function verifyAppGroup(entitlements, expectedGroup, label) {
+  const groups = entitlements["com.apple.security.application-groups"];
+  if (!isDeepStrictEqual(groups, [expectedGroup])) {
+    throw new Error(
+      `${label} must have exactly App Group ${expectedGroup}: ${JSON.stringify(groups)}`,
+    );
+  }
+}
+
 const infoPlist = path.join(appPath, "Contents", "Info.plist");
-const bundleVersion = execFileSync(
-  "/usr/libexec/PlistBuddy",
-  ["-c", "Print:CFBundleVersion", infoPlist],
-  { encoding: "utf8" },
-).trim();
+const bundleVersion = readPlistValue(infoPlist, "CFBundleVersion");
 if (!/^\d+(?:\.\d+){0,2}$/.test(bundleVersion)) {
   throw new Error(`CFBundleVersion must be numeric: ${bundleVersion}`);
 }
 if (bundleVersion !== expectedBundleVersion) {
   throw new Error(
     `CFBundleVersion ${bundleVersion} does not match configured ${expectedBundleVersion}`,
+  );
+}
+const marketingVersion = readPlistValue(
+  infoPlist,
+  "CFBundleShortVersionString",
+);
+if (marketingVersion !== expectedMarketingVersion) {
+  throw new Error(
+    `CFBundleShortVersionString ${marketingVersion} does not match expected ${expectedMarketingVersion}`,
   );
 }
 
@@ -154,41 +216,78 @@ execFileSync(
   { stdio: "inherit" },
 );
 verifySignedEntitlements(finderSyncAppex, {
-  "com.apple.security.app-sandbox": true,
-  "com.apple.security.files.user-selected.read-only": true,
-  "com.apple.security.temporary-exception.files.absolute-path.read-only": ["/"],
+  ...readEntitlementsTemplate(
+    path.join(
+      root,
+      "src-tauri",
+      "macos",
+      "build",
+      "ZinniaFinderSync.entitlements",
+    ),
+  ),
 });
+const extensionTeam = verifyDeveloperIdSignature(
+  finderSyncAppex,
+  "Finder Sync extension",
+);
+
+const extensionInfoPlist = path.join(finderSyncAppex, "Contents", "Info.plist");
+if (
+  readPlistValue(extensionInfoPlist, "CFBundleShortVersionString") !==
+    expectedMarketingVersion ||
+  readPlistValue(extensionInfoPlist, "CFBundleVersion") !==
+    expectedBundleVersion
+) {
+  throw new Error("Finder Sync extension versions do not match the host app.");
+}
 
 execFileSync(
   "codesign",
   ["--verify", "--deep", "--strict", "--verbose=2", appPath],
   { stdio: "inherit" },
 );
-const signatureInspection = spawnSync(
-  "codesign",
-  ["--display", "--verbose=4", appPath],
-  { encoding: "utf8" },
-);
-if (signatureInspection.error || signatureInspection.status !== 0) {
-  throw signatureInspection.error ?? new Error(signatureInspection.stderr);
-}
-const signatureDetails = `${signatureInspection.stdout}${signatureInspection.stderr}`;
-if (
-  /Signature=adhoc/i.test(signatureDetails) ||
-  !/Authority=Developer ID Application:/i.test(signatureDetails)
-) {
-  console.error(
-    "The macOS app is not signed with a Developer ID Application certificate.",
+const hostTeam = verifyDeveloperIdSignature(appPath, "macOS app");
+if (hostTeam !== extensionTeam) {
+  throw new Error(
+    `Host TeamIdentifier ${hostTeam} does not match Finder Sync ${extensionTeam}.`,
   );
-  process.exit(1);
 }
-verifySignedEntitlements(appPath, {
-  "com.apple.security.cs.allow-jit": true,
-});
+const hostEntitlements = readEntitlementsTemplate(
+  path.join(root, "src-tauri", "macos", "build", "Zinnia.entitlements"),
+);
+const extensionEntitlements = readEntitlementsTemplate(
+  path.join(
+    root,
+    "src-tauri",
+    "macos",
+    "build",
+    "ZinniaFinderSync.entitlements",
+  ),
+);
+const expectedAppGroup = `${hostTeam}.run.rosie.zinnia.findersync`;
+verifyAppGroup(hostEntitlements, expectedAppGroup, "macOS app");
+verifyAppGroup(
+  extensionEntitlements,
+  expectedAppGroup,
+  "Finder Sync extension",
+);
+if (
+  readPlistValue(extensionInfoPlist, "ZinniaAppGroupIdentifier") !==
+  expectedAppGroup
+) {
+  throw new Error(
+    "Finder Sync Info.plist App Group does not match its Team ID.",
+  );
+}
+verifySignedEntitlements(appPath, hostEntitlements);
 // Tauri signs externalBin sidecars with the same entitlements.plist as the app.
-verifySignedEntitlements(sidecarPath, {
-  "com.apple.security.cs.allow-jit": true,
-});
+verifySignedEntitlements(sidecarPath, hostEntitlements);
+const sidecarTeam = verifyDeveloperIdSignature(sidecarPath, "7-Zip sidecar");
+if (sidecarTeam !== hostTeam) {
+  throw new Error(
+    `7-Zip TeamIdentifier ${sidecarTeam} does not match host ${hostTeam}.`,
+  );
+}
 execFileSync("xcrun", ["stapler", "validate", appPath], { stdio: "inherit" });
 execFileSync(
   "spctl",

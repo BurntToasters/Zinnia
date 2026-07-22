@@ -11,8 +11,8 @@ npm run build:macos:finder-sync
 ```
 
 `prepare:macos:finder-sync` runs automatically from Tauri `beforeBuildCommand`
-on macOS. Release builds re-sign the nested appex via
-`scripts/resign-macos-finder-sync.js` after `tauri build`.
+on macOS. The appex is signed first with its sandbox entitlement profile;
+Tauri then signs the containing app and notarizes the completed bundle.
 
 ## Bundle
 
@@ -21,12 +21,21 @@ Embedded as `Zinnia.app/Contents/PlugIns/ZinniaFinderSync.appex`
 
 ## Runtime
 
-The extension launches the host app with the same argv shapes as Services:
+The sandboxed extension atomically queues each Extract/Compress request in a
+shared App Group, then activates the host. Zinnia drains that queue on cold
+launch, on reopen, and while already running. This avoids relying on launch
+arguments, which macOS ignores when supplied by a sandboxed extension.
 
-```
-Zinnia.app/Contents/MacOS/zinnia --extract /path/archive.zip
-Zinnia.app/Contents/MacOS/zinnia --compress /path/item
-```
+Requests carry a millisecond timestamp, are processed oldest-first, and expire
+after 60 seconds. Invalid, oversized, future-dated, and over-1,000-path requests
+are discarded. If activating the host fails, the extension removes the queued
+request so it cannot run during an unrelated later launch.
 
-Users enable it under **System Settings → General → Login Items & Extensions**,
-or via OS Integration → **Finder context menu → Enable…** (`pluginkit -e use`).
+Signed builds require both `APPLE_SIGNING_IDENTITY` and `APPLE_TEAM_ID`. The
+generated App Group is `<TeamIdentifier>.run.rosie.zinnia.findersync`; release
+packaging fails unless the host, extension, sidecar, signed entitlements, and
+extension Info.plist all agree on the signing team and App Group.
+
+Users enable it through the Finder Sync extension-management interface, or
+under **System Settings → General → Login Items & Extensions**. `pluginkit`
+remains a best-effort registration/election compatibility fallback.

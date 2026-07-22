@@ -29,13 +29,24 @@ below before publishing.
 ## macOS Finder context menu (Finder Sync)
 
 1. Install a packaged `.app` / DMG build that embeds `Contents/PlugIns/ZinniaFinderSync.appex`.
-2. Launch Zinnia once so `pluginkit` discovers the extension.
+2. Launch Zinnia once so the extension is registered, then quit it before the
+   cold-launch checks below.
 3. Settings → **OS Integration** → **Finder context menu** → **Enable…**
    (or System Settings → General → Login Items & Extensions → enable **Zinnia Finder**).
-4. Select an archive in Finder → right-click: confirm **Extract with Zinnia** is in the
-   **primary** menu (not only under Services).
-5. Select a file/folder → **Compress with Zinnia** from the primary menu.
-6. Refresh OS Integration: Finder context menu shows **Enabled**.
+4. With Zinnia stopped, select an archive in Finder → right-click → **Extract
+   with Zinnia**. Confirm quick extract receives the selected path (not merely
+   an activated empty app window).
+5. Keep Zinnia running, select a file/folder → **Compress with Zinnia** from
+   the primary menu. Confirm the already-running app receives that new request.
+6. Confirm both items are in Finder's **primary** menu (not only under Services),
+   then refresh OS Integration: Finder context menu shows **Enabled**.
+7. Trigger Compress and then Extract rapidly. Confirm they arrive oldest-first,
+   exactly once, and no action from a failed/aborted launch appears more than 60
+   seconds later.
+8. On the release VM, verify `codesign -dvvv` reports the same `TeamIdentifier`
+   for the app, Finder Sync appex, and `Contents/MacOS/7z`. Confirm both app and
+   appex entitlements contain exactly
+   `<TeamIdentifier>.run.rosie.zinnia.findersync`.
 
 ## macOS Finder Services
 

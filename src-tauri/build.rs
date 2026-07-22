@@ -332,6 +332,16 @@ fn prepare_7z_binaries() {
 }
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=APPLE_TEAM_ID");
+    let app_group = match std::env::var("APPLE_TEAM_ID") {
+        Ok(team_id) if !team_id.trim().is_empty() => {
+            format!("{}.run.rosie.zinnia.findersync", team_id.trim())
+        }
+        // Matches unsigned local Finder Sync builds. The signed release
+        // verifier rejects this fallback because it cannot match a real Team ID.
+        _ => "group.run.rosie.zinnia.findersync".to_string(),
+    };
+    println!("cargo:rustc-env=ZINNIA_APP_GROUP_ID={app_group}");
     prepare_7z_binaries();
     const COMMANDS: &[&str] = &[
         "run_7z",

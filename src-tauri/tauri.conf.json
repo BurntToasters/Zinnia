@@ -106,7 +106,7 @@
       }
     },
     "macOS": {
-      "entitlements": "entitlements.plist",
+      "entitlements": "macos/build/Zinnia.entitlements",
       "hardenedRuntime": true,
       "minimumSystemVersion": "26.0",
       "bundleVersion": "0.6.43",

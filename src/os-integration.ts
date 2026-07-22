@@ -432,6 +432,7 @@ export async function openFinderSyncSettings(): Promise<void> {
           kind: "info",
         });
       } else {
+        await invoke("open_finder_sync_settings");
         await message(
           [
             "System Settings will open to Login Items & Extensions.",

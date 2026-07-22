@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   macBundleVersionFromSemver,
+  macMarketingVersionFromSemver,
   updateCargoLockPackageVersion,
   updateWindowsResourceFlags,
 } from "../../scripts/sync-version-helpers.js";
@@ -86,5 +87,21 @@ describe("macOS bundle version", () => {
       /cannot be represented/,
     );
     expect(() => macBundleVersionFromSemver("0.6.0-beta.30")).toThrow(/0-29/);
+  });
+});
+
+describe("macOS marketing version", () => {
+  it("uses the numeric SemVer core for stable and prerelease builds", () => {
+    expect(macMarketingVersionFromSemver("0.6.0-beta.13")).toBe("0.6.0");
+    expect(macMarketingVersionFromSemver("1.2.3")).toBe("1.2.3");
+  });
+
+  it("rejects unsupported version forms", () => {
+    expect(() => macMarketingVersionFromSemver("1.2")).toThrow(
+      /cannot be represented/,
+    );
+    expect(() => macMarketingVersionFromSemver("1.2.3-preview.1")).toThrow(
+      /cannot be represented/,
+    );
   });
 });

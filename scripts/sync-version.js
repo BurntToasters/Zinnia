@@ -5,6 +5,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import {
   macBundleVersionFromSemver,
+  macMarketingVersionFromSemver,
   updateCargoLockPackageVersion,
   updateWindowsResourceFlags,
 } from "./sync-version-helpers.js";
@@ -17,6 +18,7 @@ const version = JSON.parse(
 const tauriConf = path.join(root, "src-tauri", "tauri.conf.json");
 const conf = JSON.parse(fs.readFileSync(tauriConf, "utf-8"));
 const macBundleVersion = macBundleVersionFromSemver(version);
+const macMarketingVersion = macMarketingVersionFromSemver(version);
 if (
   conf.version !== version ||
   conf.bundle?.macOS?.bundleVersion !== macBundleVersion
@@ -37,6 +39,23 @@ if (
     process.exit(1);
   }
   console.log(`tauri.conf.json → ${version} (macOS build ${macBundleVersion})`);
+}
+
+const macInfoPath = path.join(root, "src-tauri", "Info.plist");
+const macInfo = fs.readFileSync(macInfoPath, "utf8");
+const marketingVersionPattern =
+  /(<key>CFBundleShortVersionString<\/key>\s*<string>)[^<]*(<\/string>)/;
+if (!marketingVersionPattern.test(macInfo)) {
+  console.error("src-tauri/Info.plist is missing CFBundleShortVersionString");
+  process.exit(1);
+}
+const updatedMacInfo = macInfo.replace(
+  marketingVersionPattern,
+  `$1${macMarketingVersion}$2`,
+);
+if (updatedMacInfo !== macInfo) {
+  fs.writeFileSync(macInfoPath, updatedMacInfo);
+  console.log(`Info.plist       → ${macMarketingVersion}`);
 }
 
 const cargoPath = path.join(root, "src-tauri", "Cargo.toml");
