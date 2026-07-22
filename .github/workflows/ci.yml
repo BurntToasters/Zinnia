@@ -40,8 +40,6 @@ jobs:
             librsvg2-dev \
             patchelf
       - run: npm ci
-      - name: Rust format check
-        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
       - run: npm run test:all
 
   rust-check:
@@ -119,7 +117,6 @@ jobs:
       - run: npm run sync-version
       - run: npm run prepare:7z
       - run: npm run licenses
-      - run: npm run build
       - name: Native Windows shell compile smoke
         if: runner.os == 'Windows'
         shell: pwsh

@@ -81,6 +81,10 @@ native build runs.
   `release:win`, `release:mac`, and `release:linux` scripts for the same version.
   They stage updater manifests, artifacts, checksum files, and detached `.asc`
   signatures in the matching draft GitHub release.
+- Each full release command prepares and tests once. If `release:prepare` was
+  already run separately on the same VM, use the matching `release:*:resume`
+  command; its build session is bound to the exact commit, lockfiles, platform,
+  architecture, and Node/Rust toolchain and expires after 24 hours.
 - After changing the package version, `release:prepare` / `npm run u` / `u2`
   write the AppStream release entry via `node scripts/update-metainfo.js`
   (commit the XML change with the version bump). You can also run that script

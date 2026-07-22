@@ -10,11 +10,11 @@ import {
   normalizeUpdaterSignature,
   verifyUpdaterSignatures,
 } from "./updater-signature-verifier.js";
+import { verifyReleaseSession } from "./release-session.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
 const releaseDir = path.join(root, "release");
-const buildSessionPath = path.join(releaseDir, ".build-session.json");
 const pkg = JSON.parse(
   fs.readFileSync(path.join(root, "package.json"), "utf-8"),
 );
@@ -130,20 +130,13 @@ function artifactMatchesVersion(name) {
 }
 
 function readBuildSession() {
-  let session;
   try {
-    session = JSON.parse(fs.readFileSync(buildSessionPath, "utf8"));
+    return verifyReleaseSession(root);
   } catch (error) {
     throw new Error(
       `Release build session is missing or invalid. Run npm run release:prepare before building: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  if (session.version !== VERSION || !Number.isFinite(session.startedAt)) {
-    throw new Error(
-      `Release build session does not match package version ${VERSION}. Run npm run release:prepare again.`,
-    );
-  }
-  return session;
 }
 
 function wasBuiltInSession(filePath, session) {
