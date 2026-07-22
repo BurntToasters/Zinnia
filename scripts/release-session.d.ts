@@ -23,6 +23,8 @@ export const QUALITY_GATE_RELATIVE_PATH: string;
 export const RELEASE_SESSION_RELATIVE_PATH: string;
 
 export function currentReleaseIdentity(root?: string): ReleaseIdentity;
+export function porcelainPaths(statusText: string): string[];
+export function isIgnorableReleaseDirtyPath(filePath: string): boolean;
 export function createReleaseSession(root?: string): ReleaseSession;
 export function clearQualityGateProof(root?: string): void;
 export function recordSuccessfulQualityGate(root?: string): {

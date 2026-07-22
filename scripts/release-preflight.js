@@ -2,6 +2,10 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  isIgnorableReleaseDirtyPath,
+  porcelainPaths,
+} from "./release-session.js";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(scriptDir, "..");
@@ -27,11 +31,12 @@ function expectedReleaseBranch(version) {
 }
 
 function git(args) {
+  // trimEnd only — see release-session.js command() for porcelain reasons.
   return execFileSync("git", args, {
     cwd: root,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
-  }).trim();
+  }).trimEnd();
 }
 
 function runPreflight() {
@@ -46,22 +51,9 @@ function runPreflight() {
 
   const dirty = git(["status", "--porcelain=v1", "--untracked-files=all"]);
   if (dirty) {
-    const dirtyPaths = dirty
-      .split("\n")
-      .map((line) => line.replace(/\r$/, ""))
-      .filter(Boolean)
-      .map((line) => {
-        const pathPart = line.length >= 3 ? line.slice(3) : line;
-        return pathPart.includes(" -> ")
-          ? pathPart.split(" -> ").at(-1)
-          : pathPart;
-      })
-      .filter(
-        (filePath) =>
-          !filePath.startsWith("src-tauri/gen/schemas/") &&
-          filePath !== "src-tauri/gen/" &&
-          filePath !== "src-tauri/gen/schemas/",
-      );
+    const dirtyPaths = porcelainPaths(dirty).filter(
+      (filePath) => !isIgnorableReleaseDirtyPath(filePath),
+    );
     if (dirtyPaths.length > 0) {
       throw new Error(
         `Working tree is not clean. Commit and push the exact release source first:\n${dirty}`,
