@@ -432,9 +432,31 @@ describe("OS integration UI", () => {
         ?.classList.contains("status-pill--unknown"),
     ).toBe(true);
 
+    messageMock.mockClear();
     invokeMock.mockResolvedValueOnce("");
     await openFinderServicesSettings();
     expect(invokeMock).toHaveBeenCalledWith("open_finder_services_settings");
+    expect(messageMock).toHaveBeenCalledWith(
+      expect.stringContaining("click Services"),
+      expect.objectContaining({ title: "Enable Finder Services" }),
+    );
+
+    renderOsIntegrationStatus({
+      platform: "macos",
+      packaged: true,
+      fileAssociationsKnown: true,
+      contextActionsKnown: true,
+      defaultAppHelpAvailable: true,
+      finderServicesAvailable: true,
+      finderServicesKnown: true,
+      finderServicesEnabled: true,
+      archiveDefaults: [],
+    });
+    messageMock.mockClear();
+    invokeMock.mockResolvedValueOnce("");
+    await openFinderServicesSettings();
+    expect(invokeMock).toHaveBeenCalledWith("open_finder_services_settings");
+    expect(messageMock).not.toHaveBeenCalled();
 
     renderOsIntegrationStatus({
       platform: "windows",

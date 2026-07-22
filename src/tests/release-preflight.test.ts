@@ -17,13 +17,22 @@ describe("release preflight policy", () => {
     expect(packageJson.scripts["prerelease:prepare"]).toContain(
       "release:preflight",
     );
-    expect(packageJson.scripts["release:prepare"]).toContain("test:all");
+    expect(packageJson.scripts["release:prepare"]).toContain(
+      "workspace:prepare",
+    );
+    expect(packageJson.scripts["release:prepare"]).toContain(
+      "dist:clean-release-artifacts",
+    );
     // Metainfo must be written before test:all (flatpak validates the version).
-    const prepare = packageJson.scripts["release:prepare"];
-    expect(prepare.indexOf("update-metainfo.js")).toBeLessThan(
-      prepare.indexOf("test:all"),
+    const workspacePrepare = packageJson.scripts["workspace:prepare"];
+    expect(workspacePrepare.indexOf("update-metainfo.js")).toBeLessThan(
+      workspacePrepare.indexOf("test:all"),
     );
     // Branch/clean-tree gates stay on publish entry points only, not u/u2.
+    expect(packageJson.scripts.u).toContain("workspace:prepare");
+    expect(packageJson.scripts.u).not.toContain("release:prepare");
+    expect(packageJson.scripts.u2).toContain("workspace:prepare");
+    expect(packageJson.scripts.u2).not.toContain("release:prepare");
     expect(packageJson.scripts.u).not.toContain("release:preflight");
     expect(packageJson.scripts.u2).not.toContain("release:preflight");
     expect(packageJson.scripts["release:win"]).toContain("prerelease:prepare");

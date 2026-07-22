@@ -45,6 +45,18 @@ interface DefaultArchiverResult {
 
 let latestStatus: OsIntegrationStatus | null = null;
 
+const FINDER_SERVICES_ENABLE_GUIDE = [
+  "System Settings will open to Keyboard Shortcuts.",
+  "",
+  "In the left sidebar, click Services (not Modifier Keys or Login Items & Extensions).",
+  "",
+  "Turn on:",
+  "• Extract with Zinnia",
+  "• Compress with Zinnia",
+  "",
+  "Return here and click Refresh when both are enabled.",
+].join("\n");
+
 function platformLabel(platform: string): string {
   if (platform === "windows") return "Windows";
   if (platform === "macos") return "macOS";
@@ -244,8 +256,8 @@ export function renderOsIntegrationStatus(status: OsIntegrationStatus): void {
       finderBtn.disabled = false;
       finderBtn.title =
         finderKnown && finderEnabled
-          ? "Open Keyboard Shortcuts → Services (Zinnia is not a File Provider extension)"
-          : "Open Keyboard Shortcuts and select Services to enable Extract / Compress with Zinnia";
+          ? "Open Keyboard Shortcuts → Services"
+          : "Open Keyboard Shortcuts and follow the steps to enable Extract / Compress with Zinnia";
     }
   }
 
@@ -365,8 +377,17 @@ export async function openOsIntegrationSettings(): Promise<void> {
 }
 
 export async function openFinderServicesSettings(): Promise<void> {
+  const showGuide =
+    latestStatus?.finderServicesAvailable === true &&
+    latestStatus.finderServicesEnabled !== true;
   try {
     await invoke("open_finder_services_settings");
+    if (showGuide) {
+      await message(FINDER_SERVICES_ENABLE_GUIDE, {
+        title: "Enable Finder Services",
+        kind: "info",
+      });
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await message(msg, {

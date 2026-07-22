@@ -1,16 +1,11 @@
 //! Set/reset default archiver and open OS integration settings commands.
 
-#[cfg(target_os = "macos")]
-use std::process::Command;
-
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use super::default_archiver_result;
 #[cfg(target_os = "linux")]
 use super::linux_defaults::{linux_set_archive_defaults, XdgMimeBackend};
 #[cfg(target_os = "macos")]
 use super::macos_defaults::macos_set_archive_defaults;
-#[cfg(target_os = "macos")]
-use super::os_command::command_output_with_timeout;
 use super::{fallback_archive_defaults, is_packaged, DefaultArchiverResult};
 #[cfg(target_os = "linux")]
 use super::{is_flatpak, linux_desktop_session_available};
@@ -146,55 +141,17 @@ pub fn open_os_integration_settings(app: tauri::AppHandle) -> Result<(), String>
     }
 }
 
-/// Opens System Settings → Keyboard → Keyboard Shortcuts → **Services**.
+/// Opens System Settings → Keyboard → Keyboard Shortcuts.
 ///
 /// Zinnia registers **Finder Services** (`NSServices`), not a Finder Sync /
 /// File Provider appex. Those show under Login Items & Extensions (Keka-style);
-/// ours are toggled under Keyboard Shortcuts → Services.
+/// ours are toggled under Keyboard Shortcuts → Services. The frontend shows
+/// step-by-step instructions after opening this pane (no UI scripting).
 #[tauri::command]
 #[allow(deprecated)]
 pub fn open_finder_services_settings(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        // URL alone often leaves Modifier Keys selected. Reveal Shortcuts, then
-        // select the Services row by name (fragile UI scripting, with URL fallback).
-        const SCRIPT: &str = r#"
-tell application "System Settings"
-  activate
-  reveal anchor "Shortcuts" of pane id "com.apple.Keyboard-Settings.extension"
-end tell
-delay 0.9
-tell application "System Events"
-  tell process "System Settings"
-    set frontmost to true
-    if not (exists sheet 1 of window 1) then error "shortcuts sheet missing"
-    tell sheet 1 of window 1
-      set theOutline to outline 1 of scroll area 1 of group 1 of splitter group 1 of group 1
-      repeat with r in rows of theOutline
-        try
-          set rowLabel to name of UI element 1 of r
-          if rowLabel is "Services" then
-            set selected of r to true
-            return "ok"
-          end if
-        end try
-      end repeat
-    end tell
-  end tell
-end tell
-error "Services row not found"
-"#;
-        let script_ok = command_output_with_timeout(
-            Command::new("osascript").arg("-e").arg(SCRIPT),
-            std::time::Duration::from_secs(8),
-        )
-        .map(|output| output.status.success())
-        .unwrap_or(false);
-        if script_ok {
-            return Ok(());
-        }
-        // Accessibility may be denied or the sheet layout changed; still
-        // open Keyboard Shortcuts so the user can click Services manually.
         use tauri_plugin_shell::ShellExt;
         app.shell()
             .open(
