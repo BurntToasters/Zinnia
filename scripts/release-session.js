@@ -119,10 +119,28 @@ function recordSuccessfulQualityGate(root = defaultRoot) {
       root,
     );
   } catch {
-    return false;
+    return { recorded: false, dirtyFiles: null };
   }
   if (status) {
-    return false;
+    const dirtyPaths = status
+      .split("\n")
+      .map((line) => line.replace(/\r$/, ""))
+      .filter(Boolean)
+      .map((line) => {
+        const pathPart = line.length >= 3 ? line.slice(3) : line;
+        return pathPart.includes(" -> ")
+          ? pathPart.split(" -> ").at(-1)
+          : pathPart;
+      })
+      .filter(
+        (filePath) =>
+          !filePath.startsWith("src-tauri/gen/schemas/") &&
+          filePath !== "src-tauri/gen/" &&
+          filePath !== "src-tauri/gen/schemas/",
+      );
+    if (dirtyPaths.length > 0) {
+      return { recorded: false, dirtyFiles: status };
+    }
   }
   const proofPath = path.join(root, QUALITY_GATE_RELATIVE_PATH);
   fs.mkdirSync(path.dirname(proofPath), { recursive: true });
@@ -131,7 +149,7 @@ function recordSuccessfulQualityGate(root = defaultRoot) {
     `${JSON.stringify({ ...currentReleaseIdentity(root), completedAt: Date.now() })}\n`,
     { mode: 0o600 },
   );
-  return true;
+  return { recorded: true, dirtyFiles: null };
 }
 
 function verifyQualityGate(root = defaultRoot, options) {

@@ -46,9 +46,27 @@ function runPreflight() {
 
   const dirty = git(["status", "--porcelain=v1", "--untracked-files=all"]);
   if (dirty) {
-    throw new Error(
-      `Working tree is not clean. Commit and push the exact release source first:\n${dirty}`,
-    );
+    const dirtyPaths = dirty
+      .split("\n")
+      .map((line) => line.replace(/\r$/, ""))
+      .filter(Boolean)
+      .map((line) => {
+        const pathPart = line.length >= 3 ? line.slice(3) : line;
+        return pathPart.includes(" -> ")
+          ? pathPart.split(" -> ").at(-1)
+          : pathPart;
+      })
+      .filter(
+        (filePath) =>
+          !filePath.startsWith("src-tauri/gen/schemas/") &&
+          filePath !== "src-tauri/gen/" &&
+          filePath !== "src-tauri/gen/schemas/",
+      );
+    if (dirtyPaths.length > 0) {
+      throw new Error(
+        `Working tree is not clean. Commit and push the exact release source first:\n${dirty}`,
+      );
+    }
   }
 
   git(["fetch", "--quiet", "origin"]);

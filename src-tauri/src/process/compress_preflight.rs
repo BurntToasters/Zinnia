@@ -135,6 +135,7 @@ pub fn assert_no_nested_reparse_for_compress(paths: &[String]) -> Result<(), Str
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use super::*;
 
     #[cfg(unix)]
