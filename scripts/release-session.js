@@ -78,7 +78,7 @@ function validateReleaseSession(
   validateIdentity(session, expected, "Release build session");
   if (
     !Number.isFinite(session.qualityGateCompletedAt) ||
-    session.qualityGateCompletedAt > session.startedAt
+    session.qualityGateCompletedAt >= session.startedAt
   ) {
     throw new Error("Release build session has no valid quality-gate proof.");
   }

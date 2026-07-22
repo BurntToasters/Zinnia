@@ -110,6 +110,27 @@ describe("release build session", () => {
     ).toThrow(/quality-gate proof/);
   });
 
+  it("rejects sessions where the quality gate did not run before session start", () => {
+    // qualityGateCompletedAt equal to startedAt — gate and session created
+    // in the same millisecond, which cannot happen via createReleaseSession.
+    expect(() =>
+      validateReleaseSession(
+        { ...identity, qualityGateCompletedAt: 9_000, startedAt: 9_000 },
+        identity,
+        { now: 10_000 },
+      ),
+    ).toThrow(/quality-gate proof/);
+
+    // qualityGateCompletedAt strictly after startedAt — clearly invalid.
+    expect(() =>
+      validateReleaseSession(
+        { ...identity, qualityGateCompletedAt: 9_001, startedAt: 9_000 },
+        identity,
+        { now: 10_000 },
+      ),
+    ).toThrow(/quality-gate proof/);
+  });
+
   it("binds a recorded clean-tree quality gate to the release session", () => {
     const root = fs.mkdtempSync(
       path.join(os.tmpdir(), "zinnia-release-session-"),
