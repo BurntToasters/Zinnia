@@ -7,6 +7,7 @@ import {
   syncSettingsSecurityControlsForFormat,
   openSettingsModal,
   closeSettingsModal,
+  toggleSettingsModal,
   syncQuickExtractWarmIdleControl,
 } from "../settings";
 import { state } from "../state";
@@ -167,6 +168,7 @@ describe("populateSettingsModal", () => {
     populateSettingsModal();
     const logDir = document.getElementById("s-log-dir")!;
     expect(logDir.textContent).toBe("/home/user/.local/share/zinnia/logs");
+    expect(logDir.title).toBe("/home/user/.local/share/zinnia/logs");
   });
 
   it('shows "Unavailable" when log directory is empty', () => {
@@ -174,6 +176,7 @@ describe("populateSettingsModal", () => {
     populateSettingsModal();
     const logDir = document.getElementById("s-log-dir")!;
     expect(logDir.textContent).toBe("Unavailable");
+    expect(logDir.title).toBe("");
   });
 });
 
@@ -328,16 +331,44 @@ describe("syncQuickExtractWarmIdleControl", () => {
 describe("openSettingsModal / closeSettingsModal", () => {
   it("shows settings overlay on open", () => {
     const overlay = document.getElementById("settings-overlay")!;
+    const trigger = document.getElementById("open-settings")!;
     overlay.hidden = true;
+    openSettingsModal();
+    expect(overlay.hidden).toBe(false);
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("is a no-op when settings are already open", () => {
+    const overlay = document.getElementById("settings-overlay")!;
+    overlay.hidden = true;
+    openSettingsModal();
+    const basicFx = document.getElementById(
+      "s-basic-window-effects",
+    ) as HTMLInputElement | null;
+    if (basicFx) basicFx.checked = !basicFx.checked;
     openSettingsModal();
     expect(overlay.hidden).toBe(false);
   });
 
+  it("toggles settings open and closed", () => {
+    const overlay = document.getElementById("settings-overlay")!;
+    const trigger = document.getElementById("open-settings")!;
+    overlay.hidden = true;
+    toggleSettingsModal();
+    expect(overlay.hidden).toBe(false);
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    toggleSettingsModal();
+    expect(overlay.hidden).toBe(true);
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+  });
+
   it("hides settings overlay on close", () => {
     const overlay = document.getElementById("settings-overlay")!;
+    const trigger = document.getElementById("open-settings")!;
     overlay.hidden = false;
     closeSettingsModal();
     expect(overlay.hidden).toBe(true);
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("restores the live window-effects preview when settings are cancelled", () => {

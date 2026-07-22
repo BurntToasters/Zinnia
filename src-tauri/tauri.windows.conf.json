@@ -1,40 +1,55 @@
 {
   "bundle": {
     "resources": {
-      "windows/shell/out/zinnia_shell.dll": "shell-0.6.0-beta.14/zinnia_shell.dll",
-      "windows/shell/out/zinnia_extract_shell.dll": "shell-0.6.0-beta.14/zinnia_extract_shell.dll",
-      "windows/shell/out/ZinniaContextMenu.msix": "shell-0.6.0-beta.14/ZinniaContextMenu.msix",
-      "windows/shell/out/ZinniaExtractContextMenu.msix": "shell-0.6.0-beta.14/ZinniaExtractContextMenu.msix",
-      "../scripts/register-windows-context-menu.ps1": "shell-0.6.0-beta.14/register-windows-context-menu.ps1"
+      "windows/shell/out/zinnia_shell.dll": "shell-0.6.0-beta.15/zinnia_shell.dll",
+      "windows/shell/out/zinnia_extract_shell.dll": "shell-0.6.0-beta.15/zinnia_extract_shell.dll",
+      "windows/shell/out/ZinniaContextMenu.msix": "shell-0.6.0-beta.15/ZinniaContextMenu.msix",
+      "windows/shell/out/ZinniaExtractContextMenu.msix": "shell-0.6.0-beta.15/ZinniaExtractContextMenu.msix",
+      "../scripts/register-windows-context-menu.ps1": "shell-0.6.0-beta.15/register-windows-context-menu.ps1"
     },
     "fileAssociations": [
       {
-        "ext": ["7z"],
+        "ext": [
+          "7z"
+        ],
         "mimeType": "application/x-7z-compressed",
         "description": "7-Zip Archive"
       },
       {
-        "ext": ["zip"],
+        "ext": [
+          "zip"
+        ],
         "mimeType": "application/zip",
         "description": "ZIP Archive"
       },
       {
-        "ext": ["tar"],
+        "ext": [
+          "tar"
+        ],
         "mimeType": "application/x-tar",
         "description": "TAR Archive"
       },
       {
-        "ext": ["gz", "tgz"],
+        "ext": [
+          "gz",
+          "tgz"
+        ],
         "mimeType": "application/gzip",
         "description": "Gzip Archive"
       },
       {
-        "ext": ["bz2", "tbz2"],
+        "ext": [
+          "bz2",
+          "tbz2"
+        ],
         "mimeType": "application/x-bzip2",
         "description": "Bzip2 Archive"
       },
       {
-        "ext": ["xz", "txz"],
+        "ext": [
+          "xz",
+          "txz"
+        ],
         "mimeType": "application/x-xz",
         "description": "XZ Archive"
       }

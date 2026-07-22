@@ -116,7 +116,9 @@ export function populateSettingsModal() {
 
   const logDir = document.getElementById("s-log-dir");
   if (logDir) {
-    logDir.textContent = state.logDirectory || "Unavailable";
+    const text = state.logDirectory || "Unavailable";
+    logDir.textContent = text;
+    logDir.title = state.logDirectory ? state.logDirectory : "";
   }
 }
 
@@ -211,7 +213,16 @@ export async function syncBasicWindowEffectsVisibility(): Promise<void> {
   row.hidden = !supports;
 }
 
+function syncSettingsTriggerState(open: boolean) {
+  const trigger = document.getElementById("open-settings");
+  if (!trigger) return;
+  trigger.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
 export function openSettingsModal() {
+  const overlay = $("settings-overlay");
+  if (!overlay.hidden) return;
+
   settingsModalBasicWindowEffects ??= state.currentSettings.basicWindowEffects;
   populateSettingsModal();
   const keepWarm = document.getElementById(
@@ -233,8 +244,8 @@ export function openSettingsModal() {
       void syncWorkspaceWindowFx();
     });
   }
-  const overlay = $("settings-overlay");
   overlay.hidden = false;
+  syncSettingsTriggerState(true);
   const modal = overlay.querySelector<HTMLElement>(".modal");
   if (modal) {
     trapFocus(modal);
@@ -242,6 +253,14 @@ export function openSettingsModal() {
       ".settings-tab.is-active",
     );
     activeTab?.focus();
+  }
+}
+
+export function toggleSettingsModal() {
+  if ($("settings-overlay").hidden) {
+    openSettingsModal();
+  } else {
+    closeSettingsModal();
   }
 }
 
@@ -258,6 +277,7 @@ export function closeSettingsModal(
   settingsModalBasicWindowEffects = null;
   const overlay = $("settings-overlay");
   overlay.hidden = true;
+  syncSettingsTriggerState(false);
   const modal = overlay.querySelector<HTMLElement>(".modal");
   if (modal) releaseFocusTrap(modal);
   const trigger = document.getElementById("open-settings");

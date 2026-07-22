@@ -146,6 +146,7 @@ body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
 #app[data-workspace-mode="basic"] .modal--settings .settings-tab {
   background: transparent;
   border: none;
+  border-left: none;
   border-bottom: 2px solid transparent;
   border-radius: 0;
   padding: 0;
@@ -171,7 +172,7 @@ body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
   color: var(--accent);
   background: transparent;
   border-bottom-color: var(--accent);
-  border-left-color: transparent;
+  border-left: none;
 }
 
 /* Body: centered column, section rhythm */
@@ -380,9 +381,9 @@ body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
   .settings-section
   > .setting-item
   > .btn {
-  width: 148px;
-  min-width: 148px;
-  max-width: 148px;
+  width: 168px;
+  min-width: 168px;
+  max-width: 168px;
 }
 
 #app[data-workspace-mode="basic"] .modal--settings .setting-item .setting-info {
@@ -391,6 +392,7 @@ body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
   gap: 5px;
   flex: 1;
   min-width: 0;
+  overflow: hidden;
 }
 
 #app[data-workspace-mode="basic"] .modal--settings .setting-item .switch {
@@ -408,6 +410,15 @@ body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
   font-size: 0.75rem;
   color: var(--text-secondary);
   line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+#app[data-workspace-mode="basic"] .modal--settings .setting-desc--path {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 #app[data-workspace-mode="basic"] .modal--settings .setting-item select,
@@ -444,14 +455,39 @@ body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
 #app[data-workspace-mode="basic"]
   .modal--settings
   .setting-item
-  .setting-actions {
+  > .setting-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   width: auto;
-  flex-shrink: 0;
+  flex: 0 1 auto;
+  max-width: min(100%, 22rem);
   justify-content: flex-end;
   margin-top: 0;
+}
+
+/* Multi-button rows (Export logs): path on top, actions below */
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .setting-item:has(> .setting-actions button:nth-child(2)) {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .setting-item:has(> .setting-actions button:nth-child(2))
+  > .setting-info {
+  flex: 1 1 100%;
+}
+
+#app[data-workspace-mode="basic"]
+  .modal--settings
+  .setting-item:has(> .setting-actions button:nth-child(2))
+  > .setting-actions {
+  max-width: none;
+  width: 100%;
+  justify-content: flex-start;
 }
 
 #app[data-workspace-mode="basic"]

@@ -155,7 +155,9 @@
             class="btn btn--ghost btn--icon"
             id="open-settings"
             title="Settings"
-            aria-label="Open settings"
+            aria-label="Settings"
+            aria-expanded="false"
+            aria-controls="settings-overlay"
             aria-keyshortcuts="Meta+Comma Control+Comma"
           >
             <i data-lucide="settings" class="lucide-icon"></i>
@@ -296,7 +298,7 @@
                         >Update channel</span
                       >
                       <span class="setting-desc"
-                        >Production updates or beta builds.</span
+                        >Auto follows this build; or pick Stable / Beta.</span
                       >
                     </div>
                     <select
@@ -304,7 +306,7 @@
                       class="setting-select"
                       aria-labelledby="title-update-channel"
                     >
-                      <option value="auto">Auto (follow version)</option>
+                      <option value="auto">Auto</option>
                       <option value="stable">Stable</option>
                       <option value="beta">Beta</option>
                     </select>
@@ -509,7 +511,9 @@
                   <div class="setting-item">
                     <div class="setting-info">
                       <span class="setting-title">Export logs</span>
-                      <span class="setting-desc" id="s-log-dir"
+                      <span
+                        class="setting-desc setting-desc--path"
+                        id="s-log-dir"
                         >Detecting log directory…</span
                       >
                     </div>
@@ -558,11 +562,20 @@
                       <button class="btn btn--sm" id="show-licenses">
                         View
                       </button>
-                      <button
-                        class="btn btn--ghost btn--sm"
-                        id="rerun-setup-wizard"
+                    </div>
+                  </div>
+
+                  <div class="setting-item">
+                    <div class="setting-info">
+                      <span class="setting-title">Setup wizard</span>
+                      <span class="setting-desc"
+                        >Re-run first-run choices for theme, workspace, and OS
+                        integration.</span
                       >
-                        Run setup wizard again
+                    </div>
+                    <div class="setting-actions">
+                      <button class="btn btn--sm" id="rerun-setup-wizard">
+                        Run again
                       </button>
                     </div>
                   </div>
@@ -1290,7 +1303,8 @@
           <div class="setup-wizard-step" data-step="3" hidden>
             <h2 class="setup-wizard-step__title">Updates</h2>
             <p class="setup-wizard-step__desc">
-              Control automatic update checks and update channel.
+              Control automatic update checks and channel. Auto follows this
+              build&apos;s channel.
             </p>
             <div class="setup-wizard-updates">
               <label class="setup-wizard-checkbox">
@@ -1300,7 +1314,7 @@
               <div class="setup-wizard-field">
                 <label for="setup-update-channel">Update channel</label>
                 <select id="setup-update-channel">
-                  <option value="auto">Auto (follow version)</option>
+                  <option value="auto">Auto</option>
                   <option value="stable">Stable</option>
                   <option value="beta">Beta</option>
                 </select>
