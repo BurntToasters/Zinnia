@@ -17,11 +17,36 @@ const QUALITY_GATE_RELATIVE_PATH = path.join(
 const DEFAULT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 function command(commandName, args, root) {
+  // trimEnd only: git porcelain uses " M path" / "M  path". trim() would turn
+  // the first into "M path" and break XY/path parsing (schema ignore fails).
   return execFileSync(commandName, args, {
     cwd: root,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
-  }).trim();
+  }).trimEnd();
+}
+
+/** Paths from `git status --porcelain=v1` (keeps leading spaces in status text). */
+function porcelainPaths(statusText) {
+  return statusText
+    .split("\n")
+    .map((line) => line.replace(/\r$/, ""))
+    .filter(Boolean)
+    .map((line) => {
+      // XY PATH  or  XY ORIG -> PATH  (XY is always two status columns)
+      const pathPart = line.length >= 3 ? line.slice(3) : line;
+      return pathPart.includes(" -> ")
+        ? pathPart.split(" -> ").at(-1)
+        : pathPart;
+    });
+}
+
+function isIgnorableReleaseDirtyPath(filePath) {
+  return (
+    filePath.startsWith("src-tauri/gen/schemas/") ||
+    filePath === "src-tauri/gen/" ||
+    filePath === "src-tauri/gen/schemas/"
+  );
 }
 
 function sha256File(filePath) {
@@ -122,22 +147,9 @@ function recordSuccessfulQualityGate(root = defaultRoot) {
     return { recorded: false, dirtyFiles: null };
   }
   if (status) {
-    const dirtyPaths = status
-      .split("\n")
-      .map((line) => line.replace(/\r$/, ""))
-      .filter(Boolean)
-      .map((line) => {
-        const pathPart = line.length >= 3 ? line.slice(3) : line;
-        return pathPart.includes(" -> ")
-          ? pathPart.split(" -> ").at(-1)
-          : pathPart;
-      })
-      .filter(
-        (filePath) =>
-          !filePath.startsWith("src-tauri/gen/schemas/") &&
-          filePath !== "src-tauri/gen/" &&
-          filePath !== "src-tauri/gen/schemas/",
-      );
+    const dirtyPaths = porcelainPaths(status).filter(
+      (filePath) => !isIgnorableReleaseDirtyPath(filePath),
+    );
     if (dirtyPaths.length > 0) {
       return { recorded: false, dirtyFiles: status };
     }
@@ -213,6 +225,8 @@ export {
   clearQualityGateProof,
   createReleaseSession,
   currentReleaseIdentity,
+  isIgnorableReleaseDirtyPath,
+  porcelainPaths,
   recordSuccessfulQualityGate,
   validateQualityGate,
   validateReleaseSession,

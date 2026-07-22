@@ -8,6 +8,7 @@ import {
   DEFAULT_MAX_AGE_MS,
   RELEASE_SESSION_RELATIVE_PATH,
   createReleaseSession,
+  porcelainPaths,
   recordSuccessfulQualityGate,
   validateQualityGate,
   validateReleaseSession,
@@ -26,6 +27,20 @@ const identity = {
 };
 
 describe("release build session", () => {
+  it("parses porcelain paths without eating the first path character", () => {
+    // Regression: trim() on " M src-tauri/gen/schemas/x" became "M path",
+    // slice(3) => "c-tauri/..." and the schema ignore filter missed it.
+    expect(
+      porcelainPaths(" M src-tauri/gen/schemas/linux-schema.json"),
+    ).toEqual(["src-tauri/gen/schemas/linux-schema.json"]);
+    expect(
+      porcelainPaths("M  src-tauri/gen/schemas/linux-schema.json"),
+    ).toEqual(["src-tauri/gen/schemas/linux-schema.json"]);
+    expect(
+      porcelainPaths("?? src-tauri/gen/schemas/linux-schema.json"),
+    ).toEqual(["src-tauri/gen/schemas/linux-schema.json"]);
+  });
+
   it("accepts a recent session for the exact source and environment", () => {
     const now = 1_000_000;
     const session = {
@@ -180,9 +195,28 @@ describe("release build session", () => {
 
       expect(recordSuccessfulQualityGate(root).recorded).toBe(true);
 
-      // Generated ACL schemas rewritten by tauri build must not block the quality gate
+      // Generated ACL schemas rewritten by tauri build must not block the quality
+      // gate — including when they are tracked and show porcelain " M path".
       const schemaDir = path.join(root, "src-tauri", "gen", "schemas");
       fs.mkdirSync(schemaDir, { recursive: true });
+      fs.writeFileSync(path.join(schemaDir, "linux-schema.json"), "clean\n");
+      execFileSync("git", ["add", "src-tauri/gen/schemas/linux-schema.json"], {
+        cwd: root,
+      });
+      execFileSync(
+        "git",
+        [
+          "-c",
+          "user.name=Zinnia Test",
+          "-c",
+          "user.email=zinnia@example.invalid",
+          "commit",
+          "--quiet",
+          "-m",
+          "add schema",
+        ],
+        { cwd: root },
+      );
       fs.writeFileSync(path.join(schemaDir, "linux-schema.json"), "dirty\n");
       expect(recordSuccessfulQualityGate(root).recorded).toBe(true);
 

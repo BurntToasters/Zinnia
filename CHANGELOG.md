@@ -23,6 +23,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
 ## Changes in `v0.6.0-beta.14:`
 
+- **Fix:** Linux release VMs no longer fail after `test:all` when only generated `src-tauri/gen/schemas/*` files are dirty — quality-gate recording no longer strips git porcelain leading spaces (` M path`), so schema ignore works.
 - **Critical Fix:** Windows updates now install Explorer context-menu DLLs side by side in a versioned directory, preventing a loaded `zinnia_shell.dll` from blocking NSIS and soft-locking the app mid-update; identical same-version reinstalls skip unchanged payloads, while legacy and older versioned payloads are removed immediately or scheduled for deletion after reboot, including during uninstall.
 - **Fix:** Windows shell DLL and sparse-package numeric versions now preserve the beta number and reserve the maximum revision for stable builds, so promoting `0.6.0-beta.14` (`0.6.0.14`) to stable `0.6.0` (`0.6.0.65535`) always moves forward.
 - **Fix:** Windows builds that disable the modern context menu now forcibly replace any stale shell artifacts with empty stubs, preventing an older DLL/MSIX payload from leaking into a later installer.
