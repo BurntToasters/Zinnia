@@ -35,10 +35,7 @@ pub fn reject_link_or_reparse(path: &Path, meta: &Metadata) -> Result<(), String
 ///
 /// macOS `.app` / `.framework` bundles commonly use relative symlinks
 /// (`Versions/Current` → `A`). Absolute links and `../` escapes stay rejected.
-pub fn assert_relative_symlink_within_root(
-    root: &Path,
-    link_path: &Path,
-) -> Result<(), String> {
+pub fn assert_relative_symlink_within_root(root: &Path, link_path: &Path) -> Result<(), String> {
     let target = std::fs::read_link(link_path).map_err(|e| e.to_string())?;
     if target.is_absolute() {
         return Err(format!(
@@ -47,10 +44,7 @@ pub fn assert_relative_symlink_within_root(
         ));
     }
 
-    let mut resolved = link_path
-        .parent()
-        .unwrap_or(link_path)
-        .to_path_buf();
+    let mut resolved = link_path.parent().unwrap_or(link_path).to_path_buf();
     for component in target.components() {
         match component {
             std::path::Component::Normal(part) => resolved.push(part),

@@ -83,11 +83,24 @@ then bundles them into the NSIS installer. Post-install runs
 to `$INSTDIR\zinnia-context-menu-register.log` without aborting the install
 (classic verbs still work).
 
-On Windows, Tauri’s resource directory is `$INSTDIR` (next to `zinnia.exe`).
-The DLLs look for `zinnia.exe` in the same folder first, then the parent
-(if the packages are ever mapped under `resources\`). NSIS registration looks
-for both DLLs, both MSIX files, and `register-windows-context-menu.ps1` in
-`$INSTDIR`, then `$INSTDIR\resources`.
+On Windows, the installer places each release's shell payload in
+`$INSTDIR\shell-<version>`. Shell hosts can keep a COM DLL mapped after its menu
+closes, so side-by-side directories prevent a later updater from trying to
+overwrite a locked DLL. Re-running an identical same-version installer also
+skips equal-timestamp payload files instead of reopening its loaded DLL. The
+DLLs look for `zinnia.exe` in the same folder first, then the parent. NSIS
+registers both sparse packages with `$INSTDIR` as their
+external root so the manifest's `zinnia.exe` resolves correctly; each manifest's
+COM path points into the new versioned directory. Legacy unversioned DLLs are
+deleted immediately or after reboot if still mapped. Older versioned payloads
+receive the same cleanup, and uninstall covers every remaining `shell-*`
+directory.
+
+Windows/MSIX versions follow Zinnia's beta-to-stable release policy. A beta
+keeps its sequence in the fourth component, while stable reserves the maximum
+value: `0.6.0-beta.14` becomes `0.6.0.14`, and stable `0.6.0` becomes
+`0.6.0.65535`. The shared helper drives both DLL resources and sparse manifests
+so stable promotion cannot become a numeric package downgrade.
 
 Signed builds **require** `AZURE_ARTIFACT_SIGNING_PUBLISHER_DN` (full Subject).
 CN-only is rejected. `verify-windows-authenticode.ps1` also checks the signed

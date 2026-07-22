@@ -134,7 +134,10 @@ pub async fn remove_managed_temp_dir(app: tauri::AppHandle, path: String) -> Res
 
 /// List direct children of a managed conversion temp dir (includes dotfiles).
 #[tauri::command]
-pub fn list_managed_temp_children(app: tauri::AppHandle, path: String) -> Result<Vec<String>, String> {
+pub fn list_managed_temp_children(
+    app: tauri::AppHandle,
+    path: String,
+) -> Result<Vec<String>, String> {
     let base = managed_base(&app)?;
     let target = std::path::PathBuf::from(&path);
     let raw_meta = std::fs::symlink_metadata(&target).map_err(|e| e.to_string())?;
@@ -200,11 +203,12 @@ mod tests {
         let mut found = None;
         loop {
             let name = cursor.file_name().unwrap().to_string_lossy();
-            if name.starts_with("tmp-") && name.len() > 4 {
-                if cursor.parent() == Some(Path::new("/cache/convert")) {
-                    found = Some(cursor.clone());
-                    break;
-                }
+            if name.starts_with("tmp-")
+                && name.len() > 4
+                && cursor.parent() == Some(Path::new("/cache/convert"))
+            {
+                found = Some(cursor.clone());
+                break;
             }
             if !cursor.pop() {
                 break;

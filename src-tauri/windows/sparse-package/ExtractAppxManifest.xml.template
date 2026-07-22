@@ -86,7 +86,7 @@
         <com:Extension Category="windows.comServer">
           <com:ComServer>
             <com:SurrogateServer DisplayName="Extract with Zinnia">
-              <com:Class Id="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" Path="zinnia_extract_shell.dll" ThreadingModel="STA" />
+              <com:Class Id="B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5D" Path="__SHELL_DIRECTORY__\zinnia_extract_shell.dll" ThreadingModel="STA" />
             </com:SurrogateServer>
           </com:ComServer>
         </com:Extension>

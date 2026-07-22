@@ -104,12 +104,8 @@ fn walk_path(
             probe.app_bundles = probe.app_bundles.saturating_add(1);
             push_example(probe, path);
         }
-        let entries = std::fs::read_dir(path).map_err(|e| {
-            format!(
-                "Unable to read directory '{}': {e}",
-                path.display()
-            )
-        })?;
+        let entries = std::fs::read_dir(path)
+            .map_err(|e| format!("Unable to read directory '{}': {e}", path.display()))?;
         for entry in entries {
             let entry = entry.map_err(|e| e.to_string())?;
             walk_path(&entry.path(), probe, visited, false, hit_limit)?;
@@ -145,10 +141,7 @@ mod tests {
     #[test]
     fn counts_nested_symlinks_and_apps() {
         use std::os::unix::fs::symlink;
-        let root = std::env::temp_dir().join(format!(
-            "zinnia-probe-{}",
-            std::process::id()
-        ));
+        let root = std::env::temp_dir().join(format!("zinnia-probe-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let app = root.join("Demo.app/Contents");
         std::fs::create_dir_all(&app).unwrap();

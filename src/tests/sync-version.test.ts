@@ -5,6 +5,8 @@ import {
   macMarketingVersionFromSemver,
   updateCargoLockPackageVersion,
   updateWindowsResourceFlags,
+  updateWindowsShellResourceDestinations,
+  windowsPackageVersionFromSemver,
 } from "../../scripts/sync-version-helpers.js";
 
 const resource = `#ifdef _DEBUG
@@ -74,16 +76,113 @@ describe("Windows resource version flags", () => {
   });
 });
 
+describe("Windows package version", () => {
+  it("keeps beta, stable, and the next patch monotonically ordered", () => {
+    const versions = [
+      "0.6.0-beta.1",
+      "0.6.0-beta.14",
+      "0.6.0",
+      "0.6.1-beta.0",
+    ].map(windowsPackageVersionFromSemver);
+
+    expect(versions).toEqual(["0.6.0.1", "0.6.0.14", "0.6.0.65535", "0.6.1.0"]);
+    for (let index = 1; index < versions.length; index += 1) {
+      const previous = versions[index - 1].split(".").map(Number);
+      const current = versions[index].split(".").map(Number);
+      const differingIndex = current.findIndex(
+        (part, partIndex) => part !== previous[partIndex],
+      );
+      expect(differingIndex).toBeGreaterThanOrEqual(0);
+      expect(current[differingIndex]).toBeGreaterThan(previous[differingIndex]);
+    }
+  });
+
+  it("rejects unsupported prerelease forms and out-of-range components", () => {
+    expect(() => windowsPackageVersionFromSemver("0.6.0-preview.1")).toThrow(
+      /cannot be represented/,
+    );
+    expect(() => windowsPackageVersionFromSemver("0.6.0-alpha.1")).toThrow(
+      /cannot be represented/,
+    );
+    expect(() => windowsPackageVersionFromSemver("0.6.0-rc.1")).toThrow(
+      /cannot be represented/,
+    );
+    expect(() => windowsPackageVersionFromSemver("0.6.0-beta.014")).toThrow(
+      /cannot be represented/,
+    );
+    expect(() => windowsPackageVersionFromSemver("0.6.0-beta.65535")).toThrow(
+      /0-65534/,
+    );
+    expect(() => windowsPackageVersionFromSemver("65536.0.0")).toThrow(
+      /exceeds 65535/,
+    );
+  });
+});
+
+describe("Windows shell resource destinations", () => {
+  it("writes every shell artifact to the concrete release directory", () => {
+    const resources = {
+      "windows/shell/out/zinnia_shell.dll": "old/zinnia_shell.dll",
+      "windows/shell/out/zinnia_extract_shell.dll":
+        "old/zinnia_extract_shell.dll",
+      "windows/shell/out/ZinniaContextMenu.msix": "old/ZinniaContextMenu.msix",
+      "windows/shell/out/ZinniaExtractContextMenu.msix":
+        "old/ZinniaExtractContextMenu.msix",
+      "../scripts/register-windows-context-menu.ps1":
+        "old/register-windows-context-menu.ps1",
+      "unrelated.txt": "keep/unrelated.txt",
+    };
+    const config = { bundle: { resources } };
+
+    const updated = updateWindowsShellResourceDestinations(
+      config,
+      "0.6.0-beta.14",
+    );
+
+    expect(updated.bundle.resources).toEqual({
+      "windows/shell/out/zinnia_shell.dll":
+        "shell-0.6.0-beta.14/zinnia_shell.dll",
+      "windows/shell/out/zinnia_extract_shell.dll":
+        "shell-0.6.0-beta.14/zinnia_extract_shell.dll",
+      "windows/shell/out/ZinniaContextMenu.msix":
+        "shell-0.6.0-beta.14/ZinniaContextMenu.msix",
+      "windows/shell/out/ZinniaExtractContextMenu.msix":
+        "shell-0.6.0-beta.14/ZinniaExtractContextMenu.msix",
+      "../scripts/register-windows-context-menu.ps1":
+        "shell-0.6.0-beta.14/register-windows-context-menu.ps1",
+      "unrelated.txt": "keep/unrelated.txt",
+    });
+    expect(config.bundle.resources).toBe(resources);
+  });
+
+  it("fails when a required shell artifact is removed from packaging", () => {
+    expect(() =>
+      updateWindowsShellResourceDestinations(
+        { bundle: { resources: {} } },
+        "0.6.0-beta.14",
+      ),
+    ).toThrow(/missing shell resource/);
+  });
+});
+
 describe("macOS bundle version", () => {
   it("converts prerelease and stable SemVer versions into ordered numeric builds", () => {
     expect(macBundleVersionFromSemver("0.6.0-beta.4")).toBe("0.6.34");
-    expect(macBundleVersionFromSemver("0.6.0-rc.1")).toBe("0.6.61");
     expect(macBundleVersionFromSemver("0.6.0")).toBe("0.6.99");
     expect(macBundleVersionFromSemver("0.6.1-beta.1")).toBe("0.6.131");
   });
 
   it("rejects unsupported prerelease version forms", () => {
     expect(() => macBundleVersionFromSemver("0.6.0-preview.1")).toThrow(
+      /cannot be represented/,
+    );
+    expect(() => macBundleVersionFromSemver("0.6.0-alpha.1")).toThrow(
+      /cannot be represented/,
+    );
+    expect(() => macBundleVersionFromSemver("0.6.0-rc.1")).toThrow(
+      /cannot be represented/,
+    );
+    expect(() => macBundleVersionFromSemver("0.6.0-beta.04")).toThrow(
       /cannot be represented/,
     );
     expect(() => macBundleVersionFromSemver("0.6.0-beta.30")).toThrow(/0-29/);

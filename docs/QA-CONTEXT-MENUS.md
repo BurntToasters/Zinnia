@@ -77,7 +77,7 @@ Requires a **signed** NSIS install with full `AZURE_ARTIFACT_SIGNING_PUBLISHER_D
 1. Confirm package + signature:
    ```powershell
    Get-AppxPackage -Name run.rosie.zinnia.contextmenu
-   Get-AuthenticodeSignature "…\Zinnia\zinnia_shell.dll"   # Status = Valid
+   Get-AuthenticodeSignature "…\Zinnia\shell-0.6.0-beta.14\zinnia_shell.dll"   # Status = Valid
    ```
 2. If registration failed, check `$INSTDIR\zinnia-context-menu-register.log`.
 3. Right-click a `.zip` / `.7z` (primary menu, not “Show more options”). Also
@@ -90,9 +90,17 @@ Requires a **signed** NSIS install with full `AZURE_ARTIFACT_SIGNING_PUBLISHER_D
    outer iconless **Zinnia** wrapper, no top-level Extract; submenu Extract disabled).
 7. Right-click **empty folder background** → **Zinnia** ▸ Compress (current folder).
 8. “Show more options” still shows classic verbs (including background Compress).
-9. Uninstall → Appx package gone; HKCU `ZinniaCompress` keys gone.
+9. Upgrade smoke: install beta 11 or beta 13, invoke the modern menu once so
+    its shell DLL is loaded, then update to beta 14. Installation must complete
+    without an **Error opening file for writing** prompt, and both modern menu
+    entries must work after Explorer reloads them.
+10. After a reboot, confirm older `shell-*` directories have been removed.
+11. Run the beta 14 installer again after invoking its modern menu; reinstall
+    must complete without a file-write prompt and both menu entries must work.
+12. Uninstall beta 14 → Appx packages and HKCU `ZinniaCompress` keys are gone;
+    confirm no versioned shell directories remain after any requested reboot.
 
-> **Release gate:** Steps 5-7 are required before publishing a signed Windows
+> **Release gate:** Steps 5-12 are required before publishing a signed Windows
 > beta. CI unsigned shell compile smoke does **not** satisfy this gate.
 >
 > Optional (not a release): after publishing updater artifacts, run
@@ -108,7 +116,7 @@ Requires a **signed** NSIS install with full `AZURE_ARTIFACT_SIGNING_PUBLISHER_D
 | Stub MSIX (≤1 KiB)                  | Classic verbs only                   |
 | CN-only publisher DN                | Context-menu build fails             |
 | MSIX missing `AllowExternalContent` | Register log shows `0x80073D2E`      |
-| Reinstall / upgrade                 | Remove-before-add (see register log) |
+| Reinstall / upgrade                 | Versioned shell directory + remove-before-add; no file-write prompt |
 
 ## Classic Windows verbs
 

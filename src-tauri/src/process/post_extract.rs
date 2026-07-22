@@ -34,15 +34,10 @@ pub(crate) fn apply_post_extract_fixups(root: &Path) -> PostExtractFixups {
 #[cfg(target_os = "macos")]
 fn clear_quarantine_tree(root: &Path) -> u32 {
     let mut cleared = 0u32;
-    visit_app_bundles(root, &mut |app| {
-        match clear_quarantine_attr(app) {
-            Ok(()) => cleared = cleared.saturating_add(1),
-            Err(error) => {
-                eprintln!(
-                    "Could not clear quarantine on {}: {error}",
-                    app.display()
-                );
-            }
+    visit_app_bundles(root, &mut |app| match clear_quarantine_attr(app) {
+        Ok(()) => cleared = cleared.saturating_add(1),
+        Err(error) => {
+            eprintln!("Could not clear quarantine on {}: {error}", app.display());
         }
     });
     cleared
@@ -199,10 +194,7 @@ mod unix_tests {
 
     #[test]
     fn restores_execute_bit_for_shebang_and_elf_magic() {
-        let root = std::env::temp_dir().join(format!(
-            "zinnia-exec-fix-{}",
-            std::process::id()
-        ));
+        let root = std::env::temp_dir().join(format!("zinnia-exec-fix-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).expect("root");
 
@@ -231,7 +223,10 @@ mod unix_tests {
         assert!(restored >= 2);
         assert!(std::fs::metadata(&script).unwrap().permissions().mode() & 0o111 != 0);
         assert!(std::fs::metadata(&elf).unwrap().permissions().mode() & 0o111 != 0);
-        assert_eq!(std::fs::metadata(&text).unwrap().permissions().mode() & 0o111, 0);
+        assert_eq!(
+            std::fs::metadata(&text).unwrap().permissions().mode() & 0o111,
+            0
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }

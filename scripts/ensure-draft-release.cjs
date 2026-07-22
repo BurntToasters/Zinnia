@@ -31,8 +31,18 @@ const packageJson = require('../package.json');
 const VERSION = packageJson.version;
 const TAG_NAME = 'v' + VERSION;
 // Keep this in sync with scripts/gpg-sign.js so every release path classifies
-// release candidates consistently.
-const IS_PRERELEASE = /-(?:beta|alpha|rc)(?:[.-]?\d+)?/i.test(VERSION);
+// release versions consistently and rejects unsupported channels.
+const NUMERIC_VERSION = '(?:0|[1-9]\\d*)';
+const BETA_VERSION = new RegExp(
+  `^${NUMERIC_VERSION}\\.${NUMERIC_VERSION}\\.${NUMERIC_VERSION}-beta\\.${NUMERIC_VERSION}$`
+);
+const STABLE_VERSION = new RegExp(`^${NUMERIC_VERSION}\\.${NUMERIC_VERSION}\\.${NUMERIC_VERSION}$`);
+if (!BETA_VERSION.test(VERSION) && !STABLE_VERSION.test(VERSION)) {
+  throw new Error(
+    `Unsupported release version '${VERSION}'; Zinnia releases use beta or stable only.`
+  );
+}
+const IS_PRERELEASE = BETA_VERSION.test(VERSION);
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));

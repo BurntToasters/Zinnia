@@ -190,11 +190,7 @@ fn staged_relative_in_tree_symlink_is_allowed() {
     std::fs::create_dir_all(framework.join("Versions/A/Resources")).expect("framework tree");
     std::fs::write(framework.join("Versions/A/Resources/Info.plist"), b"ok").expect("plist");
     symlink("A", framework.join("Versions/Current")).expect("Current symlink");
-    symlink(
-        "Versions/Current/Resources",
-        framework.join("Resources"),
-    )
-    .expect("Resources symlink");
+    symlink("Versions/Current/Resources", framework.join("Resources")).expect("Resources symlink");
 
     merge_staged_extract(&staged, &destination, MAX_EXTRACTED_BYTES).expect("relative links ok");
     assert!(destination

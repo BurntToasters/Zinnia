@@ -23,7 +23,10 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
 ## Changes in `v0.6.0-beta.14:`
 
-- **Release Canidate:** RC1
+- **Critical Fix:** Windows updates now install Explorer context-menu DLLs side by side in a versioned directory, preventing a loaded `zinnia_shell.dll` from blocking NSIS and soft-locking the app mid-update; identical same-version reinstalls skip unchanged payloads, while legacy and older versioned payloads are removed immediately or scheduled for deletion after reboot, including during uninstall.
+- **Fix:** Windows shell DLL and sparse-package numeric versions now preserve the beta number and reserve the maximum revision for stable builds, so promoting `0.6.0-beta.14` (`0.6.0.14`) to stable `0.6.0` (`0.6.0.65535`) always moves forward.
+- **Fix:** Windows builds that disable the modern context menu now forcibly replace any stale shell artifacts with empty stubs, preventing an older DLL/MSIX payload from leaking into a later installer.
+- **Release:** Release tooling now accepts only Zinnia's supported beta and stable version formats and rejects alpha, RC, malformed, or leading-zero versions before artifact creation.
 - **Feature:** Added the Zinnia logo icon to macOS Finder context menu items (**Extract with Zinnia** / **Compress with Zinnia**), styled as an adaptive system template image (Keka-style).
 - **Performance & Automation:** Optimized `release:*` scripts with `:continue` and `:resume` pipelines to reuse prepared versions, licenses, and sidecars without repeating redundant preparation steps.
 - **Security & Quality Gate:** Introduced a commit-bound release build session proof system (`release-session.js`), ensuring quality gates pass on a clean working tree prior to artifact creation and GPG signing.

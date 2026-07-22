@@ -21,7 +21,19 @@ const pkg = JSON.parse(
 
 const VERSION = pkg.version;
 const TAG = `v${VERSION}`;
-const IS_PRERELEASE = /-(?:beta|alpha|rc)(?:[.-]?\d+)?/i.test(VERSION);
+const NUMERIC_VERSION = "(?:0|[1-9]\\d*)";
+const BETA_VERSION = new RegExp(
+  `^${NUMERIC_VERSION}\\.${NUMERIC_VERSION}\\.${NUMERIC_VERSION}-beta\\.${NUMERIC_VERSION}$`,
+);
+const STABLE_VERSION = new RegExp(
+  `^${NUMERIC_VERSION}\\.${NUMERIC_VERSION}\\.${NUMERIC_VERSION}$`,
+);
+if (!BETA_VERSION.test(VERSION) && !STABLE_VERSION.test(VERSION)) {
+  throw new Error(
+    `Unsupported release version '${VERSION}'; Zinnia releases use beta or stable only.`,
+  );
+}
+const IS_PRERELEASE = BETA_VERSION.test(VERSION);
 const EXPECTED_TAG = (process.env.EXPECTED_TAG || "").trim();
 
 const GPG_KEY_ID = process.env.GPG_KEY_ID;

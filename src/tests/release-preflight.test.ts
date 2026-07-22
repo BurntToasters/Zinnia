@@ -93,9 +93,17 @@ describe("release preflight policy", () => {
     expect(smokeJob).not.toMatch(/- run: npm run build\s/);
   });
 
-  it("routes prereleases to beta and stable releases to main", () => {
+  it("routes betas to beta, stable releases to main, and rejects other stages", () => {
     expect(expectedReleaseBranch("0.6.0-beta.10")).toBe("beta");
-    expect(expectedReleaseBranch("0.6.0-rc.2")).toBe("beta");
     expect(expectedReleaseBranch("0.6.0")).toBe("main");
+    expect(() => expectedReleaseBranch("0.6.0-alpha.2")).toThrow(
+      /beta or stable only/,
+    );
+    expect(() => expectedReleaseBranch("0.6.0-rc.2")).toThrow(
+      /beta or stable only/,
+    );
+    expect(() => expectedReleaseBranch("0.6.0-beta.02")).toThrow(
+      /beta or stable only/,
+    );
   });
 });

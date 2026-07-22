@@ -55,8 +55,7 @@ fn assert_compress_inputs_are_real_paths(
         };
         if crate::path_safety::is_link_or_reparse(&meta) {
             if meta.file_type().is_symlink() {
-                if let Some(tmp_root) = crate::tempdir::managed_convert_tmp_root_for(app, fs_path)
-                {
+                if let Some(tmp_root) = crate::tempdir::managed_convert_tmp_root_for(app, fs_path) {
                     crate::path_safety::assert_relative_symlink_within_root(&tmp_root, fs_path)?;
                     continue;
                 }
@@ -70,7 +69,9 @@ fn assert_compress_inputs_are_real_paths(
 }
 
 #[tauri::command]
-pub fn probe_compress_inputs(paths: Vec<String>) -> Result<super::compress_preflight::CompressInputProbe, String> {
+pub fn probe_compress_inputs(
+    paths: Vec<String>,
+) -> Result<super::compress_preflight::CompressInputProbe, String> {
     super::compress_preflight::probe_compress_input_paths(&paths)
 }
 
@@ -243,9 +244,7 @@ pub async fn run_7z(
     // extracted files. macOS/Linux 7-Zip builds reject -snz.
     #[cfg(target_os = "windows")]
     if args.first().map(String::as_str) == Some("x")
-        && !args
-            .iter()
-            .any(|arg| arg.eq_ignore_ascii_case("-snz"))
+        && !args.iter().any(|arg| arg.eq_ignore_ascii_case("-snz"))
     {
         args.insert(1, "-snz".to_string());
     }
@@ -699,8 +698,7 @@ pub async fn run_7z(
         stdout_truncated: collected.stdout_truncated,
         stderr_truncated: collected.stderr_truncated,
         cleared_quarantine_apps: {
-            let count =
-                cleared_quarantine_apps.load(std::sync::atomic::Ordering::Relaxed);
+            let count = cleared_quarantine_apps.load(std::sync::atomic::Ordering::Relaxed);
             if count > 0 {
                 Some(count)
             } else {
@@ -708,8 +706,7 @@ pub async fn run_7z(
             }
         },
         restored_execute_bits: {
-            let count =
-                restored_execute_bits.load(std::sync::atomic::Ordering::Relaxed);
+            let count = restored_execute_bits.load(std::sync::atomic::Ordering::Relaxed);
             if count > 0 {
                 Some(count)
             } else {

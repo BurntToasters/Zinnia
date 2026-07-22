@@ -46,7 +46,14 @@ describe("Windows 11 context-menu manifest", () => {
     expect(extractManifest).toContain('Name="run.rosie.zinnia.extractmenu"');
     expect(rootManifest).not.toContain("ZinniaExtract");
     expect(extractManifest).not.toContain("ZinniaRoot");
-    expect(extractManifest).toContain('Path="zinnia_extract_shell.dll"');
+    expect(rootManifest).toContain('Executable="zinnia.exe"');
+    expect(extractManifest).toContain('Executable="zinnia.exe"');
+    expect(rootManifest).toContain(
+      'Path="__SHELL_DIRECTORY__\\zinnia_shell.dll"',
+    );
+    expect(extractManifest).toContain(
+      'Path="__SHELL_DIRECTORY__\\zinnia_extract_shell.dll"',
+    );
   });
 
   it("does not register the extraction command as a file opener", () => {
@@ -80,6 +87,9 @@ describe("Windows 11 context-menu manifest", () => {
     const verify = read("scripts/verify-windows-authenticode.ps1");
     const sign = read("scripts/windows-artifact-sign.ps1");
     const tauriConfig = read("src-tauri/tauri.windows.conf.json");
+    const packageJson = JSON.parse(read("package.json")) as {
+      scripts: Record<string, string>;
+    };
     const packageConsumers = [
       build,
       stubs,
@@ -97,12 +107,106 @@ describe("Windows 11 context-menu manifest", () => {
       expect(contents).toContain("zinnia_shell.dll");
       expect(contents).toContain("zinnia_extract_shell.dll");
     }
+    expect(stubs).toContain('includes("--force")');
+    expect(tauriBuild).toContain('"--force"');
+    expect(packageJson.scripts["prepare:win-shell-stubs"]).toContain("--force");
 
     const registration = read("scripts/register-windows-context-menu.ps1");
     expect(registration).toContain("$MsixPath");
     expect(registration).toContain("$ExtractMsixPath");
     expect(registration).toContain("run.rosie.zinnia.contextmenu");
     expect(registration).toContain("run.rosie.zinnia.extractmenu");
+  });
+
+  it("installs shell payloads side by side so updates cannot overwrite loaded DLLs", () => {
+    const read = (file: string) =>
+      fs.readFileSync(path.resolve(process.cwd(), file), "utf8");
+    const tauriConfig = JSON.parse(
+      read("src-tauri/tauri.windows.conf.json"),
+    ) as {
+      bundle: { resources: Record<string, string> };
+    };
+    const packageVersion = (
+      JSON.parse(read("package.json")) as { version: string }
+    ).version;
+    const hooks = read("src-tauri/windows/nsis-hooks.nsh");
+
+    for (const destination of Object.values(tauriConfig.bundle.resources)) {
+      expect(destination.startsWith(`shell-${packageVersion}/`)).toBe(true);
+      expect(destination).not.toContain("${VERSION}");
+    }
+    expect(hooks).toContain('StrCpy $R9 "$INSTDIR\\shell-${VERSION}"');
+    expect(hooks).toContain("!macro NSIS_HOOK_PREINSTALL");
+    expect(hooks).toContain("zinnia_preinstall_check_reparse");
+    expect(hooks).toContain(
+      "cannot install into a shell directory that is a junction or symbolic link",
+    );
+    expect(hooks).toContain("SetOverwrite ifdiff");
+    expect(hooks).toContain("SetOverwrite on");
+    expect(hooks).not.toContain("!macro NSIS_HOOK_PREUNINSTALL");
+    expect(hooks).toContain("!macro NSIS_HOOK_POSTUNINSTALL");
+    expect(hooks).toContain("!macro ZINNIA_CLEAN_LEGACY_SHELL_PAYLOAD");
+    expect(hooks).toContain('Delete /REBOOTOK "$INSTDIR\\zinnia_shell.dll"');
+    expect(hooks).toContain("!macro ZINNIA_CLEAN_SHELL_PAYLOADS");
+    expect(hooks).toContain('FindFirst $R8 $R9 "$INSTDIR\\shell-*"');
+    expect(hooks).toContain("GetFileAttributesW");
+    expect(hooks).toContain("& 0x400");
+    expect(hooks).toContain(
+      'Delete /REBOOTOK "$INSTDIR\\$R9\\zinnia_shell.dll"',
+    );
+    expect(hooks).toContain('RMDir /REBOOTOK "$INSTDIR\\$R9"');
+    expect(hooks).not.toContain("RMDir /r");
+    expect(hooks).toContain(
+      '!insertmacro ZINNIA_CLEAN_SHELL_PAYLOADS "shell-${VERSION}"',
+    );
+    expect(hooks).toContain(
+      '!insertmacro ZINNIA_CLEAN_SHELL_PAYLOADS "" zinnia_uninstall_shell_cleanup',
+    );
+    expect(hooks.indexOf("!macro NSIS_HOOK_POSTUNINSTALL")).toBeLessThan(
+      hooks.indexOf(
+        '!insertmacro ZINNIA_CLEAN_SHELL_PAYLOADS "" zinnia_uninstall_shell_cleanup',
+      ),
+    );
+    expect(hooks).toContain(
+      'Delete /REBOOTOK "$INSTDIR\\zinnia-context-menu-register.log"',
+    );
+    expect(hooks).toContain('RMDir /REBOOTOK "$INSTDIR"');
+    expect(hooks).not.toContain("taskkill");
+
+    const registration = read("scripts/register-windows-context-menu.ps1");
+    expect(registration).toContain("Remove-StaleShellPayloads");
+    expect(registration).toContain("[StringComparer]::OrdinalIgnoreCase");
+    expect(registration).toContain("scheduling installer cleanup");
+    expect(registration).toContain(
+      "refusing to clean reparse-point shell directory",
+    );
+    expect(registration).toContain(
+      "ShellPayloadLocation must not be a reparse point",
+    );
+    expect(registration).not.toContain("-Recurse");
+    expect(registration).toContain("Could not write registration log");
+    expect(registration).toContain("Could not reset registration log");
+    expect(registration).toContain(
+      "Cleanup of stale shell payloads was deferred",
+    );
+
+    const build = read("scripts/build-windows-context-menu.ps1");
+    expect(build).toContain("print-windows-package-version.js");
+    expect(build).toContain("Replace('__SHELL_DIRECTORY__', $shellDirectory)");
+    expect(build).toContain("Assert-NoTemplateTokens $appxText");
+    expect(build).toContain("Assert-NoTemplateTokens $extractAppxText");
+    expect(build).toContain("Assert-NoTemplateTokens $identityText");
+    expect(build).toContain("Assert-NoTemplateTokens $extractIdentityText");
+    expect(build).not.toContain("-replace '[^0-9.]'");
+    expect(hooks).toContain('-ExternalLocation "$INSTDIR"');
+    expect(hooks).toContain('-ShellPayloadLocation "$R9"');
+    expect(registration).toContain("$ShellPayloadLocation");
+    expect(registration).toContain(
+      "Application executable not found in ExternalLocation",
+    );
+    expect(registration).toContain(
+      "Remove-StaleShellPayloads -CurrentLocation $ShellPayloadLocation",
+    );
   });
 
   it("keeps archive filtering fast on Explorer's menu-construction path", () => {

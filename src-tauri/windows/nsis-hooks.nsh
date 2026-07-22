@@ -38,23 +38,27 @@
   DeleteRegKey HKCU "Software\Classes\Directory\Background\shell\Zinnia"
 !macroend
 
+!macro ZINNIA_CLEAN_LEGACY_SHELL_PAYLOAD
+  ; Beta 11/13 placed these directly in $INSTDIR. Keep cleanup available on
+  ; both update and uninstall in case a mapped DLL survived the first attempt.
+  Delete /REBOOTOK "$INSTDIR\zinnia_shell.dll"
+  Delete /REBOOTOK "$INSTDIR\zinnia_extract_shell.dll"
+  Delete /REBOOTOK "$INSTDIR\ZinniaContextMenu.msix"
+  Delete /REBOOTOK "$INSTDIR\ZinniaExtractContextMenu.msix"
+  Delete /REBOOTOK "$INSTDIR\register-windows-context-menu.ps1"
+!macroend
+
 !macro ZINNIA_REGISTER_WIN11_CONTEXT_MENU
   ; Sparse MSIX + IExplorerCommand DLL.
-  ; Tauri Windows resourceDir is the exe directory ($INSTDIR). We also accept
-  ; $INSTDIR\resources when mapped that way. ExternalLocation = folder with DLL.
-  StrCpy $R9 "$INSTDIR"
-  IfFileExists "$R9\ZinniaContextMenu.msix" 0 zinnia_menu_try_resources
-  IfFileExists "$R9\zinnia_shell.dll" 0 zinnia_menu_try_resources
-  IfFileExists "$R9\ZinniaExtractContextMenu.msix" 0 zinnia_menu_try_resources
-  IfFileExists "$R9\zinnia_extract_shell.dll" 0 zinnia_menu_try_resources
-  Goto zinnia_menu_register
-  zinnia_menu_try_resources:
-  StrCpy $R9 "$INSTDIR\resources"
+  ; Shell hosts can keep a COM DLL mapped long after the menu closes. Every
+  ; release therefore gets a new directory so an update never overwrites a DLL
+  ; that Explorer/dllhost still has open. ${VERSION} is defined by Tauri's NSIS
+  ; template before this macro is expanded.
+  StrCpy $R9 "$INSTDIR\shell-${VERSION}"
   IfFileExists "$R9\ZinniaContextMenu.msix" 0 zinnia_skip_win11_menu
   IfFileExists "$R9\zinnia_shell.dll" 0 zinnia_skip_win11_menu
   IfFileExists "$R9\ZinniaExtractContextMenu.msix" 0 zinnia_skip_win11_menu
   IfFileExists "$R9\zinnia_extract_shell.dll" 0 zinnia_skip_win11_menu
-  zinnia_menu_register:
   ; Skip empty CI stubs (real packages are much larger than 1 KiB).
   FileOpen $R8 "$R9\ZinniaContextMenu.msix" r
   FileSeek $R8 0 END $R7
@@ -65,7 +69,9 @@
   FileClose $R8
   IntCmp $R7 1024 zinnia_skip_win11_menu zinnia_skip_win11_menu 0
 
-  ; Register script ships next to the DLL/MSIX (same ExternalLocation folder).
+  ; The script and sparse packages ship beside the DLLs. ExternalLocation stays
+  ; at $INSTDIR because AppxManifest references both root zinnia.exe and the
+  ; versioned shell-${VERSION} COM server paths from that common external root.
   StrCpy $R8 "$R9\register-windows-context-menu.ps1"
   IfFileExists "$R8" 0 zinnia_menu_script_instdir
   Goto zinnia_menu_run_script
@@ -74,8 +80,11 @@
   IfFileExists "$R8" 0 zinnia_menu_no_script
   zinnia_menu_run_script:
   DetailPrint "Registering Win11 context menu package…"
-  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$R8" -MsixPath "$R9\ZinniaContextMenu.msix" -ExtractMsixPath "$R9\ZinniaExtractContextMenu.msix" -ExternalLocation "$R9" -LogPath "$INSTDIR\zinnia-context-menu-register.log"'
+  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$R8" -MsixPath "$R9\ZinniaContextMenu.msix" -ExtractMsixPath "$R9\ZinniaExtractContextMenu.msix" -ExternalLocation "$INSTDIR" -ShellPayloadLocation "$R9" -LogPath "$INSTDIR\zinnia-context-menu-register.log"'
   Pop $0
+  ; The registration script removed the old sparse identities, so their
+  ; unversioned beta payload is no longer live registration state.
+  !insertmacro ZINNIA_CLEAN_LEGACY_SHELL_PAYLOAD
   IntCmp $0 0 zinnia_menu_registered 0 0
   DetailPrint "WARNING: Win11 context menu registration failed (exit $0). Classic verbs still work. See $INSTDIR\zinnia-context-menu-register.log"
   Goto zinnia_skip_win11_menu
@@ -97,7 +106,54 @@
   Pop $0
 !macroend
 
+!macro ZINNIA_CLEAN_SHELL_PAYLOADS KEEPDIR LABELPREFIX
+  ; Remove only installer-owned files from each payload except KEEPDIR. Avoid
+  ; recursive deletion so an unexpected junction or user file is never followed.
+  ; Locked DLLs and the directory are scheduled for deletion after reboot.
+  FindFirst $R8 $R9 "$INSTDIR\shell-*"
+  ${LABELPREFIX}_loop:
+  StrCmp $R9 "" ${LABELPREFIX}_done
+  StrCmp $R9 "${KEEPDIR}" ${LABELPREFIX}_next
+  ; Never follow a junction/symlink that happens to match shell-*.
+  System::Call 'kernel32::GetFileAttributesW(w "$INSTDIR\$R9") i .R7'
+  IntOp $R7 $R7 & 0x400
+  IntCmp $R7 0 ${LABELPREFIX}_clean ${LABELPREFIX}_next ${LABELPREFIX}_next
+  ${LABELPREFIX}_clean:
+  Delete /REBOOTOK "$INSTDIR\$R9\zinnia_shell.dll"
+  Delete /REBOOTOK "$INSTDIR\$R9\zinnia_extract_shell.dll"
+  Delete /REBOOTOK "$INSTDIR\$R9\ZinniaContextMenu.msix"
+  Delete /REBOOTOK "$INSTDIR\$R9\ZinniaExtractContextMenu.msix"
+  Delete /REBOOTOK "$INSTDIR\$R9\register-windows-context-menu.ps1"
+  RMDir /REBOOTOK "$INSTDIR\$R9"
+  ${LABELPREFIX}_next:
+  FindNext $R8 $R9
+  Goto ${LABELPREFIX}_loop
+  ${LABELPREFIX}_done:
+  FindClose $R8
+!macroend
+
+!macro NSIS_HOOK_PREINSTALL
+  ; Refuse a pre-created junction/symlink before Tauri copies any resources
+  ; through it. A missing destination returns INVALID_FILE_ATTRIBUTES (-1).
+  System::Call 'kernel32::GetFileAttributesW(w "$INSTDIR\shell-${VERSION}") i .R7'
+  IntCmp $R7 -1 zinnia_preinstall_destination_safe zinnia_preinstall_check_reparse zinnia_preinstall_check_reparse
+  zinnia_preinstall_check_reparse:
+  IntOp $R8 $R7 & 0x400
+  IntCmp $R8 0 zinnia_preinstall_destination_safe 0 0
+  MessageBox MB_ICONSTOP|MB_OK "Zinnia cannot install into a shell directory that is a junction or symbolic link:$\r$\n$INSTDIR\shell-${VERSION}"
+  Abort
+  zinnia_preinstall_destination_safe:
+  ; Re-running the exact same installer must not try to rewrite its own loaded
+  ; shell DLL. For an existing same-version payload, NSIS skips equal-timestamp
+  ; files while still restoring missing or genuinely different files. A normal
+  ; future-version update has no destination directory and keeps overwrite=on.
+  IfFileExists "$INSTDIR\shell-${VERSION}\zinnia_shell.dll" 0 zinnia_preinstall_done
+  SetOverwrite ifdiff
+  zinnia_preinstall_done:
+!macroend
+
 !macro NSIS_HOOK_POSTINSTALL
+  SetOverwrite on
   !insertmacro ZINNIA_REGISTER_COMPRESS_VERBS
   !insertmacro ZINNIA_REGISTER_ARCHIVE_VERBS ".7z"
   !insertmacro ZINNIA_REGISTER_ARCHIVE_VERBS ".zip"
@@ -109,10 +165,18 @@
   !insertmacro ZINNIA_REGISTER_ARCHIVE_VERBS ".xz"
   !insertmacro ZINNIA_REGISTER_ARCHIVE_VERBS ".txz"
   !insertmacro ZINNIA_REGISTER_WIN11_CONTEXT_MENU
+  !insertmacro ZINNIA_CLEAN_SHELL_PAYLOADS "shell-${VERSION}" zinnia_update_shell_cleanup
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
+  ; Tauri checks for a running app before reaching this hook, so canceling that
+  ; prompt cannot partially unregister an otherwise installed app. Its normal
+  ; resource deletes run first; this then unregisters the packages and schedules
+  ; any DLLs still mapped by a shell host for deletion after reboot.
   !insertmacro ZINNIA_UNREGISTER_WIN11_CONTEXT_MENU
+  !insertmacro ZINNIA_CLEAN_SHELL_PAYLOADS "" zinnia_uninstall_shell_cleanup
+  !insertmacro ZINNIA_CLEAN_LEGACY_SHELL_PAYLOAD
+  Delete /REBOOTOK "$INSTDIR\zinnia-context-menu-register.log"
   !insertmacro ZINNIA_UNREGISTER_COMPRESS_VERBS
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".7z"
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".zip"
@@ -123,4 +187,5 @@
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".tbz2"
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".xz"
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".txz"
+  RMDir /REBOOTOK "$INSTDIR"
 !macroend

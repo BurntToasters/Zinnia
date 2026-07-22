@@ -217,6 +217,7 @@ async function syncExtractWindowFx(): Promise<void> {
   const dark =
     themePref === "dark" ||
     (themePref !== "light" &&
+      typeof window.matchMedia === "function" &&
       window.matchMedia("(prefers-color-scheme: dark)").matches);
   document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
 

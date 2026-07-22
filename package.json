@@ -33,7 +33,7 @@
     "tauri:build": "npm run sync-version && npm run licenses && npm run prepare:7z && npm run prepare:win-shell-stubs && tauri build",
     "prepare:7z": "node scripts/prepare-7z.js",
     "prepare:7z:all": "node scripts/prepare-7z.js --all",
-    "prepare:win-shell-stubs": "node scripts/ensure-windows-context-menu-stubs.mjs",
+    "prepare:win-shell-stubs": "node scripts/ensure-windows-context-menu-stubs.mjs --force",
     "sync-version": "node scripts/sync-version.js",
     "licenses": "npm run licenses:npm && npm run licenses:cargo && npm run licenses:7zip",
     "licenses:npm": "node scripts/generate-npm-licenses.js",

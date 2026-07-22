@@ -10,9 +10,7 @@ const ALLOWED_7Z_COMMANDS: &[&str] = &["a", "u", "x", "l", "t", "b"];
 // also passes them; run_7z injects as defense in depth. Keep them out of
 // BLOCKED so those switches validate; users cannot pass them via extra-args
 // (not in ALLOWED_EXTRA_PREFIXES).
-const BLOCKED_7Z_ARGS: &[&str] = &[
-    "-si", "-so", "-sdel", "-sfx", "-w", "-sns", "-sni", "-spf2",
-];
+const BLOCKED_7Z_ARGS: &[&str] = &["-si", "-so", "-sdel", "-sfx", "-w", "-sns", "-sni", "-spf2"];
 
 fn has_embedded_listfile(arg: &str) -> bool {
     let lower = arg.to_ascii_lowercase();
@@ -54,8 +52,8 @@ fn is_allowed_method_switch(lower: &str) -> bool {
     // Prefixes ending in '=' require a non-empty value. Others require end / '=' / digit
     // so `-mxyz` does not match `-mx`.
     const PREFIXES: &[&str] = &[
-        "-m0=", "-mem=", "-mhe=", "-mtc=", "-mta=", "-mhc=", "-mcu=", "-mcl=", "-mx",
-        "-md", "-mfb", "-ms", "-mmt",
+        "-m0=", "-mem=", "-mhe=", "-mtc=", "-mta=", "-mhc=", "-mcu=", "-mcl=", "-mx", "-md",
+        "-mfb", "-ms", "-mmt",
     ];
     for prefix in PREFIXES {
         let Some(rest) = lower.strip_prefix(prefix) else {
