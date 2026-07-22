@@ -137,6 +137,28 @@ verifyMachOCompatibility(path.join(appPath, "Contents", "MacOS", "zinnia"));
 const sidecarPath = path.join(appPath, "Contents", "MacOS", "7z");
 verifyMachOCompatibility(sidecarPath);
 
+const finderSyncAppex = path.join(
+  appPath,
+  "Contents",
+  "PlugIns",
+  "ZinniaFinderSync.appex",
+);
+if (!fs.existsSync(finderSyncAppex)) {
+  throw new Error(
+    `Missing Finder Sync extension: ${finderSyncAppex}. Run npm run prepare:macos:finder-sync before building.`,
+  );
+}
+execFileSync(
+  "codesign",
+  ["--verify", "--deep", "--strict", "--verbose=2", finderSyncAppex],
+  { stdio: "inherit" },
+);
+verifySignedEntitlements(finderSyncAppex, {
+  "com.apple.security.app-sandbox": true,
+  "com.apple.security.files.user-selected.read-only": true,
+  "com.apple.security.temporary-exception.files.absolute-path.read-only": ["/"],
+});
+
 execFileSync(
   "codesign",
   ["--verify", "--deep", "--strict", "--verbose=2", appPath],

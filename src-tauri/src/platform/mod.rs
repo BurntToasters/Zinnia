@@ -123,6 +123,11 @@ pub struct OsIntegrationStatus {
     /// Whether Services appear enabled (meaningful when `finder_services_known`).
     finder_services_enabled: bool,
     finder_services_help: String,
+    /// macOS Finder Sync appex (primary Finder context menu). Other platforms: false.
+    finder_sync_available: bool,
+    finder_sync_known: bool,
+    finder_sync_enabled: bool,
+    finder_sync_help: String,
     /// Windows: sparse identity package for Win11 modern context menu (not a full AppX app).
     win11_modern_menu_available: bool,
     win11_modern_menu_known: bool,
@@ -304,17 +309,26 @@ pub fn get_cpu_count() -> usize {
 // Public API + tauri command companions (needed by generate_handler!).
 #[allow(unused_imports)]
 pub use defaults_cmds::{
-    open_finder_services_settings, open_os_integration_settings,
+    enable_finder_services, enable_finder_sync, open_finder_services_settings,
+    open_finder_sync_settings, open_os_integration_settings,
     reset_preferred_archiver_to_system, set_zinnia_default_archiver,
 };
 #[allow(unused_imports)]
 pub use integration_status::{get_os_integration_status, os_integration_status_for};
 
+#[cfg(target_os = "macos")]
+#[allow(unused_imports)]
+pub use integration_status::register_macos_finder_sync;
+
 #[doc(hidden)]
 pub use defaults_cmds::{
-    __cmd__open_finder_services_settings, __cmd__open_os_integration_settings,
-    __cmd__reset_preferred_archiver_to_system, __cmd__set_zinnia_default_archiver,
+    __cmd__enable_finder_services, __cmd__enable_finder_sync,
+    __cmd__open_finder_services_settings, __cmd__open_finder_sync_settings,
+    __cmd__open_os_integration_settings, __cmd__reset_preferred_archiver_to_system,
+    __cmd__set_zinnia_default_archiver, __tauri_command_name_enable_finder_services,
+    __tauri_command_name_enable_finder_sync,
     __tauri_command_name_open_finder_services_settings,
+    __tauri_command_name_open_finder_sync_settings,
     __tauri_command_name_open_os_integration_settings,
     __tauri_command_name_reset_preferred_archiver_to_system,
     __tauri_command_name_set_zinnia_default_archiver,

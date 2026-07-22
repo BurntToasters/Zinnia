@@ -221,7 +221,10 @@ fn main() {
             }
 
             #[cfg(target_os = "macos")]
-            macos_services::install_macos_services(app.handle());
+            {
+                macos_services::install_macos_services(app.handle());
+                platform::register_macos_finder_sync();
+            }
 
             // Recovery can traverse and sync directories. Keep it off the setup thread so the
             // first window appears immediately. `run_7z` takes the same recovery lock before any
@@ -272,6 +275,9 @@ fn main() {
             platform::get_os_integration_status,
             platform::open_os_integration_settings,
             platform::open_finder_services_settings,
+            platform::enable_finder_services,
+            platform::open_finder_sync_settings,
+            platform::enable_finder_sync,
             platform::reset_preferred_archiver_to_system,
             platform::set_zinnia_default_archiver,
             platform::get_cpu_count,

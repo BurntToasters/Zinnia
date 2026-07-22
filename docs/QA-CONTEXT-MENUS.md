@@ -26,6 +26,17 @@ DMG, AppImage, or sparse context-menu packages. Signed Windows modern-menu and
 macOS Services behavior must be verified on release VMs using the checklists
 below before publishing.
 
+## macOS Finder context menu (Finder Sync)
+
+1. Install a packaged `.app` / DMG build that embeds `Contents/PlugIns/ZinniaFinderSync.appex`.
+2. Launch Zinnia once so `pluginkit` discovers the extension.
+3. Settings → **OS Integration** → **Finder context menu** → **Enable…**
+   (or System Settings → General → Login Items & Extensions → enable **Zinnia Finder**).
+4. Select an archive in Finder → right-click: confirm **Extract with Zinnia** is in the
+   **primary** menu (not only under Services).
+5. Select a file/folder → **Compress with Zinnia** from the primary menu.
+6. Refresh OS Integration: Finder context menu shows **Enabled**.
+
 ## macOS Finder Services
 
 1. Install a packaged `.app` / DMG build (not a bare `cargo run` binary).
@@ -36,15 +47,14 @@ below before publishing.
 6. Settings → **OS Integration** → **Finder Services**: **Enabled** only when both
    services have an explicit enable toggle in `pbs` prefs; otherwise **Not enabled**
    (not Unknown). Registration is confirmed via `pbs -dump_cache` for help text.
-   **Enable…** opens Keyboard Shortcuts and selects **Services** (not Login Items &
-   Extensions / File Providers: that UI is for Finder Sync appexes like Keka;
-   Zinnia uses `NSServices`).
+   **Enable…** writes the `pbs` enable prefs (Services remain a fallback beside Finder Sync).
 7. Dev tip after Info.plist changes: `/System/Library/CoreServices/pbs -flush`
    Inspect registration: `/System/Library/CoreServices/pbs -dump_cache`
+   Finder Sync election: `pluginkit -m -v -i run.rosie.zinnia.findersync`
 
 > **Release gate:** On a clean macOS 26+ machine, install the signed and
-> notarized universal artifact; verify both Finder Services, archive Open With,
-> a signed updater check, and `spctl --assess` before publishing.
+> notarized universal artifact; verify Finder Sync primary-menu items, Finder Services,
+> archive Open With, a signed updater check, and `spctl --assess` before publishing.
 
 ## Windows 11 modern menu
 

@@ -1,6 +1,6 @@
 {
   "name": "zinnia",
-  "version": "0.6.0-beta.12",
+  "version": "0.6.0-beta.13",
   "private": true,
   "description": "Cross-platform 7z GUI built with Tauri.",
   "type": "module",
@@ -56,7 +56,9 @@
     "build:win:x64": "npm run sync-version && npm run licenses && npm run prepare:7z && dotenv -e .env -- node scripts/tauri-windows-build.js --target x86_64-pc-windows-msvc --bundles nsis",
     "build:win:arm64": "npm run sync-version && npm run licenses && npm run prepare:7z && dotenv -e .env -- node scripts/tauri-windows-build.js --target aarch64-pc-windows-msvc --bundles nsis",
     "build:win": "npm run build:win:x64 && npm run build:win:arm64",
-    "build:mac:universal": "npm run sync-version && npm run licenses && npm run prepare:7z && dotenv -e .env -- tauri build --target universal-apple-darwin --bundles dmg,app",
+    "build:macos:finder-sync": "bash scripts/build-macos-finder-sync.sh",
+    "prepare:macos:finder-sync": "node scripts/prepare-macos-finder-sync.js",
+    "build:mac:universal": "npm run sync-version && npm run licenses && npm run prepare:7z && npm run prepare:macos:finder-sync && dotenv -e .env -- tauri build --target universal-apple-darwin --bundles dmg,app && dotenv -e .env -- node scripts/resign-macos-finder-sync.js",
     "build:mac:zip": "node scripts/zip-macos.js",
     "mac:ssh:keychain": "bash scripts/mac-keychain-ssh.sh",
     "build:linux:x64": "npm run sync-version && npm run licenses && npm run prepare:7z && dotenv -e .env -- tauri build --target x86_64-unknown-linux-gnu --bundles appimage,deb,rpm",

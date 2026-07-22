@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Zinnia",
-  "version": "0.6.0-beta.12",
+  "version": "0.6.0-beta.13",
   "identifier": "run.rosie.zinnia",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run prepare:macos:finder-sync && npm run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -109,7 +109,10 @@
       "entitlements": "entitlements.plist",
       "hardenedRuntime": true,
       "minimumSystemVersion": "26.0",
-      "bundleVersion": "0.6.42"
+      "bundleVersion": "0.6.43",
+      "files": {
+        "PlugIns/ZinniaFinderSync.appex": "macos/build/ZinniaFinderSync.appex"
+      }
     },
     "linux": {
       "appimage": {
