@@ -160,7 +160,32 @@ describe("release build session", () => {
         { cwd: root },
       );
 
-      expect(recordSuccessfulQualityGate(root)).toBe(true);
+      // Add .gitignore to fixture so proof path coverage/.release-quality.json is ignored
+      fs.writeFileSync(path.join(root, ".gitignore"), "/coverage/*\n");
+      execFileSync("git", ["add", ".gitignore"], { cwd: root });
+      execFileSync(
+        "git",
+        [
+          "-c",
+          "user.name=Zinnia Test",
+          "-c",
+          "user.email=zinnia@example.invalid",
+          "commit",
+          "--quiet",
+          "-m",
+          "add gitignore",
+        ],
+        { cwd: root },
+      );
+
+      expect(recordSuccessfulQualityGate(root).recorded).toBe(true);
+
+      // Generated ACL schemas rewritten by tauri build must not block the quality gate
+      const schemaDir = path.join(root, "src-tauri", "gen", "schemas");
+      fs.mkdirSync(schemaDir, { recursive: true });
+      fs.writeFileSync(path.join(schemaDir, "linux-schema.json"), "dirty\n");
+      expect(recordSuccessfulQualityGate(root).recorded).toBe(true);
+
       const session = createReleaseSession(root);
       const sessionPath = path.join(root, RELEASE_SESSION_RELATIVE_PATH);
       fs.mkdirSync(path.dirname(sessionPath), { recursive: true });

@@ -409,12 +409,17 @@ function main() {
 
   const exitCode = printSummary(results);
   if (exitCode === 0) {
-    if (recordSuccessfulQualityGate(resolve(__dirname, ".."))) {
+    const qualityGate = recordSuccessfulQualityGate(resolve(__dirname, ".."));
+    if (qualityGate.recorded) {
       console.log("Release quality-gate proof recorded for this clean commit.");
     } else {
       console.log(
         "Release quality-gate proof not recorded because the working tree is dirty.",
       );
+      if (qualityGate.dirtyFiles) {
+        console.log("Dirty files:");
+        console.log(qualityGate.dirtyFiles);
+      }
     }
   }
   return exitCode;
