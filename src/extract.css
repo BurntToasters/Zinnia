@@ -35,6 +35,12 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Native glass: let OS vibrancy show through (matches Basic main window). */
+html[data-window-fx="basic"],
+html[data-window-fx="basic"] body {
+  background: transparent;
+}
+
 .extract-app {
   display: flex;
   flex-direction: column;
@@ -197,6 +203,25 @@ body.platform-macos .extract-app {
   gap: 8px;
   padding-top: 8px;
   border-top: 1px solid var(--border);
+}
+
+html[data-window-fx="basic"] .extract-footer {
+  border-top-color: color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+html[data-window-fx="basic"] body.platform-windows #titlebar {
+  background: transparent;
+  border-bottom-color: color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+html[data-window-fx="basic"] .extract-input-modal {
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+html[data-window-fx="basic"] .extract-input-modal-overlay {
+  background: rgb(0 0 0 / 28%);
 }
 
 .extract-input-modal-overlay {

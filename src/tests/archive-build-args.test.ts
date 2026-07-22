@@ -70,6 +70,8 @@ describe("buildArgs (add mode)", () => {
     expect(args).toContain("-m0=lzma2");
     expect(args).toContain("-md=64m");
     expect(args).toContain("-mfb=64");
+    expect(args).toContain("-snl");
+    expect(args).toContain("-snh");
     expect(args).toContain("output.7z");
     expect(args).toContain("file1.txt");
     expect(args).toContain("file2.txt");

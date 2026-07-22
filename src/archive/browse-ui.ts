@@ -568,16 +568,34 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
 
     if (result.code !== 0) {
       log(`7z exited with code ${result.code}`);
+      state.lastClearedQuarantineApps = null;
+      state.lastRestoredExecuteBits = null;
       setStatus("Error", 3000, result.stderr || "Operation failed.");
       hideProgress();
       await showOperationError(result.code, result.stdout, result.stderr);
     } else {
+      state.lastClearedQuarantineApps = result.cleared_quarantine_apps ?? null;
+      state.lastRestoredExecuteBits = result.restored_execute_bits ?? null;
       setStatus("Done", 2000);
       hideProgress();
+      const notes: string[] = [];
+      const cleared = result.cleared_quarantine_apps;
+      if (cleared && cleared > 0) {
+        notes.push(
+          `Cleared Gatekeeper quarantine on ${cleared} app bundle${cleared === 1 ? "" : "s"}`,
+        );
+      }
+      const execBits = result.restored_execute_bits;
+      if (execBits && execBits > 0) {
+        notes.push(
+          `restored execute permission on ${execBits} file${execBits === 1 ? "" : "s"}`,
+        );
+      }
+      const note = notes.length > 0 ? ` ${notes.join("; ")}.` : "";
       showToast(
         selectedPaths.length > 0
-          ? "Selected entries extracted."
-          : "Extraction complete.",
+          ? `Selected entries extracted.${note}`
+          : `Extraction complete.${note}`,
         "success",
       );
       clearPasswordFields();

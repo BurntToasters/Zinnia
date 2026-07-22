@@ -46,8 +46,34 @@ operations:
   preflight. Zinnia lists members (`7z l -slt`) and rejects paths with `..` or absolute
   forms that could escape the `-o` root into an existing sibling folder. Before
   promotion, Zinnia also snapshots sibling names in the stage parent (new names
-  outside the stage fail closed), walks the staged tree, rejects symbolic links
-  and unsupported file types, and applies entry-count and expanded-size ceilings.
+  outside the stage fail closed), walks the staged tree, rejects absolute or
+  escaping symbolic links and Windows reparse points (relative in-tree links
+  used by macOS `.app` / `.framework` bundles are allowed), rejects unsupported
+  file types, and applies entry-count and expanded-size ceilings.
+- Create/update passes `-snl` / `-snh` so symbolic and hard links inside selected
+  folders (for example macOS app bundles) are stored as links rather than
+  followed. The backend also injects these switches on create/update so they
+  cannot be omitted by the webview. The selected input path itself must still be
+  a real file or directory (symlink/reparse inputs are rejected), except for
+  relative symlink *members* under a managed convert temp directory (so Convert
+  can round-trip top-level links). Nested Windows junctions / cloud placeholders
+  inside a compress tree are rejected (fail closed); ZIP still cannot faithfully
+  round-trip many symlink trees, so the UI warns when ZIP is chosen for inputs
+  that contain symlinks or `.app` bundles—prefer `7z` or `tar`.
+- `-sns` (NTFS alternate streams) and `-sni` (NT security descriptors) remain
+  blocked: packing ADS / ACLs is a known hiding and privilege footgun.
+- On macOS, after a successful extract promote, Zinnia clears
+  `com.apple.quarantine` on `.app` bundles under the destination (so Gatekeeper
+  does not treat a user-initiated app extract like an untrusted download) and
+  reports how many bundles were cleared. Quarantine is **not** stripped from the
+  whole tree—broad clearing is a known Gatekeeper-bypass pattern. Clearing
+  quarantine does not make untrusted software safe to run.
+- On Windows extract, Zinnia injects 7-Zip `-snz` so Mark-of-the-Web
+  (`Zone.Identifier`) propagates from a downloaded archive onto extracted files
+  (SmartScreen / Office Protected View). Zinnia does **not** strip MOTW.
+- On Unix, after extract, Zinnia may restore the execute bit on files that look
+  like binaries or scripts (ELF / Mach-O / shebang / common extensions) when the
+  archive format omitted Unix modes (common with ZIP).
 - Promotion resolves file/directory conflicts without overwriting unrelated
   destination content. A durable move plan and transaction journal allow an
   interrupted merge or split-archive promotion to be rolled back on restart.

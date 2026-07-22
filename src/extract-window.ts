@@ -15,6 +15,8 @@ interface Run7zResult {
   code: number;
   stdout_truncated?: boolean;
   stderr_truncated?: boolean;
+  cleared_quarantine_apps?: number;
+  restored_execute_bits?: number;
 }
 
 interface ProgressUpdate {
@@ -185,6 +187,48 @@ async function closeWindowSafely(): Promise<void> {
   }
 }
 
+/** Match main-window Basic glass when the user has effects enabled. */
+async function syncExtractWindowFx(): Promise<void> {
+  let supports = false;
+  try {
+    supports = await invoke<boolean>("supports_workspace_window_fx");
+  } catch {
+    supports = false;
+  }
+
+  let effectsEnabled = true;
+  let themePref = "system";
+  try {
+    const raw = await invoke<string>("load_settings");
+    const parsed = JSON.parse(raw) as {
+      basicWindowEffects?: unknown;
+      theme?: unknown;
+    };
+    if (typeof parsed.basicWindowEffects === "boolean") {
+      effectsEnabled = parsed.basicWindowEffects;
+    }
+    if (typeof parsed.theme === "string") {
+      themePref = parsed.theme;
+    }
+  } catch {
+    // Defaults match SETTING_DEFAULTS (effects on, system theme).
+  }
+
+  const dark =
+    themePref === "dark" ||
+    (themePref !== "light" &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+
+  const enabled = supports && effectsEnabled;
+  document.documentElement.dataset.windowFx = enabled ? "basic" : "opaque";
+  try {
+    await invoke("set_workspace_window_fx", { enabled, dark });
+  } catch {
+    // CSS still paints correctly if native vibrancy is unavailable.
+  }
+}
+
 async function run() {
   const appWindow = getCurrentWebviewWindow();
 
@@ -197,6 +241,7 @@ async function run() {
       }
     })
     .catch(() => {});
+  void syncExtractWindowFx();
 
   // Wire custom titlebar buttons
   const minBtn = document.getElementById("titlebar-min");
@@ -472,6 +517,22 @@ async function run() {
     }
 
     finish("Done", 100);
+    const notes: string[] = [];
+    const cleared = result.cleared_quarantine_apps;
+    if (cleared && cleared > 0) {
+      notes.push(
+        `cleared Gatekeeper quarantine on ${cleared} app bundle${cleared === 1 ? "" : "s"}`,
+      );
+    }
+    const execBits = result.restored_execute_bits;
+    if (execBits && execBits > 0) {
+      notes.push(
+        `restored execute on ${execBits} file${execBits === 1 ? "" : "s"}`,
+      );
+    }
+    if (notes.length > 0) {
+      $("extract-status").textContent = `Done — ${notes.join("; ")}.`;
+    }
     clearAutoCloseTimer();
     autoCloseTimer = setTimeout(() => {
       autoCloseTimer = null;

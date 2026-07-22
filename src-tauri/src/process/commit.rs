@@ -437,6 +437,10 @@ pub(crate) fn validate_staged_tree(root: &std::path::Path, max_bytes: u64) -> Re
             let path = entry.path();
             assert_path_under_root(root, &path)?;
             let meta = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
+            if meta.file_type().is_symlink() {
+                crate::path_safety::assert_relative_symlink_within_root(root, &path)?;
+                continue;
+            }
             if crate::path_safety::is_link_or_reparse(&meta) {
                 return Err(format!(
                     "Archive contains a symbolic link or reparse point: {}",
@@ -669,7 +673,17 @@ pub(crate) fn merge_staged_extract(
     Ok(())
 }
 
-pub(crate) fn commit_cleanup(app: &tauri::AppHandle, plan: &CleanupPlan) -> Result<(), String> {
+pub(crate) struct CommitOutcome {
+    pub cleared_quarantine_apps: u32,
+    pub restored_execute_bits: u32,
+}
+
+pub(crate) fn commit_cleanup(
+    app: &tauri::AppHandle,
+    plan: &CleanupPlan,
+) -> Result<CommitOutcome, String> {
+    let mut cleared_quarantine_apps = 0u32;
+    let mut restored_execute_bits = 0u32;
     if let Some(staged) = &plan.staged_input_archive {
         std::fs::remove_dir_all(staged.parent().unwrap_or(staged))
             .map_err(|e| format!("Could not remove archive input snapshot: {e}"))?;
@@ -685,6 +699,9 @@ pub(crate) fn commit_cleanup(app: &tauri::AppHandle, plan: &CleanupPlan) -> Resu
             plan.max_extract_bytes.unwrap_or(MAX_EXTRACTED_BYTES),
         )
         .map_err(|e| format!("Could not promote staged extraction safely: {e}"))?;
+        let fixups = super::post_extract::apply_post_extract_fixups(destination);
+        cleared_quarantine_apps = fixups.cleared_quarantine_apps;
+        restored_execute_bits = fixups.restored_execute_bits;
         crate::launch::remember_openable_directory(app, destination);
     }
     if let Some((staged, destination)) = &plan.staged_archive {
@@ -695,5 +712,8 @@ pub(crate) fn commit_cleanup(app: &tauri::AppHandle, plan: &CleanupPlan) -> Resu
         }
     }
     unregister_plan_stages(plan);
-    Ok(())
+    Ok(CommitOutcome {
+        cleared_quarantine_apps,
+        restored_execute_bits,
+    })
 }

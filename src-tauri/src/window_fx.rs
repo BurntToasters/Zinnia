@@ -1,7 +1,7 @@
 //! OS-native window glass for Basic mode (macOS vibrancy / Windows Mica·Acrylic).
 //! Linux is intentionally a no-op; Basic stays fully opaque there.
 
-use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri::WebviewWindow;
 
 #[cfg(target_os = "macos")]
 fn apply_macos(window: &WebviewWindow) -> Result<(), String> {
@@ -107,14 +107,14 @@ pub fn clear_basic_window_fx(window: &WebviewWindow, dark: bool) -> Result<(), S
     }
 }
 
-/// Enable or disable Basic-mode native glass on the main window.
+/// Enable or disable Basic-mode native glass on the calling window.
 /// Linux always paints opaque and skips vibrancy APIs.
 #[tauri::command]
-pub fn set_workspace_window_fx(app: AppHandle, enabled: bool, dark: bool) -> Result<(), String> {
-    let Some(window) = app.get_webview_window("main") else {
-        return Ok(());
-    };
-
+pub fn set_workspace_window_fx(
+    window: WebviewWindow,
+    enabled: bool,
+    dark: bool,
+) -> Result<(), String> {
     if !supports_basic_window_fx() {
         paint_opaque_background(&window, dark);
         let _ = enabled;

@@ -1,4 +1,11 @@
 export {
+  confirmZipSymlinkRisk,
+  formatWeakForSymlinks,
+  probeCompressInputs,
+  type CompressInputProbe,
+} from "./compress-fidelity";
+
+export {
   looksLikePasswordRequiredError,
   describe7zError,
 } from "../error-hints";

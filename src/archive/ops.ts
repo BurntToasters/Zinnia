@@ -18,6 +18,7 @@ import { showToast } from "../toast";
 import { SAFE_EXTRACT_OVERWRITE_MODE } from "../extract-policy";
 import { buildArgs, buildExtractArgsFor } from "./args";
 import { sanitizeCommandArgsForPreview } from "./preview";
+import { confirmZipSymlinkRisk } from "./compress-fidelity";
 import {
   ensureRuntimeReady,
   formatBatchEta,
@@ -83,6 +84,13 @@ export async function runAction() {
       await ensureArchivePaths([state.inputs[0]], "extract");
       args = buildExtractArgsFor(state.inputs[0]);
     } else {
+      const format = (
+        document.getElementById("format") as HTMLSelectElement | null
+      )?.value;
+      if (format && !(await confirmZipSymlinkRisk(format, state.inputs))) {
+        setStatus("Cancelled", 2000);
+        return;
+      }
       args = buildArgs();
     }
 
@@ -106,14 +114,41 @@ export async function runAction() {
 
     if (result.code !== 0) {
       log(`7z exited with code ${result.code}`);
+      state.lastClearedQuarantineApps = null;
+      state.lastRestoredExecuteBits = null;
       setStatus("Error", 3000, result.stderr || "Operation failed.");
       hideProgress();
       await showOperationError(result.code, result.stdout, result.stderr);
     } else {
+      state.lastClearedQuarantineApps =
+        mode === "extract" && result.cleared_quarantine_apps
+          ? result.cleared_quarantine_apps
+          : null;
+      state.lastRestoredExecuteBits =
+        mode === "extract" && result.restored_execute_bits
+          ? result.restored_execute_bits
+          : null;
       setStatus("Done", 2000);
       hideProgress();
+      const notes: string[] = [];
+      const cleared = result.cleared_quarantine_apps;
+      if (cleared && cleared > 0) {
+        notes.push(
+          `Cleared Gatekeeper quarantine on ${cleared} app bundle${cleared === 1 ? "" : "s"}`,
+        );
+      }
+      const execBits = result.restored_execute_bits;
+      if (execBits && execBits > 0) {
+        notes.push(
+          `restored execute permission on ${execBits} file${execBits === 1 ? "" : "s"}`,
+        );
+      }
+      const extractToast =
+        notes.length > 0
+          ? `Extraction complete. ${notes.join("; ")}.`
+          : "Extraction complete.";
       showToast(
-        mode === "extract" ? "Extraction complete." : "Archive created.",
+        mode === "extract" ? extractToast : "Archive created.",
         "success",
       );
       // Clear every mirrored password field after a successful operation.
@@ -163,6 +198,8 @@ export async function runBatchExtract() {
 
     let succeeded = 0;
     let failed = 0;
+    let clearedApps = 0;
+    let restoredExec = 0;
     let current = 0;
     let archiveStartedAt = Date.now();
 
@@ -205,6 +242,12 @@ export async function runBatchExtract() {
 
         if (result.code === 0) {
           succeeded++;
+          if (result.cleared_quarantine_apps) {
+            clearedApps += result.cleared_quarantine_apps;
+          }
+          if (result.restored_execute_bits) {
+            restoredExec += result.restored_execute_bits;
+          }
         } else {
           failed++;
           log(`Failed: ${archive} (exit code ${result.code})`);
@@ -227,10 +270,24 @@ export async function runBatchExtract() {
         });
       }
     } else if (failed === 0) {
+      state.lastClearedQuarantineApps = clearedApps > 0 ? clearedApps : null;
+      state.lastRestoredExecuteBits = restoredExec > 0 ? restoredExec : null;
       setStatus("Done", 3000);
       if (!basic) {
+        const notes: string[] = [];
+        if (clearedApps > 0) {
+          notes.push(
+            `Cleared Gatekeeper quarantine on ${clearedApps} app bundle${clearedApps === 1 ? "" : "s"}`,
+          );
+        }
+        if (restoredExec > 0) {
+          notes.push(
+            `restored execute permission on ${restoredExec} file${restoredExec === 1 ? "" : "s"}`,
+          );
+        }
+        const note = notes.length > 0 ? ` ${notes.join("; ")}.` : "";
         await message(
-          `Successfully extracted ${succeeded} archive${succeeded !== 1 ? "s" : ""}.`,
+          `Successfully extracted ${succeeded} archive${succeeded !== 1 ? "s" : ""}.${note}`,
           { title: "Batch extraction complete" },
         );
       }

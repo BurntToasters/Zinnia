@@ -28,7 +28,7 @@ describe("custom argument allow-list", () => {
     ]);
   });
 
-  it("does not expose filesystem, stream, link, sfx, or -ssw controls", () => {
+  it("does not expose filesystem, stream, sfx, or -ssw controls via extras", () => {
     expect(ALLOWED_EXTRA_PREFIXES).not.toEqual(
       expect.arrayContaining([
         "-w",
@@ -42,6 +42,7 @@ describe("custom argument allow-list", () => {
       ]),
     );
     expect(() => validateExtraArgs(["-ssw"])).toThrow();
+    expect(() => validateExtraArgs(["-snl"])).toThrow();
     expect(() => validateExtraArgs(["-mfoo=1"])).toThrow();
     expect(() => validateExtraArgs(["-mxyz"])).toThrow();
     expect(() => validateExtraArgs(["-mx=9", "-mmt=on"])).not.toThrow();

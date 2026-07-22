@@ -216,13 +216,32 @@ export function updateBasicStatus(text: string, errorDetail?: string): void {
     const pathLabel =
       pathCandidates.find((candidate) => (candidate?.length ?? 0) > 0) ??
       undefined;
+    const clearedApps = state.lastClearedQuarantineApps;
+    const restoredExec = state.lastRestoredExecuteBits;
+    state.lastClearedQuarantineApps = null;
+    state.lastRestoredExecuteBits = null;
+    const notes: string[] = [];
+    if (clearedApps && clearedApps > 0) {
+      notes.push(
+        `Cleared Gatekeeper quarantine on ${clearedApps} app bundle${clearedApps === 1 ? "" : "s"}`,
+      );
+    }
+    if (restoredExec && restoredExec > 0) {
+      notes.push(
+        `restored execute permission on ${restoredExec} file${restoredExec === 1 ? "" : "s"}`,
+      );
+    }
+    const extractDetail =
+      notes.length > 0
+        ? `Files have been extracted successfully. ${notes.join("; ")}.`
+        : "Files have been extracted successfully.";
     showBasicCompletion(
       section,
       true,
       section === "compress" ? "Archive created" : "Extraction complete",
       section === "compress"
         ? "Your archive has been created successfully."
-        : "Files have been extracted successfully.",
+        : extractDetail,
       pathLabel,
     );
     if (section === "extract" && state.inputs[0]) {

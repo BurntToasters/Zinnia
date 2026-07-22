@@ -1304,6 +1304,14 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
   z-index: 10;
 }
 
+/* Glass Basic: no solid dock behind Compress — let vibrancy show through. */
+html[data-window-fx="basic"]
+  #app[data-workspace-mode="basic"]
+  .basic-view-sticky-bottom {
+  background: transparent;
+  border-top-color: var(--basic-glass-border);
+}
+
 /* Hide run button when progress or completion is showing */
 .basic-view-sticky-bottom:has(.basic-progress.is-active) #basic-run-compress,
 .basic-view-sticky-bottom:has(.basic-completion.is-active) #basic-run-compress,

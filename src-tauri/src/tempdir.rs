@@ -9,6 +9,40 @@ fn managed_base(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     Ok(dir.join("convert"))
 }
 
+/// If `path` lives under a managed `convert/tmp-*` directory, return that tmp root.
+/// Used so convert recompress can store top-level symlink members with `-snl`.
+pub fn managed_convert_tmp_root_for(
+    app: &tauri::AppHandle,
+    path: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let base = managed_base(app).ok()?;
+    let mut cursor = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(path)
+    };
+    // Include the path itself when it is the tmp root.
+    loop {
+        let name = cursor.file_name()?.to_string_lossy();
+        if name.starts_with("tmp-") && name.len() > 4 {
+            let parent = cursor.parent()?;
+            if parent == base
+                || parent
+                    .canonicalize()
+                    .ok()
+                    .zip(base.canonicalize().ok())
+                    .is_some_and(|(p, b)| p == b)
+            {
+                return Some(cursor);
+            }
+        }
+        if !cursor.pop() {
+            break;
+        }
+    }
+    None
+}
+
 /// Best-effort cleanup for conversion directories left behind by a crash or a
 /// forced shutdown. Only direct `tmp-*` children older than 24 hours are
 /// considered; symlinks and anything outside the managed base are ignored.
@@ -98,6 +132,35 @@ pub async fn remove_managed_temp_dir(app: tauri::AppHandle, path: String) -> Res
         .map_err(|error| format!("Temp-directory cleanup worker failed: {error}"))?
 }
 
+/// List direct children of a managed conversion temp dir (includes dotfiles).
+#[tauri::command]
+pub fn list_managed_temp_children(app: tauri::AppHandle, path: String) -> Result<Vec<String>, String> {
+    let base = managed_base(&app)?;
+    let target = std::path::PathBuf::from(&path);
+    let raw_meta = std::fs::symlink_metadata(&target).map_err(|e| e.to_string())?;
+    crate::path_safety::reject_link_or_reparse(&target, &raw_meta)
+        .map_err(|_| "Temp path cannot be a symbolic link or reparse point.".to_string())?;
+    let canonical_base = base.canonicalize().unwrap_or(base.clone());
+    let canonical_target = target.canonicalize().map_err(|e| e.to_string())?;
+    if !is_direct_managed_child(&canonical_base, &canonical_target) {
+        return Err("Refusing to list a path outside the managed temp area.".to_string());
+    }
+    if !canonical_target.is_dir() {
+        return Err("Temp path is not a directory.".to_string());
+    }
+    let mut children = Vec::new();
+    for entry in std::fs::read_dir(&canonical_target).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let name = entry.file_name();
+        if name == "." || name == ".." {
+            continue;
+        }
+        children.push(entry.path().to_string_lossy().to_string());
+    }
+    children.sort();
+    Ok(children)
+}
+
 #[cfg(test)]
 mod tests {
     use super::is_direct_managed_child;
@@ -127,5 +190,29 @@ mod tests {
             base,
             std::path::Path::new("/cache/convert/unrelated")
         ));
+    }
+
+    #[test]
+    fn convert_tmp_root_naming_walk_finds_tmp_ancestor() {
+        use std::path::Path;
+        let path = Path::new("/cache/convert/tmp-abc123/link");
+        let mut cursor = path.to_path_buf();
+        let mut found = None;
+        loop {
+            let name = cursor.file_name().unwrap().to_string_lossy();
+            if name.starts_with("tmp-") && name.len() > 4 {
+                if cursor.parent() == Some(Path::new("/cache/convert")) {
+                    found = Some(cursor.clone());
+                    break;
+                }
+            }
+            if !cursor.pop() {
+                break;
+            }
+        }
+        assert_eq!(
+            found,
+            Some(Path::new("/cache/convert/tmp-abc123").to_path_buf())
+        );
     }
 }

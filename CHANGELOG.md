@@ -27,6 +27,20 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Feature:** Added the Zinnia logo icon to macOS Finder context menu items (**Extract with Zinnia** / **Compress with Zinnia**), styled as an adaptive system template image (Keka-style).
 - **Performance & Automation:** Optimized `release:*` scripts with `:continue` and `:resume` pipelines to reuse prepared versions, licenses, and sidecars without repeating redundant preparation steps.
 - **Security & Quality Gate:** Introduced a commit-bound release build session proof system (`release-session.js`), ensuring quality gates pass on a clean working tree prior to artifact creation and GPG signing.
+- **Fix:** Extraction allows relative in-tree symlinks (macOS `.app` / `.framework` bundles) while still rejecting absolute or escaping links and Windows reparse points.
+- **Fix:** Compress/create now stores symbolic and hard links (`-snl` / `-snh`) so archiving a `.app` round-trips correctly (frontend + backend inject); ZIP compress warns when inputs contain symlinks or app bundles.
+- **Fix:** Convert recompress can include top-level relative symlink members from the managed temp dir; ACL grants for probe/list temp commands.
+- **UI:** Main password/prompt modal is frosted under Basic glass (like the extract window).
+- **UX:** Completion notes when Unix extract restores execute bits on binaries/scripts.
+- **Fix:** After extract on macOS, clears Gatekeeper quarantine on promoted `.app` bundles (not the whole tree) and surfaces counts in completion UI.
+- **Fix:** Windows extract propagates Mark-of-the-Web via 7-Zip `-snz` (does not strip Zone.Identifier).
+- **Fix:** Convert recompress includes dotfiles (no longer uses `tempDir/*`).
+- **Fix:** Compress fails closed on nested Windows junction/cloud reparse points inside input trees.
+- **Fix:** Unix extract restores execute bits on obvious binaries/scripts when the archive omitted modes.
+- **UI:** Timestamp option label matches behavior (created + accessed; modification always stored).
+- **UI:** Basic glass mode no longer paints a solid black dock behind the Compress button.
+- **UI:** Extract-only window follows Basic glass / opaque window effects and theme; password modal is frosted under glass.
+- **UX:** Clearer errors when an archive or compress input path is itself a symbolic link or reparse point.
 
 ## Changes in `v0.6.0-beta.13:`
 

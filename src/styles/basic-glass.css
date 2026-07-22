@@ -105,6 +105,17 @@ html[data-window-fx="basic"] #app[data-workspace-mode="basic"] select {
   background: color-mix(in srgb, var(--surface) 55%, transparent) !important;
 }
 
+/* Password / prompt modal: frosted panel over vibrancy (matches extract window). */
+html[data-window-fx="basic"] #input-modal-overlay {
+  background: rgb(0 0 0 / 28%);
+}
+
+html[data-window-fx="basic"] #input-modal-overlay .modal {
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
 /* 2. Custom Sleek Scrollbars */
 #app[data-workspace-mode="basic"] .basic-view-scroll-content::-webkit-scrollbar,
 #app[data-workspace-mode="basic"] .modal__body::-webkit-scrollbar {

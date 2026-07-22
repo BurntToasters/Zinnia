@@ -264,6 +264,7 @@ fn main() {
             process::cancel_7z,
             process::is_7z_running,
             process::probe_7z,
+            process::probe_compress_inputs,
             process::get_startup_recovery_status,
             archive_detect::validate_archive_paths,
             settings_store::load_settings,
@@ -296,6 +297,7 @@ fn main() {
             platform::is_packaged,
             tempdir::create_temp_extract_dir,
             tempdir::remove_managed_temp_dir,
+            tempdir::list_managed_temp_children,
             window_fx::set_workspace_window_fx,
             window_fx::supports_workspace_window_fx
         ])

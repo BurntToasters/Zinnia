@@ -24,8 +24,71 @@ pub fn is_link_or_reparse(meta: &Metadata) -> bool {
 pub fn reject_link_or_reparse(path: &Path, meta: &Metadata) -> Result<(), String> {
     if is_link_or_reparse(meta) {
         return Err(format!(
-            "Refusing symbolic link or reparse point: {}",
+            "Choose the real path, not a symbolic link or reparse point: {}",
             path.display()
+        ));
+    }
+    Ok(())
+}
+
+/// Allow a symlink only when its target is relative and stays under `root`.
+///
+/// macOS `.app` / `.framework` bundles commonly use relative symlinks
+/// (`Versions/Current` → `A`). Absolute links and `../` escapes stay rejected.
+pub fn assert_relative_symlink_within_root(
+    root: &Path,
+    link_path: &Path,
+) -> Result<(), String> {
+    let target = std::fs::read_link(link_path).map_err(|e| e.to_string())?;
+    if target.is_absolute() {
+        return Err(format!(
+            "Archive contains an absolute symbolic link: {}",
+            link_path.display()
+        ));
+    }
+
+    let mut resolved = link_path
+        .parent()
+        .unwrap_or(link_path)
+        .to_path_buf();
+    for component in target.components() {
+        match component {
+            std::path::Component::Normal(part) => resolved.push(part),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !resolved.pop() {
+                    return Err(format!(
+                        "Archive symbolic link escapes the extract root: {}",
+                        link_path.display()
+                    ));
+                }
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                return Err(format!(
+                    "Archive contains an absolute symbolic link: {}",
+                    link_path.display()
+                ));
+            }
+        }
+    }
+
+    let relative = resolved.strip_prefix(root).map_err(|_| {
+        format!(
+            "Archive symbolic link escapes the extract root: {}",
+            link_path.display()
+        )
+    })?;
+    if relative.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::ParentDir
+                | std::path::Component::RootDir
+                | std::path::Component::Prefix(_)
+        )
+    }) {
+        return Err(format!(
+            "Archive symbolic link escapes the extract root: {}",
+            link_path.display()
         ));
     }
     Ok(())
@@ -255,6 +318,37 @@ mod tests {
                 // Symlink creation may require Developer Mode; skip quietly.
             }
         }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn relative_symlink_within_root_is_allowed() {
+        use std::os::unix::fs::symlink;
+        let root = temp_root("rel-link-ok");
+        std::fs::create_dir_all(root.join("Versions/A")).expect("dir");
+        let link = root.join("Versions/Current");
+        symlink("A", &link).expect("symlink");
+        assert_relative_symlink_within_root(&root, &link).expect("in-tree relative link");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn absolute_and_escaping_symlinks_are_rejected() {
+        use std::os::unix::fs::symlink;
+        let root = temp_root("rel-link-bad");
+        std::fs::create_dir_all(root.join("nested")).expect("dir");
+        let absolute = root.join("abs");
+        symlink("/tmp", &absolute).expect("absolute");
+        let escape = root.join("nested/escape");
+        symlink("../../outside", &escape).expect("escape");
+        assert!(assert_relative_symlink_within_root(&root, &absolute)
+            .expect_err("absolute")
+            .contains("absolute"));
+        assert!(assert_relative_symlink_within_root(&root, &escape)
+            .expect_err("escape")
+            .contains("escapes"));
         let _ = std::fs::remove_dir_all(root);
     }
 }

@@ -6,8 +6,12 @@ const MAX_7Z_ARGS: usize = 4096;
 const MAX_7Z_ARG_BYTES: usize = 8192;
 
 const ALLOWED_7Z_COMMANDS: &[&str] = &["a", "u", "x", "l", "t", "b"];
+// Store symbolic/hard links as links on create/update (-snl/-snh). Frontend
+// also passes them; run_7z injects as defense in depth. Keep them out of
+// BLOCKED so those switches validate; users cannot pass them via extra-args
+// (not in ALLOWED_EXTRA_PREFIXES).
 const BLOCKED_7Z_ARGS: &[&str] = &[
-    "-si", "-so", "-sdel", "-sfx", "-w", "-sns", "-sni", "-snl", "-snh", "-spf2",
+    "-si", "-so", "-sdel", "-sfx", "-w", "-sns", "-sni", "-spf2",
 ];
 
 fn has_embedded_listfile(arg: &str) -> bool {
@@ -50,7 +54,7 @@ fn is_allowed_method_switch(lower: &str) -> bool {
     // Prefixes ending in '=' require a non-empty value. Others require end / '=' / digit
     // so `-mxyz` does not match `-mx`.
     const PREFIXES: &[&str] = &[
-        "-m0=", "-mem=", "-mhe=", "-mtc=", "-mta=", "-mtb=", "-mhc=", "-mcu=", "-mcl=", "-mx",
+        "-m0=", "-mem=", "-mhe=", "-mtc=", "-mta=", "-mhc=", "-mcu=", "-mcl=", "-mx",
         "-md", "-mfb", "-ms", "-mmt",
     ];
     for prefix in PREFIXES {
@@ -88,6 +92,8 @@ fn is_allowed_switch(cmd: &str, arg: &str) -> bool {
                 || lower == "-slp"
                 || lower == "-ssp"
                 || lower == "-sse"
+                || lower == "-snl"
+                || lower == "-snh"
                 || is_include_or_exclude(arg)
                 || (cmd == "a"
                     && lower.starts_with("-v")
@@ -385,6 +391,8 @@ mod tests {
             "-ms=on".to_string(),
             "-mmt=4".to_string(),
             "-mhe=on".to_string(),
+            "-snl".to_string(),
+            "-snh".to_string(),
             "-p secret".to_string(),
             "out.7z".to_string(),
             "--".to_string(),

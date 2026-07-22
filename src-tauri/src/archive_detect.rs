@@ -248,7 +248,9 @@ pub fn validate_archive_path(path: &str) -> ArchivePathValidation {
         }
     };
     if crate::path_safety::is_link_or_reparse(&meta) {
-        return invalid("Path is a symbolic link or reparse point.");
+        return invalid(
+            "Choose the real file, not a symbolic link or reparse point. Zinnia does not follow links as archive inputs.",
+        );
     }
     if !meta.is_file() {
         return invalid("Path is not a file.");
