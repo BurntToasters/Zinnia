@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   configureDefaultArchiverActionButton,
   openFinderServicesSettings,
+  openFinderSyncSettings,
   renderOsIntegrationStatus,
   refreshOsIntegrationStatus,
   runDefaultArchiverAction,
@@ -378,6 +379,104 @@ describe("OS integration UI", () => {
     expect(invokeMock).toHaveBeenCalledWith("get_os_integration_status");
   });
 
+  it("shows Finder Sync status on macOS and enables via pluginkit", async () => {
+    renderOsIntegrationStatus({
+      platform: "macos",
+      packaged: true,
+      fileAssociationsKnown: true,
+      contextActionsKnown: false,
+      defaultAppHelpAvailable: true,
+      finderServicesAvailable: true,
+      finderServicesKnown: true,
+      finderServicesEnabled: false,
+      finderSyncAvailable: true,
+      finderSyncKnown: true,
+      finderSyncEnabled: false,
+      finderSyncHelp: "Finder Sync is installed but not enabled.",
+      archiveDefaults: [],
+    });
+
+    const row = document.getElementById("os-finder-sync-row") as HTMLElement;
+    expect(row.hidden).toBe(false);
+    expect(document.getElementById("os-finder-sync-status")?.textContent).toBe(
+      "Not enabled",
+    );
+
+    messageMock.mockClear();
+    invokeMock.mockReset();
+    invokeMock.mockResolvedValueOnce("").mockResolvedValueOnce({
+      platform: "macos",
+      packaged: true,
+      fileAssociationsKnown: true,
+      contextActionsKnown: true,
+      defaultAppHelpAvailable: true,
+      finderServicesAvailable: true,
+      finderServicesKnown: true,
+      finderServicesEnabled: false,
+      finderSyncAvailable: true,
+      finderSyncKnown: true,
+      finderSyncEnabled: true,
+      finderSyncHelp: "Finder Sync is enabled.",
+      archiveDefaults: [],
+    });
+    await openFinderSyncSettings();
+    expect(invokeMock).toHaveBeenNthCalledWith(1, "enable_finder_sync");
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "get_os_integration_status");
+    expect(messageMock).toHaveBeenCalledWith(
+      expect.stringContaining("Finder extension is enabled"),
+      expect.objectContaining({ title: "Finder context menu enabled" }),
+    );
+    expect(document.getElementById("os-finder-sync-status")?.textContent).toBe(
+      "Enabled",
+    );
+  });
+
+  it("opens Login Items & Extensions when pluginkit does not enable Finder Sync", async () => {
+    renderOsIntegrationStatus({
+      platform: "macos",
+      packaged: true,
+      fileAssociationsKnown: true,
+      contextActionsKnown: false,
+      defaultAppHelpAvailable: true,
+      finderServicesAvailable: true,
+      finderServicesKnown: true,
+      finderServicesEnabled: false,
+      finderSyncAvailable: true,
+      finderSyncKnown: true,
+      finderSyncEnabled: false,
+      archiveDefaults: [],
+    });
+
+    invokeMock.mockReset();
+    invokeMock
+      .mockResolvedValueOnce("")
+      .mockResolvedValueOnce({
+        platform: "macos",
+        packaged: true,
+        fileAssociationsKnown: true,
+        contextActionsKnown: false,
+        defaultAppHelpAvailable: true,
+        finderServicesAvailable: true,
+        finderServicesKnown: true,
+        finderServicesEnabled: false,
+        finderSyncAvailable: true,
+        finderSyncKnown: true,
+        finderSyncEnabled: false,
+        archiveDefaults: [],
+      })
+      .mockResolvedValueOnce("");
+
+    await openFinderSyncSettings();
+
+    expect(invokeMock).toHaveBeenNthCalledWith(1, "enable_finder_sync");
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "get_os_integration_status");
+    expect(invokeMock).toHaveBeenNthCalledWith(3, "open_finder_sync_settings");
+    expect(messageMock).toHaveBeenCalledWith(
+      expect.stringContaining("System Settings will open"),
+      expect.objectContaining({ title: "Enable Finder context menu" }),
+    );
+  });
+
   it("shows Finder Services status on macOS and opens System Settings", async () => {
     renderOsIntegrationStatus({
       platform: "macos",
@@ -433,13 +532,30 @@ describe("OS integration UI", () => {
     ).toBe(true);
 
     messageMock.mockClear();
-    invokeMock.mockResolvedValueOnce("");
+    invokeMock.mockReset();
+    invokeMock.mockResolvedValueOnce("").mockResolvedValueOnce({
+      platform: "macos",
+      packaged: true,
+      fileAssociationsKnown: true,
+      contextActionsKnown: true,
+      defaultAppHelpAvailable: true,
+      finderServicesAvailable: true,
+      finderServicesKnown: true,
+      finderServicesEnabled: true,
+      finderServicesHelp:
+        "Extract with Zinnia and Compress with Zinnia are enabled in Finder's Services menu.",
+      archiveDefaults: [],
+    });
     await openFinderServicesSettings();
-    expect(invokeMock).toHaveBeenCalledWith("open_finder_services_settings");
+    expect(invokeMock).toHaveBeenNthCalledWith(1, "enable_finder_services");
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "get_os_integration_status");
     expect(messageMock).toHaveBeenCalledWith(
-      expect.stringContaining("click Services"),
-      expect.objectContaining({ title: "Enable Finder Services" }),
+      expect.stringContaining("now enabled for Finder"),
+      expect.objectContaining({ title: "Finder Services enabled" }),
     );
+    expect(
+      document.getElementById("os-finder-services-status")?.textContent,
+    ).toBe("Enabled");
 
     renderOsIntegrationStatus({
       platform: "macos",
@@ -453,6 +569,7 @@ describe("OS integration UI", () => {
       archiveDefaults: [],
     });
     messageMock.mockClear();
+    invokeMock.mockClear();
     invokeMock.mockResolvedValueOnce("");
     await openFinderServicesSettings();
     expect(invokeMock).toHaveBeenCalledWith("open_finder_services_settings");

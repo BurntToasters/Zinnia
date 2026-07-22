@@ -1,5 +1,9 @@
 //! Finder PBS / Win11 modern menu / classic verbs / OS integration status.
 
+#[cfg(target_os = "macos")]
+use objc2::msg_send;
+#[cfg(target_os = "macos")]
+use objc2::runtime::AnyClass;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::process::Command;
 
@@ -19,7 +23,7 @@ struct FinderServicesInfo {
 
 /// Keys used by macOS `pbs` prefs for our NSServices entries.
 #[cfg(any(target_os = "macos", test))]
-const MACOS_FINDER_SERVICE_KEYS: &[&str] = &[
+pub(crate) const MACOS_FINDER_SERVICE_KEYS: &[&str] = &[
     "run.rosie.zinnia - Extract with Zinnia - extractWithZinnia",
     "run.rosie.zinnia - Compress with Zinnia - compressWithZinnia",
 ];
@@ -164,7 +168,7 @@ fn macos_finder_services_info() -> FinderServicesInfo {
                 .to_string()
         }
         (_, Some(true)) => {
-            "Services are registered but not enabled yet. In Keyboard Shortcuts, click Services and turn on Extract with Zinnia and Compress with Zinnia."
+            "Services are registered but not enabled yet. Click Enable… — Keyboard Shortcuts checkboxes alone may not update this status on current macOS."
                 .to_string()
         }
         (_, Some(false)) => {
@@ -297,6 +301,148 @@ fn win11_modern_menu_status_for(platform: &str, packaged: bool) -> Win11ModernMe
     }
 }
 
+struct FinderSyncInfo {
+    available: bool,
+    known: bool,
+    enabled: bool,
+    help: String,
+}
+
+pub(crate) const MACOS_FINDER_SYNC_BUNDLE_ID: &str = "run.rosie.zinnia.findersync";
+
+// Load FinderSync in the containing app so its public management/status APIs
+// are usable even before pluginkit discovers the embedded extension.
+#[cfg(target_os = "macos")]
+#[link(name = "FinderSync", kind = "framework")]
+unsafe extern "C" {}
+
+#[cfg(target_os = "macos")]
+fn finder_sync_controller_class() -> Option<&'static AnyClass> {
+    AnyClass::get(c"FIFinderSyncController")
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn show_finder_sync_management_interface(app: &tauri::AppHandle) -> bool {
+    if finder_sync_controller_class().is_none() {
+        return false;
+    }
+    app.run_on_main_thread(|| {
+        if let Some(controller) = finder_sync_controller_class() {
+            // `showExtensionManagementInterface` is FinderSync's documented
+            // route to the system-managed enablement interface.
+            unsafe { msg_send![controller, showExtensionManagementInterface] }
+        }
+    })
+    .is_ok()
+}
+
+#[cfg(target_os = "macos")]
+fn macos_finder_sync_appex_path() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let contents = exe.parent()?.parent()?;
+    let appex = contents.join("PlugIns").join("ZinniaFinderSync.appex");
+    appex.exists().then_some(appex)
+}
+
+/// Register the embedded Finder Sync appex with pluginkit (best-effort).
+#[cfg(target_os = "macos")]
+pub fn register_macos_finder_sync() {
+    let Some(appex) = macos_finder_sync_appex_path() else {
+        return;
+    };
+    let _ = command_output_with_timeout(
+        Command::new("/usr/bin/pluginkit").args(["-a", &appex.to_string_lossy()]),
+        std::time::Duration::from_secs(8),
+    );
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_finder_sync_enabled() -> Option<bool> {
+    if let Some(controller) = finder_sync_controller_class() {
+        // `isExtensionEnabled` is the public FinderSync status API. Retain the
+        // pluginkit query below only for compatibility if the framework loads.
+        return Some(unsafe { msg_send![controller, isExtensionEnabled] });
+    }
+    // `+` election means the user (or pluginkit -e use) enabled the extension.
+    let output = command_output_with_timeout(
+        Command::new("/usr/bin/pluginkit").args(["-m", "-v", "-i", MACOS_FINDER_SYNC_BUNDLE_ID]),
+        std::time::Duration::from_secs(8),
+    )
+    .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    if text.trim().is_empty() && !output.status.success() {
+        return None;
+    }
+    if !text.contains(MACOS_FINDER_SYNC_BUNDLE_ID) {
+        // Not discovered yet — still treat as known+disabled when the appex exists.
+        return Some(false);
+    }
+    Some(text.lines().any(|line| {
+        let trimmed = line.trim_start();
+        trimmed.starts_with('+') && trimmed.contains(MACOS_FINDER_SYNC_BUNDLE_ID)
+    }))
+}
+
+fn finder_sync_status_for(platform: &str, packaged: bool) -> FinderSyncInfo {
+    if platform != "macos" {
+        return FinderSyncInfo {
+            available: false,
+            known: false,
+            enabled: false,
+            help: String::new(),
+        };
+    }
+    if !packaged {
+        return FinderSyncInfo {
+            available: true,
+            known: true,
+            enabled: false,
+            help: "Install a packaged build to embed the Finder Sync extension for primary Finder context menus.".to_string(),
+        };
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if macos_finder_sync_appex_path().is_none() {
+            return FinderSyncInfo {
+                available: true,
+                known: true,
+                enabled: false,
+                help: "Finder Sync extension is missing from this install. Reinstall a current packaged build.".to_string(),
+            };
+        }
+        match macos_finder_sync_enabled() {
+            Some(true) => FinderSyncInfo {
+                available: true,
+                known: true,
+                enabled: true,
+                help: "Finder Sync is enabled. Extract / Compress with Zinnia appear in Finder's primary right-click menu.".to_string(),
+            },
+            Some(false) => FinderSyncInfo {
+                available: true,
+                known: true,
+                enabled: false,
+                help: "Finder Sync is installed but not enabled. Click Enable… or turn on Zinnia under System Settings → General → Login Items & Extensions → File Providers / Finder extensions.".to_string(),
+            },
+            None => FinderSyncInfo {
+                available: true,
+                known: false,
+                enabled: false,
+                help: "Could not query Finder Sync status via pluginkit. Open Login Items & Extensions and enable Zinnia Finder.".to_string(),
+            },
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        FinderSyncInfo {
+            available: true,
+            known: true,
+            enabled: true,
+            help: "Finder Sync is enabled. Extract / Compress with Zinnia appear in Finder's primary right-click menu.".to_string(),
+        }
+    }
+}
+
 fn finder_services_status_for(platform: &str, packaged: bool) -> FinderServicesInfo {
     if platform != "macos" {
         return FinderServicesInfo {
@@ -337,11 +483,12 @@ pub fn os_integration_status_for(platform: &str, packaged: bool) -> OsIntegratio
     let action_available = packaged && matches!(platform, "macos" | "linux");
     let default_app_help_available = matches!(platform, "macos" | "windows") || action_available;
     let finder = finder_services_status_for(platform, packaged);
+    let finder_sync = finder_sync_status_for(platform, packaged);
     let win11 = win11_modern_menu_status_for(platform, packaged);
-    // macOS: "Open/extract actions" tracks Finder Services, not just packaging.
+    // macOS: primary context menu tracks Finder Sync; Services remain a fallback.
     // Windows: classic Explorer verbs are always registered by NSIS when packaged.
     let context_actions_known = if platform == "macos" {
-        packaged && finder.known && finder.enabled
+        packaged && ((finder_sync.known && finder_sync.enabled) || (finder.known && finder.enabled))
     } else {
         packaged && matches!(platform, "windows")
     };
@@ -359,6 +506,10 @@ pub fn os_integration_status_for(platform: &str, packaged: bool) -> OsIntegratio
         finder_services_known: finder.known,
         finder_services_enabled: finder.enabled,
         finder_services_help: finder.help,
+        finder_sync_available: finder_sync.available,
+        finder_sync_known: finder_sync.known,
+        finder_sync_enabled: finder_sync.enabled,
+        finder_sync_help: finder_sync.help,
         win11_modern_menu_available: win11.available,
         win11_modern_menu_known: win11.known,
         win11_modern_menu_registered: win11.registered,
@@ -467,16 +618,18 @@ mod tests {
         assert!(macos_dev.finder_services_available);
         assert!(macos_dev.finder_services_known);
         assert!(!macos_dev.finder_services_enabled);
+        assert!(macos_dev.finder_sync_available);
+        assert!(!macos_dev.finder_sync_enabled);
         assert!(!macos_dev.context_actions_known);
         assert!(macos_dev.finder_services_help.contains("packaged"));
 
-        // Packaged macOS: Open/extract actions track Finder Services state.
+        // Packaged macOS: Open/extract actions track Finder Sync and/or Services.
         let macos_pkg = os_integration_status_for("macos", true);
         assert!(macos_pkg.finder_services_available);
-        assert_eq!(
-            macos_pkg.context_actions_known,
-            macos_pkg.finder_services_known && macos_pkg.finder_services_enabled
-        );
+        assert!(macos_pkg.finder_sync_available);
+        let sync_ok = macos_pkg.finder_sync_known && macos_pkg.finder_sync_enabled;
+        let services_ok = macos_pkg.finder_services_known && macos_pkg.finder_services_enabled;
+        assert_eq!(macos_pkg.context_actions_known, sync_ok || services_ok);
     }
 
     #[test]

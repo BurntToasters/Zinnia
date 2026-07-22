@@ -26,6 +26,28 @@ DMG, AppImage, or sparse context-menu packages. Signed Windows modern-menu and
 macOS Services behavior must be verified on release VMs using the checklists
 below before publishing.
 
+## macOS Finder context menu (Finder Sync)
+
+1. Install a packaged `.app` / DMG build that embeds `Contents/PlugIns/ZinniaFinderSync.appex`.
+2. Launch Zinnia once so the extension is registered, then quit it before the
+   cold-launch checks below.
+3. Settings → **OS Integration** → **Finder context menu** → **Enable…**
+   (or System Settings → General → Login Items & Extensions → enable **Zinnia Finder**).
+4. With Zinnia stopped, select an archive in Finder → right-click → **Extract
+   with Zinnia**. Confirm quick extract receives the selected path (not merely
+   an activated empty app window).
+5. Keep Zinnia running, select a file/folder → **Compress with Zinnia** from
+   the primary menu. Confirm the already-running app receives that new request.
+6. Confirm both items are in Finder's **primary** menu (not only under Services),
+   then refresh OS Integration: Finder context menu shows **Enabled**.
+7. Trigger Compress and then Extract rapidly. Confirm they arrive oldest-first,
+   exactly once, and no action from a failed/aborted launch appears more than 60
+   seconds later.
+8. On the release VM, verify `codesign -dvvv` reports the same `TeamIdentifier`
+   for the app, Finder Sync appex, and `Contents/MacOS/7z`. Confirm both app and
+   appex entitlements contain exactly
+   `<TeamIdentifier>.run.rosie.zinnia.findersync`.
+
 ## macOS Finder Services
 
 1. Install a packaged `.app` / DMG build (not a bare `cargo run` binary).
@@ -36,15 +58,14 @@ below before publishing.
 6. Settings → **OS Integration** → **Finder Services**: **Enabled** only when both
    services have an explicit enable toggle in `pbs` prefs; otherwise **Not enabled**
    (not Unknown). Registration is confirmed via `pbs -dump_cache` for help text.
-   **Enable…** opens Keyboard Shortcuts and selects **Services** (not Login Items &
-   Extensions / File Providers: that UI is for Finder Sync appexes like Keka;
-   Zinnia uses `NSServices`).
+   **Enable…** writes the `pbs` enable prefs (Services remain a fallback beside Finder Sync).
 7. Dev tip after Info.plist changes: `/System/Library/CoreServices/pbs -flush`
    Inspect registration: `/System/Library/CoreServices/pbs -dump_cache`
+   Finder Sync election: `pluginkit -m -v -i run.rosie.zinnia.findersync`
 
 > **Release gate:** On a clean macOS 26+ machine, install the signed and
-> notarized universal artifact; verify both Finder Services, archive Open With,
-> a signed updater check, and `spctl --assess` before publishing.
+> notarized universal artifact; verify Finder Sync primary-menu items, Finder Services,
+> archive Open With, a signed updater check, and `spctl --assess` before publishing.
 
 ## Windows 11 modern menu
 

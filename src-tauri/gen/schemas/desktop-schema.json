@@ -423,6 +423,18 @@
           "markdownDescription": "Enables the drain_pending_paths command without any pre-configured scope."
         },
         {
+          "description": "Enables the enable_finder_services command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-enable-finder-services",
+          "markdownDescription": "Enables the enable_finder_services command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the enable_finder_sync command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-enable-finder-sync",
+          "markdownDescription": "Enables the enable_finder_sync command without any pre-configured scope."
+        },
+        {
           "description": "Enables the export_logs command without any pre-configured scope.",
           "type": "string",
           "const": "allow-export-logs",
@@ -511,6 +523,12 @@
           "type": "string",
           "const": "allow-open-finder-services-settings",
           "markdownDescription": "Enables the open_finder_services_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_finder_sync_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-finder-sync-settings",
+          "markdownDescription": "Enables the open_finder_sync_settings command without any pre-configured scope."
         },
         {
           "description": "Enables the open_log_dir command without any pre-configured scope.",
@@ -633,6 +651,18 @@
           "markdownDescription": "Denies the drain_pending_paths command without any pre-configured scope."
         },
         {
+          "description": "Denies the enable_finder_services command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-enable-finder-services",
+          "markdownDescription": "Denies the enable_finder_services command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the enable_finder_sync command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-enable-finder-sync",
+          "markdownDescription": "Denies the enable_finder_sync command without any pre-configured scope."
+        },
+        {
           "description": "Denies the export_logs command without any pre-configured scope.",
           "type": "string",
           "const": "deny-export-logs",
@@ -721,6 +751,12 @@
           "type": "string",
           "const": "deny-open-finder-services-settings",
           "markdownDescription": "Denies the open_finder_services_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_finder_sync_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-finder-sync-settings",
+          "markdownDescription": "Denies the open_finder_sync_settings command without any pre-configured scope."
         },
         {
           "description": "Denies the open_log_dir command without any pre-configured scope.",

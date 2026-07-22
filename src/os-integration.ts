@@ -17,6 +17,11 @@ export interface OsIntegrationStatus {
   finderServicesKnown?: boolean;
   finderServicesEnabled?: boolean;
   finderServicesHelp?: string;
+  /** macOS Finder Sync appex for primary Finder context menus. */
+  finderSyncAvailable?: boolean;
+  finderSyncKnown?: boolean;
+  finderSyncEnabled?: boolean;
+  finderSyncHelp?: string;
   /** Windows: sparse MSIX identity for Win11 menu (not a full AppX app install). */
   win11ModernMenuAvailable?: boolean;
   win11ModernMenuKnown?: boolean;
@@ -45,16 +50,17 @@ interface DefaultArchiverResult {
 
 let latestStatus: OsIntegrationStatus | null = null;
 
-const FINDER_SERVICES_ENABLE_GUIDE = [
-  "System Settings will open to Keyboard Shortcuts.",
+const FINDER_SYNC_ENABLED_MESSAGE = [
+  "Zinnia's Finder extension is enabled.",
   "",
-  "In the left sidebar, click Services (not Modifier Keys or Login Items & Extensions).",
+  "Right-click files in Finder to use Extract with Zinnia / Compress with Zinnia in the main menu.",
+  "If items are missing, open Login Items & Extensions and confirm Zinnia Finder is on.",
+].join("\n");
+
+const FINDER_SERVICES_ENABLED_MESSAGE = [
+  "Extract with Zinnia and Compress with Zinnia are now enabled for Finder.",
   "",
-  "Turn on:",
-  "• Extract with Zinnia",
-  "• Compress with Zinnia",
-  "",
-  "Return here and click Refresh when both are enabled.",
+  "Optional: Keyboard Shortcuts → Services → Files and Folders can still customize shortcuts.",
 ].join("\n");
 
 function platformLabel(platform: string): string {
@@ -231,6 +237,42 @@ export function renderOsIntegrationStatus(status: OsIntegrationStatus): void {
     );
   }
 
+  const finderSyncRow = document.getElementById(
+    "os-finder-sync-row",
+  ) as HTMLElement | null;
+  const finderSyncAvailable = status.finderSyncAvailable === true;
+  if (finderSyncRow) {
+    finderSyncRow.hidden = !finderSyncAvailable;
+  }
+  if (finderSyncAvailable) {
+    const syncKnown = status.finderSyncKnown !== false;
+    const syncEnabled = status.finderSyncEnabled === true;
+    setTriStatePill(
+      "os-finder-sync-status",
+      syncKnown,
+      syncEnabled,
+      "Enabled",
+      status.packaged ? "Not enabled" : "Action needed",
+    );
+    setText(
+      "os-finder-sync-help",
+      status.finderSyncHelp ??
+        "Primary Finder right-click Extract / Compress via Finder Sync (Login Items & Extensions).",
+    );
+    const syncBtn = document.getElementById(
+      "open-finder-sync-settings",
+    ) as HTMLButtonElement | null;
+    if (syncBtn) {
+      syncBtn.textContent =
+        syncKnown && syncEnabled ? "Open Extensions…" : "Enable…";
+      syncBtn.disabled = false;
+      syncBtn.title =
+        syncKnown && syncEnabled
+          ? "Open Login Items & Extensions"
+          : "Enable Zinnia Finder Sync for primary Finder context menus";
+    }
+  }
+
   const finderRow = document.getElementById(
     "os-finder-services-row",
   ) as HTMLElement | null;
@@ -256,8 +298,8 @@ export function renderOsIntegrationStatus(status: OsIntegrationStatus): void {
       finderBtn.disabled = false;
       finderBtn.title =
         finderKnown && finderEnabled
-          ? "Open Keyboard Shortcuts → Services"
-          : "Open Keyboard Shortcuts and follow the steps to enable Extract / Compress with Zinnia";
+          ? "Open Keyboard Shortcuts → Services → Files and Folders"
+          : "Enable Extract / Compress with Zinnia for Finder";
     }
   }
 
@@ -376,18 +418,58 @@ export async function openOsIntegrationSettings(): Promise<void> {
   }
 }
 
+export async function openFinderSyncSettings(): Promise<void> {
+  const needsEnable =
+    latestStatus?.finderSyncAvailable === true &&
+    latestStatus.finderSyncEnabled !== true;
+  try {
+    if (needsEnable) {
+      await invoke("enable_finder_sync");
+      await refreshOsIntegrationStatus();
+      if (latestStatus?.finderSyncEnabled) {
+        await message(FINDER_SYNC_ENABLED_MESSAGE, {
+          title: "Finder context menu enabled",
+          kind: "info",
+        });
+      } else {
+        await invoke("open_finder_sync_settings");
+        await message(
+          [
+            "System Settings will open to Login Items & Extensions.",
+            "",
+            "Find Zinnia Finder (or Zinnia) and turn it on.",
+            "Return here and click Refresh when enabled.",
+          ].join("\n"),
+          { title: "Enable Finder context menu", kind: "info" },
+        );
+      }
+      return;
+    }
+    await invoke("open_finder_sync_settings");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await message(msg, {
+      title: "Finder context menu",
+      kind: "info",
+    });
+  }
+}
+
 export async function openFinderServicesSettings(): Promise<void> {
-  const showGuide =
+  const needsEnable =
     latestStatus?.finderServicesAvailable === true &&
     latestStatus.finderServicesEnabled !== true;
   try {
-    await invoke("open_finder_services_settings");
-    if (showGuide) {
-      await message(FINDER_SERVICES_ENABLE_GUIDE, {
-        title: "Enable Finder Services",
+    if (needsEnable) {
+      await invoke("enable_finder_services");
+      await refreshOsIntegrationStatus();
+      await message(FINDER_SERVICES_ENABLED_MESSAGE, {
+        title: "Finder Services enabled",
         kind: "info",
       });
+      return;
     }
+    await invoke("open_finder_services_settings");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await message(msg, {
@@ -521,6 +603,12 @@ export function wireOsIntegrationEvents(): void {
   if (finderBtn) {
     finderBtn.addEventListener("click", () => {
       void openFinderServicesSettings();
+    });
+  }
+  const finderSyncBtn = document.getElementById("open-finder-sync-settings");
+  if (finderSyncBtn) {
+    finderSyncBtn.addEventListener("click", () => {
+      void openFinderSyncSettings();
     });
   }
 }

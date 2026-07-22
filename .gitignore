@@ -38,6 +38,7 @@ vite.config.ts.timestamp-*
 # Tauri
 src-tauri/target/
 src-tauri/binaries/
+src-tauri/macos/build/
 src-tauri/.cargo/*
 !src-tauri/.cargo/audit.toml
 

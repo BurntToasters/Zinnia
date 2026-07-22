@@ -143,10 +143,8 @@ pub fn open_os_integration_settings(app: tauri::AppHandle) -> Result<(), String>
 
 /// Opens System Settings → Keyboard → Keyboard Shortcuts.
 ///
-/// Zinnia registers **Finder Services** (`NSServices`), not a Finder Sync /
-/// File Provider appex. Those show under Login Items & Extensions (Keka-style);
-/// ours are toggled under Keyboard Shortcuts → Services. The frontend shows
-/// step-by-step instructions after opening this pane (no UI scripting).
+/// Zinnia also ships a **Finder Sync** appex for primary Finder context menus.
+/// Services remain available under Keyboard Shortcuts → Services → Files and Folders.
 #[tauri::command]
 #[allow(deprecated)]
 pub fn open_finder_services_settings(app: tauri::AppHandle) -> Result<(), String> {
@@ -166,4 +164,173 @@ pub fn open_finder_services_settings(app: tauri::AppHandle) -> Result<(), String
         let _ = app;
         Err("Finder Services settings are only available on macOS.".to_string())
     }
+}
+
+/// Opens System Settings → General → Login Items & Extensions for Finder Sync.
+#[tauri::command]
+#[allow(deprecated)]
+pub fn open_finder_sync_settings(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        if super::integration_status::show_finder_sync_management_interface(&app) {
+            return Ok(());
+        }
+        use tauri_plugin_shell::ShellExt;
+        app.shell()
+            .open(
+                "x-apple.systempreferences:com.apple.LoginItems-Settings.extension",
+                None,
+            )
+            .map_err(|e| e.to_string())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Err("Finder Sync settings are only available on macOS.".to_string())
+    }
+}
+
+/// Best-effort election of the embedded Finder Sync extension via pluginkit
+/// (`-e use`). The frontend refreshes status and opens Apple's management UI
+/// once if explicit user approval is still required.
+#[tauri::command]
+pub fn enable_finder_sync(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use super::integration_status::{register_macos_finder_sync, MACOS_FINDER_SYNC_BUNDLE_ID};
+        use super::os_command::command_output_with_timeout;
+        use std::process::Command;
+
+        register_macos_finder_sync();
+        let _ = command_output_with_timeout(
+            Command::new("/usr/bin/pluginkit").args([
+                "-e",
+                "use",
+                "-i",
+                MACOS_FINDER_SYNC_BUNDLE_ID,
+            ]),
+            std::time::Duration::from_secs(8),
+        );
+
+        let _ = app;
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Err("Finder Sync can only be enabled on macOS.".to_string())
+    }
+}
+
+/// Enable Extract/Compress with Zinnia in Finder Services by writing `pbs`
+/// `NSServicesStatus` overrides, then flushing the Services cache.
+///
+/// Keyboard Shortcuts checkboxes on current macOS often leave `NSServicesStatus`
+/// empty, so status stays Not enabled until these prefs are written explicitly.
+#[tauri::command]
+pub fn enable_finder_services() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        enable_macos_finder_services()
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("Finder Services can only be enabled on macOS.".to_string())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn enable_macos_finder_services() -> Result<(), String> {
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    use super::integration_status::MACOS_FINDER_SERVICE_KEYS;
+    use super::os_command::command_output_with_timeout;
+
+    let home = std::env::var_os("HOME").ok_or_else(|| "HOME is unset".to_string())?;
+    let path = PathBuf::from(home).join("Library/Preferences/pbs.plist");
+
+    let mut root = if path.exists() {
+        let output = command_output_with_timeout(
+            Command::new("plutil").args([
+                "-convert",
+                "json",
+                "-o",
+                "-",
+                "--",
+                &path.to_string_lossy(),
+            ]),
+            std::time::Duration::from_secs(5),
+        )
+        .map_err(|e| format!("Failed to read pbs.plist: {e}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "Failed to read pbs.plist: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        serde_json::from_slice(&output.stdout)
+            .map_err(|e| format!("Failed to parse pbs.plist JSON: {e}"))?
+    } else {
+        serde_json::json!({})
+    };
+
+    let root_obj = root
+        .as_object_mut()
+        .ok_or_else(|| "pbs.plist root must be a dictionary".to_string())?;
+    let status_value = root_obj
+        .entry("NSServicesStatus".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    let status_map = status_value
+        .as_object_mut()
+        .ok_or_else(|| "NSServicesStatus must be a dictionary".to_string())?;
+
+    let entry = serde_json::json!({
+        "enabled_context_menu": true,
+        "enabled_services_menu": true,
+        "presentation_modes": { "ContextMenu": true }
+    });
+    for key in MACOS_FINDER_SERVICE_KEYS {
+        status_map.insert((*key).to_string(), entry.clone());
+    }
+
+    let tmp = path.with_extension("zinnia.json");
+    let json = serde_json::to_vec_pretty(&root)
+        .map_err(|e| format!("Failed to serialize pbs prefs: {e}"))?;
+    std::fs::write(&tmp, json).map_err(|e| format!("Failed to stage pbs prefs: {e}"))?;
+
+    let convert = command_output_with_timeout(
+        Command::new("plutil").args([
+            "-convert",
+            "binary1",
+            "-o",
+            &path.to_string_lossy(),
+            "--",
+            &tmp.to_string_lossy(),
+        ]),
+        std::time::Duration::from_secs(5),
+    );
+    let _ = std::fs::remove_file(&tmp);
+    let convert = convert.map_err(|e| format!("Failed to write pbs.plist: {e}"))?;
+    if !convert.status.success() {
+        return Err(format!(
+            "Failed to write pbs.plist: {}",
+            String::from_utf8_lossy(&convert.stderr)
+        ));
+    }
+
+    // Refresh CFPreferences + Services registration so Finder picks up the toggles.
+    let _ = command_output_with_timeout(
+        Command::new("defaults").args(["read", "pbs", "NSServicesStatus"]),
+        std::time::Duration::from_secs(5),
+    );
+    let _ = command_output_with_timeout(
+        Command::new("/System/Library/CoreServices/pbs").args(["-flush"]),
+        std::time::Duration::from_secs(8),
+    );
+
+    Ok(())
 }
