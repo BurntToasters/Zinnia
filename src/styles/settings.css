@@ -204,6 +204,8 @@
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
 }
 
 .setting-title {
@@ -216,6 +218,15 @@
   font-size: 0.6875rem;
   color: var(--text-secondary);
   line-height: 1.4;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.setting-desc--path {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .setting-divider {
@@ -256,6 +267,11 @@
   justify-content: flex-end;
 }
 
+.setting-item > .setting-actions {
+  flex: 0 1 auto;
+  max-width: min(100%, 22rem);
+}
+
 /* --- About tab --- */
 
 .about-header {
@@ -287,6 +303,7 @@
   font-size: 0.75rem;
   color: var(--text-secondary);
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   margin-top: 2px;

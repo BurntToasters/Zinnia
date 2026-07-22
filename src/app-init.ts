@@ -32,6 +32,7 @@ import {
 } from "./presets";
 import { checkUpdates, autoCheckUpdates } from "./updater";
 import { openLicensesModal } from "./licenses";
+import { openExternalUrl, wireExternalLinkClicks } from "./external-links";
 import { refreshQuickActionRepeatState } from "./quick-actions";
 import { shouldShowSetupWizard } from "./setup-wizard";
 import { initBasicWorkspace, handleBasicDragDrop } from "./basic";
@@ -124,11 +125,7 @@ export async function init() {
           openLicensesModal();
           break;
         case "menu-support":
-          window.open(
-            "https://rosie.run/support",
-            "_blank",
-            "noopener,noreferrer",
-          );
+          void openExternalUrl("https://rosie.run/support");
           break;
         default:
           break;
@@ -169,6 +166,7 @@ export async function init() {
     document.body.classList.add("platform-linux");
   }
   wireTitlebar();
+  wireExternalLinkClicks();
 
   try {
     const cpuCount = await invoke<number>("get_cpu_count");

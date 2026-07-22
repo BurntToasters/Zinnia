@@ -8,8 +8,8 @@ import {
   applyTheme,
   readSettingsModal,
   applySettingsToForm,
-  openSettingsModal,
   closeSettingsModal,
+  toggleSettingsModal,
   populateSettingsModal,
   syncSettingsSecurityControlsForFormat,
 } from "./settings";
@@ -373,7 +373,7 @@ export function wireEvents() {
     refreshQuickActionRepeatState();
   });
 
-  $("open-settings").addEventListener("click", openSettingsModal);
+  $("open-settings").addEventListener("click", toggleSettingsModal);
   $("close-settings").addEventListener("click", () => closeSettingsModal());
   $("cancel-settings").addEventListener("click", () => closeSettingsModal());
   $("settings-overlay").addEventListener("click", (e) => {
@@ -571,9 +571,7 @@ export function wireEvents() {
     }
     if (e.key === "," && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
-      if ($("settings-overlay").hidden) {
-        openSettingsModal();
-      }
+      toggleSettingsModal();
       return;
     }
     if (e.key === "Escape") {

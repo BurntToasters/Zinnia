@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { SETTING_DEFAULTS } from "../settings-model";
 
 const mocks = vi.hoisted(() => {
@@ -21,6 +22,14 @@ const mocks = vi.hoisted(() => {
       applySettingsToForm: vi.fn(),
       openSettingsModal: vi.fn(),
       closeSettingsModal: vi.fn(),
+      toggleSettingsModal: vi.fn(() => {
+        const overlay = document.getElementById("settings-overlay");
+        if (!overlay || overlay.hidden) {
+          mocks.settings.openSettingsModal();
+        } else {
+          mocks.settings.closeSettingsModal();
+        }
+      }),
       populateSettingsModal: vi.fn(),
       syncSettingsSecurityControlsForFormat: vi.fn(),
     },
@@ -123,6 +132,7 @@ vi.mock("../settings", () => ({
   applySettingsToForm: mocks.settings.applySettingsToForm,
   openSettingsModal: mocks.settings.openSettingsModal,
   closeSettingsModal: mocks.settings.closeSettingsModal,
+  toggleSettingsModal: mocks.settings.toggleSettingsModal,
   populateSettingsModal: mocks.settings.populateSettingsModal,
   syncSettingsSecurityControlsForFormat:
     mocks.settings.syncSettingsSecurityControlsForFormat,
@@ -491,6 +501,15 @@ beforeEach(async () => {
   mocks.settings.applySettingsToForm.mockReset();
   mocks.settings.openSettingsModal.mockReset();
   mocks.settings.closeSettingsModal.mockReset();
+  mocks.settings.toggleSettingsModal.mockReset();
+  mocks.settings.toggleSettingsModal.mockImplementation(() => {
+    const overlay = document.getElementById("settings-overlay");
+    if (!overlay || overlay.hidden) {
+      mocks.settings.openSettingsModal();
+    } else {
+      mocks.settings.closeSettingsModal();
+    }
+  });
   mocks.settings.populateSettingsModal.mockReset();
   mocks.settings.syncSettingsSecurityControlsForFormat.mockReset();
 
@@ -720,14 +739,10 @@ describe("main bootstrap", () => {
     appMenuHandler!({ payload: "menu-licenses" });
     expect(mocks.licenses.openLicensesModal).toHaveBeenCalled();
 
-    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+    const openUrlMock = vi.mocked(openUrl);
+    openUrlMock.mockClear();
     appMenuHandler!({ payload: "menu-support" });
-    expect(openSpy).toHaveBeenCalledWith(
-      "https://rosie.run/support",
-      "_blank",
-      "noopener,noreferrer",
-    );
-    openSpy.mockRestore();
+    expect(openUrlMock).toHaveBeenCalledWith("https://rosie.run/support");
 
     appMenuHandler!({ payload: "menu-shortcuts" });
     expect(
@@ -756,6 +771,7 @@ describe("main bootstrap", () => {
     expect(mocks.archive.runAction).toHaveBeenCalled();
 
     mocks.settings.openSettingsModal.mockClear();
+    mocks.settings.closeSettingsModal.mockClear();
     document.dispatchEvent(
       new KeyboardEvent("keydown", { key: ",", metaKey: true }),
     );
@@ -766,11 +782,15 @@ describe("main bootstrap", () => {
     ) as HTMLElement;
     settingsOverlay.hidden = false;
     mocks.settings.openSettingsModal.mockClear();
+    mocks.settings.closeSettingsModal.mockClear();
     document.dispatchEvent(
       new KeyboardEvent("keydown", { key: ",", ctrlKey: true }),
     );
     expect(mocks.settings.openSettingsModal).not.toHaveBeenCalled();
+    expect(mocks.settings.closeSettingsModal).toHaveBeenCalled();
 
+    settingsOverlay.hidden = false;
+    mocks.settings.closeSettingsModal.mockClear();
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect(mocks.settings.closeSettingsModal).toHaveBeenCalled();
 

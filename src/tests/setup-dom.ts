@@ -39,6 +39,9 @@ vi.mock("@tauri-apps/plugin-notification", () => ({
   requestPermission: vi.fn().mockResolvedValue("denied"),
   sendNotification: vi.fn(),
 }));
+vi.mock("@tauri-apps/plugin-shell", () => ({
+  open: vi.fn().mockResolvedValue(undefined),
+}));
 
 // ── DOM elements ──
 

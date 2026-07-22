@@ -19,6 +19,7 @@
     "dialog:allow-message",
     "dialog:allow-open",
     "dialog:allow-save",
+    "shell:default",
     "updater:allow-check",
     "updater:allow-download",
     "updater:allow-install",

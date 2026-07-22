@@ -56,7 +56,7 @@ describe("Tauri capability policy", () => {
     }
   });
 
-  it("grants only the dialog, updater, process, and notification APIs Zinnia uses", () => {
+  it("grants only the dialog, updater, process, notification, and shell APIs Zinnia uses", () => {
     const { permissions } = readCapability("default");
 
     expect(permissions).toEqual(
@@ -64,6 +64,7 @@ describe("Tauri capability policy", () => {
         "dialog:allow-message",
         "dialog:allow-open",
         "dialog:allow-save",
+        "shell:default",
         "updater:allow-check",
         "updater:allow-download",
         "updater:allow-install",
@@ -79,6 +80,8 @@ describe("Tauri capability policy", () => {
         "updater:default",
         "process:default",
         "notification:default",
+        "shell:allow-execute",
+        "shell:allow-spawn",
       ]),
     );
     expect(permissions).toEqual(
