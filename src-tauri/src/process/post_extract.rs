@@ -12,6 +12,7 @@ pub(crate) struct PostExtractFixups {
 }
 
 pub(crate) fn apply_post_extract_fixups(root: &Path) -> PostExtractFixups {
+    #[allow(unused_mut)]
     let mut out = PostExtractFixups::default();
     #[cfg(target_os = "macos")]
     {
@@ -83,6 +84,7 @@ fn visit_app_bundles(path: &Path, on_app: &mut dyn FnMut(&Path)) {
     }
 }
 
+#[cfg(unix)]
 const MAX_EXECUTE_SCAN_ENTRIES: u32 = 50_000;
 
 /// Grant `u+x` to extracted binaries/scripts that 7-Zip left non-executable
