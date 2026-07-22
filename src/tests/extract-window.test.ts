@@ -102,9 +102,40 @@ async function setupAndRun(
 
 beforeEach(() => {
   vi.useRealTimers();
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    writable: true,
+    value: undefined,
+  });
 });
 
 describe("extract-window", () => {
+  it("applies the system dark theme and enabled window effects", async () => {
+    const matchMedia = vi.fn().mockReturnValue({ matches: true });
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: matchMedia,
+    });
+
+    const { invokeMock } = await setupAndRun(async (cmd) => {
+      if (cmd === "get_extract_paths") return [];
+      if (cmd === "supports_workspace_window_fx") return true;
+      if (cmd === "load_settings") {
+        return JSON.stringify({ basicWindowEffects: true, theme: "system" });
+      }
+      return undefined;
+    });
+    await flushAsync();
+
+    expect(matchMedia).toHaveBeenCalledWith("(prefers-color-scheme: dark)");
+    expect(document.documentElement.dataset.windowFx).toBe("basic");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+    expect(invokeMock).toHaveBeenCalledWith("set_workspace_window_fx", {
+      enabled: true,
+      dark: true,
+    });
+  });
+
   it("shows no-archive state when no extract path is provided", async () => {
     const { invokeMock } = await setupAndRun(async (cmd) => {
       if (cmd === "get_extract_paths") return [];

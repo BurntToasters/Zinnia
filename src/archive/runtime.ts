@@ -23,6 +23,10 @@ export interface Run7zResult {
   code: number;
   stdout_truncated?: boolean;
   stderr_truncated?: boolean;
+  /** macOS: `.app` bundles whose Gatekeeper quarantine was cleared after extract. */
+  cleared_quarantine_apps?: number;
+  /** Unix: files that received an execute bit after extract. */
+  restored_execute_bits?: number;
 }
 
 interface ProgressUpdate {

@@ -39,7 +39,7 @@ const tauriConfig = JSON.parse(
 const requiredMacOS = tauriConfig.bundle?.macOS?.minimumSystemVersion;
 const expectedBundleVersion = tauriConfig.bundle?.macOS?.bundleVersion;
 const marketingVersionMatch = tauriConfig.version?.match(
-  /^(\d+)\.(\d+)\.(\d+)(?:-(?:alpha|beta|rc)\.\d+)?$/,
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-beta\.(?:0|[1-9]\d*))?$/,
 );
 const expectedMarketingVersion = marketingVersionMatch
   ? `${marketingVersionMatch[1]}.${marketingVersionMatch[2]}.${marketingVersionMatch[3]}`

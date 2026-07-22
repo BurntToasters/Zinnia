@@ -12,7 +12,6 @@ export const ALLOWED_METHOD_PREFIXES = [
   "-mhe=",
   "-mtc=",
   "-mta=",
-  "-mtb=",
   "-mhc=",
   "-mcu=",
   "-mcl=",

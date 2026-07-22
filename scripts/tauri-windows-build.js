@@ -132,6 +132,7 @@ if (!skipContextMenu) {
       fileURLToPath(
         new URL("./ensure-windows-context-menu-stubs.mjs", import.meta.url),
       ),
+      "--force",
     ],
     { stdio: "inherit" },
   );

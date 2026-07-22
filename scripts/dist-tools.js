@@ -2,6 +2,7 @@
 
 import fs from "fs";
 import path from "path";
+import { createReleaseSession, verifyQualityGate } from "./release-session.js";
 
 const FLATPAK_BUILD_DIR_PREFIX = "flatpak-build";
 const TAURI_TARGET_DIR = path.join("src-tauri", "target");
@@ -87,6 +88,12 @@ function cleanDirs(mode) {
   const cwd = process.cwd();
   const dirs = getCleanTargets(mode, cwd);
 
+  // Refuse before deleting prior artifacts if the full quality gate was not
+  // completed for this exact clean checkout and environment.
+  if (mode === "clean-release-artifacts") {
+    verifyQualityGate(cwd);
+  }
+
   for (const relativeDir of dirs) {
     const dir = path.resolve(cwd, relativeDir);
     try {
@@ -116,13 +123,10 @@ function cleanDirs(mode) {
 
   if (mode === "clean-release-artifacts") {
     const releaseDir = path.join(cwd, "release");
-    const packageVersion = JSON.parse(
-      fs.readFileSync(path.join(cwd, "package.json"), "utf8"),
-    ).version;
     fs.mkdirSync(releaseDir, { recursive: true });
     fs.writeFileSync(
       path.join(releaseDir, RELEASE_BUILD_SESSION),
-      `${JSON.stringify({ version: packageVersion, startedAt: Date.now() })}\n`,
+      `${JSON.stringify(createReleaseSession(cwd))}\n`,
       { flag: "wx", mode: 0o600 },
     );
   }

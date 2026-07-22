@@ -348,6 +348,7 @@ fn main() {
         "cancel_7z",
         "is_7z_running",
         "probe_7z",
+        "probe_compress_inputs",
         "get_startup_recovery_status",
         "validate_archive_paths",
         "load_settings",
@@ -380,6 +381,7 @@ fn main() {
         "is_packaged",
         "create_temp_extract_dir",
         "remove_managed_temp_dir",
+        "list_managed_temp_children",
         "set_workspace_window_fx",
         "supports_workspace_window_fx",
     ];

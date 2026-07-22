@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const outDir = path.join(root, "src-tauri", "windows", "shell", "out");
+const force = process.argv.slice(2).includes("--force");
 mkdirSync(outDir, { recursive: true });
 for (const name of [
   "zinnia_shell.dll",
@@ -12,8 +13,10 @@ for (const name of [
   "ZinniaExtractContextMenu.msix",
 ]) {
   const filePath = path.join(outDir, name);
-  if (!existsSync(filePath)) {
+  if (force || !existsSync(filePath)) {
     writeFileSync(filePath, "");
-    console.log(`[ensure-windows-context-menu-stubs] created empty ${filePath}`);
+    console.log(
+      `[ensure-windows-context-menu-stubs] ${force ? "reset" : "created"} empty ${filePath}`,
+    );
   }
 }

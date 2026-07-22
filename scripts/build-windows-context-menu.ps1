@@ -53,9 +53,12 @@ if (-not $PackageVersion) {
   $pkg = Get-Content (Join-Path $root 'package.json') -Raw | ConvertFrom-Json
   $PackageVersion = [string]$pkg.version
 }
-$parts = @(($PackageVersion -replace '[^0-9.]', '') -split '\.' | Where-Object { $_ -ne '' })
-while ($parts.Count -lt 4) { $parts += '0' }
-$appxVersion = ($parts[0..3] -join '.')
+$versionHelper = Join-Path $root 'scripts\print-windows-package-version.js'
+$appxVersion = (& node $versionHelper $PackageVersion | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($appxVersion)) {
+  throw "Could not map '$PackageVersion' to an ordered Windows package version."
+}
+$shellDirectory = "shell-$PackageVersion"
 
 function Escape-XmlAttribute([string]$Value) {
   return ($Value -replace '&', '&amp;' -replace '"', '&quot;' -replace "'", '&apos;' -replace '<', '&lt;' -replace '>', '&gt;')
@@ -68,6 +71,13 @@ function Write-Utf8NoBom([string]$Path, [string]$Text) {
   [System.IO.File]::WriteAllText($Path, $Text, $encoding)
 }
 
+function Assert-NoTemplateTokens([string]$Text, [string]$Source) {
+  $match = [regex]::Match($Text, '__[A-Z0-9_]+__')
+  if ($match.Success) {
+    throw "Unresolved template token '$($match.Value)' in $Source"
+  }
+}
+
 $PublisherDnXml = Escape-XmlAttribute $PublisherDn
 
 # DLL side-by-side identity and Appx Identity.Publisher MUST be identical strings.
@@ -75,10 +85,12 @@ $PublisherDnXml = Escape-XmlAttribute $PublisherDn
 $identityIn = Join-Path $shellDir 'msix_identity.manifest.in'
 $identityOut = Join-Path $shellDir 'msix_identity.manifest'
 $identityText = (Get-Content -LiteralPath $identityIn -Raw).Replace('__PUBLISHER_DN__', $PublisherDnXml)
+Assert-NoTemplateTokens $identityText $identityIn
 Write-Utf8NoBom $identityOut $identityText
 $extractIdentityIn = Join-Path $shellDir 'msix_extract_identity.manifest.in'
 $extractIdentityOut = Join-Path $shellDir 'msix_extract_identity.manifest'
 $extractIdentityText = (Get-Content -LiteralPath $extractIdentityIn -Raw).Replace('__PUBLISHER_DN__', $PublisherDnXml)
+Assert-NoTemplateTokens $extractIdentityText $extractIdentityIn
 Write-Utf8NoBom $extractIdentityOut $extractIdentityText
 
 function Resolve-ZinniaCmakeVsGenerator {
@@ -127,7 +139,9 @@ $appxTemplate = Join-Path $sparseDir 'AppxManifest.xml.template'
 $appxPath = Join-Path $staging 'AppxManifest.xml'
 $appxText = (Get-Content -LiteralPath $appxTemplate -Raw).
   Replace('__PUBLISHER_DN__', $PublisherDnXml).
-  Replace('__PACKAGE_VERSION__', $appxVersion)
+  Replace('__PACKAGE_VERSION__', $appxVersion).
+  Replace('__SHELL_DIRECTORY__', $shellDirectory)
+Assert-NoTemplateTokens $appxText $appxTemplate
 Write-Utf8NoBom $appxPath $appxText
 
 $extractStaging = Join-Path $buildDir 'extract-sparse-staging'
@@ -138,7 +152,9 @@ $extractAppxTemplate = Join-Path $sparseDir 'ExtractAppxManifest.xml.template'
 $extractAppxPath = Join-Path $extractStaging 'AppxManifest.xml'
 $extractAppxText = (Get-Content -LiteralPath $extractAppxTemplate -Raw).
   Replace('__PUBLISHER_DN__', $PublisherDnXml).
-  Replace('__PACKAGE_VERSION__', $appxVersion)
+  Replace('__PACKAGE_VERSION__', $appxVersion).
+  Replace('__SHELL_DIRECTORY__', $shellDirectory)
+Assert-NoTemplateTokens $extractAppxText $extractAppxTemplate
 Write-Utf8NoBom $extractAppxPath $extractAppxText
 
 $makeAppx = @(

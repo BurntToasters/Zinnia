@@ -10,6 +10,18 @@ final class FinderSync: FIFinderSync {
     let paths: [String]
   }
 
+  /// Zinnia logo for context menu items. Loaded once from the extension bundle.
+  /// isTemplate=true lets AppKit render it correctly in light/dark mode and
+  /// when the item is selected (white-on-blue), matching system menu icon style.
+  private lazy var menuIcon: NSImage? = {
+    let bundle = Bundle(for: type(of: self))
+    guard let path = bundle.path(forResource: "zinnia-menu", ofType: "png"),
+          let image = NSImage(contentsOfFile: path)
+    else { return nil }
+    image.isTemplate = true
+    return image
+  }()
+
   private let archiveExtensions: Set<String> = [
     "7z", "zip", "tar", "gz", "tgz", "bz2", "tbz2", "xz", "txz", "rar", "001",
   ]
@@ -33,6 +45,7 @@ final class FinderSync: FIFinderSync {
         keyEquivalent: ""
       )
       extract.target = self
+      extract.image = menuIcon
       menu.addItem(extract)
     }
 
@@ -42,6 +55,7 @@ final class FinderSync: FIFinderSync {
       keyEquivalent: ""
     )
     compress.target = self
+    compress.image = menuIcon
     menu.addItem(compress)
     return menu
   }

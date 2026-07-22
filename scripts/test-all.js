@@ -2,6 +2,10 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import {
+  clearQualityGateProof,
+  recordSuccessfulQualityGate,
+} from "./release-session.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -339,6 +343,8 @@ ${colors.reset}`);
 }
 
 function main() {
+  // A failed or interrupted run must invalidate any earlier release proof.
+  clearQualityGateProof(resolve(__dirname, ".."));
   const results = createInitialResults();
   const npm = getNpmCommand();
   printBanner();
@@ -401,7 +407,17 @@ function main() {
     { timeout: rustTimeoutMs },
   );
 
-  return printSummary(results);
+  const exitCode = printSummary(results);
+  if (exitCode === 0) {
+    if (recordSuccessfulQualityGate(resolve(__dirname, ".."))) {
+      console.log("Release quality-gate proof recorded for this clean commit.");
+    } else {
+      console.log(
+        "Release quality-gate proof not recorded because the working tree is dirty.",
+      );
+    }
+  }
+  return exitCode;
 }
 
 process.exit(main());

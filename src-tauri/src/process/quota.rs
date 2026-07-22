@@ -85,7 +85,18 @@ pub(crate) fn staged_tree_usage(
     while let Some(directory) = pending.pop() {
         for entry in std::fs::read_dir(&directory).map_err(|e| e.to_string())? {
             let entry = entry.map_err(|e| e.to_string())?;
-            let metadata = std::fs::symlink_metadata(entry.path()).map_err(|e| e.to_string())?;
+            let path = entry.path();
+            let metadata = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
+            if metadata.file_type().is_symlink() {
+                crate::path_safety::assert_relative_symlink_within_root(root, &path)?;
+                files = files.saturating_add(1);
+                if files > max_files {
+                    return Err(format!(
+                        "Extraction exceeded the safety limit of {max_files} entries."
+                    ));
+                }
+                continue;
+            }
             if crate::path_safety::is_link_or_reparse(&metadata) {
                 return Err(
                     "Extraction created a symbolic link or reparse point; operation stopped."
@@ -106,7 +117,7 @@ pub(crate) fn staged_tree_usage(
                 ));
             }
             if metadata.is_dir() {
-                pending.push(entry.path());
+                pending.push(path);
             }
         }
     }

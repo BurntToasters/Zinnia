@@ -8,6 +8,8 @@ import {
   macMarketingVersionFromSemver,
   updateCargoLockPackageVersion,
   updateWindowsResourceFlags,
+  updateWindowsShellResourceDestinations,
+  windowsPackageVersionFromSemver,
 } from "./sync-version-helpers.js";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -39,6 +41,26 @@ if (
     process.exit(1);
   }
   console.log(`tauri.conf.json → ${version} (macOS build ${macBundleVersion})`);
+}
+
+const windowsConfPath = path.join(root, "src-tauri", "tauri.windows.conf.json");
+const windowsConf = JSON.parse(fs.readFileSync(windowsConfPath, "utf-8"));
+let updatedWindowsConf;
+try {
+  updatedWindowsConf = updateWindowsShellResourceDestinations(
+    windowsConf,
+    version,
+  );
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
+if (JSON.stringify(updatedWindowsConf) !== JSON.stringify(windowsConf)) {
+  fs.writeFileSync(
+    windowsConfPath,
+    JSON.stringify(updatedWindowsConf, null, 2) + "\n",
+  );
+  console.log(`tauri.windows.conf.json → shell-${version}`);
 }
 
 const macInfoPath = path.join(root, "src-tauri", "Info.plist");
@@ -96,26 +118,14 @@ if (updatedLock !== cargoLock) {
   console.log(`Cargo.lock      → ${version}`);
 }
 
-const windowsVersionMatch = version.match(
-  /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]*?(\d+))?$/,
-);
-if (!windowsVersionMatch) {
-  console.error(
-    `Version cannot be represented in Windows resources: ${version}`,
-  );
+let windowsPackageVersion;
+try {
+  windowsPackageVersion = windowsPackageVersionFromSemver(version);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
 }
-const windowsVersion = [
-  windowsVersionMatch[1],
-  windowsVersionMatch[2],
-  windowsVersionMatch[3],
-  windowsVersionMatch[4] ?? "0",
-];
-if (windowsVersion.some((part) => Number(part) > 65535)) {
-  console.error(`Windows resource version component exceeds 65535: ${version}`);
-  process.exit(1);
-}
-const numericVersion = windowsVersion.join(",");
+const numericVersion = windowsPackageVersion.replaceAll(".", ",");
 for (const rcName of ["zinnia_shell.rc", "zinnia_extract_shell.rc"]) {
   const rcPath = path.join(root, "src-tauri", "windows", "shell", rcName);
   const rc = fs.readFileSync(rcPath, "utf8");

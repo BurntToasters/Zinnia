@@ -23,6 +23,58 @@ use super::{ensure_idle, lock_process, RunResult, RunningProcess};
 /// Parsed bundled 7-Zip version from the last successful `probe_7z` (e.g. "26.02").
 static PROBED_7Z_VERSION: Mutex<Option<String>> = Mutex::new(None);
 
+/// Refuse symlink/reparse *user input paths* for create/update. Nested links
+/// inside a real directory are stored via `-snl`/`-snh`. Symlink *members*
+/// under a managed convert temp dir are allowed so convert can round-trip
+/// top-level links extracted from an archive.
+fn assert_compress_inputs_are_real_paths(
+    app: &tauri::AppHandle,
+    args: &[String],
+) -> Result<(), String> {
+    let Some(cmd) = args.first().map(String::as_str) else {
+        return Ok(());
+    };
+    if cmd != "a" && cmd != "u" {
+        return Ok(());
+    }
+    let Some(separator) = args.iter().position(|arg| arg == "--") else {
+        return Ok(());
+    };
+    let inputs: Vec<String> = args.iter().skip(separator + 1).cloned().collect();
+    for path in &inputs {
+        if path.contains('*') || path.contains('?') {
+            continue;
+        }
+        let fs_path = std::path::Path::new(path);
+        let meta = match std::fs::symlink_metadata(fs_path) {
+            Ok(meta) => meta,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(format!("Unable to read input path '{path}': {error}"));
+            }
+        };
+        if crate::path_safety::is_link_or_reparse(&meta) {
+            if meta.file_type().is_symlink() {
+                if let Some(tmp_root) = crate::tempdir::managed_convert_tmp_root_for(app, fs_path) {
+                    crate::path_safety::assert_relative_symlink_within_root(&tmp_root, fs_path)?;
+                    continue;
+                }
+            }
+            return Err(format!(
+                "Choose the real file or folder, not a symbolic link or reparse point: {path}"
+            ));
+        }
+    }
+    super::compress_preflight::assert_no_nested_reparse_for_compress(&inputs)
+}
+
+#[tauri::command]
+pub fn probe_compress_inputs(
+    paths: Vec<String>,
+) -> Result<super::compress_preflight::CompressInputProbe, String> {
+    super::compress_preflight::probe_compress_input_paths(&paths)
+}
+
 /// Windows RAR extract stays blocked for CVE-2026-58052 through this version inclusive.
 #[cfg(target_os = "windows")]
 const WINDOWS_RAR_EXTRACT_BLOCKED_THROUGH: &str = "26.02";
@@ -174,6 +226,28 @@ pub async fn run_7z(
     state: tauri::State<'_, RunningProcess>,
 ) -> Result<RunResult, String> {
     validate_run_7z_args(&args)?;
+    assert_compress_inputs_are_real_paths(&app, &args)?;
+
+    let mut args = args;
+    // Always store symlinks/hardlinks as links on create/update (macOS .app /
+    // .framework trees). Frontend also passes these; inject here so a malformed
+    // webview cannot omit them and cause 7-Zip to follow nested links.
+    if matches!(args.first().map(String::as_str), Some("a" | "u")) {
+        if !args.iter().any(|arg| arg.eq_ignore_ascii_case("-snl")) {
+            args.insert(1, "-snl".to_string());
+        }
+        if !args.iter().any(|arg| arg.eq_ignore_ascii_case("-snh")) {
+            args.insert(1, "-snh".to_string());
+        }
+    }
+    // Windows: propagate Mark-of-the-Web (Zone.Identifier) from the archive onto
+    // extracted files. macOS/Linux 7-Zip builds reject -snz.
+    #[cfg(target_os = "windows")]
+    if args.first().map(String::as_str) == Some("x")
+        && !args.iter().any(|arg| arg.eq_ignore_ascii_case("-snz"))
+    {
+        args.insert(1, "-snz".to_string());
+    }
 
     if let Some("x" | "l" | "t") = args.first().map(String::as_str) {
         let separator = args
@@ -540,6 +614,10 @@ pub async fn run_7z(
     let finalize_plan = cleanup_plan.clone();
     let finalize_window = window.clone();
     let finalize_emit = emit_window.clone();
+    let cleared_quarantine_apps = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let cleared_for_finalize = cleared_quarantine_apps.clone();
+    let restored_execute_bits = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let restored_for_finalize = restored_execute_bits.clone();
     let finalize_join = tokio::task::spawn_blocking(move || {
         if was_cancelled || exit_code != 0 {
             if let Err(error) = rollback_cleanup(&finalize_plan) {
@@ -560,7 +638,17 @@ pub async fn run_7z(
                 },
             );
             match commit_cleanup(&finalize_app, &finalize_plan) {
-                Ok(()) => Ok(()),
+                Ok(outcome) => {
+                    cleared_for_finalize.store(
+                        outcome.cleared_quarantine_apps,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    restored_for_finalize.store(
+                        outcome.restored_execute_bits,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    Ok(())
+                }
                 Err(error) => {
                     if commit_failure_should_scrub_staging(&finalize_plan, &error) {
                         // Safe orphan scrub (add-mode / no recovery backups).
@@ -609,6 +697,22 @@ pub async fn run_7z(
         code: exit_code,
         stdout_truncated: collected.stdout_truncated,
         stderr_truncated: collected.stderr_truncated,
+        cleared_quarantine_apps: {
+            let count = cleared_quarantine_apps.load(std::sync::atomic::Ordering::Relaxed);
+            if count > 0 {
+                Some(count)
+            } else {
+                None
+            }
+        },
+        restored_execute_bits: {
+            let count = restored_execute_bits.load(std::sync::atomic::Ordering::Relaxed);
+            if count > 0 {
+                Some(count)
+            } else {
+                None
+            }
+        },
     })
 }
 

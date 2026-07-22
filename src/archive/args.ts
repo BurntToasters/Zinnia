@@ -159,12 +159,20 @@ export function buildArgs() {
     rawEncryptHeaders,
   );
 
-  const switches = ["-sse", ...buildCompressionMethodSwitches(format)];
+  // -snl/-snh preserve symlinks/hardlinks (macOS .app / .framework bundles).
+  const switches = [
+    "-sse",
+    "-snl",
+    "-snh",
+    ...buildCompressionMethodSwitches(format),
+  ];
   if (password) switches.push(`-p${password}`);
   // ZIP defaults to weak ZipCrypto; upgrade to AES-256 when a password is set.
   if (password && format === "zip") switches.push("-mem=AES256");
   if (encryptHeaders) switches.push("-mhe=on");
   if (storeTimestamps) switches.push("-mtc=on", "-mta=on");
+  // Modification time is stored by default (-mtm=on). -mtc/-mta add creation
+  // and access; 7-Zip has no separate portable "birth" switch beyond -mtc.
   if (deleteAfter) {
     throw new Error(
       "Delete after compression is unavailable because source deletion cannot be rolled back safely. Delete the sources manually after testing the archive.",

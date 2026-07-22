@@ -10,7 +10,20 @@ const packageJson = JSON.parse(
 );
 
 function expectedReleaseBranch(version) {
-  return /-(?:alpha|beta|rc)(?:[.-]?\d+)?$/i.test(version) ? "beta" : "main";
+  const numeric = "(?:0|[1-9]\\d*)";
+  if (
+    new RegExp(`^${numeric}\\.${numeric}\\.${numeric}-beta\\.${numeric}$`).test(
+      version,
+    )
+  ) {
+    return "beta";
+  }
+  if (new RegExp(`^${numeric}\\.${numeric}\\.${numeric}$`).test(version)) {
+    return "main";
+  }
+  throw new Error(
+    `Unsupported release version '${version}'; Zinnia releases use beta or stable only.`,
+  );
 }
 
 function git(args) {

@@ -145,8 +145,15 @@ beforeEach(() => {
     true;
   (document.getElementById("browse-password") as HTMLInputElement).value = "";
   (document.getElementById("extract-password") as HTMLInputElement).value = "";
+  (document.getElementById("password") as HTMLInputElement).value = "";
+  (document.getElementById("encrypt-headers") as HTMLInputElement).checked =
+    false;
+  (document.getElementById("store-timestamps") as HTMLInputElement).checked =
+    false;
+  (document.getElementById("split-size") as HTMLSelectElement).value = "";
   (document.getElementById("extract-path") as HTMLInputElement).value = "";
   (document.getElementById("selective-dest") as HTMLInputElement).value = "";
+  (document.getElementById("format") as HTMLSelectElement).value = "7z";
 
   messageMock.mockReset();
   messageMock.mockResolvedValue("Ok");
@@ -927,6 +934,8 @@ describe("convertArchive", () => {
       if (command === "probe_7z") return undefined;
       if (command === "create_temp_extract_dir")
         return "/tmp/zinnia-convert-tmp";
+      if (command === "list_managed_temp_children")
+        return ["/tmp/zinnia-convert-tmp/document.txt"];
       if (command === "remove_managed_temp_dir") return undefined;
       if (command === "run_7z") {
         const args = (payload as { args?: string[] } | undefined)?.args ?? [];
@@ -948,6 +957,134 @@ describe("convertArchive", () => {
     expect(invokeMock).toHaveBeenCalledWith("remove_managed_temp_dir", {
       path: "/tmp/zinnia-convert-tmp",
     });
+  });
+
+  it("fails conversion safely when extraction produces no children", async () => {
+    state.inputs = [uniqueArchivePath("convert-empty")];
+    saveMock.mockResolvedValueOnce("/tmp/converted.7z");
+
+    const runArgs: string[][] = [];
+    setInvokeRouter((command, payload) => {
+      if (command === "probe_7z") return undefined;
+      if (command === "create_temp_extract_dir")
+        return "/tmp/zinnia-convert-empty";
+      if (command === "list_managed_temp_children") return [];
+      if (command === "remove_managed_temp_dir") return undefined;
+      if (command === "run_7z") {
+        const args = (payload as { args?: string[] } | undefined)?.args ?? [];
+        runArgs.push(args);
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      return undefined;
+    });
+
+    await convertArchive();
+
+    expect(runArgs).toHaveLength(1);
+    expect(messageMock).toHaveBeenCalledWith(
+      "Conversion extract produced no files to recompress.",
+      { title: "Conversion error", kind: "error" },
+    );
+    expect(invokeMock).toHaveBeenCalledWith("remove_managed_temp_dir", {
+      path: "/tmp/zinnia-convert-empty",
+    });
+  });
+
+  it("cancels ZIP conversion when extracted links may not round-trip", async () => {
+    state.inputs = [uniqueArchivePath("convert-zip-risk")];
+    (document.getElementById("format") as HTMLSelectElement).value = "zip";
+    saveMock.mockResolvedValueOnce("/tmp/converted.zip");
+    confirmMock.mockResolvedValueOnce(false);
+
+    const runArgs: string[][] = [];
+    setInvokeRouter((command, payload) => {
+      if (command === "probe_7z") return undefined;
+      if (command === "create_temp_extract_dir")
+        return "/tmp/zinnia-convert-zip";
+      if (command === "list_managed_temp_children") {
+        return ["/tmp/zinnia-convert-zip/Demo.app"];
+      }
+      if (command === "probe_compress_inputs") {
+        return {
+          nestedSymlinks: 1,
+          appBundles: 1,
+          nestedReparsePoints: 0,
+          examples: ["/tmp/zinnia-convert-zip/Demo.app"],
+        };
+      }
+      if (command === "remove_managed_temp_dir") return undefined;
+      if (command === "run_7z") {
+        const args = (payload as { args?: string[] } | undefined)?.args ?? [];
+        runArgs.push(args);
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      return undefined;
+    });
+
+    await convertArchive();
+
+    expect(runArgs).toHaveLength(1);
+    expect(confirmMock).toHaveBeenCalledWith(
+      expect.stringContaining("ZIP often fails to preserve"),
+      expect.objectContaining({ title: "ZIP may break app bundles" }),
+    );
+    expect(invokeMock).toHaveBeenCalledWith("remove_managed_temp_dir", {
+      path: "/tmp/zinnia-convert-zip",
+    });
+  });
+
+  it("preserves conversion passwords, timestamps, and split settings", async () => {
+    state.inputs = [uniqueArchivePath("convert-options")];
+    (document.getElementById("format") as HTMLSelectElement).value = "zip";
+    (document.getElementById("extract-password") as HTMLInputElement).value =
+      "source-secret";
+    (document.getElementById("password") as HTMLInputElement).value =
+      "dest-secret";
+    (document.getElementById("encrypt-headers") as HTMLInputElement).checked =
+      true;
+    (document.getElementById("store-timestamps") as HTMLInputElement).checked =
+      true;
+    (document.getElementById("split-size") as HTMLSelectElement).value = "100m";
+    saveMock.mockResolvedValueOnce("/tmp/converted.zip");
+
+    const runArgs: string[][] = [];
+    setInvokeRouter((command, payload) => {
+      if (command === "probe_7z") return undefined;
+      if (command === "create_temp_extract_dir")
+        return "/tmp/zinnia-convert-options";
+      if (command === "list_managed_temp_children") {
+        return ["/tmp/zinnia-convert-options/document.txt"];
+      }
+      if (command === "probe_compress_inputs") {
+        return {
+          nestedSymlinks: 0,
+          appBundles: 0,
+          nestedReparsePoints: 0,
+          examples: [],
+        };
+      }
+      if (command === "remove_managed_temp_dir") return undefined;
+      if (command === "run_7z") {
+        const args = (payload as { args?: string[] } | undefined)?.args ?? [];
+        runArgs.push(args);
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      return undefined;
+    });
+
+    await convertArchive();
+
+    expect(runArgs).toHaveLength(2);
+    expect(runArgs[0]).toContain("-psource-secret");
+    expect(runArgs[1]).toEqual(
+      expect.arrayContaining([
+        "-pdest-secret",
+        "-mem=AES256",
+        "-mtc=on",
+        "-mta=on",
+        "-v100m",
+      ]),
+    );
   });
 
   it("aborts cleanly when the save dialog is cancelled", async () => {

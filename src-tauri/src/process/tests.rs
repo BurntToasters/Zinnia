@@ -181,6 +181,49 @@ fn staged_symlink_is_rejected_even_for_new_destination() {
 
 #[cfg(unix)]
 #[test]
+fn staged_relative_in_tree_symlink_is_allowed() {
+    use std::os::unix::fs::symlink;
+    let root = temp_root("zinnia-rel-symlink-ok");
+    let staged = root.join("staged");
+    let destination = root.join("destination");
+    let framework = staged.join("Demo.app/Contents/Frameworks/Demo.framework");
+    std::fs::create_dir_all(framework.join("Versions/A/Resources")).expect("framework tree");
+    std::fs::write(framework.join("Versions/A/Resources/Info.plist"), b"ok").expect("plist");
+    symlink("A", framework.join("Versions/Current")).expect("Current symlink");
+    symlink("Versions/Current/Resources", framework.join("Resources")).expect("Resources symlink");
+
+    merge_staged_extract(&staged, &destination, MAX_EXTRACTED_BYTES).expect("relative links ok");
+    assert!(destination
+        .join("Demo.app/Contents/Frameworks/Demo.framework/Resources")
+        .symlink_metadata()
+        .expect("resources link")
+        .file_type()
+        .is_symlink());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+#[test]
+fn staged_relative_escape_symlink_is_rejected() {
+    use std::os::unix::fs::symlink;
+    let root = temp_root("zinnia-rel-symlink-escape");
+    let staged = root.join("staged");
+    let destination = root.join("destination");
+    std::fs::create_dir_all(staged.join("nested")).expect("staged tree");
+    symlink("../../outside", staged.join("nested/escape")).expect("escape symlink");
+
+    let error = merge_staged_extract(&staged, &destination, MAX_EXTRACTED_BYTES)
+        .expect_err("escape link must fail");
+    assert!(
+        error.contains("escapes the extract root") || error.contains("symbolic link"),
+        "unexpected error: {error}"
+    );
+    assert!(!destination.exists());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+#[test]
 fn existing_destination_symlink_is_never_followed_during_merge() {
     use std::os::unix::fs::symlink;
     let root = temp_root("zinnia-destination-symlink-test");

@@ -104,6 +104,11 @@ compile_arch x86_64 "$X86_BIN"
 "$LIPO" -create -output "$MACOS_DIR/$MODULE" "$ARM_BIN" "$X86_BIN"
 chmod +x "$MACOS_DIR/$MODULE"
 
+# Copy bundle resources (must happen before codesign, which covers Resources/).
+RESOURCES_DIR="$CONTENTS/Resources"
+mkdir -p "$RESOURCES_DIR"
+cp "$SRC/zinnia-menu.png" "$RESOURCES_DIR/zinnia-menu.png"
+
 # Ad-hoc sign for local embeds; release VMs re-sign with Developer ID via Tauri.
 IDENTITY="${APPLE_SIGNING_IDENTITY:-}"
 if [[ -n "$IDENTITY" && "$IDENTITY" != "-" ]]; then

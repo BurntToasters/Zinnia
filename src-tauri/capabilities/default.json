@@ -58,6 +58,8 @@
     "allow-is-packaged",
     "allow-create-temp-extract-dir",
     "allow-remove-managed-temp-dir",
+    "allow-list-managed-temp-children",
+    "allow-probe-compress-inputs",
     "allow-set-workspace-window-fx",
     "allow-supports-workspace-window-fx",
     "allow-get-startup-recovery-status"

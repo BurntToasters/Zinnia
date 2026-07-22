@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-managed-temp-children"
+description = "Enables the list_managed_temp_children command without any pre-configured scope."
+commands.allow = ["list_managed_temp_children"]
+
+[[permission]]
+identifier = "deny-list-managed-temp-children"
+description = "Denies the list_managed_temp_children command without any pre-configured scope."
+commands.deny = ["list_managed_temp_children"]

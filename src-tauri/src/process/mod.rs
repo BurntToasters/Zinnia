@@ -6,7 +6,9 @@ use tauri_plugin_shell::process::CommandChild;
 mod archive_snapshot;
 mod commands;
 mod commit;
+mod compress_preflight;
 mod journal;
+mod post_extract;
 mod quota;
 mod recovery;
 mod staging;
@@ -18,7 +20,7 @@ mod tests;
 #[allow(unused_imports)] // re-exported for main.rs / invoke_handler
 pub use commands::{
     cancel_7z, is_7z_running, is_non_running_kill_error, parse_7z_version, probe_7z,
-    probed_7z_version, run_7z,
+    probe_compress_inputs, probed_7z_version, run_7z,
 };
 #[allow(unused_imports)]
 pub use journal::cleanup_orphan_stages;
@@ -32,9 +34,10 @@ pub use recovery::{
 // up on the same path as the function (`process::run_7z` → `process::__cmd__run_7z`).
 #[doc(hidden)]
 pub use commands::{
-    __cmd__cancel_7z, __cmd__is_7z_running, __cmd__probe_7z, __cmd__run_7z,
-    __tauri_command_name_cancel_7z, __tauri_command_name_is_7z_running,
-    __tauri_command_name_probe_7z, __tauri_command_name_run_7z,
+    __cmd__cancel_7z, __cmd__is_7z_running, __cmd__probe_7z, __cmd__probe_compress_inputs,
+    __cmd__run_7z, __tauri_command_name_cancel_7z, __tauri_command_name_is_7z_running,
+    __tauri_command_name_probe_7z, __tauri_command_name_probe_compress_inputs,
+    __tauri_command_name_run_7z,
 };
 #[doc(hidden)]
 pub use recovery::{
@@ -80,6 +83,12 @@ pub struct RunResult {
     pub code: i32,
     pub stdout_truncated: bool,
     pub stderr_truncated: bool,
+    /// macOS: number of `.app` bundles whose Gatekeeper quarantine was cleared.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cleared_quarantine_apps: Option<u32>,
+    /// Unix: files that received an execute bit after extract (ZIP mode gaps).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub restored_execute_bits: Option<u32>,
 }
 
 pub struct ProcessState {

@@ -17,6 +17,7 @@ import {
   showOperationError,
   type Run7zResult,
 } from "./runtime";
+import { confirmZipSymlinkRisk } from "./compress-fidelity";
 
 export async function addFilesToArchive(): Promise<void> {
   if (state.running) return;
@@ -44,9 +45,15 @@ export async function addFilesToArchive(): Promise<void> {
       $<HTMLInputElement>("threads").value,
       SETTING_DEFAULTS.threads,
     );
-    const args = ["u", "-sse"];
+    const args = ["u", "-sse", "-snl", "-snh"];
     if (threads) args.push(`-mmt=${threads}`);
     args.push(archive, "--", ...files);
+
+    const zipDest = archive.toLowerCase().endsWith(".zip");
+    if (zipDest && !(await confirmZipSymlinkRisk("zip", files))) {
+      setStatus("Cancelled", 2000);
+      return;
+    }
 
     setStatus("Adding files");
     devLog(`7z ${sanitizeCommandArgsForPreview(args).join(" ")}`);
@@ -116,7 +123,13 @@ export async function convertArchive(): Promise<void> {
     }
 
     setStatus("Recompressing");
-    const compress = ["a", "-sse", ...buildCompressionMethodSwitches(format)];
+    const compress = [
+      "a",
+      "-sse",
+      "-snl",
+      "-snh",
+      ...buildCompressionMethodSwitches(format),
+    ];
     const rawPassword = $<HTMLInputElement>("password").value;
     const rawEncryptHeaders = $<HTMLInputElement>("encrypt-headers").checked;
     const { password: compressPassword, encryptHeaders } =
@@ -133,7 +146,18 @@ export async function convertArchive(): Promise<void> {
     }
     const splitSize = readSplitSize();
     if (splitSize) compress.push(`-v${splitSize}`);
-    compress.push(dest, "--", `${tempDir}/*`);
+    // List children explicitly (includes dotfiles). `tempDir/*` drops `.*`.
+    const children = await invoke<string[]>("list_managed_temp_children", {
+      path: tempDir,
+    });
+    if (children.length === 0) {
+      throw new Error("Conversion extract produced no files to recompress.");
+    }
+    if (!(await confirmZipSymlinkRisk(format, children))) {
+      setStatus("Cancelled", 2000);
+      return;
+    }
+    compress.push(dest, "--", ...children);
 
     const result = await invoke<Run7zResult>("run_7z", { args: compress });
     logCommandResult(result.stdout, result.stderr);

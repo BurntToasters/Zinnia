@@ -3,12 +3,12 @@
 
 # ⬇️ Downloads
 
-| <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                                          | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux        |
-| :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------- |
-| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.13/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.13/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.13/Zinnia-macOS.dmg)**   | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.13/Zinnia-Linux-x64.AppImage) |
-| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>-->                     | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.13/Zinnia-macOS.zip)**   | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.13/Zinnia-Linux-x64.deb)           |
-| <!--*See MSI note below*-->                                                                                                                                                                                                |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.13/Zinnia-Linux-x64.rpm)           |
-|                                                                                                                                                                                                                            |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.13/Zinnia-Linux-x64.flatpak)   |
+| <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                                            | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux         |
+| :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------- |
+| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.14/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.14/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.14/Zinnia-macOS.dmg)**  | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.14/Zinnia-Linux-x64.AppImage) |
+| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>-->                       | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.14/Zinnia-macOS.zip)**  | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.14/Zinnia-Linux-x64.deb)           |
+| <!--*See MSI note below*-->                                                                                                                                                                                                  |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.14/Zinnia-Linux-x64.rpm)           |
+|                                                                                                                                                                                                                              |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.14/Zinnia-Linux-x64.flatpak)   |
 
 > macOS downloads require macOS 26 or later.
 
@@ -21,17 +21,44 @@
 
 Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
+## Changes in `v0.6.0-beta.14:`
+
+- **Critical Fix:** Windows updates now install Explorer context-menu DLLs side by side in a versioned directory, preventing a loaded `zinnia_shell.dll` from blocking NSIS and soft-locking the app mid-update; identical same-version reinstalls skip unchanged payloads, while legacy and older versioned payloads are removed immediately or scheduled for deletion after reboot, including during uninstall.
+- **Fix:** Windows shell DLL and sparse-package numeric versions now preserve the beta number and reserve the maximum revision for stable builds, so promoting `0.6.0-beta.14` (`0.6.0.14`) to stable `0.6.0` (`0.6.0.65535`) always moves forward.
+- **Fix:** Windows builds that disable the modern context menu now forcibly replace any stale shell artifacts with empty stubs, preventing an older DLL/MSIX payload from leaking into a later installer.
+- **Release:** Release tooling now accepts only Zinnia's supported beta and stable version formats and rejects alpha, RC, malformed, or leading-zero versions before artifact creation.
+- **Feature:** Added the Zinnia logo icon to macOS Finder context menu items (**Extract with Zinnia** / **Compress with Zinnia**), styled as an adaptive system template image (Keka-style).
+- **Performance & Automation:** Optimized `release:*` scripts with `:continue` and `:resume` pipelines to reuse prepared versions, licenses, and sidecars without repeating redundant preparation steps.
+- **Security & Quality Gate:** Introduced a commit-bound release build session proof system (`release-session.js`), ensuring quality gates pass on a clean working tree prior to artifact creation and GPG signing.
+- **Fix:** Extraction allows relative in-tree symlinks (macOS `.app` / `.framework` bundles) while still rejecting absolute or escaping links and Windows reparse points.
+- **Fix:** Compress/create now stores symbolic and hard links (`-snl` / `-snh`) so archiving a `.app` round-trips correctly (frontend + backend inject); ZIP compress warns when inputs contain symlinks or app bundles.
+- **Fix:** Convert recompress can include top-level relative symlink members from the managed temp dir; ACL grants for probe/list temp commands.
+- **UI:** Main password/prompt modal is frosted under Basic glass (like the extract window).
+- **UX:** Completion notes when Unix extract restores execute bits on binaries/scripts.
+- **Fix:** After extract on macOS, clears Gatekeeper quarantine on promoted `.app` bundles (not the whole tree) and surfaces counts in completion UI.
+- **Fix:** Windows extract propagates Mark-of-the-Web via 7-Zip `-snz` (does not strip Zone.Identifier).
+- **Fix:** Convert recompress includes dotfiles (no longer uses `tempDir/*`).
+- **Fix:** Compress fails closed on nested Windows junction/cloud reparse points inside input trees.
+- **Fix:** Unix extract restores execute bits on obvious binaries/scripts when the archive omitted modes.
+- **UI:** Timestamp option label matches behavior (created + accessed; modification always stored).
+- **UI:** Basic glass mode no longer paints a solid black dock behind the Compress button.
+- **UI:** Extract-only window follows Basic glass / opaque window effects and theme; password modal is frosted under glass.
+- **UX:** Clearer errors when an archive or compress input path is itself a symbolic link or reparse point.
+
 ## Changes in `v0.6.0-beta.13:`
+
 - **Feature:** macOS **Finder Sync** extension adds **Extract with Zinnia** / **Compress with Zinnia** to Finder's primary right-click menu (Keka-style), alongside existing Services.
 - **Fix:** macOS Finder Services **Enable…** writes `pbs` enable prefs directly (System Settings checkboxes often leave status stuck on Not enabled) and no longer uses Accessibility / Automation UI scripting.
 
 ## Changes in `v0.6.0-beta.12:`
+
 - **Fix:** macOS Finder Services **Enable…** no longer scripts System Settings (no Accessibility / Automation prompts); it opens Keyboard Shortcuts and shows in-app steps to expand **Files and Folders** and turn on Extract / Compress under **Services**.
 - **Fix:** `sync-version` keeps the root crate version in `Cargo.lock` in sync so Flatpak `--locked` builds and clean-tree source export do not fail after a version bump.
 - **Fix:** `npm run u` / `u2` use `workspace:prepare` instead of `release:prepare`, so release branch/clean-tree preflight no longer blocks dependency updates and local testing on feature branches.
 - **Fix:** `workspace:prepare` / `release:prepare` write AppStream metainfo before `test:all` so Flatpak validation sees the new package version.
 
 ## Changes in `v0.6.0-beta.11:`
+
 - **Fix:** Removed the invalid sparse-package file-association declaration that caused MakeAppx to reject the Windows 11 context-menu manifest.
 - **Fix:** Split Windows 11 Root and Extract verbs into separate sparse identities so Explorer shows standalone **Extract with Zinnia** beside the **Zinnia** submenu instead of grouping both into a broken outer flyout.
 - **Fix:** Kept the Extract-only sparse identity out of **Open with** by registering archive targets solely through Explorer context-menu item types.
@@ -49,6 +76,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Test:** Fixed Windows-only Rust warnings/Clippy failures and added Clippy to the Windows/macOS CI matrix.
 
 ## Changes in `v0.6.0-beta.9:`
+
 - **Recents:** Moved to a compact titlebar dropdown in Basic mode; missing (deleted) paths are dropped automatically.
   - Misc fixes to recents.
 
@@ -65,8 +93,6 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Fix:** Win11 shell treats split volumes (`.7z.001`) like open routing; ExtractTop disables (not hides) when a selection cannot resolve filesystem paths.
 - **Fix:** Archive promote copies from the held nofollow handle when hard links are unavailable; Windows open shares `FILE_SHARE_DELETE`.
 - **Test:** `power-logs` coverage gate; Windows nofollow/token-SID unit tests.
-
-
 
 ## Changes in `v0.6.0-beta.6:`
 

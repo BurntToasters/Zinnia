@@ -507,6 +507,12 @@
           "markdownDescription": "Enables the is_packaged command without any pre-configured scope."
         },
         {
+          "description": "Enables the list_managed_temp_children command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-list-managed-temp-children",
+          "markdownDescription": "Enables the list_managed_temp_children command without any pre-configured scope."
+        },
+        {
           "description": "Enables the load_settings command without any pre-configured scope.",
           "type": "string",
           "const": "allow-load-settings",
@@ -553,6 +559,12 @@
           "type": "string",
           "const": "allow-probe-7z",
           "markdownDescription": "Enables the probe_7z command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the probe_compress_inputs command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-probe-compress-inputs",
+          "markdownDescription": "Enables the probe_compress_inputs command without any pre-configured scope."
         },
         {
           "description": "Enables the register_extract_open_path command without any pre-configured scope.",
@@ -735,6 +747,12 @@
           "markdownDescription": "Denies the is_packaged command without any pre-configured scope."
         },
         {
+          "description": "Denies the list_managed_temp_children command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-list-managed-temp-children",
+          "markdownDescription": "Denies the list_managed_temp_children command without any pre-configured scope."
+        },
+        {
           "description": "Denies the load_settings command without any pre-configured scope.",
           "type": "string",
           "const": "deny-load-settings",
@@ -781,6 +799,12 @@
           "type": "string",
           "const": "deny-probe-7z",
           "markdownDescription": "Denies the probe_7z command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the probe_compress_inputs command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-probe-compress-inputs",
+          "markdownDescription": "Denies the probe_compress_inputs command without any pre-configured scope."
         },
         {
           "description": "Denies the register_extract_open_path command without any pre-configured scope.",

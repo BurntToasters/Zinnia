@@ -58,10 +58,23 @@ notarization, updater behavior, or desktop-environment MIME integration.
 
 ## Release artifact freshness
 
-Always run `npm run release:prepare` before a platform release build. It removes
-old bundles and creates a versioned build-session marker. The GPG staging script
-rejects artifacts older than that marker, including versionless canonical
-installer names, so a stale bundle cannot be signed accidentally.
+The normal `npm run release:win`, `release:mac`, and `release:linux` entry points
+run `release:prepare` themselves. Preparation installs locked dependencies,
+runs the complete quality gate once, removes old bundles, and creates a
+commit- and environment-bound build session. Release builds reuse the generated
+versions, licenses, and sidecars instead of preparing them again.
+
+If `npm run release:prepare` was run separately and completed successfully, use
+the matching `release:win:resume`, `release:mac:resume`, or
+`release:linux:x64:resume` command. Resume still runs branch/upstream preflight
+and refuses sessions from a different commit, version, lockfile, platform,
+architecture, Node/Rust toolchain, or sessions older than 24 hours. Do not run
+`release:prepare` manually and then use the non-resume entry point, because the
+normal entry point intentionally prepares and tests again.
+
+The GPG staging script also verifies the session and rejects artifacts older
+than its marker, including versionless canonical installer names, so a stale
+bundle cannot be signed accidentally.
 
 Flatpak packaging additionally exports the exact clean `HEAD` tree into an
 ignored staging directory. It refuses tracked working-tree changes; commit the
