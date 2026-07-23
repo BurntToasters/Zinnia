@@ -78,8 +78,9 @@ jobs:
         with:
           node-version: 22.12
       - run: npm run validate:updater
-      # Read-only fetch of published latest-*.json (not a release build).
-      - run: npm run validate:updater:live
+      # Feed-shape smoke only. Candidate-bound validation runs after publish.
+      - name: Published updater feed sanity
+        run: npm run validate:updater:live
 
   # Unsigned compile smoke only: not a release. Signed NSIS/DMG/AppImage stay on build VMs.
   smoke-build:
@@ -138,9 +139,11 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $template = Get-Content src-tauri/windows/shell/msix_identity.manifest.in -Raw
-          $template.Replace('__PUBLISHER_DN__', 'CN=Zinnia CI') |
-            Set-Content src-tauri/windows/shell/msix_identity.manifest -Encoding UTF8
+          foreach ($name in 'msix_identity', 'msix_extract_identity') {
+            $template = Get-Content "src-tauri/windows/shell/$name.manifest.in" -Raw
+            $template.Replace('__PUBLISHER_DN__', 'CN=Zinnia CI') |
+              Set-Content "src-tauri/windows/shell/$name.manifest" -Encoding UTF8
+          }
           cmake -S src-tauri/windows/shell -B src-tauri/windows/shell/build-ci -A ${{ matrix.cmake_arch }}
           cmake --build src-tauri/windows/shell/build-ci --config Release
       - run: npm run prepare:win-shell-stubs

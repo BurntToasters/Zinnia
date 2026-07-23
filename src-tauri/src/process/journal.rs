@@ -18,10 +18,84 @@ pub(crate) struct CleanupJournal {
     pub(crate) previous_archive_family: Vec<std::path::PathBuf>,
     #[serde(default)]
     pub(crate) next_archive_family: Vec<std::path::PathBuf>,
+    /// Stable identities recorded immediately after each newly published
+    /// output. Recovery must never delete a same-name file it did not publish.
+    #[serde(default)]
+    pub(crate) next_archive_identities: Vec<Option<FileIdentity>>,
     /// Explicit phase for B16+ archive transactions. `None` identifies a
     /// legacy journal whose completion must be inferred for compatibility.
     #[serde(default)]
     pub(crate) archive_phase: Option<ArchiveJournalPhase>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "platform", rename_all = "snake_case")]
+pub(crate) enum FileIdentity {
+    Unix {
+        device: u64,
+        inode: u64,
+    },
+    Windows {
+        volume_serial_number: u32,
+        file_index: u64,
+    },
+}
+
+pub(crate) fn regular_file_identity(path: &std::path::Path) -> Result<FileIdentity, String> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|error| error.to_string())?;
+    if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_file() {
+        return Err(format!("Expected a regular file: {}", path.display()));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        Ok(FileIdentity::Unix {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        })
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle as _;
+        use windows_sys::Win32::Foundation::HANDLE;
+        use windows_sys::Win32::Storage::FileSystem::{
+            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+        };
+        let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+        let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+        let success =
+            unsafe { GetFileInformationByHandle(file.as_raw_handle() as HANDLE, &mut info) };
+        if success == 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        Ok(FileIdentity::Windows {
+            volume_serial_number: info.dwVolumeSerialNumber,
+            file_index: (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+        })
+    }
+}
+
+pub(crate) fn ensure_regular_file_identity(
+    path: &std::path::Path,
+    expected: &FileIdentity,
+) -> Result<(), String> {
+    let actual = regular_file_identity(path)?;
+    if &actual == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "Refusing to remove or replace {} because its file identity changed.",
+            path.display()
+        ))
+    }
+}
+
+pub(crate) fn remove_regular_file_if_matches(
+    path: &std::path::Path,
+    expected: &FileIdentity,
+) -> Result<(), String> {
+    ensure_regular_file_identity(path, expected)?;
+    std::fs::remove_file(path).map_err(|error| error.to_string())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -69,6 +143,7 @@ pub(crate) fn write_cleanup_journal(
             move_plan_sidecar: true,
             previous_archive_family: Vec::new(),
             next_archive_family: Vec::new(),
+            next_archive_identities: Vec::new(),
             archive_phase: None,
         })
     } else if let Some((staged_archive, destination)) = &plan.staged_archive {
@@ -82,6 +157,7 @@ pub(crate) fn write_cleanup_journal(
             move_plan_sidecar: false,
             previous_archive_family: archive_family(destination)?,
             next_archive_family: Vec::new(),
+            next_archive_identities: Vec::new(),
             archive_phase: Some(ArchiveJournalPhase::InProgress),
         })
     } else {
@@ -116,11 +192,44 @@ pub(crate) fn update_archive_journal(
         archive: true,
         move_plan_sidecar: false,
         previous_archive_family: archive_family(destination)?,
+        next_archive_identities: vec![None; next_archive_family.len()],
         next_archive_family,
         archive_phase: Some(ArchiveJournalPhase::InProgress),
     };
     let json = serde_json::to_string(&journal).map_err(|e| e.to_string())?;
     crate::settings_store::atomic_write_text(&cleanup_journal_path(app)?, &json)
+}
+
+pub(crate) fn record_archive_journal_published(
+    app: &tauri::AppHandle,
+    plan: &CleanupPlan,
+    published: &std::path::Path,
+    identity: &FileIdentity,
+) -> Result<(), String> {
+    let Some((staged, destination)) = &plan.staged_archive else {
+        return Ok(());
+    };
+    let expected_stage = staged
+        .parent()
+        .ok_or_else(|| "Archive staging directory is missing.".to_string())?;
+    let path = cleanup_journal_path(app)?;
+    let json = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    let mut journal: CleanupJournal =
+        serde_json::from_str(&json).map_err(|error| error.to_string())?;
+    if !journal.archive || journal.stage != expected_stage || journal.destination != *destination {
+        return Err("Archive recovery journal changed during publish.".to_string());
+    }
+    if journal.next_archive_identities.len() != journal.next_archive_family.len() {
+        return Err("Archive recovery journal has invalid identity records.".to_string());
+    }
+    let index = journal
+        .next_archive_family
+        .iter()
+        .position(|path| path == published)
+        .ok_or_else(|| "Published archive is missing from its recovery journal.".to_string())?;
+    journal.next_archive_identities[index] = Some(identity.clone());
+    let json = serde_json::to_string(&journal).map_err(|error| error.to_string())?;
+    crate::settings_store::atomic_write_text(&path, &json)
 }
 
 pub(crate) fn mark_archive_journal_committed(

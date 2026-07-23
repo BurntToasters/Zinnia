@@ -1,6 +1,7 @@
 import { state } from "./state";
 import {
   devLog,
+  log,
   renderInputs,
   setMode,
   getWorkspaceMode,
@@ -9,6 +10,10 @@ import {
 import { browseArchive } from "./archive";
 import { validateArchivePaths } from "./archive-rules";
 import { setBasicView } from "./basic";
+
+// Keep in sync with archive-rules.ts MAX_ARCHIVE_PATHS. This local constant
+// keeps OS handoff handling independent of archive-probe test doubles.
+const MAX_INCOMING_PATHS = 4096;
 
 export async function allPathsAreArchives(paths: string[]): Promise<boolean> {
   if (paths.length === 0) return false;
@@ -22,6 +27,36 @@ export async function allPathsAreArchives(paths: string[]): Promise<boolean> {
     devLog(`Archive probe failed for auto-detect: ${msg}`);
     return false;
   }
+}
+
+/**
+ * Add an OS handoff without letting independently accepted native batches make
+ * the visible operation impossible to validate. The native FIFO is drained in
+ * batches, so its own limit is not an aggregate limit for this input model.
+ */
+function mergeIncomingPaths(paths: string[]): {
+  accepted: number;
+  rejected: number;
+} {
+  let accepted = 0;
+  let rejected = 0;
+  for (const path of paths) {
+    if (state.inputs.includes(path)) continue;
+    if (state.inputs.length >= MAX_INCOMING_PATHS) {
+      rejected += 1;
+      continue;
+    }
+    state.inputs.push(path);
+    accepted += 1;
+  }
+  return { accepted, rejected };
+}
+
+function logIncomingPathLimit(source: string, rejected: number): void {
+  if (rejected === 0) return;
+  log(
+    `Received paths from ${source}, but kept only the first ${MAX_INCOMING_PATHS} unique inputs; ${rejected} excess path(s) were not added.`,
+  );
 }
 
 export async function applyIncomingPaths(
@@ -39,13 +74,10 @@ export async function applyIncomingPaths(
 
   if (mode === "compress") {
     setMode("add");
-    for (const path of paths) {
-      if (!state.inputs.includes(path)) {
-        state.inputs.push(path);
-      }
-    }
+    const { rejected } = mergeIncomingPaths(paths);
     renderInputs();
     devLog(`Received ${paths.length} path(s) from ${source}.`);
+    logIncomingPathLimit(source, rejected);
     if (getWorkspaceMode() === "basic") {
       setBasicView("compress");
     }
@@ -82,16 +114,13 @@ export async function applyIncomingPaths(
     state.inputs.length = 0;
   }
 
-  for (const path of paths) {
-    if (!state.inputs.includes(path)) {
-      state.inputs.push(path);
-    }
-  }
+  const { rejected } = mergeIncomingPaths(paths);
   if (shouldAutoBrowse) {
     setBrowsePasswordFieldVisible(false);
   }
   renderInputs();
   devLog(`Received ${paths.length} path(s) from ${source}.`);
+  logIncomingPathLimit(source, rejected);
 
   if (getWorkspaceMode() === "basic") {
     if (shouldAutoExtract || shouldAutoBrowse) {

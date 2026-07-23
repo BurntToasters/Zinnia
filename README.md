@@ -81,6 +81,10 @@ native build runs.
   `release:win`, `release:mac`, and `release:linux` scripts for the same version.
   They stage updater manifests, artifacts, checksum files, and detached `.asc`
   signatures in the matching draft GitHub release.
+- After publishing a release, run `npm run release:verify:published`. It
+  verifies that the live updater manifests for the current stable or beta
+  channel report the exact release version; use `REQUIRED_UPDATER_TARGETS` for
+  any target set that must be present in that release.
 - Each full release command prepares and tests once. If `release:prepare` was
   already run separately on the same VM, use the matching `release:*:resume`
   command; its build session is bound to the exact commit, lockfiles, platform,

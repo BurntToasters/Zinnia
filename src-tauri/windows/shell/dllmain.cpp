@@ -37,6 +37,7 @@ enum class CommandKind { Root, Extract, Compress, ExtractTop };
 static LONG g_moduleRefs = 0;
 static HINSTANCE g_hInst = nullptr;
 static constexpr size_t kMaxPathsPerRequest = 4'096;
+static constexpr size_t kMaxHandoffBytes = 4 * 1024 * 1024;
 
 static void AddRefModule() { InterlockedIncrement(&g_moduleRefs); }
 static void ReleaseModule() { InterlockedDecrement(&g_moduleRefs); }
@@ -250,6 +251,79 @@ static HRESULT LaunchOneBatch(const std::wstring& exe,
   return S_OK;
 }
 
+static bool Utf8PathLine(const std::wstring& path, std::string* out) {
+  if (!out || path.empty() ||
+      path.find_first_of(L"\r\n") != std::wstring::npos) {
+    return false;
+  }
+  const int required = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
+      path.data(), static_cast<int>(path.size()), nullptr, 0, nullptr, nullptr);
+  if (required <= 0) return false;
+  const size_t begin = out->size();
+  if (begin > kMaxHandoffBytes ||
+      static_cast<size_t>(required) + 1 > kMaxHandoffBytes - begin) {
+    return false;
+  }
+  out->resize(begin + static_cast<size_t>(required));
+  if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, path.data(),
+      static_cast<int>(path.size()), out->data() + begin, required,
+      nullptr, nullptr) != required) {
+    out->resize(begin);
+    return false;
+  }
+  out->push_back('\n');
+  return true;
+}
+
+// Persist the complete Explorer selection before spawning Zinnia. One command
+// launch is then sufficient regardless of selection size, so a later batch
+// launch can never partially deliver a request.
+static HRESULT WriteShellHandoff(const std::vector<std::wstring>& paths,
+                                 std::wstring* handoff_path) {
+  if (!handoff_path) return E_POINTER;
+  std::string payload;
+  for (const auto& path : paths) {
+    if (!Utf8PathLine(path, &payload)) {
+      return HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE);
+    }
+  }
+
+  DWORD temp_length = GetTempPathW(0, nullptr);
+  if (temp_length == 0) return HRESULT_FROM_WIN32(GetLastError());
+  std::vector<wchar_t> temp(temp_length + 1);
+  if (GetTempPathW(static_cast<DWORD>(temp.size()), temp.data()) == 0) {
+    return HRESULT_FROM_WIN32(GetLastError());
+  }
+  GUID handoff_guid = {};
+  HRESULT guid_hr = CoCreateGuid(&handoff_guid);
+  if (FAILED(guid_hr)) return guid_hr;
+  wchar_t guid_text[40] = {};
+  if (StringFromGUID2(handoff_guid, guid_text, 40) == 0) {
+    return E_FAIL;
+  }
+  const std::wstring name = std::wstring(temp.data()) +
+      L"zinnia-shell-handoff-" + guid_text + L".tmp";
+  // CREATE_NEW avoids a temp-file replacement window before the Rust process
+  // validates and consumes the payload.
+  HANDLE file = CreateFileW(name.c_str(), GENERIC_WRITE, 0, nullptr,
+      CREATE_NEW, FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_WRITE_THROUGH, nullptr);
+  if (file == INVALID_HANDLE_VALUE) {
+    return HRESULT_FROM_WIN32(GetLastError());
+  }
+  DWORD written = 0;
+  const bool wrote = payload.size() <= MAXDWORD &&
+      WriteFile(file, payload.data(), static_cast<DWORD>(payload.size()), &written, nullptr) &&
+      written == payload.size() && FlushFileBuffers(file);
+  const DWORD error = wrote ? ERROR_SUCCESS : GetLastError();
+  CloseHandle(file);
+  if (!wrote) {
+    DeleteFileW(name.c_str());
+    return HRESULT_FROM_WIN32(error);
+  }
+  *handoff_path = name;
+  return S_OK;
+}
+
 static HRESULT LaunchZinnia(const wchar_t* flag,
                             const std::vector<std::wstring>& paths) {
   if (paths.empty()) return E_FAIL;
@@ -261,31 +335,14 @@ static HRESULT LaunchZinnia(const wchar_t* flag,
     return HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
   }
 
-  // Stay well below Windows' 32,767-character process command-line ceiling.
-  // Also stay within Zinnia's pending-request queue limit so an already-running
-  // instance never rejects an oversized batch wholesale.
-  constexpr size_t kSafeParameterChars = 24'000;
-  constexpr size_t kMaxPathsPerBatch = 1'000;
-  std::wstring params = flag;
-  size_t pathsInBatch = 0;
-  for (const auto& path : paths) {
-    const std::wstring quoted = QuoteArgument(path);
-    if (params.size() > wcslen(flag) &&
-        (params.size() + 1 + quoted.size() > kSafeParameterChars ||
-         pathsInBatch >= kMaxPathsPerBatch)) {
-      HRESULT hr = LaunchOneBatch(exe, params);
-      if (FAILED(hr)) return hr;
-      params = flag;
-      pathsInBatch = 0;
-    }
-    if (params.size() + 1 + quoted.size() > kSafeParameterChars) {
-      return HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE);
-    }
-    params += L' ';
-    params += quoted;
-    ++pathsInBatch;
-  }
-  return LaunchOneBatch(exe, params);
+  std::wstring handoff_path;
+  HRESULT hr = WriteShellHandoff(paths, &handoff_path);
+  if (FAILED(hr)) return hr;
+  const std::wstring params = std::wstring(flag) +
+      L" --zinnia-shell-handoff " + QuoteArgument(handoff_path);
+  hr = LaunchOneBatch(exe, params);
+  if (FAILED(hr)) DeleteFileW(handoff_path.c_str());
+  return hr;
 }
 
 class ExplorerCommand : public IExplorerCommand, public IObjectWithSite {

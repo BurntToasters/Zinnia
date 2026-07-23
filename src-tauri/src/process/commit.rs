@@ -1,8 +1,10 @@
 //! Promote/merge staged outputs, commit and rollback cleanup.
 
 use super::journal::{
-    mark_archive_journal_committed, move_plan_path, sync_directory, unregister_plan_stages,
-    update_archive_journal, MoveRecord, LEGACY_MOVE_PLAN_FILE_NAME,
+    ensure_regular_file_identity, mark_archive_journal_committed, move_plan_path,
+    record_archive_journal_published, regular_file_identity, remove_regular_file_if_matches,
+    sync_directory, unregister_plan_stages, update_archive_journal, MoveRecord,
+    LEGACY_MOVE_PLAN_FILE_NAME,
 };
 use super::quota::MAX_EXTRACT_ENTRIES;
 use super::staging::{assert_real_directory, path_entry_exists};
@@ -170,6 +172,9 @@ pub(crate) fn copy_file_no_replace(
         options.mode(source_permissions.mode());
     }
     let mut target_file = options.open(target).map_err(|error| error.to_string())?;
+    // Capture the identity while our exclusive create handle is still open.
+    // If a later copy step fails, cleanup is allowed only for this exact file.
+    let target_identity = regular_file_identity(target)?;
     let copy_result = (|| {
         std::io::copy(&mut source_file, &mut target_file).map_err(|error| error.to_string())?;
         target_file
@@ -179,7 +184,7 @@ pub(crate) fn copy_file_no_replace(
     })();
     drop(target_file);
     if let Err(error) = copy_result {
-        if let Err(cleanup_error) = std::fs::remove_file(target) {
+        if let Err(cleanup_error) = remove_regular_file_if_matches(target, &target_identity) {
             return Err(format!(
                 "{error}; partial destination cleanup failed: {cleanup_error}"
             ));
@@ -190,16 +195,35 @@ pub(crate) fn copy_file_no_replace(
 }
 
 #[cfg(target_os = "windows")]
-fn rename_file_no_replace(
+pub(crate) fn rename_file_no_replace(
     source: &std::path::Path,
     target: &std::path::Path,
 ) -> Result<(), String> {
-    // Rust's Windows rename uses MoveFileEx without REPLACE_EXISTING.
-    std::fs::rename(source, target).map_err(|error| error.to_string())
+    use std::os::windows::ffi::OsStrExt as _;
+    use windows_sys::Win32::Storage::FileSystem::MoveFileW;
+
+    // `std::fs::rename` can replace an existing destination on Windows. Use
+    // MoveFileW instead: unlike MoveFileEx with MOVEFILE_REPLACE_EXISTING, it
+    // fails when the target already exists.
+    let source_wide: Vec<u16> = source
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let target_wide: Vec<u16> = target
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    if unsafe { MoveFileW(source_wide.as_ptr(), target_wide.as_ptr()) } != 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error().to_string())
+    }
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-fn rename_file_no_replace(
+pub(crate) fn rename_file_no_replace(
     source: &std::path::Path,
     target: &std::path::Path,
 ) -> Result<(), String> {
@@ -227,7 +251,7 @@ fn rename_file_no_replace(
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
-fn rename_file_no_replace(
+pub(crate) fn rename_file_no_replace(
     source: &std::path::Path,
     target: &std::path::Path,
 ) -> Result<(), String> {
@@ -272,7 +296,7 @@ fn rename_file_no_replace(
     target_os = "linux",
     target_os = "android"
 )))]
-fn rename_file_no_replace(
+pub(crate) fn rename_file_no_replace(
     _source: &std::path::Path,
     _target: &std::path::Path,
 ) -> Result<(), String> {
@@ -290,13 +314,15 @@ pub(crate) fn sync_file_best_effort(file: &std::fs::File) -> Result<(), String> 
     }
 }
 
-fn promote_archive_family_with_commit<F>(
+fn promote_archive_family_with_commit<F, R>(
     staged: &std::path::Path,
     destination: &std::path::Path,
+    mut record_published: R,
     mark_committed: F,
 ) -> Result<(), String>
 where
     F: FnOnce() -> Result<(), String>,
+    R: FnMut(&std::path::Path, &super::journal::FileIdentity) -> Result<(), String>,
 {
     let staged_family = archive_family(staged)?;
     if staged_family.is_empty() {
@@ -313,7 +339,8 @@ where
         if let Err(e) = std::fs::rename(&path, &backup) {
             let mut restore_errors = Vec::new();
             for (previous_backup, previous_path) in backups.into_iter().rev() {
-                if let Err(restore_error) = std::fs::rename(&previous_backup, &previous_path) {
+                if let Err(restore_error) = rename_file_no_replace(&previous_backup, &previous_path)
+                {
                     restore_errors.push(format!(
                         "Could not restore {}: {restore_error}",
                         previous_path.display()
@@ -345,7 +372,9 @@ where
         for source in staged_family {
             let target = archive_destination_for(staged, destination, &source)?;
             publish_file_no_replace(&source, &target)?;
-            promoted.push((target, source));
+            let identity = regular_file_identity(&target)?;
+            record_published(&target, &identity)?;
+            promoted.push((target, source, identity));
         }
         if let Some(parent) = destination.parent() {
             sync_directory(parent)?;
@@ -360,8 +389,10 @@ where
 
     if let Err(error) = result {
         let mut recovery_errors = Vec::new();
-        for (target, source) in promoted.into_iter().rev() {
-            if let Err(e) = std::fs::rename(&target, &source) {
+        for (target, source, identity) in promoted.into_iter().rev() {
+            if let Err(e) = ensure_regular_file_identity(&target, &identity)
+                .and_then(|_| rename_file_no_replace(&target, &source))
+            {
                 recovery_errors.push(format!(
                     "Could not return {} to staging: {e}",
                     target.display()
@@ -434,7 +465,7 @@ pub(crate) fn promote_archive_family(
     staged: &std::path::Path,
     destination: &std::path::Path,
 ) -> Result<(), String> {
-    promote_archive_family_with_commit(staged, destination, || Ok(()))
+    promote_archive_family_with_commit(staged, destination, |_, _| Ok(()), || Ok(()))
 }
 
 /// True when the archive stage still holds `backup-*` files needed for journal recovery.
@@ -1003,9 +1034,12 @@ pub(crate) fn commit_cleanup(app: &tauri::AppHandle, plan: &CleanupPlan) -> Resu
     }
     if let Some((staged, destination)) = &plan.staged_archive {
         update_archive_journal(app, plan)?;
-        promote_archive_family_with_commit(staged, destination, || {
-            mark_archive_journal_committed(app, plan)
-        })?;
+        promote_archive_family_with_commit(
+            staged,
+            destination,
+            |published, identity| record_archive_journal_published(app, plan, published, identity),
+            || mark_archive_journal_committed(app, plan),
+        )?;
         if let Some(parent) = destination.parent() {
             crate::launch::remember_openable_directory(app, parent);
         }

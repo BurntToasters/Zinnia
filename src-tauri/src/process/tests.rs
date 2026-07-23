@@ -586,18 +586,22 @@ fn extract_member_list_preserves_password_and_archive_type() {
         "--".to_string(),
         "/tmp/archive.custom".to_string(),
     ];
+    #[allow(unused_mut)]
+    let mut expected = vec![
+        "l",
+        "-spd",
+        "-slt",
+        "-ba",
+        "-psecret",
+        "-ttar",
+        "--",
+        "/tmp/archive.custom",
+    ];
+    #[cfg(target_os = "windows")]
+    expected.insert(1, "-sccUTF-8");
     assert_eq!(
         extract_member_list_args(&args).expect("list args"),
-        vec![
-            "l",
-            "-spd",
-            "-slt",
-            "-ba",
-            "-psecret",
-            "-ttar",
-            "--",
-            "/tmp/archive.custom",
-        ]
+        expected
     );
 }
 
@@ -861,6 +865,9 @@ fn archive_journal_committed_when_promote_finished_and_stage_empty() {
         move_plan_sidecar: false,
         previous_archive_family: Vec::new(),
         next_archive_family: vec![destination.clone()],
+        next_archive_identities: vec![Some(
+            super::journal::regular_file_identity(&destination).unwrap(),
+        )],
         archive_phase: None,
     };
     assert!(archive_journal_is_committed(&journal));
@@ -883,6 +890,9 @@ fn archive_journal_not_committed_while_staged_outputs_remain() {
         move_plan_sidecar: false,
         previous_archive_family: Vec::new(),
         next_archive_family: vec![destination.clone()],
+        next_archive_identities: vec![Some(
+            super::journal::regular_file_identity(&destination).unwrap(),
+        )],
         archive_phase: None,
     };
     assert!(!archive_journal_is_committed(&journal));
@@ -906,11 +916,55 @@ fn archive_journal_rollback_restores_backups_for_update() {
         move_plan_sidecar: false,
         previous_archive_family: vec![destination.clone()],
         next_archive_family: vec![destination.clone()],
+        next_archive_identities: vec![Some(
+            super::journal::regular_file_identity(&destination).unwrap(),
+        )],
         archive_phase: Some(ArchiveJournalPhase::InProgress),
     };
     assert!(!archive_journal_is_committed(&journal));
     rollback_archive_journal(&journal).expect("rollback update");
     assert_eq!(std::fs::read(&destination).unwrap(), b"old");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn archive_journal_rollback_preserves_a_replacement_output() {
+    let root = temp_root("zinnia-journal-replacement");
+    let stage = root.join(".zinnia-archive-abc");
+    let destination = root.join("out.7z");
+    std::fs::create_dir_all(&stage).expect("stage");
+    std::fs::write(archive_backup_path(&stage, 0), b"old").expect("backup");
+    std::fs::write(&destination, b"new-partial").expect("partial new");
+    let published_identity = super::journal::regular_file_identity(&destination).unwrap();
+    // Keep the published inode/file ID allocated while replacing the destination.
+    // Otherwise ext4 may reuse it immediately and make this identity-safety test
+    // pass or fail based on allocator timing.
+    let retained_published_file = root.join("published-identity");
+    std::fs::hard_link(&destination, &retained_published_file).expect("retain published file");
+    std::fs::remove_file(&destination).expect("remove partial");
+    std::fs::write(&destination, b"user replacement").expect("replacement");
+    assert_ne!(
+        super::journal::regular_file_identity(&destination).unwrap(),
+        published_identity,
+        "replacement must not inherit the published file identity"
+    );
+    let journal = CleanupJournal {
+        stage: stage.clone(),
+        destination: destination.clone(),
+        archive: true,
+        move_plan_sidecar: false,
+        previous_archive_family: vec![destination.clone()],
+        next_archive_family: vec![destination.clone()],
+        next_archive_identities: vec![Some(published_identity)],
+        archive_phase: Some(ArchiveJournalPhase::InProgress),
+    };
+    assert!(rollback_archive_journal(&journal).is_err());
+    assert_eq!(std::fs::read(&destination).unwrap(), b"user replacement");
+    assert_eq!(
+        std::fs::read(archive_backup_path(&stage, 0)).unwrap(),
+        b"old"
+    );
+    std::fs::remove_file(retained_published_file).expect("release retained file");
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -931,6 +985,10 @@ fn explicit_archive_phase_controls_recovery_across_partial_backup_cleanup() {
         move_plan_sidecar: false,
         previous_archive_family: vec![first.clone(), second.clone()],
         next_archive_family: vec![first.clone(), second.clone()],
+        next_archive_identities: vec![
+            Some(super::journal::regular_file_identity(&first).unwrap()),
+            Some(super::journal::regular_file_identity(&second).unwrap()),
+        ],
         archive_phase: Some(ArchiveJournalPhase::InProgress),
     };
     assert!(!archive_journal_is_committed(&journal));

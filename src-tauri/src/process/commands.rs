@@ -65,7 +65,6 @@ impl Drop for ManagedListFile {
     }
 }
 
-#[cfg(any(target_os = "windows", test))]
 pub(crate) fn rewrite_args_for_managed_listfile(
     args: &mut Vec<String>,
     listfile_reference: String,
@@ -73,7 +72,7 @@ pub(crate) fn rewrite_args_for_managed_listfile(
     let separator = args
         .iter()
         .position(|arg| arg == "--")
-        .ok_or_else(|| "The 7-Zip command is too large for Windows.".to_string())?;
+        .ok_or_else(|| "The 7-Zip command is missing its path separator.".to_string())?;
     let command = args.first().map(String::as_str);
     let (archive, selected_start) = match command {
         Some("a" | "u") => (None, separator + 1),
@@ -86,13 +85,11 @@ pub(crate) fn rewrite_args_for_managed_listfile(
             separator + 2,
         ),
         _ => {
-            return Err(
-                "This selection is too large for the Windows command-line limit.".to_string(),
-            )
+            return Err("This 7-Zip command does not support managed path list files.".to_string())
         }
     };
     if selected_start >= args.len() {
-        return Err("The 7-Zip command is too large for Windows.".to_string());
+        return Err("The 7-Zip command has no selected paths to place in a list file.".to_string());
     }
     let selected = args[selected_start..].to_vec();
     args.truncate(separator);
@@ -108,10 +105,16 @@ pub(crate) fn rewrite_args_for_managed_listfile(
     Ok(selected)
 }
 
-#[cfg(target_os = "windows")]
-fn prepare_windows_listfile(args: &mut Vec<String>) -> Result<Option<ManagedListFile>, String> {
-    const SAFE_COMMAND_LINE_BYTES: usize = 20_000;
-    if args.iter().map(|arg| arg.len() + 3).sum::<usize>() <= SAFE_COMMAND_LINE_BYTES {
+fn prepare_managed_listfile(args: &mut Vec<String>) -> Result<Option<ManagedListFile>, String> {
+    let Some(separator) = args.iter().position(|arg| arg == "--") else {
+        return Ok(None);
+    };
+    let selected_start = match args.first().map(String::as_str) {
+        Some("a" | "u") => separator + 1,
+        Some("x") => separator + 2,
+        _ => return Ok(None),
+    };
+    if selected_start >= args.len() {
         return Ok(None);
     }
     let token = super::staging::random_token()?;
@@ -123,7 +126,7 @@ fn prepare_windows_listfile(args: &mut Vec<String>) -> Result<Option<ManagedList
         rewrite_args_for_managed_listfile(args, format!("@{}", listfile.0.to_string_lossy()))?;
     if selected.iter().any(|path| path.contains(['\r', '\n'])) {
         return Err(
-            "A selected path contains a line break and cannot be placed in a Windows 7-Zip list file."
+            "A selected path contains a line break and cannot be placed in a managed 7-Zip list file."
                 .to_string(),
         );
     }
@@ -140,11 +143,6 @@ fn prepare_windows_listfile(args: &mut Vec<String>) -> Result<Option<ManagedList
     file.flush()
         .map_err(|error| format!("Could not finish the 7-Zip list file: {error}"))?;
     Ok(Some(listfile))
-}
-
-#[cfg(not(target_os = "windows"))]
-fn prepare_windows_listfile(_args: &mut Vec<String>) -> Result<Option<ManagedListFile>, String> {
-    Ok(None)
 }
 
 pub(crate) fn terminate_child(child: &Arc<SharedChild>) {
@@ -192,7 +190,10 @@ pub(crate) fn spawn_7z_noninteractive(
     {
         return Err("Archive passwords cannot contain line breaks.".to_string());
     }
-    let listfile = prepare_windows_listfile(&mut args)?;
+    // Always use a private response list for caller-selected paths. Besides
+    // avoiding platform-specific execve/command-line ceilings, this keeps the
+    // path transport identical across Windows, macOS, and Linux.
+    let listfile = prepare_managed_listfile(&mut args)?;
     let plugin_command = app
         .shell()
         .sidecar("7z")

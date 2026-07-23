@@ -1,8 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-// @ts-expect-error The executable release helper is JavaScript, intentionally imported for policy tests.
-import { requiredLinuxTargetKeys } from "../../scripts/gpg-sign.js";
+import {
+  isChecksumTextName,
+  requiredLinuxTargetKeys,
+} from "../../scripts/gpg-sign.js";
 
 const read = (file: string) =>
   fs.readFileSync(path.resolve(process.cwd(), file), "utf8");
@@ -22,6 +24,7 @@ describe("cross-platform release policy", () => {
     }
     expect(ci).toContain("Compile Finder Sync extension smoke");
     expect(ci).toContain("Native Windows shell compile smoke");
+    expect(ci).toContain("'msix_identity', 'msix_extract_identity'");
   });
 
   it("requires present Linux architectures without blocking other platform signers", () => {
@@ -44,6 +47,11 @@ describe("cross-platform release policy", () => {
     const live = read("scripts/validate-updater-live.js");
     expect(live).toContain('"linux-beta-aarch64-appimage"');
     expect(live).toContain('"linux-beta-x86_64-deb"');
+    expect(live).toContain("EXPECTED_UPDATER_VERSION");
+    expect(live).toContain("REQUIRED_UPDATER_TARGETS");
+    expect(packageJson.scripts["release:verify:published"]).toContain(
+      "--expected-version=current",
+    );
   });
 
   it("scopes automatic Linux updater requirements to the current signing session", () => {
@@ -69,5 +77,10 @@ describe("cross-platform release policy", () => {
     const manifest = read("run.rosie.zinnia.yml");
     expect(manifest).toContain("--filesystem=/run/media");
     expect(manifest).toContain("--filesystem=/media");
+  });
+
+  it("uploads checksum manifests for prerelease target keys", () => {
+    expect(isChecksumTextName("SHA256SUMS-windows-beta-x86_64.txt")).toBe(true);
+    expect(isChecksumTextName("SHA256SUMS-darwin-beta-aarch64.txt")).toBe(true);
   });
 });

@@ -7,7 +7,7 @@ use super::extract_window::{
 use super::open_path::{derive_extract_destination_path, normalize_destination_path};
 use super::open_routing::{
     enqueue_pending_batch, looks_like_archive_path, parse_open_request_args,
-    should_use_extract_window,
+    parse_shell_handoff_contents, should_use_extract_window,
 };
 use super::OpenPathsPayload;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -252,6 +252,16 @@ fn parse_open_request_args_keeps_compress_mode_for_folder_input() {
 }
 
 #[test]
+fn shell_handoff_parser_accepts_bounded_absolute_paths() {
+    assert_eq!(
+        parse_shell_handoff_contents("C:\\one.txt\nC:\\two.txt\n").unwrap(),
+        ["C:\\one.txt", "C:\\two.txt"]
+    );
+    assert!(parse_shell_handoff_contents("relative.txt\n").is_err());
+    assert!(parse_shell_handoff_contents("C:\\one\r.txt\n").is_err());
+}
+
+#[test]
 fn pending_path_queue_accepts_back_to_back_shell_batches() {
     let mut queue = Vec::new();
     for batch in 0..4 {
@@ -288,6 +298,24 @@ fn pending_path_queue_rejects_work_beyond_its_bounded_headroom() {
         vec!["C:\\overflow".to_string()],
         "compress".to_string()
     ));
+    assert_eq!(queue[0].paths.len(), 4_096);
+}
+
+#[test]
+fn pending_path_queue_accepts_duplicate_only_requests_at_capacity() {
+    let existing: Vec<String> = (0..4_096)
+        .map(|index| format!("C:\\existing-{index}"))
+        .collect();
+    let mut queue = vec![OpenPathsPayload {
+        paths: existing.clone(),
+        mode: "compress".to_string(),
+    }];
+    assert!(enqueue_pending_batch(
+        &mut queue,
+        existing.into_iter().take(100).collect(),
+        "compress".to_string(),
+    ));
+    assert_eq!(queue.len(), 1);
     assert_eq!(queue[0].paths.len(), 4_096);
 }
 

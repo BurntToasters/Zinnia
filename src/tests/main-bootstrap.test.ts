@@ -1290,6 +1290,28 @@ describe("main bootstrap", () => {
     expect(mocks.ui.setMode).toHaveBeenCalledWith("extract");
   });
 
+  it("caps aggregate explicit handoffs and reports omitted paths", async () => {
+    const { applyIncomingPaths } = await import("../incoming-paths");
+    const { state } = await import("../state");
+    const first = Array.from(
+      { length: 4_096 },
+      (_, index) => `/tmp/archive-${index}.7z`,
+    );
+    mocks.archiveRules.validateArchivePaths.mockImplementation(async (paths) =>
+      (paths as string[]).map((path) => ({ path, valid: true })),
+    );
+    state.inputs = [];
+
+    await applyIncomingPaths(first, "extract", "Explorer");
+    await applyIncomingPaths(["/tmp/overflow.7z"], "extract", "Explorer");
+
+    expect(state.inputs).toHaveLength(4_096);
+    expect(state.inputs).not.toContain("/tmp/overflow.7z");
+    expect(mocks.ui.log).toHaveBeenCalledWith(
+      expect.stringContaining("1 excess path(s) were not added"),
+    );
+  });
+
   it("applies platform-windows class and wires titlebar for Windows", async () => {
     document.body.className = "";
     setInvokeRouter((command) => {

@@ -3,7 +3,7 @@
 use super::commit::{archive_backup_path, archive_family, rollback_persisted_move_plan};
 use super::journal::{
     cleanup_journal_path, clear_cleanup_journal, is_safe_stage_dir_name, move_plan_path,
-    sync_directory, ArchiveJournalPhase, CleanupJournal,
+    remove_regular_file_if_matches, sync_directory, ArchiveJournalPhase, CleanupJournal,
 };
 
 static RECOVERY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -80,13 +80,29 @@ pub(crate) fn rollback_archive_journal(journal: &CleanupJournal) -> Result<(), S
             None => true,
         };
         if should_remove {
-            remove_regular_file_if_present(&current)?;
+            let Some(index) = journal
+                .next_archive_family
+                .iter()
+                .position(|target| target == &current)
+            else {
+                return Err(format!(
+                    "Refusing to roll back unjournaled archive output {}.",
+                    current.display()
+                ));
+            };
+            let Some(Some(identity)) = journal.next_archive_identities.get(index) else {
+                return Err(format!(
+                    "Refusing to roll back archive output {} without a recorded file identity.",
+                    current.display()
+                ));
+            };
+            remove_regular_file_if_matches(&current, identity)?;
         }
     }
     for (index, target) in journal.previous_archive_family.iter().enumerate() {
         let backup = archive_backup_path(&journal.stage, index);
         if backup.is_file() {
-            std::fs::rename(&backup, target).map_err(|e| e.to_string())?;
+            super::commit::rename_file_no_replace(&backup, target)?;
         }
     }
     Ok(())

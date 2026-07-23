@@ -66,7 +66,8 @@ const rx = (r) => (n) => r.test(n);
 const exact = (f) => (n) => n === f;
 const isPerTargetManifest = rx(/^latest-[a-z0-9-]+-[a-z0-9_]+\.json$/i);
 const isChecksumTextName = rx(
-  /^SHA256SUMS(?:-[a-z0-9_]+(?:-[a-z0-9_]+)?)?\.txt$/i,
+  // Target keys include prerelease names such as darwin-beta-aarch64.
+  /^SHA256SUMS(?:-[a-z0-9_-]+)?\.txt$/i,
 );
 
 const ARTIFACT_RULES = [
@@ -1141,4 +1142,4 @@ if (isDirectExecution()) {
   });
 }
 
-export { isDirectExecution, requiredLinuxTargetKeys };
+export { isChecksumTextName, isDirectExecution, requiredLinuxTargetKeys };

@@ -19,24 +19,41 @@ use super::{
 // across several 1,000-path launches. Keep the aggregate aligned with archive
 // validation's public ceiling so every accepted queue can actually execute.
 const MAX_PENDING_PATHS: usize = 4_096;
+#[cfg(any(windows, test))]
+const MAX_SHELL_HANDOFF_BYTES: u64 = 4 * 1024 * 1024;
+#[cfg(any(windows, test))]
+const MAX_SHELL_HANDOFF_PATHS: usize = 4_096;
+#[cfg(windows)]
+const SHELL_HANDOFF_PREFIX: &str = "zinnia-shell-handoff-";
+#[cfg(windows)]
+const SHELL_HANDOFF_SUFFIX: &str = ".tmp";
 
 pub(crate) fn enqueue_pending_batch(
     queue: &mut Vec<OpenPathsPayload>,
     paths: Vec<String>,
     mode: String,
 ) -> bool {
-    let total_paths: usize = queue.iter().map(|item| item.paths.len()).sum();
+    // Deduplicate before capacity accounting. Shell integrations can resend a
+    // batch after an activation race; a duplicate-only retry consumes no queue
+    // space and must remain an accepted no-op.
+    let mut known: std::collections::HashSet<String> = queue
+        .iter()
+        .flat_map(|item| item.paths.iter().cloned())
+        .collect();
+    let paths: Vec<String> = paths
+        .into_iter()
+        .filter(|path| known.insert(path.clone()))
+        .collect();
+    if paths.is_empty() {
+        return true;
+    }
+    let total_paths = known.len() - paths.len();
     if total_paths + paths.len() > MAX_PENDING_PATHS {
         return false;
     }
     if let Some(last) = queue.last_mut() {
         if last.mode == mode {
-            let mut known: std::collections::HashSet<String> = last.paths.iter().cloned().collect();
-            for path in paths {
-                if known.insert(path.clone()) {
-                    last.paths.push(path);
-                }
-            }
+            last.paths.extend(paths);
             return true;
         }
     }
@@ -113,6 +130,79 @@ pub(crate) fn looks_like_archive_path(path: &str) -> bool {
     looks_like_archive_extension(&lower) || looks_like_split_volume_path(path)
 }
 
+/// Parse the UTF-8, newline-delimited payload produced by Zinnia's Windows
+/// shell extension. Windows file names cannot contain CR/LF, making this a
+/// lossless compact representation for an Explorer selection.
+#[cfg(any(windows, test))]
+pub(crate) fn parse_shell_handoff_contents(contents: &str) -> Result<Vec<String>, String> {
+    if contents.len() as u64 > MAX_SHELL_HANDOFF_BYTES {
+        return Err("Windows shell handoff exceeds the 4 MiB safety limit.".to_string());
+    }
+    if contents.contains('\0') {
+        return Err("Windows shell handoff contains a NUL byte.".to_string());
+    }
+    let paths: Vec<String> = contents.lines().map(ToOwned::to_owned).collect();
+    if paths.is_empty() || paths.len() > MAX_SHELL_HANDOFF_PATHS {
+        return Err(format!(
+            "Windows shell handoff must contain between 1 and {MAX_SHELL_HANDOFF_PATHS} paths."
+        ));
+    }
+    if paths.iter().any(|path| {
+        path.is_empty() || path.contains(['\r', '\n']) || !windows_path_is_absolute(path)
+    }) {
+        return Err("Windows shell handoff contains an invalid path.".to_string());
+    }
+    Ok(paths)
+}
+
+#[cfg(any(windows, test))]
+fn windows_path_is_absolute(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    (bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/'))
+        || path.starts_with(r"\\")
+}
+
+#[cfg(windows)]
+fn load_shell_handoff(path: &str) -> Result<Vec<String>, String> {
+    let path = std::path::Path::new(path);
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "Windows shell handoff has an invalid file name.".to_string())?;
+    if !name.starts_with(SHELL_HANDOFF_PREFIX) || !name.ends_with(SHELL_HANDOFF_SUFFIX) {
+        return Err("Refusing an unrecognized Windows shell handoff file.".to_string());
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Windows shell handoff has no parent directory.".to_string())?;
+    let parent = parent.canonicalize().map_err(|error| error.to_string())?;
+    let temp = std::env::temp_dir()
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    if parent != temp {
+        return Err("Windows shell handoff is outside the temporary directory.".to_string());
+    }
+    let metadata = std::fs::symlink_metadata(path).map_err(|error| error.to_string())?;
+    if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_file() {
+        return Err("Windows shell handoff is not a regular file.".to_string());
+    }
+    if metadata.len() > MAX_SHELL_HANDOFF_BYTES {
+        return Err("Windows shell handoff exceeds the 4 MiB safety limit.".to_string());
+    }
+    let result = std::fs::read_to_string(path)
+        .map_err(|error| error.to_string())
+        .and_then(|contents| parse_shell_handoff_contents(&contents));
+    if let Err(error) = std::fs::remove_file(path) {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            eprintln!("Could not remove consumed Windows shell handoff: {error}");
+        }
+    }
+    result
+}
+
 pub(crate) fn parse_open_request_args<I>(args: I) -> (Vec<String>, String)
 where
     I: IntoIterator<Item = String>,
@@ -120,7 +210,8 @@ where
     let mut paths = Vec::new();
     let mut mode = String::new();
 
-    for arg in args {
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
         if arg == "--extract" {
             mode = "extract-explicit".to_string();
             continue;
@@ -128,6 +219,24 @@ where
 
         if arg == "--compress" {
             mode = "compress".to_string();
+            continue;
+        }
+
+        if arg == "--zinnia-shell-handoff" {
+            let Some(handoff) = args.next() else {
+                eprintln!("Ignoring Windows shell handoff without a file path.");
+                continue;
+            };
+            #[cfg(windows)]
+            match load_shell_handoff(&handoff) {
+                Ok(mut handoff_paths) => paths.append(&mut handoff_paths),
+                Err(error) => eprintln!("Could not load Windows shell handoff: {error}"),
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = handoff;
+                eprintln!("Ignoring a Windows shell handoff outside Windows.");
+            }
             continue;
         }
 

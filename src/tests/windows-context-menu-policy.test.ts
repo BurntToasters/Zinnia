@@ -219,7 +219,7 @@ describe("Windows 11 context-menu manifest", () => {
     expect(shellSource).not.toContain("volume <= 999");
   });
 
-  it("routes complete filesystem selections without exceeding Windows command lines", () => {
+  it("routes every complete filesystem selection through one durable handoff", () => {
     const hooks = fs.readFileSync(
       path.resolve(process.cwd(), "src-tauri/windows/nsis-hooks.nsh"),
       "utf8",
@@ -232,12 +232,21 @@ describe("Windows 11 context-menu manifest", () => {
     expect(shellSource).toContain(
       "if (count > 0) return GetSelectedPaths(selection, paths);",
     );
-    expect(shellSource).toContain("kSafeParameterChars");
-    expect(shellSource).toContain("kMaxPathsPerBatch = 1'000");
-    expect(shellSource).toContain("pathsInBatch >= kMaxPathsPerBatch");
+    expect(shellSource).toContain("WriteShellHandoff");
+    expect(shellSource).toContain("--zinnia-shell-handoff");
+    expect(shellSource).toContain("kMaxHandoffBytes = 4 * 1024 * 1024");
+    expect(shellSource).toContain("CREATE_NEW");
+    expect(shellSource).not.toContain("GetTempFileNameW");
+    expect(shellSource).not.toContain("kMaxPathsPerBatch");
+    expect(shellSource).not.toContain("kSafeParameterChars");
     expect(shellSource).toContain("kMaxPathsPerRequest = 4'096");
     expect(shellSource).toContain("selectionCount > kMaxPathsPerRequest");
     expect(openRoutingSource).toContain("MAX_PENDING_PATHS: usize = 4_096");
+    expect(openRoutingSource).toContain(
+      "MAX_SHELL_HANDOFF_BYTES: u64 = 4 * 1024 * 1024",
+    );
+    expect(openRoutingSource).toContain("parse_shell_handoff_contents");
+    expect(openRoutingSource).toContain("--zinnia-shell-handoff");
     expect(openRoutingSource).toContain(
       "total_paths + paths.len() > MAX_PENDING_PATHS",
     );

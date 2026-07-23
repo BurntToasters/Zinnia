@@ -15,7 +15,6 @@ const REQUESTS_DIRECTORY: &str = "FinderSyncRequests";
 const MAX_REQUESTS_PER_DRAIN: usize = 100;
 const MAX_PATHS_PER_REQUEST: usize = 1_000;
 const MAX_REQUEST_BYTES: u64 = 1_048_576;
-const REQUEST_TTL_MS: u64 = 15 * 60_000;
 const MAX_FUTURE_SKEW_MS: u64 = 5_000;
 const MIN_POLL_MS: u64 = 250;
 const MAX_POLL_MS: u64 = 2_000;
@@ -59,7 +58,6 @@ fn unix_time_ms() -> u64 {
 fn valid_request_at(request: &FinderSyncRequest, now_ms: u64) -> bool {
     matches!(request.mode.as_str(), "extract" | "compress")
         && request.created_at_ms <= now_ms.saturating_add(MAX_FUTURE_SKEW_MS)
-        && now_ms.saturating_sub(request.created_at_ms) <= REQUEST_TTL_MS
         && !request.paths.is_empty()
         && request.paths.len() <= MAX_PATHS_PER_REQUEST
         && request
@@ -179,7 +177,7 @@ pub(crate) fn start_request_monitor(app: AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::{valid_request_at, FinderSyncRequest, REQUEST_TTL_MS};
+    use super::{valid_request_at, FinderSyncRequest};
 
     #[test]
     fn accepts_absolute_extract_and_compress_requests() {
@@ -224,15 +222,15 @@ mod tests {
     }
 
     #[test]
-    fn rejects_expired_and_implausibly_future_requests() {
+    fn retains_old_requests_but_rejects_implausibly_future_requests() {
         let request = |created_at_ms| FinderSyncRequest {
             created_at_ms,
             mode: "extract".to_string(),
             paths: vec!["/tmp/archive.zip".to_string()],
         };
         assert!(valid_request_at(&request(10_000), 10_000));
-        let now = REQUEST_TTL_MS + 100_000;
-        assert!(!valid_request_at(&request(now - REQUEST_TTL_MS - 1), now));
+        let now = 1_000_000;
+        assert!(valid_request_at(&request(10_000), now));
         assert!(!valid_request_at(&request(now + 10_000), now));
     }
 }
