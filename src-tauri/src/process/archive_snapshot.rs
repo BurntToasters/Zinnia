@@ -371,7 +371,7 @@ pub(super) fn stage_extract_input(
         })
     })();
     if result.is_err() {
-        let _ = std::fs::remove_dir_all(&stage);
+        let _ = crate::fs_secure::remove_dir_all_for_cleanup(&stage);
         if let Some(cache) = cache_dir {
             let _ = super::unregister_pending_stage(cache, &stage);
         }

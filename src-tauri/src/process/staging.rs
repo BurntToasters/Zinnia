@@ -120,7 +120,7 @@ fn create_stage_dir_under(
             Ok(()) => {
                 if let Some(cache_dir) = cache_dir {
                     if let Err(error) = register_pending_stage(cache_dir, &candidate) {
-                        let _ = std::fs::remove_dir_all(&candidate);
+                        let _ = crate::fs_secure::remove_dir_all_for_cleanup(&candidate);
                         return Err(format!(
                             "Could not register staging directory for recovery: {error}"
                         ));
@@ -419,7 +419,7 @@ pub(crate) fn prepare_cleanup_plan(
             let staged_input = match stage_extract_input(std::path::Path::new(archive), cache_ref) {
                 Ok(snapshot) => snapshot,
                 Err(error) => {
-                    let _ = std::fs::remove_dir_all(&stage);
+                    let _ = crate::fs_secure::remove_dir_all_for_cleanup(&stage);
                     if let Some(cache) = cache_ref {
                         let _ = unregister_pending_stage(cache, &stage);
                     }
@@ -447,9 +447,9 @@ pub(crate) fn prepare_cleanup_plan(
                 Ok(preparation) => preparation,
                 Err(error) => {
                     let input_stage = staged_input.path.parent().map(std::path::Path::to_path_buf);
-                    let _ = std::fs::remove_dir_all(&stage);
+                    let _ = crate::fs_secure::remove_dir_all_for_cleanup(&stage);
                     if let Some(input_stage) = &input_stage {
-                        let _ = std::fs::remove_dir_all(input_stage);
+                        let _ = crate::fs_secure::remove_dir_all_for_cleanup(input_stage);
                     }
                     if let Some(cache) = cache_ref {
                         let _ = unregister_pending_stage(cache, &stage);
@@ -505,7 +505,7 @@ pub(crate) fn prepare_cleanup_plan(
                     .ok_or_else(|| "Archive output has no file name.".to_string())?,
             );
             if let Err(error) = std::fs::copy(&target, &staged) {
-                let _ = std::fs::remove_dir_all(&stage_dir);
+                let _ = crate::fs_secure::remove_dir_all_for_cleanup(&stage_dir);
                 if let Some(cache_dir) = cache_ref {
                     let _ = unregister_pending_stage(cache_dir, &stage_dir);
                 }
