@@ -19,24 +19,7 @@ pub fn create_private_dir(path: &Path) -> io::Result<()> {
 
     #[cfg(windows)]
     {
-        std::fs::create_dir(path).map_err(|error| {
-            if error.kind() == io::ErrorKind::PermissionDenied {
-                io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    format!(
-                        "Access is denied creating staging directory under {}. Choose a writable folder such as Desktop or Documents.",
-                        path.parent().unwrap_or(path).display()
-                    ),
-                )
-            } else {
-                error
-            }
-        })?;
-        if let Err(error) = restrict_directory_acl(path) {
-            let _ = std::fs::remove_dir(path);
-            return Err(io::Error::other(error));
-        }
-        Ok(())
+        create_private_dir_windows(path)
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -80,7 +63,8 @@ pub fn sync_directory(path: &Path) -> Result<(), String> {
 struct WindowsUserIdentity {
     /// SID string, e.g. `S-1-5-21-...`
     sid: String,
-    /// Account from whoami, e.g. `DESKTOP\dev` (kept for ACL listing match).
+    /// Account from the `whoami` fallback, retained only for parser tests.
+    #[cfg(test)]
     account: String,
 }
 
@@ -123,6 +107,7 @@ fn parse_whoami_user_csv(line: &str) -> Result<WindowsUserIdentity, String> {
     }
     Ok(WindowsUserIdentity {
         sid: sid.to_string(),
+        #[cfg(test)]
         account: account.to_string(),
     })
 }
@@ -172,8 +157,8 @@ fn decode_windows_command_file(bytes: &[u8]) -> Result<String, String> {
 #[cfg(windows)]
 fn run_hidden_output(program: &str, args: &[&str]) -> io::Result<std::process::Output> {
     use std::os::windows::process::CommandExt;
-    // Zinnia is a windows_subsystem app; without CREATE_NO_WINDOW every helper
-    // (whoami/icacls) flashes a console during staging ACL setup.
+    // Zinnia is a windows_subsystem app; without CREATE_NO_WINDOW the
+    // `whoami` fallback flashes a console during staging ACL setup.
     std::process::Command::new(program)
         .args(args)
         .creation_flags(CREATE_NO_WINDOW)
@@ -271,6 +256,7 @@ fn current_user_identity() -> Result<WindowsUserIdentity, String> {
     let identity = match current_user_sid_from_token() {
         Ok(sid) => WindowsUserIdentity {
             sid,
+            #[cfg(test)]
             account: String::new(),
         },
         Err(token_error) => {
@@ -295,147 +281,415 @@ fn current_user_identity() -> Result<WindowsUserIdentity, String> {
     Ok(identity)
 }
 
-#[cfg(windows)]
-fn strip_extended_prefix(path: &str) -> String {
-    if let Some(stripped) = path.strip_prefix(r"\\?\UNC\") {
-        format!(r"\\{}", stripped)
-    } else if let Some(stripped) = path.strip_prefix(r"\\?\") {
-        stripped.to_string()
-    } else {
-        path.to_string()
-    }
-}
-
-#[cfg(windows)]
-fn restrict_directory_acl(path: &Path) -> Result<(), String> {
-    let path_str = strip_extended_prefix(&path.to_string_lossy());
-    let identity = current_user_identity()?;
-    // icacls accepts SID grants as *S-1-5-...
-    let grant_user = format!("*{}:(OI)(CI)F", identity.sid);
-
-    // `icacls` accepts one SID/permission value for each switch. First replace
-    // inherited/explicit grants with the current user's ACE, then *add* SYSTEM.
-    // A second `/grant:r` would replace the user's newly-created explicit ACE.
-    run_icacls(&[path_str.as_ref(), "/inheritance:r"])?;
-    run_icacls(&[path_str.as_ref(), "/grant:r", &grant_user])?;
-    run_icacls(&[path_str.as_ref(), "/grant", "SYSTEM:(OI)(CI)F"])?;
-
-    // One call for all broad-principal removals (best-effort).
-    let _ = run_icacls(&[
-        path_str.as_ref(),
-        "/remove",
-        "*S-1-1-0", // Everyone
-        "/remove",
-        "*S-1-5-11", // Authenticated Users
-        "/remove",
-        "*S-1-5-32-545", // BUILTIN\Users
-    ]);
-
-    verify_restricted_acl(path, &identity)?;
-    Ok(())
-}
-
-#[cfg(windows)]
-fn read_directory_sddl(path: &Path) -> Result<String, String> {
-    let mut random = [0u8; 8];
-    getrandom::fill(&mut random).map_err(|e| format!("Could not name ACL save file: {e}"))?;
-    let token: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
-    let save_path = std::env::temp_dir().join(format!("zinnia-acl-{token}.txt"));
-    let path_str = strip_extended_prefix(&path.to_string_lossy());
-    let save_str = save_path.to_string_lossy();
-    let save_result = run_icacls(&[path_str.as_ref(), "/save", save_str.as_ref()]);
-    let content = std::fs::read(&save_path);
-    let _ = std::fs::remove_file(&save_path);
-    save_result?;
-    let content = content.map_err(|e| format!("Could not read saved ACL: {e}"))?;
-    let content = decode_windows_command_file(&content)?;
-    let sddl = sddl_from_icacls_save(&content).ok_or_else(|| {
-        format!(
-            "Saved ACL for {} did not include an SDDL line.",
-            path.display()
-        )
-    })?;
-    Ok(sddl)
-}
-
-/// `icacls /save` writes either a path and SDDL on separate lines or both on
-/// one line, depending on the Windows build and target path. The final `D:`
-/// marks the DACL section; taking the final occurrence also avoids a drive
-/// prefix such as `D:\\staging`.
 #[cfg(any(windows, test))]
-fn sddl_from_icacls_save(content: &str) -> Option<String> {
-    content.lines().find_map(|line| {
-        let line = line.trim();
-        let start = line.rfind("D:")?;
-        let sddl = line[start..].trim();
-        (!sddl.is_empty()).then(|| sddl.to_string())
-    })
-}
-
-/// True when SDDL contains an Allow ACE whose trustee is `sid`
-/// (bare SID, `*SID`, or a matching SDDL short alias).
-#[cfg(any(windows, test))]
-fn sddl_has_allow_trustee(sddl: &str, trustees: &[&str]) -> bool {
-    let sddl_upper = sddl.to_ascii_uppercase();
-    let trustees_upper: Vec<String> = trustees
-        .iter()
-        .map(|t| t.trim_start_matches('*').to_ascii_uppercase())
-        .collect();
-    for chunk in sddl_upper.split('(').skip(1) {
-        let ace = chunk.trim_end_matches(')');
-        let mut parts = ace.split(';');
-        let Some(ace_type) = parts.next() else {
-            continue;
-        };
-        if ace_type != "A" {
-            continue;
-        }
-        // A;flags;rights;objectguid;inheritedobjectguid;trustee
-        let trustee = parts.nth(4).unwrap_or("");
-        let trustee = trustee.trim_start_matches('*');
-        if trustees_upper.iter().any(|t| t == trustee) {
-            return true;
-        }
-    }
-    false
+fn private_directory_sddl(user_sid: &str) -> String {
+    // Set the current token user as owner. D:P protects the DACL from parent
+    // inheritance. OI/CI propagates the two full-control ACEs to children.
+    format!("O:{user_sid}D:P(A;OICI;FA;;;{user_sid})(A;OICI;FA;;;SY)")
 }
 
 #[cfg(windows)]
-fn verify_restricted_acl(path: &Path, identity: &WindowsUserIdentity) -> Result<(), String> {
-    let sddl = read_directory_sddl(path)?;
-    if sddl_has_allow_trustee(
-        &sddl,
-        &["WD", "AU", "BU", "S-1-1-0", "S-1-5-11", "S-1-5-32-545"],
-    ) {
+#[derive(Clone, Copy)]
+struct AccessAllowedAceView {
+    flags: u8,
+    mask: u32,
+    sid: windows_sys::Win32::Security::PSID,
+}
+
+#[cfg(windows)]
+fn security_descriptor_owner(
+    descriptor: windows_sys::Win32::Security::PSECURITY_DESCRIPTOR,
+) -> Result<windows_sys::Win32::Security::PSID, String> {
+    use std::ptr;
+    use windows_sys::Win32::Security::{GetSecurityDescriptorOwner, IsValidSid, PSID};
+
+    let mut owner: PSID = ptr::null_mut();
+    let mut defaulted = 0;
+    if unsafe { GetSecurityDescriptorOwner(descriptor, &mut owner, &mut defaulted) } == 0 {
         return Err(format!(
-            "Staging directory ACL still grants a broad principal: {}",
-            path.display()
+            "GetSecurityDescriptorOwner failed: {}",
+            io::Error::last_os_error()
         ));
     }
-    if !sddl_has_allow_trustee(&sddl, &[&identity.sid]) {
-        return Err(format!(
-            "Staging directory ACL missing current user SID after restrict: {}",
-            path.display()
-        ));
+    if owner.is_null() || unsafe { IsValidSid(owner) } == 0 {
+        return Err("Security descriptor has no valid owner SID.".to_string());
     }
-    Ok(())
+    Ok(owner)
 }
 
 #[cfg(windows)]
-fn run_icacls(args: &[&str]) -> Result<(), String> {
-    let output =
-        run_hidden_output("icacls", args).map_err(|e| format!("icacls failed to start: {e}"))?;
-    if output.status.success() {
-        return Ok(());
+fn security_descriptor_dacl(
+    descriptor: windows_sys::Win32::Security::PSECURITY_DESCRIPTOR,
+) -> Result<*mut windows_sys::Win32::Security::ACL, String> {
+    use std::ptr;
+    use windows_sys::Win32::Security::{GetSecurityDescriptorDacl, IsValidAcl, ACL};
+
+    let mut present = 0;
+    let mut dacl: *mut ACL = ptr::null_mut();
+    let mut defaulted = 0;
+    if unsafe { GetSecurityDescriptorDacl(descriptor, &mut present, &mut dacl, &mut defaulted) } == 0
+    {
+        return Err(format!(
+            "GetSecurityDescriptorDacl failed: {}",
+            io::Error::last_os_error()
+        ));
     }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let detail = if !stderr.trim().is_empty() {
-        stderr.trim()
-    } else {
-        stdout.trim()
+    // A present-but-NULL DACL grants full access to everyone, so fail closed.
+    if present == 0 || dacl.is_null() {
+        return Err("Security descriptor has no non-NULL DACL.".to_string());
+    }
+    if unsafe { IsValidAcl(dacl) } == 0 {
+        return Err("Security descriptor contains an invalid DACL.".to_string());
+    }
+    Ok(dacl)
+}
+
+#[cfg(windows)]
+fn access_allowed_ace_view(
+    dacl: *const windows_sys::Win32::Security::ACL,
+    index: u32,
+) -> Result<Option<AccessAllowedAceView>, String> {
+    use std::ffi::c_void;
+    use std::mem::size_of;
+    use std::ptr;
+    use windows_sys::Win32::Security::{
+        GetAce, GetLengthSid, IsValidSid, ACCESS_ALLOWED_ACE, ACE_HEADER, PSID,
     };
-    Err(format!("icacls {} failed: {detail}", args.join(" ")))
+    use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
+
+    let mut raw_ace: *mut c_void = ptr::null_mut();
+    if unsafe { GetAce(dacl, index, &mut raw_ace) } == 0 || raw_ace.is_null() {
+        return Err(format!(
+            "GetAce({index}) failed: {}",
+            io::Error::last_os_error()
+        ));
+    }
+
+    let header = unsafe { &*raw_ace.cast::<ACE_HEADER>() };
+    if header.AceType != ACCESS_ALLOWED_ACE_TYPE as u8 {
+        return Ok(None);
+    }
+
+    // ACCESS_ALLOWED_ACE ends with a variable-sized SID. Validate its size from
+    // the bytes inside this ACE before asking Win32 to inspect the SID pointer.
+    const SID_FIXED_BYTES: usize = 8; // Revision + count + identifier authority.
+    let sid_offset = size_of::<ACE_HEADER>() + size_of::<u32>();
+    let ace_size = usize::from(header.AceSize);
+    if ace_size < sid_offset + SID_FIXED_BYTES {
+        return Err(format!("Allow ACE {index} is truncated."));
+    }
+    let sid_bytes = unsafe { raw_ace.cast::<u8>().add(sid_offset) };
+    let sub_authority_count = unsafe { *sid_bytes.add(1) } as usize;
+    let encoded_sid_length = SID_FIXED_BYTES + sub_authority_count * size_of::<u32>();
+    if encoded_sid_length > ace_size - sid_offset {
+        return Err(format!("Allow ACE {index} has a truncated trustee SID."));
+    }
+
+    let sid: PSID = sid_bytes.cast_mut().cast();
+    if unsafe { IsValidSid(sid) } == 0 {
+        return Err(format!("Allow ACE {index} has an invalid trustee SID."));
+    }
+    if unsafe { GetLengthSid(sid) } as usize != encoded_sid_length {
+        return Err(format!("Allow ACE {index} has an inconsistent trustee SID."));
+    }
+
+    let ace = unsafe { &*raw_ace.cast::<ACCESS_ALLOWED_ACE>() };
+    Ok(Some(AccessAllowedAceView {
+        flags: header.AceFlags,
+        mask: ace.Mask,
+        sid,
+    }))
+}
+
+#[cfg(windows)]
+fn dacl_matches_expected(
+    actual: *const windows_sys::Win32::Security::ACL,
+    expected: *const windows_sys::Win32::Security::ACL,
+) -> Result<bool, String> {
+    use windows_sys::Win32::Security::EqualSid;
+
+    let actual_count = unsafe { (*actual).AceCount } as u32;
+    let expected_count = unsafe { (*expected).AceCount } as u32;
+    if actual_count != expected_count {
+        return Ok(false);
+    }
+
+    // Compare ACEs semantically and without relying on their order. Windows may
+    // canonicalize a DACL while preserving the same effective entries.
+    let mut matched = vec![false; actual_count as usize];
+    for expected_index in 0..expected_count {
+        let Some(expected_ace) = access_allowed_ace_view(expected, expected_index)? else {
+            return Err(format!(
+                "Expected DACL ACE {expected_index} is not an allow ACE."
+            ));
+        };
+        let mut found = false;
+        for actual_index in 0..actual_count {
+            if matched[actual_index as usize] {
+                continue;
+            }
+            let Some(actual_ace) = access_allowed_ace_view(actual, actual_index)? else {
+                continue;
+            };
+            if actual_ace.flags == expected_ace.flags
+                && actual_ace.mask == expected_ace.mask
+                && unsafe { EqualSid(actual_ace.sid, expected_ace.sid) } != 0
+            {
+                matched[actual_index as usize] = true;
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+#[cfg(windows)]
+fn open_directory_for_acl_verification(path: &Path) -> io::Result<std::fs::File> {
+    use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS,
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        READ_CONTROL,
+    };
+
+    // Open the directory itself, not a reparse target. Omit FILE_SHARE_DELETE so
+    // it cannot be renamed or removed while its descriptor is being verified.
+    let directory = std::fs::OpenOptions::new()
+        .access_mode(READ_CONTROL | FILE_READ_ATTRIBUTES)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .map_err(|error| {
+            io::Error::other(format!(
+                "Could not open the staging directory for ACL verification: {error}"
+            ))
+        })?;
+
+    let attributes = directory.metadata()?.file_attributes();
+    if attributes & FILE_ATTRIBUTE_DIRECTORY == 0 {
+        return Err(io::Error::other(
+            "Staging path is no longer a directory during ACL verification.",
+        ));
+    }
+    if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(io::Error::other(
+            "Staging directory unexpectedly became a reparse point during ACL verification.",
+        ));
+    }
+    Ok(directory)
+}
+
+#[cfg(windows)]
+fn read_directory_security_descriptor(directory: &std::fs::File) -> io::Result<Vec<usize>> {
+    use std::mem::size_of;
+    use std::os::windows::io::AsRawHandle;
+    use std::ptr;
+    use windows_sys::Win32::Foundation::{ERROR_INSUFFICIENT_BUFFER, HANDLE};
+    use windows_sys::Win32::Security::{
+        GetKernelObjectSecurity, DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
+    };
+
+    let handle = directory.as_raw_handle() as HANDLE;
+    let requested = OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+    let mut needed = 0u32;
+    let first = unsafe {
+        GetKernelObjectSecurity(handle, requested, ptr::null_mut(), 0, &mut needed)
+    };
+    let first_error = io::Error::last_os_error();
+    if first != 0
+        || first_error.raw_os_error() != Some(ERROR_INSUFFICIENT_BUFFER as i32)
+        || needed == 0
+    {
+        return Err(io::Error::other(format!(
+            "Could not size the staging directory security descriptor: {first_error}"
+        )));
+    }
+
+    loop {
+        // A usize-backed buffer provides sufficient alignment for the returned
+        // self-relative security descriptor while still owning raw bytes.
+        let word_size = size_of::<usize>();
+        let words = (needed as usize).div_ceil(word_size);
+        let mut buffer = vec![0usize; words];
+        let capacity = buffer.len() * word_size;
+        let capacity_u32 = u32::try_from(capacity).map_err(|_| {
+            io::Error::other("Staging directory security descriptor is too large.")
+        })?;
+        let mut returned = needed;
+        if unsafe {
+            GetKernelObjectSecurity(
+                handle,
+                requested,
+                buffer.as_mut_ptr().cast(),
+                capacity_u32,
+                &mut returned,
+            )
+        } != 0
+        {
+            return Ok(buffer);
+        }
+
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(ERROR_INSUFFICIENT_BUFFER as i32)
+            || returned <= capacity_u32
+        {
+            return Err(io::Error::other(format!(
+                "Could not read the staging directory security descriptor: {error}"
+            )));
+        }
+        needed = returned;
+    }
+}
+
+#[cfg(windows)]
+fn verify_private_directory_security(
+    actual: windows_sys::Win32::Security::PSECURITY_DESCRIPTOR,
+    expected: windows_sys::Win32::Security::PSECURITY_DESCRIPTOR,
+) -> Result<(), String> {
+    use windows_sys::Win32::Security::{
+        EqualSid, GetSecurityDescriptorControl, IsValidSecurityDescriptor, SE_DACL_PROTECTED,
+    };
+
+    if unsafe { IsValidSecurityDescriptor(actual) } == 0 {
+        return Err(
+            "Windows returned an invalid staging directory security descriptor.".to_string(),
+        );
+    }
+    if unsafe { IsValidSecurityDescriptor(expected) } == 0 {
+        return Err(
+            "The expected staging directory security descriptor is invalid.".to_string(),
+        );
+    }
+
+    let mut control = 0u16;
+    let mut revision = 0u32;
+    if unsafe { GetSecurityDescriptorControl(actual, &mut control, &mut revision) } == 0 {
+        return Err(format!(
+            "GetSecurityDescriptorControl failed: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    if control & SE_DACL_PROTECTED == 0 {
+        return Err("Staging directory DACL is not protected from inheritance.".to_string());
+    }
+
+    let actual_owner = security_descriptor_owner(actual)?;
+    let expected_owner = security_descriptor_owner(expected)?;
+    if unsafe { EqualSid(actual_owner, expected_owner) } == 0 {
+        return Err("Staging directory owner is not the current user SID.".to_string());
+    }
+
+    let actual_dacl = security_descriptor_dacl(actual)?;
+    let expected_dacl = security_descriptor_dacl(expected)?;
+    if !dacl_matches_expected(actual_dacl, expected_dacl)? {
+        return Err(
+            "Staging directory DACL does not exactly grant full control to only the current user and SYSTEM."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn create_private_dir_windows(path: &Path) -> io::Result<()> {
+    use std::mem::size_of;
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr;
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+    };
+    use windows_sys::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+    use windows_sys::Win32::Storage::FileSystem::CreateDirectoryW;
+
+    let identity = current_user_identity().map_err(io::Error::other)?;
+    let sddl = private_directory_sddl(&identity.sid);
+    let sddl_wide: Vec<u16> = sddl.encode_utf16().chain(Some(0)).collect();
+    let mut path_wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+    if path_wide.contains(&0) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Staging directory path contains an embedded NUL.",
+        ));
+    }
+    path_wide.push(0);
+    let mut expected_descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
+
+    if unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl_wide.as_ptr(),
+            SDDL_REVISION_1,
+            &mut expected_descriptor,
+            ptr::null_mut(),
+        )
+    } == 0
+    {
+        return Err(io::Error::other(format!(
+            "Could not build the staging directory security descriptor: {}",
+            io::Error::last_os_error()
+        )));
+    }
+    if expected_descriptor.is_null() {
+        return Err(io::Error::other(
+            "Windows returned an empty staging directory security descriptor.",
+        ));
+    }
+
+    // Keep the creator descriptor alive through creation and verification, then
+    // always release the LocalAlloc buffer returned by the SDDL conversion API.
+    let result = (|| -> io::Result<()> {
+        let attributes = SECURITY_ATTRIBUTES {
+            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: expected_descriptor,
+            bInheritHandle: 0,
+        };
+
+        // Apply the protected DACL and explicit owner as part of creation. This
+        // avoids the old create-then-restrict window and supports \\?\ paths
+        // without routing them through command-line argument parsing.
+        if unsafe { CreateDirectoryW(path_wide.as_ptr(), &attributes) } == 0 {
+            let error = io::Error::last_os_error();
+            if error.kind() == io::ErrorKind::PermissionDenied {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!(
+                        "Access is denied creating staging directory under {}. Choose a writable folder such as Desktop or Documents.",
+                        path.parent().unwrap_or(path).display()
+                    ),
+                ));
+            }
+            return Err(error);
+        }
+
+        // Read the descriptor back from an open directory handle. This is a
+        // verification step, not a second ACL mutation. It also fails closed on
+        // filesystems that ignore or cannot persist the requested ACL.
+        let verification = (|| -> io::Result<()> {
+            let directory = open_directory_for_acl_verification(path)?;
+            let actual_storage = read_directory_security_descriptor(&directory)?;
+            let actual_descriptor = actual_storage.as_ptr().cast_mut().cast();
+            verify_private_directory_security(actual_descriptor, expected_descriptor).map_err(
+                |error| {
+                    io::Error::other(format!("Could not verify staging directory ACL: {error}"))
+                },
+            )
+        })();
+
+        if let Err(error) = verification {
+            let _ = std::fs::remove_dir(path);
+            return Err(error);
+        }
+        Ok(())
+    })();
+
+    unsafe {
+        LocalFree(expected_descriptor);
+    }
+    result
 }
 
 #[cfg(test)]
@@ -477,37 +731,29 @@ mod tests {
     }
 
     #[test]
-    fn parses_icacls_saved_acl_with_path_on_its_own_line() {
-        let saved = "C:\\\\staging\r\nD:P(A;OICI;FA;;;S-1-5-21-1-2-3-1001)(A;OICI;FA;;;SY)\r\n";
+    fn private_directory_sddl_is_protected_and_specific() {
+        let sddl = private_directory_sddl("S-1-5-21-1-2-3-1001");
         assert_eq!(
-            sddl_from_icacls_save(saved).as_deref(),
-            Some("D:P(A;OICI;FA;;;S-1-5-21-1-2-3-1001)(A;OICI;FA;;;SY)")
+            sddl,
+            "O:S-1-5-21-1-2-3-1001D:P(A;OICI;FA;;;S-1-5-21-1-2-3-1001)(A;OICI;FA;;;SY)"
         );
+        assert!(sddl.starts_with("O:S-1-5-21-1-2-3-1001D:P"));
+        assert!(!sddl.contains(";;;WD)"));
+        assert!(!sddl.contains(";;;AU)"));
+        assert!(!sddl.contains(";;;BU)"));
     }
 
+    #[cfg(windows)]
     #[test]
-    fn parses_icacls_saved_acl_inline_after_a_drive_path() {
-        let saved = "D:\\\\staging D:P(A;OICI;FA;;;S-1-5-21-1-2-3-1001)(A;OICI;FA;;;SY)\r\n";
-        assert_eq!(
-            sddl_from_icacls_save(saved).as_deref(),
-            Some("D:P(A;OICI;FA;;;S-1-5-21-1-2-3-1001)(A;OICI;FA;;;SY)")
-        );
-    }
+    fn private_directory_creation_round_trips_security_descriptor() {
+        let mut random = [0u8; 8];
+        getrandom::fill(&mut random).expect("random test directory suffix");
+        let suffix: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+        let path = std::env::temp_dir().join(format!("zinnia-private-dir-{suffix}"));
 
-    #[test]
-    fn sddl_detects_user_sid_allow_ace() {
-        let sddl = "D:P(A;OICI;FA;;;S-1-5-21-1-2-3-1001)(A;OICI;FA;;;SY)";
-        assert!(sddl_has_allow_trustee(sddl, &["S-1-5-21-1-2-3-1001"]));
-        assert!(sddl_has_allow_trustee(sddl, &["SY"]));
-        assert!(!sddl_has_allow_trustee(sddl, &["WD", "AU", "BU"]));
-    }
-
-    #[test]
-    fn sddl_detects_broad_principal_aliases() {
-        let sddl = "D:P(A;OICI;FA;;;WD)(A;OICI;FA;;;S-1-5-21-1-2-3-1001)";
-        assert!(sddl_has_allow_trustee(sddl, &["WD", "S-1-1-0"]));
-        let sddl_au = "D:P(A;OICI;FR;;;AU)";
-        assert!(sddl_has_allow_trustee(sddl_au, &["AU", "S-1-5-11"]));
+        create_private_dir(&path).expect("create and verify private directory");
+        assert!(path.is_dir());
+        std::fs::remove_dir(&path).expect("remove private test directory");
     }
 
     #[cfg(windows)]
