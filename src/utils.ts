@@ -33,6 +33,7 @@ const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
 
 const activeFocusTraps = new Map<HTMLElement, (e: KeyboardEvent) => void>();
+const focusTrapStack: HTMLElement[] = [];
 const isolatedForModal = new Map<HTMLElement, HTMLElement[]>();
 const activatedAncestorsForModal = new Map<HTMLElement, HTMLElement[]>();
 const isolationState = new Map<
@@ -98,6 +99,8 @@ export function trapFocus(container: HTMLElement): void {
   }
   const handler = (e: KeyboardEvent) => {
     if (e.key !== "Tab") return;
+    // Only the topmost trapped sheet owns Tab (settings can open over selective).
+    if (focusTrapStack[focusTrapStack.length - 1] !== container) return;
     const focusable = Array.from(
       container.querySelectorAll<HTMLElement>(FOCUSABLE),
     ).filter((el) => el.offsetParent !== null);
@@ -122,6 +125,7 @@ export function trapFocus(container: HTMLElement): void {
     }
   };
   activeFocusTraps.set(container, handler);
+  focusTrapStack.push(container);
   document.addEventListener("keydown", handler);
   isolateModalBackground(container);
   const first = container.querySelector<HTMLElement>(FOCUSABLE);
@@ -134,6 +138,8 @@ export function releaseFocusTrap(container: HTMLElement): void {
     document.removeEventListener("keydown", handler);
     activeFocusTraps.delete(container);
   }
+  const stackIndex = focusTrapStack.lastIndexOf(container);
+  if (stackIndex >= 0) focusTrapStack.splice(stackIndex, 1);
   restoreModalBackground(container);
 }
 
