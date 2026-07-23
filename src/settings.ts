@@ -104,6 +104,9 @@ export function populateSettingsModal() {
   $<HTMLSelectElement>("s-quick-extract-warm-idle").value = String(
     state.currentSettings.quickExtractWarmIdleMinutes,
   );
+  $<HTMLSelectElement>("s-extract-auto-close").value = String(
+    state.currentSettings.extractAutoCloseSeconds,
+  );
   const basicFx = document.getElementById(
     "s-basic-window-effects",
   ) as HTMLInputElement | null;
@@ -177,6 +180,9 @@ export function readSettingsModal(): UserSettings {
       $<HTMLSelectElement>("s-quick-extract-warm-idle").value,
       SETTING_DEFAULTS.quickExtractWarmIdleMinutes,
     ),
+    extractAutoCloseSeconds: Number(
+      $<HTMLSelectElement>("s-extract-auto-close").value,
+    ) as UserSettings["extractAutoCloseSeconds"],
     basicWindowEffects: (() => {
       const el = document.getElementById(
         "s-basic-window-effects",

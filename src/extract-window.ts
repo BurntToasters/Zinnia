@@ -264,6 +264,25 @@ async function run() {
   let operationFinished = false;
   let destination = "";
 
+  let autoCloseDelay = 1.5;
+  try {
+    const raw = await invoke<string>("load_settings");
+    const parsed = JSON.parse(raw) as { extractAutoCloseSeconds?: unknown };
+    if (typeof parsed.extractAutoCloseSeconds === "number") {
+      autoCloseDelay = parsed.extractAutoCloseSeconds;
+    }
+  } catch {}
+
+  let autoCloseInterval: ReturnType<typeof setInterval> | null = null;
+
+  const abortAutoClose = () => {
+    if (autoCloseInterval !== null) {
+      clearInterval(autoCloseInterval);
+      autoCloseInterval = null;
+      closeBtn.textContent = "Close";
+    }
+  };
+
   const finish = (
     status: string,
     progressPercent: number,
@@ -295,6 +314,31 @@ async function run() {
       openDestinationBtn.focus();
     } else {
       closeBtn.focus();
+    }
+
+    if (!asError && !asCancelled && autoCloseDelay >= 0) {
+      if (autoCloseDelay === 0) {
+        void closeWindowSafely();
+        return;
+      }
+
+      let remaining = autoCloseDelay;
+      closeBtn.textContent = `Close (${Math.ceil(remaining)}s)`;
+
+      const abortListener = () => abortAutoClose();
+      window.addEventListener("mousemove", abortListener, { once: true });
+      window.addEventListener("keydown", abortListener, { once: true });
+      window.addEventListener("click", abortListener, { once: true });
+
+      autoCloseInterval = setInterval(() => {
+        remaining -= 0.1;
+        if (remaining <= 0) {
+          abortAutoClose();
+          void closeWindowSafely();
+        } else {
+          closeBtn.textContent = `Close (${Math.ceil(remaining)}s)`;
+        }
+      }, 100);
     }
   };
 

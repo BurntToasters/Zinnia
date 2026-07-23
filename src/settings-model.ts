@@ -8,6 +8,7 @@ export type UpdateChannel = "auto" | "stable" | "beta";
 export type WorkingMode = "add" | "extract" | "browse";
 export type WorkspaceMode = "basic" | "power";
 export type UiDensity = "comfortable" | "compact";
+export type AutoCloseDelay = -1 | 0 | 1.5 | 3 | 5 | 10;
 
 export const POWER_WINDOW_WIDTH_MIN = 800;
 export const POWER_WINDOW_WIDTH_MAX = 4096;
@@ -59,6 +60,7 @@ export interface UserSettings {
   powerWindowWidth: number;
   powerWindowHeight: number;
   setupComplete: boolean;
+  extractAutoCloseSeconds: AutoCloseDelay;
 }
 
 export interface LoadSettingsResult {
@@ -99,6 +101,7 @@ export const SETTING_DEFAULTS: UserSettings = {
   powerWindowWidth: 1100,
   powerWindowHeight: 720,
   setupComplete: false,
+  extractAutoCloseSeconds: 1.5,
 };
 
 function clampWindowDimension(
@@ -245,6 +248,7 @@ const USER_SETTING_KEYS = new Set<keyof UserSettings>([
   "powerWindowWidth",
   "powerWindowHeight",
   "setupComplete",
+  "extractAutoCloseSeconds",
 ]);
 
 const WARM_IDLE_MINUTES = new Set([5, 10, 30, 60]);
@@ -259,6 +263,24 @@ function asWarmIdleMinutes(value: unknown, fallback: number): number {
   if (!Number.isFinite(n)) return fallback;
   const rounded = Math.round(n);
   return WARM_IDLE_MINUTES.has(rounded) ? rounded : fallback;
+}
+
+const AUTO_CLOSE_DELAYS = new Set<AutoCloseDelay>([-1, 0, 1.5, 3, 5, 10]);
+
+function asAutoCloseDelay(
+  value: unknown,
+  fallback: AutoCloseDelay,
+): AutoCloseDelay {
+  const n =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number(value)
+        : NaN;
+  if (!Number.isFinite(n)) return fallback;
+  return AUTO_CLOSE_DELAYS.has(n as AutoCloseDelay)
+    ? (n as AutoCloseDelay)
+    : fallback;
 }
 
 const MAX_CUSTOM_PRESETS = 50;
@@ -395,6 +417,10 @@ export function normalizeUserSettings(
     powerWindowWidth: powerWindowSize.width,
     powerWindowHeight: powerWindowSize.height,
     setupComplete: asBoolean(settings.setupComplete, fallback.setupComplete),
+    extractAutoCloseSeconds: asAutoCloseDelay(
+      settings.extractAutoCloseSeconds,
+      fallback.extractAutoCloseSeconds,
+    ),
   };
 }
 
