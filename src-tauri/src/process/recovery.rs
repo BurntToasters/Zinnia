@@ -90,11 +90,11 @@ pub(crate) fn rollback_archive_journal(journal: &CleanupJournal) -> Result<(), S
                     current.display()
                 ));
             };
+            // Incomplete publishes leave None identities. Skip deleting those
+            // paths and keep restoring backups for volumes we did publish —
+            // aborting here used to leave destinations removed and backups stranded.
             let Some(Some(identity)) = journal.next_archive_identities.get(index) else {
-                return Err(format!(
-                    "Refusing to roll back archive output {} without a recorded file identity.",
-                    current.display()
-                ));
+                continue;
             };
             remove_regular_file_if_matches(&current, identity)?;
         }

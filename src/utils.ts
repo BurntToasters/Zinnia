@@ -40,6 +40,11 @@ const isolationState = new Map<
   { count: number; wasInert: boolean }
 >();
 
+/** Window chrome that stays clickable above modal sheets (gear, Support, close). */
+function keepInteractiveDuringModal(element: HTMLElement): boolean {
+  return element.id === "titlebar" || element.classList.contains("header");
+}
+
 function isolateModalBackground(container: HTMLElement): void {
   const isolated: HTMLElement[] = [];
   const activatedAncestors: HTMLElement[] = [];
@@ -51,6 +56,7 @@ function isolateModalBackground(container: HTMLElement): void {
     }
     for (const sibling of branch.parentElement.children) {
       if (!(sibling instanceof HTMLElement) || sibling === branch) continue;
+      if (keepInteractiveDuringModal(sibling)) continue;
       const existing = isolationState.get(sibling);
       if (existing) {
         existing.count += 1;

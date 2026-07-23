@@ -390,9 +390,18 @@ where
     if let Err(error) = result {
         let mut recovery_errors = Vec::new();
         for (target, source, identity) in promoted.into_iter().rev() {
-            if let Err(e) = ensure_regular_file_identity(&target, &identity)
-                .and_then(|_| rename_file_no_replace(&target, &source))
-            {
+            let retract = (|| {
+                ensure_regular_file_identity(&target, &identity)?;
+                // Hard-link / exclusive-copy publish can leave the staged source
+                // in place. rename_file_no_replace then fails, so delete the
+                // published identity instead when the stage copy still exists.
+                if path_entry_exists(&source)? {
+                    remove_regular_file_if_matches(&target, &identity)
+                } else {
+                    rename_file_no_replace(&target, &source)
+                }
+            })();
+            if let Err(e) = retract {
                 recovery_errors.push(format!(
                     "Could not return {} to staging: {e}",
                     target.display()

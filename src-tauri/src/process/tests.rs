@@ -928,6 +928,37 @@ fn archive_journal_rollback_restores_backups_for_update() {
 }
 
 #[test]
+fn archive_journal_rollback_continues_after_unpublished_volume_identity() {
+    // Crash after publishing volume 0 but before recording volume 1's identity
+    // must still delete the published volume and restore backups.
+    let root = temp_root("zinnia-journal-partial-identities");
+    let stage = root.join(".zinnia-archive-abc");
+    let first = root.join("out.7z.001");
+    let second = root.join("out.7z.002");
+    std::fs::create_dir_all(&stage).expect("stage");
+    std::fs::write(archive_backup_path(&stage, 0), b"old-1").expect("backup0");
+    std::fs::write(archive_backup_path(&stage, 1), b"old-2").expect("backup1");
+    std::fs::write(&first, b"new-1").expect("published first");
+    let journal = CleanupJournal {
+        stage: stage.clone(),
+        destination: root.join("out.7z"),
+        archive: true,
+        move_plan_sidecar: false,
+        previous_archive_family: vec![first.clone(), second.clone()],
+        next_archive_family: vec![first.clone(), second.clone()],
+        next_archive_identities: vec![
+            Some(super::journal::regular_file_identity(&first).unwrap()),
+            None,
+        ],
+        archive_phase: Some(ArchiveJournalPhase::InProgress),
+    };
+    rollback_archive_journal(&journal).expect("rollback partial multi-volume");
+    assert_eq!(std::fs::read(&first).unwrap(), b"old-1");
+    assert_eq!(std::fs::read(&second).unwrap(), b"old-2");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn archive_journal_rollback_preserves_a_replacement_output() {
     let root = temp_root("zinnia-journal-replacement");
     let stage = root.join(".zinnia-archive-abc");
