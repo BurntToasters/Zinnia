@@ -1671,6 +1671,60 @@ fn unregister_plan_stages_keeps_present_archive_stage() {
 }
 
 #[test]
+fn legacy_windows_file_identity_json_remains_compatible() {
+    let identity: super::journal::FileIdentity = serde_json::from_str(
+        r#"{"platform":"windows","volume_serial_number":7,"file_index":9}"#,
+    )
+    .expect("deserialize legacy Windows identity");
+    assert_eq!(
+        identity,
+        super::journal::FileIdentity::Windows {
+            volume_serial_number: 7,
+            file_index: 9,
+            volume_serial_number_64: None,
+            file_id_128: None,
+        }
+    );
+}
+
+#[test]
+fn windows_file_identity_matching_prefers_recorded_128_bit_id() {
+    use super::journal::{file_identities_match, FileIdentity};
+
+    let expected = FileIdentity::Windows {
+        volume_serial_number: 7,
+        file_index: 9,
+        volume_serial_number_64: Some(700),
+        file_id_128: Some([1; 16]),
+    };
+    let same = expected.clone();
+    let legacy_fields_only_match = FileIdentity::Windows {
+        volume_serial_number: 7,
+        file_index: 9,
+        volume_serial_number_64: Some(700),
+        file_id_128: Some([2; 16]),
+    };
+    assert!(file_identities_match(&same, &expected));
+    assert!(!file_identities_match(&legacy_fields_only_match, &expected));
+
+    let legacy_expected = FileIdentity::Windows {
+        volume_serial_number: 7,
+        file_index: 9,
+        volume_serial_number_64: None,
+        file_id_128: None,
+    };
+    assert!(file_identities_match(&same, &legacy_expected));
+
+    let malformed_partial_expected = FileIdentity::Windows {
+        volume_serial_number: 7,
+        file_index: 9,
+        volume_serial_number_64: Some(700),
+        file_id_128: None,
+    };
+    assert!(!file_identities_match(&same, &malformed_partial_expected));
+}
+
+#[test]
 fn archive_journal_committed_when_promote_finished_and_stage_empty() {
     let root = temp_root("zinnia-journal-committed");
     let stage = root.join(".zinnia-archive-abc");
@@ -1964,8 +2018,9 @@ fn archive_journal_rollback_continues_after_unpublished_volume_identity() {
 }
 
 #[test]
-fn archive_journal_rollback_clears_published_volume_without_identity() {
-    // Crash after publish_file_no_replace but before record_archive_journal_published.
+fn archive_journal_rollback_preserves_published_volume_without_identity() {
+    // A legacy or torn journal with no identity cannot prove that the present
+    // path is still Zinnia's output. Recovery must preserve it and its backup.
     let root = temp_root("zinnia-journal-unrecorded-publish");
     let stage = root.join(".zinnia-archive-abc");
     let destination = root.join("out.7z");
@@ -1985,8 +2040,44 @@ fn archive_journal_rollback_clears_published_volume_without_identity() {
         extract_phase: None,
         archive_phase: Some(ArchiveJournalPhase::InProgress),
     };
-    rollback_archive_journal(&journal).expect("rollback unrecorded publish");
+    assert!(rollback_archive_journal(&journal).is_err());
+    assert_eq!(std::fs::read(&destination).unwrap(), b"new-unrecorded");
+    assert_eq!(
+        std::fs::read(archive_backup_path(&stage, 0)).unwrap(),
+        b"old"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn archive_journal_rollback_restores_backup_when_prerecorded_publish_is_missing() {
+    // New archive promotion records the staged identity before publishing. A
+    // crash before the rename leaves the target absent but the identity filled.
+    let root = temp_root("zinnia-journal-prerecorded-missing-publish");
+    let stage = root.join(".zinnia-archive-abc");
+    let staged = stage.join("out.7z");
+    let destination = root.join("out.7z");
+    std::fs::create_dir_all(&stage).expect("stage");
+    std::fs::write(&staged, b"new-staged").expect("staged output");
+    std::fs::write(archive_backup_path(&stage, 0), b"old").expect("backup");
+    let journal = CleanupJournal {
+        stage: stage.clone(),
+        destination: destination.clone(),
+        archive: true,
+        extract_stage_placement: None,
+        move_plan_sidecar: false,
+        previous_archive_family: vec![destination.clone()],
+        next_archive_family: vec![destination.clone()],
+        next_archive_identities: vec![Some(
+            super::journal::regular_file_identity(&staged).unwrap(),
+        )],
+        extract_stage_identity: None,
+        extract_phase: None,
+        archive_phase: Some(ArchiveJournalPhase::InProgress),
+    };
+    rollback_archive_journal(&journal).expect("restore backup before publish");
     assert_eq!(std::fs::read(&destination).unwrap(), b"old");
+    assert_eq!(std::fs::read(&staged).unwrap(), b"new-staged");
     let _ = std::fs::remove_dir_all(root);
 }
 

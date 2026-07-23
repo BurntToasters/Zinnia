@@ -1,7 +1,7 @@
 //! Promote/merge staged outputs, commit and rollback cleanup.
 
 use super::journal::{
-    ensure_path_identity, ensure_regular_file_identity, file_identity,
+    ensure_path_identity, ensure_regular_file_identity, file_identities_match, file_identity,
     mark_archive_journal_committed, mark_extract_journal_committed, move_identity_log_path,
     move_plan_path, path_identity, record_archive_journal_published, regular_file_identity,
     remove_move_plan_sidecars, remove_regular_file_if_matches, sync_directory,
@@ -115,16 +115,24 @@ pub(crate) fn publish_file_no_replace(
     source: &std::path::Path,
     target: &std::path::Path,
 ) -> Result<(), String> {
+    publish_file_no_replace_with_created(source, target, |_, _| Ok(()))
+}
+
+fn publish_file_no_replace_with_created(
+    source: &std::path::Path,
+    target: &std::path::Path,
+    on_created: impl FnOnce(&std::path::Path, &FileIdentity) -> Result<(), String>,
+) -> Result<(), String> {
     let source_file = crate::path_safety::open_regular_file_nofollow(source)?;
     // Same as directory fsync: some Windows setups deny FlushFileBuffers.
     sync_file_best_effort(&source_file)?;
 
     drop(source_file);
 
-    // Stage directories are siblings of their destinations, so this is a
-    // same-filesystem atomic move. Crucially, every platform implementation
-    // refuses an existing target: no partially copied destination is exposed,
-    // and no error path ever unlinks a pathname whose identity may have changed.
+    // Stage directories are siblings of their destinations, so rename is a
+    // same-filesystem atomic move. Every publication path refuses an existing
+    // target, and no error path unlinks a pathname whose identity may have changed.
+    // Only the final create-new copy fallback can expose bytes incrementally.
     match rename_file_no_replace(source, target) {
         Ok(()) => Ok(()),
         Err(rename_error) => {
@@ -139,7 +147,7 @@ pub(crate) fn publish_file_no_replace(
                 // existing destination. The recovery journal removes a partial
                 // file after interruption; only this fallback loses atomic
                 // visibility because the filesystem provides no atomic primitive.
-                copy_file_no_replace(source, target).map_err(|copy_error| {
+                copy_file_no_replace_with_created(source, target, on_created).map_err(|copy_error| {
                     format!(
                         "Could not publish archive output {} without replacement: {rename_error}; hard-link fallback failed: {link_error}; exclusive-copy fallback failed: {copy_error}",
                         target.display()
@@ -558,10 +566,44 @@ where
     let result = (|| {
         for source in staged_family {
             let target = archive_destination_for(staged, destination, &source)?;
-            publish_file_no_replace(&source, &target)?;
+            // Record the staged object's identity before its final pathname can
+            // become visible. Rename and hard-link publication preserve identity.
+            // A crash can therefore never leave a published target with a blank
+            // identity record that recovery might mistake for safe to delete.
+            let expected_identity = regular_file_identity(&source)?;
+            record_published(&target, &expected_identity)?;
+            let mut created_identity = None;
+            publish_file_no_replace_with_created(&source, &target, |created, identity| {
+                // The compatibility copy path allocates a new object. Journal
+                // that identity while its create-new handle is still open and
+                // before any bytes are copied, closing the last crash window.
+                record_published(created, identity)?;
+                created_identity = Some(identity.clone());
+                Ok(())
+            })?;
+
+            // Register a rollback identity immediately after publication. If the
+            // post-publish query below fails, rename/hard-link paths can still be
+            // retracted with the pre-recorded identity, while copy publication
+            // uses the exact identity captured from its open create-new handle.
+            promoted.push((
+                target.clone(),
+                source.clone(),
+                created_identity
+                    .clone()
+                    .unwrap_or_else(|| expected_identity.clone()),
+            ));
             let identity = regular_file_identity(&target)?;
-            record_published(&target, &identity)?;
-            promoted.push((target, source, identity));
+            if let Some((_, _, rollback_identity)) = promoted.last_mut() {
+                *rollback_identity = identity.clone();
+            }
+            if created_identity.is_none() && !file_identities_match(&identity, &expected_identity) {
+                // A filesystem may report a stronger or otherwise changed stable
+                // identity after rename or hard-link publication. Correct the
+                // pre-recorded value before continuing; live rollback already has
+                // the actual identity in `promoted` if this journal update fails.
+                record_published(&target, &identity)?;
+            }
         }
         if let Some(parent) = destination.parent() {
             sync_directory(parent)?;
@@ -1051,7 +1093,7 @@ fn hydrate_move_plan_identities(
             return Err("Extraction identity log does not match its move plan.".to_string());
         }
         if let Some(existing) = &planned.publish_identity {
-            if existing != &record.identity {
+            if !file_identities_match(&record.identity, existing) {
                 return Err("Extraction identity log contains conflicting records.".to_string());
             }
         } else {

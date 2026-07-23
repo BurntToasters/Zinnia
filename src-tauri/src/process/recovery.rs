@@ -196,18 +196,27 @@ pub(crate) fn rollback_archive_journal(journal: &CleanupJournal) -> Result<(), S
                     current.display()
                 ));
             };
-            // Incomplete publishes leave None identities when the process crashes
-            // between publish and the journal write. During InProgress, clear a
-            // plain file at the journaled path so backups can restore; never do
-            // that after Committed.
-            let Some(Some(identity)) = journal.next_archive_identities.get(index) else {
-                match journal.archive_phase {
-                    Some(ArchiveJournalPhase::Committed) => {}
-                    Some(ArchiveJournalPhase::InProgress) | None => {
-                        remove_regular_file_if_present(&current)?;
-                    }
-                }
+            let current_exists = match std::fs::symlink_metadata(&current) {
+                Ok(_) => true,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+                Err(error) => return Err(error.to_string()),
+            };
+            if !current_exists {
+                // Publication may not have started yet, even though its staged
+                // identity was pre-recorded. A missing target is safe to skip so
+                // the old backup can be restored below.
                 continue;
+            }
+
+            // Never delete a present path unless the journal recorded the exact
+            // file identity before publication. Older or torn journals can have
+            // a blank entry; fail closed rather than deleting a same-name file
+            // that another process may have created after the crash.
+            let Some(Some(identity)) = journal.next_archive_identities.get(index) else {
+                return Err(format!(
+                    "Refusing to roll back archive output {} because its published identity was not recorded.",
+                    current.display()
+                ));
             };
             remove_regular_file_if_matches(&current, identity)?;
         }

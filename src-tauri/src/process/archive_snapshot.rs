@@ -14,17 +14,26 @@ pub(super) struct ArchiveFileIdentity {
     volume_serial: u32,
     #[cfg(windows)]
     file_index: u64,
+    #[cfg(windows)]
+    volume_serial_64: Option<u64>,
+    #[cfg(windows)]
+    file_id_128: Option<[u8; 16]>,
 }
 
 #[cfg(windows)]
-fn windows_file_identity(file: &std::fs::File) -> Result<(u32, u64), String> {
+fn windows_file_identity(
+    file: &std::fs::File,
+) -> Result<(u32, u64, Option<u64>, Option<[u8; 16]>), String> {
     use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::Storage::FileSystem::{
-        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+        GetFileInformationByHandle, GetFileInformationByHandleEx, FileIdInfo,
+        BY_HANDLE_FILE_INFORMATION, FILE_ID_INFO,
     };
 
+    let handle = file.as_raw_handle() as HANDLE;
     let mut info = BY_HANDLE_FILE_INFORMATION::default();
-    let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) };
+    let ok = unsafe { GetFileInformationByHandle(handle, &mut info) };
     if ok == 0 {
         return Err(format!(
             "Could not read Windows archive file identity: {}",
@@ -32,7 +41,25 @@ fn windows_file_identity(file: &std::fs::File) -> Result<(u32, u64), String> {
         ));
     }
     let file_index = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
-    Ok((info.dwVolumeSerialNumber, file_index))
+
+    // ReFS uses 128-bit file IDs; the legacy 64-bit index is not guaranteed
+    // unique there. Keep the legacy pair as a compatibility fallback for
+    // filesystems and SMB servers that do not implement FileIdInfo.
+    let mut extended: FILE_ID_INFO = unsafe { std::mem::zeroed() };
+    let has_extended_id = unsafe {
+        GetFileInformationByHandleEx(
+            handle,
+            FileIdInfo,
+            (&mut extended as *mut FILE_ID_INFO).cast(),
+            std::mem::size_of::<FILE_ID_INFO>() as u32,
+        )
+    } != 0;
+    Ok((
+        info.dwVolumeSerialNumber,
+        file_index,
+        has_extended_id.then_some(extended.VolumeSerialNumber),
+        has_extended_id.then_some(extended.FileId.Identifier),
+    ))
 }
 
 pub(super) fn archive_file_identity(path: &std::path::Path) -> Result<ArchiveFileIdentity, String> {
@@ -51,7 +78,8 @@ pub(super) fn archive_file_identity(path: &std::path::Path) -> Result<ArchiveFil
     #[cfg(unix)]
     use std::os::unix::fs::MetadataExt as _;
     #[cfg(windows)]
-    let (volume_serial, file_index) = windows_file_identity(&file)?;
+    let (volume_serial, file_index, volume_serial_64, file_id_128) =
+        windows_file_identity(&file)?;
 
     Ok(ArchiveFileIdentity {
         canonical_path,
@@ -66,6 +94,10 @@ pub(super) fn archive_file_identity(path: &std::path::Path) -> Result<ArchiveFil
         volume_serial,
         #[cfg(windows)]
         file_index,
+        #[cfg(windows)]
+        volume_serial_64,
+        #[cfg(windows)]
+        file_id_128,
     })
 }
 

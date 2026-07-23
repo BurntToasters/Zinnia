@@ -58,8 +58,10 @@ pub(crate) struct CleanupJournal {
     pub(crate) previous_archive_family: Vec<std::path::PathBuf>,
     #[serde(default)]
     pub(crate) next_archive_family: Vec<std::path::PathBuf>,
-    /// Stable identities recorded immediately after each newly published
-    /// output. Recovery must never delete a same-name file it did not publish.
+    /// Stable identities recorded before each output becomes visible. Rename
+    /// and hard-link publication preserve the staged identity; create-new copy
+    /// publication replaces it while the new handle is still open. Recovery
+    /// must never delete a same-name file it cannot identify as Zinnia's output.
     #[serde(default)]
     pub(crate) next_archive_identities: Vec<Option<FileIdentity>>,
     /// Identity of an extraction stage captured before 7-Zip starts. This lets
@@ -86,9 +88,58 @@ pub(crate) enum FileIdentity {
         inode: u64,
     },
     Windows {
+        /// Legacy 32-bit volume serial retained for journals written by older betas
+        /// and for filesystems that do not expose `FileIdInfo`.
         volume_serial_number: u32,
+        /// Legacy 64-bit file index. Microsoft does not guarantee this identifier
+        /// is unique on ReFS, so new journals also record the 128-bit ID when the
+        /// filesystem or SMB server supports it.
         file_index: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        volume_serial_number_64: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file_id_128: Option<[u8; 16]>,
     },
+}
+
+/// Compare identities using the strongest representation captured in the
+/// journal. New Windows records require the 128-bit ID when it was available;
+/// older records remain compatible through the legacy volume/index pair.
+pub(crate) fn file_identities_match(actual: &FileIdentity, expected: &FileIdentity) -> bool {
+    match (actual, expected) {
+        (
+            FileIdentity::Unix {
+                device: actual_device,
+                inode: actual_inode,
+            },
+            FileIdentity::Unix {
+                device: expected_device,
+                inode: expected_inode,
+            },
+        ) => actual_device == expected_device && actual_inode == expected_inode,
+        (
+            FileIdentity::Windows {
+                volume_serial_number: actual_volume,
+                file_index: actual_index,
+                volume_serial_number_64: actual_volume_64,
+                file_id_128: actual_id_128,
+            },
+            FileIdentity::Windows {
+                volume_serial_number: expected_volume,
+                file_index: expected_index,
+                volume_serial_number_64: expected_volume_64,
+                file_id_128: expected_id_128,
+            },
+        ) => match (expected_volume_64, expected_id_128) {
+            (Some(expected_volume_64), Some(expected_id_128)) => {
+                actual_volume_64 == &Some(*expected_volume_64)
+                    && actual_id_128 == &Some(*expected_id_128)
+            }
+            (None, None) => actual_volume == expected_volume && actual_index == expected_index,
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 pub(crate) fn path_identity(path: &std::path::Path) -> Result<FileIdentity, String> {
@@ -144,20 +195,32 @@ pub(crate) fn file_identity(file: &std::fs::File) -> Result<FileIdentity, String
         use std::os::windows::io::AsRawHandle as _;
         use windows_sys::Win32::Foundation::HANDLE;
         use windows_sys::Win32::Storage::FileSystem::{
-            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_REPARSE_POINT,
+            GetFileInformationByHandle, GetFileInformationByHandleEx, FileIdInfo,
+            BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ID_INFO,
         };
+        let handle = file.as_raw_handle() as HANDLE;
         let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
-        let success =
-            unsafe { GetFileInformationByHandle(file.as_raw_handle() as HANDLE, &mut info) };
+        let success = unsafe { GetFileInformationByHandle(handle, &mut info) };
         if success == 0 {
             return Err(std::io::Error::last_os_error().to_string());
         }
         if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
             return Err("Refusing a file identity for a link or reparse point.".to_string());
         }
+        let mut extended: FILE_ID_INFO = unsafe { std::mem::zeroed() };
+        let has_extended_id = unsafe {
+            GetFileInformationByHandleEx(
+                handle,
+                FileIdInfo,
+                (&mut extended as *mut FILE_ID_INFO).cast(),
+                std::mem::size_of::<FILE_ID_INFO>() as u32,
+            )
+        } != 0;
         Ok(FileIdentity::Windows {
             volume_serial_number: info.dwVolumeSerialNumber,
             file_index: (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+            volume_serial_number_64: has_extended_id.then_some(extended.VolumeSerialNumber),
+            file_id_128: has_extended_id.then_some(extended.FileId.Identifier),
         })
     }
     #[cfg(not(any(unix, windows)))]
@@ -180,7 +243,7 @@ pub(crate) fn ensure_path_identity(
     expected: &FileIdentity,
 ) -> Result<(), String> {
     let actual = path_identity(path)?;
-    if &actual == expected {
+    if file_identities_match(&actual, expected) {
         Ok(())
     } else {
         Err(format!(
@@ -195,7 +258,7 @@ pub(crate) fn ensure_regular_file_identity(
     expected: &FileIdentity,
 ) -> Result<(), String> {
     let actual = regular_file_identity(path)?;
-    if &actual == expected {
+    if file_identities_match(&actual, expected) {
         Ok(())
     } else {
         Err(format!(
