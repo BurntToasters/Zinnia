@@ -63,7 +63,8 @@ pub(crate) use commit::{
 #[cfg(test)]
 pub(crate) use journal::{
     is_safe_stage_dir_name, move_plan_path, read_pending_stages, register_pending_stage,
-    unregister_plan_stages, ArchiveJournalPhase, CleanupJournal, MoveRecord,
+    unregister_plan_stages, ArchiveJournalPhase, CleanupJournal, ExtractStagePlacement,
+    MoveRecord,
 };
 #[cfg(test)]
 pub(crate) use quota::staged_tree_usage;
@@ -99,9 +100,9 @@ pub struct ProcessState {
 
 #[derive(Clone, Debug)]
 pub(crate) struct CleanupPlan {
-    // Every extraction is directed to a sibling staging directory first. This
-    // keeps failed/cancelled jobs from leaving partial files in an existing
-    // user directory and gives us a contained place to inspect before promote.
+    // Every extraction is directed to a contained staging directory first.
+    // New destinations use a sibling stage; existing destinations use a hidden
+    // child stage so published files inherit that destination's actual policy.
     pub(crate) staged_extract: Option<(std::path::PathBuf, std::path::PathBuf)>,
     // Create/update output is written to a sibling staging basename. This also
     // covers split-volume families (`.001`, `.002`, ...).

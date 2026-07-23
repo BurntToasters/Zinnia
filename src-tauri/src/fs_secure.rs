@@ -1,4 +1,5 @@
-//! Cross-platform helpers for private directories and durable directory sync.
+//! Cross-platform helpers for private/internal directories, inheriting publish stages,
+//! and durable directory sync.
 
 use std::io;
 use std::path::Path;
@@ -20,6 +21,34 @@ pub fn create_private_dir(path: &Path) -> io::Result<()> {
     #[cfg(windows)]
     {
         create_private_dir_windows(path)
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        std::fs::create_dir(path)
+    }
+}
+
+/// Create a publish staging directory with the parent directory's normal policy.
+///
+/// On Windows this deliberately uses the parent directory's default security
+/// descriptor instead of a local-account-specific private DACL. Network servers
+/// may authenticate the SMB session as a different account, translate SIDs, or
+/// normalize ACLs. Creating the stage under the ACL source that should govern the
+/// published output matches ordinary Windows and SMB file creation.
+///
+/// App-owned temporary directories and list files must continue to use
+/// `create_private_dir`; this compatibility helper is only for randomly named
+/// publish stages whose contents are later committed to the same location.
+pub fn create_inheriting_stage_dir(path: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        create_private_dir(path)
+    }
+
+    #[cfg(windows)]
+    {
+        create_inheriting_stage_dir_windows(path)
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -595,6 +624,56 @@ fn verify_private_directory_security(
 }
 
 #[cfg(windows)]
+fn map_windows_directory_create_error(path: &Path, error: io::Error) -> io::Error {
+    if error.kind() == io::ErrorKind::PermissionDenied {
+        io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "Access is denied creating staging directory under {}. Choose a writable folder such as Desktop or Documents.",
+                path.parent().unwrap_or(path).display()
+            ),
+        )
+    } else {
+        error
+    }
+}
+
+#[cfg(windows)]
+fn create_inheriting_stage_dir_windows(path: &Path) -> io::Result<()> {
+    use std::os::windows::fs::MetadataExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+
+    std::fs::create_dir(path).map_err(|error| map_windows_directory_create_error(path, error))?;
+
+    // Creation used the parent/server default descriptor. Confirm that the
+    // randomly named entry is still a real directory before handing it to 7-Zip.
+    // The extraction commit path performs deeper tree checks after 7-Zip exits.
+    let validation = (|| -> io::Result<()> {
+        let metadata = std::fs::symlink_metadata(path)?;
+        if !metadata.is_dir() {
+            return Err(io::Error::other("New staging path is not a directory."));
+        }
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(io::Error::other(
+                "New staging directory unexpectedly became a reparse point.",
+            ));
+        }
+        Ok(())
+    })();
+
+    if let Err(error) = validation {
+        return match std::fs::remove_dir(path) {
+            Ok(()) => Err(error),
+            Err(cleanup) if cleanup.kind() == io::ErrorKind::NotFound => Err(error),
+            Err(cleanup) => Err(io::Error::other(format!(
+                "{error}; additionally could not remove the rejected staging directory: {cleanup}"
+            ))),
+        };
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
 fn create_private_dir_windows(path: &Path) -> io::Result<()> {
     use std::mem::size_of;
     use std::os::windows::ffi::OsStrExt;
@@ -652,17 +731,10 @@ fn create_private_dir_windows(path: &Path) -> io::Result<()> {
         // avoids the old create-then-restrict window and supports \\?\ paths
         // without routing them through command-line argument parsing.
         if unsafe { CreateDirectoryW(path_wide.as_ptr(), &attributes) } == 0 {
-            let error = io::Error::last_os_error();
-            if error.kind() == io::ErrorKind::PermissionDenied {
-                return Err(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    format!(
-                        "Access is denied creating staging directory under {}. Choose a writable folder such as Desktop or Documents.",
-                        path.parent().unwrap_or(path).display()
-                    ),
-                ));
-            }
-            return Err(error);
+            return Err(map_windows_directory_create_error(
+                path,
+                io::Error::last_os_error(),
+            ));
         }
 
         // Read the descriptor back from an open directory handle. This is a
@@ -680,8 +752,13 @@ fn create_private_dir_windows(path: &Path) -> io::Result<()> {
         })();
 
         if let Err(error) = verification {
-            let _ = std::fs::remove_dir(path);
-            return Err(error);
+            return match std::fs::remove_dir(path) {
+                Ok(()) => Err(error),
+                Err(cleanup) if cleanup.kind() == io::ErrorKind::NotFound => Err(error),
+                Err(cleanup) => Err(io::Error::other(format!(
+                    "{error}; additionally could not remove the rejected private directory: {cleanup}"
+                ))),
+            };
         }
         Ok(())
     })();
@@ -754,6 +831,19 @@ mod tests {
         create_private_dir(&path).expect("create and verify private directory");
         assert!(path.is_dir());
         std::fs::remove_dir(&path).expect("remove private test directory");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn inheriting_stage_directory_uses_compatible_creation_path() {
+        let mut random = [0u8; 8];
+        getrandom::fill(&mut random).expect("random test directory suffix");
+        let suffix: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+        let path = std::env::temp_dir().join(format!("zinnia-publish-stage-{suffix}"));
+
+        create_inheriting_stage_dir(&path).expect("create inherited-ACL publish stage");
+        assert!(path.is_dir());
+        std::fs::remove_dir(&path).expect("remove publish stage test directory");
     }
 
     #[cfg(windows)]

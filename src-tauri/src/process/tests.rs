@@ -150,8 +150,8 @@ fn windows_listfile_rewrite_places_reference_before_any_separator() {
 }
 
 #[test]
-fn extraction_uses_a_staging_directory() {
-    let root = temp_root("zinnia-extract-plan-test");
+fn existing_extraction_destination_stages_inside_destination() {
+    let root = temp_root("zinnia-extract-existing-plan-test");
     std::fs::create_dir_all(&root).expect("test directory");
     let archive = root.join("archive.7z");
     std::fs::write(&archive, b"archive").expect("test archive");
@@ -163,9 +163,53 @@ fn extraction_uses_a_staging_directory() {
     ];
     let plan = prepare_cleanup_plan(&args, None).expect("cleanup plan");
     let (staged, target) = plan.staged_extract.clone().expect("staging plan");
-    assert_ne!(staged, target);
+    assert_eq!(staged.parent(), Some(target.as_path()));
+    assert_eq!(
+        ExtractStagePlacement::from_paths(&staged, &target),
+        Ok(ExtractStagePlacement::InsideDestination)
+    );
     rollback_cleanup(&plan).expect("rollback");
     let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn new_extraction_destination_stages_beside_destination() {
+    let root = temp_root("zinnia-extract-new-plan-test");
+    std::fs::create_dir_all(&root).expect("test directory");
+    let archive = root.join("archive.7z");
+    let destination = root.join("new-destination");
+    std::fs::write(&archive, b"archive").expect("test archive");
+    let args = vec![
+        "x".to_string(),
+        format!("-o{}", destination.display()),
+        "--".to_string(),
+        archive.to_string_lossy().to_string(),
+    ];
+    let plan = prepare_cleanup_plan(&args, None).expect("cleanup plan");
+    let (staged, target) = plan.staged_extract.clone().expect("staging plan");
+    assert_eq!(staged.parent(), target.parent());
+    assert_eq!(
+        ExtractStagePlacement::from_paths(&staged, &target),
+        Ok(ExtractStagePlacement::Sibling)
+    );
+    rollback_cleanup(&plan).expect("rollback");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn extract_stage_placement_rejects_mismatched_layouts() {
+    let root = std::path::Path::new("root");
+    let destination = root.join("destination");
+    let sibling = root.join(".zinnia-extract-token");
+    let inside = destination.join(".zinnia-extract-token");
+
+    assert!(ExtractStagePlacement::Sibling.matches_paths(&sibling, &destination));
+    assert!(!ExtractStagePlacement::Sibling.matches_paths(&inside, &destination));
+    assert!(ExtractStagePlacement::InsideDestination.matches_paths(&inside, &destination));
+    assert!(!ExtractStagePlacement::InsideDestination.matches_paths(&sibling, &destination));
+    assert!(
+        ExtractStagePlacement::from_paths(&root.join("elsewhere/stage"), &destination).is_err()
+    );
 }
 
 #[test]
@@ -189,6 +233,7 @@ fn existing_archive_is_untouched_after_staged_rollback() {
         .map(|(staged, _)| staged.clone())
         .expect("staged archive");
     assert!(target.exists());
+    assert_eq!(staged.parent().and_then(|stage| stage.parent()), target.parent());
     std::fs::write(&staged, b"partial").expect("partial staged archive");
     rollback_cleanup(&plan).expect("rollback should remove staging");
     assert_eq!(
@@ -196,6 +241,26 @@ fn existing_archive_is_untouched_after_staged_rollback() {
         b"original"
     );
     assert!(!staged.exists());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn inside_destination_extract_stage_merges_without_self_conflict() {
+    let root = temp_root("zinnia-inside-destination-merge-test");
+    let destination = root.join("destination");
+    let staged = destination.join(".zinnia-extract-0123456789abcdef0123456789abcdef");
+    std::fs::create_dir_all(&staged).expect("staged tree");
+    std::fs::write(staged.join("new.txt"), b"new").expect("staged file");
+
+    merge_staged_extract(&staged, &destination, MAX_EXTRACTED_BYTES)
+        .expect("inside-destination merge should succeed");
+
+    assert_eq!(
+        std::fs::read(destination.join("new.txt")).expect("promoted file"),
+        b"new"
+    );
+    assert!(!staged.exists());
+    assert!(!move_plan_path(&staged).exists());
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -630,7 +695,30 @@ fn extraction_uses_a_private_archive_snapshot() {
         b"original"
     );
     assert_eq!(snapshot.total_len, 8);
-    let _ = std::fs::remove_dir_all(snapshot.path.parent().expect("stage"));
+    let stage = snapshot.path.parent().expect("stage");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = std::fs::metadata(stage).expect("snapshot stage metadata").permissions().mode();
+        assert_eq!(mode & 0o777, 0o700);
+    }
+    let _ = std::fs::remove_dir_all(stage);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn extraction_snapshot_uses_app_cache_when_available() {
+    let root = temp_root("zinnia-archive-snapshot-cache");
+    let source = root.join("source");
+    let cache = root.join("cache");
+    std::fs::create_dir_all(&source).expect("source");
+    let archive = source.join("archive.7z");
+    std::fs::write(&archive, b"archive").expect("archive");
+
+    let snapshot = stage_extract_input(&archive, Some(&cache)).expect("snapshot");
+    let stage = snapshot.path.parent().expect("stage");
+    assert_eq!(stage.parent(), Some(cache.as_path()));
+
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -862,6 +950,7 @@ fn archive_journal_committed_when_promote_finished_and_stage_empty() {
         stage: stage.clone(),
         destination: destination.clone(),
         archive: true,
+        extract_stage_placement: None,
         move_plan_sidecar: false,
         previous_archive_family: Vec::new(),
         next_archive_family: vec![destination.clone()],
@@ -887,6 +976,7 @@ fn archive_journal_not_committed_while_staged_outputs_remain() {
         stage: stage.clone(),
         destination: destination.clone(),
         archive: true,
+        extract_stage_placement: None,
         move_plan_sidecar: false,
         previous_archive_family: Vec::new(),
         next_archive_family: vec![destination.clone()],
@@ -913,6 +1003,7 @@ fn archive_journal_rollback_restores_backups_for_update() {
         stage: stage.clone(),
         destination: destination.clone(),
         archive: true,
+        extract_stage_placement: None,
         move_plan_sidecar: false,
         previous_archive_family: vec![destination.clone()],
         next_archive_family: vec![destination.clone()],
@@ -943,6 +1034,7 @@ fn archive_journal_rollback_continues_after_unpublished_volume_identity() {
         stage: stage.clone(),
         destination: root.join("out.7z"),
         archive: true,
+        extract_stage_placement: None,
         move_plan_sidecar: false,
         previous_archive_family: vec![first.clone(), second.clone()],
         next_archive_family: vec![first.clone(), second.clone()],
@@ -971,6 +1063,7 @@ fn archive_journal_rollback_clears_published_volume_without_identity() {
         stage: stage.clone(),
         destination: destination.clone(),
         archive: true,
+        extract_stage_placement: None,
         move_plan_sidecar: false,
         previous_archive_family: vec![destination.clone()],
         next_archive_family: vec![destination.clone()],
@@ -1007,6 +1100,7 @@ fn archive_journal_rollback_preserves_a_replacement_output() {
         stage: stage.clone(),
         destination: destination.clone(),
         archive: true,
+        extract_stage_placement: None,
         move_plan_sidecar: false,
         previous_archive_family: vec![destination.clone()],
         next_archive_family: vec![destination.clone()],
@@ -1037,6 +1131,7 @@ fn explicit_archive_phase_controls_recovery_across_partial_backup_cleanup() {
         stage: stage.clone(),
         destination: root.join("out.7z"),
         archive: true,
+        extract_stage_placement: None,
         move_plan_sidecar: false,
         previous_archive_family: vec![first.clone(), second.clone()],
         next_archive_family: vec![first.clone(), second.clone()],

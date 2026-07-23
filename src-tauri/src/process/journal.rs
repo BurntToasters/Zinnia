@@ -6,11 +6,51 @@ use super::commit::{archive_destination_for, archive_family};
 use super::staging::path_entry_exists;
 use super::CleanupPlan;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ExtractStagePlacement {
+    /// The destination did not exist when the transaction started, so the
+    /// stage is beside it and can be renamed into place as a whole.
+    Sibling,
+    /// The destination already existed, so the stage is a hidden child whose
+    /// contents inherit the destination's local or SMB security policy.
+    InsideDestination,
+}
+
+impl ExtractStagePlacement {
+    pub(crate) fn from_paths(
+        stage: &std::path::Path,
+        destination: &std::path::Path,
+    ) -> Result<Self, String> {
+        if stage.parent() == destination.parent() {
+            return Ok(Self::Sibling);
+        }
+        if stage.parent() == Some(destination) {
+            return Ok(Self::InsideDestination);
+        }
+        Err("Extraction stage is not in a supported publish location.".to_string())
+    }
+
+    pub(crate) fn matches_paths(
+        self,
+        stage: &std::path::Path,
+        destination: &std::path::Path,
+    ) -> bool {
+        match self {
+            Self::Sibling => stage.parent() == destination.parent(),
+            Self::InsideDestination => stage.parent() == Some(destination),
+        }
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct CleanupJournal {
     pub(crate) stage: std::path::PathBuf,
     pub(crate) destination: std::path::PathBuf,
     pub(crate) archive: bool,
+    /// Recorded extraction layout. Missing means a legacy sibling-stage journal.
+    #[serde(default)]
+    pub(crate) extract_stage_placement: Option<ExtractStagePlacement>,
     /// Newer extracts keep their move plan beside the stage. False means a
     /// legacy journal that may need the old in-payload recovery location.
     #[serde(default)]
@@ -106,7 +146,7 @@ pub(crate) enum ArchiveJournalPhase {
 }
 
 /// Legacy in-payload location, retained only to recover transactions created
-/// by older betas. New plans are always stored beside the private stage.
+/// by older betas. New plans are always stored beside the stage.
 pub(crate) const LEGACY_MOVE_PLAN_FILE_NAME: &str = "move-plan.json";
 
 pub(crate) fn move_plan_path(stage: &std::path::Path) -> std::path::PathBuf {
@@ -140,6 +180,7 @@ pub(crate) fn write_cleanup_journal(
             stage: stage.clone(),
             destination: destination.clone(),
             archive: false,
+            extract_stage_placement: Some(ExtractStagePlacement::from_paths(stage, destination)?),
             move_plan_sidecar: true,
             previous_archive_family: Vec::new(),
             next_archive_family: Vec::new(),
@@ -154,6 +195,7 @@ pub(crate) fn write_cleanup_journal(
                 .to_path_buf(),
             destination: destination.clone(),
             archive: true,
+            extract_stage_placement: None,
             move_plan_sidecar: false,
             previous_archive_family: archive_family(destination)?,
             next_archive_family: Vec::new(),
@@ -190,6 +232,7 @@ pub(crate) fn update_archive_journal(
         stage,
         destination: destination.clone(),
         archive: true,
+        extract_stage_placement: None,
         move_plan_sidecar: false,
         previous_archive_family: archive_family(destination)?,
         next_archive_identities: vec![None; next_archive_family.len()],

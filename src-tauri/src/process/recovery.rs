@@ -166,8 +166,18 @@ pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), Str
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("");
-    if journal.stage.parent() != journal.destination.parent() || !is_safe_stage_dir_name(stage_name)
-    {
+    let placement_is_valid = if journal.archive {
+        journal.stage.parent() == journal.destination.parent()
+    } else {
+        // Legacy extract journals had only sibling stages. New journals record
+        // whether the destination existed and therefore whether the stage was
+        // placed beside it or inside it for ACL inheritance compatibility.
+        journal
+            .extract_stage_placement
+            .map(|placement| placement.matches_paths(&journal.stage, &journal.destination))
+            .unwrap_or_else(|| journal.stage.parent() == journal.destination.parent())
+    };
+    if !placement_is_valid || !is_safe_stage_dir_name(stage_name) {
         return Err("Refusing unsafe interrupted-transaction recovery path.".to_string());
     }
     let metadata = match std::fs::symlink_metadata(&journal.stage) {

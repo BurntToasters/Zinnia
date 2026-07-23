@@ -105,18 +105,18 @@ pub(crate) fn resolve_existing_target(
     target.canonicalize().map_err(|e| e.to_string())
 }
 
-pub(crate) fn create_private_stage_dir(
-    target: &std::path::Path,
+fn create_stage_dir_under(
+    parent: &std::path::Path,
     purpose: &str,
     cache_dir: Option<&std::path::Path>,
+    create: impl Fn(&std::path::Path) -> std::io::Result<()>,
 ) -> Result<std::path::PathBuf, String> {
-    let parent = target.parent().unwrap_or_else(|| std::path::Path::new("."));
     // Keep the stage basename independent of the user destination. Besides
     // avoiding NAME_MAX failures, this prevents 7-Zip output-path wildcard
     // substitution from interpreting a literal `*` in a destination name.
     for _ in 0..32 {
         let candidate = parent.join(format!(".zinnia-{purpose}-{}", random_token()?));
-        match crate::fs_secure::create_private_dir(&candidate) {
+        match create(&candidate) {
             Ok(()) => {
                 if let Some(cache_dir) = cache_dir {
                     if let Err(error) = register_pending_stage(cache_dir, &candidate) {
@@ -129,14 +129,48 @@ pub(crate) fn create_private_stage_dir(
                 return Ok(candidate);
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => {
-                return Err(format!(
-                    "Could not create secure staging directory: {error}"
-                ))
-            }
+            Err(error) => return Err(format!("Could not create staging directory: {error}")),
         }
     }
     Err("Could not reserve a unique staging directory.".to_string())
+}
+
+/// Create an app-private stage beside an anchor path.
+///
+/// This is reserved for archive input snapshots and other internal material
+/// that must not inherit a user-selected or remote share ACL.
+pub(crate) fn create_private_stage_dir(
+    anchor: &std::path::Path,
+    purpose: &str,
+    cache_dir: Option<&std::path::Path>,
+) -> Result<std::path::PathBuf, String> {
+    let parent = anchor
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    create_stage_dir_under(
+        parent,
+        purpose,
+        cache_dir,
+        crate::fs_secure::create_private_dir,
+    )
+}
+
+/// Create a publish stage beside the target so it inherits the target parent's
+/// normal local or SMB security policy.
+pub(crate) fn create_publish_stage_dir(
+    target: &std::path::Path,
+    purpose: &str,
+    cache_dir: Option<&std::path::Path>,
+) -> Result<std::path::PathBuf, String> {
+    let parent = target
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    create_stage_dir_under(
+        parent,
+        purpose,
+        cache_dir,
+        crate::fs_secure::create_inheriting_stage_dir,
+    )
 }
 
 pub(crate) fn next_extract_stage_path(
@@ -151,8 +185,21 @@ pub(crate) fn next_extract_stage_path(
         if !meta.is_dir() {
             return Err("Extraction destination is not a directory.".to_string());
         }
+
+        // Existing destinations can have a different ACL from their parent.
+        // Stage inside the destination so Windows/SMB-created children inherit
+        // the exact policy that should govern the published files.
+        return create_stage_dir_under(
+            target,
+            "extract",
+            cache_dir,
+            crate::fs_secure::create_inheriting_stage_dir,
+        );
     }
-    create_private_stage_dir(target, "extract", cache_dir)
+
+    // A new destination has no ACL of its own yet. A sibling stage inherits from
+    // the same parent and can be renamed atomically into the final location.
+    create_publish_stage_dir(target, "extract", cache_dir)
 }
 
 pub(crate) fn rewrite_extract_output(
@@ -421,7 +468,7 @@ pub(crate) fn prepare_cleanup_plan(
                 staged_extract: Some((stage, destination)),
                 staged_archive: None,
                 staged_input_archive: Some(staged_input.path),
-                // Member preflight plus a fixed, wildcard-free private stage
+                // Member preflight plus a fixed, wildcard-free stage
                 // contains 7-Zip output. Unrelated siblings may legitimately
                 // appear during a long extraction and must not abort commit.
                 cache_dir,
@@ -435,7 +482,7 @@ pub(crate) fn prepare_cleanup_plan(
             } else {
                 resolve_new_target(&target)?
             };
-            let stage_dir = create_private_stage_dir(&target, "archive", cache_ref)?;
+            let stage_dir = create_publish_stage_dir(&target, "archive", cache_ref)?;
             let staged = stage_dir.join(
                 target
                     .file_name()
@@ -455,7 +502,7 @@ pub(crate) fn prepare_cleanup_plan(
                 return Err("Update requires an existing output archive file.".to_string());
             }
             let target = resolve_existing_target(&target, false)?;
-            let stage_dir = create_private_stage_dir(&target, "archive", cache_ref)?;
+            let stage_dir = create_publish_stage_dir(&target, "archive", cache_ref)?;
             let staged = stage_dir.join(
                 target
                     .file_name()
