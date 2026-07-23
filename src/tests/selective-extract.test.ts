@@ -12,6 +12,8 @@ import {
   selectPaths,
   toggleEntrySelection,
   togglePathSelection,
+  MAX_ARCHIVE_MEMBER_PATH_LENGTH,
+  MAX_ARCHIVE_TREE_DEPTH,
 } from "../selective-extract";
 import type { TreeNode } from "../selective-extract";
 
@@ -80,7 +82,13 @@ describe("isPathWithinFolder", () => {
   });
 
   it("detects paths within folder (backslash)", () => {
-    expect(isPathWithinFolder("docs\\guide\\install.md", "docs")).toBe(true);
+    expect(isPathWithinFolder("docs\\guide\\install.md", "docs", true)).toBe(
+      true,
+    );
+  });
+
+  it("does not treat a POSIX literal backslash as a separator", () => {
+    expect(isPathWithinFolder("docs\\guide.txt", "docs")).toBe(false);
   });
 
   it("rejects paths outside folder", () => {
@@ -174,9 +182,9 @@ describe("buildSelectiveExtractArgs", () => {
       "x",
       "-o/tmp/output",
       "-aou",
+      "-spd",
       "-psecret",
       "-aos",
-      "-spd",
       "--",
       "/tmp/archive.7z",
       "docs/readme.md",
@@ -207,7 +215,7 @@ describe("buildSelectiveExtractArgs", () => {
   it("extracts everything when no paths selected", () => {
     expect(
       buildSelectiveExtractArgs("/tmp/archive.7z", "/tmp/output", "", [], []),
-    ).toEqual(["x", "-o/tmp/output", "-aou", "--", "/tmp/archive.7z"]);
+    ).toEqual(["x", "-o/tmp/output", "-aou", "-spd", "--", "/tmp/archive.7z"]);
   });
 });
 
@@ -266,12 +274,59 @@ describe("buildEntryTree", () => {
     expect(findNode(tree, "a/b")?.isFolder).toBe(true);
   });
 
+  it("preserves a literal POSIX backslash member as one leaf", () => {
+    const tree = buildEntryTree([
+      {
+        path: "a\\b.txt",
+        size: 1,
+        packedSize: 1,
+        modified: "",
+        isFolder: false,
+      },
+    ]);
+    expect(tree).toHaveLength(1);
+    expect(tree[0].path).toBe("a\\b.txt");
+    expect(tree[0].name).toBe("a\\b.txt");
+  });
+
   it("sorts folders before files alphabetically", () => {
     const tree = buildEntryTree(SAMPLE_ENTRIES);
     const topNames = tree.map((n) => n.name);
     const docsIdx = topNames.indexOf("docs");
     const fileIdx = topNames.indexOf("-leading-switch-name.txt");
     expect(docsIdx).toBeLessThan(fileIdx);
+  });
+
+  it("rejects hostile member depth before recursive UI rendering", () => {
+    const path = Array.from(
+      { length: MAX_ARCHIVE_TREE_DEPTH + 1 },
+      (_, index) => `d${index}`,
+    ).join("/");
+    expect(() =>
+      buildEntryTree([
+        {
+          path,
+          size: 1,
+          packedSize: 1,
+          modified: "",
+          isFolder: false,
+        },
+      ]),
+    ).toThrow(/256-level browsing limit/);
+  });
+
+  it("rejects hostile member path length", () => {
+    expect(() =>
+      buildEntryTree([
+        {
+          path: "x".repeat(MAX_ARCHIVE_MEMBER_PATH_LENGTH + 1),
+          size: 1,
+          packedSize: 1,
+          modified: "",
+          isFolder: false,
+        },
+      ]),
+    ).toThrow(/character browsing limit/);
   });
 });
 

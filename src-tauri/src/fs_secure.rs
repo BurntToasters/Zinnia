@@ -302,14 +302,12 @@ fn restrict_directory_acl(path: &Path) -> Result<(), String> {
     // icacls accepts SID grants as *S-1-5-...
     let grant_user = format!("*{}:(OI)(CI)F", identity.sid);
 
-    run_icacls(&[
-        path_str.as_ref(),
-        "/inheritance:r",
-        "/grant:r",
-        &grant_user,
-        "/grant:r",
-        "SYSTEM:(OI)(CI)F",
-    ])?;
+    // `icacls` accepts one SID/permission value for each switch. First replace
+    // inherited/explicit grants with the current user's ACE, then *add* SYSTEM.
+    // A second `/grant:r` would replace the user's newly-created explicit ACE.
+    run_icacls(&[path_str.as_ref(), "/inheritance:r"])?;
+    run_icacls(&[path_str.as_ref(), "/grant:r", &grant_user])?;
+    run_icacls(&[path_str.as_ref(), "/grant", "SYSTEM:(OI)(CI)F"])?;
 
     // One call for all broad-principal removals (best-effort).
     let _ = run_icacls(&[
@@ -340,15 +338,27 @@ fn read_directory_sddl(path: &Path) -> Result<String, String> {
     save_result?;
     let content = content.map_err(|e| format!("Could not read saved ACL: {e}"))?;
     let content = decode_windows_command_file(&content)?;
-    // icacls /save writes: <path>\n<SDDL>\n
-    let sddl = content.lines().nth(1).unwrap_or("").trim().to_string();
-    if sddl.is_empty() {
-        return Err(format!(
+    let sddl = sddl_from_icacls_save(&content).ok_or_else(|| {
+        format!(
             "Saved ACL for {} did not include an SDDL line.",
             path.display()
-        ));
-    }
+        )
+    })?;
     Ok(sddl)
+}
+
+/// `icacls /save` writes either a path and SDDL on separate lines or both on
+/// one line, depending on the Windows build and target path. The final `D:`
+/// marks the DACL section; taking the final occurrence also avoids a drive
+/// prefix such as `D:\\staging`.
+#[cfg(any(windows, test))]
+fn sddl_from_icacls_save(content: &str) -> Option<String> {
+    content.lines().find_map(|line| {
+        let line = line.trim();
+        let start = line.rfind("D:")?;
+        let sddl = line[start..].trim();
+        (!sddl.is_empty()).then(|| sddl.to_string())
+    })
 }
 
 /// True when SDDL contains an Allow ACE whose trustee is `sid`
@@ -452,6 +462,24 @@ mod tests {
         assert_eq!(
             decode_windows_command_file(&utf16le[2..]).unwrap(),
             expected
+        );
+    }
+
+    #[test]
+    fn parses_icacls_saved_acl_with_path_on_its_own_line() {
+        let saved = "C:\\\\staging\r\nD:P(A;OICI;FA;;;S-1-5-21-1-2-3-1001)(A;OICI;FA;;;SY)\r\n";
+        assert_eq!(
+            sddl_from_icacls_save(saved).as_deref(),
+            Some("D:P(A;OICI;FA;;;S-1-5-21-1-2-3-1001)(A;OICI;FA;;;SY)")
+        );
+    }
+
+    #[test]
+    fn parses_icacls_saved_acl_inline_after_a_drive_path() {
+        let saved = "D:\\\\staging D:P(A;OICI;FA;;;S-1-5-21-1-2-3-1001)(A;OICI;FA;;;SY)\r\n";
+        assert_eq!(
+            sddl_from_icacls_save(saved).as_deref(),
+            Some("D:P(A;OICI;FA;;;S-1-5-21-1-2-3-1001)(A;OICI;FA;;;SY)")
         );
     }
 

@@ -319,24 +319,24 @@ html[data-window-fx="basic"] .extract-input-modal-overlay {
 .btn--close {
   background: var(--accent);
   color: var(--text-on-accent);
-  border-color: var(--accent);
+  border-color: var(--accent-fg);
 }
 
 .btn--open {
   background: transparent;
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--accent-fg);
+  color: var(--accent-fg);
 }
 
 .btn--open:hover {
   background: var(--accent-bg-strong);
-  border-color: var(--accent-hover);
-  color: var(--accent-hover);
+  border-color: var(--accent-fg-hover);
+  color: var(--accent-fg-hover);
 }
 
 .btn--close:hover {
   background: var(--accent-hover);
-  border-color: var(--accent-hover);
+  border-color: var(--accent-fg-hover);
 }
 
 @media (prefers-reduced-motion: reduce) {

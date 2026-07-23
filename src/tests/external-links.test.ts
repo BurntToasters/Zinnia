@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { open } from "@tauri-apps/plugin-shell";
-import { openExternalUrl, wireExternalLinkClicks } from "../external-links";
+import fs from "node:fs";
+import path from "node:path";
+import { openExternalUrl } from "../external-links";
 
 const openMock = vi.mocked(open);
 const logMock = vi.fn();
@@ -14,7 +16,6 @@ describe("external links", () => {
     openMock.mockReset();
     openMock.mockResolvedValue(undefined);
     logMock.mockReset();
-    document.body.innerHTML = "";
   });
 
   it("opens safe http(s) URLs via the shell plugin", async () => {
@@ -31,18 +32,15 @@ describe("external links", () => {
     );
   });
 
-  it("intercepts anchor clicks for http(s) links", async () => {
-    const anchor = document.createElement("a");
-    anchor.setAttribute("href", "https://rosie.run/support");
-    anchor.textContent = "Support";
-    document.body.appendChild(anchor);
-    wireExternalLinkClicks();
-
-    anchor.dispatchEvent(
-      new MouseEvent("click", { bubbles: true, cancelable: true }),
+  it("does not add a second click interceptor on top of shell target=_blank", () => {
+    // Regression: capture-phase open() + shell plugin IIFF opened two tabs.
+    const appInit = fs.readFileSync(
+      path.resolve(process.cwd(), "src", "app-init.ts"),
+      "utf8",
     );
-    await vi.waitFor(() => {
-      expect(openMock).toHaveBeenCalledWith("https://rosie.run/support");
-    });
+    expect(appInit).not.toMatch(/wireExternalLinkClicks/);
+    expect(appInit).toMatch(
+      /openExternalUrl\("https:\/\/rosie\.run\/support"\)/,
+    );
   });
 });

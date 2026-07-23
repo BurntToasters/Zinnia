@@ -14,6 +14,8 @@
 #include <vector>
 #include <new>
 #include <algorithm>
+#include <cwchar>
+#include <cwctype>
 #include <filesystem>
 #include "resource.h"
 
@@ -34,6 +36,8 @@ enum class CommandKind { Root, Extract, Compress, ExtractTop };
 
 static LONG g_moduleRefs = 0;
 static HINSTANCE g_hInst = nullptr;
+static constexpr size_t kMaxPathsPerRequest = 4'096;
+static constexpr size_t kMaxHandoffBytes = 4 * 1024 * 1024;
 
 static void AddRefModule() { InterlockedIncrement(&g_moduleRefs); }
 static void ReleaseModule() { InterlockedDecrement(&g_moduleRefs); }
@@ -73,6 +77,7 @@ static bool LooksLikeSplitVolume(const std::wstring& path) {
 
   // Bare name.001: the manifest only activates Extract for first volumes, so
   // one .002 probe proves a split set without stalling Explorer on 999 stats.
+  if (suffix != L"001") return false;
   std::filesystem::path fs_path(path);
   const auto parent = fs_path.parent_path();
   const auto stem_os = fs_path.stem().wstring();
@@ -101,6 +106,7 @@ static HRESULT GetSelectedPaths(IShellItemArray* items,
   DWORD count = 0;
   HRESULT hr = items->GetCount(&count);
   if (FAILED(hr)) return hr;
+  DWORD resolved = 0;
   for (DWORD i = 0; i < count; ++i) {
     IShellItem* item = nullptr;
     hr = items->GetItemAt(i, &item);
@@ -109,9 +115,14 @@ static HRESULT GetSelectedPaths(IShellItemArray* items,
     hr = item->GetDisplayName(SIGDN_FILESYSPATH, &path);
     if (SUCCEEDED(hr) && path) {
       out->emplace_back(path);
+      ++resolved;
       CoTaskMemFree(path);
     }
     item->Release();
+  }
+  if (resolved != count) {
+    out->clear();
+    return HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED);
   }
   return out->empty() ? E_FAIL : S_OK;
 }
@@ -201,28 +212,31 @@ static HRESULT GetZinniaIconRef(LPWSTR* icon) {
   return SHStrDupW(exe.c_str(), icon);
 }
 
-static HRESULT LaunchZinnia(const wchar_t* flag,
-                            const std::vector<std::wstring>& paths) {
-  if (paths.empty()) return E_FAIL;
-  std::wstring exe = GetZinniaExePath();
-  if (GetFileAttributesW(exe.c_str()) == INVALID_FILE_ATTRIBUTES) {
-    return HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
-  }
-
-  std::wstring params = flag;
-  for (const auto& path : paths) {
-    params += L" \"";
-    for (wchar_t ch : path) {
-      if (ch == L'"') params += L'\\';
-      params += ch;
+static std::wstring QuoteArgument(const std::wstring& path) {
+  std::wstring quoted = L"\"";
+  size_t backslashes = 0;
+  for (wchar_t ch : path) {
+    if (ch == L'\\') {
+      ++backslashes;
+      continue;
     }
-    // Trailing backslash before " would escape the quote for CommandLineToArgvW.
-    if (!path.empty() && path.back() == L'\\') {
-      params += L'\\';
+    if (ch == L'\"') {
+      quoted.append(backslashes * 2 + 1, L'\\');
+      quoted += ch;
+      backslashes = 0;
+      continue;
     }
-    params += L'"';
+    quoted.append(backslashes, L'\\');
+    backslashes = 0;
+    quoted += ch;
   }
+  quoted.append(backslashes * 2, L'\\');
+  quoted += L'\"';
+  return quoted;
+}
 
+static HRESULT LaunchOneBatch(const std::wstring& exe,
+                              const std::wstring& params) {
   SHELLEXECUTEINFOW sei = {};
   sei.cbSize = sizeof(sei);
   sei.fMask = SEE_MASK_NOCLOSEPROCESS;
@@ -235,6 +249,100 @@ static HRESULT LaunchZinnia(const wchar_t* flag,
   }
   if (sei.hProcess) CloseHandle(sei.hProcess);
   return S_OK;
+}
+
+static bool Utf8PathLine(const std::wstring& path, std::string* out) {
+  if (!out || path.empty() ||
+      path.find_first_of(L"\r\n") != std::wstring::npos) {
+    return false;
+  }
+  const int required = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
+      path.data(), static_cast<int>(path.size()), nullptr, 0, nullptr, nullptr);
+  if (required <= 0) return false;
+  const size_t begin = out->size();
+  if (begin > kMaxHandoffBytes ||
+      static_cast<size_t>(required) + 1 > kMaxHandoffBytes - begin) {
+    return false;
+  }
+  out->resize(begin + static_cast<size_t>(required));
+  if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, path.data(),
+      static_cast<int>(path.size()), out->data() + begin, required,
+      nullptr, nullptr) != required) {
+    out->resize(begin);
+    return false;
+  }
+  out->push_back('\n');
+  return true;
+}
+
+// Persist the complete Explorer selection before spawning Zinnia. One command
+// launch is then sufficient regardless of selection size, so a later batch
+// launch can never partially deliver a request.
+static HRESULT WriteShellHandoff(const std::vector<std::wstring>& paths,
+                                 std::wstring* handoff_path) {
+  if (!handoff_path) return E_POINTER;
+  std::string payload;
+  for (const auto& path : paths) {
+    if (!Utf8PathLine(path, &payload)) {
+      return HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE);
+    }
+  }
+
+  DWORD temp_length = GetTempPathW(0, nullptr);
+  if (temp_length == 0) return HRESULT_FROM_WIN32(GetLastError());
+  std::vector<wchar_t> temp(temp_length + 1);
+  if (GetTempPathW(static_cast<DWORD>(temp.size()), temp.data()) == 0) {
+    return HRESULT_FROM_WIN32(GetLastError());
+  }
+  GUID handoff_guid = {};
+  HRESULT guid_hr = CoCreateGuid(&handoff_guid);
+  if (FAILED(guid_hr)) return guid_hr;
+  wchar_t guid_text[40] = {};
+  if (StringFromGUID2(handoff_guid, guid_text, 40) == 0) {
+    return E_FAIL;
+  }
+  const std::wstring name = std::wstring(temp.data()) +
+      L"zinnia-shell-handoff-" + guid_text + L".tmp";
+  // CREATE_NEW avoids a temp-file replacement window before the Rust process
+  // validates and consumes the payload.
+  HANDLE file = CreateFileW(name.c_str(), GENERIC_WRITE, 0, nullptr,
+      CREATE_NEW, FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_WRITE_THROUGH, nullptr);
+  if (file == INVALID_HANDLE_VALUE) {
+    return HRESULT_FROM_WIN32(GetLastError());
+  }
+  DWORD written = 0;
+  const bool wrote = payload.size() <= MAXDWORD &&
+      WriteFile(file, payload.data(), static_cast<DWORD>(payload.size()), &written, nullptr) &&
+      written == payload.size() && FlushFileBuffers(file);
+  const DWORD error = wrote ? ERROR_SUCCESS : GetLastError();
+  CloseHandle(file);
+  if (!wrote) {
+    DeleteFileW(name.c_str());
+    return HRESULT_FROM_WIN32(error);
+  }
+  *handoff_path = name;
+  return S_OK;
+}
+
+static HRESULT LaunchZinnia(const wchar_t* flag,
+                            const std::vector<std::wstring>& paths) {
+  if (paths.empty()) return E_FAIL;
+  if (paths.size() > kMaxPathsPerRequest) {
+    return HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);
+  }
+  std::wstring exe = GetZinniaExePath();
+  if (GetFileAttributesW(exe.c_str()) == INVALID_FILE_ATTRIBUTES) {
+    return HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
+  }
+
+  std::wstring handoff_path;
+  HRESULT hr = WriteShellHandoff(paths, &handoff_path);
+  if (FAILED(hr)) return hr;
+  const std::wstring params = std::wstring(flag) +
+      L" --zinnia-shell-handoff " + QuoteArgument(handoff_path);
+  hr = LaunchOneBatch(exe, params);
+  if (FAILED(hr)) DeleteFileW(handoff_path.c_str());
+  return hr;
 }
 
 class ExplorerCommand : public IExplorerCommand, public IObjectWithSite {
@@ -355,7 +463,14 @@ class ExplorerCommand : public IExplorerCommand, public IObjectWithSite {
   HRESULT ResolvePaths(IShellItemArray* selection,
                        std::vector<std::wstring>* paths) {
     if (!paths) return E_INVALIDARG;
-    if (SUCCEEDED(GetSelectedPaths(selection, paths))) return S_OK;
+    if (selection) {
+      DWORD count = 0;
+      HRESULT countHr = selection->GetCount(&count);
+      if (FAILED(countHr)) return countHr;
+      // A non-empty selection must resolve in full. Never reinterpret a
+      // partial/virtual selection as a background click on the current folder.
+      if (count > 0) return GetSelectedPaths(selection, paths);
+    }
     std::wstring folder;
     if (site_ && SUCCEEDED(GetFolderPathFromSite(site_, &folder)) &&
         !folder.empty()) {
@@ -369,6 +484,12 @@ class ExplorerCommand : public IExplorerCommand, public IObjectWithSite {
   IFACEMETHODIMP GetState(IShellItemArray* selection, BOOL, EXPCMDSTATE* state) override {
     if (!state) return E_POINTER;
     *state = ECS_ENABLED;
+    DWORD selectionCount = 0;
+    if (selection && SUCCEEDED(selection->GetCount(&selectionCount)) &&
+        selectionCount > kMaxPathsPerRequest) {
+      *state = ECS_DISABLED;
+      return S_OK;
+    }
     if (kind_ == CommandKind::ExtractTop) {
       // Manifest ItemType registration already limits this command to archive
       // extensions. Keep thin Explorer probes enabled so the modern menu does

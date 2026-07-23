@@ -25,7 +25,10 @@ export function showBasicProgress(section: "compress" | "extract"): void {
 
 export function hideBasicProgress(section: "compress" | "extract"): void {
   const progress = document.getElementById(`basic-${section}-progress`);
-  if (progress) progress.classList.remove("is-active");
+  if (progress) {
+    progress.classList.remove("is-active");
+    progress.removeAttribute("aria-busy");
+  }
 }
 
 export function showBasicCompletion(
@@ -60,8 +63,8 @@ export function showBasicCompletion(
   if (titleEl) titleEl.textContent = title;
   if (msgEl) msgEl.textContent = message;
   if (pathEl) {
-    pathEl.textContent = pathLabel?.trim() ?? "";
-    pathEl.hidden = !(pathLabel?.trim() ?? "");
+    pathEl.textContent = pathLabel ?? "";
+    pathEl.hidden = !(pathLabel ?? "");
   }
 
   // Manage "Open folder" button visibility based on success state
@@ -117,6 +120,23 @@ export function resetBasicBar(section: "compress" | "extract"): void {
 
 export function updateBasicRunningState(active: boolean): void {
   if (getWorkspaceMode() !== "basic") return;
+
+  const browsing = getMode() === "browse";
+  for (const id of ["basic-browse-extract-all", "basic-browse-test"]) {
+    const button = document.getElementById(id) as HTMLButtonElement | null;
+    if (button) button.disabled = active;
+  }
+  const browseCancel = document.getElementById(
+    "basic-browse-cancel",
+  ) as HTMLButtonElement | null;
+  if (browseCancel) browseCancel.hidden = !active || !browsing;
+  if (browsing) {
+    if (basicProgressUnlisten) {
+      basicProgressUnlisten();
+      basicProgressUnlisten = null;
+    }
+    return;
+  }
 
   const section = getMode() === "extract" ? "extract" : "compress";
 
@@ -205,10 +225,10 @@ export function updateBasicStatus(text: string, errorDetail?: string): void {
     hideBasicProgress(section);
     const outputPath = (
       document.getElementById("basic-output-path") as HTMLInputElement | null
-    )?.value?.trim();
+    )?.value;
     const extractPath = (
       document.getElementById("basic-extract-path") as HTMLInputElement | null
-    )?.value?.trim();
+    )?.value;
     const pathCandidates =
       section === "compress"
         ? [outputPath, state.lastAutoOutputPath]
@@ -216,32 +236,13 @@ export function updateBasicStatus(text: string, errorDetail?: string): void {
     const pathLabel =
       pathCandidates.find((candidate) => (candidate?.length ?? 0) > 0) ??
       undefined;
-    const clearedApps = state.lastClearedQuarantineApps;
-    const restoredExec = state.lastRestoredExecuteBits;
-    state.lastClearedQuarantineApps = null;
-    state.lastRestoredExecuteBits = null;
-    const notes: string[] = [];
-    if (clearedApps && clearedApps > 0) {
-      notes.push(
-        `Cleared Gatekeeper quarantine on ${clearedApps} app bundle${clearedApps === 1 ? "" : "s"}`,
-      );
-    }
-    if (restoredExec && restoredExec > 0) {
-      notes.push(
-        `restored execute permission on ${restoredExec} file${restoredExec === 1 ? "" : "s"}`,
-      );
-    }
-    const extractDetail =
-      notes.length > 0
-        ? `Files have been extracted successfully. ${notes.join("; ")}.`
-        : "Files have been extracted successfully.";
     showBasicCompletion(
       section,
       true,
       section === "compress" ? "Archive created" : "Extraction complete",
       section === "compress"
         ? "Your archive has been created successfully."
-        : extractDetail,
+        : "Files have been extracted successfully.",
       pathLabel,
     );
     if (section === "extract" && state.inputs[0]) {

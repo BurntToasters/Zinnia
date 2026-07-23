@@ -1,6 +1,6 @@
 [package]
 name = "zinnia"
-version = "0.6.0-beta.15"
+version = "0.6.0-beta.16"
 description = "Cross-platform 7z GUI built with Tauri."
 authors = ["BurntToasters <code@rosie.run>"]
 edition = "2021"
@@ -17,6 +17,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"
 tauri-plugin-notification = "2"
 tokio = { version = "1", features = ["time"] }
+shared_child = "1.1"
 getrandom = "0.3"
 # Tauri 2 already uses 0.6. Keeping one version avoids duplicate Objective-C
 # class symbols in the final macOS bundle.

@@ -11,7 +11,6 @@ import {
 import { log, devLog, setStatus } from "./ui";
 import { state } from "./state";
 
-let cachedUpdaterTargetBase: string | null = null;
 let pendingUpdate: Update | null = null;
 let pendingVersion: string | null = null;
 let pendingTarget: string | undefined;
@@ -54,36 +53,19 @@ async function archiveOperationIsRunning(): Promise<boolean> {
   }
 }
 
-async function getUpdaterTargetBase(): Promise<string> {
-  if (cachedUpdaterTargetBase) {
-    return cachedUpdaterTargetBase;
-  }
-  const platform = await invoke<string>("get_platform_info");
-  if (platform === "win32" || platform === "windows") {
-    cachedUpdaterTargetBase = "windows";
-  } else if (platform === "macos") {
-    cachedUpdaterTargetBase = "darwin";
-  } else {
-    cachedUpdaterTargetBase = platform;
-  }
-  return cachedUpdaterTargetBase;
-}
-
 async function getUpdateCheckTarget(): Promise<string | undefined> {
   const channel = state.currentSettings.updateChannel;
   if (channel === "stable") {
     return undefined;
   }
   if (channel === "beta") {
-    const base = await getUpdaterTargetBase();
-    return `${base}-beta`;
+    return invoke<string>("get_beta_updater_target");
   }
   // auto: follow the installed version; beta if version contains a pre-release tag
   const version = await getVersion();
   const isBeta = /-(beta|alpha|rc)/i.test(version);
   if (!isBeta) return undefined;
-  const base = await getUpdaterTargetBase();
-  return `${base}-beta`;
+  return invoke<string>("get_beta_updater_target");
 }
 
 export async function notify(title: string, body: string) {

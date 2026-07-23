@@ -212,8 +212,8 @@ pub fn enter_extract_warm_idle(app: &tauri::AppHandle) -> bool {
     let idle_secs = prefs.idle_secs.max(60);
 
     let handle = app.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_secs(idle_secs));
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(idle_secs)).await;
         if EXTRACT_WARM_IDLE_GENERATION.load(Ordering::SeqCst) != generation {
             return;
         }

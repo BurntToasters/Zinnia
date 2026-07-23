@@ -32,7 +32,7 @@ import {
 } from "./presets";
 import { checkUpdates, autoCheckUpdates } from "./updater";
 import { openLicensesModal } from "./licenses";
-import { openExternalUrl, wireExternalLinkClicks } from "./external-links";
+import { openExternalUrl } from "./external-links";
 import { refreshQuickActionRepeatState } from "./quick-actions";
 import { shouldShowSetupWizard } from "./setup-wizard";
 import { initBasicWorkspace, handleBasicDragDrop } from "./basic";
@@ -166,7 +166,6 @@ export async function init() {
     document.body.classList.add("platform-linux");
   }
   wireTitlebar();
-  wireExternalLinkClicks();
 
   try {
     const cpuCount = await invoke<number>("get_cpu_count");

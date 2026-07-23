@@ -62,6 +62,9 @@ jobs:
       - run: npm ci
       - run: npm run test:cov
       - run: npm run prepare:7z
+      - name: Compile Finder Sync extension smoke
+        if: runner.os == 'macOS'
+        run: npm run prepare:macos:finder-sync
       # Empty stubs only: CI never builds/signs the real Win11 shell package.
       - run: npm run prepare:win-shell-stubs
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
@@ -75,8 +78,9 @@ jobs:
         with:
           node-version: 22.12
       - run: npm run validate:updater
-      # Read-only fetch of published latest-*.json (not a release build).
-      - run: npm run validate:updater:live
+      # Feed-shape smoke only. Candidate-bound validation runs after publish.
+      - name: Published updater feed sanity
+        run: npm run validate:updater:live
 
   # Unsigned compile smoke only: not a release. Signed NSIS/DMG/AppImage stay on build VMs.
   smoke-build:
@@ -87,12 +91,23 @@ jobs:
           - os: ubuntu-latest
             sidecar: 7z-x86_64-unknown-linux-gnu
             binary: zinnia
+          - os: ubuntu-24.04-arm
+            sidecar: 7z-aarch64-unknown-linux-gnu
+            binary: zinnia
           - os: macos-26
             sidecar: 7z-aarch64-apple-darwin
+            binary: zinnia
+          - os: macos-26-intel
+            sidecar: 7z-x86_64-apple-darwin
             binary: zinnia
           - os: windows-latest
             sidecar: 7z-x86_64-pc-windows-msvc.exe
             binary: zinnia.exe
+            cmake_arch: x64
+          - os: windows-11-arm
+            sidecar: 7z-aarch64-pc-windows-msvc.exe
+            binary: zinnia.exe
+            cmake_arch: ARM64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
@@ -117,14 +132,19 @@ jobs:
       - run: npm run sync-version
       - run: npm run prepare:7z
       - run: npm run licenses
+      - name: Compile Finder Sync extension smoke
+        if: runner.os == 'macOS'
+        run: npm run prepare:macos:finder-sync
       - name: Native Windows shell compile smoke
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $template = Get-Content src-tauri/windows/shell/msix_identity.manifest.in -Raw
-          $template.Replace('__PUBLISHER_DN__', 'CN=Zinnia CI') |
-            Set-Content src-tauri/windows/shell/msix_identity.manifest -Encoding UTF8
-          cmake -S src-tauri/windows/shell -B src-tauri/windows/shell/build-ci -A x64
+          foreach ($name in 'msix_identity', 'msix_extract_identity') {
+            $template = Get-Content "src-tauri/windows/shell/$name.manifest.in" -Raw
+            $template.Replace('__PUBLISHER_DN__', 'CN=Zinnia CI') |
+              Set-Content "src-tauri/windows/shell/$name.manifest" -Encoding UTF8
+          }
+          cmake -S src-tauri/windows/shell -B src-tauri/windows/shell/build-ci -A ${{ matrix.cmake_arch }}
           cmake --build src-tauri/windows/shell/build-ci --config Release
       - run: npm run prepare:win-shell-stubs
       - name: Unsigned tauri build (no bundle)

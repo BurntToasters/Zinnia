@@ -169,9 +169,9 @@ body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
 }
 
 #app[data-workspace-mode="basic"] .modal--settings .settings-tab.is-active {
-  color: var(--accent);
+  color: var(--accent-fg);
   background: transparent;
-  border-bottom-color: var(--accent);
+  border-bottom-color: var(--accent-fg);
   border-left: none;
 }
 
@@ -449,7 +449,7 @@ body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
 #app[data-workspace-mode="basic"] .modal--settings .setting-item select:focus,
 #app[data-workspace-mode="basic"] .modal--settings .setting-item input:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--accent-fg);
 }
 
 #app[data-workspace-mode="basic"]

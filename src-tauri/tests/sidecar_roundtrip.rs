@@ -1,8 +1,9 @@
 //! End-to-end test against the real bundled 7-Zip binary. Skips (passes) when the
 //! per-host sidecar binary is absent (run `npm run prepare:7z` to provide it).
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 fn binary_path() -> Option<PathBuf> {
     // CARGO_MANIFEST_DIR is src-tauri/. Pick the sidecar for the host arch/os.
@@ -155,5 +156,86 @@ fn rejects_extract_with_wrong_password() {
         .expect("7z extract should run");
     assert!(!extract.status.success(), "wrong password should fail");
 
+    let _ = std::fs::remove_dir_all(work);
+}
+
+#[test]
+fn encrypted_archive_without_password_reaches_eof_instead_of_hanging() {
+    let Some(bin) = binary_path() else {
+        return;
+    };
+    let work = temp_dir("password-eof");
+    let src = work.join("secret.txt");
+    std::fs::write(&src, b"secret\n").unwrap();
+    let archive = work.join("encrypted.7z");
+    assert!(Command::new(&bin)
+        .args([
+            "a",
+            "-t7z",
+            "-pcorrect",
+            "-mhe=on",
+            archive.to_str().unwrap(),
+            "--",
+            src.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap()
+        .status
+        .success());
+
+    let mut child = Command::new(&bin)
+        .args(["l", "--", archive.to_str().unwrap()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            assert!(!status.success(), "listing should require a password");
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            panic!("7-Zip waited indefinitely after password input reached EOF");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let _ = std::fs::remove_dir_all(work);
+}
+
+#[test]
+fn password_prompt_accepts_the_bounded_pipe_used_by_zinnia() {
+    let Some(bin) = binary_path() else {
+        return;
+    };
+    let work = temp_dir("password-pipe");
+    let src = work.join("secret.txt");
+    std::fs::write(&src, b"secret\n").unwrap();
+    let archive = work.join("encrypted.7z");
+    let mut child = Command::new(&bin)
+        .args([
+            "a",
+            "-t7z",
+            "-mhe=on",
+            archive.to_str().unwrap(),
+            "--",
+            src.to_str().unwrap(),
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all(b"correct\ncorrect\ncorrect\n").unwrap();
+    drop(stdin);
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "pipe password failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let _ = std::fs::remove_dir_all(work);
 }

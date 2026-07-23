@@ -421,6 +421,38 @@ describe("basic-ui views and rendering", () => {
 });
 
 describe("basic-ui state transitions", () => {
+  it("clears progress busy semantics when an operation ends", () => {
+    uiMocks.runtime.mode = "add";
+    const progress = document.getElementById("basic-compress-progress")!;
+
+    updateBasicRunningState(true);
+    expect(progress.getAttribute("aria-busy")).toBe("true");
+
+    updateBasicRunningState(false);
+    expect(progress.hasAttribute("aria-busy")).toBe(false);
+  });
+
+  it("shows only the browse cancel control during a browse operation", () => {
+    uiMocks.runtime.mode = "browse";
+
+    updateBasicRunningState(true);
+
+    expect(
+      (document.getElementById("basic-browse-cancel") as HTMLButtonElement)
+        .hidden,
+    ).toBe(false);
+    expect(
+      (document.getElementById("basic-browse-test") as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+
+    updateBasicRunningState(false);
+    expect(
+      (document.getElementById("basic-browse-cancel") as HTMLButtonElement)
+        .hidden,
+    ).toBe(true);
+  });
+
   it("toggles running state across compress and extract sections", () => {
     uiMocks.runtime.mode = "add";
 

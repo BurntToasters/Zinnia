@@ -233,9 +233,8 @@ export function renderInputs() {
       const format =
         (document.getElementById("format") as HTMLSelectElement | null)
           ?.value ?? "7z";
-      const trimmedName = archiveNameInput?.value.trim();
-      const customName =
-        trimmedName && trimmedName.length > 0 ? trimmedName : undefined;
+      const rawName = archiveNameInput?.value;
+      const customName = rawName && rawName.length > 0 ? rawName : undefined;
       const next = resolveOutputArchiveAutofill(
         outputPathInput.value,
         state.lastAutoOutputPath,

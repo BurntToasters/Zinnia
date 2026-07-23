@@ -15,8 +15,6 @@ interface Run7zResult {
   code: number;
   stdout_truncated?: boolean;
   stderr_truncated?: boolean;
-  cleared_quarantine_apps?: number;
-  restored_execute_bits?: number;
 }
 
 interface ProgressUpdate {
@@ -265,14 +263,6 @@ async function run() {
   let cancelRequested = false;
   let operationFinished = false;
   let destination = "";
-  let autoCloseTimer: ReturnType<typeof setTimeout> | null = null;
-
-  const clearAutoCloseTimer = () => {
-    if (autoCloseTimer !== null) {
-      clearTimeout(autoCloseTimer);
-      autoCloseTimer = null;
-    }
-  };
 
   const finish = (
     status: string,
@@ -338,13 +328,11 @@ async function run() {
   });
 
   closeBtn.addEventListener("click", async () => {
-    clearAutoCloseTimer();
     await closeWindowSafely();
   });
 
   openDestinationBtn.addEventListener("click", async () => {
     if (!destination) return;
-    clearAutoCloseTimer();
     openDestinationBtn.disabled = true;
     try {
       await invoke("register_extract_open_path", { path: destination });
@@ -518,29 +506,6 @@ async function run() {
     }
 
     finish("Done", 100);
-    const notes: string[] = [];
-    const cleared = result.cleared_quarantine_apps;
-    if (cleared && cleared > 0) {
-      notes.push(
-        `cleared Gatekeeper quarantine on ${cleared} app bundle${cleared === 1 ? "" : "s"}`,
-      );
-    }
-    const execBits = result.restored_execute_bits;
-    if (execBits && execBits > 0) {
-      notes.push(
-        `restored execute on ${execBits} file${execBits === 1 ? "" : "s"}`,
-      );
-    }
-    if (notes.length > 0) {
-      $("extract-status").textContent = `Done — ${notes.join("; ")}.`;
-    }
-    clearAutoCloseTimer();
-    autoCloseTimer = setTimeout(() => {
-      autoCloseTimer = null;
-      if (!cancelRequested) {
-        void closeWindowSafely();
-      }
-    }, 1200);
   } catch (err) {
     await removeProgressListeners();
     if (cancelRequested) {

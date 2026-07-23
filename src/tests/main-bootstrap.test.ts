@@ -310,11 +310,13 @@ function ensureMainDomElements(): void {
     "choose-extract",
     "open-settings",
     "browse-list",
+    "browse-cancel",
     "browse-test",
     "browse-extract",
     "browse-selective",
     "browse-add-files",
     "browse-convert",
+    "basic-browse-cancel",
     "selective-select-all",
     "selective-clear",
     "selective-cancel",
@@ -1255,6 +1257,59 @@ describe("main bootstrap", () => {
     expect(mocks.ui.setMode).toHaveBeenCalledWith("extract");
     expect(mocks.basicUi.setBasicView).toHaveBeenCalledWith("extract");
     expect(mocks.ui.renderInputs).toHaveBeenCalled();
+  });
+
+  it("preserves every explicit extract batch across cold-start handoffs", async () => {
+    const first = ["/tmp/a.7z", "/tmp/b.7z"];
+    const second = ["/tmp/c.7z", "/tmp/b.7z"];
+    mocks.archiveRules.validateArchivePaths.mockImplementation(async (paths) =>
+      (paths as string[]).map((path) => ({ path, valid: true })),
+    );
+    const { state } = await import("../state");
+    state.inputs = [];
+
+    let drainCalls = 0;
+    setInvokeRouter((command) => {
+      if (command === "get_cpu_count") return 8;
+      if (command === "get_log_dir") return "/tmp/logs";
+      if (command === "get_platform_info") return "windows";
+      if (command === "is_packaged") return true;
+      if (command === "is_flatpak") return false;
+      if (command === "get_initial_mode") return "extract";
+      if (command === "get_initial_paths") return first;
+      if (command === "drain_pending_paths") {
+        drainCalls += 1;
+        return drainCalls === 1 ? [{ paths: second, mode: "extract" }] : [];
+      }
+      return undefined;
+    });
+
+    await loadMainModule();
+
+    expect(state.inputs).toEqual(["/tmp/a.7z", "/tmp/b.7z", "/tmp/c.7z"]);
+    expect(mocks.ui.setMode).toHaveBeenCalledWith("extract");
+  });
+
+  it("caps aggregate explicit handoffs and reports omitted paths", async () => {
+    const { applyIncomingPaths } = await import("../incoming-paths");
+    const { state } = await import("../state");
+    const first = Array.from(
+      { length: 4_096 },
+      (_, index) => `/tmp/archive-${index}.7z`,
+    );
+    mocks.archiveRules.validateArchivePaths.mockImplementation(async (paths) =>
+      (paths as string[]).map((path) => ({ path, valid: true })),
+    );
+    state.inputs = [];
+
+    await applyIncomingPaths(first, "extract", "Explorer");
+    await applyIncomingPaths(["/tmp/overflow.7z"], "extract", "Explorer");
+
+    expect(state.inputs).toHaveLength(4_096);
+    expect(state.inputs).not.toContain("/tmp/overflow.7z");
+    expect(mocks.ui.log).toHaveBeenCalledWith(
+      expect.stringContaining("1 excess path(s) were not added"),
+    );
   });
 
   it("applies platform-windows class and wires titlebar for Windows", async () => {

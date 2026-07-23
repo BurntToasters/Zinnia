@@ -22,7 +22,10 @@ export function setRecentArchiveHandler(handler: (path: string) => void): void {
 
 export function loadRecentArchives(): string[] {
   try {
-    const raw = localStorage.getItem(RECENT_ARCHIVES_KEY);
+    // Archive paths disclose user and project names. Keep recents only for the
+    // current app session and erase the legacy persistent copy on upgrade.
+    localStorage.removeItem(RECENT_ARCHIVES_KEY);
+    const raw = sessionStorage.getItem(RECENT_ARCHIVES_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
@@ -38,7 +41,8 @@ export function loadRecentArchives(): string[] {
 
 export function saveRecentArchives(paths: string[]): void {
   try {
-    localStorage.setItem(
+    localStorage.removeItem(RECENT_ARCHIVES_KEY);
+    sessionStorage.setItem(
       RECENT_ARCHIVES_KEY,
       JSON.stringify(paths.slice(0, MAX_RECENT_ARCHIVES)),
     );
@@ -171,7 +175,7 @@ function renderRecentList(recent: string[]): void {
   }
 }
 
-/** Sync paint from localStorage (no FS probe). Prefer `refreshRecentArchives`. */
+/** Sync paint from session storage (no FS probe). Prefer `refreshRecentArchives`. */
 export function renderRecentArchives(): void {
   wireRecentMenuOnce();
   renderRecentList(loadRecentArchives());

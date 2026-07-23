@@ -1,9 +1,11 @@
 !macro ZINNIA_REGISTER_ARCHIVE_VERBS EXT
   WriteRegStr HKCU "Software\Classes\SystemFileAssociations\${EXT}\shell\ZinniaOpen" "" "Open with Zinnia"
   WriteRegStr HKCU "Software\Classes\SystemFileAssociations\${EXT}\shell\ZinniaOpen" "Icon" "$INSTDIR\zinnia.exe"
+  WriteRegStr HKCU "Software\Classes\SystemFileAssociations\${EXT}\shell\ZinniaOpen" "MultiSelectModel" "Player"
   WriteRegStr HKCU "Software\Classes\SystemFileAssociations\${EXT}\shell\ZinniaOpen\command" "" '"$INSTDIR\zinnia.exe" "%1"'
   WriteRegStr HKCU "Software\Classes\SystemFileAssociations\${EXT}\shell\ZinniaExtract" "" "Extract with Zinnia"
   WriteRegStr HKCU "Software\Classes\SystemFileAssociations\${EXT}\shell\ZinniaExtract" "Icon" "$INSTDIR\zinnia.exe"
+  WriteRegStr HKCU "Software\Classes\SystemFileAssociations\${EXT}\shell\ZinniaExtract" "MultiSelectModel" "Player"
   WriteRegStr HKCU "Software\Classes\SystemFileAssociations\${EXT}\shell\ZinniaExtract\command" "" '"$INSTDIR\zinnia.exe" --extract "%1"'
 !macroend
 
@@ -19,9 +21,11 @@
 
   WriteRegStr HKCU "Software\Classes\*\shell\ZinniaCompress" "MUIVerb" "Compress with Zinnia"
   WriteRegStr HKCU "Software\Classes\*\shell\ZinniaCompress" "Icon" "$INSTDIR\zinnia.exe"
+  WriteRegStr HKCU "Software\Classes\*\shell\ZinniaCompress" "MultiSelectModel" "Player"
   WriteRegStr HKCU "Software\Classes\*\shell\ZinniaCompress\command" "" '"$INSTDIR\zinnia.exe" --compress "%1"'
   WriteRegStr HKCU "Software\Classes\Directory\shell\ZinniaCompress" "MUIVerb" "Compress folder with Zinnia"
   WriteRegStr HKCU "Software\Classes\Directory\shell\ZinniaCompress" "Icon" "$INSTDIR\zinnia.exe"
+  WriteRegStr HKCU "Software\Classes\Directory\shell\ZinniaCompress" "MultiSelectModel" "Player"
   WriteRegStr HKCU "Software\Classes\Directory\shell\ZinniaCompress\command" "" '"$INSTDIR\zinnia.exe" --compress "%1"'
   ; Empty folder background: %V is the folder path.
   WriteRegStr HKCU "Software\Classes\Directory\Background\shell\ZinniaCompress" "MUIVerb" "Compress with Zinnia"

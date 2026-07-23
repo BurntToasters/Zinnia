@@ -260,7 +260,7 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
   appearance: none;
   border: none;
   background: transparent;
-  color: var(--accent);
+  color: var(--accent-fg);
   font: inherit;
   font-size: var(--basic-font);
   font-weight: 560;
@@ -272,7 +272,7 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
 }
 
 .basic-home__link:hover {
-  color: var(--accent-hover);
+  color: var(--accent-fg-hover);
   background: var(--accent-bg);
 }
 
@@ -310,7 +310,7 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
 }
 
 .basic-dropzone:hover {
-  border-color: var(--accent);
+  border-color: var(--accent-fg);
   background: var(--accent-bg);
   box-shadow:
     inset 0 2px 4px var(--shadow),
@@ -318,7 +318,7 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
 }
 
 .basic-dropzone.is-drag-over {
-  border-color: var(--accent);
+  border-color: var(--accent-fg);
   background: var(--accent-bg-strong);
   box-shadow: 0 0 0 4px var(--accent-shadow);
 }
@@ -377,7 +377,7 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
 .basic-dropzone__icon-circle .lucide-icon {
   width: 26px;
   height: 26px;
-  color: var(--accent);
+  color: var(--accent-fg);
 }
 
 .basic-dropzone:hover .basic-dropzone__icon-circle {
@@ -482,7 +482,7 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
 }
 
 .basic-back-link:hover {
-  color: var(--accent);
+  color: var(--accent-fg);
   background: var(--hover-overlay);
 }
 
@@ -662,7 +662,7 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
 .basic-field input:focus,
 .basic-field select:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--accent-fg);
   box-shadow:
     var(--input-inset-shadow),
     0 0 0 3px var(--accent-shadow);
@@ -723,7 +723,7 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
 
 .basic-preset-pill.is-active {
   background: var(--surface);
-  color: var(--accent);
+  color: var(--accent-fg);
   font-weight: 600;
   box-shadow: 0 1px 3px var(--shadow);
 }
@@ -734,7 +734,7 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
 }
 
 .basic-more-options summary {
-  color: var(--accent);
+  color: var(--accent-fg);
   cursor: pointer;
   font-size: var(--basic-label);
   font-weight: 600;
@@ -1084,7 +1084,7 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
 .basic-archive-info__icon .lucide-icon {
   width: 20px;
   height: 20px;
-  color: var(--accent);
+  color: var(--accent-fg);
 }
 
 .basic-archive-info__details {
@@ -1167,7 +1167,7 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
 }
 
 .basic-browse-table-wrap .browse-folder td {
-  color: var(--accent);
+  color: var(--accent-fg);
   font-weight: 500;
 }
 
@@ -1265,7 +1265,7 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
 
 .basic-toolbar__tab.is-active {
   background: var(--accent-bg-strong);
-  color: var(--accent);
+  color: var(--accent-fg);
 }
 
 .basic-toolbar__tab .lucide-icon {
@@ -1345,7 +1345,7 @@ html[data-window-fx="basic"]
 .basic-section-head .lucide-icon {
   width: 16px;
   height: 16px;
-  color: var(--accent);
+  color: var(--accent-fg);
 }
 
 /* Cleaner dividers */

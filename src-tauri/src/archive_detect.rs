@@ -1,8 +1,8 @@
 //! Archive detection by magic bytes / TAR header, and extension-vs-header validation.
 
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 
-const ARCHIVE_SIGNATURE_SCAN_BYTES: usize = 512;
+const ARCHIVE_SIGNATURE_SCAN_BYTES: usize = 1024;
 /// Keep aligned with `src/archive-rules.ts` MAX_ARCHIVE_PATHS and the 7-Zip
 /// argument ceiling in `validation.rs`.
 const MAX_ARCHIVE_PATHS: usize = 4096;
@@ -144,6 +144,9 @@ fn has_tar_checksum(bytes: &[u8]) -> bool {
 }
 
 pub fn has_tar_signature(bytes: &[u8]) -> bool {
+    if bytes.len() >= 1024 && bytes[..1024].iter().all(|byte| *byte == 0) {
+        return true;
+    }
     if bytes.len() < 512 {
         return false;
     }
@@ -156,6 +159,34 @@ fn read_probe_bytes(path: &std::path::Path, max_bytes: usize) -> Result<Vec<u8>,
     let read = file.read(&mut buf).map_err(|e| e.to_string())?;
     buf.truncate(read);
     Ok(buf)
+}
+
+/// ZIP self-extracting archives may contain an arbitrary executable preamble,
+/// so the first local-file header is not necessarily near byte zero. Validate
+/// the mandatory end-of-central-directory record from the tail instead.
+fn has_zip_end_record(path: &std::path::Path) -> Result<bool, String> {
+    const MAX_EOCD_SEARCH: u64 = 65_535 + 22;
+    let mut file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+    let len = file.metadata().map_err(|error| error.to_string())?.len();
+    let start = len.saturating_sub(MAX_EOCD_SEARCH);
+    file.seek(SeekFrom::Start(start))
+        .map_err(|error| error.to_string())?;
+    let mut tail = Vec::with_capacity((len - start) as usize);
+    file.read_to_end(&mut tail)
+        .map_err(|error| error.to_string())?;
+    if tail.len() < 22 {
+        return Ok(false);
+    }
+    for offset in (0..=tail.len() - 22).rev() {
+        if tail[offset..offset + 4] != [0x50, 0x4b, 0x05, 0x06] {
+            continue;
+        }
+        let comment_len = u16::from_le_bytes([tail[offset + 20], tail[offset + 21]]) as usize;
+        if offset + 22 + comment_len == tail.len() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 #[cfg(target_os = "windows")]
@@ -269,6 +300,7 @@ pub fn validate_archive_path(path: &str) -> ArchivePathValidation {
 
     let signature = detect_archive_signature(&bytes);
     let tar = has_tar_signature(&bytes);
+    let zip_end_record = has_zip_end_record(fs_path).unwrap_or(false);
 
     // Windows RAR extract is blocked at run_7z (command `x`) for CVE-2026-58052.
     // Browse/test remain allowed so users can inspect archives without extracting.
@@ -291,7 +323,7 @@ pub fn validate_archive_path(path: &str) -> ArchivePathValidation {
 
     let valid = match expected_archive_family(&lower) {
         Some("7z") => signature == Some("7z"),
-        Some("zip") => signature == Some("zip") || split_zip_header_valid(),
+        Some("zip") => signature == Some("zip") || zip_end_record || split_zip_header_valid(),
         Some("rar") => signature == Some("rar"),
         Some("gzip") => signature == Some("gzip"),
         Some("bzip2") => signature == Some("bzip2"),
@@ -432,6 +464,11 @@ mod tests {
     }
 
     #[test]
+    fn has_tar_signature_accepts_the_standard_empty_archive() {
+        assert!(has_tar_signature(&[0; 1024]));
+    }
+
+    #[test]
     fn validate_archive_path_accepts_extensionless_zip_signature() {
         let base = std::env::temp_dir().join(format!(
             "zinnia-archive-probe-{}",
@@ -472,6 +509,28 @@ mod tests {
             .unwrap_or_default()
             .contains("Extension indicates zip"));
 
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn validate_archive_path_accepts_zip_with_an_executable_preamble() {
+        let base = std::env::temp_dir().join(format!(
+            "zinnia-sfx-zip-probe-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time should work")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).expect("temp directory should be created");
+        let file_path = base.join("self-extracting.zip");
+        let mut bytes = vec![b'M', b'Z'];
+        bytes.extend(std::iter::repeat_n(0u8, 2_048));
+        bytes.extend_from_slice(&[
+            0x50, 0x4b, 0x05, 0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ]);
+        std::fs::write(&file_path, bytes).expect("probe file should be written");
+
+        assert!(validate_archive_path(&file_path.to_string_lossy()).valid);
         let _ = std::fs::remove_dir_all(base);
     }
 

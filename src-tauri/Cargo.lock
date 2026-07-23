@@ -5564,7 +5564,7 @@ dependencies = [
 
 [[package]]
 name = "zinnia"
-version = "0.6.0-beta.15"
+version = "0.6.0-beta.16"
 dependencies = [
  "block2",
  "getrandom 0.3.4",
@@ -5576,6 +5576,7 @@ dependencies = [
  "objc2-uniform-type-identifiers",
  "serde",
  "serde_json",
+ "shared_child",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",

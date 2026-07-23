@@ -133,14 +133,20 @@ describe("checkUpdates", () => {
 
   it("uses beta target when beta channel is selected", async () => {
     mockState.currentSettings.updateChannel = "beta";
-    invokeMock.mockResolvedValue("windows");
+    invokeMock.mockImplementation((command) =>
+      Promise.resolve(
+        command === "get_beta_updater_target"
+          ? "windows-beta-x86_64-nsis"
+          : false,
+      ),
+    );
     checkMock.mockResolvedValue(null);
 
     await checkUpdates();
 
-    expect(invokeMock).toHaveBeenCalledWith("get_platform_info");
+    expect(invokeMock).toHaveBeenCalledWith("get_beta_updater_target");
     expect(checkMock).toHaveBeenCalledWith({
-      target: "windows-beta",
+      target: "windows-beta-x86_64-nsis",
       timeout: 30_000,
     });
   });
@@ -282,6 +288,27 @@ describe("checkUpdates", () => {
 });
 
 describe("autoCheckUpdates", () => {
+  it("notifies without prompting for notification permission when an update is found", async () => {
+    const download = vi.fn().mockResolvedValue(undefined);
+    checkMock.mockResolvedValue({
+      version: "0.5.0",
+      download,
+      install: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+    } as unknown as Awaited<ReturnType<typeof check>>);
+    isPermissionGrantedMock.mockResolvedValue(true);
+
+    await autoCheckUpdates();
+
+    expect(sendNotificationMock).toHaveBeenCalledWith({
+      title: "Zinnia Update Available",
+      body: "Version 0.5.0 is available. Downloading in the background...",
+    });
+    expect(requestPermissionMock).not.toHaveBeenCalled();
+    expect(download).toHaveBeenCalledOnce();
+    discardPendingUpdate();
+  });
+
   it("uses default target when auto channel runs on stable version", async () => {
     mockState.currentSettings.updateChannel = "auto";
     getVersionMock.mockResolvedValue("0.4.1");

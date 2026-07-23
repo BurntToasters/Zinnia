@@ -533,29 +533,13 @@ describe("OS integration UI", () => {
 
     messageMock.mockClear();
     invokeMock.mockReset();
-    invokeMock.mockResolvedValueOnce("").mockResolvedValueOnce({
-      platform: "macos",
-      packaged: true,
-      fileAssociationsKnown: true,
-      contextActionsKnown: true,
-      defaultAppHelpAvailable: true,
-      finderServicesAvailable: true,
-      finderServicesKnown: true,
-      finderServicesEnabled: true,
-      finderServicesHelp:
-        "Extract with Zinnia and Compress with Zinnia are enabled in Finder's Services menu.",
-      archiveDefaults: [],
-    });
+    invokeMock.mockResolvedValueOnce("");
     await openFinderServicesSettings();
-    expect(invokeMock).toHaveBeenNthCalledWith(1, "enable_finder_services");
-    expect(invokeMock).toHaveBeenNthCalledWith(2, "get_os_integration_status");
+    expect(invokeMock).toHaveBeenCalledWith("open_finder_services_settings");
     expect(messageMock).toHaveBeenCalledWith(
-      expect.stringContaining("now enabled for Finder"),
-      expect.objectContaining({ title: "Finder Services enabled" }),
+      expect.stringContaining("Services → Files and Folders"),
+      expect.objectContaining({ title: "Enable Finder Services" }),
     );
-    expect(
-      document.getElementById("os-finder-services-status")?.textContent,
-    ).toBe("Enabled");
 
     renderOsIntegrationStatus({
       platform: "macos",

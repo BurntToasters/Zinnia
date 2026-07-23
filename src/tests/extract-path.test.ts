@@ -80,13 +80,13 @@ describe("shouldAutofillExtractDestination", () => {
     expect(shouldAutofillExtractDestination("", null)).toBe(true);
   });
 
-  it("returns true when destination matches previous autofill (trimmed)", () => {
+  it("preserves whitespace because it can be part of a real path", () => {
     expect(
       shouldAutofillExtractDestination(
         " /downloads/example ",
         "/downloads/example",
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("returns false when user has customized destination", () => {

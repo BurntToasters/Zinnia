@@ -92,6 +92,35 @@ pub fn get_platform_info() -> String {
     std::env::consts::OS.to_string()
 }
 
+#[tauri::command]
+pub fn get_beta_updater_target() -> String {
+    use tauri::utils::config::BundleType;
+
+    let os = match std::env::consts::OS {
+        "windows" => "windows",
+        "macos" => "darwin",
+        other => other,
+    };
+    let arch = match std::env::consts::ARCH {
+        "x86" => "i686",
+        "arm64" => "aarch64",
+        other => other,
+    };
+    let installer = match tauri::utils::platform::bundle_type() {
+        Some(BundleType::Deb) => Some("deb"),
+        Some(BundleType::Rpm) => Some("rpm"),
+        Some(BundleType::AppImage) => Some("appimage"),
+        Some(BundleType::Msi) => Some("msi"),
+        Some(BundleType::Nsis) => Some("nsis"),
+        Some(BundleType::App | BundleType::Dmg) => Some("app"),
+        None => None,
+    };
+    match installer {
+        Some(installer) => format!("{os}-beta-{arch}-{installer}"),
+        None => format!("{os}-beta-{arch}"),
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ArchiveDefaultStatus {
@@ -309,9 +338,8 @@ pub fn get_cpu_count() -> usize {
 // Public API + tauri command companions (needed by generate_handler!).
 #[allow(unused_imports)]
 pub use defaults_cmds::{
-    enable_finder_services, enable_finder_sync, open_finder_services_settings,
-    open_finder_sync_settings, open_os_integration_settings, reset_preferred_archiver_to_system,
-    set_zinnia_default_archiver,
+    enable_finder_sync, open_finder_services_settings, open_finder_sync_settings,
+    open_os_integration_settings, reset_preferred_archiver_to_system, set_zinnia_default_archiver,
 };
 #[allow(unused_imports)]
 pub use integration_status::{get_os_integration_status, os_integration_status_for};
@@ -322,11 +350,10 @@ pub use integration_status::register_macos_finder_sync;
 
 #[doc(hidden)]
 pub use defaults_cmds::{
-    __cmd__enable_finder_services, __cmd__enable_finder_sync, __cmd__open_finder_services_settings,
+    __cmd__enable_finder_sync, __cmd__open_finder_services_settings,
     __cmd__open_finder_sync_settings, __cmd__open_os_integration_settings,
     __cmd__reset_preferred_archiver_to_system, __cmd__set_zinnia_default_archiver,
-    __tauri_command_name_enable_finder_services, __tauri_command_name_enable_finder_sync,
-    __tauri_command_name_open_finder_services_settings,
+    __tauri_command_name_enable_finder_sync, __tauri_command_name_open_finder_services_settings,
     __tauri_command_name_open_finder_sync_settings,
     __tauri_command_name_open_os_integration_settings,
     __tauri_command_name_reset_preferred_archiver_to_system,

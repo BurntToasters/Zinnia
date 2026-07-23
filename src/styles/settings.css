@@ -56,9 +56,9 @@
 }
 
 .settings-tab.is-active {
-  color: var(--accent);
+  color: var(--accent-fg);
   background: var(--accent-bg);
-  border-left-color: var(--accent);
+  border-left-color: var(--accent-fg);
   font-weight: 600;
 }
 
@@ -108,7 +108,7 @@
   }
 
   .settings-tab.is-active {
-    border-bottom-color: var(--accent);
+    border-bottom-color: var(--accent-fg);
     border-left-color: transparent;
   }
 
@@ -171,7 +171,7 @@
 
 .switch input:checked + .switch__track {
   background: var(--accent);
-  border-color: var(--accent);
+  border-color: var(--accent-fg);
 }
 
 .switch input:checked + .switch__track::after {
@@ -310,7 +310,7 @@
 }
 
 .about-credit a {
-  color: var(--accent);
+  color: var(--accent-fg);
   text-decoration: none;
 }
 
@@ -367,7 +367,7 @@
 }
 
 .about-notice a {
-  color: var(--accent);
+  color: var(--accent-fg);
   text-decoration: none;
 }
 

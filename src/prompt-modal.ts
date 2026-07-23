@@ -9,9 +9,12 @@ export interface PromptOptions {
   confirmLabel?: string;
 }
 
+let promptOpen = false;
+
 // In-app replacement for window.prompt (which WebKitGTK disables). Resolves to
 // the entered string, or null if cancelled.
 export function promptInput(options: PromptOptions): Promise<string | null> {
+  if (promptOpen) return Promise.resolve(null);
   const overlay = document.getElementById("input-modal-overlay");
   const field = document.getElementById(
     "input-modal-field",
@@ -25,6 +28,7 @@ export function promptInput(options: PromptOptions): Promise<string | null> {
   if (!overlay || !field || !confirmBtn || !cancelBtn) {
     return Promise.resolve(null);
   }
+  promptOpen = true;
 
   const modal = overlay.querySelector<HTMLElement>(".modal");
   const trigger = document.activeElement as HTMLElement | null;
@@ -50,6 +54,7 @@ export function promptInput(options: PromptOptions): Promise<string | null> {
       field.value = "";
       field.type = "text";
       overlay.hidden = true;
+      promptOpen = false;
       trigger?.focus();
     };
 

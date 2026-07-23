@@ -5,10 +5,10 @@
 
 | <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                                            | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux         |
 | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------- |
-| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.15/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.15/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.15/Zinnia-macOS.dmg)**  | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.15/Zinnia-Linux-x64.AppImage) |
-| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>-->                       | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.15/Zinnia-macOS.zip)**  | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.15/Zinnia-Linux-x64.deb)           |
-| <!--*See MSI note below*-->                                                                                                                                                                                                  |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.15/Zinnia-Linux-x64.rpm)           |
-|                                                                                                                                                                                                                              |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.15/Zinnia-Linux-x64.flatpak)   |
+| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.16/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.16/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.16/Zinnia-macOS.dmg)**  | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.16/Zinnia-Linux-x64.AppImage) |
+| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>-->                       | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.16/Zinnia-macOS.zip)**  | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.16/Zinnia-Linux-x64.deb)           |
+| <!--*See MSI note below*-->                                                                                                                                                                                                  |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.16/Zinnia-Linux-x64.rpm)           |
+|                                                                                                                                                                                                                              |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.16/Zinnia-Linux-x64.flatpak)   |
 
 > macOS downloads require macOS 26 or later.
 
@@ -21,10 +21,24 @@
 
 Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
+## Changes in `v0.6.0-beta.16:`
+
+* **Release Candidate:** RC3.
+- **Fix:** Support / About / license http(s) links open once in the system browser via `shell:default` (`target="_blank"`); the app menu uses a single programmatic `open` (beta.15 also called `open` from a click interceptor and double-opened tabs).
+- **Fix:** Settings and other modals no longer mark the titlebar / header `inert`, so window controls and the settings gear stay clickable while a sheet is open.
+- **Data integrity:** Archive publication uses atomic no-replace moves and never deletes a public destination during failure cleanup; split-archive recovery uses an explicit durable commit phase so a crash during backup cleanup cannot mix old and new volumes.
+- **Reliability:** Cancelling during preparation kills the already-spawned 7-Zip child before staging rollback, caps synchronous reaping at five seconds, and finishes delayed cleanup in the background.
+- **Windows:** Large selections use a UTF-8 7-Zip list file in a syntactically active position; Explorer context-menu launches cap each single-instance batch at 1,000 paths; partial virtual selections no longer fall back to compressing the current folder.
+- **OS integration:** Consecutive Extract handoffs append instead of replacing earlier batches, Explorer caps the complete request at the executable 4,096-path ceiling, and Windows/Finder agree on first-volume `.001` detection.
+- **Filesystem compatibility:** Archive publication falls back to an exclusive, journal-recoverable copy on volumes that support neither atomic no-replace rename nor hard links, without overwriting an existing destination.
+- **Release:** Per-platform signing requires Linux updater artifacts only for Linux architectures present in that signing session, so Windows and macOS release pipelines are no longer blocked by absent Linux bundles.
+- **Security / UI:** Selective browsing uses iterative tree construction with member path/depth limits, preventing hostile archives from exhausting the JavaScript stack and reporting a controlled error before opening the picker.
+- **Accessibility:** Basic progress clears `aria-busy` when an operation finishes.
+
 ## Changes in `v0.6.0-beta.15:`
 
 * **Release Candidate:** RC2.
-- **Fix:** Support / About / license http(s) links now open in the system browser via the Tauri shell plugin (`window.open` / `target=_blank` do not work in the webview).
+- **Fix:** Support / About / license http(s) links open in the system browser via `shell:default` (`target="_blank"`; plain `window.open` does not work in the webview).
 - **UI:** Settings Export logs path no longer overlaps action buttons; multi-button rows stack under the path in Basic; setup wizard moved to its own settings row.
 - **UI:** Settings gear and ⌘/, toggle open/close (with `aria-expanded`); update channel explains Auto; About credit wraps; OS Integration keeps flex layout while settings rows keep the narrower action max-width.
 

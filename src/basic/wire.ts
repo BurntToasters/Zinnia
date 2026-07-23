@@ -342,7 +342,7 @@ export function wireBasicCompressEvents(): void {
       const format =
         (document.getElementById("basic-format") as HTMLSelectElement | null)
           ?.value ?? "7z";
-      const customName = archiveNameInput.value.trim() || undefined;
+      const customName = archiveNameInput.value || undefined;
       const next = deriveOutputArchivePath(state.inputs, format, customName);
       const basicOutput = document.getElementById(
         "basic-output-path",
