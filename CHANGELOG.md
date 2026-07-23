@@ -26,6 +26,8 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 * **Release Candidate:** RC3.
 - **Fix:** Support / About / license http(s) links open once in the system browser via `shell:default` (`target="_blank"`); the app menu uses a single programmatic `open` (beta.15 also called `open` from a click interceptor and double-opened tabs).
 - **Fix:** Settings and other modals no longer mark the titlebar / header `inert`, so window controls and the settings gear stay clickable while a sheet is open.
+- **Critical Fix:** Split-archive startup rollback no longer aborts when a later volume has no recorded identity, so already-published volumes are removed and backups are restored instead of leaving the journal stuck.
+- **Fix:** In-process archive promote recovery deletes a published volume when the staged source still exists (hard-link/copy fallback), so restore is not blocked by `rename` onto a live stage path.
 - **Data integrity:** Archive publication uses atomic no-replace moves and never deletes a public destination during failure cleanup; split-archive recovery uses an explicit durable commit phase so a crash during backup cleanup cannot mix old and new volumes.
 - **Reliability:** Cancelling during preparation kills the already-spawned 7-Zip child before staging rollback, caps synchronous reaping at five seconds, and finishes delayed cleanup in the background.
 - **Windows:** Large selections use a UTF-8 7-Zip list file in a syntactically active position; Explorer context-menu launches cap each single-instance batch at 1,000 paths; partial virtual selections no longer fall back to compressing the current folder.
