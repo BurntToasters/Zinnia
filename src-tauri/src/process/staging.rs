@@ -144,9 +144,7 @@ pub(crate) fn create_private_stage_dir(
     purpose: &str,
     cache_dir: Option<&std::path::Path>,
 ) -> Result<std::path::PathBuf, String> {
-    let parent = anchor
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."));
+    let parent = anchor.parent().unwrap_or_else(|| std::path::Path::new("."));
     create_stage_dir_under(
         parent,
         purpose,
@@ -162,9 +160,7 @@ pub(crate) fn create_publish_stage_dir(
     purpose: &str,
     cache_dir: Option<&std::path::Path>,
 ) -> Result<std::path::PathBuf, String> {
-    let parent = target
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."));
+    let parent = target.parent().unwrap_or_else(|| std::path::Path::new("."));
     create_stage_dir_under(
         parent,
         purpose,

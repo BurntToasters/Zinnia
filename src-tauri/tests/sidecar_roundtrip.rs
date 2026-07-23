@@ -43,6 +43,43 @@ fn temp_dir(tag: &str) -> PathBuf {
     base
 }
 
+#[cfg(windows)]
+fn volume_guid_alias(path: &Path) -> Option<PathBuf> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::{OsStrExt as _, OsStringExt as _};
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetVolumeNameForVolumeMountPointW, GetVolumePathNameW,
+    };
+
+    let input: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut mount = vec![0u16; 32_768];
+    if unsafe { GetVolumePathNameW(input.as_ptr(), mount.as_mut_ptr(), mount.len() as u32) } == 0 {
+        return None;
+    }
+    let mount_len = mount.iter().position(|unit| *unit == 0)?;
+    let mount_path = PathBuf::from(OsString::from_wide(&mount[..mount_len]));
+    let relative = path.strip_prefix(&mount_path).ok()?;
+
+    let mount_wide: Vec<u16> = mount_path
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let mut volume = [0u16; 50];
+    if unsafe {
+        GetVolumeNameForVolumeMountPointW(
+            mount_wide.as_ptr(),
+            volume.as_mut_ptr(),
+            volume.len() as u32,
+        )
+    } == 0
+    {
+        return None;
+    }
+    let volume_len = volume.iter().position(|unit| *unit == 0)?;
+    Some(PathBuf::from(OsString::from_wide(&volume[..volume_len])).join(relative))
+}
+
 #[test]
 fn create_list_test_extract_roundtrip() {
     let Some(bin) = binary_path() else {
@@ -111,6 +148,64 @@ fn create_list_test_extract_roundtrip() {
     assert_eq!(
         std::fs::read_to_string(&extracted).unwrap(),
         "zinnia integration test\n"
+    );
+
+    let _ = std::fs::remove_dir_all(work);
+}
+
+#[cfg(windows)]
+#[test]
+fn create_extract_roundtrip_supports_extended_and_volume_guid_paths() {
+    use std::ffi::OsString;
+
+    let Some(bin) = binary_path() else {
+        eprintln!("skipping: bundled 7z binary not found (run npm run prepare:7z)");
+        return;
+    };
+
+    let work = temp_dir("windows-namespaces");
+    let Some(volume_work) = volume_guid_alias(&work) else {
+        eprintln!("skipping: temporary directory has no volume-GUID alias");
+        let _ = std::fs::remove_dir_all(work);
+        return;
+    };
+    let extended_work = PathBuf::from(format!(r"\\?\{}", work.display()));
+    let source = extended_work.join("namespace-input.txt");
+    std::fs::write(&source, b"windows namespace roundtrip\n").unwrap();
+    let archive = volume_work.join("namespace-output.7z");
+
+    let add = Command::new(&bin)
+        .args(["a", "-t7z"])
+        .arg(&archive)
+        .arg("--")
+        .arg(&source)
+        .output()
+        .expect("7z add through extended paths should run");
+    assert!(
+        add.status.success(),
+        "extended-path add failed: {}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+
+    let out = volume_work.join("namespace-extracted");
+    let mut output_arg = OsString::from("-o");
+    output_arg.push(&out);
+    let extract = Command::new(&bin)
+        .arg("x")
+        .arg(output_arg)
+        .arg("-y")
+        .arg("--")
+        .arg(&archive)
+        .output()
+        .expect("7z extract through volume-GUID path should run");
+    assert!(
+        extract.status.success(),
+        "volume-GUID extract failed: {}",
+        String::from_utf8_lossy(&extract.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(out.join("namespace-input.txt")).unwrap(),
+        "windows namespace roundtrip\n"
     );
 
     let _ = std::fs::remove_dir_all(work);

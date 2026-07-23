@@ -81,10 +81,15 @@ pub(crate) enum FileIdentity {
     },
 }
 
-pub(crate) fn regular_file_identity(path: &std::path::Path) -> Result<FileIdentity, String> {
+pub(crate) fn path_identity(path: &std::path::Path) -> Result<FileIdentity, String> {
     let metadata = std::fs::symlink_metadata(path).map_err(|error| error.to_string())?;
-    if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_file() {
-        return Err(format!("Expected a regular file: {}", path.display()));
+    if crate::path_safety::is_link_or_reparse(&metadata)
+        || (!metadata.is_file() && !metadata.is_dir())
+    {
+        return Err(format!(
+            "Expected a regular file or directory: {}",
+            path.display()
+        ));
     }
     #[cfg(unix)]
     {
@@ -96,12 +101,22 @@ pub(crate) fn regular_file_identity(path: &std::path::Path) -> Result<FileIdenti
     }
     #[cfg(windows)]
     {
+        use std::os::windows::fs::OpenOptionsExt as _;
         use std::os::windows::io::AsRawHandle as _;
         use windows_sys::Win32::Foundation::HANDLE;
         use windows_sys::Win32::Storage::FileSystem::{
-            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS,
+            FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ,
+            FILE_SHARE_WRITE,
         };
-        let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+        let mut options = std::fs::OpenOptions::new();
+        options
+            .access_mode(FILE_READ_ATTRIBUTES)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE);
+        if metadata.is_dir() {
+            options.custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
+        }
+        let file = options.open(path).map_err(|error| error.to_string())?;
         let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
         let success =
             unsafe { GetFileInformationByHandle(file.as_raw_handle() as HANDLE, &mut info) };
@@ -112,6 +127,29 @@ pub(crate) fn regular_file_identity(path: &std::path::Path) -> Result<FileIdenti
             volume_serial_number: info.dwVolumeSerialNumber,
             file_index: (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
         })
+    }
+}
+
+pub(crate) fn regular_file_identity(path: &std::path::Path) -> Result<FileIdentity, String> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|error| error.to_string())?;
+    if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_file() {
+        return Err(format!("Expected a regular file: {}", path.display()));
+    }
+    path_identity(path)
+}
+
+pub(crate) fn ensure_path_identity(
+    path: &std::path::Path,
+    expected: &FileIdentity,
+) -> Result<(), String> {
+    let actual = path_identity(path)?;
+    if &actual == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "Refusing to remove or replace {} because its file identity changed.",
+            path.display()
+        ))
     }
 }
 
@@ -161,6 +199,15 @@ pub(crate) fn move_plan_path(stage: &std::path::Path) -> std::path::PathBuf {
 pub(crate) struct MoveRecord {
     pub(crate) source: std::path::PathBuf,
     pub(crate) target: std::path::PathBuf,
+    /// Windows publish copy created directly under the real target parent.
+    /// Creating there lets NTFS or the SMB server assign the same inherited ACL
+    /// as an ordinary extraction, while the final no-replace rename stays atomic.
+    #[serde(default)]
+    pub(crate) publish_temp: Option<std::path::PathBuf>,
+    /// Stable identity captured immediately after `publish_temp` is created.
+    /// Recovery never removes a same-name object without matching this value.
+    #[serde(default)]
+    pub(crate) publish_identity: Option<FileIdentity>,
 }
 
 pub(crate) fn cleanup_journal_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {

@@ -158,11 +158,76 @@ pub(crate) fn parse_shell_handoff_contents(contents: &str) -> Result<Vec<String>
 #[cfg(any(windows, test))]
 fn windows_path_is_absolute(path: &str) -> bool {
     let bytes = path.as_bytes();
-    (bytes.len() >= 3
+    if windows_drive_path_is_absolute(bytes, true) {
+        return true;
+    }
+    let Some(rest) = path.strip_prefix(r"\\").or_else(|| path.strip_prefix("//")) else {
+        return false;
+    };
+
+    // Device namespaces (`\\.\...`) and arbitrary verbatim namespaces such
+    // as `\\?\GLOBALROOT\...` are not filesystem destinations. Accept only
+    // documented extended drive, UNC, and volume-GUID forms.
+    if let Some(verbatim) = rest.strip_prefix(r"?\") {
+        if windows_drive_path_is_absolute(verbatim.as_bytes(), false) {
+            return true;
+        }
+        if verbatim
+            .get(..4)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("UNC\\"))
+        {
+            return windows_unc_has_server_and_share(&verbatim[4..]);
+        }
+        return windows_volume_guid_path_is_absolute(verbatim);
+    }
+    if rest.starts_with(r".\")
+        || rest.starts_with("./")
+        || rest.starts_with(r"?\")
+        || rest.starts_with("?/")
+    {
+        return false;
+    }
+    windows_unc_has_server_and_share(rest)
+}
+
+#[cfg(any(windows, test))]
+fn windows_drive_path_is_absolute(bytes: &[u8], allow_forward_slash: bool) -> bool {
+    bytes.len() >= 3
         && bytes[0].is_ascii_alphabetic()
         && bytes[1] == b':'
-        && matches!(bytes[2], b'\\' | b'/'))
-        || path.starts_with(r"\\")
+        && (bytes[2] == b'\\' || (allow_forward_slash && bytes[2] == b'/'))
+}
+
+#[cfg(any(windows, test))]
+fn windows_unc_has_server_and_share(path: &str) -> bool {
+    let mut parts = path.split(['\\', '/']).filter(|part| !part.is_empty());
+    parts.next().is_some() && parts.next().is_some()
+}
+
+#[cfg(any(windows, test))]
+fn windows_volume_guid_path_is_absolute(path: &str) -> bool {
+    let Some((volume, _)) = path.split_once('\\') else {
+        return false;
+    };
+    if volume.len() != 44
+        || !volume
+            .get(..7)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("Volume{"))
+        || !volume.ends_with('}')
+    {
+        return false;
+    }
+    let Some(guid) = volume.get(7..43).map(str::as_bytes) else {
+        return false;
+    };
+    guid.len() == 36
+        && guid.iter().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                *byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
 }
 
 #[cfg(windows)]

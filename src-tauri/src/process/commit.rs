@@ -1,10 +1,10 @@
 //! Promote/merge staged outputs, commit and rollback cleanup.
 
 use super::journal::{
-    ensure_regular_file_identity, mark_archive_journal_committed, move_plan_path,
-    record_archive_journal_published, regular_file_identity, remove_regular_file_if_matches,
-    sync_directory, unregister_plan_stages, update_archive_journal, MoveRecord,
-    LEGACY_MOVE_PLAN_FILE_NAME,
+    ensure_path_identity, ensure_regular_file_identity, mark_archive_journal_committed,
+    move_plan_path, path_identity, record_archive_journal_published, regular_file_identity,
+    remove_regular_file_if_matches, sync_directory, unregister_plan_stages, update_archive_journal,
+    FileIdentity, MoveRecord, LEGACY_MOVE_PLAN_FILE_NAME,
 };
 use super::quota::MAX_EXTRACT_ENTRIES;
 use super::staging::{assert_real_directory, path_entry_exists};
@@ -159,11 +159,19 @@ pub(crate) fn copy_file_no_replace(
     source: &std::path::Path,
     target: &std::path::Path,
 ) -> Result<(), String> {
+    copy_file_no_replace_with_created(source, target, |_, _| Ok(()))
+}
+
+fn copy_file_no_replace_with_created(
+    source: &std::path::Path,
+    target: &std::path::Path,
+    on_created: impl FnOnce(&std::path::Path, &FileIdentity) -> Result<(), String>,
+) -> Result<(), String> {
     let mut source_file = crate::path_safety::open_regular_file_nofollow(source)?;
-    let source_permissions = source_file
-        .metadata()
-        .map_err(|error| error.to_string())?
-        .permissions();
+    #[cfg(unix)]
+    let source_metadata = source_file.metadata().map_err(|error| error.to_string())?;
+    #[cfg(unix)]
+    let source_permissions = source_metadata.permissions();
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -171,15 +179,44 @@ pub(crate) fn copy_file_no_replace(
         use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
         options.mode(source_permissions.mode());
     }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
+        // Keep the newly created object stable while its identity is journaled
+        // and its bytes are copied. Readers are harmless; writers, renames, and
+        // deletion stay blocked until the copy is durable.
+        options.share_mode(FILE_SHARE_READ);
+    }
     let mut target_file = options.open(target).map_err(|error| error.to_string())?;
     // Capture the identity while our exclusive create handle is still open.
     // If a later copy step fails, cleanup is allowed only for this exact file.
-    let target_identity = regular_file_identity(target)?;
+    let target_identity = path_identity(target)?;
     let copy_result = (|| {
+        on_created(target, &target_identity)?;
         std::io::copy(&mut source_file, &mut target_file).map_err(|error| error.to_string())?;
-        target_file
-            .set_permissions(source_permissions)
-            .map_err(|error| error.to_string())?;
+        #[cfg(unix)]
+        {
+            let times = std::fs::FileTimes::new()
+                .set_accessed(
+                    source_metadata
+                        .accessed()
+                        .map_err(|error| error.to_string())?,
+                )
+                .set_modified(
+                    source_metadata
+                        .modified()
+                        .map_err(|error| error.to_string())?,
+                );
+            target_file
+                .set_times(times)
+                .map_err(|error| error.to_string())?;
+            target_file
+                .set_permissions(source_permissions)
+                .map_err(|error| error.to_string())?;
+        }
+        #[cfg(windows)]
+        copy_windows_times_and_attributes(source, &source_file, target, &target_file, false)?;
         sync_file_best_effort(&target_file)
     })();
     drop(target_file);
@@ -190,6 +227,155 @@ pub(crate) fn copy_file_no_replace(
             ));
         }
         return Err(error);
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn copy_windows_times_and_attributes(
+    source_path: &std::path::Path,
+    source: &std::fs::File,
+    target_path: &std::path::Path,
+    target: &std::fs::File,
+    directory: bool,
+) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt as _;
+    use std::os::windows::fs::MetadataExt as _;
+    use std::os::windows::io::AsRawHandle as _;
+    use windows_sys::Win32::Foundation::{FILETIME, HANDLE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileTime, SetFileAttributesW, SetFileTime, FILE_ATTRIBUTE_ARCHIVE,
+        FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_NOT_CONTENT_INDEXED,
+        FILE_ATTRIBUTE_OFFLINE, FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_SYSTEM,
+    };
+
+    let mut created = FILETIME::default();
+    let mut accessed = FILETIME::default();
+    let mut modified = FILETIME::default();
+    if unsafe {
+        GetFileTime(
+            source.as_raw_handle() as HANDLE,
+            &mut created,
+            &mut accessed,
+            &mut modified,
+        )
+    } == 0
+    {
+        return Err(format!(
+            "Could not read extracted {} timestamps: {}",
+            source_path.display(),
+            std::io::Error::last_os_error()
+        ));
+    }
+    if unsafe {
+        SetFileTime(
+            target.as_raw_handle() as HANDLE,
+            &created,
+            &accessed,
+            &modified,
+        )
+    } == 0
+    {
+        return Err(format!(
+            "Could not preserve extracted {} timestamps: {}",
+            target_path.display(),
+            std::io::Error::last_os_error()
+        ));
+    }
+
+    let source_attributes = std::fs::symlink_metadata(source_path)
+        .map_err(|error| error.to_string())?
+        .file_attributes();
+    let allowed = FILE_ATTRIBUTE_READONLY
+        | FILE_ATTRIBUTE_HIDDEN
+        | FILE_ATTRIBUTE_SYSTEM
+        | FILE_ATTRIBUTE_ARCHIVE
+        | FILE_ATTRIBUTE_OFFLINE
+        | FILE_ATTRIBUTE_NOT_CONTENT_INDEXED;
+    let mut target_attributes = source_attributes & allowed;
+    if target_attributes == 0 {
+        target_attributes = FILE_ATTRIBUTE_NORMAL;
+    }
+    // A directory's read-only bit is shell metadata rather than an access
+    // control. Preserve it anyway because Explorer and archive users observe it.
+    let _ = directory;
+    let target_wide: Vec<u16> = target_path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    if unsafe { SetFileAttributesW(target_wide.as_ptr(), target_attributes) } == 0 {
+        return Err(format!(
+            "Could not preserve extracted {} attributes: {}",
+            target_path.display(),
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn open_directory_for_metadata(
+    path: &std::path::Path,
+    write: bool,
+) -> Result<std::fs::File, String> {
+    use std::os::windows::fs::OpenOptionsExt as _;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
+        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES,
+    };
+
+    let mut options = std::fs::OpenOptions::new();
+    options
+        .access_mode(if write {
+            FILE_WRITE_ATTRIBUTES
+        } else {
+            FILE_READ_ATTRIBUTES
+        })
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
+    options.open(path).map_err(|error| error.to_string())
+}
+
+#[cfg(windows)]
+fn copy_windows_directory_metadata(
+    source: &std::path::Path,
+    target: &std::path::Path,
+) -> Result<(), String> {
+    let source_file = open_directory_for_metadata(source, false)?;
+    let target_file = open_directory_for_metadata(target, true)?;
+    copy_windows_times_and_attributes(source, &source_file, target, &target_file, true)
+}
+
+#[cfg(windows)]
+fn copy_tree_with_inherited_acl(
+    source: &std::path::Path,
+    target: &std::path::Path,
+) -> Result<(), String> {
+    for entry in std::fs::read_dir(source).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let source_child = entry.path();
+        let target_child = target.join(entry.file_name());
+        let metadata =
+            std::fs::symlink_metadata(&source_child).map_err(|error| error.to_string())?;
+        if crate::path_safety::is_link_or_reparse(&metadata) {
+            return Err(format!(
+                "Archive contains a symbolic link or reparse point: {}",
+                source_child.display()
+            ));
+        }
+        if metadata.is_dir() {
+            std::fs::create_dir(&target_child).map_err(|error| error.to_string())?;
+            copy_tree_with_inherited_acl(&source_child, &target_child)?;
+            copy_windows_directory_metadata(&source_child, &target_child)?;
+        } else if metadata.is_file() {
+            copy_file_no_replace(&source_child, &target_child)?;
+        } else {
+            return Err(format!(
+                "Archive contains an unsupported entry: {}",
+                source_child.display()
+            ));
+        }
     }
     Ok(())
 }
@@ -694,7 +880,173 @@ pub(crate) fn plan_staged_contents(
         }
         let target = auto_rename_path(&requested_target, reserved)?;
         reserved.insert(target.clone());
-        plan.push(MoveRecord { source, target });
+        plan.push(MoveRecord {
+            source,
+            target,
+            publish_temp: None,
+            publish_identity: None,
+        });
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn is_publish_temp_name(path: &std::path::Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let Some(token) = name.strip_prefix(".zinnia-publish-") else {
+        return false;
+    };
+    token.len() == 32 && token.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+#[cfg(windows)]
+fn prepare_target_local_publish_paths(
+    plan: &mut [MoveRecord],
+    reserved: &mut std::collections::HashSet<std::path::PathBuf>,
+) -> Result<(), String> {
+    for record in plan {
+        let parent = record
+            .target
+            .parent()
+            .ok_or_else(|| "Extraction target has no parent directory.".to_string())?;
+        let publish_temp = loop {
+            let candidate = parent.join(format!(
+                ".zinnia-publish-{}",
+                super::staging::random_token()?
+            ));
+            if !reserved.contains(&candidate) && !path_entry_exists(&candidate)? {
+                break candidate;
+            }
+        };
+        reserved.insert(publish_temp.clone());
+        record.publish_temp = Some(publish_temp);
+    }
+    Ok(())
+}
+
+fn remove_path_if_matches(path: &std::path::Path, identity: &FileIdentity) -> Result<(), String> {
+    ensure_path_identity(path, identity)?;
+    let metadata = std::fs::symlink_metadata(path).map_err(|error| error.to_string())?;
+    if crate::path_safety::is_link_or_reparse(&metadata) {
+        return Err(format!(
+            "Refusing to remove a publish path that became a link or reparse point: {}",
+            path.display()
+        ));
+    }
+    #[cfg(windows)]
+    clear_windows_readonly_tree(path)?;
+    if metadata.is_dir() {
+        std::fs::remove_dir_all(path).map_err(|error| error.to_string())
+    } else if metadata.is_file() {
+        std::fs::remove_file(path).map_err(|error| error.to_string())
+    } else {
+        Err(format!(
+            "Refusing to remove an unsupported publish path: {}",
+            path.display()
+        ))
+    }
+}
+
+#[cfg(windows)]
+fn clear_windows_readonly_tree(path: &std::path::Path) -> Result<(), String> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|error| error.to_string())?;
+    if crate::path_safety::is_link_or_reparse(&metadata) {
+        return Err(format!(
+            "Refusing to traverse a link or reparse point during publish cleanup: {}",
+            path.display()
+        ));
+    }
+    if metadata.is_dir() {
+        for entry in std::fs::read_dir(path).map_err(|error| error.to_string())? {
+            clear_windows_readonly_tree(&entry.map_err(|error| error.to_string())?.path())?;
+        }
+    }
+    if metadata.permissions().readonly() {
+        let mut permissions = metadata.permissions();
+        permissions.set_readonly(false);
+        std::fs::set_permissions(path, permissions).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn record_publish_identity(
+    staged: &std::path::Path,
+    plan: &mut [MoveRecord],
+    index: usize,
+    identity: &FileIdentity,
+) -> Result<(), String> {
+    plan[index].publish_identity = Some(identity.clone());
+    write_move_plan(staged, plan)
+}
+
+#[cfg(windows)]
+fn publish_target_local_copy(
+    staged: &std::path::Path,
+    plan: &mut [MoveRecord],
+    index: usize,
+) -> Result<(), String> {
+    let source = plan[index].source.clone();
+    let target = plan[index].target.clone();
+    let publish_temp = plan[index]
+        .publish_temp
+        .clone()
+        .ok_or_else(|| "Extraction publish path was not planned.".to_string())?;
+    let metadata = std::fs::symlink_metadata(&source).map_err(|error| error.to_string())?;
+    if crate::path_safety::is_link_or_reparse(&metadata) {
+        return Err(format!(
+            "Archive contains a symbolic link or reparse point: {}",
+            source.display()
+        ));
+    }
+
+    let copy_result = if metadata.is_file() {
+        copy_file_no_replace_with_created(&source, &publish_temp, |_, identity| {
+            record_publish_identity(staged, plan, index, identity)
+        })
+    } else if metadata.is_dir() {
+        crate::fs_secure::create_inheriting_stage_dir(&publish_temp)
+            .map_err(|error| error.to_string())?;
+        let identity = path_identity(&publish_temp)?;
+        let journal_result = record_publish_identity(staged, plan, index, &identity);
+        if let Err(error) = journal_result {
+            let cleanup = remove_path_if_matches(&publish_temp, &identity);
+            return Err(match cleanup {
+                Ok(()) => error,
+                Err(cleanup_error) => {
+                    format!("{error}; publish-temp cleanup also failed: {cleanup_error}")
+                }
+            });
+        }
+        let result = copy_tree_with_inherited_acl(&source, &publish_temp)
+            .and_then(|()| copy_windows_directory_metadata(&source, &publish_temp))
+            .and_then(|()| sync_directory(&publish_temp));
+        if let Err(error) = result {
+            let cleanup = remove_path_if_matches(&publish_temp, &identity);
+            return Err(match cleanup {
+                Ok(()) => error,
+                Err(cleanup_error) => {
+                    format!("{error}; publish-temp cleanup also failed: {cleanup_error}")
+                }
+            });
+        }
+        Ok(())
+    } else {
+        Err(format!(
+            "Archive contains an unsupported entry: {}",
+            source.display()
+        ))
+    };
+    copy_result?;
+
+    // The temporary object was created directly under the final parent, so it
+    // already has the correct NTFS/server ACL. MoveFileW preserves that ACL and
+    // refuses an existing destination.
+    rename_file_no_replace(&publish_temp, &target)?;
+    if let Some(parent) = target.parent() {
+        sync_directory(parent)?;
     }
     Ok(())
 }
@@ -844,7 +1196,77 @@ fn prepare_planned_links(
 
 pub(crate) fn write_move_plan(staged: &std::path::Path, plan: &[MoveRecord]) -> Result<(), String> {
     let json = serde_json::to_string(plan).map_err(|e| e.to_string())?;
-    crate::settings_store::atomic_write_text(&move_plan_path(staged), &json)
+    let path = move_plan_path(staged);
+    #[cfg(windows)]
+    {
+        atomic_replace_move_plan_windows(&path, &json)
+    }
+    #[cfg(not(windows))]
+    {
+        crate::settings_store::atomic_write_text(&path, &json)
+    }
+}
+
+#[cfg(windows)]
+fn atomic_replace_move_plan_windows(path: &std::path::Path, contents: &str) -> Result<(), String> {
+    use std::io::Write as _;
+    use std::os::windows::ffi::OsStrExt as _;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Extraction move plan has no parent directory.".to_string())?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "Extraction move plan has an invalid file name.".to_string())?;
+    let (temp, mut file) = loop {
+        let candidate = parent.join(format!(
+            ".{file_name}.{}.tmp",
+            super::staging::random_token()?
+        ));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        match options.open(&candidate) {
+            Ok(file) => break (candidate, file),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.to_string()),
+        }
+    };
+    let write_result = file
+        .write_all(contents.as_bytes())
+        .and_then(|()| file.sync_all())
+        .map_err(|error| error.to_string());
+    drop(file);
+    if let Err(error) = write_result {
+        let _ = std::fs::remove_file(&temp);
+        return Err(error);
+    }
+
+    let temp_wide: Vec<u16> = temp
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let path_wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let flags = MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH;
+    if unsafe { MoveFileExW(temp_wide.as_ptr(), path_wide.as_ptr(), flags) } == 0 {
+        let error = std::io::Error::last_os_error();
+        let cleanup = std::fs::remove_file(&temp);
+        return Err(match cleanup {
+            Ok(()) => error.to_string(),
+            Err(cleanup_error) => {
+                format!("{error}; move-plan temp cleanup also failed: {cleanup_error}")
+            }
+        });
+    }
+    sync_directory(parent)
 }
 
 pub(crate) fn validate_move_record(
@@ -855,7 +1277,84 @@ pub(crate) fn validate_move_record(
     if !record.source.starts_with(staged) || !record.target.starts_with(destination) {
         return Err("Refusing unsafe extraction recovery move plan.".to_string());
     }
+    if let Some(publish_temp) = &record.publish_temp {
+        #[cfg(not(windows))]
+        {
+            let _ = publish_temp;
+            return Err("Refusing a Windows publish path on this platform.".to_string());
+        }
+        #[cfg(windows)]
+        {
+            if publish_temp.parent() != record.target.parent()
+                || !publish_temp.starts_with(destination)
+                || !is_publish_temp_name(publish_temp)
+            {
+                return Err("Refusing unsafe extraction publish path.".to_string());
+            }
+        }
+    } else if record.publish_identity.is_some() {
+        return Err("Refusing extraction publish identity without a publish path.".to_string());
+    }
     Ok(())
+}
+
+fn rollback_target_local_record(record: &MoveRecord) -> Result<(), String> {
+    let publish_temp = record
+        .publish_temp
+        .as_ref()
+        .ok_or_else(|| "Extraction publish path is missing.".to_string())?;
+    let source_exists = path_entry_exists(&record.source)?;
+    let temp_exists = path_entry_exists(publish_temp)?;
+    let target_exists = path_entry_exists(&record.target)?;
+    let Some(identity) = &record.publish_identity else {
+        if temp_exists {
+            return Err(format!(
+                "Refusing to remove unverified extraction publish path: {}",
+                publish_temp.display()
+            ));
+        }
+        return if source_exists {
+            Ok(())
+        } else {
+            Err(format!(
+                "Extraction source disappeared before its publish identity was recorded: {}",
+                record.source.display()
+            ))
+        };
+    };
+
+    if source_exists {
+        // A target-local publish is a copy, so the source remains until the
+        // whole stage is committed. Remove only the exact object whose identity
+        // was recorded when the publish temp was created.
+        if target_exists && ensure_path_identity(&record.target, identity).is_ok() {
+            remove_path_if_matches(&record.target, identity)?;
+        }
+        if temp_exists {
+            remove_path_if_matches(publish_temp, identity)?;
+        }
+        return Ok(());
+    }
+
+    // This state is not expected during normal copy publishing, but supporting
+    // it makes recovery safe if a future implementation retires the source
+    // before commit or a manual repair moved it.
+    if target_exists && ensure_path_identity(&record.target, identity).is_ok() {
+        if let Some(parent) = record.source.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        return rename_file_no_replace(&record.target, &record.source);
+    }
+    if temp_exists && ensure_path_identity(publish_temp, identity).is_ok() {
+        if let Some(parent) = record.source.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        return rename_file_no_replace(publish_temp, &record.source);
+    }
+    Err(format!(
+        "Extraction source and its verified publish object are missing: {}",
+        record.source.display()
+    ))
 }
 
 pub(crate) fn rollback_move_records(
@@ -871,6 +1370,12 @@ pub(crate) fn rollback_move_records(
         }
         if let Err(error) = assert_safe_extract_target_ancestors(destination, &record.target) {
             failures.push(error);
+            continue;
+        }
+        if record.publish_temp.is_some() {
+            if let Err(error) = rollback_target_local_record(record) {
+                failures.push(error);
+            }
             continue;
         }
         let source_exists = path_entry_exists(&record.source)?;
@@ -978,8 +1483,11 @@ pub(crate) fn merge_staged_extract(
     let mut plan = Vec::new();
     plan_staged_contents(staged, destination, &mut reserved, &mut plan)?;
     prepare_planned_links(staged, destination, &plan)?;
+    #[cfg(windows)]
+    prepare_target_local_publish_paths(&mut plan, &mut reserved)?;
     write_move_plan(staged, &plan)?;
-    for record in &plan {
+    for index in 0..plan.len() {
+        let record = &plan[index];
         validate_move_record(staged, destination, record)?;
         if let Err(error) = assert_safe_extract_target_ancestors(destination, &record.target) {
             let rollback = rollback_move_records(staged, destination, &plan);
@@ -998,6 +1506,19 @@ pub(crate) fn merge_staged_extract(
                 Ok(()) => error,
                 Err(rollback_error) => format!("{error}; rollback also failed: {rollback_error}"),
             });
+        }
+        #[cfg(windows)]
+        if record.publish_temp.is_some() {
+            if let Err(error) = publish_target_local_copy(staged, &mut plan, index) {
+                let rollback = rollback_move_records(staged, destination, &plan);
+                return Err(match rollback {
+                    Ok(()) => error,
+                    Err(rollback_error) => {
+                        format!("{error}; rollback also failed: {rollback_error}")
+                    }
+                });
+            }
+            continue;
         }
         let metadata = std::fs::symlink_metadata(&record.source).map_err(|e| e.to_string())?;
         let result = if metadata.is_file() {

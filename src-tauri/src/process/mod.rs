@@ -63,8 +63,7 @@ pub(crate) use commit::{
 #[cfg(test)]
 pub(crate) use journal::{
     is_safe_stage_dir_name, move_plan_path, read_pending_stages, register_pending_stage,
-    unregister_plan_stages, ArchiveJournalPhase, CleanupJournal, ExtractStagePlacement,
-    MoveRecord,
+    unregister_plan_stages, ArchiveJournalPhase, CleanupJournal, ExtractStagePlacement, MoveRecord,
 };
 #[cfg(test)]
 pub(crate) use quota::staged_tree_usage;

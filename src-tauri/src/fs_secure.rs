@@ -61,13 +61,31 @@ pub fn create_inheriting_stage_dir(path: &Path) -> io::Result<()> {
 pub fn sync_directory(path: &Path) -> Result<(), String> {
     #[cfg(windows)]
     {
-        // std opens directories with FILE_FLAG_BACKUP_SEMANTICS so
-        // FlushFileBuffers (via sync_all) is the fsync(dirfd) equivalent.
-        // Some environments deny directory FlushFileBuffers (os error 5); treat
-        // that as best-effort success; the file write itself already succeeded.
+        // Windows has no portable fsync(dirfd) equivalent. `sync_all` may work
+        // on an opened directory, but Windows rejects volume roots with error 3
+        // and many local/SMB filesystems return access denied, invalid function,
+        // invalid handle, not supported, or invalid parameter. First prove the
+        // path still names a real directory, then treat only those known
+        // unsupported flush results as best effort. Other I/O failures remain
+        // fatal so a disconnected share or vanished non-root path is reported.
+        // Following an already-approved directory reparse point is safe here:
+        // this helper only flushes and is also used for redirected app data.
+        let metadata = std::fs::metadata(path).map_err(|error| error.to_string())?;
+        if !metadata.is_dir() {
+            return Err(format!(
+                "Could not sync a path that is not a directory: {}",
+                path.display()
+            ));
+        }
         match std::fs::File::open(path).and_then(|directory| directory.sync_all()) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(()),
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound && path.parent().is_none() =>
+            {
+                Ok(())
+            }
+            Err(error) if matches!(error.raw_os_error(), Some(1 | 6 | 50 | 87)) => Ok(()),
             Err(error) => Err(error.to_string()),
         }
     }
@@ -356,7 +374,8 @@ fn security_descriptor_dacl(
     let mut present = 0;
     let mut dacl: *mut ACL = ptr::null_mut();
     let mut defaulted = 0;
-    if unsafe { GetSecurityDescriptorDacl(descriptor, &mut present, &mut dacl, &mut defaulted) } == 0
+    if unsafe { GetSecurityDescriptorDacl(descriptor, &mut present, &mut dacl, &mut defaulted) }
+        == 0
     {
         return Err(format!(
             "GetSecurityDescriptorDacl failed: {}",
@@ -414,12 +433,14 @@ fn access_allowed_ace_view(
         return Err(format!("Allow ACE {index} has a truncated trustee SID."));
     }
 
-    let sid: PSID = sid_bytes.cast_mut().cast();
+    let sid: PSID = sid_bytes.cast();
     if unsafe { IsValidSid(sid) } == 0 {
         return Err(format!("Allow ACE {index} has an invalid trustee SID."));
     }
     if unsafe { GetLengthSid(sid) } as usize != encoded_sid_length {
-        return Err(format!("Allow ACE {index} has an inconsistent trustee SID."));
+        return Err(format!(
+            "Allow ACE {index} has an inconsistent trustee SID."
+        ));
     }
 
     let ace = unsafe { &*raw_ace.cast::<ACCESS_ALLOWED_ACE>() };
@@ -525,9 +546,8 @@ fn read_directory_security_descriptor(directory: &std::fs::File) -> io::Result<V
     let handle = directory.as_raw_handle() as HANDLE;
     let requested = OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
     let mut needed = 0u32;
-    let first = unsafe {
-        GetKernelObjectSecurity(handle, requested, ptr::null_mut(), 0, &mut needed)
-    };
+    let first =
+        unsafe { GetKernelObjectSecurity(handle, requested, ptr::null_mut(), 0, &mut needed) };
     let first_error = io::Error::last_os_error();
     if first != 0
         || first_error.raw_os_error() != Some(ERROR_INSUFFICIENT_BUFFER as i32)
@@ -545,9 +565,8 @@ fn read_directory_security_descriptor(directory: &std::fs::File) -> io::Result<V
         let words = (needed as usize).div_ceil(word_size);
         let mut buffer = vec![0usize; words];
         let capacity = buffer.len() * word_size;
-        let capacity_u32 = u32::try_from(capacity).map_err(|_| {
-            io::Error::other("Staging directory security descriptor is too large.")
-        })?;
+        let capacity_u32 = u32::try_from(capacity)
+            .map_err(|_| io::Error::other("Staging directory security descriptor is too large."))?;
         let mut returned = needed;
         if unsafe {
             GetKernelObjectSecurity(
@@ -589,9 +608,7 @@ fn verify_private_directory_security(
         );
     }
     if unsafe { IsValidSecurityDescriptor(expected) } == 0 {
-        return Err(
-            "The expected staging directory security descriptor is invalid.".to_string(),
-        );
+        return Err("The expected staging directory security descriptor is invalid.".to_string());
     }
 
     let mut control = 0u16;
@@ -844,6 +861,175 @@ mod tests {
         create_inheriting_stage_dir(&path).expect("create inherited-ACL publish stage");
         assert!(path.is_dir());
         std::fs::remove_dir(&path).expect("remove publish stage test directory");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn directory_sync_accepts_windows_volume_roots() {
+        let configured = std::env::var_os("ZINNIA_TEST_VOLUME_ROOT").map(std::path::PathBuf::from);
+        let root = configured.unwrap_or_else(|| {
+            std::env::temp_dir()
+                .ancestors()
+                .find(|path| path.parent().is_none() && path.has_root())
+                .expect("temporary volume root")
+                .to_path_buf()
+        });
+        assert!(root.is_dir(), "volume root must exist: {}", root.display());
+        sync_directory(&root).expect("sync Windows volume root");
+        assert!(
+            sync_directory(&root.join("zinnia-missing-directory")).is_err(),
+            "missing non-root directory sync must remain an error"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn inside_destination_stage_files_follow_destination_not_parent_acl() {
+        use windows_sys::Win32::Security::EqualSid;
+
+        let mut random = [0u8; 8];
+        getrandom::fill(&mut random).expect("random ACL test suffix");
+        let suffix: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+        let root = std::env::temp_dir().join(format!("zinnia-acl-policy-{suffix}"));
+        std::fs::create_dir(&root).expect("ACL test parent");
+        let parent_file = root.join("parent-policy.txt");
+        std::fs::write(&parent_file, b"parent policy").expect("parent policy file");
+
+        let destination = root.join("destination");
+        create_private_dir(&destination).expect("destination ACL B");
+        let direct_file = destination.join("direct.txt");
+        std::fs::write(&direct_file, b"direct destination file").expect("direct destination file");
+        let stage = destination.join(".zinnia-extract-0123456789abcdef0123456789abcdef");
+        create_inheriting_stage_dir(&stage).expect("inside-destination publish stage");
+        let staged_file = stage.join("staged.txt");
+        std::fs::write(&staged_file, b"staged destination file").expect("staged destination file");
+
+        let parent_handle = std::fs::File::open(&parent_file).expect("open parent policy file");
+        let direct_handle = std::fs::File::open(&direct_file).expect("open direct file");
+        let staged_handle = std::fs::File::open(&staged_file).expect("open staged file");
+        let parent_storage =
+            read_directory_security_descriptor(&parent_handle).expect("parent descriptor");
+        let direct_storage =
+            read_directory_security_descriptor(&direct_handle).expect("direct descriptor");
+        let staged_storage =
+            read_directory_security_descriptor(&staged_handle).expect("staged descriptor");
+        let parent_descriptor = parent_storage.as_ptr().cast_mut().cast();
+        let direct_descriptor = direct_storage.as_ptr().cast_mut().cast();
+        let staged_descriptor = staged_storage.as_ptr().cast_mut().cast();
+
+        let direct_owner = security_descriptor_owner(direct_descriptor).expect("direct owner");
+        let staged_owner = security_descriptor_owner(staged_descriptor).expect("staged owner");
+        assert_ne!(unsafe { EqualSid(direct_owner, staged_owner) }, 0);
+        let parent_dacl = security_descriptor_dacl(parent_descriptor).expect("parent DACL");
+        let direct_dacl = security_descriptor_dacl(direct_descriptor).expect("direct DACL");
+        let staged_dacl = security_descriptor_dacl(staged_descriptor).expect("staged DACL");
+        assert!(
+            dacl_matches_expected(staged_dacl, direct_dacl)
+                .expect("compare staged and destination DACLs"),
+            "stage file did not receive destination ACL B"
+        );
+        assert!(
+            !dacl_matches_expected(staged_dacl, parent_dacl)
+                .expect("compare staged and parent DACLs"),
+            "stage file incorrectly received parent ACL A"
+        );
+
+        drop((parent_handle, direct_handle, staged_handle));
+        std::fs::remove_dir_all(&root).expect("remove ACL policy test tree");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn extraction_publish_recreates_nested_target_acl_for_files_and_trees() {
+        fn open_acl_object(path: &Path) -> std::fs::File {
+            if path.is_dir() {
+                open_directory_for_acl_verification(path).expect("open ACL directory")
+            } else {
+                std::fs::File::open(path).expect("open ACL file")
+            }
+        }
+
+        fn dacl_matches(left: &Path, right: &Path) -> bool {
+            let left_handle = open_acl_object(left);
+            let right_handle = open_acl_object(right);
+            let left_storage =
+                read_directory_security_descriptor(&left_handle).expect("left descriptor");
+            let right_storage =
+                read_directory_security_descriptor(&right_handle).expect("right descriptor");
+            let left_descriptor = left_storage.as_ptr().cast_mut().cast();
+            let right_descriptor = right_storage.as_ptr().cast_mut().cast();
+            let left_dacl = security_descriptor_dacl(left_descriptor).expect("left DACL");
+            let right_dacl = security_descriptor_dacl(right_descriptor).expect("right DACL");
+            dacl_matches_expected(left_dacl, right_dacl).expect("compare DACLs")
+        }
+
+        let mut random = [0u8; 8];
+        getrandom::fill(&mut random).expect("random nested ACL test suffix");
+        let suffix: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+        let root = std::env::temp_dir().join(format!("zinnia-nested-acl-{suffix}"));
+        std::fs::create_dir(&root).expect("nested ACL test parent");
+
+        // Destination ACL B differs from parent ACL A. Build the nested policy
+        // under A, then move it under B; Windows preserves its custom ACL.
+        let destination = root.join("destination");
+        create_private_dir(&destination).expect("destination ACL B");
+        let nested_source = root.join("nested-policy");
+        std::fs::create_dir(&nested_source).expect("nested ACL A");
+        let nested = destination.join("nested");
+        std::fs::rename(&nested_source, &nested).expect("install nested ACL A under B");
+
+        let direct_file = nested.join("direct-file.txt");
+        std::fs::write(&direct_file, b"direct").expect("direct nested file");
+        let direct_directory = nested.join("direct-directory");
+        std::fs::create_dir(&direct_directory).expect("direct nested directory");
+        let direct_deep_file = direct_directory.join("deep.txt");
+        std::fs::write(&direct_deep_file, b"direct deep").expect("direct deep file");
+
+        let stage = destination.join(".zinnia-extract-0123456789abcdef0123456789abcdef");
+        create_inheriting_stage_dir(&stage).expect("inside-destination stage");
+        let staged_nested = stage.join("nested");
+        std::fs::create_dir(&staged_nested).expect("staged existing nested path");
+        std::fs::write(staged_nested.join("published-file.txt"), b"published")
+            .expect("staged nested file");
+        let staged_directory = staged_nested.join("published-directory");
+        std::fs::create_dir(&staged_directory).expect("staged directory tree");
+        std::fs::write(staged_directory.join("deep.txt"), b"published deep")
+            .expect("staged deep file");
+
+        crate::process::merge_staged_extract(
+            &stage,
+            &destination,
+            crate::process::MAX_EXTRACTED_BYTES,
+        )
+        .expect("publish nested extraction");
+
+        let published_file = nested.join("published-file.txt");
+        let published_directory = nested.join("published-directory");
+        let published_deep_file = published_directory.join("deep.txt");
+        assert!(
+            dacl_matches(&published_file, &direct_file),
+            "published file did not inherit the real nested target ACL"
+        );
+        assert!(
+            dacl_matches(&published_directory, &direct_directory),
+            "published directory did not inherit the real nested target ACL"
+        );
+        assert!(
+            dacl_matches(&published_deep_file, &direct_deep_file),
+            "published directory contents did not inherit the nested tree ACL"
+        );
+        assert!(
+            std::fs::read_dir(&nested)
+                .expect("list nested destination")
+                .all(|entry| !entry
+                    .expect("nested entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".zinnia-publish-")),
+            "publish temp remained after commit"
+        );
+
+        std::fs::remove_dir_all(&root).expect("remove nested ACL test tree");
     }
 
     #[cfg(windows)]

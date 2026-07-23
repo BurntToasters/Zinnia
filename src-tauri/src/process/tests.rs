@@ -14,6 +14,67 @@ fn temp_root(prefix: &str) -> std::path::PathBuf {
     ))
 }
 
+fn bundled_7z_test_binary() -> Option<std::path::PathBuf> {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries");
+    let arch = std::env::consts::ARCH;
+    let candidates: &[&str] = if cfg!(target_os = "windows") {
+        &["pc-windows-msvc.exe"]
+    } else if cfg!(target_os = "macos") {
+        &["apple-darwin", "universal-apple-darwin"]
+    } else {
+        &["unknown-linux-gnu"]
+    };
+    for suffix in candidates {
+        let name = if suffix.starts_with("universal") {
+            format!("7z-{suffix}")
+        } else {
+            format!("7z-{arch}-{suffix}")
+        };
+        let path = dir.join(name);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+fn volume_guid_alias(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::{OsStrExt as _, OsStringExt as _};
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetVolumeNameForVolumeMountPointW, GetVolumePathNameW,
+    };
+
+    let input: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut mount = vec![0u16; 32_768];
+    if unsafe { GetVolumePathNameW(input.as_ptr(), mount.as_mut_ptr(), mount.len() as u32) } == 0 {
+        return None;
+    }
+    let mount_len = mount.iter().position(|unit| *unit == 0)?;
+    let mount_path = std::path::PathBuf::from(OsString::from_wide(&mount[..mount_len]));
+    let relative = path.strip_prefix(&mount_path).ok()?;
+
+    let mount_wide: Vec<u16> = mount_path
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let mut volume = [0u16; 50];
+    if unsafe {
+        GetVolumeNameForVolumeMountPointW(
+            mount_wide.as_ptr(),
+            volume.as_mut_ptr(),
+            volume.len() as u32,
+        )
+    } == 0
+    {
+        return None;
+    }
+    let volume_len = volume.iter().position(|unit| *unit == 0)?;
+    Some(std::path::PathBuf::from(OsString::from_wide(&volume[..volume_len])).join(relative))
+}
+
 #[test]
 fn ensure_idle_detects_busy_state() {
     let idle = ProcessState::idle();
@@ -196,6 +257,344 @@ fn new_extraction_destination_stages_beside_destination() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[cfg(windows)]
+#[test]
+fn extraction_staging_supports_volume_guid_destinations() {
+    let root = temp_root("zinnia-volume-guid-stage-test");
+    std::fs::create_dir_all(&root).expect("test directory");
+    let Some(volume_root) = volume_guid_alias(&root) else {
+        eprintln!("skipping: temporary directory has no volume-GUID alias");
+        let _ = std::fs::remove_dir_all(root);
+        return;
+    };
+    let archive = root.join("archive.7z");
+    std::fs::write(&archive, b"archive").expect("test archive");
+
+    let existing = volume_root.join("existing");
+    std::fs::create_dir(&existing).expect("existing volume-GUID destination");
+    let existing_args = vec![
+        "x".to_string(),
+        format!("-o{}", existing.display()),
+        "--".to_string(),
+        archive.to_string_lossy().to_string(),
+    ];
+    let existing_plan =
+        prepare_cleanup_plan(&existing_args, None).expect("existing destination plan");
+    let (existing_stage, existing_target) = existing_plan
+        .staged_extract
+        .as_ref()
+        .expect("existing stage");
+    assert_eq!(existing_stage.parent(), Some(existing_target.as_path()));
+    assert!(existing_target.is_absolute());
+    rollback_cleanup(&existing_plan).expect("existing rollback");
+
+    let new_destination = volume_root.join("new");
+    let new_args = vec![
+        "x".to_string(),
+        format!("-o{}", new_destination.display()),
+        "--".to_string(),
+        archive.to_string_lossy().to_string(),
+    ];
+    let new_plan = prepare_cleanup_plan(&new_args, None).expect("new destination plan");
+    let (new_stage, new_target) = new_plan.staged_extract.as_ref().expect("new stage");
+    assert_eq!(new_stage.parent(), new_target.parent());
+    assert!(new_target.is_absolute());
+    rollback_cleanup(&new_plan).expect("new rollback");
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn real_7z_extract_uses_snapshot_publish_stage_and_safe_commit() {
+    let Some(binary) = bundled_7z_test_binary() else {
+        eprintln!("skipping: bundled 7z binary not found (run npm run prepare:7z)");
+        return;
+    };
+    let root = temp_root("zinnia-real-extract-transaction");
+    let source = root.join("source");
+    let cache = root.join("cache");
+    std::fs::create_dir_all(&root).expect("transaction root");
+    let external_archive = std::env::var_os("ZINNIA_TEST_ARCHIVE").map(std::path::PathBuf::from);
+    let archive = if let Some(archive) = &external_archive {
+        assert!(archive.is_file(), "ZINNIA_TEST_ARCHIVE must be a file");
+        archive.clone()
+    } else {
+        std::fs::create_dir(&source).expect("source directory");
+        std::fs::write(source.join("payload.txt"), b"transaction payload\n")
+            .expect("source payload");
+        let archive = root.join("payload.7z");
+        let add = std::process::Command::new(&binary)
+            .current_dir(&source)
+            .args(["a", "-t7z"])
+            .arg(&archive)
+            .arg("--")
+            .arg("payload.txt")
+            .output()
+            .expect("create test archive");
+        assert!(
+            add.status.success(),
+            "7z create failed: {}",
+            String::from_utf8_lossy(&add.stderr)
+        );
+        archive
+    };
+
+    let external_publish_parent =
+        std::env::var_os("ZINNIA_TEST_PUBLISH_PARENT").map(std::path::PathBuf::from);
+    let publish_root = if let Some(parent) = &external_publish_parent {
+        assert!(parent.is_absolute(), "publish parent must be absolute");
+        crate::path_safety::assert_real_directory(parent).expect("real publish parent");
+        parent.clone()
+    } else {
+        #[cfg(windows)]
+        {
+            volume_guid_alias(&root).expect("volume-GUID alias")
+        }
+        #[cfg(not(windows))]
+        {
+            root.clone()
+        }
+    };
+    let destination_token = random_token().expect("destination token");
+
+    for existing in [true, false] {
+        let name = if external_publish_parent.is_some() {
+            format!(
+                "zinnia-transaction-{}-{destination_token}",
+                if existing { "existing" } else { "new" }
+            )
+        } else if existing {
+            "existing-destination".to_string()
+        } else {
+            "new-destination".to_string()
+        };
+        let destination = publish_root.join(&name);
+        if existing {
+            std::fs::create_dir(&destination).expect("existing destination");
+        }
+        let mut args = vec![
+            "x".to_string(),
+            "-aou".to_string(),
+            format!("-o{}", destination.display()),
+            "--".to_string(),
+            archive.to_string_lossy().to_string(),
+        ];
+        crate::validation::validate_run_7z_args(&args).expect("valid extract arguments");
+        super::commands::harden_7z_args(&mut args);
+
+        let plan =
+            prepare_cleanup_plan(&args, Some(cache.clone())).expect("prepare production plan");
+        let staged_snapshot = plan
+            .staged_input_archive
+            .as_ref()
+            .expect("private archive snapshot");
+        let (staged_output, resolved_destination) =
+            plan.staged_extract.as_ref().expect("publish stage");
+        if existing {
+            assert_eq!(staged_output.parent(), Some(resolved_destination.as_path()));
+        } else {
+            assert_eq!(staged_output.parent(), resolved_destination.parent());
+        }
+
+        let mut execution_args = args.clone();
+        super::staging::rewrite_extract_archive(&mut execution_args, staged_snapshot)
+            .expect("rewrite snapshot input");
+        super::staging::rewrite_extract_output(&mut execution_args, staged_output)
+            .expect("rewrite publish stage");
+
+        let list_args = extract_member_list_args(&execution_args).expect("member list arguments");
+        let list = std::process::Command::new(&binary)
+            .args(&list_args)
+            .output()
+            .expect("list snapshot members");
+        assert!(
+            list.status.success(),
+            "7z list failed: {}",
+            String::from_utf8_lossy(&list.stderr)
+        );
+        assert_slt_archive_members_safe(
+            &String::from_utf8_lossy(&list.stdout),
+            execution_args.last().expect("snapshot argument"),
+        )
+        .expect("safe archive members");
+
+        let extract = std::process::Command::new(&binary)
+            .args(&execution_args)
+            .output()
+            .expect("extract into publish stage");
+        assert!(
+            extract.status.success(),
+            "7z extract failed: {}",
+            String::from_utf8_lossy(&extract.stderr)
+        );
+        merge_staged_extract(
+            staged_output,
+            resolved_destination,
+            plan.max_extract_bytes.expect("extract quota"),
+        )
+        .expect("safe staged commit");
+        std::fs::remove_dir_all(
+            staged_snapshot
+                .parent()
+                .expect("snapshot staging directory"),
+        )
+        .expect("remove snapshot stage");
+        unregister_plan_stages(&plan);
+
+        let normal_destination = external_publish_parent
+            .as_ref()
+            .unwrap_or(&root)
+            .join(&name);
+        if external_archive.is_some() {
+            assert!(
+                std::fs::read_dir(&normal_destination)
+                    .expect("published destination")
+                    .next()
+                    .is_some(),
+                "external archive extracted no entries"
+            );
+        } else {
+            assert_eq!(
+                std::fs::read_to_string(normal_destination.join("payload.txt"))
+                    .expect("published payload"),
+                "transaction payload\n"
+            );
+        }
+        assert!(!staged_output.exists());
+        assert!(!move_plan_path(staged_output).exists());
+        if external_publish_parent.is_some() {
+            std::fs::remove_dir_all(&normal_destination)
+                .expect("remove external publish destination");
+        }
+    }
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn real_7z_archive_create_and_update_use_publish_stages() {
+    let Some(binary) = bundled_7z_test_binary() else {
+        eprintln!("skipping: bundled 7z binary not found (run npm run prepare:7z)");
+        return;
+    };
+    let root = temp_root("zinnia-real-archive-transaction");
+    let source = root.join("source");
+    let cache = root.join("cache");
+    std::fs::create_dir_all(&source).expect("source directory");
+    let old_input = source.join("old.txt");
+    let new_input = source.join("new.txt");
+    std::fs::write(&old_input, b"old payload\n").expect("old input");
+    std::fs::write(&new_input, b"new payload\n").expect("new input");
+
+    let external_publish_parent =
+        std::env::var_os("ZINNIA_TEST_PUBLISH_PARENT").map(std::path::PathBuf::from);
+    let publish_root = if let Some(parent) = &external_publish_parent {
+        assert!(parent.is_absolute(), "publish parent must be absolute");
+        crate::path_safety::assert_real_directory(parent).expect("real publish parent");
+        parent.clone()
+    } else {
+        #[cfg(windows)]
+        {
+            volume_guid_alias(&root).expect("volume-GUID alias")
+        }
+        #[cfg(not(windows))]
+        {
+            root.clone()
+        }
+    };
+    let archive_name = if external_publish_parent.is_some() {
+        format!(
+            "zinnia-archive-transaction-{}.7z",
+            random_token().expect("archive token")
+        )
+    } else {
+        "output.7z".to_string()
+    };
+    let destination = publish_root.join(&archive_name);
+    let normal_destination = external_publish_parent
+        .as_ref()
+        .unwrap_or(&root)
+        .join(&archive_name);
+
+    let mut create_args = vec![
+        "a".to_string(),
+        "-t7z".to_string(),
+        destination.to_string_lossy().to_string(),
+        "--".to_string(),
+        old_input.to_string_lossy().to_string(),
+    ];
+    crate::validation::validate_run_7z_args(&create_args).expect("valid create arguments");
+    super::commands::harden_7z_args(&mut create_args);
+    let create_plan =
+        prepare_cleanup_plan(&create_args, Some(cache.clone())).expect("prepare create plan");
+    let (staged_create, resolved_destination) =
+        create_plan.staged_archive.as_ref().expect("create stage");
+    assert_eq!(
+        staged_create.parent().and_then(std::path::Path::parent),
+        resolved_destination.parent()
+    );
+    let mut create_execution = create_args.clone();
+    super::staging::rewrite_archive_output(&mut create_execution, staged_create)
+        .expect("rewrite create output");
+    let create = std::process::Command::new(&binary)
+        .args(&create_execution)
+        .output()
+        .expect("run staged create");
+    assert!(
+        create.status.success(),
+        "7z create failed: {}",
+        String::from_utf8_lossy(&create.stderr)
+    );
+    promote_archive_family(staged_create, resolved_destination).expect("promote created archive");
+    unregister_plan_stages(&create_plan);
+    assert!(normal_destination.is_file());
+    assert!(!staged_create.exists());
+
+    let mut update_args = vec![
+        "u".to_string(),
+        destination.to_string_lossy().to_string(),
+        "--".to_string(),
+        new_input.to_string_lossy().to_string(),
+    ];
+    crate::validation::validate_run_7z_args(&update_args).expect("valid update arguments");
+    super::commands::harden_7z_args(&mut update_args);
+    let update_plan = prepare_cleanup_plan(&update_args, Some(cache)).expect("prepare update plan");
+    let (staged_update, resolved_destination) =
+        update_plan.staged_archive.as_ref().expect("update stage");
+    assert!(staged_update.is_file(), "update must copy existing archive");
+    let mut update_execution = update_args.clone();
+    super::staging::rewrite_archive_output(&mut update_execution, staged_update)
+        .expect("rewrite update output");
+    let update = std::process::Command::new(&binary)
+        .args(&update_execution)
+        .output()
+        .expect("run staged update");
+    assert!(
+        update.status.success(),
+        "7z update failed: {}",
+        String::from_utf8_lossy(&update.stderr)
+    );
+    promote_archive_family(staged_update, resolved_destination).expect("promote updated archive");
+    unregister_plan_stages(&update_plan);
+    assert!(!staged_update.exists());
+
+    let list = std::process::Command::new(&binary)
+        .arg("l")
+        .arg("--")
+        .arg(&normal_destination)
+        .output()
+        .expect("list updated archive");
+    assert!(list.status.success(), "updated archive list failed");
+    let listing = String::from_utf8_lossy(&list.stdout);
+    assert!(listing.contains("old.txt"));
+    assert!(listing.contains("new.txt"));
+    if external_publish_parent.is_some() {
+        std::fs::remove_file(&normal_destination).expect("remove external archive output");
+    }
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
 #[test]
 fn extract_stage_placement_rejects_mismatched_layouts() {
     let root = std::path::Path::new("root");
@@ -210,6 +609,60 @@ fn extract_stage_placement_rejects_mismatched_layouts() {
     assert!(
         ExtractStagePlacement::from_paths(&root.join("elsewhere/stage"), &destination).is_err()
     );
+}
+
+#[test]
+fn extract_stage_placement_serializes_and_legacy_journals_remain_sibling_only() {
+    let destination = std::path::PathBuf::from("root/destination");
+    let stage = destination.join(".zinnia-extract-0123456789abcdef0123456789abcdef");
+    let journal = CleanupJournal {
+        stage: stage.clone(),
+        destination: destination.clone(),
+        archive: false,
+        extract_stage_placement: Some(ExtractStagePlacement::InsideDestination),
+        move_plan_sidecar: true,
+        previous_archive_family: Vec::new(),
+        next_archive_family: Vec::new(),
+        next_archive_identities: Vec::new(),
+        archive_phase: None,
+    };
+    let value = serde_json::to_value(&journal).expect("serialize journal");
+    assert_eq!(
+        value.get("extract_stage_placement"),
+        Some(&serde_json::Value::String("inside_destination".to_string()))
+    );
+    let decoded: CleanupJournal = serde_json::from_value(value.clone()).expect("decode journal");
+    assert_eq!(
+        decoded.extract_stage_placement,
+        Some(ExtractStagePlacement::InsideDestination)
+    );
+    assert!(ExtractStagePlacement::InsideDestination
+        .matches_paths(&decoded.stage, &decoded.destination));
+
+    let sibling = destination
+        .parent()
+        .expect("destination parent")
+        .join(".zinnia-extract-fedcba9876543210fedcba9876543210");
+    let mut legacy = serde_json::to_value(CleanupJournal {
+        stage: sibling.clone(),
+        destination: destination.clone(),
+        archive: false,
+        extract_stage_placement: Some(ExtractStagePlacement::Sibling),
+        move_plan_sidecar: false,
+        previous_archive_family: Vec::new(),
+        next_archive_family: Vec::new(),
+        next_archive_identities: Vec::new(),
+        archive_phase: None,
+    })
+    .expect("serialize legacy base");
+    legacy
+        .as_object_mut()
+        .expect("journal object")
+        .remove("extract_stage_placement");
+    let decoded: CleanupJournal = serde_json::from_value(legacy).expect("decode legacy journal");
+    assert_eq!(decoded.extract_stage_placement, None);
+    assert_eq!(decoded.stage.parent(), decoded.destination.parent());
+    assert_ne!(decoded.stage.parent(), Some(decoded.destination.as_path()));
 }
 
 #[test]
@@ -233,7 +686,11 @@ fn existing_archive_is_untouched_after_staged_rollback() {
         .map(|(staged, _)| staged.clone())
         .expect("staged archive");
     assert!(target.exists());
-    assert_eq!(staged.parent().and_then(|stage| stage.parent()), target.parent());
+    let canonical_target = target.canonicalize().expect("canonical archive target");
+    assert_eq!(
+        staged.parent().and_then(|stage| stage.parent()),
+        canonical_target.parent()
+    );
     std::fs::write(&staged, b"partial").expect("partial staged archive");
     rollback_cleanup(&plan).expect("rollback should remove staging");
     assert_eq!(
@@ -418,6 +875,8 @@ fn persisted_move_plan_rolls_back_a_partial_merge() {
     let plan = vec![MoveRecord {
         source: source.clone(),
         target: target.clone(),
+        publish_temp: None,
+        publish_identity: None,
     }];
     write_move_plan(&staged, &plan).expect("durable move plan");
     std::fs::write(&target, b"partially published").expect("partial target");
@@ -429,6 +888,102 @@ fn persisted_move_plan_rolls_back_a_partial_merge() {
         b"partially published"
     );
     assert!(!target.exists());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn inside_destination_move_plan_rolls_back_a_partial_merge() {
+    let root = temp_root("zinnia-inside-move-recovery-test");
+    let destination = root.join("destination");
+    let staged = destination.join(".zinnia-extract-0123456789abcdef0123456789abcdef");
+    std::fs::create_dir_all(&staged).expect("inside-destination stage");
+    let source = staged.join("new.txt");
+    let target = destination.join("new.txt");
+    std::fs::write(&source, b"partially published").expect("staged source");
+    let plan = vec![MoveRecord {
+        source: source.clone(),
+        target: target.clone(),
+        publish_temp: None,
+        publish_identity: None,
+    }];
+    write_move_plan(&staged, &plan).expect("durable sidecar move plan");
+    std::fs::rename(&source, &target).expect("partial promotion");
+
+    rollback_persisted_move_plan(&staged, &destination, false)
+        .expect("rollback inside-destination plan");
+
+    assert_eq!(
+        std::fs::read(&source).expect("restored staged source"),
+        b"partially published"
+    );
+    assert!(!target.exists());
+    assert!(move_plan_path(&staged).is_file());
+    let _ = std::fs::remove_file(move_plan_path(&staged));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(windows)]
+#[test]
+fn target_local_publish_recovery_removes_only_verified_copies() {
+    let root = temp_root("zinnia-target-local-recovery");
+    let destination = root.join("destination");
+    let staged = destination.join(".zinnia-extract-0123456789abcdef0123456789abcdef");
+    std::fs::create_dir_all(&staged).expect("inside-destination stage");
+    let source = staged.join("new.txt");
+    std::fs::write(&source, b"staged source").expect("staged source");
+
+    let publish_temp = destination.join(".zinnia-publish-0123456789abcdef0123456789abcdef");
+    std::fs::write(&publish_temp, b"partial copy").expect("publish temp");
+    let publish_identity = super::journal::path_identity(&publish_temp).expect("publish identity");
+    let target = destination.join("new.txt");
+    let plan = vec![MoveRecord {
+        source: source.clone(),
+        target: target.clone(),
+        publish_temp: Some(publish_temp.clone()),
+        publish_identity: Some(publish_identity),
+    }];
+    write_move_plan(&staged, &plan).expect("target-local move plan");
+
+    rollback_persisted_move_plan(&staged, &destination, false)
+        .expect("remove verified partial copy");
+
+    assert_eq!(std::fs::read(&source).unwrap(), b"staged source");
+    assert!(!publish_temp.exists());
+    assert!(!target.exists());
+    let _ = std::fs::remove_file(move_plan_path(&staged));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(windows)]
+#[test]
+fn target_local_publish_recovery_preserves_replacement_target() {
+    let root = temp_root("zinnia-target-local-replacement");
+    let destination = root.join("destination");
+    let staged = destination.join(".zinnia-extract-0123456789abcdef0123456789abcdef");
+    std::fs::create_dir_all(&staged).expect("inside-destination stage");
+    let source = staged.join("new.txt");
+    std::fs::write(&source, b"staged source").expect("staged source");
+
+    let publish_temp = destination.join(".zinnia-publish-0123456789abcdef0123456789abcdef");
+    std::fs::write(&publish_temp, b"owned object").expect("owned publish object");
+    let publish_identity = super::journal::path_identity(&publish_temp).expect("publish identity");
+    std::fs::remove_file(&publish_temp).expect("remove owned publish object");
+    let target = destination.join("new.txt");
+    std::fs::write(&target, b"replacement").expect("replacement target");
+    let plan = vec![MoveRecord {
+        source: source.clone(),
+        target: target.clone(),
+        publish_temp: Some(publish_temp),
+        publish_identity: Some(publish_identity),
+    }];
+    write_move_plan(&staged, &plan).expect("target-local move plan");
+
+    rollback_persisted_move_plan(&staged, &destination, false)
+        .expect("leave replacement target untouched");
+
+    assert_eq!(std::fs::read(&source).unwrap(), b"staged source");
+    assert_eq!(std::fs::read(&target).unwrap(), b"replacement");
+    let _ = std::fs::remove_file(move_plan_path(&staged));
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -491,6 +1046,8 @@ fn persisted_move_plan_rolls_back_a_promoted_symlink() {
     let plan = vec![MoveRecord {
         source: source.clone(),
         target: target.clone(),
+        publish_temp: None,
+        publish_identity: None,
     }];
     write_move_plan(&staged, &plan).expect("move plan");
     std::fs::rename(&source, &target).expect("partial promotion");
@@ -699,7 +1256,10 @@ fn extraction_uses_a_private_archive_snapshot() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
-        let mode = std::fs::metadata(stage).expect("snapshot stage metadata").permissions().mode();
+        let mode = std::fs::metadata(stage)
+            .expect("snapshot stage metadata")
+            .permissions()
+            .mode();
         assert_eq!(mode & 0o777, 0o700);
     }
     let _ = std::fs::remove_dir_all(stage);

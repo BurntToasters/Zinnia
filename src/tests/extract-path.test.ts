@@ -48,6 +48,24 @@ describe("deriveExtractDestinationPath", () => {
     expect(deriveExtractDestinationPath("C:\\example.zip")).toBe("C:\\example");
   });
 
+  it("preserves UNC and extended Windows path namespaces", () => {
+    expect(
+      deriveExtractDestinationPath("\\\\server\\share\\folder\\example.zip"),
+    ).toBe("\\\\server\\share\\folder\\example");
+    expect(
+      deriveExtractDestinationPath(
+        "\\\\?\\UNC\\server\\share\\folder\\example.7z",
+      ),
+    ).toBe("\\\\?\\UNC\\server\\share\\folder\\example");
+    expect(
+      deriveExtractDestinationPath(
+        "\\\\?\\Volume{12345678-1234-1234-1234-123456789abc}\\folder\\example.zip",
+      ),
+    ).toBe(
+      "\\\\?\\Volume{12345678-1234-1234-1234-123456789abc}\\folder\\example",
+    );
+  });
+
   it("returns empty for blank input", () => {
     expect(deriveExtractDestinationPath("")).toBe("");
     expect(deriveExtractFolderName("")).toBe("");
@@ -137,6 +155,22 @@ describe("deriveOutputArchivePath", () => {
   it("derives from a file input", () => {
     expect(deriveOutputArchivePath(["C:\\docs\\readme.txt"], "zip")).toBe(
       "C:\\docs\\readme.txt.zip",
+    );
+  });
+
+  it("derives outputs beside UNC and volume-GUID inputs", () => {
+    expect(
+      deriveOutputArchivePath(["\\\\server\\share\\folder\\readme.txt"], "zip"),
+    ).toBe("\\\\server\\share\\folder\\readme.txt.zip");
+    expect(
+      deriveOutputArchivePath(
+        [
+          "\\\\?\\Volume{12345678-1234-1234-1234-123456789abc}\\folder\\readme.txt",
+        ],
+        "7z",
+      ),
+    ).toBe(
+      "\\\\?\\Volume{12345678-1234-1234-1234-123456789abc}\\folder\\readme.txt.7z",
     );
   });
 
