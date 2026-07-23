@@ -296,8 +296,19 @@ fn current_user_identity() -> Result<WindowsUserIdentity, String> {
 }
 
 #[cfg(windows)]
+fn strip_extended_prefix(path: &str) -> String {
+    if let Some(stripped) = path.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{}", stripped)
+    } else if let Some(stripped) = path.strip_prefix(r"\\?\") {
+        stripped.to_string()
+    } else {
+        path.to_string()
+    }
+}
+
+#[cfg(windows)]
 fn restrict_directory_acl(path: &Path) -> Result<(), String> {
-    let path_str = path.to_string_lossy();
+    let path_str = strip_extended_prefix(&path.to_string_lossy());
     let identity = current_user_identity()?;
     // icacls accepts SID grants as *S-1-5-...
     let grant_user = format!("*{}:(OI)(CI)F", identity.sid);
@@ -330,7 +341,7 @@ fn read_directory_sddl(path: &Path) -> Result<String, String> {
     getrandom::fill(&mut random).map_err(|e| format!("Could not name ACL save file: {e}"))?;
     let token: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
     let save_path = std::env::temp_dir().join(format!("zinnia-acl-{token}.txt"));
-    let path_str = path.to_string_lossy();
+    let path_str = strip_extended_prefix(&path.to_string_lossy());
     let save_str = save_path.to_string_lossy();
     let save_result = run_icacls(&[path_str.as_ref(), "/save", save_str.as_ref()]);
     let content = std::fs::read(&save_path);
