@@ -25,9 +25,6 @@ pub fn probe_compress_input_paths(paths: &[String]) -> Result<CompressInputProbe
     let mut visited = 0u32;
     let mut hit_limit = false;
     for raw in paths {
-        if raw.contains('*') || raw.contains('?') {
-            continue;
-        }
         let path = PathBuf::from(raw);
         walk_path(&path, &mut probe, &mut visited, true, &mut hit_limit)?;
         if hit_limit {
@@ -72,7 +69,6 @@ fn walk_path(
 
     let meta = match std::fs::symlink_metadata(path) {
         Ok(meta) => meta,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => {
             return Err(format!(
                 "Unable to read compress input '{}': {error}",

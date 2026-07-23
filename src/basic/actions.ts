@@ -83,7 +83,10 @@ function loadInputs(paths: string[]): void {
   }
 }
 
-export async function handleBasicDrop(paths: string[]): Promise<void> {
+let basicDropPending = false;
+let basicActionPending = false;
+
+async function handleBasicDropOnce(paths: string[]): Promise<void> {
   if (paths.length === 0 || state.running) return;
 
   const { archives, others } = await partitionByArchive(paths);
@@ -136,7 +139,17 @@ export async function handleBasicDrop(paths: string[]): Promise<void> {
   }
 }
 
-export async function handleBasicCompressAction(): Promise<void> {
+export async function handleBasicDrop(paths: string[]): Promise<void> {
+  if (basicDropPending || state.running) return;
+  basicDropPending = true;
+  try {
+    await handleBasicDropOnce(paths);
+  } finally {
+    basicDropPending = false;
+  }
+}
+
+async function handleBasicCompressActionOnce(): Promise<void> {
   if (state.inputs.length === 0) {
     showBasicCompletion(
       "compress",
@@ -217,12 +230,22 @@ export async function handleBasicCompressAction(): Promise<void> {
   await runAction();
 }
 
+export async function handleBasicCompressAction(): Promise<void> {
+  if (basicActionPending || state.running) return;
+  basicActionPending = true;
+  try {
+    await handleBasicCompressActionOnce();
+  } finally {
+    basicActionPending = false;
+  }
+}
+
 export async function testArchivePassword(
   archive: string,
   password?: string,
 ): Promise<boolean> {
   try {
-    const args = ["t"];
+    const args = ["t", "-spd"];
     if (password) {
       args.push(`-p${password}`);
     }
@@ -246,7 +269,7 @@ export async function isArchiveEncrypted(
   }
 
   try {
-    const args = ["l", "-slt", "--", archivePath];
+    const args = ["l", "-slt", "-spd", "--", archivePath];
     const result = await invoke<Run7zResult>("run_7z", { args });
     if (result.code > 1) {
       return looksLikePasswordRequiredError(result.stdout, result.stderr);
@@ -258,7 +281,7 @@ export async function isArchiveEncrypted(
   }
 }
 
-export async function handleBasicExtractAction(): Promise<void> {
+async function handleBasicExtractActionOnce(): Promise<void> {
   const archive = state.inputs[0];
   if (!archive) {
     showBasicCompletion(
@@ -340,6 +363,16 @@ export async function handleBasicExtractAction(): Promise<void> {
   showBasicProgress("extract");
   hideBasicCompletion("extract");
   await runAction();
+}
+
+export async function handleBasicExtractAction(): Promise<void> {
+  if (basicActionPending || state.running) return;
+  basicActionPending = true;
+  try {
+    await handleBasicExtractActionOnce();
+  } finally {
+    basicActionPending = false;
+  }
 }
 
 export function togglePasswordVisibility(inputId: string, btnId: string): void {

@@ -1,6 +1,12 @@
 //! Tauri commands: run/probe/cancel 7z and shared command-output drain.
 
-use std::sync::Mutex;
+use shared_child::SharedChild;
+use std::{
+    io::{BufReader, Write},
+    process::Stdio,
+    sync::{Arc, Mutex, RwLock},
+};
+use tauri::async_runtime::{block_on, channel, Receiver, Sender};
 use tauri::{Emitter, Manager};
 use tauri_plugin_shell::process::{CommandEvent, TerminatedPayload};
 use tauri_plugin_shell::ShellExt;
@@ -19,6 +25,286 @@ use super::staging::{
     rewrite_archive_output, rewrite_extract_archive, rewrite_extract_output,
 };
 use super::{ensure_idle, lock_process, RunResult, RunningProcess};
+
+fn read_command_stream<R, F>(reader: R, tx: Sender<CommandEvent>, wrap: F)
+where
+    R: std::io::Read,
+    F: Fn(Vec<u8>) -> CommandEvent + Copy,
+{
+    let mut reader = BufReader::new(reader);
+    loop {
+        let mut bytes = Vec::new();
+        match tauri::utils::io::read_line(&mut reader, &mut bytes) {
+            Ok(0) => break,
+            Ok(_) => {
+                let tx = tx.clone();
+                let _ = block_on(async move { tx.send(wrap(bytes)).await });
+            }
+            Err(error) => {
+                let tx = tx.clone();
+                let _ =
+                    block_on(async move { tx.send(CommandEvent::Error(error.to_string())).await });
+                break;
+            }
+        }
+    }
+}
+
+struct ManagedListFile(std::path::PathBuf);
+
+impl Drop for ManagedListFile {
+    fn drop(&mut self) {
+        if let Err(error) = std::fs::remove_file(&self.0) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                eprintln!("Could not remove the temporary 7-Zip list file: {error}");
+            }
+        }
+        if let Some(parent) = self.0.parent() {
+            let _ = std::fs::remove_dir(parent);
+        }
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+pub(crate) fn rewrite_args_for_managed_listfile(
+    args: &mut Vec<String>,
+    listfile_reference: String,
+) -> Result<Vec<String>, String> {
+    let separator = args
+        .iter()
+        .position(|arg| arg == "--")
+        .ok_or_else(|| "The 7-Zip command is too large for Windows.".to_string())?;
+    let command = args.first().map(String::as_str);
+    let (archive, selected_start) = match command {
+        Some("a" | "u") => (None, separator + 1),
+        Some("x") => (
+            Some(
+                args.get(separator + 1)
+                    .cloned()
+                    .ok_or_else(|| "Extraction command is missing its archive.".to_string())?,
+            ),
+            separator + 2,
+        ),
+        _ => {
+            return Err(
+                "This selection is too large for the Windows command-line limit.".to_string(),
+            )
+        }
+    };
+    if selected_start >= args.len() {
+        return Err("The 7-Zip command is too large for Windows.".to_string());
+    }
+    let selected = args[selected_start..].to_vec();
+    args.truncate(separator);
+    if !args.iter().any(|arg| arg.eq_ignore_ascii_case("-scsUTF-8")) {
+        args.insert(1, "-scsUTF-8".to_string());
+    }
+    if let Some(archive) = archive {
+        // `@listfile` must occur before `--` to be expanded, but extraction's
+        // archive must remain the first positional argument.
+        args.push(archive);
+    }
+    args.push(listfile_reference);
+    Ok(selected)
+}
+
+#[cfg(target_os = "windows")]
+fn prepare_windows_listfile(args: &mut Vec<String>) -> Result<Option<ManagedListFile>, String> {
+    const SAFE_COMMAND_LINE_BYTES: usize = 20_000;
+    if args.iter().map(|arg| arg.len() + 3).sum::<usize>() <= SAFE_COMMAND_LINE_BYTES {
+        return Ok(None);
+    }
+    let token = super::staging::random_token()?;
+    let private_dir = std::env::temp_dir().join(format!("zinnia-7z-list-{token}"));
+    crate::fs_secure::create_private_dir(&private_dir)
+        .map_err(|error| format!("Could not secure the 7-Zip list directory: {error}"))?;
+    let listfile = ManagedListFile(private_dir.join("items.txt"));
+    let selected =
+        rewrite_args_for_managed_listfile(args, format!("@{}", listfile.0.to_string_lossy()))?;
+    if selected.iter().any(|path| path.contains(['\r', '\n'])) {
+        return Err(
+            "A selected path contains a line break and cannot be placed in a Windows 7-Zip list file."
+                .to_string(),
+        );
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    let mut file = options
+        .open(&listfile.0)
+        .map_err(|error| format!("Could not create a private 7-Zip list file: {error}"))?;
+    for path in &selected {
+        file.write_all(path.as_bytes())
+            .and_then(|_| file.write_all(b"\r\n"))
+            .map_err(|error| format!("Could not write the 7-Zip list file: {error}"))?;
+    }
+    file.flush()
+        .map_err(|error| format!("Could not finish the 7-Zip list file: {error}"))?;
+    Ok(Some(listfile))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn prepare_windows_listfile(_args: &mut Vec<String>) -> Result<Option<ManagedListFile>, String> {
+    Ok(None)
+}
+
+pub(crate) fn terminate_child(child: &Arc<SharedChild>) {
+    let _ = child.kill();
+    match child.wait_timeout(std::time::Duration::from_secs(5)) {
+        Ok(Some(_)) => {}
+        Ok(None) | Err(_) => {
+            // Never hold the command/UI path indefinitely if termination failed.
+            // Keep an owner alive and reap asynchronously if the process exits later.
+            let child = Arc::clone(child);
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
+    }
+}
+
+/// Spawn bundled 7-Zip with a closed/noninteractive stdin while retaining a
+/// shared native child handle for cancellation and quota enforcement.
+pub(crate) fn spawn_7z_noninteractive(
+    app: &tauri::AppHandle,
+    mut args: Vec<String>,
+) -> Result<(Receiver<CommandEvent>, Arc<SharedChild>), String> {
+    // A command-line password is visible to same-user process inspection on
+    // several desktop platforms. Remove it before spawn and answer 7-Zip's
+    // password prompt through a short-lived pipe instead. Multiple copies
+    // cover create-time confirmation and a single retry; EOF then guarantees
+    // that no unexpected prompt can leave the process waiting forever.
+    let mut password = None;
+    args.retain(|arg| {
+        if arg
+            .get(..2)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("-p"))
+            && arg.len() > 2
+        {
+            password = Some(arg[2..].to_string());
+            false
+        } else {
+            true
+        }
+    });
+    if password
+        .as_deref()
+        .is_some_and(|value| value.contains(['\r', '\n']))
+    {
+        return Err("Archive passwords cannot contain line breaks.".to_string());
+    }
+    let listfile = prepare_windows_listfile(&mut args)?;
+    let plugin_command = app
+        .shell()
+        .sidecar("7z")
+        .map_err(|error| error.to_string())?
+        .args(args);
+    let mut command: std::process::Command = plugin_command.into();
+    command
+        .stdin(if password.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let child = Arc::new(SharedChild::spawn(&mut command).map_err(|error| error.to_string())?);
+    let setup = (|| {
+        if let Some(password) = password {
+            let mut stdin = child
+                .take_stdin()
+                .ok_or_else(|| "Could not open 7-Zip password input.".to_string())?;
+            for _ in 0..3 {
+                stdin
+                    .write_all(password.as_bytes())
+                    .and_then(|_| stdin.write_all(b"\n"))
+                    .map_err(|error| format!("Could not provide the archive password: {error}"))?;
+            }
+            drop(stdin);
+        }
+        let stdout = child
+            .take_stdout()
+            .ok_or_else(|| "Could not capture 7-Zip stdout.".to_string())?;
+        let stderr = child
+            .take_stderr()
+            .ok_or_else(|| "Could not capture 7-Zip stderr.".to_string())?;
+        Ok::<_, String>((stdout, stderr))
+    })();
+    let (stdout, stderr) = match setup {
+        Ok(streams) => streams,
+        Err(error) => {
+            terminate_child(&child);
+            return Err(error);
+        }
+    };
+    let (tx, rx) = channel(1);
+    let readers = Arc::new(RwLock::new(()));
+    for (reader, wrap) in [
+        (
+            Box::new(stdout) as Box<dyn std::io::Read + Send>,
+            CommandEvent::Stdout as fn(Vec<u8>) -> CommandEvent,
+        ),
+        (
+            Box::new(stderr) as Box<dyn std::io::Read + Send>,
+            CommandEvent::Stderr as fn(Vec<u8>) -> CommandEvent,
+        ),
+    ] {
+        let tx = tx.clone();
+        let readers = readers.clone();
+        std::thread::spawn(move || {
+            let _guard = readers
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            read_command_stream(reader, tx, wrap);
+        });
+    }
+    let wait_child = child.clone();
+    std::thread::spawn(move || {
+        let event = match wait_child.wait() {
+            Ok(status) => {
+                // Wait for both pipe readers to finish before termination, so
+                // collection never drops the final stdout/stderr records.
+                let _guard = readers
+                    .write()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                #[cfg(unix)]
+                let signal = {
+                    use std::os::unix::process::ExitStatusExt;
+                    status.signal()
+                };
+                #[cfg(windows)]
+                let signal = None;
+                CommandEvent::Terminated(TerminatedPayload {
+                    code: status.code(),
+                    signal,
+                })
+            }
+            Err(error) => CommandEvent::Error(error.to_string()),
+        };
+        drop(listfile);
+        let _ = block_on(async move { tx.send(event).await });
+    });
+    Ok((rx, child))
+}
+
+pub(crate) fn harden_7z_args(args: &mut Vec<String>) {
+    let command = args.first().cloned();
+    let command = command.as_deref();
+    if matches!(command, Some("a" | "u" | "x" | "l" | "t"))
+        && !args.iter().any(|arg| arg.eq_ignore_ascii_case("-spd"))
+    {
+        args.insert(1, "-spd".to_string());
+    }
+    #[cfg(target_os = "windows")]
+    if matches!(command, Some("a" | "u" | "x" | "l" | "t"))
+        && !args.iter().any(|arg| arg.eq_ignore_ascii_case("-sccUTF-8"))
+    {
+        args.insert(1, "-sccUTF-8".to_string());
+    }
+    #[cfg(not(target_os = "windows"))]
+    if command == Some("x") && !args.iter().any(|arg| arg.eq_ignore_ascii_case("-spod")) {
+        args.insert(1, "-spod".to_string());
+    }
+}
 
 /// Parsed bundled 7-Zip version from the last successful `probe_7z` (e.g. "26.02").
 static PROBED_7Z_VERSION: Mutex<Option<String>> = Mutex::new(None);
@@ -41,14 +327,21 @@ fn assert_compress_inputs_are_real_paths(
         return Ok(());
     };
     let inputs: Vec<String> = args.iter().skip(separator + 1).cloned().collect();
+    let single_stream = args.iter().any(|arg| {
+        matches!(
+            arg.to_ascii_lowercase().as_str(),
+            "-tgzip" | "-tbzip2" | "-txz"
+        )
+    });
+    if single_stream && inputs.len() != 1 {
+        return Err(
+            "GZIP, BZIP2, and XZ compression require exactly one regular input file.".to_string(),
+        );
+    }
     for path in &inputs {
-        if path.contains('*') || path.contains('?') {
-            continue;
-        }
         let fs_path = std::path::Path::new(path);
         let meta = match std::fs::symlink_metadata(fs_path) {
             Ok(meta) => meta,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             Err(error) => {
                 return Err(format!("Unable to read input path '{path}': {error}"));
             }
@@ -62,6 +355,11 @@ fn assert_compress_inputs_are_real_paths(
             }
             return Err(format!(
                 "Choose the real file or folder, not a symbolic link or reparse point: {path}"
+            ));
+        }
+        if single_stream && !meta.is_file() {
+            return Err(format!(
+                "GZIP, BZIP2, and XZ compression require one regular file, not a directory or special entry: {path}"
             ));
         }
     }
@@ -229,6 +527,7 @@ pub async fn run_7z(
     assert_compress_inputs_are_real_paths(&app, &args)?;
 
     let mut args = args;
+    harden_7z_args(&mut args);
     // Always store symlinks/hardlinks as links on create/update (macOS .app /
     // .framework trees). Frontend also passes these; inject here so a malformed
     // webview cannot omit them and cause 7-Zip to follow nested links.
@@ -467,8 +766,8 @@ pub async fn run_7z(
     }
 
     let mut rx = {
-        let command = match app.shell().sidecar("7z") {
-            Ok(command) => command.args(execution_args.clone()),
+        let (rx, child) = match spawn_7z_noninteractive(&app, execution_args.clone()) {
+            Ok(result) => result,
             Err(e) => {
                 if let Ok(mut process) = lock_process(&state) {
                     process.preparing = false;
@@ -494,39 +793,42 @@ pub async fn run_7z(
             }
         };
 
-        let mut process = lock_process(&state)?;
-        if process.cancelling {
-            process.preparing = false;
-            process.cancelling = false;
-            process.owner_label = None;
-            drop(process);
-            rollback_cleanup(&cleanup_plan)?;
-            journal_guard.clear()?;
-            return Err("Archive operation was cancelled during preparation.".to_string());
-        }
-
-        let (rx, child) = match command.spawn() {
-            Ok(result) => result,
-            Err(e) => {
+        let mut process = match lock_process(&state) {
+            Ok(process) => process,
+            Err(error) => {
+                terminate_child(&child);
                 let rollback_error = rollback_cleanup(&cleanup_plan).err();
                 let journal_error = if rollback_error.is_none() {
                     journal_guard.clear().err()
                 } else {
                     None
                 };
-                process.preparing = false;
-                process.owner_label = None;
                 return Err(match rollback_error {
-                    Some(rollback_error) => format!("{e}; rollback also failed: {rollback_error}"),
-                    None => match journal_error {
-                        Some(journal_error) => {
-                            format!("{e}; recovery journal cleanup also failed: {journal_error}")
+                    Some(rollback_error) => {
+                        format!("{error}; staging cleanup also failed: {rollback_error}")
+                    }
+                    None => {
+                        match journal_error {
+                            Some(journal_error) => {
+                                format!("{error}; recovery journal cleanup also failed: {journal_error}")
+                            }
+                            None => error,
                         }
-                        None => e.to_string(),
-                    },
+                    }
                 });
             }
         };
+        if process.cancelling {
+            process.preparing = false;
+            process.cancelling = false;
+            process.owner_label = None;
+            drop(process);
+            terminate_child(&child);
+            rollback_cleanup(&cleanup_plan)?;
+            journal_guard.clear()?;
+            return Err("Archive operation was cancelled during preparation.".to_string());
+        }
+
         process.child = Some(child);
         process.preparing = false;
         process.cancelling = false;
@@ -614,10 +916,6 @@ pub async fn run_7z(
     let finalize_plan = cleanup_plan.clone();
     let finalize_window = window.clone();
     let finalize_emit = emit_window.clone();
-    let cleared_quarantine_apps = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
-    let cleared_for_finalize = cleared_quarantine_apps.clone();
-    let restored_execute_bits = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
-    let restored_for_finalize = restored_execute_bits.clone();
     let finalize_join = tokio::task::spawn_blocking(move || {
         if was_cancelled || exit_code != 0 {
             if let Err(error) = rollback_cleanup(&finalize_plan) {
@@ -638,17 +936,7 @@ pub async fn run_7z(
                 },
             );
             match commit_cleanup(&finalize_app, &finalize_plan) {
-                Ok(outcome) => {
-                    cleared_for_finalize.store(
-                        outcome.cleared_quarantine_apps,
-                        std::sync::atomic::Ordering::Relaxed,
-                    );
-                    restored_for_finalize.store(
-                        outcome.restored_execute_bits,
-                        std::sync::atomic::Ordering::Relaxed,
-                    );
-                    Ok(())
-                }
+                Ok(()) => Ok(()),
                 Err(error) => {
                     if commit_failure_should_scrub_staging(&finalize_plan, &error) {
                         // Safe orphan scrub (add-mode / no recovery backups).
@@ -697,22 +985,6 @@ pub async fn run_7z(
         code: exit_code,
         stdout_truncated: collected.stdout_truncated,
         stderr_truncated: collected.stderr_truncated,
-        cleared_quarantine_apps: {
-            let count = cleared_quarantine_apps.load(std::sync::atomic::Ordering::Relaxed);
-            if count > 0 {
-                Some(count)
-            } else {
-                None
-            }
-        },
-        restored_execute_bits: {
-            let count = restored_execute_bits.load(std::sync::atomic::Ordering::Relaxed);
-            if count > 0 {
-                Some(count)
-            } else {
-                None
-            }
-        },
     })
 }
 
@@ -732,13 +1004,7 @@ pub async fn probe_7z(
     }
 
     let result = async {
-        let command = app
-            .shell()
-            .sidecar("7z")
-            .map_err(|e| e.to_string())?
-            .args(["i"]);
-
-        let (mut rx, child) = command.spawn().map_err(|e| e.to_string())?;
+        let (mut rx, child) = spawn_7z_noninteractive(&app, vec!["i".to_string()])?;
 
         let probe = async {
             let collected = collect_command_output(&mut rx, PROBE_OUTPUT_LIMIT, |_| {}).await;

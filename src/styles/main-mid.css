@@ -296,7 +296,7 @@ select:hover {
 input:focus-visible,
 select:focus-visible {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--accent-fg);
   box-shadow: 0 0 0 2px var(--accent-bg);
 }
 
@@ -356,7 +356,7 @@ input[type="number"] {
 
 .toggle input[type="checkbox"]:checked {
   background: var(--accent);
-  border-color: var(--accent);
+  border-color: var(--accent-fg);
 }
 
 .toggle input[type="checkbox"]:checked::after {
@@ -407,20 +407,20 @@ input[type="number"] {
 .btn--primary {
   background: var(--accent);
   color: var(--text-on-accent);
-  border-color: var(--accent);
+  border-color: var(--accent-fg);
   font-weight: 600;
   box-shadow: 0 0 0 1px var(--accent-shadow);
 }
 
 .btn--primary:hover {
   background: var(--accent-hover);
-  border-color: var(--accent-hover);
+  border-color: var(--accent-fg-hover);
   box-shadow: 0 1px 8px var(--accent-shadow-hover);
 }
 
 .btn--primary:active {
   background: var(--accent-pressed);
-  border-color: var(--accent-pressed);
+  border-color: var(--accent-fg-pressed);
 }
 
 .btn--danger {
@@ -452,27 +452,27 @@ input[type="number"] {
 }
 
 .btn--ghost.is-active {
-  color: var(--accent);
+  color: var(--accent-fg);
   background: var(--accent-bg);
 }
 
 .btn--accent-outline {
   background: transparent;
-  color: var(--accent);
-  border-color: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent-fg);
   font-weight: 600;
 }
 
 .btn--accent-outline:hover {
   background: var(--accent-bg);
-  border-color: var(--accent-hover);
-  color: var(--accent-hover);
+  border-color: var(--accent-fg-hover);
+  color: var(--accent-fg-hover);
 }
 
 .btn--accent-outline:active {
   background: var(--accent-bg);
-  border-color: var(--accent-pressed);
-  color: var(--accent-pressed);
+  border-color: var(--accent-fg-pressed);
+  color: var(--accent-fg-pressed);
 }
 
 .btn--sm {
@@ -518,7 +518,7 @@ input[type="number"] {
 }
 
 .list--dragover {
-  border-color: var(--accent);
+  border-color: var(--accent-fg);
   border-width: 2px;
   border-style: dashed;
   background: var(--drag-bg);
@@ -529,7 +529,7 @@ input[type="number"] {
   content: "Drop files to add";
   display: block;
   text-align: center;
-  color: var(--accent);
+  color: var(--accent-fg);
   font-size: 0.8125rem;
   padding: 20px;
   font-weight: 500;
@@ -545,7 +545,6 @@ input[type="number"] {
   padding: 12px 10px;
   font-size: 0.75rem;
   text-align: center;
-  opacity: 0.7;
   user-select: none;
 }
 
@@ -1060,11 +1059,11 @@ input[type="number"] {
 }
 
 .setup-wizard-choice-btn:hover {
-  border-color: var(--accent);
+  border-color: var(--accent-fg);
 }
 
 .setup-wizard-choice-btn--active {
-  border-color: var(--accent);
+  border-color: var(--accent-fg);
   background: var(--accent-bg);
 }
 
@@ -1348,7 +1347,7 @@ input[type="number"] {
 
 .browse-table .is-folder td:first-child {
   font-weight: 500;
-  color: var(--accent);
+  color: var(--accent-fg);
 }
 
 .browse-table .size-col {
@@ -1624,7 +1623,7 @@ input[type="number"] {
   flex-shrink: 0;
   font-size: 0.625rem;
   background: var(--accent-bg);
-  color: var(--accent);
+  color: var(--accent-fg);
   padding: 2px 8px;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -1639,7 +1638,7 @@ input[type="number"] {
 }
 
 .license-card__body a {
-  color: var(--accent);
+  color: var(--accent-fg);
   text-decoration: none;
 }
 

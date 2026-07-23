@@ -30,6 +30,7 @@ export type ArchiveTestResult =
 export async function testArchive(): Promise<ArchiveTestResult> {
   if (state.running) return "cancelled";
   setRunning(true);
+  state.cancelRequested = false;
   try {
     const archive = state.inputs[0];
     if (!archive) {
@@ -48,14 +49,18 @@ export async function testArchive(): Promise<ArchiveTestResult> {
 
     const passwordField =
       getMode() === "browse" ? "browse-password" : "extract-password";
-    const password = $<HTMLInputElement>(passwordField).value.trim();
-    const args = ["t"];
+    const password = $<HTMLInputElement>(passwordField).value;
+    const args = ["t", "-spd"];
     if (password) args.push(`-p${password}`);
     args.push("--", archive);
 
     if (!(await ensureRuntimeReady())) return "error";
     setStatus("Testing archive integrity");
     const result = await invoke<Run7zResult>("run_7z", { args });
+    if (state.cancelRequested) {
+      setStatus("Cancelled", 2000);
+      return "cancelled";
+    }
     logCommandResult(result.stdout, result.stderr);
     logTruncationNotice(result);
 
@@ -108,6 +113,7 @@ export async function testArchive(): Promise<ArchiveTestResult> {
 export async function browseArchive(): Promise<ArchiveInfo | null> {
   if (state.running) return null;
   setRunning(true);
+  state.cancelRequested = false;
   try {
     const archive = state.inputs[0];
     if (!archive) {
@@ -124,14 +130,18 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
       return null;
     }
 
-    const password = $<HTMLInputElement>("browse-password").value.trim();
-    const args = ["l", "-slt"];
+    const password = $<HTMLInputElement>("browse-password").value;
+    const args = ["l", "-slt", "-spd"];
     if (password) args.push(`-p${password}`);
     args.push("--", archive);
 
     if (!(await ensureRuntimeReady())) return null;
     setStatus("Listing archive contents");
     const result = await invoke<Run7zResult>("run_7z", { args });
+    if (state.cancelRequested) {
+      setStatus("Cancelled", 2000);
+      return null;
+    }
     logTruncationNotice(result);
 
     if (result.code !== 0) {

@@ -29,11 +29,23 @@ const TARGETS = [
   "darwin-aarch64",
   "darwin-x86_64",
   "linux-x86_64",
+  "linux-aarch64",
   "windows-beta-x86_64",
+  "windows-beta-x86_64-nsis",
   "windows-beta-aarch64",
+  "windows-beta-aarch64-nsis",
   "darwin-beta-aarch64",
+  "darwin-beta-aarch64-app",
   "darwin-beta-x86_64",
+  "darwin-beta-x86_64-app",
   "linux-beta-x86_64",
+  "linux-beta-x86_64-appimage",
+  "linux-beta-x86_64-deb",
+  "linux-beta-x86_64-rpm",
+  "linux-beta-aarch64",
+  "linux-beta-aarch64-appimage",
+  "linux-beta-aarch64-deb",
+  "linux-beta-aarch64-rpm",
 ];
 
 const BASE = "https://github.com/BurntToasters/zinnia/releases/latest/download";
@@ -88,6 +100,12 @@ try {
     }
     console.warn(message);
     process.exit(0);
+  }
+  if (requireLive && skipped > 0) {
+    console.error(
+      `updater-live: ${skipped} required platform manifest${skipped === 1 ? " is" : "s are"} missing (REQUIRE_UPDATER_LIVE=1)`,
+    );
+    process.exit(1);
   }
 
   const check = spawnSync(process.execPath, [validator, ...files], {

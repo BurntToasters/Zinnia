@@ -44,12 +44,9 @@ export function buildExtractArgsFor(
   passwordOverride?: string,
   destinationOverride?: string,
 ): string[] {
-  const dest =
-    destinationOverride?.trim() ??
-    $<HTMLInputElement>("extract-path").value.trim();
-  const password = (
-    passwordOverride ?? $<HTMLInputElement>("extract-password").value
-  ).trim();
+  const dest = destinationOverride ?? $<HTMLInputElement>("extract-path").value;
+  const password =
+    passwordOverride ?? $<HTMLInputElement>("extract-password").value;
   const extraArgs = splitArgs(
     $<HTMLInputElement>("extract-extra-args").value.trim(),
   );
@@ -110,6 +107,26 @@ export function validateCompressionInputShape(
   return null;
 }
 
+const OUTPUT_SUFFIXES: Record<string, string[]> = {
+  "7z": [".7z"],
+  zip: [".zip"],
+  tar: [".tar"],
+  gzip: [".gz", ".tgz"],
+  bzip2: [".bz2", ".tbz2"],
+  xz: [".xz", ".txz"],
+};
+
+export function validateArchiveOutputExtension(
+  outputPath: string,
+  format: string,
+): string | null {
+  const suffixes = OUTPUT_SUFFIXES[format];
+  if (!suffixes) return `Unsupported archive format: ${format}`;
+  const lower = outputPath.toLocaleLowerCase("en-US");
+  if (suffixes.some((suffix) => lower.endsWith(suffix))) return null;
+  return `Output filename must end in ${suffixes.join(" or ")} for ${format.toUpperCase()} format.`;
+}
+
 export function buildArgs() {
   const mode = getMode();
 
@@ -124,7 +141,7 @@ export function buildArgs() {
     validateExtraArgs(extraArgs);
   }
 
-  const outputPath = $<HTMLInputElement>("output-path").value.trim();
+  const outputPath = $<HTMLInputElement>("output-path").value;
   if (!outputPath) {
     throw new Error("Choose an output archive path.");
   }
@@ -133,6 +150,8 @@ export function buildArgs() {
   }
 
   const format = $<HTMLSelectElement>("format").value;
+  const extensionError = validateArchiveOutputExtension(outputPath, format);
+  if (extensionError) throw new Error(extensionError);
   const inputShapeError = validateCompressionInputShape(
     format,
     state.inputs.length,
@@ -164,6 +183,7 @@ export function buildArgs() {
     "-sse",
     "-snl",
     "-snh",
+    "-spd",
     ...buildCompressionMethodSwitches(format),
   ];
   if (password) switches.push(`-p${password}`);

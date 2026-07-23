@@ -1,5 +1,5 @@
 import { setMode } from "../ui";
-import { testArchive } from "../archive";
+import { cancelAction, testArchive } from "../archive";
 import { setBasicView, syncBasicBrowsePasswordToPower } from "./sync";
 import { handleBasicExtractAction } from "./actions";
 
@@ -20,4 +20,9 @@ export function wireBasicBrowseEvents(): void {
       void testArchive();
     });
   }
+  document
+    .getElementById("basic-browse-cancel")
+    ?.addEventListener("click", () => {
+      void cancelAction();
+    });
 }

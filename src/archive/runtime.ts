@@ -23,10 +23,6 @@ export interface Run7zResult {
   code: number;
   stdout_truncated?: boolean;
   stderr_truncated?: boolean;
-  /** macOS: `.app` bundles whose Gatekeeper quarantine was cleared after extract. */
-  cleared_quarantine_apps?: number;
-  /** Unix: files that received an execute bit after extract. */
-  restored_execute_bits?: number;
 }
 
 interface ProgressUpdate {
@@ -181,11 +177,12 @@ export async function withLiveProgress<T>(fn: () => Promise<T>): Promise<T> {
 
 export async function runWithPasswordRetry(
   args: string[],
-  isExtract: boolean,
+  retryForMissingPassword: boolean,
+  confirmLabel = "Extract",
 ): Promise<Run7zResult> {
   let result = await invoke<Run7zResult>("run_7z", { args });
   if (
-    isExtract &&
+    retryForMissingPassword &&
     result.code > 1 &&
     looksLikePasswordRequiredError(result.stdout, result.stderr)
   ) {
@@ -193,7 +190,7 @@ export async function runWithPasswordRetry(
       title: "Password required",
       label: "This archive is encrypted. Enter password:",
       password: true,
-      confirmLabel: "Extract",
+      confirmLabel,
     });
     if (password) {
       setStatus("Retrying with password");

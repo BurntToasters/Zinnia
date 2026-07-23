@@ -27,6 +27,10 @@ import {
   selectEntries,
   toggleEntrySelection,
 } from "../selective-extract";
+
+function usesWindowsMemberPaths(): boolean {
+  return state.platformName === "windows" || state.platformName === "win32";
+}
 import type { TreeNode } from "../selective-extract";
 import { buildExtractArgsFor } from "./args";
 import { sanitizeCommandArgsForPreview } from "./preview";
@@ -39,6 +43,8 @@ import {
 } from "./runtime";
 
 let browseArchiveLoader: (() => Promise<ArchiveInfo | null>) | null = null;
+const MAX_RENDERED_BROWSE_ROWS = 1_000;
+const MAX_RENDERED_SELECTIVE_ROWS = 1_000;
 
 export function registerBrowseArchiveLoader(
   loader: () => Promise<ArchiveInfo | null>,
@@ -46,6 +52,60 @@ export function registerBrowseArchiveLoader(
   browseArchiveLoader = loader;
 }
 import { clearPasswordFields, showOperationError } from "./runtime";
+
+function renderBrowseRows(
+  tbody: HTMLElement,
+  entries: BrowseEntry[],
+  folderClass: string,
+): void {
+  tbody.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  if (entries.length === 0) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 4;
+    td.className = "browse-empty";
+    td.textContent = "Archive is empty.";
+    tr.appendChild(td);
+    fragment.appendChild(tr);
+    tbody.appendChild(fragment);
+    return;
+  }
+  for (const entry of entries.slice(0, MAX_RENDERED_BROWSE_ROWS)) {
+    const tr = document.createElement("tr");
+    if (entry.isFolder) tr.className = folderClass;
+
+    const tdName = document.createElement("td");
+    const iconName = entry.isFolder ? "folder" : "file";
+    tdName.innerHTML = `<i data-lucide="${iconName}" class="lucide-icon lucide-icon--inline"></i><span></span>`;
+    tdName.querySelector("span")!.textContent = entry.path;
+    tdName.title = entry.path;
+    tdName.classList.add("cell-break");
+
+    const tdSize = document.createElement("td");
+    tdSize.className = "size-col cell-tabular";
+    tdSize.textContent = entry.isFolder ? "-" : formatSize(entry.size);
+
+    const tdPacked = document.createElement("td");
+    tdPacked.className = "size-col cell-tabular";
+    tdPacked.textContent = entry.isFolder ? "-" : formatSize(entry.packedSize);
+
+    const tdModified = document.createElement("td");
+    tdModified.textContent = entry.modified;
+    tr.append(tdName, tdSize, tdPacked, tdModified);
+    fragment.appendChild(tr);
+  }
+  if (entries.length > MAX_RENDERED_BROWSE_ROWS) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 4;
+    td.className = "browse-empty";
+    td.textContent = `Showing the first ${MAX_RENDERED_BROWSE_ROWS.toLocaleString()} of ${entries.length.toLocaleString()} entries. Use selective extraction search to find other entries.`;
+    tr.appendChild(td);
+    fragment.appendChild(tr);
+  }
+  tbody.appendChild(fragment);
+}
 
 export function renderBrowseTable(info: ArchiveInfo) {
   const container = document.getElementById("browse-contents");
@@ -72,81 +132,11 @@ export function renderBrowseTable(info: ArchiveInfo) {
 
   const tbody = document.getElementById("browse-tbody");
   if (!tbody) return;
-  tbody.innerHTML = "";
-
-  if (info.entries.length === 0) {
-    const tr = document.createElement("tr");
-    const td = document.createElement("td");
-    td.colSpan = 4;
-    td.className = "browse-empty";
-    td.textContent = "Archive is empty.";
-    tr.appendChild(td);
-    tbody.appendChild(tr);
-    return;
-  }
-
-  for (const entry of info.entries) {
-    const tr = document.createElement("tr");
-    if (entry.isFolder) tr.className = "is-folder";
-
-    const tdName = document.createElement("td");
-    const iconName = entry.isFolder ? "folder" : "file";
-    tdName.innerHTML = `<i data-lucide="${iconName}" class="lucide-icon lucide-icon--inline"></i><span></span>`;
-    tdName.querySelector("span")!.textContent = entry.path;
-    tdName.title = entry.path;
-    tdName.classList.add("cell-break");
-
-    const tdSize = document.createElement("td");
-    tdSize.className = "size-col cell-tabular";
-    tdSize.textContent = entry.isFolder ? "-" : formatSize(entry.size);
-
-    const tdPacked = document.createElement("td");
-    tdPacked.className = "size-col cell-tabular";
-    tdPacked.textContent = entry.isFolder ? "-" : formatSize(entry.packedSize);
-
-    const tdModified = document.createElement("td");
-    tdModified.textContent = entry.modified;
-
-    tr.appendChild(tdName);
-    tr.appendChild(tdSize);
-    tr.appendChild(tdPacked);
-    tr.appendChild(tdModified);
-    tbody.appendChild(tr);
-  }
+  renderBrowseRows(tbody, info.entries, "is-folder");
 
   const basicTbody = document.getElementById("basic-browse-tbody");
   if (basicTbody) {
-    basicTbody.innerHTML = "";
-    for (const entry of info.entries) {
-      const tr = document.createElement("tr");
-      if (entry.isFolder) tr.className = "browse-folder";
-
-      const tdName = document.createElement("td");
-      const iconName = entry.isFolder ? "folder" : "file";
-      tdName.innerHTML = `<i data-lucide="${iconName}" class="lucide-icon lucide-icon--inline"></i><span></span>`;
-      tdName.querySelector("span")!.textContent = entry.path;
-      tdName.title = entry.path;
-      tdName.classList.add("cell-break");
-
-      const tdSize = document.createElement("td");
-      tdSize.classList.add("cell-tabular");
-      tdSize.textContent = entry.isFolder ? "-" : formatSize(entry.size);
-
-      const tdPacked = document.createElement("td");
-      tdPacked.classList.add("cell-tabular");
-      tdPacked.textContent = entry.isFolder
-        ? "-"
-        : formatSize(entry.packedSize);
-
-      const tdModified = document.createElement("td");
-      tdModified.textContent = entry.modified;
-
-      tr.appendChild(tdName);
-      tr.appendChild(tdSize);
-      tr.appendChild(tdPacked);
-      tr.appendChild(tdModified);
-      basicTbody.appendChild(tr);
-    }
+    renderBrowseRows(basicTbody, info.entries, "browse-folder");
   }
 
   const basicSummary = document.getElementById("basic-browse-summary");
@@ -194,7 +184,12 @@ function renderSelectiveFlatRow(
   checkbox.disabled = state.running;
   checkbox.addEventListener("change", () => {
     const current = getOrCreateSelection(archive);
-    const next = toggleEntrySelection(current, entry, allEntries);
+    const next = toggleEntrySelection(
+      current,
+      entry,
+      allEntries,
+      usesWindowsMemberPaths(),
+    );
     cacheSelection(archive, next);
     renderSelectiveExtractModal();
   });
@@ -221,7 +216,10 @@ function renderSelectiveTreeNode(
   node: TreeNode,
   allEntries: BrowseEntry[],
   list: HTMLElement,
+  budget: { remaining: number },
 ): void {
+  if (budget.remaining <= 0) return;
+  budget.remaining -= 1;
   const selected = getOrCreateSelection(archive);
   const row = document.createElement("div");
   row.className = "selective-row selective-row--tree";
@@ -267,7 +265,12 @@ function renderSelectiveTreeNode(
       packedSize: 0,
       modified: "",
     };
-    const next = toggleEntrySelection(current, entry, allEntries);
+    const next = toggleEntrySelection(
+      current,
+      entry,
+      allEntries,
+      usesWindowsMemberPaths(),
+    );
     cacheSelection(archive, next);
     renderSelectiveExtractModal();
   });
@@ -289,7 +292,7 @@ function renderSelectiveTreeNode(
 
   if (expandable && expanded) {
     for (const child of node.children) {
-      renderSelectiveTreeNode(archive, child, allEntries, list);
+      renderSelectiveTreeNode(archive, child, allEntries, list, budget);
     }
   }
 }
@@ -315,16 +318,30 @@ function renderSelectiveEntryList(
   // Searching shows a flat result list; otherwise a collapsible tree.
   if (searching) {
     list.removeAttribute("role");
-    for (const entry of entries) {
+    for (const entry of entries.slice(0, MAX_RENDERED_SELECTIVE_ROWS)) {
       list.appendChild(renderSelectiveFlatRow(archive, entry, allEntries));
+    }
+    if (entries.length > MAX_RENDERED_SELECTIVE_ROWS) {
+      const notice = document.createElement("div");
+      notice.className = "selective-empty";
+      notice.textContent = `Refine the search to view matches beyond the first ${MAX_RENDERED_SELECTIVE_ROWS.toLocaleString()}.`;
+      list.appendChild(notice);
     }
     return;
   }
 
   list.setAttribute("role", "tree");
 
-  for (const node of buildEntryTree(entries)) {
-    renderSelectiveTreeNode(archive, node, allEntries, list);
+  const budget = { remaining: MAX_RENDERED_SELECTIVE_ROWS };
+  for (const node of buildEntryTree(entries, usesWindowsMemberPaths())) {
+    renderSelectiveTreeNode(archive, node, allEntries, list, budget);
+    if (budget.remaining <= 0) break;
+  }
+  if (budget.remaining <= 0) {
+    const notice = document.createElement("div");
+    notice.className = "selective-empty";
+    notice.textContent = `Expand fewer folders or search to keep this view responsive. At most ${MAX_RENDERED_SELECTIVE_ROWS.toLocaleString()} rows are shown at once.`;
+    list.appendChild(notice);
   }
 }
 
@@ -371,7 +388,7 @@ function syncSelectiveDestinationWithExtractInput(): void {
     "extract-path",
   ) as HTMLInputElement | null;
   if (!selectiveDest || !extractPath) return;
-  selectiveDest.value = extractPath.value.trim();
+  selectiveDest.value = extractPath.value;
 }
 
 async function ensureArchiveInfoForPicker(
@@ -420,7 +437,12 @@ export function selectAllVisibleInPicker(): void {
     state.selectiveSearchQuery,
   );
   const current = getOrCreateSelection(archive);
-  const next = selectEntries(current, visibleEntries, info.entries);
+  const next = selectEntries(
+    current,
+    visibleEntries,
+    info.entries,
+    usesWindowsMemberPaths(),
+  );
   cacheSelection(archive, next);
   renderSelectiveExtractModal();
 }
@@ -433,8 +455,9 @@ export function clearPickerSelection(): void {
 }
 
 let selectiveTrigger: HTMLElement | null = null;
+let selectiveOpening = false;
 
-export async function openSelectiveExtractModal(): Promise<void> {
+async function openSelectiveExtractModalOnce(): Promise<void> {
   if (state.running) return;
   selectiveTrigger = document.activeElement as HTMLElement | null;
 
@@ -470,6 +493,21 @@ export async function openSelectiveExtractModal(): Promise<void> {
   ) as HTMLInputElement | null;
   if (search) search.value = "";
 
+  try {
+    // Render while the overlay is still hidden. Hostile member depth/length
+    // limits become a controlled dialog error instead of a half-open modal and
+    // an unhandled promise rejection.
+    renderSelectiveExtractModal();
+  } catch (err) {
+    closeSelectiveExtractModal();
+    const msg = err instanceof Error ? err.message : String(err);
+    await message(`This archive cannot be browsed safely: ${msg}`, {
+      title: "Archive browsing unavailable",
+      kind: "error",
+    });
+    return;
+  }
+
   const overlay = document.getElementById(
     "selective-overlay",
   ) as HTMLElement | null;
@@ -478,8 +516,16 @@ export async function openSelectiveExtractModal(): Promise<void> {
     const modal = overlay.querySelector<HTMLElement>(".modal");
     if (modal) trapFocus(modal);
   }
+}
 
-  renderSelectiveExtractModal();
+export async function openSelectiveExtractModal(): Promise<void> {
+  if (selectiveOpening || state.running) return;
+  selectiveOpening = true;
+  try {
+    await openSelectiveExtractModalOnce();
+  } finally {
+    selectiveOpening = false;
+  }
 }
 
 export async function runSelectiveExtractFromModal(): Promise<void> {
@@ -509,7 +555,7 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
     const destinationInput = document.getElementById(
       "selective-dest",
     ) as HTMLInputElement | null;
-    const destination = destinationInput?.value.trim() ?? "";
+    const destination = destinationInput?.value ?? "";
     if (!destination) throw new Error("Choose a destination folder.");
 
     const extractPathInput = $<HTMLInputElement>("extract-path");
@@ -518,9 +564,8 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
       state.lastAutoExtractDestination = null;
     }
 
-    const browsePassword = $<HTMLInputElement>("browse-password").value.trim();
-    const extractPassword =
-      $<HTMLInputElement>("extract-password").value.trim();
+    const browsePassword = $<HTMLInputElement>("browse-password").value;
+    const extractPassword = $<HTMLInputElement>("extract-password").value;
     const password = extractPassword || browsePassword;
 
     const selectedPaths = getCurrentArchiveSelectionPaths(archive, info);
@@ -568,34 +613,16 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
 
     if (result.code !== 0) {
       log(`7z exited with code ${result.code}`);
-      state.lastClearedQuarantineApps = null;
-      state.lastRestoredExecuteBits = null;
       setStatus("Error", 3000, result.stderr || "Operation failed.");
       hideProgress();
       await showOperationError(result.code, result.stdout, result.stderr);
     } else {
-      state.lastClearedQuarantineApps = result.cleared_quarantine_apps ?? null;
-      state.lastRestoredExecuteBits = result.restored_execute_bits ?? null;
       setStatus("Done", 2000);
       hideProgress();
-      const notes: string[] = [];
-      const cleared = result.cleared_quarantine_apps;
-      if (cleared && cleared > 0) {
-        notes.push(
-          `Cleared Gatekeeper quarantine on ${cleared} app bundle${cleared === 1 ? "" : "s"}`,
-        );
-      }
-      const execBits = result.restored_execute_bits;
-      if (execBits && execBits > 0) {
-        notes.push(
-          `restored execute permission on ${execBits} file${execBits === 1 ? "" : "s"}`,
-        );
-      }
-      const note = notes.length > 0 ? ` ${notes.join("; ")}.` : "";
       showToast(
         selectedPaths.length > 0
-          ? `Selected entries extracted.${note}`
-          : `Extraction complete.${note}`,
+          ? "Selected entries extracted."
+          : "Extraction complete.",
         "success",
       );
       clearPasswordFields();
@@ -629,7 +656,7 @@ export function syncDestinationWhilePickerOpen(value: string): void {
   ) as HTMLInputElement | null;
   if (!extractPath) return;
   extractPath.value = value;
-  if (value.trim() && value.trim() !== state.lastAutoExtractDestination) {
+  if (value && value !== state.lastAutoExtractDestination) {
     state.lastAutoExtractDestination = null;
   }
 }

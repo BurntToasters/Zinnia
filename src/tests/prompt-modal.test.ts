@@ -107,6 +107,19 @@ describe("promptInput", () => {
     expect(await p).toBeNull();
   });
 
+  it("rejects a concurrent prompt instead of sharing or overwriting it", async () => {
+    const first = promptInput({ title: "First", label: "Password" });
+    const second = promptInput({ title: "Second", label: "Other" });
+    expect(await second).toBeNull();
+    expect(document.getElementById("input-modal-title")?.textContent).toBe(
+      "First",
+    );
+    document
+      .getElementById("input-modal-cancel")
+      ?.dispatchEvent(new MouseEvent("click"));
+    expect(await first).toBeNull();
+  });
+
   it("returns null when required modal nodes are missing", async () => {
     const field = document.getElementById("input-modal-field");
     const parent = field?.parentElement;

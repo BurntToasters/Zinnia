@@ -39,31 +39,35 @@ export function clearPathSelection(): Set<string> {
   return new Set();
 }
 
-function normalizeFolderPath(path: string): string {
-  return path.replace(/[\\/]+$/g, "");
+function normalizeFolderPath(path: string, windowsPaths: boolean): string {
+  return windowsPaths
+    ? path.replace(/[\\/]+$/g, "")
+    : path.replace(/\/+$/g, "");
 }
 
 export function isPathWithinFolder(
   entryPath: string,
   folderPath: string,
+  windowsPaths = false,
 ): boolean {
-  const normalizedFolder = normalizeFolderPath(folderPath);
+  const normalizedFolder = normalizeFolderPath(folderPath, windowsPaths);
   if (!normalizedFolder) return entryPath === folderPath;
   if (entryPath === normalizedFolder) return true;
-  return (
-    entryPath.startsWith(`${normalizedFolder}/`) ||
-    entryPath.startsWith(`${normalizedFolder}\\`)
-  );
+  return windowsPaths
+    ? entryPath.startsWith(`${normalizedFolder}/`) ||
+        entryPath.startsWith(`${normalizedFolder}\\`)
+    : entryPath.startsWith(`${normalizedFolder}/`);
 }
 
 export function getRecursiveSelectionPaths(
   allEntries: BrowseEntry[],
   targetPath: string,
   isFolder: boolean,
+  windowsPaths = false,
 ): string[] {
   if (!isFolder) return [targetPath];
   const recursive = allEntries
-    .filter((entry) => isPathWithinFolder(entry.path, targetPath))
+    .filter((entry) => isPathWithinFolder(entry.path, targetPath, windowsPaths))
     .map((entry) => entry.path);
   return recursive.length > 0 ? recursive : [targetPath];
 }
@@ -72,11 +76,13 @@ export function toggleEntrySelection(
   current: Set<string>,
   targetEntry: BrowseEntry,
   allEntries: BrowseEntry[],
+  windowsPaths = false,
 ): Set<string> {
   const recursiveTargets = getRecursiveSelectionPaths(
     allEntries,
     targetEntry.path,
     targetEntry.isFolder,
+    windowsPaths,
   );
   const shouldSelect = recursiveTargets.some((path) => !current.has(path));
   const next = new Set(current);
@@ -92,6 +98,7 @@ export function selectEntries(
   current: Set<string>,
   targetEntries: BrowseEntry[],
   allEntries: BrowseEntry[],
+  windowsPaths = false,
 ): Set<string> {
   const next = new Set(current);
   for (const entry of targetEntries) {
@@ -99,6 +106,7 @@ export function selectEntries(
       allEntries,
       entry.path,
       entry.isFolder,
+      windowsPaths,
     );
     for (const path of recursiveTargets) next.add(path);
   }
@@ -114,13 +122,21 @@ export interface TreeNode {
   children: TreeNode[];
 }
 
-function splitPathSegments(path: string): string[] {
-  return path.split(/[\\/]+/).filter((s) => s.length > 0);
+export const MAX_ARCHIVE_TREE_DEPTH = 256;
+export const MAX_ARCHIVE_MEMBER_PATH_LENGTH = 32_768;
+
+function splitPathSegments(path: string, windowsPaths: boolean): string[] {
+  return path
+    .split(windowsPaths ? /[\\/]+/ : /\/+/)
+    .filter((s) => s.length > 0);
 }
 
 // Build a nested folder/file tree from flat archive entries. Intermediate
 // folders missing from the entry list are synthesized so the tree is complete.
-export function buildEntryTree(entries: BrowseEntry[]): TreeNode[] {
+export function buildEntryTree(
+  entries: BrowseEntry[],
+  windowsPaths = false,
+): TreeNode[] {
   const root: TreeNode = {
     name: "",
     path: "",
@@ -132,37 +148,44 @@ export function buildEntryTree(entries: BrowseEntry[]): TreeNode[] {
   const byPath = new Map<string, TreeNode>();
   byPath.set("", root);
 
-  const ensureNode = (
-    path: string,
-    isFolder: boolean,
-    size: number,
-  ): TreeNode => {
-    const existing = byPath.get(path);
-    if (existing) {
-      if (isFolder) existing.isFolder = true;
-      else existing.size = size;
-      return existing;
-    }
-    const segments = splitPathSegments(path);
-    const name = segments[segments.length - 1] ?? path;
-    const parentPath = segments.slice(0, -1).join("/");
-    const parent = ensureNode(parentPath, true, 0);
-    const node: TreeNode = {
-      name,
-      path,
-      isFolder,
-      size,
-      depth: segments.length - 1,
-      children: [],
-    };
-    parent.children.push(node);
-    byPath.set(path, node);
-    return node;
-  };
-
+  const separator = windowsPaths ? "\\" : "/";
   for (const entry of entries) {
-    const normalized = splitPathSegments(entry.path).join("/");
-    ensureNode(normalized, entry.isFolder, entry.size);
+    if (entry.path.length > MAX_ARCHIVE_MEMBER_PATH_LENGTH) {
+      throw new Error(
+        `Archive member path exceeds the ${MAX_ARCHIVE_MEMBER_PATH_LENGTH}-character browsing limit.`,
+      );
+    }
+    const segments = splitPathSegments(entry.path, windowsPaths);
+    if (segments.length > MAX_ARCHIVE_TREE_DEPTH) {
+      throw new Error(
+        `Archive member path exceeds the ${MAX_ARCHIVE_TREE_DEPTH}-level browsing limit.`,
+      );
+    }
+    let parent = root;
+    const pathSegments: string[] = [];
+    for (let index = 0; index < segments.length; index += 1) {
+      const name = segments[index];
+      pathSegments.push(name);
+      const nodePath = pathSegments.join(separator);
+      const isLeaf = index === segments.length - 1;
+      let node = byPath.get(nodePath);
+      if (!node) {
+        node = {
+          name,
+          path: nodePath,
+          isFolder: isLeaf ? entry.isFolder : true,
+          size: isLeaf && !entry.isFolder ? entry.size : 0,
+          depth: index,
+          children: [],
+        };
+        parent.children.push(node);
+        byPath.set(nodePath, node);
+      } else if (isLeaf) {
+        if (entry.isFolder) node.isFolder = true;
+        else node.size = entry.size;
+      }
+      parent = node;
+    }
   }
 
   sortTree(root);
@@ -170,11 +193,15 @@ export function buildEntryTree(entries: BrowseEntry[]): TreeNode[] {
 }
 
 function sortTree(node: TreeNode): void {
-  node.children.sort((a, b) => {
-    if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
-    return a.name.localeCompare(b.name);
-  });
-  for (const child of node.children) sortTree(child);
+  const pending = [node];
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    current.children.sort((a, b) => {
+      if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    pending.push(...current.children);
+  }
 }
 
 export type NodeCheckState = "checked" | "unchecked" | "indeterminate";
@@ -211,11 +238,11 @@ export function buildSelectiveExtractArgs(
   extraArgs: string[],
   selectedPaths: string[],
 ): string[] {
-  const args = ["x", `-o${destination}`, SAFE_EXTRACT_OVERWRITE_MODE];
+  const args = ["x", `-o${destination}`, SAFE_EXTRACT_OVERWRITE_MODE, "-spd"];
   if (password) args.push(`-p${password}`);
   args.push(...extraArgs);
   if (selectedPaths.length > 0) {
-    args.push("-spd", "--", archive, ...selectedPaths);
+    args.push("--", archive, ...selectedPaths);
   } else {
     args.push("--", archive);
   }

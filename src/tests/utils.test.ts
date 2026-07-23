@@ -283,4 +283,72 @@ describe("focus trap helpers", () => {
     alreadyInert.remove();
     overlay.remove();
   });
+
+  it("makes titlebar and header inert while a modal is open", () => {
+    const app = document.createElement("div");
+    app.id = "app";
+    const titlebar = document.createElement("div");
+    titlebar.id = "titlebar";
+    const closeBtn = document.createElement("button");
+    closeBtn.id = "titlebar-close";
+    titlebar.appendChild(closeBtn);
+    const header = document.createElement("header");
+    header.className = "header";
+    const settingsBtn = document.createElement("button");
+    settingsBtn.id = "open-settings";
+    header.appendChild(settingsBtn);
+    const overlay = document.createElement("div");
+    overlay.id = "settings-overlay";
+    const modal = document.createElement("div");
+    modal.className = "modal";
+    const modalBtn = document.createElement("button");
+    modal.appendChild(modalBtn);
+    overlay.appendChild(modal);
+    const main = document.createElement("main");
+    app.append(titlebar, header, overlay, main);
+    document.body.appendChild(app);
+    setVisibleForFocus(modalBtn, modal);
+
+    trapFocus(modal);
+    expect(Boolean(titlebar.inert)).toBe(true);
+    expect(Boolean(header.inert)).toBe(true);
+    expect(main.inert).toBe(true);
+    expect(closeBtn.disabled).toBe(false);
+    expect(settingsBtn.disabled).toBe(false);
+
+    releaseFocusTrap(modal);
+    expect(main.inert).toBe(false);
+    app.remove();
+  });
+
+  it("returns escaped focus to the modal on Tab", () => {
+    const outside = document.createElement("button");
+    const modal = document.createElement("div");
+    const first = document.createElement("button");
+    const last = document.createElement("button");
+    modal.append(first, last);
+    document.body.append(outside, modal);
+    setVisibleForFocus(first, modal);
+    setVisibleForFocus(last, modal);
+    trapFocus(modal);
+    outside.focus();
+
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Tab", bubbles: true }),
+    );
+    expect(document.activeElement).toBe(first);
+
+    outside.focus();
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Tab",
+        shiftKey: true,
+        bubbles: true,
+      }),
+    );
+    expect(document.activeElement).toBe(last);
+    releaseFocusTrap(modal);
+    outside.remove();
+    modal.remove();
+  });
 });

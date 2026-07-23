@@ -5,6 +5,8 @@ type AnyInvoke = (cmd: string, payload?: unknown) => unknown;
 function mountExtractDom(): void {
   document.body.innerHTML = `
     <div id="extract-app" class="extract-app">
+      <button id="titlebar-min">Minimize</button>
+      <button id="titlebar-close">Close</button>
       <div class="extract-header"><h1>Extracting</h1></div>
       <div class="extract-body">
         <span id="archive-name"></span>
@@ -43,6 +45,7 @@ async function setupAndRun(
     typeof vi.mocked<(typeof import("@tauri-apps/api/core"))["invoke"]>
   >;
   appWindow: {
+    minimize: ReturnType<typeof vi.fn>;
     close: ReturnType<typeof vi.fn>;
     destroy: ReturnType<typeof vi.fn>;
   };
@@ -67,6 +70,7 @@ async function setupAndRun(
   const invokeMock = vi.mocked(core.invoke);
   const progressUnlisten = vi.fn();
   const appWindow = {
+    minimize: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
     destroy: vi.fn().mockResolvedValue(undefined),
   };
@@ -264,7 +268,7 @@ describe("extract-window", () => {
     ).toBe("fatal extraction error");
   });
 
-  it("auto-closes after successful extraction", async () => {
+  it("keeps successful extraction visible until the user acts", async () => {
     vi.useFakeTimers();
 
     const { invokeMock } = await setupAndRun();
@@ -278,10 +282,19 @@ describe("extract-window", () => {
 
     expect(
       invokeMock.mock.calls.some(([name]) => name === "close_extract_window"),
-    ).toBe(true);
+    ).toBe(false);
   });
 
-  it("cancels auto-close when the user opens the destination", async () => {
+  it("wires the native minimize titlebar action", async () => {
+    const { appWindow } = await setupAndRun();
+
+    (document.getElementById("titlebar-min") as HTMLButtonElement).click();
+    await flushAsync();
+
+    expect(appWindow.minimize).toHaveBeenCalledOnce();
+  });
+
+  it("does not close after the user opens the destination", async () => {
     vi.useFakeTimers();
 
     const { invokeMock } = await setupAndRun();

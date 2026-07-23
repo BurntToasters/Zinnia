@@ -19,6 +19,7 @@ finish-args:
   - --filesystem=home
   # Common download / removable mount points outside $HOME (USB, etc.).
   - --filesystem=xdg-download
+  - --filesystem=/media
   - --filesystem=/run/media
   - --filesystem=/mnt
   # No --share=network: Flatpak builds update via the host store / reinstall,

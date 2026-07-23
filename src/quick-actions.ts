@@ -99,7 +99,7 @@ async function runQuickAction(
         );
         return false;
       }
-      const password = $<HTMLInputElement>("password").value.trim();
+      const password = $<HTMLInputElement>("password").value;
       if (!password) {
         setQuickActionFeedback(
           "Enter a password first, then run Encrypt + Run.",

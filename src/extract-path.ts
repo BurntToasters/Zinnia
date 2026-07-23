@@ -97,10 +97,10 @@ export function shouldAutofillExtractDestination(
   currentValue: string,
   lastAutoValue: string | null,
 ): boolean {
-  const current = currentValue.trim();
+  const current = currentValue;
   if (!current) return true;
   if (!lastAutoValue) return false;
-  return current === lastAutoValue.trim();
+  return current === lastAutoValue;
 }
 
 export function resolveExtractDestinationAutofill(
@@ -176,13 +176,11 @@ export function deriveOutputArchivePath(
   if (!first) return null;
   const { parent, name, separator } = splitPathParts(first);
   if (!name) return null;
-  const trimmedCustomName = customName?.trim();
-  const archiveStem =
-    trimmedCustomName && trimmedCustomName.length > 0
-      ? trimmedCustomName
-      : name;
+  const archiveStem = customName && customName.length > 0 ? customName : name;
   if (!archiveStem) return null;
-  const fileName = `${archiveStem}.${format}`;
+  const extension =
+    format === "gzip" ? "gz" : format === "bzip2" ? "bz2" : format;
+  const fileName = `${archiveStem}.${extension}`;
   if (isPreferredCompressParent(parent)) {
     return joinPath(parent, fileName, separator);
   }
@@ -199,10 +197,10 @@ export function shouldAutofillOutputPath(
   currentValue: string,
   lastAutoValue: string | null,
 ): boolean {
-  const current = currentValue.trim();
+  const current = currentValue;
   if (!current) return true;
   if (!lastAutoValue) return false;
-  return current === lastAutoValue.trim();
+  return current === lastAutoValue;
 }
 
 export function resolveOutputArchiveAutofill(

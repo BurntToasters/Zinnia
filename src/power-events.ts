@@ -137,9 +137,8 @@ export function wireEvents() {
     ) as HTMLInputElement | null;
     if (!outputPathInput) return;
     const format = $<HTMLSelectElement>("format").value;
-    const trimmedName = archiveNameInput?.value.trim();
-    const customName =
-      trimmedName && trimmedName.length > 0 ? trimmedName : undefined;
+    const rawName = archiveNameInput?.value;
+    const customName = rawName && rawName.length > 0 ? rawName : undefined;
     const next = resolveOutputArchiveAutofill(
       outputPathInput.value,
       state.lastAutoOutputPath,
@@ -201,6 +200,7 @@ export function wireEvents() {
   $("test-integrity").addEventListener("click", testArchive);
 
   $("browse-list").addEventListener("click", browseArchive);
+  $("browse-cancel").addEventListener("click", cancelAction);
   $("browse-test").addEventListener("click", testArchive);
   $("browse-extract").addEventListener("click", () => setMode("extract"));
   $("browse-selective").addEventListener("click", () => {
@@ -300,8 +300,8 @@ export function wireEvents() {
   });
 
   $("output-path").addEventListener("input", () => {
-    const value = $<HTMLInputElement>("output-path").value.trim();
-    if (value !== (state.lastAutoOutputPath ?? "").trim()) {
+    const value = $<HTMLInputElement>("output-path").value;
+    if (value !== (state.lastAutoOutputPath ?? "")) {
       state.lastAutoOutputPath = null;
     }
   });
@@ -311,7 +311,7 @@ export function wireEvents() {
     const outputPathInput = $<HTMLInputElement>("output-path");
     const archiveNameInput = $<HTMLInputElement>("archive-name");
     const format = $<HTMLSelectElement>("format").value;
-    const customName = archiveNameInput.value.trim() || undefined;
+    const customName = archiveNameInput.value || undefined;
     const next = deriveOutputArchivePath(state.inputs, format, customName);
     if (next) {
       outputPathInput.value = next;
@@ -340,7 +340,7 @@ export function wireEvents() {
   wirePasswordToggle("extract-password", "toggle-extract-password");
 
   $("extract-path").addEventListener("input", () => {
-    const value = $<HTMLInputElement>("extract-path").value.trim();
+    const value = $<HTMLInputElement>("extract-path").value;
     if (value && value !== state.lastAutoExtractDestination) {
       state.lastAutoExtractDestination = null;
     }
@@ -463,6 +463,7 @@ export function wireEvents() {
       // alongside the persisted settings and diagnostics history.
       try {
         localStorage.removeItem(BASIC_RECENT_ARCHIVES_KEY);
+        sessionStorage.removeItem(BASIC_RECENT_ARCHIVES_KEY);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(`Failed to clear recent archives during reset: ${msg}`);

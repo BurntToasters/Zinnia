@@ -99,10 +99,10 @@ describe("looksLikePasswordRequiredError", () => {
     ).toBe(true);
   });
 
-  it("detects 'data error in encrypted file'", () => {
+  it("does not mistake corrupted encrypted data for a password prompt", () => {
     expect(
       looksLikePasswordRequiredError("", "Data Error in encrypted file: x.dat"),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("detects 'encrypted headers'", () => {
@@ -115,9 +115,9 @@ describe("looksLikePasswordRequiredError", () => {
     expect(looksLikePasswordRequiredError("Enter password:", "")).toBe(true);
   });
 
-  it("detects 'is encrypted'", () => {
+  it("requires an actionable password diagnostic", () => {
     expect(looksLikePasswordRequiredError("Archive is encrypted", "")).toBe(
-      true,
+      false,
     );
   });
 

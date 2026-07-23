@@ -53,10 +53,6 @@ export const state = {
   logDirectory: "",
   lastAutoExtractDestination: null as string | null,
   lastAutoOutputPath: null as string | null,
-  /** macOS extract: Gatekeeper quarantine cleared on this many `.app` bundles. */
-  lastClearedQuarantineApps: null as number | null,
-  /** Unix extract: files that received a restored execute bit. */
-  lastRestoredExecuteBits: null as number | null,
   browseArchiveInfoByPath: new Map<string, ArchiveInfo>(),
   browseSelectionsByArchive: new Map<string, Set<string>>(),
   selectiveSearchQuery: "",

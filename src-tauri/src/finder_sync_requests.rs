@@ -4,6 +4,7 @@
 
 use std::ffi::CStr;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use objc2_foundation::{NSFileManager, NSString};
@@ -14,10 +15,11 @@ const REQUESTS_DIRECTORY: &str = "FinderSyncRequests";
 const MAX_REQUESTS_PER_DRAIN: usize = 100;
 const MAX_PATHS_PER_REQUEST: usize = 1_000;
 const MAX_REQUEST_BYTES: u64 = 1_048_576;
-const REQUEST_TTL_MS: u64 = 60_000;
+const REQUEST_TTL_MS: u64 = 15 * 60_000;
 const MAX_FUTURE_SKEW_MS: u64 = 5_000;
 const MIN_POLL_MS: u64 = 250;
 const MAX_POLL_MS: u64 = 2_000;
+static DRAIN_SCHEDULED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Deserialize)]
 struct FinderSyncRequest {
@@ -82,8 +84,8 @@ fn has_pending_requests() -> bool {
         })
 }
 
-/// Consume queued requests before routing them. Removing the file first gives
-/// each Finder action at-most-once delivery across cold starts and relaunches.
+/// Route queued requests, then acknowledge them by removing their files. A
+/// full in-app queue leaves the durable request intact for a later drain.
 pub(crate) fn route_pending_requests(app: &AppHandle) -> bool {
     let Some(directory) = requests_directory() else {
         return false;
@@ -128,17 +130,17 @@ pub(crate) fn route_pending_requests(app: &AppHandle) -> bool {
 
     let mut routed = false;
     for (_, path, request) in requests.into_iter().take(MAX_REQUESTS_PER_DRAIN) {
-        // Consume before routing for at-most-once delivery across app relaunches.
+        let mut argv = vec!["zinnia".to_string(), format!("--{}", request.mode)];
+        argv.extend(request.paths);
+        if !crate::launch::emit_open_paths(app, argv) {
+            continue;
+        }
         if let Err(error) = std::fs::remove_file(&path) {
             if error.kind() != std::io::ErrorKind::NotFound {
-                eprintln!("Zinnia Finder Sync: could not consume queued request: {error}");
+                eprintln!("Zinnia Finder Sync: could not acknowledge queued request: {error}");
             }
             continue;
         }
-
-        let mut argv = vec!["zinnia".to_string(), format!("--{}", request.mode)];
-        argv.extend(request.paths);
-        crate::launch::emit_open_paths(app, argv);
         routed = true;
     }
     routed
@@ -148,26 +150,28 @@ pub(crate) fn route_pending_requests(app: &AppHandle) -> bool {
 /// reopen event. A short poll guarantees warm-host delivery without relying on
 /// launch arguments or private plug-in behavior.
 pub(crate) fn start_request_monitor(app: AppHandle) {
-    std::thread::spawn(move || {
+    tauri::async_runtime::spawn(async move {
         let mut poll_ms = MIN_POLL_MS;
         loop {
-            std::thread::sleep(Duration::from_millis(poll_ms));
+            tokio::time::sleep(Duration::from_millis(poll_ms)).await;
             if !has_pending_requests() {
                 poll_ms = (poll_ms * 2).min(MAX_POLL_MS);
                 continue;
             }
             poll_ms = MIN_POLL_MS;
-            let handle = app.clone();
-            let (finished_tx, finished_rx) = std::sync::mpsc::channel();
-            if app
-                .run_on_main_thread(move || {
-                    route_pending_requests(&handle);
-                    let _ = finished_tx.send(());
-                })
-                .is_ok()
+            if DRAIN_SCHEDULED
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_err()
             {
-                // Avoid scheduling duplicate drains if the main thread is busy.
-                let _ = finished_rx.recv_timeout(Duration::from_secs(5));
+                continue;
+            }
+            let handle = app.clone();
+            if let Err(error) = app.run_on_main_thread(move || {
+                route_pending_requests(&handle);
+                DRAIN_SCHEDULED.store(false, Ordering::SeqCst);
+            }) {
+                DRAIN_SCHEDULED.store(false, Ordering::SeqCst);
+                eprintln!("Zinnia Finder Sync: could not schedule request drain: {error}");
             }
         }
     });
@@ -227,7 +231,7 @@ mod tests {
             paths: vec!["/tmp/archive.zip".to_string()],
         };
         assert!(valid_request_at(&request(10_000), 10_000));
-        let now = 100_000;
+        let now = REQUEST_TTL_MS + 100_000;
         assert!(!valid_request_at(&request(now - REQUEST_TTL_MS - 1), now));
         assert!(!valid_request_at(&request(now + 10_000), now));
     }

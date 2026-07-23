@@ -69,7 +69,14 @@ export async function applyIncomingPaths(
     (mode !== "extract" && paths.length > 1 && allArchives);
   if (shouldAutoExtract) {
     setMode("extract");
-    state.inputs.length = 0;
+    // OS integrations may split one Explorer/Finder selection across several
+    // process handoffs. Append and de-duplicate explicit extract batches just
+    // like compress batches so a later handoff can never erase an earlier one.
+    // The UI does not auto-run, so retaining an existing visible archive is
+    // safer than silently replacing work the user already selected.
+    if (mode !== "extract") {
+      state.inputs.length = 0;
+    }
   } else if (shouldAutoBrowse) {
     setMode("browse");
     state.inputs.length = 0;

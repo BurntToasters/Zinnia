@@ -48,7 +48,7 @@ export function normalizeCompressionSecurityOptions(
 ): { password: string; encryptHeaders: boolean } {
   const support = getCompressionSecuritySupport(format);
   return {
-    password: support.password ? password.trim() : "",
+    password: support.password ? password : "",
     encryptHeaders: support.encryptHeaders ? encryptHeaders : false,
   };
 }
@@ -59,8 +59,11 @@ export function validateCompressionSecurityOptions(
   encryptHeaders: boolean,
 ): string | null {
   const support = getCompressionSecuritySupport(format);
+  if (support.password && /[\r\n]/.test(password)) {
+    return "Archive passwords cannot contain line breaks.";
+  }
   if (!support.encryptHeaders) return null;
   if (!encryptHeaders) return null;
-  if (password.trim()) return null;
+  if (password.length > 0) return null;
   return "Enter a password to enable file-name encryption.";
 }

@@ -57,12 +57,6 @@ const FINDER_SYNC_ENABLED_MESSAGE = [
   "If items are missing, open Login Items & Extensions and confirm Zinnia Finder is on.",
 ].join("\n");
 
-const FINDER_SERVICES_ENABLED_MESSAGE = [
-  "Extract with Zinnia and Compress with Zinnia are now enabled for Finder.",
-  "",
-  "Optional: Keyboard Shortcuts → Services → Files and Folders can still customize shortcuts.",
-].join("\n");
-
 function platformLabel(platform: string): string {
   if (platform === "windows") return "Windows";
   if (platform === "macos") return "macOS";
@@ -461,12 +455,19 @@ export async function openFinderServicesSettings(): Promise<void> {
     latestStatus.finderServicesEnabled !== true;
   try {
     if (needsEnable) {
-      await invoke("enable_finder_services");
-      await refreshOsIntegrationStatus();
-      await message(FINDER_SERVICES_ENABLED_MESSAGE, {
-        title: "Finder Services enabled",
-        kind: "info",
-      });
+      await invoke("open_finder_services_settings");
+      await message(
+        [
+          "System Settings will open to Keyboard Shortcuts.",
+          "",
+          "Open Services → Files and Folders, then enable Extract with Zinnia and Compress with Zinnia.",
+          "Return here and click Refresh when finished.",
+        ].join("\n"),
+        {
+          title: "Enable Finder Services",
+          kind: "info",
+        },
+      );
       return;
     }
     await invoke("open_finder_services_settings");

@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { confirm, message, save } from "@tauri-apps/plugin-dialog";
+import { confirm, message, open, save } from "@tauri-apps/plugin-dialog";
 import {
+  addFilesToArchive,
   browseArchive,
   cancelAction,
   closeCommandPreviewModal,
@@ -22,10 +23,12 @@ import {
 import { state } from "../state";
 import type { ArchiveInfo } from "../browse-model";
 import { SAFE_EXTRACT_OVERWRITE_MODE } from "../extract-policy";
+import { MAX_ARCHIVE_TREE_DEPTH } from "../selective-extract";
 
 const invokeMock = vi.mocked(invoke);
 const messageMock = vi.mocked(message);
 const confirmMock = vi.mocked(confirm);
+const openMock = vi.mocked(open);
 const saveMock = vi.mocked(save);
 
 function uniqueArchivePath(prefix: string): string {
@@ -159,9 +162,72 @@ beforeEach(() => {
   messageMock.mockResolvedValue("Ok");
   confirmMock.mockReset();
   confirmMock.mockResolvedValue(true);
+  openMock.mockReset();
+  openMock.mockResolvedValue(null);
   saveMock.mockReset();
   saveMock.mockResolvedValue(null);
   invokeMock.mockReset();
+});
+
+describe("addFilesToArchive", () => {
+  it("updates the archive and refreshes its listing", async () => {
+    const archive = uniqueArchivePath("add-files");
+    state.inputs = [archive];
+    openMock.mockResolvedValue(["/tmp/one.txt", "/tmp/two.txt"]);
+
+    const runArgs: string[][] = [];
+    setInvokeRouter((command, payload) => {
+      if (command === "probe_7z") return undefined;
+      if (command === "validate_archive_paths") {
+        return pathsFromValidationPayload(payload).map((path) => ({
+          path,
+          valid: true,
+        }));
+      }
+      if (command === "run_7z") {
+        const args = (payload as { args?: string[] } | undefined)?.args ?? [];
+        runArgs.push(args);
+        if (args[0] === "l") {
+          return {
+            stdout: sltListing([
+              {
+                path: "one.txt",
+                size: 3,
+                packedSize: 3,
+                modified: "2026-07-22",
+                isFolder: false,
+              },
+            ]),
+            stderr: "",
+            code: 0,
+          };
+        }
+        return { stdout: "Everything is Ok", stderr: "", code: 0 };
+      }
+      return undefined;
+    });
+
+    await addFilesToArchive();
+
+    expect(openMock).toHaveBeenCalledWith({ multiple: true, directory: false });
+    expect(runArgs[0]).toEqual(
+      expect.arrayContaining([
+        "u",
+        "-sse",
+        "-snl",
+        "-snh",
+        "-spd",
+        archive,
+        "--",
+        "/tmp/one.txt",
+        "/tmp/two.txt",
+      ]),
+    );
+    expect(runArgs.some(([operation]) => operation === "l")).toBe(true);
+    expect(document.getElementById("browse-summary")?.textContent).toContain(
+      "1 file",
+    );
+  });
 });
 
 describe("archive test/browse/selective flows", () => {
@@ -192,8 +258,11 @@ describe("archive test/browse/selective flows", () => {
     const result = await testArchive();
 
     expect(result).toBe("passed_with_warnings");
-    expect(invokeMock.mock.calls.some(([name]) => name === "probe_7z")).toBe(
-      true,
+    expect(invokeMock).toHaveBeenCalledWith(
+      "run_7z",
+      expect.objectContaining({
+        args: expect.arrayContaining(["t", "/tmp/sample.7z"]),
+      }),
     );
   });
 
@@ -301,6 +370,46 @@ describe("archive test/browse/selective flows", () => {
     expect(document.getElementById("selective-list")?.children.length).toBe(1);
   });
 
+  it("reports hostile member depth without opening a broken selective modal", async () => {
+    const archive = "/tmp/hostile-depth.7z";
+    const hostilePath = Array.from(
+      { length: MAX_ARCHIVE_TREE_DEPTH + 1 },
+      (_, index) => `d${index}`,
+    ).join("/");
+    state.inputs = [archive];
+    state.browseArchiveInfoByPath.set(
+      archive,
+      archiveInfo([
+        {
+          path: hostilePath,
+          size: 1,
+          packedSize: 1,
+          modified: "",
+          isFolder: false,
+        },
+      ]),
+    );
+
+    setInvokeRouter((command, payload) => {
+      if (command === "validate_archive_paths") {
+        const paths = pathsFromValidationPayload(payload);
+        return paths.map((path) => ({ path, valid: true }));
+      }
+      return undefined;
+    });
+
+    await openSelectiveExtractModal();
+
+    expect(
+      (document.getElementById("selective-overlay") as HTMLElement).hidden,
+    ).toBe(true);
+    expect(state.selectiveActiveArchive).toBeNull();
+    expect(messageMock).toHaveBeenCalledWith(
+      expect.stringContaining("256-level browsing limit"),
+      { title: "Archive browsing unavailable", kind: "error" },
+    );
+  });
+
   it("shows error when selective extract destination is missing", async () => {
     const archive = "/tmp/selection.7z";
     state.inputs = [archive];
@@ -386,7 +495,7 @@ describe("archive test/browse/selective flows", () => {
     const runCall = invokeMock.mock.calls.find(([name, payload]) => {
       if (name !== "run_7z") return false;
       const args = (payload as { args?: string[] } | undefined)?.args ?? [];
-      return args.includes("-spd");
+      return args[0] === "x" && args.includes("-spd");
     });
     const args = (runCall?.[1] as { args?: string[] } | undefined)?.args ?? [];
     expect(args).toContain("-spd");

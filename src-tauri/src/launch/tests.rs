@@ -6,8 +6,10 @@ use super::extract_window::{
 };
 use super::open_path::{derive_extract_destination_path, normalize_destination_path};
 use super::open_routing::{
-    looks_like_archive_path, parse_open_request_args, should_use_extract_window,
+    enqueue_pending_batch, looks_like_archive_path, parse_open_request_args,
+    should_use_extract_window,
 };
+use super::OpenPathsPayload;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tauri::Url;
 
@@ -247,6 +249,46 @@ fn parse_open_request_args_keeps_compress_mode_for_folder_input() {
     assert!(!should_use_extract_window(&paths, &mode));
 
     let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
+fn pending_path_queue_accepts_back_to_back_shell_batches() {
+    let mut queue = Vec::new();
+    for batch in 0..4 {
+        let paths = (0..1_000)
+            .map(|index| format!("C:\\batch-{batch}-item-{index}"))
+            .collect();
+        assert!(enqueue_pending_batch(
+            &mut queue,
+            paths,
+            "compress".to_string()
+        ));
+    }
+    assert!(enqueue_pending_batch(
+        &mut queue,
+        (0..96)
+            .map(|index| format!("C:\\final-batch-item-{index}"))
+            .collect(),
+        "compress".to_string()
+    ));
+    assert_eq!(queue.len(), 1);
+    assert_eq!(queue[0].paths.len(), 4_096);
+}
+
+#[test]
+fn pending_path_queue_rejects_work_beyond_its_bounded_headroom() {
+    let mut queue = vec![OpenPathsPayload {
+        paths: (0..4_096)
+            .map(|index| format!("C:\\existing-{index}"))
+            .collect(),
+        mode: "compress".to_string(),
+    }];
+    assert!(!enqueue_pending_batch(
+        &mut queue,
+        vec!["C:\\overflow".to_string()],
+        "compress".to_string()
+    ));
+    assert_eq!(queue[0].paths.len(), 4_096);
 }
 
 fn temp_base(tag: &str) -> std::path::PathBuf {

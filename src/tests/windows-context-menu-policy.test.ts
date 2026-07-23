@@ -16,6 +16,10 @@ const shellSource = fs.readFileSync(
   path.resolve(process.cwd(), "src-tauri/windows/shell/dllmain.cpp"),
   "utf8",
 );
+const openRoutingSource = fs.readFileSync(
+  path.resolve(process.cwd(), "src-tauri/src/launch/open_routing.rs"),
+  "utf8",
+);
 const supportedArchiveTypes = [
   ".7z",
   ".zip",
@@ -211,6 +215,33 @@ describe("Windows 11 context-menu manifest", () => {
 
   it("keeps archive filtering fast on Explorer's menu-construction path", () => {
     expect(shellSource).toContain('stem_os + L".002"');
+    expect(shellSource).toContain('if (suffix != L"001") return false;');
     expect(shellSource).not.toContain("volume <= 999");
+  });
+
+  it("routes complete filesystem selections without exceeding Windows command lines", () => {
+    const hooks = fs.readFileSync(
+      path.resolve(process.cwd(), "src-tauri/windows/nsis-hooks.nsh"),
+      "utf8",
+    );
+    expect(
+      hooks.match(/MultiSelectModel" "Player"/g)?.length,
+    ).toBeGreaterThanOrEqual(4);
+    expect(shellSource).toContain("resolved != count");
+    expect(shellSource).toContain("ERROR_NOT_SUPPORTED");
+    expect(shellSource).toContain(
+      "if (count > 0) return GetSelectedPaths(selection, paths);",
+    );
+    expect(shellSource).toContain("kSafeParameterChars");
+    expect(shellSource).toContain("kMaxPathsPerBatch = 1'000");
+    expect(shellSource).toContain("pathsInBatch >= kMaxPathsPerBatch");
+    expect(shellSource).toContain("kMaxPathsPerRequest = 4'096");
+    expect(shellSource).toContain("selectionCount > kMaxPathsPerRequest");
+    expect(openRoutingSource).toContain("MAX_PENDING_PATHS: usize = 4_096");
+    expect(openRoutingSource).toContain(
+      "total_paths + paths.len() > MAX_PENDING_PATHS",
+    );
+    expect(shellSource).toContain("LaunchOneBatch");
+    expect(shellSource).toContain("QuoteArgument");
   });
 });

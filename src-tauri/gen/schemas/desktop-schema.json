@@ -423,12 +423,6 @@
           "markdownDescription": "Enables the drain_pending_paths command without any pre-configured scope."
         },
         {
-          "description": "Enables the enable_finder_services command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-enable-finder-services",
-          "markdownDescription": "Enables the enable_finder_services command without any pre-configured scope."
-        },
-        {
           "description": "Enables the enable_finder_sync command without any pre-configured scope.",
           "type": "string",
           "const": "allow-enable-finder-sync",
@@ -439,6 +433,12 @@
           "type": "string",
           "const": "allow-export-logs",
           "markdownDescription": "Enables the export_logs command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_beta_updater_target command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-beta-updater-target",
+          "markdownDescription": "Enables the get_beta_updater_target command without any pre-configured scope."
         },
         {
           "description": "Enables the get_cpu_count command without any pre-configured scope.",
@@ -663,12 +663,6 @@
           "markdownDescription": "Denies the drain_pending_paths command without any pre-configured scope."
         },
         {
-          "description": "Denies the enable_finder_services command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-enable-finder-services",
-          "markdownDescription": "Denies the enable_finder_services command without any pre-configured scope."
-        },
-        {
           "description": "Denies the enable_finder_sync command without any pre-configured scope.",
           "type": "string",
           "const": "deny-enable-finder-sync",
@@ -679,6 +673,12 @@
           "type": "string",
           "const": "deny-export-logs",
           "markdownDescription": "Denies the export_logs command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_beta_updater_target command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-beta-updater-target",
+          "markdownDescription": "Denies the get_beta_updater_target command without any pre-configured scope."
         },
         {
           "description": "Denies the get_cpu_count command without any pre-configured scope.",

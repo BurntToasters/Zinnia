@@ -11,12 +11,37 @@ pub(crate) struct CleanupJournal {
     pub(crate) stage: std::path::PathBuf,
     pub(crate) destination: std::path::PathBuf,
     pub(crate) archive: bool,
+    /// Newer extracts keep their move plan beside the stage. False means a
+    /// legacy journal that may need the old in-payload recovery location.
+    #[serde(default)]
+    pub(crate) move_plan_sidecar: bool,
     pub(crate) previous_archive_family: Vec<std::path::PathBuf>,
     #[serde(default)]
     pub(crate) next_archive_family: Vec<std::path::PathBuf>,
+    /// Explicit phase for B16+ archive transactions. `None` identifies a
+    /// legacy journal whose completion must be inferred for compatibility.
+    #[serde(default)]
+    pub(crate) archive_phase: Option<ArchiveJournalPhase>,
 }
 
-pub(crate) const MOVE_PLAN_FILE_NAME: &str = "move-plan.json";
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ArchiveJournalPhase {
+    InProgress,
+    Committed,
+}
+
+/// Legacy in-payload location, retained only to recover transactions created
+/// by older betas. New plans are always stored beside the private stage.
+pub(crate) const LEGACY_MOVE_PLAN_FILE_NAME: &str = "move-plan.json";
+
+pub(crate) fn move_plan_path(stage: &std::path::Path) -> std::path::PathBuf {
+    let name = stage
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(".zinnia-extract-unknown");
+    stage.with_file_name(format!("{name}.move-plan.json"))
+}
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct MoveRecord {
@@ -41,8 +66,10 @@ pub(crate) fn write_cleanup_journal(
             stage: stage.clone(),
             destination: destination.clone(),
             archive: false,
+            move_plan_sidecar: true,
             previous_archive_family: Vec::new(),
             next_archive_family: Vec::new(),
+            archive_phase: None,
         })
     } else if let Some((staged_archive, destination)) = &plan.staged_archive {
         Some(CleanupJournal {
@@ -52,8 +79,10 @@ pub(crate) fn write_cleanup_journal(
                 .to_path_buf(),
             destination: destination.clone(),
             archive: true,
+            move_plan_sidecar: false,
             previous_archive_family: archive_family(destination)?,
             next_archive_family: Vec::new(),
+            archive_phase: Some(ArchiveJournalPhase::InProgress),
         })
     } else {
         None
@@ -85,11 +114,38 @@ pub(crate) fn update_archive_journal(
         stage,
         destination: destination.clone(),
         archive: true,
+        move_plan_sidecar: false,
         previous_archive_family: archive_family(destination)?,
         next_archive_family,
+        archive_phase: Some(ArchiveJournalPhase::InProgress),
     };
     let json = serde_json::to_string(&journal).map_err(|e| e.to_string())?;
     crate::settings_store::atomic_write_text(&cleanup_journal_path(app)?, &json)
+}
+
+pub(crate) fn mark_archive_journal_committed(
+    app: &tauri::AppHandle,
+    plan: &CleanupPlan,
+) -> Result<(), String> {
+    let Some((staged, destination)) = &plan.staged_archive else {
+        return Ok(());
+    };
+    let expected_stage = staged
+        .parent()
+        .ok_or_else(|| "Archive staging directory is missing.".to_string())?;
+    let path = cleanup_journal_path(app)?;
+    let json = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let mut journal: CleanupJournal = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    if !journal.archive
+        || journal.stage != expected_stage
+        || journal.destination != *destination
+        || journal.next_archive_family.is_empty()
+    {
+        return Err("Archive recovery journal changed before commit.".to_string());
+    }
+    journal.archive_phase = Some(ArchiveJournalPhase::Committed);
+    let json = serde_json::to_string(&journal).map_err(|e| e.to_string())?;
+    crate::settings_store::atomic_write_text(&path, &json)
 }
 
 pub(crate) fn clear_cleanup_journal(app: &tauri::AppHandle) -> Result<(), String> {
@@ -205,6 +261,40 @@ pub(crate) fn unregister_plan_stages(plan: &CleanupPlan) {
     }
 }
 
+fn cleanup_archive_backup_sidecars(stage: &std::path::Path) -> Result<(), String> {
+    let Some(stage_name) = stage.file_name().and_then(|name| name.to_str()) else {
+        return Err("Archive stage has an invalid name.".to_string());
+    };
+    if !stage_name.contains(".zinnia-archive-") {
+        return Ok(());
+    }
+    let Some(parent) = stage.parent() else {
+        return Err("Archive stage has no parent directory.".to_string());
+    };
+    let prefix = format!("{stage_name}.backup-");
+    for entry in std::fs::read_dir(parent).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let Some(index) = name.strip_prefix(&prefix) else {
+            continue;
+        };
+        if index.is_empty() || !index.bytes().all(|byte| byte.is_ascii_digit()) {
+            continue;
+        }
+        let path = entry.path();
+        let metadata = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
+        if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_file() {
+            return Err(format!(
+                "Refusing unexpected archive backup sidecar {}.",
+                path.display()
+            ));
+        }
+        std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+    }
+    sync_directory(parent)
+}
+
 /// Remove stage directories left behind when a crash happened after create but
 /// before (or without) a durable transaction journal. Safe names only.
 pub fn cleanup_orphan_stages(app: &tauri::AppHandle) -> Result<(), String> {
@@ -225,7 +315,12 @@ pub fn cleanup_orphan_stages(app: &tauri::AppHandle) -> Result<(), String> {
             continue;
         }
         match std::fs::symlink_metadata(&path) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let _ = std::fs::remove_file(move_plan_path(&path));
+                if cleanup_archive_backup_sidecars(&path).is_err() {
+                    remaining.push(stage);
+                }
+            }
             Err(_) => {
                 remaining.push(stage);
             }
@@ -236,6 +331,15 @@ pub fn cleanup_orphan_stages(app: &tauri::AppHandle) -> Result<(), String> {
                 if let Err(error) = std::fs::remove_dir_all(&path) {
                     eprintln!(
                         "Failed to remove orphan staging directory {}: {error}",
+                        path.display()
+                    );
+                    remaining.push(stage);
+                    continue;
+                }
+                let _ = std::fs::remove_file(move_plan_path(&path));
+                if let Err(error) = cleanup_archive_backup_sidecars(&path) {
+                    eprintln!(
+                        "Failed to remove archive backup sidecars for {}: {error}",
                         path.display()
                     );
                     remaining.push(stage);
@@ -255,6 +359,12 @@ pub(crate) fn sync_directory(path: &std::path::Path) -> Result<(), String> {
 }
 
 pub(crate) fn is_safe_stage_dir_name(name: &str) -> bool {
+    for prefix in [".zinnia-extract-", ".zinnia-archive-", ".zinnia-input-"] {
+        if let Some(token) = name.strip_prefix(prefix) {
+            return token.len() == 32 && token.chars().all(|c| c.is_ascii_hexdigit());
+        }
+    }
+    // Accept pre-B16 stage names for safe startup recovery.
     let Some(rest) = name.strip_prefix('.') else {
         return false;
     };

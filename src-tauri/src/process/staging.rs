@@ -1,7 +1,5 @@
 //! Stage directory create/rewrite, extract parent snapshot, and SLT member preflight.
 
-use tauri_plugin_shell::ShellExt;
-
 use crate::output::sanitize_output;
 use crate::validation::archive_member_path_is_unsafe;
 
@@ -113,12 +111,11 @@ pub(crate) fn create_private_stage_dir(
     cache_dir: Option<&std::path::Path>,
 ) -> Result<std::path::PathBuf, String> {
     let parent = target.parent().unwrap_or_else(|| std::path::Path::new("."));
-    let name = target
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("output");
+    // Keep the stage basename independent of the user destination. Besides
+    // avoiding NAME_MAX failures, this prevents 7-Zip output-path wildcard
+    // substitution from interpreting a literal `*` in a destination name.
     for _ in 0..32 {
-        let candidate = parent.join(format!(".{name}.zinnia-{purpose}-{}", random_token()?));
+        let candidate = parent.join(format!(".zinnia-{purpose}-{}", random_token()?));
         match crate::fs_secure::create_private_dir(&candidate) {
             Ok(()) => {
                 if let Some(cache_dir) = cache_dir {
@@ -206,36 +203,6 @@ pub(crate) fn rewrite_archive_output(
     Ok(())
 }
 
-pub(crate) fn directory_entry_names(
-    dir: &std::path::Path,
-) -> Result<std::collections::HashSet<std::ffi::OsString>, String> {
-    let mut names = std::collections::HashSet::new();
-    for entry in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        names.insert(entry.file_name());
-    }
-    Ok(names)
-}
-
-pub(crate) fn assert_extract_parent_unchanged(
-    stage: &std::path::Path,
-    expected: &std::collections::HashSet<std::ffi::OsString>,
-) -> Result<(), String> {
-    let parent = stage
-        .parent()
-        .ok_or_else(|| "Staged extract has no parent directory.".to_string())?;
-    let current = directory_entry_names(parent)?;
-    for name in &current {
-        if !expected.contains(name) {
-            return Err(format!(
-                "Extraction wrote outside the staging directory: {}",
-                parent.join(name).display()
-            ));
-        }
-    }
-    Ok(())
-}
-
 /// Build `7z l -slt -ba` args from an extract command, copying switches that
 /// affect whether/how the archive can be opened.
 pub(crate) fn extract_member_list_args(args: &[String]) -> Result<Vec<String>, String> {
@@ -255,6 +222,7 @@ pub(crate) fn extract_member_list_args(args: &[String]) -> Result<Vec<String>, S
     }
     list_args.push("--".to_string());
     list_args.push(archive.clone());
+    super::commands::harden_7z_args(&mut list_args);
     Ok(list_args)
 }
 
@@ -271,7 +239,6 @@ pub(crate) fn assert_slt_archive_members_safe(
         let Some(path) = line.strip_prefix("Path = ") else {
             continue;
         };
-        let path = path.trim();
         if path.is_empty() {
             continue;
         }
@@ -309,12 +276,7 @@ pub(crate) async fn assert_extract_archive_members_safe(
         .ok_or_else(|| "Extraction member list is missing an archive path.".to_string())?;
     let archive_path = std::path::PathBuf::from(&archive);
     let identity = archive_file_identity(&archive_path)?;
-    let command = app
-        .shell()
-        .sidecar("7z")
-        .map_err(|e| e.to_string())?
-        .args(list_args);
-    let (mut rx, child) = command.spawn().map_err(|e| e.to_string())?;
+    let (mut rx, child) = super::commands::spawn_7z_noninteractive(app, list_args)?;
     {
         let mut process = lock_process(state)?;
         if process.cancelling {
@@ -387,7 +349,6 @@ pub(crate) fn prepare_cleanup_plan(
             staged_extract: None,
             staged_archive: None,
             staged_input_archive: None,
-            extract_parent_names: None,
             cache_dir,
             max_extract_bytes: None,
             min_free_bytes: None,
@@ -437,13 +398,9 @@ pub(crate) fn prepare_cleanup_plan(
                     ));
                 }
                 let max_extract_bytes = ratio_limit.min(disk_limit);
-                let parent = stage
-                    .parent()
-                    .ok_or_else(|| "Staged extract has no parent directory.".to_string())?;
-                let extract_parent_names = directory_entry_names(parent)?;
-                Ok((max_extract_bytes, reserve, extract_parent_names))
+                Ok((max_extract_bytes, reserve))
             })();
-            let (max_extract_bytes, reserve, extract_parent_names) = match preparation {
+            let (max_extract_bytes, reserve) = match preparation {
                 Ok(preparation) => preparation,
                 Err(error) => {
                     let input_stage = staged_input.path.parent().map(std::path::Path::to_path_buf);
@@ -464,7 +421,9 @@ pub(crate) fn prepare_cleanup_plan(
                 staged_extract: Some((stage, destination)),
                 staged_archive: None,
                 staged_input_archive: Some(staged_input.path),
-                extract_parent_names: Some(extract_parent_names),
+                // Member preflight plus a fixed, wildcard-free private stage
+                // contains 7-Zip output. Unrelated siblings may legitimately
+                // appear during a long extraction and must not abort commit.
                 cache_dir,
                 max_extract_bytes: Some(max_extract_bytes),
                 min_free_bytes: Some(reserve),
@@ -486,7 +445,6 @@ pub(crate) fn prepare_cleanup_plan(
                 staged_extract: None,
                 staged_archive: Some((staged, target)),
                 staged_input_archive: None,
-                extract_parent_names: None,
                 cache_dir,
                 max_extract_bytes: None,
                 min_free_bytes: None,
@@ -514,7 +472,6 @@ pub(crate) fn prepare_cleanup_plan(
                 staged_extract: None,
                 staged_archive: Some((staged, target)),
                 staged_input_archive: None,
-                extract_parent_names: None,
                 cache_dir,
                 max_extract_bytes: None,
                 min_free_bytes: None,
@@ -524,7 +481,6 @@ pub(crate) fn prepare_cleanup_plan(
             staged_extract: None,
             staged_archive: None,
             staged_input_archive: None,
-            extract_parent_names: None,
             cache_dir,
             max_extract_bytes: None,
             min_free_bytes: None,

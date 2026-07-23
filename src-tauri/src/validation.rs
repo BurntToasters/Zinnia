@@ -2,7 +2,9 @@
 
 // Large drag-and-drop selections are valid. This is still bounded to protect
 // the sidecar and IPC boundary without rejecting ordinary bulk operations.
-const MAX_7Z_ARGS: usize = 4096;
+// Archive validation accepts 4,096 user paths. Leave bounded room for the
+// command, output, safety, compression, and user-approved option arguments.
+const MAX_7Z_ARGS: usize = 8192;
 const MAX_7Z_ARG_BYTES: usize = 8192;
 
 const ALLOWED_7Z_COMMANDS: &[&str] = &["a", "u", "x", "l", "t", "b"];
@@ -45,6 +47,7 @@ fn is_common_diagnostic_switch(lower: &str) -> bool {
         || is_numbered_switch(lower, "-bb", 3)
         || is_stream_switch(lower)
         || (lower.starts_with("-scs") && lower.len() > 4)
+        || (lower.starts_with("-scc") && lower.len() > 4)
 }
 
 fn is_allowed_method_switch(lower: &str) -> bool {
@@ -92,6 +95,7 @@ fn is_allowed_switch(cmd: &str, arg: &str) -> bool {
                 || lower == "-sse"
                 || lower == "-snl"
                 || lower == "-snh"
+                || lower == "-spd"
                 || is_include_or_exclude(arg)
                 || (cmd == "a"
                     && lower.starts_with("-v")
@@ -108,6 +112,7 @@ fn is_allowed_switch(cmd: &str, arg: &str) -> bool {
                 || matches!(lower.as_str(), "-aos" | "-aou")
                 || lower == "-y"
                 || lower == "-spd"
+                || lower == "-spod"
                 || lower == "-r"
                 || lower == "-r-"
                 || lower == "-r0"
@@ -120,6 +125,7 @@ fn is_allowed_switch(cmd: &str, arg: &str) -> bool {
                 || lower == "-r"
                 || lower == "-r-"
                 || lower == "-r0"
+                || lower == "-spd"
                 || is_include_or_exclude(arg)
         }
         "b" => is_allowed_method_switch(&lower),
@@ -135,18 +141,26 @@ pub(crate) fn has_parent_dir_component(path: &str) -> bool {
 /// True when an archive member path could escape an extract `-o` root
 /// (`..`, absolute POSIX, drive-letter, or UNC).
 pub(crate) fn archive_member_path_is_unsafe(path: &str) -> bool {
-    let path = path.trim();
     if path.is_empty() {
         return false;
     }
-    if has_parent_dir_component(path) {
+    #[cfg(target_os = "windows")]
+    let has_parent = path.split(['/', '\\']).any(|component| component == "..");
+    #[cfg(not(target_os = "windows"))]
+    let has_parent = path.split('/').any(|component| component == "..");
+    if has_parent {
         return true;
     }
     let bytes = path.as_bytes();
-    if bytes[0] == b'/' || bytes[0] == b'\\' {
+    if bytes[0] == b'/' {
+        return true;
+    }
+    #[cfg(target_os = "windows")]
+    if bytes[0] == b'\\' {
         return true;
     }
     // Windows drive-absolute: `C:\...` or `C:/...`
+    #[cfg(target_os = "windows")]
     if bytes.len() >= 2 && bytes[1] == b':' {
         return true;
     }
@@ -366,6 +380,18 @@ mod tests {
             "input.txt".to_string(),
         ];
         assert!(validate_run_7z_args(&args).is_err());
+    }
+
+    #[test]
+    fn validate_run_7z_args_accepts_public_maximum_path_batch() {
+        let mut args = vec![
+            "a".to_string(),
+            "-t7z".to_string(),
+            "out.7z".to_string(),
+            "--".to_string(),
+        ];
+        args.extend((0..4_096).map(|index| format!("input-{index}.txt")));
+        validate_run_7z_args(&args).expect("4,096 input paths plus bounded options should fit");
     }
 
     #[test]
@@ -774,7 +800,15 @@ mod tests {
         assert!(archive_member_path_is_unsafe("../sibling/file.txt"));
         assert!(archive_member_path_is_unsafe("a/../../b"));
         assert!(archive_member_path_is_unsafe("/etc/passwd"));
+        #[cfg(target_os = "windows")]
         assert!(archive_member_path_is_unsafe(r"C:\Windows\evil.dll"));
+        #[cfg(target_os = "windows")]
         assert!(archive_member_path_is_unsafe(r"\\server\share\file"));
+        #[cfg(not(target_os = "windows"))]
+        {
+            assert!(!archive_member_path_is_unsafe(r"a:b"));
+            assert!(!archive_member_path_is_unsafe(r"\literal-name"));
+            assert!(!archive_member_path_is_unsafe(r"folder\..\literal"));
+        }
     }
 }

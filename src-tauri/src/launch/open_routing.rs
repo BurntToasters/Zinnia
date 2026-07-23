@@ -15,6 +15,38 @@ use super::{
     MAC_FALLBACK_MAIN_PENDING,
 };
 
+// Finder caps one request at 1,000 paths and Explorer may split one selection
+// across several 1,000-path launches. Keep the aggregate aligned with archive
+// validation's public ceiling so every accepted queue can actually execute.
+const MAX_PENDING_PATHS: usize = 4_096;
+
+pub(crate) fn enqueue_pending_batch(
+    queue: &mut Vec<OpenPathsPayload>,
+    paths: Vec<String>,
+    mode: String,
+) -> bool {
+    let total_paths: usize = queue.iter().map(|item| item.paths.len()).sum();
+    if total_paths + paths.len() > MAX_PENDING_PATHS {
+        return false;
+    }
+    if let Some(last) = queue.last_mut() {
+        if last.mode == mode {
+            let mut known: std::collections::HashSet<String> = last.paths.iter().cloned().collect();
+            for path in paths {
+                if known.insert(path.clone()) {
+                    last.paths.push(path);
+                }
+            }
+            return true;
+        }
+    }
+    if queue.len() >= 100 {
+        return false;
+    }
+    queue.push(OpenPathsPayload { paths, mode });
+    true
+}
+
 pub(crate) fn should_use_extract_window(paths: &[String], mode: &str) -> bool {
     if mode == "compress" {
         return false;
@@ -58,7 +90,11 @@ pub(crate) fn looks_like_split_volume_path(path: &str) -> bool {
     if looks_like_archive_extension(stem) {
         return true;
     }
-    // Bare name.001: only when another volume sibling exists (name.002, …).
+    // Bare name.001: require the immediate second volume. Avoid probing 999
+    // filesystem entries synchronously during process startup.
+    if suffix != "001" {
+        return false;
+    }
     let fs_path = std::path::Path::new(path);
     let Some(parent) = fs_path.parent() else {
         return false;
@@ -69,16 +105,7 @@ pub(crate) fn looks_like_split_volume_path(path: &str) -> bool {
     else {
         return false;
     };
-    for volume in 1u32..=999 {
-        let candidate = parent.join(format!("{stem_os}.{volume:03}"));
-        if candidate.as_os_str() == fs_path.as_os_str() {
-            continue;
-        }
-        if candidate.exists() {
-            return true;
-        }
-    }
-    false
+    parent.join(format!("{stem_os}.002")).exists()
 }
 
 pub(crate) fn looks_like_archive_path(path: &str) -> bool {
@@ -133,7 +160,7 @@ where
     (paths, mode)
 }
 
-pub(crate) fn route_open_request(app: &tauri::AppHandle, paths: Vec<String>, mode: String) {
+pub(crate) fn route_open_request(app: &tauri::AppHandle, paths: Vec<String>, mode: String) -> bool {
     if paths.is_empty() {
         // Second-instance activation with no paths while warm: reopen the UI.
         if EXTRACT_WARM_IDLE_ACTIVE.load(Ordering::SeqCst)
@@ -141,7 +168,7 @@ pub(crate) fn route_open_request(app: &tauri::AppHandle, paths: Vec<String>, mod
         {
             open_main_from_extract_warm(app);
         }
-        return;
+        return true;
     }
 
     if should_use_extract_window(&paths, &mode) {
@@ -152,26 +179,24 @@ pub(crate) fn route_open_request(app: &tauri::AppHandle, paths: Vec<String>, mod
             EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);
             leave_extract_warm(app);
             let pending = app.state::<PendingPaths>();
-            if let Ok(mut queue) = pending.0.lock() {
-                let total_paths: usize = queue.iter().map(|item| item.paths.len()).sum();
-                if queue.len() < 100 && total_paths + paths.len() <= 1000 {
-                    queue.push(OpenPathsPayload {
-                        paths,
-                        mode: "extract".to_string(),
-                    });
-                } else {
+            let accepted = if let Ok(mut queue) = pending.0.lock() {
+                let accepted = enqueue_pending_batch(&mut queue, paths, "extract".to_string());
+                if !accepted {
                     eprintln!("Pending extract queue full, dropping open request");
                     let _ = app.emit(
                         "open-paths-dropped",
                         "Zinnia is busy and the pending extract queue is full. Try again shortly.",
                     );
                 }
-            }
+                accepted
+            } else {
+                false
+            };
             let _ = app.emit("pending-paths-changed", ());
             if let Err(e) = show_main_window(app) {
                 eprintln!("Failed to show queued extraction in main window: {e}");
             }
-            return;
+            return accepted;
         }
         let fallback_main = MAC_FALLBACK_MAIN_PENDING.swap(false, Ordering::SeqCst);
         let had_main_window = app.get_webview_window("main").is_some() && !fallback_main;
@@ -180,24 +205,27 @@ pub(crate) fn route_open_request(app: &tauri::AppHandle, paths: Vec<String>, mod
                 let _ = tx.send(());
             }
         }
-        if let Err(e) = spawn_extract_window(app, paths) {
+        let accepted = if let Err(e) = spawn_extract_window(app, paths) {
             eprintln!("Failed to open extract window: {e}");
             if let Err(main_error) = show_main_window(app) {
                 eprintln!("Failed to open main window: {main_error}");
             }
             EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);
             leave_extract_warm(app);
+            false
         } else if had_main_window {
             // Warm opens must not discard the user's active main workspace.
             EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);
             leave_extract_warm(app);
+            true
         } else {
             if let Some(main_window) = app.get_webview_window("main") {
                 let _ = main_window.destroy();
             }
             EXTRACT_ONLY_LAUNCH.store(true, Ordering::SeqCst);
-        }
-        return;
+            true
+        };
+        return accepted;
     }
 
     EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);
@@ -208,21 +236,23 @@ pub(crate) fn route_open_request(app: &tauri::AppHandle, paths: Vec<String>, mod
     }
 
     let pending = app.state::<PendingPaths>();
-    match pending.0.lock() {
+    let accepted = match pending.0.lock() {
         Ok(mut q) => {
-            let total_paths: usize = q.iter().map(|p| p.paths.len()).sum();
-            if q.len() < 100 && total_paths + paths.len() <= 1000 {
-                q.push(OpenPathsPayload { paths, mode });
-            } else {
+            let accepted = enqueue_pending_batch(&mut q, paths, mode);
+            if !accepted {
                 eprintln!("Pending paths queue full, dropping open request");
                 let _ = app.emit(
                     "open-paths-dropped",
                     "Zinnia could not accept more open requests. Finish the current job and try again.",
                 );
             }
+            accepted
         }
-        Err(e) => eprintln!("Failed to acquire pending paths lock: {e}"),
-    }
+        Err(e) => {
+            eprintln!("Failed to acquire pending paths lock: {e}");
+            false
+        }
+    };
 
     if let Err(e) = app.emit("pending-paths-changed", ()) {
         eprintln!("Failed to emit pending-paths-changed: {e}");
@@ -231,6 +261,7 @@ pub(crate) fn route_open_request(app: &tauri::AppHandle, paths: Vec<String>, mod
     if let Err(e) = show_main_window(app) {
         eprintln!("Failed to open main window: {e}");
     }
+    accepted
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -241,12 +272,12 @@ pub fn emit_open_urls(app: &tauri::AppHandle, urls: Vec<Url>) {
         .map(|path| path.to_string_lossy().to_string())
         .collect();
 
-    route_open_request(app, paths, String::new());
+    let _ = route_open_request(app, paths, String::new());
 }
 
-pub fn emit_open_paths(app: &tauri::AppHandle, argv: Vec<String>) {
+pub fn emit_open_paths(app: &tauri::AppHandle, argv: Vec<String>) -> bool {
     let (paths, mode) = parse_open_request_args(argv.into_iter().skip(1));
-    route_open_request(app, paths, mode);
+    route_open_request(app, paths, mode)
 }
 
 pub fn collect_cli_context() -> (Vec<String>, String) {

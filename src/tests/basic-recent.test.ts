@@ -16,11 +16,13 @@ const KEY = "zinnia.basic.recentArchives";
 describe("pruneMissingRecentArchives", () => {
   beforeEach(() => {
     localStorage.clear();
+    sessionStorage.clear();
     vi.mocked(validateArchivePaths).mockReset();
   });
 
   afterEach(() => {
     localStorage.clear();
+    sessionStorage.clear();
   });
 
   it("removes paths that no longer exist and keeps the rest", async () => {
@@ -51,7 +53,8 @@ describe("pruneMissingRecentArchives", () => {
 
     const kept = await pruneMissingRecentArchives();
     expect(kept).toEqual(["/tmp/not-archive.bin"]);
-    expect(localStorage.getItem(KEY)).toContain("not-archive.bin");
+    expect(sessionStorage.getItem(KEY)).toContain("not-archive.bin");
+    expect(localStorage.getItem(KEY)).toBeNull();
   });
 
   it("leaves the list alone when probing fails", async () => {

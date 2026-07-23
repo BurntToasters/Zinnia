@@ -15,6 +15,9 @@
     "allow-close-extract-window",
     "allow-open-path",
     "allow-register-extract-open-path",
-    "allow-get-platform-info"
+    "allow-get-platform-info",
+    "allow-load-settings",
+    "allow-set-workspace-window-fx",
+    "allow-supports-workspace-window-fx"
   ]
 }

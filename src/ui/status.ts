@@ -70,6 +70,9 @@ export function setRunning(active: boolean) {
     dom.extractCancelBtn.hidden = !active;
   } else {
     $<HTMLButtonElement>("browse-list").disabled = active;
+    const browseCancel = $<HTMLButtonElement>("browse-cancel");
+    browseCancel.hidden = !active;
+    browseCancel.disabled = false;
     $<HTMLButtonElement>("browse-test").disabled = active;
     $<HTMLButtonElement>("browse-extract").disabled = active;
     $<HTMLButtonElement>("browse-selective").disabled = active;

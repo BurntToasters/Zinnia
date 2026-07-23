@@ -94,6 +94,26 @@ describe("Tauri capability policy", () => {
     expect(permissions).not.toContain("core:default");
   });
 
+  it("keeps generated capabilities.json permissions aligned with default.json", () => {
+    const { permissions } = readCapability("default");
+    const generated = JSON.parse(
+      fs.readFileSync(
+        path.resolve(
+          process.cwd(),
+          "src-tauri",
+          "gen",
+          "schemas",
+          "capabilities.json",
+        ),
+        "utf8",
+      ),
+    ) as { default?: { permissions?: string[] } };
+    expect(new Set(generated.default?.permissions ?? [])).toEqual(
+      new Set(permissions),
+    );
+    expect(generated.default?.permissions).toContain("shell:default");
+  });
+
   it("keeps extract windows to their explicit core APIs", () => {
     const { permissions } = readCapability("extract");
 
@@ -104,6 +124,9 @@ describe("Tauri capability policy", () => {
         "core:window:allow-close",
         "core:window:allow-minimize",
         "core:window:allow-start-dragging",
+        "allow-load-settings",
+        "allow-set-workspace-window-fx",
+        "allow-supports-workspace-window-fx",
       ]),
     );
     expect(permissions).not.toContain("core:default");

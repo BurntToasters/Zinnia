@@ -118,6 +118,13 @@ describe("macOS compatibility", () => {
     expect(finderSync).toContain("FinderSyncRequests");
     expect(finderSync).toContain("createdAtMs");
     expect(finderSync).toContain("1,000-item safety limit");
+    expect(finderSync).toContain("supports selections of up to 1,000 items");
+    expect(finderSync).toContain('fileURLWithPath: "/Volumes"');
+    expect(finderSync).toContain("embeddedExtension");
+    expect(finderSync).toContain(
+      "archiveExtensions.contains(embeddedExtension)",
+    );
+    expect(finderSync).not.toContain('fileURLWithPath: "/", isDirectory: true');
     expect(finderSync).not.toContain("configuration.arguments");
     expect(finderSyncPlist).toContain("NSExtensionAttributes");
     expect(finderSyncPlist).toContain("ZinniaAppGroupIdentifier");

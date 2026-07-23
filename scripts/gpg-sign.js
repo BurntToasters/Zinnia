@@ -5,7 +5,7 @@ import path from "path";
 import crypto from "crypto";
 import { execSync, spawnSync } from "child_process";
 import https from "https";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 import {
   normalizeUpdaterSignature,
   verifyUpdaterSignatures,
@@ -288,11 +288,21 @@ function normalizeArchToken(token) {
   return null;
 }
 
-function requiredLinuxTargetKeys(channelVariants) {
+function requiredLinuxTargetKeys(channelVariants, byName) {
   const tokens = REQUIRED_LINUX_TARGETS.split(/[,\s]+/)
     .map((t) => t.trim())
     .filter(Boolean);
   if (REQUIRE_LINUX_AARCH64) tokens.push("aarch64");
+  // Platform release commands sign independently. Automatically require an
+  // AppImage updater for each Linux architecture represented in this signing
+  // session, while allowing Windows/macOS-only sessions to proceed. Operators
+  // can still demand additional architectures through the environment.
+  for (const [name] of byName) {
+    if (name.endsWith(".sig")) continue;
+    for (const target of resolveUpdaterTargets(name)) {
+      if (target.os === "linux") tokens.push(target.arch);
+    }
+  }
   const targetKeys = new Set();
   for (const token of tokens) {
     const explicitMatch = token
@@ -429,7 +439,10 @@ function generateUpdaterManifests(files) {
       baseUrl: TAG_DOWNLOAD_BASE_URL,
     });
   }
-  const expectedLinuxTargetKeys = requiredLinuxTargetKeys(channelVariants);
+  const expectedLinuxTargetKeys = requiredLinuxTargetKeys(
+    channelVariants,
+    byName,
+  );
   const generatedLinuxAppImageTargets = new Set();
   const missingSignatures = [];
 
@@ -471,6 +484,19 @@ function generateUpdaterManifests(files) {
         const installerKey = `${targetName}-${target.arch}-${target.installer}`;
         const fallbackKey = `${targetName}-${target.arch}`;
         manifest.platforms[installerKey] = { url, signature };
+        if (channel.targetSuffix) {
+          // A beta check uses the full installer-aware key as its custom Tauri
+          // target. Give that key its own endpoint manifest so DEB/RPM installs
+          // never fall through to the AppImage fallback (and vice versa).
+          const installerManifestName = `latest-${installerKey}.json`;
+          manifests.set(installerManifestName, {
+            version: VERSION,
+            notes: RELEASE_NOTES,
+            pub_date: RELEASE_PUB_DATE,
+            platforms: { [installerKey]: { url, signature } },
+            fallbackPriority: -1,
+          });
+        }
         if (target.os === "linux" && target.installer === "appimage") {
           generatedLinuxAppImageTargets.add(fallbackKey);
         }
@@ -997,7 +1023,7 @@ async function syncBetaManifestsToLatestStable(
   currentReleaseId,
 ) {
   const betaManifests = uploadedFiles.filter((filePath) =>
-    /^latest-[a-z0-9]+-beta-[a-z0-9_]+\.json$/i.test(path.basename(filePath)),
+    /^latest-[a-z0-9]+-beta-[a-z0-9_-]+\.json$/i.test(path.basename(filePath)),
   );
   if (betaManifests.length === 0) return;
 
@@ -1101,7 +1127,18 @@ async function main() {
   );
 }
 
-main().catch((err) => {
-  console.error(err.message || err);
-  process.exit(1);
-});
+function isDirectExecution() {
+  return Boolean(
+    process.argv[1] &&
+    pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url,
+  );
+}
+
+if (isDirectExecution()) {
+  main().catch((err) => {
+    console.error(err.message || err);
+    process.exit(1);
+  });
+}
+
+export { isDirectExecution, requiredLinuxTargetKeys };
