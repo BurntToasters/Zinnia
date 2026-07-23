@@ -57,6 +57,58 @@ pub fn create_inheriting_stage_dir(path: &Path) -> io::Result<()> {
     }
 }
 
+/// Remove an app-owned directory tree, clearing Windows read-only attributes
+/// first so extracted archive metadata cannot make cleanup fail after publish.
+/// Reparse points are rejected rather than traversed.
+pub fn remove_dir_all_for_cleanup(path: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    clear_windows_readonly_tree(path)?;
+    std::fs::remove_dir_all(path)
+}
+
+/// Remove an app-owned regular file, clearing the Windows read-only attribute
+/// first. The final path component must not be a link or reparse point.
+pub fn remove_file_for_cleanup(path: &Path) -> io::Result<()> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_file() {
+        return Err(io::Error::other(format!(
+            "Refusing to remove an unexpected cleanup file: {}",
+            path.display()
+        )));
+    }
+    #[cfg(windows)]
+    clear_windows_readonly(path, &metadata)?;
+    std::fs::remove_file(path)
+}
+
+#[cfg(windows)]
+fn clear_windows_readonly_tree(path: &Path) -> io::Result<()> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    if crate::path_safety::is_link_or_reparse(&metadata) {
+        return Err(io::Error::other(format!(
+            "Refusing to traverse a link or reparse point during cleanup: {}",
+            path.display()
+        )));
+    }
+    if metadata.is_dir() {
+        for entry in std::fs::read_dir(path)? {
+            clear_windows_readonly_tree(&entry?.path())?;
+        }
+    }
+    clear_windows_readonly(path, &metadata)?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn clear_windows_readonly(path: &Path, metadata: &std::fs::Metadata) -> io::Result<()> {
+    if metadata.permissions().readonly() {
+        let mut permissions = metadata.permissions();
+        permissions.set_readonly(false);
+        std::fs::set_permissions(path, permissions)?;
+    }
+    Ok(())
+}
+
 /// Flush directory metadata so rename/create durability survives a crash where possible.
 pub fn sync_directory(path: &Path) -> Result<(), String> {
     #[cfg(windows)]
@@ -861,6 +913,22 @@ mod tests {
         create_inheriting_stage_dir(&path).expect("create inherited-ACL publish stage");
         assert!(path.is_dir());
         std::fs::remove_dir(&path).expect("remove publish stage test directory");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cleanup_removes_readonly_regular_files() {
+        let mut random = [0u8; 8];
+        getrandom::fill(&mut random).expect("random cleanup test suffix");
+        let suffix: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+        let path = std::env::temp_dir().join(format!("zinnia-readonly-cleanup-{suffix}.tmp"));
+        std::fs::write(&path, b"cleanup").expect("write cleanup file");
+        let mut permissions = std::fs::metadata(&path).expect("cleanup metadata").permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&path, permissions).expect("mark cleanup file read-only");
+
+        remove_file_for_cleanup(&path).expect("remove read-only cleanup file");
+        assert!(!path.exists());
     }
 
     #[cfg(windows)]

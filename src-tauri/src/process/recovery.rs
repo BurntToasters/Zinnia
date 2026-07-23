@@ -1,9 +1,12 @@
 //! Startup recovery for interrupted archive transactions.
 
-use super::commit::{archive_backup_path, archive_family, rollback_persisted_move_plan};
+use super::commit::{
+    archive_backup_path, archive_family, rename_file_no_replace, rollback_persisted_move_plan,
+};
 use super::journal::{
     cleanup_journal_path, clear_cleanup_journal, is_safe_stage_dir_name, move_plan_path,
-    remove_regular_file_if_matches, sync_directory, ArchiveJournalPhase, CleanupJournal,
+    remove_move_plan_sidecars, remove_regular_file_if_matches, sync_directory, ArchiveJournalPhase,
+    CleanupJournal, ExtractJournalPhase,
 };
 
 static RECOVERY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -47,11 +50,114 @@ pub(crate) fn archive_journal_is_committed(journal: &CleanupJournal) -> bool {
     }
 }
 
+pub(crate) fn extract_journal_is_committed(journal: &CleanupJournal) -> bool {
+    matches!(journal.extract_phase, Some(ExtractJournalPhase::Committed))
+}
+
+pub(crate) fn cleanup_extract_journal_artifacts(journal: &CleanupJournal) -> Result<(), String> {
+    // Remove the durable rollback description before deleting the source stage.
+    // If sidecar cleanup fails, leaving the stage intact lets the next recovery
+    // pass repeat safely instead of seeing a missing stage with a stale plan.
+    remove_move_plan_sidecars(&journal.stage)?;
+    match crate::fs_secure::remove_dir_all_for_cleanup(&journal.stage) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.to_string()),
+    }
+    if let Some(parent) = journal.stage.parent() {
+        sync_directory(parent)?;
+    }
+    Ok(())
+}
+
+fn extraction_move_plan_exists(journal: &CleanupJournal) -> Result<bool, String> {
+    let mut candidates = vec![move_plan_path(&journal.stage)];
+    if !journal.move_plan_sidecar {
+        candidates.push(journal.stage.join(super::journal::LEGACY_MOVE_PLAN_FILE_NAME));
+    }
+    for path in candidates {
+        match std::fs::symlink_metadata(&path) {
+            Ok(metadata)
+                if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_file() =>
+            {
+                return Err(format!(
+                    "Refusing unexpected extraction recovery sidecar {}.",
+                    path.display()
+                ));
+            }
+            Ok(_) => return Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Ok(false)
+}
+
+pub(crate) fn recover_missing_extract_stage(journal: &CleanupJournal) -> Result<(), String> {
+    if extract_journal_is_committed(journal) || journal.extract_phase.is_none() {
+        // Committed outputs must be preserved. Legacy journals had no explicit
+        // phase and historically treated a missing stage as completion.
+        return remove_move_plan_sidecars(&journal.stage);
+    }
+
+    if extraction_move_plan_exists(journal)? {
+        rollback_persisted_move_plan(
+            &journal.stage,
+            &journal.destination,
+            !journal.move_plan_sidecar,
+        )?;
+        return cleanup_extract_journal_artifacts(journal);
+    }
+
+    let destination_metadata = match std::fs::symlink_metadata(&journal.destination) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return remove_move_plan_sidecars(&journal.stage);
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+    if crate::path_safety::is_link_or_reparse(&destination_metadata)
+        || !destination_metadata.is_dir()
+    {
+        return Err(
+            "Refusing to recover a missing extraction stage through an unexpected destination."
+                .to_string(),
+        );
+    }
+
+    match journal.extract_stage_placement {
+        Some(super::journal::ExtractStagePlacement::InsideDestination) => {
+            // No move plan means publication never started. The destination
+            // predated the transaction, so preserve it and clear only sidecars.
+            remove_move_plan_sidecars(&journal.stage)
+        }
+        Some(super::journal::ExtractStagePlacement::Sibling) => {
+            // A brand-new destination is published by renaming the whole sibling
+            // stage. A crash can therefore make the stage disappear before the
+            // committed phase reaches disk. Roll it back only when the object is
+            // still the exact stage identity captured before extraction.
+            let expected = journal.extract_stage_identity.as_ref().ok_or_else(|| {
+                format!(
+                    "Extraction stage disappeared before commit and {} cannot be identified safely. Preserve the destination and retry recovery manually.",
+                    journal.destination.display()
+                )
+            })?;
+            super::journal::ensure_path_identity(&journal.destination, expected)?;
+            rename_file_no_replace(&journal.destination, &journal.stage)?;
+            if let Some(parent) = journal.destination.parent() {
+                sync_directory(parent)?;
+            }
+            cleanup_extract_journal_artifacts(journal)
+        }
+        None => remove_move_plan_sidecars(&journal.stage),
+    }
+}
+
 pub(crate) fn cleanup_committed_archive_journal(journal: &CleanupJournal) -> Result<(), String> {
     for (index, _) in journal.previous_archive_family.iter().enumerate() {
         remove_regular_file_if_present(&archive_backup_path(&journal.stage, index))?;
     }
-    match std::fs::remove_dir_all(&journal.stage) {
+    match crate::fs_secure::remove_dir_all_for_cleanup(&journal.stage) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(error.to_string()),
@@ -191,7 +297,10 @@ pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), Str
             return clear_cleanup_journal(app);
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return clear_cleanup_journal(app)
+            if !journal.archive {
+                recover_missing_extract_stage(&journal)?;
+            }
+            return clear_cleanup_journal(app);
         }
         Err(error) => return Err(error.to_string()),
     };
@@ -207,6 +316,11 @@ pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), Str
             return clear_cleanup_journal(app);
         }
         rollback_archive_journal(&journal)?;
+    } else if extract_journal_is_committed(&journal) {
+        // All targets crossed the durable extraction commit point. Preserve
+        // them and remove only the source stage and recovery sidecars.
+        cleanup_extract_journal_artifacts(&journal)?;
+        return clear_cleanup_journal(app);
     } else {
         rollback_persisted_move_plan(
             &journal.stage,
@@ -214,14 +328,19 @@ pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), Str
             !journal.move_plan_sidecar,
         )?;
     }
-    std::fs::remove_dir_all(&journal.stage).map_err(|e| e.to_string())?;
-    match std::fs::remove_file(move_plan_path(&journal.stage)) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.to_string()),
-    }
-    if let Some(parent) = journal.stage.parent() {
-        sync_directory(parent)?;
+    if journal.archive {
+        crate::fs_secure::remove_dir_all_for_cleanup(&journal.stage)
+            .map_err(|e| e.to_string())?;
+        match std::fs::remove_file(move_plan_path(&journal.stage)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.to_string()),
+        }
+        if let Some(parent) = journal.stage.parent() {
+            sync_directory(parent)?;
+        }
+    } else {
+        cleanup_extract_journal_artifacts(&journal)?;
     }
     clear_cleanup_journal(app)
 }
@@ -236,7 +355,7 @@ pub(crate) fn remove_regular_file_if_present(path: &std::path::Path) -> Result<(
                 path.display()
             ))
         }
-        Ok(_) => std::fs::remove_file(path).map_err(|e| e.to_string()),
+        Ok(_) => crate::fs_secure::remove_file_for_cleanup(path).map_err(|e| e.to_string()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error.to_string()),
     }

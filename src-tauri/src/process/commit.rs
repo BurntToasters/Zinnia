@@ -1,10 +1,12 @@
 //! Promote/merge staged outputs, commit and rollback cleanup.
 
 use super::journal::{
-    ensure_path_identity, ensure_regular_file_identity, mark_archive_journal_committed,
+    ensure_path_identity, ensure_regular_file_identity, file_identity,
+    mark_archive_journal_committed, mark_extract_journal_committed, move_identity_log_path,
     move_plan_path, path_identity, record_archive_journal_published, regular_file_identity,
-    remove_regular_file_if_matches, sync_directory, unregister_plan_stages, update_archive_journal,
-    FileIdentity, MoveRecord, LEGACY_MOVE_PLAN_FILE_NAME,
+    remove_move_plan_sidecars, remove_regular_file_if_matches, sync_directory,
+    unregister_plan_stages, update_archive_journal, FileIdentity, MoveRecord,
+    LEGACY_MOVE_PLAN_FILE_NAME,
 };
 use super::quota::MAX_EXTRACT_ENTRIES;
 use super::staging::{assert_real_directory, path_entry_exists};
@@ -191,7 +193,7 @@ fn copy_file_no_replace_with_created(
     let mut target_file = options.open(target).map_err(|error| error.to_string())?;
     // Capture the identity while our exclusive create handle is still open.
     // If a later copy step fails, cleanup is allowed only for this exact file.
-    let target_identity = path_identity(target)?;
+    let target_identity = file_identity(&target_file)?;
     let copy_result = (|| {
         on_created(target, &target_identity)?;
         std::io::copy(&mut source_file, &mut target_file).map_err(|error| error.to_string())?;
@@ -246,7 +248,7 @@ fn copy_windows_times_and_attributes(
     use windows_sys::Win32::Storage::FileSystem::{
         GetFileTime, SetFileAttributesW, SetFileTime, FILE_ATTRIBUTE_ARCHIVE,
         FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_NOT_CONTENT_INDEXED,
-        FILE_ATTRIBUTE_OFFLINE, FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_SYSTEM,
+        FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_SYSTEM,
     };
 
     let mut created = FILETIME::default();
@@ -290,7 +292,6 @@ fn copy_windows_times_and_attributes(
         | FILE_ATTRIBUTE_HIDDEN
         | FILE_ATTRIBUTE_SYSTEM
         | FILE_ATTRIBUTE_ARCHIVE
-        | FILE_ATTRIBUTE_OFFLINE
         | FILE_ATTRIBUTE_NOT_CONTENT_INDEXED;
     let mut target_attributes = source_attributes & allowed;
     if target_attributes == 0 {
@@ -522,7 +523,7 @@ where
     let mut backups: Vec<(std::path::PathBuf, std::path::PathBuf)> = Vec::new();
     for (index, path) in existing.into_iter().enumerate() {
         let backup = archive_backup_path(stage_dir, index);
-        if let Err(e) = std::fs::rename(&path, &backup) {
+        if let Err(e) = rename_file_no_replace(&path, &backup) {
             let mut restore_errors = Vec::new();
             for (previous_backup, previous_path) in backups.into_iter().rev() {
                 if let Err(restore_error) = rename_file_no_replace(&previous_backup, &previous_path)
@@ -613,7 +614,7 @@ where
     // this point may return Err: recovery treats backup files as cleanup-only.
 
     for (backup, _) in backups {
-        if let Err(error) = std::fs::remove_file(&backup) {
+        if let Err(error) = crate::fs_secure::remove_file_for_cleanup(&backup) {
             eprintln!(
                 "Archive published; leftover backup cleanup failed for {}: {error}",
                 backup.display()
@@ -639,7 +640,7 @@ where
         if error.kind() != std::io::ErrorKind::NotFound {
             // Empty-dir remove failed (e.g. PermissionDenied). Try a full scrub only
             // when we already know there are no backup-* files.
-            if let Err(scrub_error) = std::fs::remove_dir_all(stage_dir) {
+            if let Err(scrub_error) = crate::fs_secure::remove_dir_all_for_cleanup(stage_dir) {
                 if scrub_error.kind() != std::io::ErrorKind::NotFound {
                     eprintln!(
                         "Archive published; staging directory cleanup failed for {}: {scrub_error}",
@@ -703,7 +704,7 @@ pub(crate) fn commit_failure_should_scrub_staging(plan: &CleanupPlan, error: &st
 pub(crate) fn rollback_cleanup(plan: &CleanupPlan) -> Result<(), String> {
     let mut failures = Vec::new();
     if let Some((staged, _)) = &plan.staged_extract {
-        if let Err(e) = std::fs::remove_dir_all(staged) {
+        if let Err(e) = crate::fs_secure::remove_dir_all_for_cleanup(staged) {
             if e.kind() != std::io::ErrorKind::NotFound {
                 failures.push(format!(
                     "Could not remove partial extract directory {}: {e}",
@@ -711,15 +712,13 @@ pub(crate) fn rollback_cleanup(plan: &CleanupPlan) -> Result<(), String> {
                 ));
             }
         }
-        if let Err(e) = std::fs::remove_file(move_plan_path(staged)) {
-            if e.kind() != std::io::ErrorKind::NotFound {
-                failures.push(format!("Could not remove extract move plan: {e}"));
-            }
+        if let Err(e) = remove_move_plan_sidecars(staged) {
+            failures.push(format!("Could not remove extract move-plan sidecars: {e}"));
         }
     }
     if let Some((staged, _)) = &plan.staged_archive {
         let stage_dir = staged.parent().unwrap_or(staged);
-        if let Err(e) = std::fs::remove_dir_all(stage_dir) {
+        if let Err(e) = crate::fs_secure::remove_dir_all_for_cleanup(stage_dir) {
             if e.kind() != std::io::ErrorKind::NotFound {
                 failures.push(format!(
                     "Could not remove partial archive staging directory {}: {e}",
@@ -730,7 +729,7 @@ pub(crate) fn rollback_cleanup(plan: &CleanupPlan) -> Result<(), String> {
     }
     if let Some(staged) = &plan.staged_input_archive {
         let stage_dir = staged.parent().unwrap_or(staged);
-        if let Err(e) = std::fs::remove_dir_all(stage_dir) {
+        if let Err(e) = crate::fs_secure::remove_dir_all_for_cleanup(stage_dir) {
             if e.kind() != std::io::ErrorKind::NotFound {
                 failures.push(format!(
                     "Could not remove archive input snapshot {}: {e}",
@@ -911,15 +910,23 @@ fn prepare_target_local_publish_paths(
             .target
             .parent()
             .ok_or_else(|| "Extraction target has no parent directory.".to_string())?;
-        let publish_temp = loop {
+        let mut publish_temp = None;
+        for _ in 0..32 {
             let candidate = parent.join(format!(
                 ".zinnia-publish-{}",
                 super::staging::random_token()?
             ));
             if !reserved.contains(&candidate) && !path_entry_exists(&candidate)? {
-                break candidate;
+                publish_temp = Some(candidate);
+                break;
             }
-        };
+        }
+        let publish_temp = publish_temp.ok_or_else(|| {
+            format!(
+                "Could not reserve a unique extraction publish path under {}.",
+                parent.display()
+            )
+        })?;
         reserved.insert(publish_temp.clone());
         record.publish_temp = Some(publish_temp);
     }
@@ -935,12 +942,10 @@ fn remove_path_if_matches(path: &std::path::Path, identity: &FileIdentity) -> Re
             path.display()
         ));
     }
-    #[cfg(windows)]
-    clear_windows_readonly_tree(path)?;
     if metadata.is_dir() {
-        std::fs::remove_dir_all(path).map_err(|error| error.to_string())
+        crate::fs_secure::remove_dir_all_for_cleanup(path).map_err(|error| error.to_string())
     } else if metadata.is_file() {
-        std::fs::remove_file(path).map_err(|error| error.to_string())
+        crate::fs_secure::remove_file_for_cleanup(path).map_err(|error| error.to_string())
     } else {
         Err(format!(
             "Refusing to remove an unsupported publish path: {}",
@@ -950,41 +955,135 @@ fn remove_path_if_matches(path: &std::path::Path, identity: &FileIdentity) -> Re
 }
 
 #[cfg(windows)]
-fn clear_windows_readonly_tree(path: &std::path::Path) -> Result<(), String> {
-    let metadata = std::fs::symlink_metadata(path).map_err(|error| error.to_string())?;
-    if crate::path_safety::is_link_or_reparse(&metadata) {
-        return Err(format!(
-            "Refusing to traverse a link or reparse point during publish cleanup: {}",
-            path.display()
-        ));
-    }
-    if metadata.is_dir() {
-        for entry in std::fs::read_dir(path).map_err(|error| error.to_string())? {
-            clear_windows_readonly_tree(&entry.map_err(|error| error.to_string())?.path())?;
+#[derive(serde::Serialize, serde::Deserialize)]
+struct MoveIdentityLogRecord {
+    index: usize,
+    publish_temp: std::path::PathBuf,
+    identity: FileIdentity,
+}
+
+#[cfg(windows)]
+struct MoveIdentityLogWriter {
+    file: std::fs::File,
+}
+
+#[cfg(windows)]
+impl MoveIdentityLogWriter {
+    fn create(staged: &std::path::Path) -> Result<Self, String> {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
+
+        let path = move_identity_log_path(staged);
+        let mut options = std::fs::OpenOptions::new();
+        options
+            .write(true)
+            .create_new(true)
+            // Recovery readers are harmless. Deny concurrent writers, rename,
+            // and deletion for the lifetime of this extraction commit.
+            .share_mode(FILE_SHARE_READ);
+        let file = options.open(&path).map_err(|error| error.to_string())?;
+        sync_file_best_effort(&file)?;
+        if let Some(parent) = path.parent() {
+            sync_directory(parent)?;
         }
+        Ok(Self { file })
     }
-    if metadata.permissions().readonly() {
-        let mut permissions = metadata.permissions();
-        permissions.set_readonly(false);
-        std::fs::set_permissions(path, permissions).map_err(|error| error.to_string())?;
+
+    fn append(&mut self, record: &MoveIdentityLogRecord) -> Result<(), String> {
+        use std::io::Write as _;
+
+        let mut json = serde_json::to_vec(record).map_err(|error| error.to_string())?;
+        json.push(b'\n');
+        self.file
+            .write_all(&json)
+            .map_err(|error| error.to_string())?;
+        sync_file_best_effort(&self.file)
+    }
+}
+
+#[cfg(windows)]
+fn hydrate_move_plan_identities(
+    staged: &std::path::Path,
+    plan: &mut [MoveRecord],
+) -> Result<(), String> {
+    use std::io::BufRead as _;
+
+    let path = move_identity_log_path(staged);
+    match std::fs::symlink_metadata(&path) {
+        Ok(metadata)
+            if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_file() =>
+        {
+            return Err("Extraction identity log is not a regular file.".to_string());
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.to_string()),
+    };
+    let file = crate::path_safety::open_regular_file_nofollow(&path)?;
+    let mut reader = std::io::BufReader::new(file);
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        let bytes = reader
+            .read_until(b'\n', &mut line)
+            .map_err(|error| error.to_string())?;
+        if bytes == 0 {
+            break;
+        }
+        if !line.ends_with(b"\n") {
+            // A crash can leave one torn append. Ignore only the incomplete
+            // final record; complete malformed records remain a hard error.
+            break;
+        }
+        line.pop();
+        if line.ends_with(b"\r") {
+            line.pop();
+        }
+        if line.is_empty() {
+            return Err("Extraction identity log contains an empty record.".to_string());
+        }
+        let record: MoveIdentityLogRecord =
+            serde_json::from_slice(&line).map_err(|error| error.to_string())?;
+        let Some(planned) = plan.get_mut(record.index) else {
+            return Err("Extraction identity log references an invalid move index.".to_string());
+        };
+        if planned.publish_temp.as_ref() != Some(&record.publish_temp) {
+            return Err("Extraction identity log does not match its move plan.".to_string());
+        }
+        if let Some(existing) = &planned.publish_identity {
+            if existing != &record.identity {
+                return Err("Extraction identity log contains conflicting records.".to_string());
+            }
+        } else {
+            planned.publish_identity = Some(record.identity);
+        }
     }
     Ok(())
 }
 
 #[cfg(windows)]
 fn record_publish_identity(
-    staged: &std::path::Path,
+    identity_log: &mut MoveIdentityLogWriter,
     plan: &mut [MoveRecord],
     index: usize,
     identity: &FileIdentity,
 ) -> Result<(), String> {
+    let publish_temp = plan
+        .get(index)
+        .and_then(|record| record.publish_temp.clone())
+        .ok_or_else(|| "Extraction publish path was not planned.".to_string())?;
+    identity_log.append(&MoveIdentityLogRecord {
+        index,
+        publish_temp,
+        identity: identity.clone(),
+    })?;
     plan[index].publish_identity = Some(identity.clone());
-    write_move_plan(staged, plan)
+    Ok(())
 }
 
 #[cfg(windows)]
 fn publish_target_local_copy(
-    staged: &std::path::Path,
+    identity_log: &mut MoveIdentityLogWriter,
     plan: &mut [MoveRecord],
     index: usize,
 ) -> Result<(), String> {
@@ -1004,13 +1103,13 @@ fn publish_target_local_copy(
 
     let copy_result = if metadata.is_file() {
         copy_file_no_replace_with_created(&source, &publish_temp, |_, identity| {
-            record_publish_identity(staged, plan, index, identity)
+            record_publish_identity(identity_log, plan, index, identity)
         })
     } else if metadata.is_dir() {
         crate::fs_secure::create_inheriting_stage_dir(&publish_temp)
             .map_err(|error| error.to_string())?;
         let identity = path_identity(&publish_temp)?;
-        let journal_result = record_publish_identity(staged, plan, index, &identity);
+        let journal_result = record_publish_identity(identity_log, plan, index, &identity);
         if let Err(error) = journal_result {
             let cleanup = remove_path_if_matches(&publish_temp, &identity);
             return Err(match cleanup {
@@ -1222,7 +1321,8 @@ fn atomic_replace_move_plan_windows(path: &std::path::Path, contents: &str) -> R
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or_else(|| "Extraction move plan has an invalid file name.".to_string())?;
-    let (temp, mut file) = loop {
+    let mut reserved = None;
+    for _ in 0..32 {
         let candidate = parent.join(format!(
             ".{file_name}.{}.tmp",
             super::staging::random_token()?
@@ -1230,11 +1330,16 @@ fn atomic_replace_move_plan_windows(path: &std::path::Path, contents: &str) -> R
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
         match options.open(&candidate) {
-            Ok(file) => break (candidate, file),
+            Ok(file) => {
+                reserved = Some((candidate, file));
+                break;
+            }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error.to_string()),
         }
-    };
+    }
+    let (temp, mut file) = reserved
+        .ok_or_else(|| "Could not reserve a unique extraction move-plan temp file.".to_string())?;
     let write_result = file
         .write_all(contents.as_bytes())
         .and_then(|()| file.sync_all())
@@ -1408,7 +1513,7 @@ pub(crate) fn rollback_move_records(
                 continue;
             }
         }
-        if let Err(error) = std::fs::rename(&record.target, &record.source) {
+        if let Err(error) = rename_file_no_replace(&record.target, &record.source) {
             failures.push(format!(
                 "Could not roll back {}: {error}",
                 record.target.display()
@@ -1428,28 +1533,55 @@ pub(crate) fn rollback_persisted_move_plan(
     allow_legacy_location: bool,
 ) -> Result<(), String> {
     let path = move_plan_path(staged);
-    let json = match std::fs::read_to_string(&path) {
-        Ok(json) => json,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound && allow_legacy_location => {
+    let json = match read_recovery_text_file(&path)? {
+        Some(json) => json,
+        None if allow_legacy_location => {
             // Compatibility recovery for transactions started by older betas.
-            match std::fs::read_to_string(staged.join(LEGACY_MOVE_PLAN_FILE_NAME)) {
-                Ok(json) => json,
-                Err(legacy) if legacy.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-                Err(legacy) => return Err(legacy.to_string()),
+            match read_recovery_text_file(&staged.join(LEGACY_MOVE_PLAN_FILE_NAME))? {
+                Some(json) => json,
+                None => return Ok(()),
             }
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error.to_string()),
+        None => return Ok(()),
     };
-    let plan: Vec<MoveRecord> = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    let mut plan: Vec<MoveRecord> = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    #[cfg(windows)]
+    hydrate_move_plan_identities(staged, &mut plan)?;
     rollback_move_records(staged, destination, &plan)
 }
 
-pub(crate) fn merge_staged_extract(
+fn read_recovery_text_file(path: &std::path::Path) -> Result<Option<String>, String> {
+    use std::io::Read as _;
+
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata)
+            if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_file() =>
+        {
+            return Err(format!(
+                "Refusing unexpected extraction recovery sidecar {}.",
+                path.display()
+            ));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    }
+    let mut file = crate::path_safety::open_regular_file_nofollow(path)?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)
+        .map_err(|error| error.to_string())?;
+    Ok(Some(contents))
+}
+
+pub(crate) fn merge_staged_extract_with_commit<F>(
     staged: &std::path::Path,
     destination: &std::path::Path,
     max_bytes: u64,
-) -> Result<Vec<std::path::PathBuf>, String> {
+    mark_committed: F,
+) -> Result<Vec<std::path::PathBuf>, String>
+where
+    F: FnOnce() -> Result<(), String>,
+{
     // Always enforce the operation-specific limit immediately before publish.
     // Fast extractions can finish before the live monitor's first poll.
     validate_staged_tree(staged, max_bytes)?;
@@ -1472,9 +1604,41 @@ pub(crate) fn merge_staged_extract(
             }
             Err(error) => return Err(error.to_string()),
         }
-        std::fs::rename(staged, destination).map_err(|e| e.to_string())?;
-        if let Some(parent) = destination.parent() {
-            sync_directory(parent)?;
+        rename_file_no_replace(staged, destination)?;
+        let durability = if let Some(parent) = destination.parent() {
+            sync_directory(parent)
+        } else {
+            Ok(())
+        };
+        if let Err(error) = durability {
+            let rollback = rename_file_no_replace(destination, staged)
+                .and_then(|()| {
+                    if let Some(parent) = destination.parent() {
+                        sync_directory(parent)?;
+                    }
+                    Ok(())
+                });
+            return Err(match rollback {
+                Ok(()) => error,
+                Err(rollback_error) => {
+                    format!("{error}; extraction durability rollback also failed: {rollback_error}")
+                }
+            });
+        }
+        if let Err(error) = mark_committed() {
+            let rollback = rename_file_no_replace(destination, staged)
+                .and_then(|()| {
+                    if let Some(parent) = destination.parent() {
+                        sync_directory(parent)?;
+                    }
+                    Ok(())
+                });
+            return Err(match rollback {
+                Ok(()) => error,
+                Err(rollback_error) => {
+                    format!("{error}; extraction commit rollback also failed: {rollback_error}")
+                }
+            });
         }
         return Ok(vec![destination.to_path_buf()]);
     }
@@ -1485,7 +1649,15 @@ pub(crate) fn merge_staged_extract(
     prepare_planned_links(staged, destination, &plan)?;
     #[cfg(windows)]
     prepare_target_local_publish_paths(&mut plan, &mut reserved)?;
+    #[cfg(windows)]
+    match std::fs::remove_file(move_identity_log_path(staged)) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.to_string()),
+    }
     write_move_plan(staged, &plan)?;
+    #[cfg(windows)]
+    let mut identity_log = MoveIdentityLogWriter::create(staged)?;
     for index in 0..plan.len() {
         let record = &plan[index];
         validate_move_record(staged, destination, record)?;
@@ -1509,7 +1681,7 @@ pub(crate) fn merge_staged_extract(
         }
         #[cfg(windows)]
         if record.publish_temp.is_some() {
-            if let Err(error) = publish_target_local_copy(staged, &mut plan, index) {
+            if let Err(error) = publish_target_local_copy(&mut identity_log, &mut plan, index) {
                 let rollback = rollback_move_records(staged, destination, &plan);
                 return Err(match rollback {
                     Ok(()) => error,
@@ -1524,7 +1696,7 @@ pub(crate) fn merge_staged_extract(
         let result = if metadata.is_file() {
             publish_file_no_replace(&record.source, &record.target)
         } else {
-            std::fs::rename(&record.source, &record.target).map_err(|e| e.to_string())
+            rename_file_no_replace(&record.source, &record.target)
         };
         if let Err(error) = result {
             let rollback = rollback_move_records(staged, destination, &plan);
@@ -1534,30 +1706,91 @@ pub(crate) fn merge_staged_extract(
             });
         }
     }
+    #[cfg(windows)]
+    drop(identity_log);
     let promoted: Vec<_> = plan.iter().map(|record| record.target.clone()).collect();
-    std::fs::remove_dir_all(staged).map_err(|e| e.to_string())?;
-    if let Err(error) = std::fs::remove_file(move_plan_path(staged)) {
-        if error.kind() != std::io::ErrorKind::NotFound {
-            eprintln!("Extraction committed; could not remove move-plan sidecar: {error}");
+    let durability = sync_directory(destination).and_then(|()| {
+        if let Some(parent) = destination.parent() {
+            sync_directory(parent)?;
         }
+        Ok(())
+    });
+    if let Err(error) = durability {
+        let rollback = rollback_move_records(staged, destination, &plan).and_then(|()| {
+            sync_directory(destination)?;
+            if let Some(parent) = destination.parent() {
+                sync_directory(parent)?;
+            }
+            Ok(())
+        });
+        return Err(match rollback {
+            Ok(()) => error,
+            Err(rollback_error) => {
+                format!("{error}; extraction durability rollback also failed: {rollback_error}")
+            }
+        });
     }
-    sync_directory(destination)?;
-    if let Some(parent) = destination.parent() {
-        sync_directory(parent)?;
+    if let Err(error) = mark_committed() {
+        let rollback = rollback_move_records(staged, destination, &plan).and_then(|()| {
+            sync_directory(destination)?;
+            if let Some(parent) = destination.parent() {
+                sync_directory(parent)?;
+            }
+            Ok(())
+        });
+        return Err(match rollback {
+            Ok(()) => error,
+            Err(rollback_error) => {
+                format!("{error}; extraction commit rollback also failed: {rollback_error}")
+            }
+        });
+    }
+
+    // The journal now records a durable extraction commit. Nothing after this
+    // point may return Err: recovery must preserve published targets and only
+    // retry cleanup of the source stage and sidecars.
+    match remove_move_plan_sidecars(staged) {
+        Ok(()) => {
+            if let Err(error) = crate::fs_secure::remove_dir_all_for_cleanup(staged) {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    eprintln!(
+                        "Extraction published; staging directory cleanup failed for {}: {error}",
+                        staged.display()
+                    );
+                }
+            }
+        }
+        Err(error) => {
+            // Keep the stage so pending-stages tracking remains active and the
+            // next startup can retry both stage and sidecar cleanup.
+            eprintln!(
+                "Extraction published; move-plan sidecar cleanup failed for {}: {error}",
+                staged.display()
+            );
+        }
     }
     Ok(promoted)
 }
 
+pub(crate) fn merge_staged_extract(
+    staged: &std::path::Path,
+    destination: &std::path::Path,
+    max_bytes: u64,
+) -> Result<Vec<std::path::PathBuf>, String> {
+    merge_staged_extract_with_commit(staged, destination, max_bytes, || Ok(()))
+}
+
 pub(crate) fn commit_cleanup(app: &tauri::AppHandle, plan: &CleanupPlan) -> Result<(), String> {
     if let Some(staged) = &plan.staged_input_archive {
-        std::fs::remove_dir_all(staged.parent().unwrap_or(staged))
+        crate::fs_secure::remove_dir_all_for_cleanup(staged.parent().unwrap_or(staged))
             .map_err(|e| format!("Could not remove archive input snapshot: {e}"))?;
     }
     if let Some((staged, destination)) = &plan.staged_extract {
-        merge_staged_extract(
+        merge_staged_extract_with_commit(
             staged,
             destination,
             plan.max_extract_bytes.unwrap_or(MAX_EXTRACTED_BYTES),
+            || mark_extract_journal_committed(app, plan),
         )
         .map_err(|e| format!("Could not promote staged extraction safely: {e}"))?;
         crate::launch::remember_openable_directory(app, destination);
