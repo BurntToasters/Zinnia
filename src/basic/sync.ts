@@ -401,9 +401,7 @@ export function syncBasicOutputAutofill(): void {
   if (!basicOutputPath || !basicFormat) return;
 
   const format = basicFormat.value;
-  const customName = basicArchiveName?.value
-    ? basicArchiveName.value
-    : undefined;
+  const customName = basicArchiveName?.value ?? undefined;
   const next = resolveOutputArchiveAutofill(
     basicOutputPath.value,
     state.lastAutoOutputPath,
