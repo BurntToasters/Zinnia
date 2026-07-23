@@ -242,6 +242,7 @@ soid.type = "checkbox";
 const sqekw = addEl("input", "s-quick-extract-keep-warm") as HTMLInputElement;
 sqekw.type = "checkbox";
 addSelect("s-quick-extract-warm-idle", ["5", "10", "30", "60"]);
+addSelect("s-extract-auto-close", ["-1", "0", "1.5", "3", "5", "10"]);
 const sBasicFx = addEl("input", "s-basic-window-effects") as HTMLInputElement;
 sBasicFx.type = "checkbox";
 const basicFxRow = addEl("div", "setting-basic-window-effects");
