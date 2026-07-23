@@ -409,7 +409,7 @@ where
             }
         }
         for (backup, target) in backups.into_iter().rev() {
-            if let Err(e) = std::fs::rename(&backup, &target) {
+            if let Err(e) = rename_file_no_replace(&backup, &target) {
                 recovery_errors.push(format!("Could not restore {}: {e}", target.display()));
             }
         }

@@ -351,4 +351,33 @@ describe("focus trap helpers", () => {
     outside.remove();
     modal.remove();
   });
+
+  it("lets only the topmost focus trap own Tab", () => {
+    const lower = document.createElement("div");
+    const lowerFirst = document.createElement("button");
+    const lowerLast = document.createElement("button");
+    lower.append(lowerFirst, lowerLast);
+    const upper = document.createElement("div");
+    const upperFirst = document.createElement("button");
+    const upperLast = document.createElement("button");
+    upper.append(upperFirst, upperLast);
+    document.body.append(lower, upper);
+    setVisibleForFocus(lowerFirst, lower);
+    setVisibleForFocus(lowerLast, lower);
+    setVisibleForFocus(upperFirst, upper);
+    setVisibleForFocus(upperLast, upper);
+
+    trapFocus(lower);
+    trapFocus(upper);
+    lowerLast.focus();
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Tab", bubbles: true }),
+    );
+    expect(document.activeElement).toBe(upperFirst);
+
+    releaseFocusTrap(upper);
+    releaseFocusTrap(lower);
+    lower.remove();
+    upper.remove();
+  });
 });

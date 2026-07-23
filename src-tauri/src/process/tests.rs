@@ -959,6 +959,30 @@ fn archive_journal_rollback_continues_after_unpublished_volume_identity() {
 }
 
 #[test]
+fn archive_journal_rollback_clears_published_volume_without_identity() {
+    // Crash after publish_file_no_replace but before record_archive_journal_published.
+    let root = temp_root("zinnia-journal-unrecorded-publish");
+    let stage = root.join(".zinnia-archive-abc");
+    let destination = root.join("out.7z");
+    std::fs::create_dir_all(&stage).expect("stage");
+    std::fs::write(archive_backup_path(&stage, 0), b"old").expect("backup");
+    std::fs::write(&destination, b"new-unrecorded").expect("published");
+    let journal = CleanupJournal {
+        stage: stage.clone(),
+        destination: destination.clone(),
+        archive: true,
+        move_plan_sidecar: false,
+        previous_archive_family: vec![destination.clone()],
+        next_archive_family: vec![destination.clone()],
+        next_archive_identities: vec![None],
+        archive_phase: Some(ArchiveJournalPhase::InProgress),
+    };
+    rollback_archive_journal(&journal).expect("rollback unrecorded publish");
+    assert_eq!(std::fs::read(&destination).unwrap(), b"old");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn archive_journal_rollback_preserves_a_replacement_output() {
     let root = temp_root("zinnia-journal-replacement");
     let stage = root.join(".zinnia-archive-abc");
