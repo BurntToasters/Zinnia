@@ -2,10 +2,10 @@
 
 use super::journal::{
     ensure_path_identity, ensure_regular_file_identity, file_identities_match, file_identity,
-    mark_archive_journal_committed, mark_extract_journal_committed,
-    move_plan_path, record_archive_journal_backup, record_archive_journal_published,
-    regular_file_identity, remove_move_plan_sidecars, remove_regular_file_if_matches,
-    sync_directory, unregister_plan_stages, update_archive_journal, FileIdentity, MoveRecord,
+    mark_archive_journal_committed, mark_extract_journal_committed, move_plan_path,
+    record_archive_journal_backup, record_archive_journal_published, regular_file_identity,
+    remove_move_plan_sidecars, remove_regular_file_if_matches, sync_directory,
+    unregister_plan_stages, update_archive_journal, FileIdentity, MoveRecord,
     LEGACY_MOVE_PLAN_FILE_NAME,
 };
 #[cfg(windows)]
