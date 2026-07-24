@@ -25,8 +25,12 @@ flyout. Root and Extract therefore use separate sparse packages and DLLs, with
 one command identity in each package. This produces sibling root entries instead
 of the redundant **Zinnia > Zinnia** nesting.
 
-Classic NSIS registry verbs remain for the legacy menu (including
-`Directory\Background\shell\ZinniaCompress` with `%V`).
+Classic NSIS registry verbs are a **fallback** when Win11 sparse-package
+registration fails (stubs, missing script, or `Add-AppxPackage` error). They
+must not be left installed alongside the packages: Win11 `IExplorerCommand`
+verbs also appear under “Show more options,” so classic Extract/Compress would
+duplicate the package entries. File association **Open with Zinnia** stays on
+the Tauri ProgId only (never a parallel `SystemFileAssociations\ZinniaOpen`).
 
 ## Build (Windows only)
 
