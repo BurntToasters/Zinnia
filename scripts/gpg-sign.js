@@ -64,7 +64,7 @@ const ENFORCE_LINUX_X64_PACKAGE_SET = !/^(0|false|no|off)$/i.test(
 const ext = (e) => (n) => n.toLowerCase().endsWith(e);
 const rx = (r) => (n) => r.test(n);
 const exact = (f) => (n) => n === f;
-const isPerTargetManifest = rx(/^latest-[a-z0-9-]+-[a-z0-9_]+\.json$/i);
+const isPerTargetManifest = rx(/^latest-[a-z0-9_-]+\.json$/i);
 const isChecksumTextName = rx(
   // Target keys include prerelease names such as darwin-beta-aarch64.
   /^SHA256SUMS(?:-[a-z0-9_-]+)?\.txt$/i,
@@ -594,9 +594,9 @@ function generateUpdaterManifests(files) {
 }
 
 function parseManifestTargetKey(name) {
-  const m = name.match(/^latest-([a-z0-9-]+)-([a-z0-9_]+)\.json$/i);
+  const m = name.match(/^latest-([a-z0-9_-]+)\.json$/i);
   if (!m) return null;
-  return `${m[1].toLowerCase()}-${m[2].toLowerCase()}`;
+  return m[1].toLowerCase();
 }
 
 function targetKeysForArtifactName(name) {
