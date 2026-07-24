@@ -201,7 +201,7 @@ pub(crate) fn file_identity(file: &std::fs::File) -> Result<FileIdentity, String
         use std::os::windows::io::AsRawHandle as _;
         use windows_sys::Win32::Foundation::HANDLE;
         use windows_sys::Win32::Storage::FileSystem::{
-            GetFileInformationByHandle, GetFileInformationByHandleEx, FileIdInfo,
+            FileIdInfo, GetFileInformationByHandle, GetFileInformationByHandleEx,
             BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ID_INFO,
         };
         let handle = file.as_raw_handle() as HANDLE;

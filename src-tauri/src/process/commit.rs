@@ -3,10 +3,9 @@
 use super::journal::{
     ensure_path_identity, ensure_regular_file_identity, file_identities_match, file_identity,
     mark_archive_journal_committed, mark_extract_journal_committed, move_identity_log_path,
-    move_plan_path, path_identity, record_archive_journal_backup,
-    record_archive_journal_published, regular_file_identity,
-    remove_move_plan_sidecars, remove_regular_file_if_matches, sync_directory,
-    unregister_plan_stages, update_archive_journal, FileIdentity, MoveRecord,
+    move_plan_path, path_identity, record_archive_journal_backup, record_archive_journal_published,
+    regular_file_identity, remove_move_plan_sidecars, remove_regular_file_if_matches,
+    sync_directory, unregister_plan_stages, update_archive_journal, FileIdentity, MoveRecord,
     LEGACY_MOVE_PLAN_FILE_NAME,
 };
 use super::quota::MAX_EXTRACT_ENTRIES;
@@ -747,13 +746,7 @@ pub(crate) fn promote_archive_family(
     staged: &std::path::Path,
     destination: &std::path::Path,
 ) -> Result<(), String> {
-    promote_archive_family_with_commit(
-        staged,
-        destination,
-        |_, _| Ok(()),
-        |_, _| Ok(()),
-        || Ok(()),
-    )
+    promote_archive_family_with_commit(staged, destination, |_, _| Ok(()), |_, _| Ok(()), || Ok(()))
 }
 
 /// True when the archive stage still holds `backup-*` files needed for journal recovery.
@@ -1703,13 +1696,12 @@ where
             Ok(())
         };
         if let Err(error) = durability {
-            let rollback = rename_file_no_replace(destination, staged)
-                .and_then(|()| {
-                    if let Some(parent) = destination.parent() {
-                        sync_directory(parent)?;
-                    }
-                    Ok(())
-                });
+            let rollback = rename_file_no_replace(destination, staged).and_then(|()| {
+                if let Some(parent) = destination.parent() {
+                    sync_directory(parent)?;
+                }
+                Ok(())
+            });
             return Err(match rollback {
                 Ok(()) => error,
                 Err(rollback_error) => {
@@ -1718,13 +1710,12 @@ where
             });
         }
         if let Err(error) = mark_committed() {
-            let rollback = rename_file_no_replace(destination, staged)
-                .and_then(|()| {
-                    if let Some(parent) = destination.parent() {
-                        sync_directory(parent)?;
-                    }
-                    Ok(())
-                });
+            let rollback = rename_file_no_replace(destination, staged).and_then(|()| {
+                if let Some(parent) = destination.parent() {
+                    sync_directory(parent)?;
+                }
+                Ok(())
+            });
             return Err(match rollback {
                 Ok(()) => error,
                 Err(rollback_error) => {

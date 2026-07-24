@@ -74,7 +74,11 @@ pub(crate) fn cleanup_extract_journal_artifacts(journal: &CleanupJournal) -> Res
 fn extraction_move_plan_exists(journal: &CleanupJournal) -> Result<bool, String> {
     let mut candidates = vec![move_plan_path(&journal.stage)];
     if !journal.move_plan_sidecar {
-        candidates.push(journal.stage.join(super::journal::LEGACY_MOVE_PLAN_FILE_NAME));
+        candidates.push(
+            journal
+                .stage
+                .join(super::journal::LEGACY_MOVE_PLAN_FILE_NAME),
+        );
     }
     for path in candidates {
         match std::fs::symlink_metadata(&path) {
@@ -161,9 +165,13 @@ fn archive_backup_identity(
     if journal.previous_archive_identities.len() != journal.previous_archive_family.len() {
         return Err("Archive recovery journal has invalid backup identity records.".to_string());
     }
-    journal.previous_archive_identities[index].as_ref().ok_or_else(|| {
-        format!("Archive recovery journal did not record the identity of backup volume {index}.")
-    })
+    journal.previous_archive_identities[index]
+        .as_ref()
+        .ok_or_else(|| {
+            format!(
+                "Archive recovery journal did not record the identity of backup volume {index}."
+            )
+        })
 }
 
 fn validate_archive_backup(
@@ -389,8 +397,7 @@ pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), Str
         )?;
     }
     if journal.archive {
-        crate::fs_secure::remove_dir_all_for_cleanup(&journal.stage)
-            .map_err(|e| e.to_string())?;
+        crate::fs_secure::remove_dir_all_for_cleanup(&journal.stage).map_err(|e| e.to_string())?;
         match std::fs::remove_file(move_plan_path(&journal.stage)) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}

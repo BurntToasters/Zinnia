@@ -442,9 +442,9 @@ pub(super) fn stage_extract_input(
             );
             let mut source_file =
                 crate::path_safety::open_regular_file_nofollow_for_snapshot(&source)
-                .map_err(|error| {
-                    format!("Could not open archive input {}: {error}", source.display())
-                })?;
+                    .map_err(|error| {
+                        format!("Could not open archive input {}: {error}", source.display())
+                    })?;
             let opened_identity = archive_file_identity_from_open_file(&source, &source_file)?;
             if opened_identity != expected {
                 return Err(
