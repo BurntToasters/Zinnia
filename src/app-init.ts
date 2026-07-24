@@ -58,6 +58,8 @@ function wireTitlebar(): void {
   }
   if (maxBtn) {
     maxBtn.addEventListener("click", async () => {
+      // Basic mode locks window size; ignore maximize even if the OS APIs allow it.
+      if (getWorkspaceMode() === "basic") return;
       const isMax = await appWindow.isMaximized();
       if (isMax) {
         void appWindow.unmaximize();

@@ -25,7 +25,11 @@ vi.mock("@tauri-apps/api/app", () => ({
 vi.mock("@tauri-apps/api/webviewWindow", () => ({
   getCurrentWebviewWindow: vi.fn().mockReturnValue({
     onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
-    setSize: vi.fn(),
+    setSize: vi.fn().mockResolvedValue(undefined),
+    setResizable: vi.fn().mockResolvedValue(undefined),
+    setMaximizable: vi.fn().mockResolvedValue(undefined),
+    isMaximized: vi.fn().mockResolvedValue(false),
+    unmaximize: vi.fn().mockResolvedValue(undefined),
   }),
 }));
 vi.mock("@tauri-apps/plugin-updater", () => ({

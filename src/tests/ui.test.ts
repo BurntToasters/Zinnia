@@ -264,21 +264,49 @@ describe("workspace and density", () => {
     const appWindow = {
       onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
       setSize: vi.fn().mockResolvedValue(undefined),
+      setResizable: vi.fn().mockResolvedValue(undefined),
+      setMaximizable: vi.fn().mockResolvedValue(undefined),
+      isMaximized: vi.fn().mockResolvedValue(false),
+      unmaximize: vi.fn().mockResolvedValue(undefined),
     };
     vi.mocked(getCurrentWebviewWindow).mockReturnValue(appWindow as never);
 
     await resizeWorkspaceWindow("basic");
 
+    expect(appWindow.setResizable).toHaveBeenCalledWith(false);
+    expect(appWindow.setMaximizable).toHaveBeenCalledWith(false);
     expect(appWindow.setSize).toHaveBeenCalledOnce();
     const [size] = appWindow.setSize.mock.calls[0];
     expect(size.width).toBe(500);
     expect(size.height).toBe(650);
   });
 
+  it("unmaximizes before locking the basic window size", async () => {
+    const appWindow = {
+      onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
+      setSize: vi.fn().mockResolvedValue(undefined),
+      setResizable: vi.fn().mockResolvedValue(undefined),
+      setMaximizable: vi.fn().mockResolvedValue(undefined),
+      isMaximized: vi.fn().mockResolvedValue(true),
+      unmaximize: vi.fn().mockResolvedValue(undefined),
+    };
+    vi.mocked(getCurrentWebviewWindow).mockReturnValue(appWindow as never);
+
+    await resizeWorkspaceWindow("basic");
+
+    expect(appWindow.unmaximize).toHaveBeenCalledOnce();
+    expect(appWindow.setResizable).toHaveBeenCalledWith(false);
+    expect(appWindow.setSize).toHaveBeenCalledOnce();
+  });
+
   it("clamps restored power window size before resizing", () => {
     const appWindow = {
       onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
-      setSize: vi.fn(),
+      setSize: vi.fn().mockResolvedValue(undefined),
+      setResizable: vi.fn().mockResolvedValue(undefined),
+      setMaximizable: vi.fn().mockResolvedValue(undefined),
+      isMaximized: vi.fn().mockResolvedValue(false),
+      unmaximize: vi.fn().mockResolvedValue(undefined),
     };
     vi.mocked(getCurrentWebviewWindow).mockReturnValue(appWindow as never);
     state.currentSettings.powerWindowWidth = -20;
@@ -286,16 +314,43 @@ describe("workspace and density", () => {
 
     setWorkspaceMode("power", { persist: false });
 
+    expect(appWindow.setResizable).toHaveBeenCalledWith(true);
+    expect(appWindow.setMaximizable).toHaveBeenCalledWith(true);
     expect(appWindow.setSize).toHaveBeenCalledOnce();
     const [size] = appWindow.setSize.mock.calls[0];
     expect(size.width).toBe(800);
     expect(size.height).toBe(2160);
   });
 
+  it("disables the titlebar maximize control in Basic mode", async () => {
+    const maxBtn = document.createElement("button");
+    maxBtn.id = "titlebar-max";
+    document.body.appendChild(maxBtn);
+    const appWindow = {
+      onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
+      setSize: vi.fn().mockResolvedValue(undefined),
+      setResizable: vi.fn().mockResolvedValue(undefined),
+      setMaximizable: vi.fn().mockResolvedValue(undefined),
+      isMaximized: vi.fn().mockResolvedValue(false),
+      unmaximize: vi.fn().mockResolvedValue(undefined),
+    };
+    vi.mocked(getCurrentWebviewWindow).mockReturnValue(appWindow as never);
+
+    await resizeWorkspaceWindow("basic");
+    expect(maxBtn.disabled).toBe(true);
+
+    await resizeWorkspaceWindow("power");
+    expect(maxBtn.disabled).toBe(false);
+  });
+
   it("logs and continues when workspace resizing fails", async () => {
     const appWindow = {
       onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
       setSize: vi.fn().mockRejectedValue(new Error("permission denied")),
+      setResizable: vi.fn().mockResolvedValue(undefined),
+      setMaximizable: vi.fn().mockResolvedValue(undefined),
+      isMaximized: vi.fn().mockResolvedValue(false),
+      unmaximize: vi.fn().mockResolvedValue(undefined),
     };
     vi.mocked(getCurrentWebviewWindow).mockReturnValue(appWindow as never);
     state.currentSettings.logVerbosity = "debug";

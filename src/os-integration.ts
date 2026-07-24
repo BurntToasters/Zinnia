@@ -334,7 +334,7 @@ export function renderOsIntegrationStatus(status: OsIntegrationStatus): void {
       help.textContent =
         status.win11ModernMenuHelp ??
         status.defaultArchiverHelp ??
-        "Zinnia installs as a normal NSIS app. Classic Explorer verbs always register; the Win11 modern menu uses a separate sparse identity package (not a Store/AppX app install).";
+        "Zinnia installs as a normal NSIS app. Win11 modern menu uses a sparse identity package; classic Extract/Compress registry verbs are only a fallback when that package is unavailable. Open with Zinnia stays on the file-association ProgId.";
     } else if (status.platform === "linux") {
       help.textContent =
         status.defaultArchiverHelp ??

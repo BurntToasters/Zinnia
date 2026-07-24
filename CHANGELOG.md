@@ -5,10 +5,10 @@
 
 | <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                                            | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux         |
 | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------- |
-| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.21/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.21/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.21/Zinnia-macOS.dmg)**  | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.21/Zinnia-Linux-x64.AppImage) |
-| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>-->                       | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.21/Zinnia-macOS.zip)**  | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.21/Zinnia-Linux-x64.deb)           |
-| <!--*See MSI note below*-->                                                                                                                                                                                                  |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.21/Zinnia-Linux-x64.rpm)           |
-|                                                                                                                                                                                                                              |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.21/Zinnia-Linux-x64.flatpak)   |
+| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.22/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.22/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.22/Zinnia-macOS.dmg)**  | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.22/Zinnia-Linux-x64.AppImage) |
+| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>-->                       | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.22/Zinnia-macOS.zip)**  | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.22/Zinnia-Linux-x64.deb)           |
+| <!--*See MSI note below*-->                                                                                                                                                                                                  |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.22/Zinnia-Linux-x64.rpm)           |
+|                                                                                                                                                                                                                              |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.22/Zinnia-Linux-x64.flatpak)   |
 
 > macOS downloads require macOS 26 or later.
 
@@ -21,11 +21,17 @@
 
 Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
+## Changes in `v0.6.0-beta.22:`
+* **Last beta** before `v0.6.0` stable.
+* **UI:** Basic mode locks the main window size (non-resizable / non-maximizable) live when switching workspaces; Power mode restores free resizing on the same window. The custom titlebar Maximize control is disabled/ignored in Basic so it cannot bypass the lock.
+* **Fix (Windows):** OS Integration now reads the live default-app ProgId for each archive type (instead of always showing “Choose in Windows Settings”), so formats already set to Zinnia show as Default. Explorer context-action Ready detection also accepts Win11 sparse packages when classic Extract/Compress verbs were removed.
+* **Docs:** Windows context-menu QA checklist matches the fallback-only classic verb policy (no duplicate Extract/Compress under Show more options when packages register).
+
 ## Changes in `v0.6.0-beta.21:`
 * **Fix (Windows):** Legacy “Show more options” no longer stacks duplicate Open/Extract/Compress Zinnia entries when the Win11 sparse packages register successfully. Upgrade also removes leftover `ZinniaOpen` keys from earlier betas; classic Extract/Compress verbs are kept only as a fallback if package registration fails.
 
 ## Changes in `v0.6.0-beta.20:`
-* **Windows:** Ads migration logic in the NSIS installer/updater to finalize the upgrade from `v0.5.3`'s legacy context menu implementation to `v0.6.0`'s new implementation.
+* **Windows:** Adds migration logic in the NSIS installer/updater to finalize the upgrade from `v0.5.3`'s legacy context menu implementation to `v0.6.0`'s new implementation.
 
 ## Changes in `v0.6.0-beta.19:`
 * **Release Candidate:** RC4 V3.
