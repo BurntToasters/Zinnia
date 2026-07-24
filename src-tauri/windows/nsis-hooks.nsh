@@ -1,17 +1,25 @@
 !macro ZINNIA_REGISTER_ARCHIVE_VERBS EXT
-  WriteRegStr HKCU "Software\Classes\SystemFileAssociations\${EXT}\shell\ZinniaOpen" "" "Open with Zinnia"
-  WriteRegStr HKCU "Software\Classes\SystemFileAssociations\${EXT}\shell\ZinniaOpen" "Icon" "$INSTDIR\zinnia.exe"
-  WriteRegStr HKCU "Software\Classes\SystemFileAssociations\${EXT}\shell\ZinniaOpen" "MultiSelectModel" "Player"
-  WriteRegStr HKCU "Software\Classes\SystemFileAssociations\${EXT}\shell\ZinniaOpen\command" "" '"$INSTDIR\zinnia.exe" "%1"'
+  ; Enhance Tauri's default ProgId open verb so we don't need a duplicate ZinniaOpen
+  WriteRegStr HKCU "Software\Classes\run.rosie.zinnia${EXT}\shell\open" "MUIVerb" "Open with Zinnia"
+  WriteRegStr HKCU "Software\Classes\run.rosie.zinnia${EXT}\shell\open" "Icon" "$INSTDIR\zinnia.exe"
+  WriteRegStr HKCU "Software\Classes\run.rosie.zinnia${EXT}\shell\open" "MultiSelectModel" "Player"
+
+  ; Add legacy Extract verb (will be removed later if Win11 modern menu succeeds)
   WriteRegStr HKCU "Software\Classes\SystemFileAssociations\${EXT}\shell\ZinniaExtract" "" "Extract with Zinnia"
   WriteRegStr HKCU "Software\Classes\SystemFileAssociations\${EXT}\shell\ZinniaExtract" "Icon" "$INSTDIR\zinnia.exe"
   WriteRegStr HKCU "Software\Classes\SystemFileAssociations\${EXT}\shell\ZinniaExtract" "MultiSelectModel" "Player"
   WriteRegStr HKCU "Software\Classes\SystemFileAssociations\${EXT}\shell\ZinniaExtract\command" "" '"$INSTDIR\zinnia.exe" --extract "%1"'
 !macroend
 
+!macro ZINNIA_UNREGISTER_LEGACY_EXTRACT_VERBS EXT
+  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\${EXT}\shell\ZinniaExtract"
+!macroend
+
 !macro ZINNIA_UNREGISTER_ARCHIVE_VERBS EXT
   DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\${EXT}\shell\ZinniaOpen"
   DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\${EXT}\shell\ZinniaExtract"
+  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\${EXT}\shell\Zinnia.Extract"
+  DeleteRegKey HKCU "Software\Classes\${EXT}\OpenWithProgids\Zinnia.Archive"
 !macroend
 
 !macro ZINNIA_REGISTER_COMPRESS_VERBS
@@ -94,6 +102,18 @@
   Goto zinnia_skip_win11_menu
   zinnia_menu_registered:
   DetailPrint "Win11 context menu package registered."
+  ; The AppX sparse package successfully mapped its own Extract with Zinnia verbs 
+  ; into the legacy context menu (for Win10+). Remove the fallback registry verbs 
+  ; so the user does not see duplicates.
+  !insertmacro ZINNIA_UNREGISTER_LEGACY_EXTRACT_VERBS ".7z"
+  !insertmacro ZINNIA_UNREGISTER_LEGACY_EXTRACT_VERBS ".zip"
+  !insertmacro ZINNIA_UNREGISTER_LEGACY_EXTRACT_VERBS ".tar"
+  !insertmacro ZINNIA_UNREGISTER_LEGACY_EXTRACT_VERBS ".gz"
+  !insertmacro ZINNIA_UNREGISTER_LEGACY_EXTRACT_VERBS ".tgz"
+  !insertmacro ZINNIA_UNREGISTER_LEGACY_EXTRACT_VERBS ".bz2"
+  !insertmacro ZINNIA_UNREGISTER_LEGACY_EXTRACT_VERBS ".tbz2"
+  !insertmacro ZINNIA_UNREGISTER_LEGACY_EXTRACT_VERBS ".xz"
+  !insertmacro ZINNIA_UNREGISTER_LEGACY_EXTRACT_VERBS ".txz"
   Goto zinnia_skip_win11_menu
   zinnia_menu_no_script:
   DetailPrint "WARNING: register-windows-context-menu.ps1 missing; skipping Win11 modern menu. Classic verbs still work."
@@ -189,7 +209,9 @@
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".tgz"
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".bz2"
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".tbz2"
+  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".tbz2"
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".xz"
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".txz"
+  DeleteRegKey HKCU "Software\Classes\Zinnia.Archive"
   RMDir /REBOOTOK "$INSTDIR"
 !macroend
