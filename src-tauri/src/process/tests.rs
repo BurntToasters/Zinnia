@@ -1865,8 +1865,7 @@ fn missing_committed_extract_stage_preserves_the_destination() {
     let destination = root.join("destination");
     let stage = root.join(".zinnia-extract-0123456789abcdef0123456789abcdef");
     std::fs::create_dir_all(&destination).expect("committed destination");
-    std::fs::write(destination.join("published.txt"), b"published")
-        .expect("published file");
+    std::fs::write(destination.join("published.txt"), b"published").expect("published file");
     let journal = CleanupJournal {
         stage: stage.clone(),
         destination: destination.clone(),
@@ -1940,7 +1939,10 @@ fn extraction_recovery_rejects_a_symlinked_move_plan_sidecar() {
     let error = rollback_persisted_move_plan(&stage, &destination, false)
         .expect_err("symlinked sidecar must be rejected");
     assert!(error.contains("sidecar") || error.contains("link"));
-    assert_eq!(std::fs::read(&outside).expect("outside file preserved"), b"not a move plan");
+    assert_eq!(
+        std::fs::read(&outside).expect("outside file preserved"),
+        b"not a move plan"
+    );
     let _ = std::fs::remove_dir_all(root);
 }
 

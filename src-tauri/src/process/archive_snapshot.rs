@@ -37,8 +37,7 @@ fn archive_file_identity_from_open_file(
     #[cfg(unix)]
     use std::os::unix::fs::MetadataExt as _;
     #[cfg(windows)]
-    let (volume_serial, file_index, volume_serial_64, file_id_128) =
-        windows_file_identity(file)?;
+    let windows_identity = windows_file_identity(file)?;
 
     Ok(ArchiveFileIdentity {
         canonical_path,
@@ -50,20 +49,26 @@ fn archive_file_identity_from_open_file(
         #[cfg(unix)]
         inode: metadata.ino(),
         #[cfg(windows)]
-        volume_serial,
+        volume_serial: windows_identity.volume_serial,
         #[cfg(windows)]
-        file_index,
+        file_index: windows_identity.file_index,
         #[cfg(windows)]
-        volume_serial_64,
+        volume_serial_64: windows_identity.volume_serial_64,
         #[cfg(windows)]
-        file_id_128,
+        file_id_128: windows_identity.file_id_128,
     })
 }
 
 #[cfg(windows)]
-fn windows_file_identity(
-    file: &std::fs::File,
-) -> Result<(u32, u64, Option<u64>, Option<[u8; 16]>), String> {
+struct WindowsArchiveFileIdentity {
+    volume_serial: u32,
+    file_index: u64,
+    volume_serial_64: Option<u64>,
+    file_id_128: Option<[u8; 16]>,
+}
+
+#[cfg(windows)]
+fn windows_file_identity(file: &std::fs::File) -> Result<WindowsArchiveFileIdentity, String> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::Storage::FileSystem::{
@@ -94,12 +99,12 @@ fn windows_file_identity(
             std::mem::size_of::<FILE_ID_INFO>() as u32,
         )
     } != 0;
-    Ok((
-        info.dwVolumeSerialNumber,
+    Ok(WindowsArchiveFileIdentity {
+        volume_serial: info.dwVolumeSerialNumber,
         file_index,
-        has_extended_id.then_some(extended.VolumeSerialNumber),
-        has_extended_id.then_some(extended.FileId.Identifier),
-    ))
+        volume_serial_64: has_extended_id.then_some(extended.VolumeSerialNumber),
+        file_id_128: has_extended_id.then_some(extended.FileId.Identifier),
+    })
 }
 
 pub(super) fn archive_file_identity(path: &std::path::Path) -> Result<ArchiveFileIdentity, String> {

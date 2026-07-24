@@ -232,7 +232,7 @@ fn open_regular_file_nofollow_windows(
         }
         return Err(format!("Path is not a regular file: {}", path.display()));
     }
-    Ok(unsafe { std::fs::File::from_raw_handle(handle as _) })
+    Ok(unsafe { std::fs::File::from_raw_handle(handle) })
 }
 
 #[cfg(test)]

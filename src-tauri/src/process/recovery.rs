@@ -404,19 +404,3 @@ pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), Str
     }
     clear_cleanup_journal(app)
 }
-
-pub(crate) fn remove_regular_file_if_present(path: &std::path::Path) -> Result<(), String> {
-    match std::fs::symlink_metadata(path) {
-        Ok(metadata)
-            if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_file() =>
-        {
-            Err(format!(
-                "Refusing to remove unexpected recovery target {}.",
-                path.display()
-            ))
-        }
-        Ok(_) => crate::fs_secure::remove_file_for_cleanup(path).map_err(|e| e.to_string()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error.to_string()),
-    }
-}
