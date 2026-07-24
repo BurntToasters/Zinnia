@@ -2,12 +2,14 @@
 
 use super::journal::{
     ensure_path_identity, ensure_regular_file_identity, file_identities_match, file_identity,
-    mark_archive_journal_committed, mark_extract_journal_committed, move_identity_log_path,
-    move_plan_path, path_identity, record_archive_journal_backup, record_archive_journal_published,
+    mark_archive_journal_committed, mark_extract_journal_committed,
+    move_plan_path, record_archive_journal_backup, record_archive_journal_published,
     regular_file_identity, remove_move_plan_sidecars, remove_regular_file_if_matches,
     sync_directory, unregister_plan_stages, update_archive_journal, FileIdentity, MoveRecord,
     LEGACY_MOVE_PLAN_FILE_NAME,
 };
+#[cfg(windows)]
+use super::journal::{move_identity_log_path, path_identity};
 use super::quota::MAX_EXTRACT_ENTRIES;
 use super::staging::{assert_real_directory, path_entry_exists};
 use super::CleanupPlan;
@@ -165,6 +167,7 @@ fn publish_file_no_replace_with_created(
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn copy_file_no_replace(
     source: &std::path::Path,
     target: &std::path::Path,
@@ -1629,6 +1632,7 @@ pub(crate) fn rollback_persisted_move_plan(
         }
         None => return Ok(()),
     };
+    #[allow(unused_mut)]
     let mut plan: Vec<MoveRecord> = serde_json::from_str(&json).map_err(|e| e.to_string())?;
     #[cfg(windows)]
     hydrate_move_plan_identities(staged, &mut plan)?;
