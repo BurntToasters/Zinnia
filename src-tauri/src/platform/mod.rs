@@ -8,10 +8,15 @@ mod os_command;
 #[cfg(target_os = "macos")]
 mod macos_defaults;
 
+#[cfg(target_os = "windows")]
+mod windows_defaults;
+
 #[cfg(target_os = "linux")]
 use linux_defaults::linux_query_archive_defaults_parallel;
 #[cfg(target_os = "macos")]
 use macos_defaults::macos_query_archive_defaults;
+#[cfg(target_os = "windows")]
+use windows_defaults::windows_query_archive_defaults;
 
 pub(crate) const ZINNIA_BUNDLE_ID: &str = "run.rosie.zinnia";
 pub(crate) const ZINNIA_DESKTOP_ID: &str = "run.rosie.zinnia.desktop";
@@ -174,15 +179,30 @@ pub struct DefaultArchiverResult {
     results: Vec<ArchiveDefaultStatus>,
 }
 
+pub(crate) fn handler_is_zinnia(handler: &str) -> bool {
+    let trimmed = handler.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower == ZINNIA_BUNDLE_ID || lower == ZINNIA_DESKTOP_ID {
+        return true;
+    }
+    // Windows Tauri ProgIds look like run.rosie.zinnia.zip / run.rosie.zinnia.7z.
+    if lower.starts_with("run.rosie.zinnia.") {
+        return true;
+    }
+    let path = lower.replace('/', "\\");
+    path.ends_with("\\zinnia.exe") || path == "zinnia.exe"
+}
+
 pub(crate) fn archive_status(
     target: ArchiveDefaultTarget,
     current_handler: Option<String>,
     can_change: bool,
     status: impl Into<String>,
 ) -> ArchiveDefaultStatus {
-    let is_default = current_handler
-        .as_deref()
-        .is_some_and(|handler| handler == ZINNIA_BUNDLE_ID || handler == ZINNIA_DESKTOP_ID);
+    let is_default = current_handler.as_deref().is_some_and(handler_is_zinnia);
 
     ArchiveDefaultStatus {
         key: target.key.to_string(),
@@ -284,6 +304,11 @@ pub(crate) fn query_archive_defaults(platform: &str, packaged: bool) -> Vec<Arch
         );
     }
 
+    #[cfg(target_os = "windows")]
+    if platform == "windows" {
+        return windows_query_archive_defaults();
+    }
+
     fallback_archive_defaults(platform, packaged, false)
 }
 
@@ -363,6 +388,45 @@ pub use defaults_cmds::{
 pub use integration_status::{
     __cmd__get_os_integration_status, __tauri_command_name_get_os_integration_status,
 };
+
+#[cfg(test)]
+mod handler_tests {
+    use super::{archive_status, handler_is_zinnia, ARCHIVE_DEFAULT_TARGETS, ZINNIA_BUNDLE_ID};
+
+    #[test]
+    fn handler_is_zinnia_accepts_bundle_desktop_and_windows_progids() {
+        assert!(handler_is_zinnia(ZINNIA_BUNDLE_ID));
+        assert!(handler_is_zinnia("run.rosie.zinnia.desktop"));
+        assert!(handler_is_zinnia("run.rosie.zinnia.zip"));
+        assert!(handler_is_zinnia("run.rosie.zinnia.7z"));
+        assert!(handler_is_zinnia(
+            r"C:\Users\me\AppData\Local\Zinnia\zinnia.exe"
+        ));
+        assert!(!handler_is_zinnia("7-Zip.zip"));
+        assert!(!handler_is_zinnia("Applications\\7zFM.exe"));
+        assert!(!handler_is_zinnia(""));
+    }
+
+    #[test]
+    fn archive_status_marks_windows_progid_as_default() {
+        let zip = ARCHIVE_DEFAULT_TARGETS
+            .iter()
+            .find(|target| target.key == "zip")
+            .copied()
+            .expect("zip target");
+        let status = archive_status(
+            zip,
+            Some("run.rosie.zinnia.zip".to_string()),
+            false,
+            "Default",
+        );
+        assert!(status.is_default);
+        assert_eq!(
+            status.current_handler.as_deref(),
+            Some("run.rosie.zinnia.zip")
+        );
+    }
+}
 
 #[cfg(all(test, target_os = "macos"))]
 mod macos_uti_tests {

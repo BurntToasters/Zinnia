@@ -89,19 +89,28 @@ Requires a **signed** NSIS install with full `AZURE_ARTIFACT_SIGNING_PUBLISHER_D
 6. Right-click a non-archive file/folder → one **Zinnia** ▸ Compress menu (no
    outer iconless **Zinnia** wrapper, no top-level Extract; submenu Extract disabled).
 7. Right-click **empty folder background** → **Zinnia** ▸ Compress (current folder).
-8. “Show more options” still shows classic verbs (including background Compress).
-9. Upgrade smoke: install beta 11 or beta 13, invoke the modern menu once so
-    its shell DLL is loaded, then update to beta 14. Installation must complete
-    without an **Error opening file for writing** prompt, and both modern menu
-    entries must work after Explorer reloads them.
+8. “Show more options” should **not** stack duplicate classic Extract/Compress
+   verbs on top of the package entries. Expect **Open with Zinnia** (ProgId)
+   plus the same package-backed Extract / Zinnia submenu already visible in the
+   primary menu. Classic HKCU Extract/Compress verbs appear only when Win11
+   package registration failed (see Failure modes).
+9. Upgrade smoke: install an earlier 0.6.0 beta that used unversioned shell DLLs,
+   invoke the modern menu once so its shell DLL is loaded, then update to the
+   current build. Installation must complete without an **Error opening file for
+   writing** prompt, and both modern menu entries must work after Explorer
+   reloads them.
 10. After a reboot, confirm older `shell-*` directories have been removed.
-11. Run the beta 14 installer again after invoking its modern menu; reinstall
+11. Run the current installer again after invoking its modern menu; reinstall
     must complete without a file-write prompt and both menu entries must work.
-12. Uninstall beta 14 → Appx packages and HKCU `ZinniaCompress` keys are gone;
-    confirm no versioned shell directories remain after any requested reboot.
+12. Uninstall → Appx packages are gone; classic `ZinniaCompress` keys are gone
+    when they were present; confirm no versioned shell directories remain after
+    any requested reboot.
+13. OS Integration → archive defaults: formats already set to Zinnia in Windows
+    Settings show green **Zinnia** / Default (not perpetual yellow “Choose in
+    Windows Settings”).
 
-> **Release gate:** Steps 5-12 are required before publishing a signed Windows
-> beta. CI unsigned shell compile smoke does **not** satisfy this gate.
+> **Release gate:** Steps 5-13 are required before publishing a signed Windows
+> build. CI unsigned shell compile smoke does **not** satisfy this gate.
 >
 > Optional (not a release): after publishing updater artifacts, run
 > `REQUIRE_UPDATER_LIVE=1 npm run validate:updater:live` on a networked machine
@@ -120,11 +129,19 @@ Requires a **signed** NSIS install with full `AZURE_ARTIFACT_SIGNING_PUBLISHER_D
 
 ## Classic Windows verbs
 
-Always registered by NSIS (HKCU):
+**Fallback only** when Win11 sparse-package registration fails (stubs, missing
+script, or `Add-AppxPackage` error). Do not leave these installed alongside a
+successful modern-menu registration — package verbs also appear under “Show
+more options,” and stacking causes duplicate Extract/Compress entries.
 
-- Archives: **Open with Zinnia**, **Extract with Zinnia**
+When the fallback path is active (HKCU):
+
+- Archives: **Open with Zinnia** (ProgId) and **Extract with Zinnia**
 - Files/folders: **Compress with Zinnia** / **Compress folder with Zinnia**
 - Folder background: **Compress with Zinnia** (`%V`)
+
+When modern packages register successfully, keep ProgId **Open with Zinnia**
+only; Extract/Compress come from the sparse packages.
 
 ## Linux desktop integration
 

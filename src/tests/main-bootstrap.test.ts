@@ -1386,6 +1386,8 @@ describe("main bootstrap", () => {
     await flushAsync();
     expect(closeMock).toHaveBeenCalled();
 
+    // Maximize is locked in Basic; switch to Power for the toggle path.
+    mocks.runtime.workspaceMode = "power";
     (document.getElementById("titlebar-max") as HTMLButtonElement).click();
     await flushAsync();
     expect(maximizeMock).toHaveBeenCalled();
@@ -1395,6 +1397,32 @@ describe("main bootstrap", () => {
     (document.getElementById("titlebar-max") as HTMLButtonElement).click();
     await flushAsync();
     expect(unmaximizeMock).toHaveBeenCalled();
+  });
+
+  it("ignores titlebar maximize clicks in Basic mode", async () => {
+    const maximizeMock = vi.fn().mockResolvedValue(undefined);
+    const isMaximizedMock = vi.fn().mockResolvedValue(false);
+
+    getCurrentWebviewWindowMock.mockReturnValue({
+      minimize: vi.fn().mockResolvedValue(undefined),
+      maximize: maximizeMock,
+      isMaximized: isMaximizedMock,
+      unmaximize: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+      onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
+    } as never);
+
+    ensureElement("titlebar-min", "button");
+    ensureElement("titlebar-max", "button");
+    ensureElement("titlebar-close", "button");
+    mocks.runtime.workspaceMode = "basic";
+
+    await loadMainModule();
+
+    (document.getElementById("titlebar-max") as HTMLButtonElement).click();
+    await flushAsync();
+    expect(maximizeMock).not.toHaveBeenCalled();
+    expect(isMaximizedMock).not.toHaveBeenCalled();
   });
 
   it("handles platform detection failure gracefully", async () => {

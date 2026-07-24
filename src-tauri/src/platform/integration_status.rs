@@ -229,31 +229,52 @@ fn windows_modern_menu_registered() -> Option<bool> {
     }
 }
 
-/// Probe classic Explorer verbs written by NSIS (HKCU SystemFileAssociations).
+/// Probe Explorer shell integration written by NSIS / Win11 sparse packages.
+///
+/// After beta.21, classic Extract/Compress registry verbs are removed when the
+/// Win11 packages register successfully (they also appear under Show more
+/// options). Treat ProgId open + (classic compress OR modern menu) as Ready.
 #[cfg(target_os = "windows")]
 fn windows_classic_verbs_registered() -> Option<bool> {
     use std::os::windows::process::CommandExt;
 
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    // Representative keys from nsis-hooks.nsh: enough to tell install registration ran.
-    const KEYS: &[&str] = &[
-        r"HKCU\Software\Classes\SystemFileAssociations\.7z\shell\ZinniaExtract",
-        r"HKCU\Software\Classes\*\shell\ZinniaCompress",
-    ];
-    let mut found = 0usize;
-    for key in KEYS {
+    const PROGID_OPEN: &str = r"HKCU\Software\Classes\run.rosie.zinnia.7z\shell\open";
+    const CLASSIC_COMPRESS: &str = r"HKCU\Software\Classes\*\shell\ZinniaCompress";
+
+    let progid_open = {
         let output = command_output_with_timeout(
             Command::new("reg")
-                .args(["query", key])
+                .args(["query", PROGID_OPEN])
                 .creation_flags(CREATE_NO_WINDOW),
             std::time::Duration::from_secs(5),
         )
         .ok()?;
-        if output.status.success() {
-            found += 1;
-        }
+        output.status.success()
+    };
+    if !progid_open {
+        return Some(false);
     }
-    Some(found == KEYS.len())
+
+    let classic_compress = {
+        let output = command_output_with_timeout(
+            Command::new("reg")
+                .args(["query", CLASSIC_COMPRESS])
+                .creation_flags(CREATE_NO_WINDOW),
+            std::time::Duration::from_secs(5),
+        )
+        .ok()?;
+        output.status.success()
+    };
+    if classic_compress {
+        return Some(true);
+    }
+
+    match windows_modern_menu_registered() {
+        Some(true) => Some(true),
+        Some(false) => Some(false),
+        None => None,
+    }
 }
 
 fn win11_modern_menu_status_for(platform: &str, packaged: bool) -> Win11ModernMenuInfo {
@@ -487,7 +508,8 @@ pub fn os_integration_status_for(platform: &str, packaged: bool) -> OsIntegratio
     let finder_sync = finder_sync_status_for(platform, packaged);
     let win11 = win11_modern_menu_status_for(platform, packaged);
     // macOS: primary context menu tracks Finder Sync; Services remain a fallback.
-    // Windows: classic Explorer verbs are always registered by NSIS when packaged.
+    // Windows: Explorer actions come from Win11 sparse packages and/or classic
+    // NSIS verbs (classic Extract/Compress only when packages fail to register).
     let context_actions_known = if platform == "macos" {
         packaged && ((finder_sync.known && finder_sync.enabled) || (finder.known && finder.enabled))
     } else {
@@ -547,6 +569,16 @@ fn get_os_integration_status_blocking() -> OsIntegrationStatus {
         status.win11_modern_menu_known = win11.known;
         status.win11_modern_menu_registered = win11.registered;
         status.win11_modern_menu_help = win11.help;
+
+        // Live ProgId query succeeded for at least one format.
+        if packaged
+            && status
+                .archive_defaults
+                .iter()
+                .any(|entry| entry.current_handler.is_some() || entry.is_default)
+        {
+            status.file_associations_known = true;
+        }
 
         #[cfg(target_os = "windows")]
         {

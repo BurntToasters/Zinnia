@@ -87,13 +87,50 @@ export async function resizeWorkspaceWindow(
           state.currentSettings.powerWindowWidth,
           state.currentSettings.powerWindowHeight,
         );
+  // Same main window: Basic locks size; Power stays freely resizable.
+  const resizable = mode !== "basic";
+  syncBasicWindowChrome(resizable);
 
   try {
-    await appWindow.setSize(new LogicalSize(size.width, size.height));
+    if (!resizable) {
+      try {
+        if (
+          typeof appWindow.isMaximized === "function" &&
+          (await appWindow.isMaximized())
+        ) {
+          await appWindow.unmaximize();
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        devLog(`Unable to unmaximize before locking basic window: ${msg}`);
+      }
+    }
+
+    const pending: Promise<unknown>[] = [];
+    if (typeof appWindow.setResizable === "function") {
+      pending.push(appWindow.setResizable(resizable));
+    }
+    if (typeof appWindow.setMaximizable === "function") {
+      pending.push(appWindow.setMaximizable(resizable));
+    }
+    pending.push(appWindow.setSize(new LogicalSize(size.width, size.height)));
+    await Promise.all(pending);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     devLog(`Unable to resize ${mode} workspace window: ${msg}`);
   }
+}
+
+function syncBasicWindowChrome(resizable: boolean): void {
+  const maxBtn = document.getElementById(
+    "titlebar-max",
+  ) as HTMLButtonElement | null;
+  if (!maxBtn) return;
+  maxBtn.disabled = !resizable;
+  maxBtn.setAttribute("aria-disabled", String(!resizable));
+  maxBtn.title = resizable
+    ? "Maximize"
+    : "Maximize is unavailable in Basic mode";
 }
 
 export function setWorkspaceMode(
