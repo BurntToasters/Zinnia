@@ -1864,6 +1864,7 @@ where
     Ok(promoted)
 }
 
+#[cfg(test)]
 pub(crate) fn merge_staged_extract(
     staged: &std::path::Path,
     destination: &std::path::Path,

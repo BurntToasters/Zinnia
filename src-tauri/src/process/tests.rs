@@ -642,11 +642,11 @@ fn extract_stage_placement_serializes_and_legacy_journals_remain_sibling_only() 
         decoded.extract_stage_placement,
         Some(ExtractStagePlacement::InsideDestination)
     );
+    assert_eq!(decoded.extract_phase, Some(ExtractJournalPhase::InProgress));
     assert_eq!(
-        decoded.extract_phase,
-        Some(ExtractJournalPhase::InProgress)
+        decoded.extract_stage_identity,
+        journal.extract_stage_identity
     );
-    assert_eq!(decoded.extract_stage_identity, journal.extract_stage_identity);
     assert!(ExtractStagePlacement::InsideDestination
         .matches_paths(&decoded.stage, &decoded.destination));
 
@@ -754,17 +754,12 @@ fn extraction_commit_point_precedes_stage_cleanup() {
     std::fs::write(staged.join("new.txt"), b"new").expect("staged file");
     let committed = std::cell::Cell::new(false);
 
-    merge_staged_extract_with_commit(
-        &staged,
-        &destination,
-        MAX_EXTRACTED_BYTES,
-        || {
-            assert!(staged.is_dir(), "stage must remain until commit is durable");
-            assert!(destination.join("new.txt").is_file());
-            committed.set(true);
-            Ok(())
-        },
-    )
+    merge_staged_extract_with_commit(&staged, &destination, MAX_EXTRACTED_BYTES, || {
+        assert!(staged.is_dir(), "stage must remain until commit is durable");
+        assert!(destination.join("new.txt").is_file());
+        committed.set(true);
+        Ok(())
+    })
     .expect("merge and commit");
 
     assert!(committed.get());
@@ -782,16 +777,17 @@ fn extraction_commit_marker_failure_rolls_back_existing_destination() {
     let source = staged.join("new.txt");
     std::fs::write(&source, b"new").expect("staged file");
 
-    let error = merge_staged_extract_with_commit(
-        &staged,
-        &destination,
-        MAX_EXTRACTED_BYTES,
-        || Err("journal write failed".to_string()),
-    )
-    .expect_err("commit marker failure must abort");
+    let error =
+        merge_staged_extract_with_commit(&staged, &destination, MAX_EXTRACTED_BYTES, || {
+            Err("journal write failed".to_string())
+        })
+        .expect_err("commit marker failure must abort");
 
     assert!(error.contains("journal write failed"));
-    assert_eq!(std::fs::read(&source).expect("restored staged source"), b"new");
+    assert_eq!(
+        std::fs::read(&source).expect("restored staged source"),
+        b"new"
+    );
     assert!(!destination.join("new.txt").exists());
     let _ = std::fs::remove_file(move_plan_path(&staged));
     let _ = std::fs::remove_file(move_identity_log_path(&staged));
@@ -806,13 +802,11 @@ fn extraction_commit_marker_failure_restores_new_destination_stage() {
     std::fs::create_dir_all(&staged).expect("staged tree");
     std::fs::write(staged.join("new.txt"), b"new").expect("staged file");
 
-    let error = merge_staged_extract_with_commit(
-        &staged,
-        &destination,
-        MAX_EXTRACTED_BYTES,
-        || Err("journal write failed".to_string()),
-    )
-    .expect_err("commit marker failure must abort");
+    let error =
+        merge_staged_extract_with_commit(&staged, &destination, MAX_EXTRACTED_BYTES, || {
+            Err("journal write failed".to_string())
+        })
+        .expect_err("commit marker failure must abort");
 
     assert!(error.contains("journal write failed"));
     assert!(staged.join("new.txt").is_file());
@@ -839,7 +833,10 @@ fn readonly_staged_files_do_not_turn_a_committed_extract_into_failure() {
     assert!(!staged.exists());
     let published = destination.join("readonly.txt");
     assert!(published.is_file());
-    assert!(std::fs::metadata(&published).unwrap().permissions().readonly());
+    assert!(std::fs::metadata(&published)
+        .unwrap()
+        .permissions()
+        .readonly());
     crate::fs_secure::remove_dir_all_for_cleanup(&root).expect("cleanup test tree");
 }
 
@@ -1120,7 +1117,9 @@ fn target_local_recovery_hydrates_append_only_identity_log() {
         .expect("hydrate identity log and remove verified copy");
 
     assert_eq!(std::fs::read(&source).unwrap(), b"staged source");
-    assert!(!destination.join(".zinnia-publish-0123456789abcdef0123456789abcdef").exists());
+    assert!(!destination
+        .join(".zinnia-publish-0123456789abcdef0123456789abcdef")
+        .exists());
     assert!(!target.exists());
     let _ = std::fs::remove_file(move_plan_path(&staged));
     let _ = std::fs::remove_file(move_identity_log_path(&staged));
@@ -1685,10 +1684,9 @@ fn unregister_plan_stages_keeps_present_archive_stage() {
 
 #[test]
 fn legacy_windows_file_identity_json_remains_compatible() {
-    let identity: super::journal::FileIdentity = serde_json::from_str(
-        r#"{"platform":"windows","volume_serial_number":7,"file_index":9}"#,
-    )
-    .expect("deserialize legacy Windows identity");
+    let identity: super::journal::FileIdentity =
+        serde_json::from_str(r#"{"platform":"windows","volume_serial_number":7,"file_index":9}"#)
+            .expect("deserialize legacy Windows identity");
     assert_eq!(
         identity,
         super::journal::FileIdentity::Windows {

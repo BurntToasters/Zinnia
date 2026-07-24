@@ -100,6 +100,9 @@ fn clear_windows_readonly_tree(path: &Path) -> io::Result<()> {
 }
 
 #[cfg(windows)]
+// This helper is Windows-only, where `set_readonly(false)` clears only
+// FILE_ATTRIBUTE_READONLY; the Unix mode-bit hazard cannot apply.
+#[allow(clippy::permissions_set_readonly_false)]
 fn clear_windows_readonly(path: &Path, metadata: &std::fs::Metadata) -> io::Result<()> {
     if metadata.permissions().readonly() {
         let mut permissions = metadata.permissions();
