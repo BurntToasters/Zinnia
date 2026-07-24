@@ -622,6 +622,7 @@ fn extract_stage_placement_serializes_and_legacy_journals_remain_sibling_only() 
         extract_stage_placement: Some(ExtractStagePlacement::InsideDestination),
         move_plan_sidecar: true,
         previous_archive_family: Vec::new(),
+        previous_archive_identities: Vec::new(),
         next_archive_family: Vec::new(),
         next_archive_identities: Vec::new(),
         extract_stage_identity: Some(super::journal::FileIdentity::Unix {
@@ -660,6 +661,7 @@ fn extract_stage_placement_serializes_and_legacy_journals_remain_sibling_only() 
         extract_stage_placement: Some(ExtractStagePlacement::Sibling),
         move_plan_sidecar: false,
         previous_archive_family: Vec::new(),
+        previous_archive_identities: Vec::new(),
         next_archive_family: Vec::new(),
         next_archive_identities: Vec::new(),
         extract_stage_identity: None,
@@ -1738,6 +1740,7 @@ fn archive_journal_committed_when_promote_finished_and_stage_empty() {
         extract_stage_placement: None,
         move_plan_sidecar: false,
         previous_archive_family: Vec::new(),
+        previous_archive_identities: Vec::new(),
         next_archive_family: vec![destination.clone()],
         next_archive_identities: vec![Some(
             super::journal::regular_file_identity(&destination).unwrap(),
@@ -1762,6 +1765,7 @@ fn explicit_extract_phase_controls_cleanup_only_recovery() {
         extract_stage_placement: Some(ExtractStagePlacement::InsideDestination),
         move_plan_sidecar: true,
         previous_archive_family: Vec::new(),
+        previous_archive_identities: Vec::new(),
         next_archive_family: Vec::new(),
         next_archive_identities: Vec::new(),
         extract_stage_identity: None,
@@ -1793,6 +1797,7 @@ fn missing_new_destination_stage_rolls_back_the_matching_renamed_stage() {
         extract_stage_placement: Some(ExtractStagePlacement::Sibling),
         move_plan_sidecar: true,
         previous_archive_family: Vec::new(),
+        previous_archive_identities: Vec::new(),
         next_archive_family: Vec::new(),
         next_archive_identities: Vec::new(),
         extract_stage_identity: Some(stage_identity),
@@ -1827,6 +1832,7 @@ fn missing_new_destination_stage_preserves_an_identity_mismatch() {
         extract_stage_placement: Some(ExtractStagePlacement::Sibling),
         move_plan_sidecar: true,
         previous_archive_family: Vec::new(),
+        previous_archive_identities: Vec::new(),
         next_archive_family: Vec::new(),
         next_archive_identities: Vec::new(),
         extract_stage_identity: Some(stage_identity),
@@ -1857,6 +1863,7 @@ fn missing_committed_extract_stage_preserves_the_destination() {
         extract_stage_placement: Some(ExtractStagePlacement::Sibling),
         move_plan_sidecar: true,
         previous_archive_family: Vec::new(),
+        previous_archive_identities: Vec::new(),
         next_archive_family: Vec::new(),
         next_archive_identities: Vec::new(),
         extract_stage_identity: None,
@@ -1889,6 +1896,7 @@ fn extraction_cleanup_preserves_stage_when_sidecar_cleanup_fails() {
         extract_stage_placement: Some(ExtractStagePlacement::InsideDestination),
         move_plan_sidecar: true,
         previous_archive_family: Vec::new(),
+        previous_archive_identities: Vec::new(),
         next_archive_family: Vec::new(),
         next_archive_identities: Vec::new(),
         extract_stage_identity: None,
@@ -1940,6 +1948,7 @@ fn archive_journal_not_committed_while_staged_outputs_remain() {
         extract_stage_placement: None,
         move_plan_sidecar: false,
         previous_archive_family: Vec::new(),
+        previous_archive_identities: Vec::new(),
         next_archive_family: vec![destination.clone()],
         next_archive_identities: vec![Some(
             super::journal::regular_file_identity(&destination).unwrap(),
@@ -1955,7 +1964,7 @@ fn archive_journal_not_committed_while_staged_outputs_remain() {
 }
 
 #[test]
-fn archive_journal_rollback_restores_backups_for_update() {
+fn archive_journal_rollback_preserves_legacy_backup_without_identity() {
     let root = temp_root("zinnia-journal-update");
     let stage = root.join(".zinnia-archive-abc");
     let destination = root.join("out.7z");
@@ -1969,6 +1978,7 @@ fn archive_journal_rollback_restores_backups_for_update() {
         extract_stage_placement: None,
         move_plan_sidecar: false,
         previous_archive_family: vec![destination.clone()],
+        previous_archive_identities: Vec::new(),
         next_archive_family: vec![destination.clone()],
         next_archive_identities: vec![Some(
             super::journal::regular_file_identity(&destination).unwrap(),
@@ -1978,8 +1988,125 @@ fn archive_journal_rollback_restores_backups_for_update() {
         archive_phase: Some(ArchiveJournalPhase::InProgress),
     };
     assert!(!archive_journal_is_committed(&journal));
-    rollback_archive_journal(&journal).expect("rollback update");
+    assert!(rollback_archive_journal(&journal).is_err());
+    assert_eq!(std::fs::read(&destination).unwrap(), b"new-partial");
+    assert_eq!(
+        std::fs::read(archive_backup_path(&stage, 0)).unwrap(),
+        b"old"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn archive_journal_rollback_restores_identity_verified_backup() {
+    let root = temp_root("zinnia-journal-verified-backup");
+    let stage = root.join(".zinnia-archive-abc");
+    let destination = root.join("out.7z");
+    std::fs::create_dir_all(&stage).expect("stage");
+    let backup = archive_backup_path(&stage, 0);
+    std::fs::write(&backup, b"old").expect("backup");
+    let backup_identity = super::journal::regular_file_identity(&backup).unwrap();
+    std::fs::write(&destination, b"new-partial").expect("partial new");
+    let published_identity = super::journal::regular_file_identity(&destination).unwrap();
+    let journal = CleanupJournal {
+        stage: stage.clone(),
+        destination: destination.clone(),
+        archive: true,
+        extract_stage_placement: None,
+        move_plan_sidecar: false,
+        previous_archive_family: vec![destination.clone()],
+        previous_archive_identities: vec![Some(backup_identity)],
+        next_archive_family: vec![destination.clone()],
+        next_archive_identities: vec![Some(published_identity)],
+        extract_stage_identity: None,
+        extract_phase: None,
+        archive_phase: Some(ArchiveJournalPhase::InProgress),
+    };
+
+    rollback_archive_journal(&journal).expect("rollback verified update");
     assert_eq!(std::fs::read(&destination).unwrap(), b"old");
+    assert!(!backup.exists());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn archive_journal_rollback_rejects_replaced_backup() {
+    let root = temp_root("zinnia-journal-replaced-backup");
+    let stage = root.join(".zinnia-archive-abc");
+    let destination = root.join("out.7z");
+    std::fs::create_dir_all(&stage).expect("stage");
+    let backup = archive_backup_path(&stage, 0);
+    std::fs::write(&backup, b"old").expect("backup");
+    let backup_identity = super::journal::regular_file_identity(&backup).unwrap();
+    let retained_backup = root.join("retained-backup-identity");
+    std::fs::hard_link(&backup, &retained_backup).expect("retain backup identity");
+    std::fs::remove_file(&backup).expect("remove original backup name");
+    std::fs::write(&backup, b"attacker replacement").expect("replacement backup");
+    assert_ne!(
+        super::journal::regular_file_identity(&backup).unwrap(),
+        backup_identity,
+        "replacement must not inherit the backup file identity"
+    );
+    std::fs::write(&destination, b"new-partial").expect("partial new");
+    let published_identity = super::journal::regular_file_identity(&destination).unwrap();
+    let journal = CleanupJournal {
+        stage: stage.clone(),
+        destination: destination.clone(),
+        archive: true,
+        extract_stage_placement: None,
+        move_plan_sidecar: false,
+        previous_archive_family: vec![destination.clone()],
+        previous_archive_identities: vec![Some(backup_identity)],
+        next_archive_family: vec![destination.clone()],
+        next_archive_identities: vec![Some(published_identity)],
+        extract_stage_identity: None,
+        extract_phase: None,
+        archive_phase: Some(ArchiveJournalPhase::InProgress),
+    };
+
+    assert!(rollback_archive_journal(&journal).is_err());
+    assert_eq!(std::fs::read(&destination).unwrap(), b"new-partial");
+    assert_eq!(std::fs::read(&backup).unwrap(), b"attacker replacement");
+    std::fs::remove_file(retained_backup).expect("release retained backup");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn committed_archive_cleanup_rejects_replaced_backup() {
+    let root = temp_root("zinnia-journal-committed-replaced-backup");
+    let stage = root.join(".zinnia-archive-abc");
+    let destination = root.join("out.7z");
+    std::fs::create_dir_all(&stage).expect("stage");
+    let backup = archive_backup_path(&stage, 0);
+    std::fs::write(&backup, b"old").expect("backup");
+    let backup_identity = super::journal::regular_file_identity(&backup).unwrap();
+    let retained_backup = root.join("retained-backup-identity");
+    std::fs::hard_link(&backup, &retained_backup).expect("retain backup identity");
+    std::fs::remove_file(&backup).expect("remove original backup name");
+    std::fs::write(&backup, b"attacker replacement").expect("replacement backup");
+    std::fs::write(&destination, b"new-committed").expect("committed archive");
+    let journal = CleanupJournal {
+        stage: stage.clone(),
+        destination: destination.clone(),
+        archive: true,
+        extract_stage_placement: None,
+        move_plan_sidecar: false,
+        previous_archive_family: vec![destination.clone()],
+        previous_archive_identities: vec![Some(backup_identity)],
+        next_archive_family: vec![destination.clone()],
+        next_archive_identities: vec![Some(
+            super::journal::regular_file_identity(&destination).unwrap(),
+        )],
+        extract_stage_identity: None,
+        extract_phase: None,
+        archive_phase: Some(ArchiveJournalPhase::Committed),
+    };
+
+    assert!(cleanup_committed_archive_journal(&journal).is_err());
+    assert_eq!(std::fs::read(&destination).unwrap(), b"new-committed");
+    assert_eq!(std::fs::read(&backup).unwrap(), b"attacker replacement");
+    assert!(stage.is_dir());
+    std::fs::remove_file(retained_backup).expect("release retained backup");
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -1992,8 +2119,12 @@ fn archive_journal_rollback_continues_after_unpublished_volume_identity() {
     let first = root.join("out.7z.001");
     let second = root.join("out.7z.002");
     std::fs::create_dir_all(&stage).expect("stage");
-    std::fs::write(archive_backup_path(&stage, 0), b"old-1").expect("backup0");
-    std::fs::write(archive_backup_path(&stage, 1), b"old-2").expect("backup1");
+    let first_backup = archive_backup_path(&stage, 0);
+    let second_backup = archive_backup_path(&stage, 1);
+    std::fs::write(&first_backup, b"old-1").expect("backup0");
+    std::fs::write(&second_backup, b"old-2").expect("backup1");
+    let first_backup_identity = super::journal::regular_file_identity(&first_backup).unwrap();
+    let second_backup_identity = super::journal::regular_file_identity(&second_backup).unwrap();
     std::fs::write(&first, b"new-1").expect("published first");
     let journal = CleanupJournal {
         stage: stage.clone(),
@@ -2002,6 +2133,10 @@ fn archive_journal_rollback_continues_after_unpublished_volume_identity() {
         extract_stage_placement: None,
         move_plan_sidecar: false,
         previous_archive_family: vec![first.clone(), second.clone()],
+        previous_archive_identities: vec![
+            Some(first_backup_identity),
+            Some(second_backup_identity),
+        ],
         next_archive_family: vec![first.clone(), second.clone()],
         next_archive_identities: vec![
             Some(super::journal::regular_file_identity(&first).unwrap()),
@@ -2025,7 +2160,9 @@ fn archive_journal_rollback_preserves_published_volume_without_identity() {
     let stage = root.join(".zinnia-archive-abc");
     let destination = root.join("out.7z");
     std::fs::create_dir_all(&stage).expect("stage");
-    std::fs::write(archive_backup_path(&stage, 0), b"old").expect("backup");
+    let backup = archive_backup_path(&stage, 0);
+    std::fs::write(&backup, b"old").expect("backup");
+    let backup_identity = super::journal::regular_file_identity(&backup).unwrap();
     std::fs::write(&destination, b"new-unrecorded").expect("published");
     let journal = CleanupJournal {
         stage: stage.clone(),
@@ -2034,6 +2171,7 @@ fn archive_journal_rollback_preserves_published_volume_without_identity() {
         extract_stage_placement: None,
         move_plan_sidecar: false,
         previous_archive_family: vec![destination.clone()],
+        previous_archive_identities: vec![Some(backup_identity)],
         next_archive_family: vec![destination.clone()],
         next_archive_identities: vec![None],
         extract_stage_identity: None,
@@ -2059,7 +2197,9 @@ fn archive_journal_rollback_restores_backup_when_prerecorded_publish_is_missing(
     let destination = root.join("out.7z");
     std::fs::create_dir_all(&stage).expect("stage");
     std::fs::write(&staged, b"new-staged").expect("staged output");
-    std::fs::write(archive_backup_path(&stage, 0), b"old").expect("backup");
+    let backup = archive_backup_path(&stage, 0);
+    std::fs::write(&backup, b"old").expect("backup");
+    let backup_identity = super::journal::regular_file_identity(&backup).unwrap();
     let journal = CleanupJournal {
         stage: stage.clone(),
         destination: destination.clone(),
@@ -2067,6 +2207,7 @@ fn archive_journal_rollback_restores_backup_when_prerecorded_publish_is_missing(
         extract_stage_placement: None,
         move_plan_sidecar: false,
         previous_archive_family: vec![destination.clone()],
+        previous_archive_identities: vec![Some(backup_identity)],
         next_archive_family: vec![destination.clone()],
         next_archive_identities: vec![Some(
             super::journal::regular_file_identity(&staged).unwrap(),
@@ -2087,7 +2228,9 @@ fn archive_journal_rollback_preserves_a_replacement_output() {
     let stage = root.join(".zinnia-archive-abc");
     let destination = root.join("out.7z");
     std::fs::create_dir_all(&stage).expect("stage");
-    std::fs::write(archive_backup_path(&stage, 0), b"old").expect("backup");
+    let backup = archive_backup_path(&stage, 0);
+    std::fs::write(&backup, b"old").expect("backup");
+    let backup_identity = super::journal::regular_file_identity(&backup).unwrap();
     std::fs::write(&destination, b"new-partial").expect("partial new");
     let published_identity = super::journal::regular_file_identity(&destination).unwrap();
     // Keep the published inode/file ID allocated while replacing the destination.
@@ -2109,6 +2252,7 @@ fn archive_journal_rollback_preserves_a_replacement_output() {
         extract_stage_placement: None,
         move_plan_sidecar: false,
         previous_archive_family: vec![destination.clone()],
+        previous_archive_identities: vec![Some(backup_identity)],
         next_archive_family: vec![destination.clone()],
         next_archive_identities: vec![Some(published_identity)],
         extract_stage_identity: None,
@@ -2134,7 +2278,9 @@ fn explicit_archive_phase_controls_recovery_across_partial_backup_cleanup() {
     std::fs::create_dir_all(&stage).expect("stage");
     std::fs::write(&first, b"new-1").expect("first");
     std::fs::write(&second, b"new-2").expect("second");
-    std::fs::write(archive_backup_path(&stage, 1), b"old-2").expect("remaining backup");
+    let second_backup = archive_backup_path(&stage, 1);
+    std::fs::write(&second_backup, b"old-2").expect("remaining backup");
+    let second_backup_identity = super::journal::regular_file_identity(&second_backup).unwrap();
     let mut journal = CleanupJournal {
         stage: stage.clone(),
         destination: root.join("out.7z"),
@@ -2142,6 +2288,7 @@ fn explicit_archive_phase_controls_recovery_across_partial_backup_cleanup() {
         extract_stage_placement: None,
         move_plan_sidecar: false,
         previous_archive_family: vec![first.clone(), second.clone()],
+        previous_archive_identities: vec![None, Some(second_backup_identity)],
         next_archive_family: vec![first.clone(), second.clone()],
         next_archive_identities: vec![
             Some(super::journal::regular_file_identity(&first).unwrap()),

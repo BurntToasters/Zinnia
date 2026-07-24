@@ -3,7 +3,8 @@
 use super::journal::{
     ensure_path_identity, ensure_regular_file_identity, file_identities_match, file_identity,
     mark_archive_journal_committed, mark_extract_journal_committed, move_identity_log_path,
-    move_plan_path, path_identity, record_archive_journal_published, regular_file_identity,
+    move_plan_path, path_identity, record_archive_journal_backup,
+    record_archive_journal_published, regular_file_identity,
     remove_move_plan_sidecars, remove_regular_file_if_matches, sync_directory,
     unregister_plan_stages, update_archive_journal, FileIdentity, MoveRecord,
     LEGACY_MOVE_PLAN_FILE_NAME,
@@ -509,14 +510,34 @@ pub(crate) fn sync_file_best_effort(file: &std::fs::File) -> Result<(), String> 
     }
 }
 
-fn promote_archive_family_with_commit<F, R>(
+fn restore_archive_backups(
+    backups: Vec<(
+        std::path::PathBuf,
+        std::path::PathBuf,
+        super::journal::FileIdentity,
+    )>,
+) -> Vec<String> {
+    let mut restore_errors = Vec::new();
+    for (backup, target, identity) in backups.into_iter().rev() {
+        let restore = ensure_regular_file_identity(&backup, &identity)
+            .and_then(|()| rename_file_no_replace(&backup, &target));
+        if let Err(error) = restore {
+            restore_errors.push(format!("Could not restore {}: {error}", target.display()));
+        }
+    }
+    restore_errors
+}
+
+fn promote_archive_family_with_commit<F, B, R>(
     staged: &std::path::Path,
     destination: &std::path::Path,
+    mut record_backup: B,
     mut record_published: R,
     mark_committed: F,
 ) -> Result<(), String>
 where
     F: FnOnce() -> Result<(), String>,
+    B: FnMut(&std::path::Path, &super::journal::FileIdentity) -> Result<(), String>,
     R: FnMut(&std::path::Path, &super::journal::FileIdentity) -> Result<(), String>,
 {
     let staged_family = archive_family(staged)?;
@@ -528,20 +549,23 @@ where
         .parent()
         .ok_or_else(|| "Staged archive has no parent directory.".to_string())?;
     let existing = archive_family(destination)?;
-    let mut backups: Vec<(std::path::PathBuf, std::path::PathBuf)> = Vec::new();
+    let mut backups: Vec<(
+        std::path::PathBuf,
+        std::path::PathBuf,
+        super::journal::FileIdentity,
+    )> = Vec::new();
     for (index, path) in existing.into_iter().enumerate() {
+        // Keep the original object open across the rename. Besides closing the
+        // final path-component race, this lets filesystems such as FAT report a
+        // changed stable ID after a longer backup name is assigned.
+        let original_file = crate::path_safety::open_regular_file_nofollow(&path)?;
+        let original_identity = file_identity(&original_file)?;
+        // Persist an identity before moving the old volume aside. If the process
+        // stops immediately after rename, recovery has a fail-closed record.
+        record_backup(&path, &original_identity)?;
         let backup = archive_backup_path(stage_dir, index);
         if let Err(e) = rename_file_no_replace(&path, &backup) {
-            let mut restore_errors = Vec::new();
-            for (previous_backup, previous_path) in backups.into_iter().rev() {
-                if let Err(restore_error) = rename_file_no_replace(&previous_backup, &previous_path)
-                {
-                    restore_errors.push(format!(
-                        "Could not restore {}: {restore_error}",
-                        previous_path.display()
-                    ));
-                }
-            }
+            let restore_errors = restore_archive_backups(backups);
             let error = format!(
                 "Could not protect existing archive volume {}: {e}",
                 path.display()
@@ -555,7 +579,31 @@ where
                 ))
             };
         }
-        backups.push((backup, path));
+        backups.push((backup.clone(), path.clone(), original_identity.clone()));
+        let post_rename = (|| {
+            let backup_identity = file_identity(&original_file)?;
+            if let Some((_, _, rollback_identity)) = backups.last_mut() {
+                *rollback_identity = backup_identity.clone();
+            }
+            if !file_identities_match(&backup_identity, &original_identity) {
+                // FAT-family filesystems can change their legacy file ID when a
+                // rename requires a longer directory entry. Correct the journal
+                // from the still-open handle before relying on the backup path.
+                record_backup(&path, &backup_identity)?;
+            }
+            ensure_regular_file_identity(&backup, &backup_identity)
+        })();
+        if let Err(error) = post_rename {
+            let restore_errors = restore_archive_backups(backups);
+            return if restore_errors.is_empty() {
+                Err(error)
+            } else {
+                Err(format!(
+                    "{error}; recovery also failed: {}",
+                    restore_errors.join("; ")
+                ))
+            };
+        }
     }
     if let Some(parent) = destination.parent() {
         sync_directory(parent)?;
@@ -637,11 +685,7 @@ where
                 ));
             }
         }
-        for (backup, target) in backups.into_iter().rev() {
-            if let Err(e) = rename_file_no_replace(&backup, &target) {
-                recovery_errors.push(format!("Could not restore {}: {e}", target.display()));
-            }
-        }
+        recovery_errors.extend(restore_archive_backups(backups));
         return if recovery_errors.is_empty() {
             Err(error)
         } else {
@@ -655,8 +699,8 @@ where
     // Destination already holds the durable committed archive(s). Nothing after
     // this point may return Err: recovery treats backup files as cleanup-only.
 
-    for (backup, _) in backups {
-        if let Err(error) = crate::fs_secure::remove_file_for_cleanup(&backup) {
+    for (backup, _, identity) in backups {
+        if let Err(error) = remove_regular_file_if_matches(&backup, &identity) {
             eprintln!(
                 "Archive published; leftover backup cleanup failed for {}: {error}",
                 backup.display()
@@ -703,7 +747,13 @@ pub(crate) fn promote_archive_family(
     staged: &std::path::Path,
     destination: &std::path::Path,
 ) -> Result<(), String> {
-    promote_archive_family_with_commit(staged, destination, |_, _| Ok(()), || Ok(()))
+    promote_archive_family_with_commit(
+        staged,
+        destination,
+        |_, _| Ok(()),
+        |_, _| Ok(()),
+        || Ok(()),
+    )
 }
 
 /// True when the archive stage still holds `backup-*` files needed for journal recovery.
@@ -1842,6 +1892,7 @@ pub(crate) fn commit_cleanup(app: &tauri::AppHandle, plan: &CleanupPlan) -> Resu
         promote_archive_family_with_commit(
             staged,
             destination,
+            |original, identity| record_archive_journal_backup(app, plan, original, identity),
             |published, identity| record_archive_journal_published(app, plan, published, identity),
             || mark_archive_journal_committed(app, plan),
         )?;

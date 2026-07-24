@@ -4,9 +4,10 @@ use super::commit::{
     archive_backup_path, archive_family, rename_file_no_replace, rollback_persisted_move_plan,
 };
 use super::journal::{
-    cleanup_journal_path, clear_cleanup_journal, is_safe_stage_dir_name, move_plan_path,
-    remove_move_plan_sidecars, remove_regular_file_if_matches, sync_directory, ArchiveJournalPhase,
-    CleanupJournal, ExtractJournalPhase,
+    cleanup_journal_path, clear_cleanup_journal, ensure_regular_file_identity,
+    is_safe_stage_dir_name, move_plan_path, remove_move_plan_sidecars,
+    remove_regular_file_if_matches, sync_directory, ArchiveJournalPhase, CleanupJournal,
+    ExtractJournalPhase, FileIdentity,
 };
 
 static RECOVERY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -153,9 +154,47 @@ pub(crate) fn recover_missing_extract_stage(journal: &CleanupJournal) -> Result<
     }
 }
 
+fn archive_backup_identity(
+    journal: &CleanupJournal,
+    index: usize,
+) -> Result<&FileIdentity, String> {
+    if journal.previous_archive_identities.len() != journal.previous_archive_family.len() {
+        return Err("Archive recovery journal has invalid backup identity records.".to_string());
+    }
+    journal.previous_archive_identities[index].as_ref().ok_or_else(|| {
+        format!("Archive recovery journal did not record the identity of backup volume {index}.")
+    })
+}
+
+fn validate_archive_backup(
+    journal: &CleanupJournal,
+    index: usize,
+    backup: &std::path::Path,
+) -> Result<bool, String> {
+    let metadata = match std::fs::symlink_metadata(backup) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.to_string()),
+    };
+    if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_file() {
+        return Err(format!(
+            "Refusing unexpected archive recovery backup {}.",
+            backup.display()
+        ));
+    }
+    let identity = archive_backup_identity(journal, index)?;
+    ensure_regular_file_identity(backup, identity)?;
+    Ok(true)
+}
+
 pub(crate) fn cleanup_committed_archive_journal(journal: &CleanupJournal) -> Result<(), String> {
     for (index, _) in journal.previous_archive_family.iter().enumerate() {
-        remove_regular_file_if_present(&archive_backup_path(&journal.stage, index))?;
+        let backup = archive_backup_path(&journal.stage, index);
+        if !validate_archive_backup(journal, index, &backup)? {
+            continue;
+        }
+        let identity = archive_backup_identity(journal, index)?;
+        remove_regular_file_if_matches(&backup, identity)?;
     }
     match crate::fs_secure::remove_dir_all_for_cleanup(&journal.stage) {
         Ok(()) => {}
@@ -169,6 +208,15 @@ pub(crate) fn cleanup_committed_archive_journal(journal: &CleanupJournal) -> Res
 }
 
 pub(crate) fn rollback_archive_journal(journal: &CleanupJournal) -> Result<(), String> {
+    // Validate every recovery backup before deleting any partially published
+    // output. If a shared-folder race replaced a backup, preserve all paths and
+    // fail closed rather than restoring an unrelated file as the user's archive.
+    let mut backup_presence = Vec::with_capacity(journal.previous_archive_family.len());
+    for (index, _) in journal.previous_archive_family.iter().enumerate() {
+        let backup = archive_backup_path(&journal.stage, index);
+        backup_presence.push(validate_archive_backup(journal, index, &backup)?);
+    }
+
     let candidates = if journal.next_archive_family.is_empty() {
         archive_family(&journal.destination)?
     } else {
@@ -182,7 +230,7 @@ pub(crate) fn rollback_archive_journal(journal: &CleanupJournal) -> Result<(), S
         // Only delete a destination when we can restore a backup, or when it is a
         // newly published volume (not in previous family) during an incomplete promote.
         let should_remove = match prior_index {
-            Some(index) => archive_backup_path(&journal.stage, index).is_file(),
+            Some(index) => backup_presence[index],
             None => true,
         };
         if should_remove {
@@ -223,9 +271,12 @@ pub(crate) fn rollback_archive_journal(journal: &CleanupJournal) -> Result<(), S
     }
     for (index, target) in journal.previous_archive_family.iter().enumerate() {
         let backup = archive_backup_path(&journal.stage, index);
-        if backup.is_file() {
-            super::commit::rename_file_no_replace(&backup, target)?;
+        if !validate_archive_backup(journal, index, &backup)? {
+            continue;
         }
+        super::commit::rename_file_no_replace(&backup, target)?;
+        let identity = archive_backup_identity(journal, index)?;
+        ensure_regular_file_identity(target, identity)?;
     }
     Ok(())
 }

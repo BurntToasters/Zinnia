@@ -56,6 +56,12 @@ pub(crate) struct CleanupJournal {
     #[serde(default)]
     pub(crate) move_plan_sidecar: bool,
     pub(crate) previous_archive_family: Vec<std::path::PathBuf>,
+    /// Stable identities for recovery backups, recorded immediately before each
+    /// existing archive volume is moved aside and corrected from the open handle
+    /// after rename when needed. Legacy journals deserialize as empty, but recovery
+    /// refuses to restore or remove any present backup it cannot identify.
+    #[serde(default)]
+    pub(crate) previous_archive_identities: Vec<Option<FileIdentity>>,
     #[serde(default)]
     pub(crate) next_archive_family: Vec<std::path::PathBuf>,
     /// Stable identities recorded before each output becomes visible. Rename
@@ -362,6 +368,7 @@ pub(crate) fn write_cleanup_journal(
             extract_stage_placement: Some(ExtractStagePlacement::from_paths(stage, destination)?),
             move_plan_sidecar: true,
             previous_archive_family: Vec::new(),
+            previous_archive_identities: Vec::new(),
             next_archive_family: Vec::new(),
             next_archive_identities: Vec::new(),
             extract_stage_identity: match path_identity(stage) {
@@ -378,6 +385,8 @@ pub(crate) fn write_cleanup_journal(
             archive_phase: None,
         })
     } else if let Some((staged_archive, destination)) = &plan.staged_archive {
+        let previous_archive_family = archive_family(destination)?;
+        let previous_archive_identities = vec![None; previous_archive_family.len()];
         Some(CleanupJournal {
             stage: staged_archive
                 .parent()
@@ -387,7 +396,8 @@ pub(crate) fn write_cleanup_journal(
             archive: true,
             extract_stage_placement: None,
             move_plan_sidecar: false,
-            previous_archive_family: archive_family(destination)?,
+            previous_archive_family,
+            previous_archive_identities,
             next_archive_family: Vec::new(),
             next_archive_identities: Vec::new(),
             extract_stage_identity: None,
@@ -420,13 +430,15 @@ pub(crate) fn update_archive_journal(
         .iter()
         .map(|source| archive_destination_for(staged, destination, source))
         .collect::<Result<Vec<_>, _>>()?;
+    let previous_archive_family = archive_family(destination)?;
     let journal = CleanupJournal {
         stage,
         destination: destination.clone(),
         archive: true,
         extract_stage_placement: None,
         move_plan_sidecar: false,
-        previous_archive_family: archive_family(destination)?,
+        previous_archive_identities: vec![None; previous_archive_family.len()],
+        previous_archive_family,
         next_archive_identities: vec![None; next_archive_family.len()],
         next_archive_family,
         extract_stage_identity: None,
@@ -464,6 +476,47 @@ pub(crate) fn mark_extract_journal_committed(
     crate::settings_store::atomic_write_text(&path, &json)
 }
 
+pub(crate) fn record_archive_journal_backup(
+    app: &tauri::AppHandle,
+    plan: &CleanupPlan,
+    original: &std::path::Path,
+    identity: &FileIdentity,
+) -> Result<(), String> {
+    let Some((staged, destination)) = &plan.staged_archive else {
+        return Ok(());
+    };
+    let expected_stage = staged
+        .parent()
+        .ok_or_else(|| "Archive staging directory is missing.".to_string())?;
+    let path = cleanup_journal_path(app)?;
+    let json = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    let mut journal: CleanupJournal =
+        serde_json::from_str(&json).map_err(|error| error.to_string())?;
+    if !journal.archive
+        || journal.stage != expected_stage
+        || journal.destination != *destination
+        || journal.archive_phase != Some(ArchiveJournalPhase::InProgress)
+    {
+        return Err("Archive recovery journal changed during backup.".to_string());
+    }
+    if journal.previous_archive_identities.len() != journal.previous_archive_family.len() {
+        return Err("Archive recovery journal has invalid backup identity records.".to_string());
+    }
+    let index = journal
+        .previous_archive_family
+        .iter()
+        .position(|path| path == original)
+        .ok_or_else(|| {
+            "Existing archive volume is missing from its recovery journal.".to_string()
+        })?;
+    // The caller records once before rename and may correct the value from a
+    // still-open handle afterward. Some FAT-family filesystems can change their
+    // legacy file ID when a rename uses a longer directory entry.
+    journal.previous_archive_identities[index] = Some(identity.clone());
+    let json = serde_json::to_string(&journal).map_err(|error| error.to_string())?;
+    crate::settings_store::atomic_write_text(&path, &json)
+}
+
 pub(crate) fn record_archive_journal_published(
     app: &tauri::AppHandle,
     plan: &CleanupPlan,
@@ -480,7 +533,11 @@ pub(crate) fn record_archive_journal_published(
     let json = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
     let mut journal: CleanupJournal =
         serde_json::from_str(&json).map_err(|error| error.to_string())?;
-    if !journal.archive || journal.stage != expected_stage || journal.destination != *destination {
+    if !journal.archive
+        || journal.stage != expected_stage
+        || journal.destination != *destination
+        || journal.archive_phase != Some(ArchiveJournalPhase::InProgress)
+    {
         return Err("Archive recovery journal changed during publish.".to_string());
     }
     if journal.next_archive_identities.len() != journal.next_archive_family.len() {
@@ -491,7 +548,13 @@ pub(crate) fn record_archive_journal_published(
         .iter()
         .position(|path| path == published)
         .ok_or_else(|| "Published archive is missing from its recovery journal.".to_string())?;
-    journal.next_archive_identities[index] = Some(identity.clone());
+    if let Some(existing) = &journal.next_archive_identities[index] {
+        if !file_identities_match(existing, identity) {
+            journal.next_archive_identities[index] = Some(identity.clone());
+        }
+    } else {
+        journal.next_archive_identities[index] = Some(identity.clone());
+    }
     let json = serde_json::to_string(&journal).map_err(|error| error.to_string())?;
     crate::settings_store::atomic_write_text(&path, &json)
 }
