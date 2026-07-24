@@ -270,11 +270,7 @@ fn windows_classic_verbs_registered() -> Option<bool> {
         return Some(true);
     }
 
-    match windows_modern_menu_registered() {
-        Some(true) => Some(true),
-        Some(false) => Some(false),
-        None => None,
-    }
+    windows_modern_menu_registered()
 }
 
 fn win11_modern_menu_status_for(platform: &str, packaged: bool) -> Win11ModernMenuInfo {
