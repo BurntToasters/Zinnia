@@ -135,70 +135,104 @@ pub fn open_regular_file_nofollow(path: &Path) -> Result<std::fs::File, String> 
     }
     #[cfg(windows)]
     {
-        use std::os::windows::ffi::OsStrExt;
-        use std::os::windows::io::FromRawHandle;
-        use std::ptr;
-        use windows_sys::Win32::Foundation::{CloseHandle, GENERIC_READ, INVALID_HANDLE_VALUE};
         use windows_sys::Win32::Storage::FileSystem::{
-            CreateFileW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
-            FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_OPEN_REPARSE_POINT,
-            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
         };
 
-        let wide: Vec<u16> = path
-            .as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-        let handle = unsafe {
-            CreateFileW(
-                wide.as_ptr(),
-                GENERIC_READ,
-                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                ptr::null(),
-                OPEN_EXISTING,
-                FILE_FLAG_OPEN_REPARSE_POINT,
-                ptr::null_mut(),
-            )
-        };
-        if handle == INVALID_HANDLE_VALUE {
-            return Err(format!(
-                "Could not open {}: {}",
-                path.display(),
-                std::io::Error::last_os_error()
-            ));
-        }
-        let mut info = unsafe { std::mem::zeroed::<BY_HANDLE_FILE_INFORMATION>() };
-        let ok = unsafe { GetFileInformationByHandle(handle, &mut info) };
-        if ok == 0 {
-            let err = std::io::Error::last_os_error();
-            unsafe {
-                CloseHandle(handle);
-            }
-            return Err(format!("Could not inspect {}: {err}", path.display()));
-        }
-        if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-            unsafe {
-                CloseHandle(handle);
-            }
-            return Err(format!(
-                "Refusing symbolic link or reparse point: {}",
-                path.display()
-            ));
-        }
-        if info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
-            unsafe {
-                CloseHandle(handle);
-            }
-            return Err(format!("Path is not a regular file: {}", path.display()));
-        }
-        Ok(unsafe { std::fs::File::from_raw_handle(handle as _) })
+        open_regular_file_nofollow_windows(
+            path,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        )
     }
     #[cfg(not(any(unix, windows)))]
     {
         assert_real_file(path)?;
         std::fs::File::open(path).map_err(|e| e.to_string())
     }
+}
+
+/// Open an archive input for snapshotting without following the final component.
+///
+/// Windows additionally denies write and delete sharing while this handle is
+/// alive, so another process cannot modify, rename, or replace the archive while
+/// its bytes are copied. Unix keeps the existing `O_NOFOLLOW` behavior; callers
+/// still verify stable file identity before and after the copy.
+pub fn open_regular_file_nofollow_for_snapshot(path: &Path) -> Result<std::fs::File, String> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
+
+        open_regular_file_nofollow_windows(path, FILE_SHARE_READ)
+    }
+    #[cfg(not(windows))]
+    {
+        open_regular_file_nofollow(path)
+    }
+}
+
+#[cfg(windows)]
+fn open_regular_file_nofollow_windows(
+    path: &Path,
+    share_mode: u32,
+) -> Result<std::fs::File, String> {
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::io::FromRawHandle;
+    use std::ptr;
+    use windows_sys::Win32::Foundation::{CloseHandle, GENERIC_READ, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+        FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_OPEN_REPARSE_POINT,
+        OPEN_EXISTING,
+    };
+
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let handle = unsafe {
+        CreateFileW(
+            wide.as_ptr(),
+            GENERIC_READ,
+            share_mode,
+            ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT,
+            ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(format!(
+            "Could not open {}: {}",
+            path.display(),
+            std::io::Error::last_os_error()
+        ));
+    }
+    let mut info = unsafe { std::mem::zeroed::<BY_HANDLE_FILE_INFORMATION>() };
+    let ok = unsafe { GetFileInformationByHandle(handle, &mut info) };
+    if ok == 0 {
+        let err = std::io::Error::last_os_error();
+        unsafe {
+            CloseHandle(handle);
+        }
+        return Err(format!("Could not inspect {}: {err}", path.display()));
+    }
+    if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        unsafe {
+            CloseHandle(handle);
+        }
+        return Err(format!(
+            "Refusing symbolic link or reparse point: {}",
+            path.display()
+        ));
+    }
+    if info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
+        unsafe {
+            CloseHandle(handle);
+        }
+        return Err(format!("Path is not a regular file: {}", path.display()));
+    }
+    Ok(unsafe { std::fs::File::from_raw_handle(handle as _) })
 }
 
 #[cfg(test)]
@@ -287,6 +321,30 @@ mod tests {
         drop(opened);
         let dir_err = open_regular_file_nofollow(&root).expect_err("directory");
         assert!(dir_err.contains("not a regular file") || dir_err.contains("Could not open"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn snapshot_open_blocks_concurrent_write_and_rename() {
+        let root = temp_root("win-snapshot-share");
+        std::fs::create_dir_all(&root).expect("dir");
+        let file = root.join("archive.7z");
+        let renamed = root.join("renamed.7z");
+        std::fs::write(&file, b"archive").expect("write");
+
+        let snapshot_source =
+            open_regular_file_nofollow_for_snapshot(&file).expect("snapshot open");
+        let reader = std::fs::File::open(&file).expect("concurrent reader");
+        assert!(std::fs::OpenOptions::new()
+            .write(true)
+            .open(&file)
+            .is_err());
+        assert!(std::fs::rename(&file, &renamed).is_err());
+
+        drop(reader);
+        drop(snapshot_source);
+        std::fs::rename(&file, &renamed).expect("rename after snapshot handle closes");
         let _ = std::fs::remove_dir_all(root);
     }
 

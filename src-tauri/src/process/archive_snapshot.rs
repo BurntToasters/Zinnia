@@ -435,7 +435,8 @@ pub(super) fn stage_extract_input(
                     .file_name()
                     .ok_or_else(|| "Archive volume has no file name.".to_string())?,
             );
-            let mut source_file = crate::path_safety::open_regular_file_nofollow(&source)
+            let mut source_file =
+                crate::path_safety::open_regular_file_nofollow_for_snapshot(&source)
                 .map_err(|error| {
                     format!("Could not open archive input {}: {error}", source.display())
                 })?;
