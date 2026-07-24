@@ -14,33 +14,19 @@ pub(super) struct ArchiveFileIdentity {
     volume_serial: u32,
     #[cfg(windows)]
     file_index: u64,
+    #[cfg(windows)]
+    volume_serial_64: Option<u64>,
+    #[cfg(windows)]
+    file_id_128: Option<[u8; 16]>,
 }
 
-#[cfg(windows)]
-fn windows_file_identity(file: &std::fs::File) -> Result<(u32, u64), String> {
-    use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::Storage::FileSystem::{
-        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
-    };
-
-    let mut info = BY_HANDLE_FILE_INFORMATION::default();
-    let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) };
-    if ok == 0 {
-        return Err(format!(
-            "Could not read Windows archive file identity: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
-    let file_index = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
-    Ok((info.dwVolumeSerialNumber, file_index))
-}
-
-pub(super) fn archive_file_identity(path: &std::path::Path) -> Result<ArchiveFileIdentity, String> {
+fn archive_file_identity_from_open_file(
+    path: &std::path::Path,
+    file: &std::fs::File,
+) -> Result<ArchiveFileIdentity, String> {
     let canonical_path = path
         .canonicalize()
         .map_err(|e| format!("Could not resolve archive identity: {e}"))?;
-    let file = std::fs::File::open(&canonical_path)
-        .map_err(|e| format!("Could not open archive identity: {e}"))?;
     let metadata = file
         .metadata()
         .map_err(|e| format!("Could not read archive identity: {e}"))?;
@@ -51,7 +37,7 @@ pub(super) fn archive_file_identity(path: &std::path::Path) -> Result<ArchiveFil
     #[cfg(unix)]
     use std::os::unix::fs::MetadataExt as _;
     #[cfg(windows)]
-    let (volume_serial, file_index) = windows_file_identity(&file)?;
+    let windows_identity = windows_file_identity(file)?;
 
     Ok(ArchiveFileIdentity {
         canonical_path,
@@ -63,10 +49,115 @@ pub(super) fn archive_file_identity(path: &std::path::Path) -> Result<ArchiveFil
         #[cfg(unix)]
         inode: metadata.ino(),
         #[cfg(windows)]
-        volume_serial,
+        volume_serial: windows_identity.volume_serial,
         #[cfg(windows)]
-        file_index,
+        file_index: windows_identity.file_index,
+        #[cfg(windows)]
+        volume_serial_64: windows_identity.volume_serial_64,
+        #[cfg(windows)]
+        file_id_128: windows_identity.file_id_128,
     })
+}
+
+#[cfg(windows)]
+struct WindowsArchiveFileIdentity {
+    volume_serial: u32,
+    file_index: u64,
+    volume_serial_64: Option<u64>,
+    file_id_128: Option<[u8; 16]>,
+}
+
+#[cfg(windows)]
+fn windows_file_identity(file: &std::fs::File) -> Result<WindowsArchiveFileIdentity, String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FileIdInfo, GetFileInformationByHandle, GetFileInformationByHandleEx,
+        BY_HANDLE_FILE_INFORMATION, FILE_ID_INFO,
+    };
+
+    let handle = file.as_raw_handle() as HANDLE;
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    let ok = unsafe { GetFileInformationByHandle(handle, &mut info) };
+    if ok == 0 {
+        return Err(format!(
+            "Could not read Windows archive file identity: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let file_index = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
+
+    // ReFS uses 128-bit file IDs; the legacy 64-bit index is not guaranteed
+    // unique there. Keep the legacy pair as a compatibility fallback for
+    // filesystems and SMB servers that do not implement FileIdInfo.
+    let mut extended: FILE_ID_INFO = unsafe { std::mem::zeroed() };
+    let has_extended_id = unsafe {
+        GetFileInformationByHandleEx(
+            handle,
+            FileIdInfo,
+            (&mut extended as *mut FILE_ID_INFO).cast(),
+            std::mem::size_of::<FILE_ID_INFO>() as u32,
+        )
+    } != 0;
+    Ok(WindowsArchiveFileIdentity {
+        volume_serial: info.dwVolumeSerialNumber,
+        file_index,
+        volume_serial_64: has_extended_id.then_some(extended.VolumeSerialNumber),
+        file_id_128: has_extended_id.then_some(extended.FileId.Identifier),
+    })
+}
+
+pub(super) fn archive_file_identity(path: &std::path::Path) -> Result<ArchiveFileIdentity, String> {
+    let file = crate::path_safety::open_regular_file_nofollow(path)
+        .map_err(|e| format!("Could not open archive identity: {e}"))?;
+    archive_file_identity_from_open_file(path, &file)
+}
+
+fn copy_archive_snapshot_file(
+    source: &mut std::fs::File,
+    destination: &std::path::Path,
+) -> Result<(), String> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
+
+        // Keep the private snapshot stable while it is populated. More
+        // importantly, creating it here lets it inherit the private stage DACL
+        // instead of CopyFileEx copying the source archive's security descriptor.
+        options.share_mode(FILE_SHARE_READ);
+    }
+
+    let mut destination_file = options
+        .open(destination)
+        .map_err(|error| error.to_string())?;
+    let result = std::io::copy(source, &mut destination_file)
+        .map_err(|error| error.to_string())
+        .and_then(|_| {
+            destination_file
+                .sync_all()
+                .map_err(|error| error.to_string())
+        });
+    drop(destination_file);
+
+    if let Err(error) = result {
+        let cleanup = crate::fs_secure::remove_file_for_cleanup(destination);
+        return Err(match cleanup {
+            Ok(()) => error,
+            Err(cleanup_error) if cleanup_error.kind() == std::io::ErrorKind::NotFound => error,
+            Err(cleanup_error) => {
+                format!("{error}; partial snapshot cleanup also failed: {cleanup_error}")
+            }
+        });
+    }
+    Ok(())
 }
 
 pub(super) fn assert_archive_identity_unchanged(
@@ -353,12 +444,30 @@ pub(super) fn stage_extract_input(
                     .file_name()
                     .ok_or_else(|| "Archive volume has no file name.".to_string())?,
             );
-            std::fs::copy(&source, &destination).map_err(|error| {
+            let mut source_file =
+                crate::path_safety::open_regular_file_nofollow_for_snapshot(&source).map_err(
+                    |error| format!("Could not open archive input {}: {error}", source.display()),
+                )?;
+            let opened_identity = archive_file_identity_from_open_file(&source, &source_file)?;
+            if opened_identity != expected {
+                return Err(
+                    "Archive changed before its private snapshot could be created; extraction was cancelled."
+                        .to_string(),
+                );
+            }
+            copy_archive_snapshot_file(&mut source_file, &destination).map_err(|error| {
                 format!(
                     "Could not snapshot archive input {}: {error}",
                     source.display()
                 )
             })?;
+            let copied_identity = archive_file_identity_from_open_file(&source, &source_file)?;
+            if copied_identity != expected {
+                return Err(
+                    "Archive changed while its private snapshot was being created; extraction was cancelled."
+                        .to_string(),
+                );
+            }
             assert_archive_identity_unchanged(&source, &expected)?;
         }
         Ok(StagedArchiveInput {
@@ -371,7 +480,7 @@ pub(super) fn stage_extract_input(
         })
     })();
     if result.is_err() {
-        let _ = std::fs::remove_dir_all(&stage);
+        let _ = crate::fs_secure::remove_dir_all_for_cleanup(&stage);
         if let Some(cache) = cache_dir {
             let _ = super::unregister_pending_stage(cache, &stage);
         }

@@ -18,7 +18,7 @@ const coverageSummaryPath = resolve(
 );
 const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
 const appVersion = packageJson.version ?? "unknown";
-const scriptVersion = "1.1.0";
+const scriptVersion = "1.1.2";
 const criticalCoverageThresholds = {
   // Directory keys (trailing `/`) aggregate all matching `src/<dir>/**/*.ts` files.
   "archive/": { lines: 80, branches: 62, functions: 88 },
@@ -59,6 +59,7 @@ function createInitialResults() {
       branches: null,
     },
     rustfmt: { status: "pending" },
+    rustprep: { status: "pending" },
     clippy: { status: "pending" },
     rust: { status: "pending" },
   };
@@ -76,7 +77,7 @@ function printTail(output, label) {
   const cleanOutput = stripAnsi(output).trim();
   if (!cleanOutput) return;
   const lines = cleanOutput.split("\n");
-  const tail = lines.slice(-20).join("\n");
+  const tail = lines.slice(-120).join("\n");
   console.log(`${colors.red}${label}:${colors.reset}`);
   console.log(`${colors.red}${tail}${colors.reset}`);
 }
@@ -314,6 +315,13 @@ ${colors.reset}`);
     }${colors.reset}`,
   );
   console.log(
+    `${colors.bold}Rust Prep:${colors.reset}   ${
+      results.rustprep.status === "passed"
+        ? `${colors.green}✓ PASS`
+        : `${colors.red}✗ FAIL`
+    }${colors.reset}`,
+  );
+  console.log(
     `${colors.bold}Clippy:${colors.reset}      ${
       results.clippy.status === "passed"
         ? `${colors.green}✓ PASS`
@@ -382,30 +390,46 @@ function main() {
     results,
     { timeout: rustTimeoutMs },
   );
-  runCommand(
-    "clippy",
-    "cargo",
-    [
+  const rustPrepared = runCommand(
+    "rustprep",
+    npm,
+    ["run", "prepare:rust-tests"],
+    null,
+    results,
+    { timeout: rustTimeoutMs },
+  );
+  if (rustPrepared) {
+    runCommand(
       "clippy",
-      "--manifest-path",
-      "src-tauri/Cargo.toml",
-      "--all-targets",
-      "--",
-      "-D",
-      "warnings",
-    ],
-    null,
-    results,
-    { timeout: rustTimeoutMs },
-  );
-  runCommand(
-    "rust",
-    "cargo",
-    ["test", "--manifest-path", "src-tauri/Cargo.toml", "--all-targets"],
-    null,
-    results,
-    { timeout: rustTimeoutMs },
-  );
+      "cargo",
+      [
+        "clippy",
+        "--manifest-path",
+        "src-tauri/Cargo.toml",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings",
+      ],
+      null,
+      results,
+      { timeout: rustTimeoutMs },
+    );
+    runCommand(
+      "rust",
+      "cargo",
+      ["test", "--manifest-path", "src-tauri/Cargo.toml", "--all-targets"],
+      null,
+      results,
+      { timeout: rustTimeoutMs },
+    );
+  } else {
+    results.clippy.status = "failed";
+    results.rust.status = "failed";
+    console.log(
+      `${colors.red}Skipping clippy and Rust tests because Rust test assets could not be prepared.${colors.reset}\n`,
+    );
+  }
 
   const exitCode = printSummary(results);
   if (exitCode === 0) {

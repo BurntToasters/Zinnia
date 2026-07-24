@@ -6,22 +6,80 @@ use super::commit::{archive_destination_for, archive_family};
 use super::staging::path_entry_exists;
 use super::CleanupPlan;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ExtractStagePlacement {
+    /// The destination did not exist when the transaction started, so the
+    /// stage is beside it and can be renamed into place as a whole.
+    Sibling,
+    /// The destination already existed, so the stage is a hidden child whose
+    /// contents inherit the destination's local or SMB security policy.
+    InsideDestination,
+}
+
+impl ExtractStagePlacement {
+    pub(crate) fn from_paths(
+        stage: &std::path::Path,
+        destination: &std::path::Path,
+    ) -> Result<Self, String> {
+        if stage.parent() == destination.parent() {
+            return Ok(Self::Sibling);
+        }
+        if stage.parent() == Some(destination) {
+            return Ok(Self::InsideDestination);
+        }
+        Err("Extraction stage is not in a supported publish location.".to_string())
+    }
+
+    pub(crate) fn matches_paths(
+        self,
+        stage: &std::path::Path,
+        destination: &std::path::Path,
+    ) -> bool {
+        match self {
+            Self::Sibling => stage.parent() == destination.parent(),
+            Self::InsideDestination => stage.parent() == Some(destination),
+        }
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct CleanupJournal {
     pub(crate) stage: std::path::PathBuf,
     pub(crate) destination: std::path::PathBuf,
     pub(crate) archive: bool,
+    /// Recorded extraction layout. Missing means a legacy sibling-stage journal.
+    #[serde(default)]
+    pub(crate) extract_stage_placement: Option<ExtractStagePlacement>,
     /// Newer extracts keep their move plan beside the stage. False means a
     /// legacy journal that may need the old in-payload recovery location.
     #[serde(default)]
     pub(crate) move_plan_sidecar: bool,
     pub(crate) previous_archive_family: Vec<std::path::PathBuf>,
+    /// Stable identities for recovery backups, recorded immediately before each
+    /// existing archive volume is moved aside and corrected from the open handle
+    /// after rename when needed. Legacy journals deserialize as empty, but recovery
+    /// refuses to restore or remove any present backup it cannot identify.
+    #[serde(default)]
+    pub(crate) previous_archive_identities: Vec<Option<FileIdentity>>,
     #[serde(default)]
     pub(crate) next_archive_family: Vec<std::path::PathBuf>,
-    /// Stable identities recorded immediately after each newly published
-    /// output. Recovery must never delete a same-name file it did not publish.
+    /// Stable identities recorded before each output becomes visible. Rename
+    /// and hard-link publication preserve the staged identity; create-new copy
+    /// publication replaces it while the new handle is still open. Recovery
+    /// must never delete a same-name file it cannot identify as Zinnia's output.
     #[serde(default)]
     pub(crate) next_archive_identities: Vec<Option<FileIdentity>>,
+    /// Identity of an extraction stage captured before 7-Zip starts. This lets
+    /// recovery recognize a sibling stage that was renamed into a brand-new
+    /// destination immediately before a crash. Missing remains compatible with
+    /// older journals and filesystems that do not expose stable identities.
+    #[serde(default)]
+    pub(crate) extract_stage_identity: Option<FileIdentity>,
+    /// Explicit phase for extraction transactions. Missing means a legacy
+    /// journal whose stage/move-plan state must be interpreted conservatively.
+    #[serde(default)]
+    pub(crate) extract_phase: Option<ExtractJournalPhase>,
     /// Explicit phase for B16+ archive transactions. `None` identifies a
     /// legacy journal whose completion must be inferred for compatibility.
     #[serde(default)]
@@ -36,15 +94,69 @@ pub(crate) enum FileIdentity {
         inode: u64,
     },
     Windows {
+        /// Legacy 32-bit volume serial retained for journals written by older betas
+        /// and for filesystems that do not expose `FileIdInfo`.
         volume_serial_number: u32,
+        /// Legacy 64-bit file index. Microsoft does not guarantee this identifier
+        /// is unique on ReFS, so new journals also record the 128-bit ID when the
+        /// filesystem or SMB server supports it.
         file_index: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        volume_serial_number_64: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file_id_128: Option<[u8; 16]>,
     },
 }
 
-pub(crate) fn regular_file_identity(path: &std::path::Path) -> Result<FileIdentity, String> {
+/// Compare identities using the strongest representation captured in the
+/// journal. New Windows records require the 128-bit ID when it was available;
+/// older records remain compatible through the legacy volume/index pair.
+pub(crate) fn file_identities_match(actual: &FileIdentity, expected: &FileIdentity) -> bool {
+    match (actual, expected) {
+        (
+            FileIdentity::Unix {
+                device: actual_device,
+                inode: actual_inode,
+            },
+            FileIdentity::Unix {
+                device: expected_device,
+                inode: expected_inode,
+            },
+        ) => actual_device == expected_device && actual_inode == expected_inode,
+        (
+            FileIdentity::Windows {
+                volume_serial_number: actual_volume,
+                file_index: actual_index,
+                volume_serial_number_64: actual_volume_64,
+                file_id_128: actual_id_128,
+            },
+            FileIdentity::Windows {
+                volume_serial_number: expected_volume,
+                file_index: expected_index,
+                volume_serial_number_64: expected_volume_64,
+                file_id_128: expected_id_128,
+            },
+        ) => match (expected_volume_64, expected_id_128) {
+            (Some(expected_volume_64), Some(expected_id_128)) => {
+                actual_volume_64 == &Some(*expected_volume_64)
+                    && actual_id_128 == &Some(*expected_id_128)
+            }
+            (None, None) => actual_volume == expected_volume && actual_index == expected_index,
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+pub(crate) fn path_identity(path: &std::path::Path) -> Result<FileIdentity, String> {
     let metadata = std::fs::symlink_metadata(path).map_err(|error| error.to_string())?;
-    if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_file() {
-        return Err(format!("Expected a regular file: {}", path.display()));
+    if crate::path_safety::is_link_or_reparse(&metadata)
+        || (!metadata.is_file() && !metadata.is_dir())
+    {
+        return Err(format!(
+            "Expected a regular file or directory: {}",
+            path.display()
+        ));
     }
     #[cfg(unix)]
     {
@@ -56,22 +168,94 @@ pub(crate) fn regular_file_identity(path: &std::path::Path) -> Result<FileIdenti
     }
     #[cfg(windows)]
     {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
+            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        };
+        let mut options = std::fs::OpenOptions::new();
+        options
+            .access_mode(FILE_READ_ATTRIBUTES)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            // BACKUP_SEMANTICS is harmless for files and required for directories.
+            // OPEN_REPARSE_POINT plus the handle-attribute check closes the final
+            // component race between symlink_metadata and open.
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
+        let file = options.open(path).map_err(|error| error.to_string())?;
+        file_identity(&file)
+    }
+}
+
+pub(crate) fn file_identity(file: &std::fs::File) -> Result<FileIdentity, String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        let metadata = file.metadata().map_err(|error| error.to_string())?;
+        Ok(FileIdentity::Unix {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        })
+    }
+    #[cfg(windows)]
+    {
         use std::os::windows::io::AsRawHandle as _;
         use windows_sys::Win32::Foundation::HANDLE;
         use windows_sys::Win32::Storage::FileSystem::{
-            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+            FileIdInfo, GetFileInformationByHandle, GetFileInformationByHandleEx,
+            BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ID_INFO,
         };
-        let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+        let handle = file.as_raw_handle() as HANDLE;
         let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
-        let success =
-            unsafe { GetFileInformationByHandle(file.as_raw_handle() as HANDLE, &mut info) };
+        let success = unsafe { GetFileInformationByHandle(handle, &mut info) };
         if success == 0 {
             return Err(std::io::Error::last_os_error().to_string());
         }
+        if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err("Refusing a file identity for a link or reparse point.".to_string());
+        }
+        let mut extended: FILE_ID_INFO = unsafe { std::mem::zeroed() };
+        let has_extended_id = unsafe {
+            GetFileInformationByHandleEx(
+                handle,
+                FileIdInfo,
+                (&mut extended as *mut FILE_ID_INFO).cast(),
+                std::mem::size_of::<FILE_ID_INFO>() as u32,
+            )
+        } != 0;
         Ok(FileIdentity::Windows {
             volume_serial_number: info.dwVolumeSerialNumber,
             file_index: (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+            volume_serial_number_64: has_extended_id.then_some(extended.VolumeSerialNumber),
+            file_id_128: has_extended_id.then_some(extended.FileId.Identifier),
         })
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = file;
+        Err("Stable file identities are unavailable on this platform.".to_string())
+    }
+}
+
+pub(crate) fn regular_file_identity(path: &std::path::Path) -> Result<FileIdentity, String> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|error| error.to_string())?;
+    if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_file() {
+        return Err(format!("Expected a regular file: {}", path.display()));
+    }
+    path_identity(path)
+}
+
+pub(crate) fn ensure_path_identity(
+    path: &std::path::Path,
+    expected: &FileIdentity,
+) -> Result<(), String> {
+    let actual = path_identity(path)?;
+    if file_identities_match(&actual, expected) {
+        Ok(())
+    } else {
+        Err(format!(
+            "Refusing to remove or replace {} because its file identity changed.",
+            path.display()
+        ))
     }
 }
 
@@ -80,7 +264,7 @@ pub(crate) fn ensure_regular_file_identity(
     expected: &FileIdentity,
 ) -> Result<(), String> {
     let actual = regular_file_identity(path)?;
-    if &actual == expected {
+    if file_identities_match(&actual, expected) {
         Ok(())
     } else {
         Err(format!(
@@ -95,7 +279,7 @@ pub(crate) fn remove_regular_file_if_matches(
     expected: &FileIdentity,
 ) -> Result<(), String> {
     ensure_regular_file_identity(path, expected)?;
-    std::fs::remove_file(path).map_err(|error| error.to_string())
+    crate::fs_secure::remove_file_for_cleanup(path).map_err(|error| error.to_string())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -105,8 +289,15 @@ pub(crate) enum ArchiveJournalPhase {
     Committed,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ExtractJournalPhase {
+    InProgress,
+    Committed,
+}
+
 /// Legacy in-payload location, retained only to recover transactions created
-/// by older betas. New plans are always stored beside the private stage.
+/// by older betas. New plans are always stored beside the stage.
 pub(crate) const LEGACY_MOVE_PLAN_FILE_NAME: &str = "move-plan.json";
 
 pub(crate) fn move_plan_path(stage: &std::path::Path) -> std::path::PathBuf {
@@ -117,10 +308,44 @@ pub(crate) fn move_plan_path(stage: &std::path::Path) -> std::path::PathBuf {
     stage.with_file_name(format!("{name}.move-plan.json"))
 }
 
+pub(crate) fn move_identity_log_path(stage: &std::path::Path) -> std::path::PathBuf {
+    let name = stage
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(".zinnia-extract-unknown");
+    stage.with_file_name(format!("{name}.move-identities.jsonl"))
+}
+
+pub(crate) fn remove_move_plan_sidecars(stage: &std::path::Path) -> Result<(), String> {
+    let mut removed = false;
+    for path in [move_plan_path(stage), move_identity_log_path(stage)] {
+        match std::fs::remove_file(&path) {
+            Ok(()) => removed = true,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    if removed {
+        if let Some(parent) = stage.parent() {
+            sync_directory(parent)?;
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct MoveRecord {
     pub(crate) source: std::path::PathBuf,
     pub(crate) target: std::path::PathBuf,
+    /// Windows publish copy created directly under the real target parent.
+    /// Creating there lets NTFS or the SMB server assign the same inherited ACL
+    /// as an ordinary extraction, while the final no-replace rename stays atomic.
+    #[serde(default)]
+    pub(crate) publish_temp: Option<std::path::PathBuf>,
+    /// Stable identity captured immediately after `publish_temp` is created.
+    /// Recovery never removes a same-name object without matching this value.
+    #[serde(default)]
+    pub(crate) publish_identity: Option<FileIdentity>,
 }
 
 pub(crate) fn cleanup_journal_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
@@ -140,13 +365,28 @@ pub(crate) fn write_cleanup_journal(
             stage: stage.clone(),
             destination: destination.clone(),
             archive: false,
+            extract_stage_placement: Some(ExtractStagePlacement::from_paths(stage, destination)?),
             move_plan_sidecar: true,
             previous_archive_family: Vec::new(),
+            previous_archive_identities: Vec::new(),
             next_archive_family: Vec::new(),
             next_archive_identities: Vec::new(),
+            extract_stage_identity: match path_identity(stage) {
+                Ok(identity) => Some(identity),
+                Err(error) => {
+                    eprintln!(
+                        "Could not record extraction stage identity for {}: {error}. Crash recovery will remain conservative if the stage disappears before commit.",
+                        stage.display()
+                    );
+                    None
+                }
+            },
+            extract_phase: Some(ExtractJournalPhase::InProgress),
             archive_phase: None,
         })
     } else if let Some((staged_archive, destination)) = &plan.staged_archive {
+        let previous_archive_family = archive_family(destination)?;
+        let previous_archive_identities = vec![None; previous_archive_family.len()];
         Some(CleanupJournal {
             stage: staged_archive
                 .parent()
@@ -154,10 +394,14 @@ pub(crate) fn write_cleanup_journal(
                 .to_path_buf(),
             destination: destination.clone(),
             archive: true,
+            extract_stage_placement: None,
             move_plan_sidecar: false,
-            previous_archive_family: archive_family(destination)?,
+            previous_archive_family,
+            previous_archive_identities,
             next_archive_family: Vec::new(),
             next_archive_identities: Vec::new(),
+            extract_stage_identity: None,
+            extract_phase: None,
             archive_phase: Some(ArchiveJournalPhase::InProgress),
         })
     } else {
@@ -186,18 +430,91 @@ pub(crate) fn update_archive_journal(
         .iter()
         .map(|source| archive_destination_for(staged, destination, source))
         .collect::<Result<Vec<_>, _>>()?;
+    let previous_archive_family = archive_family(destination)?;
     let journal = CleanupJournal {
         stage,
         destination: destination.clone(),
         archive: true,
+        extract_stage_placement: None,
         move_plan_sidecar: false,
-        previous_archive_family: archive_family(destination)?,
+        previous_archive_identities: vec![None; previous_archive_family.len()],
+        previous_archive_family,
         next_archive_identities: vec![None; next_archive_family.len()],
         next_archive_family,
+        extract_stage_identity: None,
+        extract_phase: None,
         archive_phase: Some(ArchiveJournalPhase::InProgress),
     };
     let json = serde_json::to_string(&journal).map_err(|e| e.to_string())?;
     crate::settings_store::atomic_write_text(&cleanup_journal_path(app)?, &json)
+}
+
+pub(crate) fn mark_extract_journal_committed(
+    app: &tauri::AppHandle,
+    plan: &CleanupPlan,
+) -> Result<(), String> {
+    let Some((stage, destination)) = &plan.staged_extract else {
+        return Ok(());
+    };
+    let path = cleanup_journal_path(app)?;
+    let json = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    let mut journal: CleanupJournal =
+        serde_json::from_str(&json).map_err(|error| error.to_string())?;
+    if journal.archive
+        || journal.stage != *stage
+        || journal.destination != *destination
+        || journal.extract_phase != Some(ExtractJournalPhase::InProgress)
+        || !journal
+            .extract_stage_placement
+            .map(|placement| placement.matches_paths(stage, destination))
+            .unwrap_or_else(|| stage.parent() == destination.parent())
+    {
+        return Err("Extraction recovery journal changed before commit.".to_string());
+    }
+    journal.extract_phase = Some(ExtractJournalPhase::Committed);
+    let json = serde_json::to_string(&journal).map_err(|error| error.to_string())?;
+    crate::settings_store::atomic_write_text(&path, &json)
+}
+
+pub(crate) fn record_archive_journal_backup(
+    app: &tauri::AppHandle,
+    plan: &CleanupPlan,
+    original: &std::path::Path,
+    identity: &FileIdentity,
+) -> Result<(), String> {
+    let Some((staged, destination)) = &plan.staged_archive else {
+        return Ok(());
+    };
+    let expected_stage = staged
+        .parent()
+        .ok_or_else(|| "Archive staging directory is missing.".to_string())?;
+    let path = cleanup_journal_path(app)?;
+    let json = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    let mut journal: CleanupJournal =
+        serde_json::from_str(&json).map_err(|error| error.to_string())?;
+    if !journal.archive
+        || journal.stage != expected_stage
+        || journal.destination != *destination
+        || journal.archive_phase != Some(ArchiveJournalPhase::InProgress)
+    {
+        return Err("Archive recovery journal changed during backup.".to_string());
+    }
+    if journal.previous_archive_identities.len() != journal.previous_archive_family.len() {
+        return Err("Archive recovery journal has invalid backup identity records.".to_string());
+    }
+    let index = journal
+        .previous_archive_family
+        .iter()
+        .position(|path| path == original)
+        .ok_or_else(|| {
+            "Existing archive volume is missing from its recovery journal.".to_string()
+        })?;
+    // The caller records once before rename and may correct the value from a
+    // still-open handle afterward. Some FAT-family filesystems can change their
+    // legacy file ID when a rename uses a longer directory entry.
+    journal.previous_archive_identities[index] = Some(identity.clone());
+    let json = serde_json::to_string(&journal).map_err(|error| error.to_string())?;
+    crate::settings_store::atomic_write_text(&path, &json)
 }
 
 pub(crate) fn record_archive_journal_published(
@@ -216,7 +533,11 @@ pub(crate) fn record_archive_journal_published(
     let json = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
     let mut journal: CleanupJournal =
         serde_json::from_str(&json).map_err(|error| error.to_string())?;
-    if !journal.archive || journal.stage != expected_stage || journal.destination != *destination {
+    if !journal.archive
+        || journal.stage != expected_stage
+        || journal.destination != *destination
+        || journal.archive_phase != Some(ArchiveJournalPhase::InProgress)
+    {
         return Err("Archive recovery journal changed during publish.".to_string());
     }
     if journal.next_archive_identities.len() != journal.next_archive_family.len() {
@@ -227,7 +548,13 @@ pub(crate) fn record_archive_journal_published(
         .iter()
         .position(|path| path == published)
         .ok_or_else(|| "Published archive is missing from its recovery journal.".to_string())?;
-    journal.next_archive_identities[index] = Some(identity.clone());
+    if let Some(existing) = &journal.next_archive_identities[index] {
+        if !file_identities_match(existing, identity) {
+            journal.next_archive_identities[index] = Some(identity.clone());
+        }
+    } else {
+        journal.next_archive_identities[index] = Some(identity.clone());
+    }
     let json = serde_json::to_string(&journal).map_err(|error| error.to_string())?;
     crate::settings_store::atomic_write_text(&path, &json)
 }
@@ -399,7 +726,7 @@ fn cleanup_archive_backup_sidecars(stage: &std::path::Path) -> Result<(), String
                 path.display()
             ));
         }
-        std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+        crate::fs_secure::remove_file_for_cleanup(&path).map_err(|e| e.to_string())?;
     }
     sync_directory(parent)
 }
@@ -425,8 +752,9 @@ pub fn cleanup_orphan_stages(app: &tauri::AppHandle) -> Result<(), String> {
         }
         match std::fs::symlink_metadata(&path) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                let _ = std::fs::remove_file(move_plan_path(&path));
-                if cleanup_archive_backup_sidecars(&path).is_err() {
+                if remove_move_plan_sidecars(&path).is_err()
+                    || cleanup_archive_backup_sidecars(&path).is_err()
+                {
                     remaining.push(stage);
                 }
             }
@@ -437,7 +765,19 @@ pub fn cleanup_orphan_stages(app: &tauri::AppHandle) -> Result<(), String> {
                 remaining.push(stage);
             }
             Ok(_) => {
-                if let Err(error) = std::fs::remove_dir_all(&path) {
+                // Clear recovery sidecars before deleting their source stage. If
+                // sidecar cleanup fails, retaining the stage keeps the next pass
+                // in a fully recoverable state instead of leaving a stale plan
+                // that refers to a missing source tree.
+                if let Err(error) = remove_move_plan_sidecars(&path) {
+                    eprintln!(
+                        "Failed to remove move-plan sidecars for {}: {error}",
+                        path.display()
+                    );
+                    remaining.push(stage);
+                    continue;
+                }
+                if let Err(error) = crate::fs_secure::remove_dir_all_for_cleanup(&path) {
                     eprintln!(
                         "Failed to remove orphan staging directory {}: {error}",
                         path.display()
@@ -445,7 +785,6 @@ pub fn cleanup_orphan_stages(app: &tauri::AppHandle) -> Result<(), String> {
                     remaining.push(stage);
                     continue;
                 }
-                let _ = std::fs::remove_file(move_plan_path(&path));
                 if let Err(error) = cleanup_archive_backup_sidecars(&path) {
                     eprintln!(
                         "Failed to remove archive backup sidecars for {}: {error}",

@@ -57,19 +57,23 @@ pub(crate) use commit::assert_safe_extract_target_ancestors;
 #[cfg(test)]
 pub(crate) use commit::{
     archive_backup_path, archive_stage_has_recovery_backups, commit_failure_should_scrub_staging,
-    merge_staged_extract, promote_archive_family, publish_file_no_replace, rollback_cleanup,
-    rollback_persisted_move_plan, write_move_plan, MAX_EXTRACTED_BYTES,
+    merge_staged_extract, merge_staged_extract_with_commit, promote_archive_family,
+    publish_file_no_replace, rollback_cleanup, rollback_persisted_move_plan, write_move_plan,
+    MAX_EXTRACTED_BYTES,
 };
 #[cfg(test)]
 pub(crate) use journal::{
-    is_safe_stage_dir_name, move_plan_path, read_pending_stages, register_pending_stage,
-    unregister_plan_stages, ArchiveJournalPhase, CleanupJournal, MoveRecord,
+    is_safe_stage_dir_name, move_identity_log_path, move_plan_path, read_pending_stages,
+    register_pending_stage, unregister_plan_stages, ArchiveJournalPhase, CleanupJournal,
+    ExtractJournalPhase, ExtractStagePlacement, MoveRecord,
 };
 #[cfg(test)]
 pub(crate) use quota::staged_tree_usage;
 #[cfg(test)]
 pub(crate) use recovery::{
-    archive_journal_is_committed, cleanup_committed_archive_journal, rollback_archive_journal,
+    archive_journal_is_committed, cleanup_committed_archive_journal,
+    cleanup_extract_journal_artifacts, extract_journal_is_committed, recover_missing_extract_stage,
+    rollback_archive_journal,
 };
 #[cfg(test)]
 pub(crate) use staging::{
@@ -99,9 +103,9 @@ pub struct ProcessState {
 
 #[derive(Clone, Debug)]
 pub(crate) struct CleanupPlan {
-    // Every extraction is directed to a sibling staging directory first. This
-    // keeps failed/cancelled jobs from leaving partial files in an existing
-    // user directory and gives us a contained place to inspect before promote.
+    // Every extraction is directed to a contained staging directory first.
+    // New destinations use a sibling stage; existing destinations use a hidden
+    // child stage so published files inherit that destination's actual policy.
     pub(crate) staged_extract: Option<(std::path::PathBuf, std::path::PathBuf)>,
     // Create/update output is written to a sibling staging basename. This also
     // covers split-volume families (`.001`, `.002`, ...).

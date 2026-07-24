@@ -1,6 +1,6 @@
 {
   "name": "zinnia",
-  "version": "0.6.0-beta.17",
+  "version": "0.6.0-beta.18",
   "private": true,
   "description": "Cross-platform 7z GUI built with Tauri.",
   "type": "module",
@@ -16,7 +16,8 @@
     "test:watch": "vitest",
     "test:cov": "npm run licenses && vitest run --coverage",
     "test:cov:watch": "vitest --coverage",
-    "test:rust": "npm run prepare:7z && npm run prepare:win-shell-stubs && cargo test --manifest-path src-tauri/Cargo.toml --all-targets",
+    "prepare:rust-tests": "npm run prepare:7z && node scripts/ensure-windows-context-menu-stubs.mjs",
+    "test:rust": "npm run prepare:rust-tests && cargo test --manifest-path src-tauri/Cargo.toml --all-targets",
     "test:all": "node scripts/test-all.js",
     "typecheck": "tsc --noEmit",
     "validate:updater": "node scripts/validate-updater-manifest.js",

@@ -36,12 +36,21 @@ pub(crate) fn normalize_shell_open_path(path: std::path::PathBuf) -> std::path::
     use std::path::PathBuf;
 
     let text = path.to_string_lossy();
-    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
-        return PathBuf::from(format!(r"\\{rest}"));
+    let Some(rest) = text.strip_prefix(r"\\?\") else {
+        return path;
+    };
+    if rest
+        .get(..4)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("UNC\\"))
+    {
+        return PathBuf::from(format!(r"\\{}", &rest[4..]));
     }
-    if let Some(rest) = text.strip_prefix(r"\\?\") {
+    let bytes = rest.as_bytes();
+    if bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'\\' {
         return PathBuf::from(rest);
     }
+    // Keep volume-GUID and any other namespace path intact. Removing `\\?\`
+    // from `\\?\Volume{GUID}\...` produces a relative, unusable path.
     path
 }
 

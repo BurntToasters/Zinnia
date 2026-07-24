@@ -257,8 +257,54 @@ fn shell_handoff_parser_accepts_bounded_absolute_paths() {
         parse_shell_handoff_contents("C:\\one.txt\nC:\\two.txt\n").unwrap(),
         ["C:\\one.txt", "C:\\two.txt"]
     );
+    assert_eq!(
+        parse_shell_handoff_contents(
+            "\\\\server\\share\\one.txt\n//server/share/two.txt\n\\\\?\\UNC\\server\\share\\three.txt\n"
+        )
+        .unwrap(),
+        [
+            "\\\\server\\share\\one.txt",
+            "//server/share/two.txt",
+            "\\\\?\\UNC\\server\\share\\three.txt"
+        ]
+    );
+    assert_eq!(
+        parse_shell_handoff_contents(
+            "\\\\?\\C:\\one.txt\n\\\\?\\Volume{12345678-1234-1234-1234-123456789abc}\\two.txt\n"
+        )
+        .unwrap(),
+        [
+            "\\\\?\\C:\\one.txt",
+            "\\\\?\\Volume{12345678-1234-1234-1234-123456789abc}\\two.txt"
+        ]
+    );
     assert!(parse_shell_handoff_contents("relative.txt\n").is_err());
+    assert!(parse_shell_handoff_contents("C:drive-relative.txt\n").is_err());
+    assert!(parse_shell_handoff_contents("\\rooted-current-drive.txt\n").is_err());
+    assert!(parse_shell_handoff_contents("\\\\server-only\n").is_err());
+    assert!(parse_shell_handoff_contents("\\\\.\\PhysicalDrive0\n").is_err());
+    assert!(parse_shell_handoff_contents("\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1\n").is_err());
     assert!(parse_shell_handoff_contents("C:\\one\r.txt\n").is_err());
+}
+
+#[cfg(windows)]
+#[test]
+fn shell_open_normalization_preserves_volume_guid_namespace() {
+    use std::path::PathBuf;
+
+    assert_eq!(
+        super::open_path::normalize_shell_open_path(PathBuf::from(r"\\?\C:\folder")),
+        PathBuf::from(r"C:\folder")
+    );
+    assert_eq!(
+        super::open_path::normalize_shell_open_path(PathBuf::from(r"\\?\UNC\server\share\folder")),
+        PathBuf::from(r"\\server\share\folder")
+    );
+    let volume = PathBuf::from(r"\\?\Volume{12345678-1234-1234-1234-123456789abc}\folder");
+    assert_eq!(
+        super::open_path::normalize_shell_open_path(volume.clone()),
+        volume
+    );
 }
 
 #[test]

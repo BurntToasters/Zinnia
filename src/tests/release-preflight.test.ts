@@ -73,7 +73,12 @@ describe("release preflight policy", () => {
       "release-session.js",
     );
     expect(testRunner).toContain('"rustfmt"');
+    expect(testRunner).toContain('"rustprep"');
+    expect(testRunner).toContain('"prepare:rust-tests"');
     expect(testRunner).toContain('"clippy"');
+    expect(packageJson.scripts["prepare:rust-tests"]).toContain(
+      "ensure-windows-context-menu-stubs.mjs",
+    );
   });
 
   it("does not duplicate checks already covered by test:all in the quality job", () => {
