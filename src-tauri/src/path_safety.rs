@@ -336,10 +336,7 @@ mod tests {
         let snapshot_source =
             open_regular_file_nofollow_for_snapshot(&file).expect("snapshot open");
         let reader = std::fs::File::open(&file).expect("concurrent reader");
-        assert!(std::fs::OpenOptions::new()
-            .write(true)
-            .open(&file)
-            .is_err());
+        assert!(std::fs::OpenOptions::new().write(true).open(&file).is_err());
         assert!(std::fs::rename(&file, &renamed).is_err());
 
         drop(reader);

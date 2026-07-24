@@ -72,7 +72,7 @@ fn windows_file_identity(file: &std::fs::File) -> Result<WindowsArchiveFileIdent
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::Storage::FileSystem::{
-        GetFileInformationByHandle, GetFileInformationByHandleEx, FileIdInfo,
+        FileIdInfo, GetFileInformationByHandle, GetFileInformationByHandleEx,
         BY_HANDLE_FILE_INFORMATION, FILE_ID_INFO,
     };
 
@@ -140,7 +140,11 @@ fn copy_archive_snapshot_file(
         .map_err(|error| error.to_string())?;
     let result = std::io::copy(source, &mut destination_file)
         .map_err(|error| error.to_string())
-        .and_then(|_| destination_file.sync_all().map_err(|error| error.to_string()));
+        .and_then(|_| {
+            destination_file
+                .sync_all()
+                .map_err(|error| error.to_string())
+        });
     drop(destination_file);
 
     if let Err(error) = result {
@@ -441,10 +445,9 @@ pub(super) fn stage_extract_input(
                     .ok_or_else(|| "Archive volume has no file name.".to_string())?,
             );
             let mut source_file =
-                crate::path_safety::open_regular_file_nofollow_for_snapshot(&source)
-                    .map_err(|error| {
-                        format!("Could not open archive input {}: {error}", source.display())
-                    })?;
+                crate::path_safety::open_regular_file_nofollow_for_snapshot(&source).map_err(
+                    |error| format!("Could not open archive input {}: {error}", source.display()),
+                )?;
             let opened_identity = archive_file_identity_from_open_file(&source, &source_file)?;
             if opened_identity != expected {
                 return Err(

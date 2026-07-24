@@ -926,7 +926,9 @@ mod tests {
         let suffix: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
         let path = std::env::temp_dir().join(format!("zinnia-readonly-cleanup-{suffix}.tmp"));
         std::fs::write(&path, b"cleanup").expect("write cleanup file");
-        let mut permissions = std::fs::metadata(&path).expect("cleanup metadata").permissions();
+        let mut permissions = std::fs::metadata(&path)
+            .expect("cleanup metadata")
+            .permissions();
         permissions.set_readonly(true);
         std::fs::set_permissions(&path, permissions).expect("mark cleanup file read-only");
 
