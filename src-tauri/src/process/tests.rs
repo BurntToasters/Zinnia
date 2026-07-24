@@ -1418,6 +1418,12 @@ fn extraction_uses_a_private_archive_snapshot() {
     std::fs::create_dir_all(&root).expect("root");
     let archive = root.join("archive.7z");
     std::fs::write(&archive, b"original").expect("archive");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&archive, std::fs::Permissions::from_mode(0o644))
+            .expect("source archive permissions");
+    }
     let snapshot = stage_extract_input(&archive, None).expect("snapshot");
     std::fs::write(&archive, b"changed!").expect("mutate source");
     assert_eq!(
@@ -1434,6 +1440,11 @@ fn extraction_uses_a_private_archive_snapshot() {
             .permissions()
             .mode();
         assert_eq!(mode & 0o777, 0o700);
+        let snapshot_mode = std::fs::metadata(&snapshot.path)
+            .expect("snapshot file metadata")
+            .permissions()
+            .mode();
+        assert_eq!(snapshot_mode & 0o777, 0o600);
     }
     let _ = std::fs::remove_dir_all(stage);
     let _ = std::fs::remove_dir_all(root);

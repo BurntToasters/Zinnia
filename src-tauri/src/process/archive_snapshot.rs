@@ -20,6 +20,46 @@ pub(super) struct ArchiveFileIdentity {
     file_id_128: Option<[u8; 16]>,
 }
 
+fn archive_file_identity_from_open_file(
+    path: &std::path::Path,
+    file: &std::fs::File,
+) -> Result<ArchiveFileIdentity, String> {
+    let canonical_path = path
+        .canonicalize()
+        .map_err(|e| format!("Could not resolve archive identity: {e}"))?;
+    let metadata = file
+        .metadata()
+        .map_err(|e| format!("Could not read archive identity: {e}"))?;
+    if !metadata.is_file() {
+        return Err("Archive path is no longer a regular file.".to_string());
+    }
+
+    #[cfg(unix)]
+    use std::os::unix::fs::MetadataExt as _;
+    #[cfg(windows)]
+    let (volume_serial, file_index, volume_serial_64, file_id_128) =
+        windows_file_identity(file)?;
+
+    Ok(ArchiveFileIdentity {
+        canonical_path,
+        len: metadata.len(),
+        modified: metadata.modified().ok(),
+        created: metadata.created().ok(),
+        #[cfg(unix)]
+        device: metadata.dev(),
+        #[cfg(unix)]
+        inode: metadata.ino(),
+        #[cfg(windows)]
+        volume_serial,
+        #[cfg(windows)]
+        file_index,
+        #[cfg(windows)]
+        volume_serial_64,
+        #[cfg(windows)]
+        file_id_128,
+    })
+}
+
 #[cfg(windows)]
 fn windows_file_identity(
     file: &std::fs::File,
@@ -63,42 +103,52 @@ fn windows_file_identity(
 }
 
 pub(super) fn archive_file_identity(path: &std::path::Path) -> Result<ArchiveFileIdentity, String> {
-    let canonical_path = path
-        .canonicalize()
-        .map_err(|e| format!("Could not resolve archive identity: {e}"))?;
-    let file = std::fs::File::open(&canonical_path)
+    let file = crate::path_safety::open_regular_file_nofollow(path)
         .map_err(|e| format!("Could not open archive identity: {e}"))?;
-    let metadata = file
-        .metadata()
-        .map_err(|e| format!("Could not read archive identity: {e}"))?;
-    if !metadata.is_file() {
-        return Err("Archive path is no longer a regular file.".to_string());
+    archive_file_identity_from_open_file(path, &file)
+}
+
+fn copy_archive_snapshot_file(
+    source: &mut std::fs::File,
+    destination: &std::path::Path,
+) -> Result<(), String> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
+
+        // Keep the private snapshot stable while it is populated. More
+        // importantly, creating it here lets it inherit the private stage DACL
+        // instead of CopyFileEx copying the source archive's security descriptor.
+        options.share_mode(FILE_SHARE_READ);
     }
 
-    #[cfg(unix)]
-    use std::os::unix::fs::MetadataExt as _;
-    #[cfg(windows)]
-    let (volume_serial, file_index, volume_serial_64, file_id_128) =
-        windows_file_identity(&file)?;
+    let mut destination_file = options
+        .open(destination)
+        .map_err(|error| error.to_string())?;
+    let result = std::io::copy(source, &mut destination_file)
+        .map_err(|error| error.to_string())
+        .and_then(|_| destination_file.sync_all().map_err(|error| error.to_string()));
+    drop(destination_file);
 
-    Ok(ArchiveFileIdentity {
-        canonical_path,
-        len: metadata.len(),
-        modified: metadata.modified().ok(),
-        created: metadata.created().ok(),
-        #[cfg(unix)]
-        device: metadata.dev(),
-        #[cfg(unix)]
-        inode: metadata.ino(),
-        #[cfg(windows)]
-        volume_serial,
-        #[cfg(windows)]
-        file_index,
-        #[cfg(windows)]
-        volume_serial_64,
-        #[cfg(windows)]
-        file_id_128,
-    })
+    if let Err(error) = result {
+        let cleanup = crate::fs_secure::remove_file_for_cleanup(destination);
+        return Err(match cleanup {
+            Ok(()) => error,
+            Err(cleanup_error) if cleanup_error.kind() == std::io::ErrorKind::NotFound => error,
+            Err(cleanup_error) => {
+                format!("{error}; partial snapshot cleanup also failed: {cleanup_error}")
+            }
+        });
+    }
+    Ok(())
 }
 
 pub(super) fn assert_archive_identity_unchanged(
@@ -385,12 +435,30 @@ pub(super) fn stage_extract_input(
                     .file_name()
                     .ok_or_else(|| "Archive volume has no file name.".to_string())?,
             );
-            std::fs::copy(&source, &destination).map_err(|error| {
+            let mut source_file = crate::path_safety::open_regular_file_nofollow(&source)
+                .map_err(|error| {
+                    format!("Could not open archive input {}: {error}", source.display())
+                })?;
+            let opened_identity = archive_file_identity_from_open_file(&source, &source_file)?;
+            if opened_identity != expected {
+                return Err(
+                    "Archive changed before its private snapshot could be created; extraction was cancelled."
+                        .to_string(),
+                );
+            }
+            copy_archive_snapshot_file(&mut source_file, &destination).map_err(|error| {
                 format!(
                     "Could not snapshot archive input {}: {error}",
                     source.display()
                 )
             })?;
+            let copied_identity = archive_file_identity_from_open_file(&source, &source_file)?;
+            if copied_identity != expected {
+                return Err(
+                    "Archive changed while its private snapshot was being created; extraction was cancelled."
+                        .to_string(),
+                );
+            }
             assert_archive_identity_unchanged(&source, &expected)?;
         }
         Ok(StagedArchiveInput {
