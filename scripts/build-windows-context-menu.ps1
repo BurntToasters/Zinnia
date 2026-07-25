@@ -93,35 +93,23 @@ $extractIdentityText = (Get-Content -LiteralPath $extractIdentityIn -Raw).Replac
 Assert-NoTemplateTokens $extractIdentityText $extractIdentityIn
 Write-Utf8NoBom $extractIdentityOut $extractIdentityText
 
-function Resolve-ZinniaCmakeVsGenerator {
-  $cmakeHelp = & cmake --help 2>&1 | Out-String
-  $hasVs18 = Test-Path -LiteralPath (Join-Path $env:ProgramFiles 'Microsoft Visual Studio\18')
-  $hasVs2022 = (Test-Path -LiteralPath (Join-Path $env:ProgramFiles 'Microsoft Visual Studio\2022')) -or
-    (Test-Path -LiteralPath (Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\2022'))
-  $cmakeListsVs18 = $cmakeHelp -match 'Visual Studio 18 2026'
-  $cmakeListsVs17 = $cmakeHelp -match 'Visual Studio 17 2022'
-
-  # Prefer the VS install on this machine (release VMs use VS 18 / 2026).
-  if ($hasVs18 -and $cmakeListsVs18) { return 'Visual Studio 18 2026' }
-  if ($hasVs2022 -and $cmakeListsVs17) { return 'Visual Studio 17 2022' }
-  if ($cmakeListsVs18) { return 'Visual Studio 18 2026' }
-  if ($cmakeListsVs17) { return 'Visual Studio 17 2022' }
-  throw 'No supported Visual Studio CMake generator found. Install VS 2022 or VS 2026 C++ tools, and CMake 4.2+ for VS 18.'
-}
+. (Join-Path $PSScriptRoot 'windows-vs-toolchain.ps1')
 
 Write-Host "Configuring shell DLL ($Arch / $Configuration)..."
+$cmakeExe = Resolve-ZinniaCmakeExecutable
+Write-Host "Using CMake: $cmakeExe"
 $cmakeArch = if ($Arch -eq 'arm64') { 'ARM64' } else { 'x64' }
-$cmakeGenerator = Resolve-ZinniaCmakeVsGenerator
+$cmakeGenerator = Resolve-ZinniaCmakeVsGenerator -CmakeExe $cmakeExe
 Write-Host "Using CMake generator: $cmakeGenerator -A $cmakeArch"
 # Drop stale cache when retargeting VS versions (e.g. old VS 2022 → VS 18).
 if (Test-Path -LiteralPath $buildDir) {
   Remove-Item -LiteralPath $buildDir -Recurse -Force
 }
 New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
-& cmake -S $shellDir -B $buildDir -G $cmakeGenerator -A $cmakeArch
+& $cmakeExe -S $shellDir -B $buildDir -G $cmakeGenerator -A $cmakeArch
 if ($LASTEXITCODE -ne 0) { throw "cmake configure failed: $LASTEXITCODE" }
 
-& cmake --build $buildDir --config $Configuration
+& $cmakeExe --build $buildDir --config $Configuration
 if ($LASTEXITCODE -ne 0) { throw "cmake build failed: $LASTEXITCODE" }
 
 $dll = Get-ChildItem -Path $buildDir -Recurse -Filter 'zinnia_shell.dll' | Select-Object -First 1
