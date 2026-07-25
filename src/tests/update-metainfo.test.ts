@@ -110,4 +110,40 @@ describe("update-metainfo", () => {
       "add and commit it before release preparation",
     );
   });
+
+  it("drops same-base prereleases when shipping a stable release", () => {
+    const paths = fixture(
+      "0.6.0",
+      [
+        '<release version="0.6.0-beta.23" date="2026-07-24"/>',
+        '<release version="0.6.0-beta.1" date="2026-07-17"/>',
+        '<release version="0.5.3" date="2026-07-16"/>',
+      ].join("\n    "),
+    );
+
+    expect(
+      run({ ...paths, now: new Date("2026-07-25T12:00:00Z") }).updated,
+    ).toBe(true);
+    const metadata = fs.readFileSync(paths.metadataPath, "utf8");
+    expect(metadata).toContain('<release version="0.6.0" date="2026-07-25"/>');
+    expect(metadata).not.toContain("0.6.0-beta.");
+    expect(metadata).toContain('<release version="0.5.3" date="2026-07-16"/>');
+  });
+
+  it("prunes leftover same-base prereleases when the stable entry already exists", () => {
+    const paths = fixture(
+      "0.6.0",
+      [
+        '<release version="0.6.0" date="2026-07-25"/>',
+        '<release version="0.6.0-beta.23" date="2026-07-24"/>',
+        '<release version="0.5.3" date="2026-07-16"/>',
+      ].join("\n    "),
+    );
+
+    expect(run({ ...paths }).updated).toBe(true);
+    const metadata = fs.readFileSync(paths.metadataPath, "utf8");
+    expect(metadata).toContain('version="0.6.0" date="2026-07-25"');
+    expect(metadata).not.toContain("0.6.0-beta.");
+    expect(metadata).toContain('version="0.5.3"');
+  });
 });
