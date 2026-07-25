@@ -4,7 +4,13 @@
 
 - Windows 10/11 x64 or ARM64
 - PowerShell 7.x
-- Developer PowerShell / Command Prompt for VS18
+- Developer PowerShell / Command Prompt for VS 2022 or VS 2026 (C++ workload)
+- **CMake 3.20+** (bundled with the VS C++ workload, or standalone; **4.2+** when building
+  against Visual Studio 18 / 2026). Builds locate CMake via `vswhere` when it is not on PATH.
+- After upgrading to **Visual Studio 2026**, re-check Visual Studio Installer → **Modify** →
+  **Desktop development with C++** includes **C++ CMake tools for Windows** (updates can drop
+  optional components; an old VS 2022 `cmake` on PATH stops working when 2022 is removed).
+- **Windows SDK** (`makeappx.exe`) for Win11 sparse context-menu packages
 - Node.js 22.12 through 24.x
 - Rust (rustup) + Visual Studio Build Tools (clang: x64 and arm64)
 

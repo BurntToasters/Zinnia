@@ -195,6 +195,8 @@ describe("Windows 11 context-menu manifest", () => {
     );
 
     const build = read("scripts/build-windows-context-menu.ps1");
+    expect(build).toContain("windows-vs-toolchain.ps1");
+    expect(build).toContain("Resolve-ZinniaCmakeExecutable");
     expect(build).toContain("print-windows-package-version.js");
     expect(build).toContain("Replace('__SHELL_DIRECTORY__', $shellDirectory)");
     expect(build).toContain("Assert-NoTemplateTokens $appxText");

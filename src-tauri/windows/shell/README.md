@@ -37,6 +37,9 @@ the Tauri ProgId only (never a parallel `SystemFileAssociations\ZinniaOpen`).
 Requires Visual Studio 2022 or **2026** (C++ workload), CMake (**4.2+** for VS 18),
 and the Windows SDK (`makeappx`). The build script picks
 `Visual Studio 18 2026` when VS 18 is installed, else `Visual Studio 17 2022`.
+CMake and Developer PowerShell are resolved with **`vswhere`** (works after VS 2026 CE
+updates; stale VS 2022 `cmake` on PATH is ignored). If configure fails, re-enable
+**C++ CMake tools for Windows** in Visual Studio Installer.
 
 **Publisher DN is required for signing to succeed.** Azure Artifact Signing’s
 certificate Subject (full DN) must match every:
