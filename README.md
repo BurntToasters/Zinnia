@@ -11,7 +11,7 @@ A cross-platform 7z GUI built with Tauri.
       </td>
       <td valign="middle" align="center">
         <p align="center">
-  <img width="85%" height="650" alt="Zinnia screenshot" src="./media/Zinnia-1.png" />
+  <img width="85%" height="850" alt="Zinnia screenshot" src="./media/Zinnia-1.png" />
 &nbsp;
 </p>
       </td>
