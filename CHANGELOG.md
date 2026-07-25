@@ -28,7 +28,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 * **Release:** Upload allowlists, RPM/`*.rpm.sig` matching, fail-closed signature checks, Flatpak exact-version validation, and trusted `--trusted-7z` bootstrap identity checks are tightened for cutover safety.
 * **Fix:** Basic prep locks OS handoffs and file-remove controls until a job is running, so Explorer/Finder batches cannot swap inputs under a verified password or destination dialog.
 * **Security:** Password stdin is written only after stdout/stderr drain starts (avoids pipe deadlock); scrubbed failed commits clear recovery journals; create/update rejects passwords for non-encrypting formats and line-break secrets at validation.
-* **Security (Windows):** Explorer shell handoffs use a private SDDL temp file and nofollow/owner-checked consume; whoami SID fallback is strictly validated and resolved via System32 only.
+* **Security (Windows):** Explorer shell handoffs use a private SDDL temp file and nofollow/owner-checked consume; whoami SID fallback is strictly validated and resolved via System32 only. Owner-check tests create files with the same private SDDL (elevated tokens otherwise own plain creates as Administrators).
 * **Security (macOS):** Finder Sync requests expire after 120s and are read with nofollow.
 * **Fix:** Basic/Power browse password hide/clear now clears both fields so a secret cannot sync back after hide or archive swap.
 * **Release:** Draft ensure accepts `GITHUB_TOKEN`; GitHub asset/draft listing paginates past 100 items.

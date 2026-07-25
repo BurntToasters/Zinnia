@@ -1220,6 +1220,7 @@ fn inside_destination_move_plan_rolls_back_a_partial_merge() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[cfg(not(windows))]
 #[test]
 fn hardlink_partial_publish_rollback_uses_recorded_identity() {
     use super::commit::rollback_move_records;
@@ -1243,6 +1244,36 @@ fn hardlink_partial_publish_rollback_uses_recorded_identity() {
     rollback_move_records(&staged, &destination, &plan).expect("identity retract");
     assert!(source.exists());
     assert!(!target.exists());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_rejects_publish_identity_without_publish_path() {
+    use super::commit::rollback_move_records;
+
+    let root = temp_root("zinnia-windows-identity-without-temp");
+    let staged = root.join("staged");
+    let destination = root.join("destination");
+    std::fs::create_dir_all(&staged).expect("staged tree");
+    std::fs::create_dir_all(&destination).expect("destination tree");
+    let source = staged.join("new.txt");
+    let target = destination.join("new.txt");
+    std::fs::write(&source, b"staged copy").expect("staged source");
+    std::fs::write(&target, b"published").expect("published target");
+    let identity = super::journal::path_identity(&target).expect("target identity");
+    let plan = vec![MoveRecord {
+        source,
+        target,
+        publish_temp: None,
+        publish_identity: Some(identity),
+    }];
+    let err = rollback_move_records(&staged, &destination, &plan)
+        .expect_err("Windows requires publish_temp with identity");
+    assert!(
+        err.contains("without a publish path"),
+        "unexpected rejection: {err}"
+    );
     let _ = std::fs::remove_dir_all(root);
 }
 
