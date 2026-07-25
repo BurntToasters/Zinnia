@@ -1221,14 +1221,12 @@ async function main() {
     await uploadAssetWithReplace(release, f);
     console.log(`  ^ ${path.basename(f)}`);
   }
+  // Beta clients poll /releases/latest for latest-*-beta-*.json. Sync those
+  // manifests onto the latest *stable* release during every beta sign upload,
+  // including while this tag is still a draft (same automatic behavior as
+  // beta.22). Keep release:sync-beta-manifests for recovery/re-sync only.
   if (IS_PRERELEASE) {
-    if (!release.draft) {
-      await syncBetaManifestsToLatestStable(everything, release.id);
-    } else {
-      console.log(
-        "  ~ syncBetaManifests: skipped because the current release is still a draft.",
-      );
-    }
+    await syncBetaManifestsToLatestStable(everything, release.id);
   }
 
   console.log(
