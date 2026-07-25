@@ -7,6 +7,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { spawnSync } from "child_process";
+import { hasExactReleaseVersion } from "./update-metainfo.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const required = [
@@ -75,9 +76,9 @@ if (fs.existsSync(metainfo)) {
   const pkg = JSON.parse(
     fs.readFileSync(path.join(root, "package.json"), "utf8"),
   );
-  if (!xml.includes(pkg.version)) {
+  if (!hasExactReleaseVersion(xml, pkg.version)) {
     console.error(
-      `flatpak-dry-run: metainfo should mention package version ${pkg.version}`,
+      `flatpak-dry-run: metainfo needs an exact release version="${pkg.version}" attribute`,
     );
     failed = true;
   }

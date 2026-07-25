@@ -240,6 +240,18 @@ describe("archive test/browse/selective flows", () => {
     });
   });
 
+  it("clears the Basic browse password after an archive test", async () => {
+    const basicBrowsePassword = document.createElement("input");
+    basicBrowsePassword.id = "basic-browse-password";
+    basicBrowsePassword.value = "must-clear";
+    document.body.appendChild(basicBrowsePassword);
+
+    await testArchive();
+
+    expect(basicBrowsePassword.value).toBe("");
+    basicBrowsePassword.remove();
+  });
+
   it("returns passed_with_warnings when testArchive exits with code 1", async () => {
     state.inputs = ["/tmp/sample.7z"];
 

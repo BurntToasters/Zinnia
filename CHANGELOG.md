@@ -5,10 +5,10 @@
 
 | <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                                            | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux         |
 | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------- |
-| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.22/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.22/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.22/Zinnia-macOS.dmg)**  | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.22/Zinnia-Linux-x64.AppImage) |
-| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>-->                       | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.22/Zinnia-macOS.zip)**  | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.22/Zinnia-Linux-x64.deb)           |
-| <!--*See MSI note below*-->                                                                                                                                                                                                  |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.22/Zinnia-Linux-x64.rpm)           |
-|                                                                                                                                                                                                                              |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.22/Zinnia-Linux-x64.flatpak)   |
+| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.23/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.23/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.23/Zinnia-macOS.dmg)**  | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.23/Zinnia-Linux-x64.AppImage) |
+| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>-->                       | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.23/Zinnia-macOS.zip)**  | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.23/Zinnia-Linux-x64.deb)           |
+| <!--*See MSI note below*-->                                                                                                                                                                                                  |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.23/Zinnia-Linux-x64.rpm)           |
+|                                                                                                                                                                                                                              |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.23/Zinnia-Linux-x64.flatpak)   |
 
 > macOS downloads require macOS 26 or later.
 
@@ -21,8 +21,44 @@
 
 Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
+## Changes in `v0.6.0-beta.23:`
+* **Actual Final beta** before `v0.6.0` stable. (I know there's been a lot of betas for `v0.6.0`. This is the biggest and more major update to Zinnia ever and I want to make sure everything is stable!)
+* **Critical Fix:** Creating or updating password-protected archives now keeps 7-Zip’s bare `-p` encryption switch and pipes the secret on stdin, so archives are actually encrypted (not silent plaintext after stripping `-pPASSWORD`).
+* **Updater:** Stable releases also publish beta-channel updater manifests so beta.22+ installs are not stranded when updating to stable.
+* **Release:** Upload allowlists, RPM/`*.rpm.sig` matching, fail-closed signature checks, Flatpak exact-version validation, and trusted `--trusted-7z` bootstrap identity checks are tightened for cutover safety.
+* **Fix:** Basic prep locks OS handoffs and file-remove controls until a job is running, so Explorer/Finder batches cannot swap inputs under a verified password or destination dialog.
+* **Security:** Password stdin is written only after stdout/stderr drain starts (avoids pipe deadlock); scrubbed failed commits clear recovery journals; create/update rejects passwords for non-encrypting formats and line-break secrets at validation.
+* **Security (Windows):** Explorer shell handoffs use a private SDDL temp file and nofollow/owner-checked consume; whoami SID fallback is strictly validated and resolved via System32 only.
+* **Security (macOS):** Finder Sync requests expire after 120s and are read with nofollow.
+* **Fix:** Basic/Power browse password hide/clear now clears both fields so a secret cannot sync back after hide or archive swap.
+* **Release:** Draft ensure accepts `GITHUB_TOKEN`; GitHub asset/draft listing paginates past 100 items.
+* **Accessibility:** Contrast tokens (focus rings, dark danger buttons, extract focus), Flatpak Updates section hide, path ellipsis RTL, and Basic chrome target sizing updated for WCAG-friendly controls.
+* **Fix:** Selective extract “Select all” / folder toggles while searching only select visible matches (no hidden recursive children).
+* **Fix:** Selective browse tree path separators follow the archive listing (`\` vs `/`), not the host OS.
+* **Fix (Windows):** Uninstall retries Win11 sparse AppX removal and warns if packages remain registered.
+* **Release (macOS):** `zip-macos` verifies the host Mach-O contains the baked App Group ID matching the signed entitlements.
+* **Critical Fix:** 7-Zip password spawn uses a buffered event channel and a dedicated stdin thread so banner/prompt output cannot deadlock before cancel can terminate the child; the child is registered in the process slot before password stdin so Cancel works during password setup.
+* **Fix:** Failed add-mode commit scrub now fail-closes when the recovery journal cannot be read or parsed before retracting partial archive output (no silent journal clear).
+* **Security (Unix):** Publish stages are `0o700` while in progress; atomic extract-root rename and merged directory publishes restore the destination parent's mode (including setgid/sticky) after commit.
+* **Fix:** Cancel during prepare always clears the global 7z soft-lock (`cancelling`); extract merge rolls back on every mid-loop failure and journals publish identity before hard-link visibility.
+* **Fix:** Selective “Select all” only selects rendered rows (including collapsed-tree views); extract-only launches clear `InitialPaths` so warm main reopen cannot re-apply the archive.
+* **Fix:** Power drops and OS handoffs serialize on `incomingPathsApplying`; Basic drops wait for that apply lock, then take prep (no-op if still prep-locked). Add Files/Folder/Remove honor the busy predicate; Basic Add holds prep without self-deadlocking on it. Selective extract never passes non-empty folder paths to 7z (avoids over-extract past the rendered selection).
+* **Release:** After publishing a beta draft, run `npm run release:sync-beta-manifests` so `latest-*-beta-*.json` is copied onto `/releases/latest` (draft signing intentionally skips that sync). `release:wait-draft` fails fast when the tag is already published.
+* **Fix (macOS):** Finder Sync sweeps claimed orphans before `read_dir`; after a successful emit, claims are invalidated then renamed to `.acked` so crash-before-ack cannot redeliver.
+* **Security (Unix):** Hard-link/copy extract rollback retracts published targets only when a recorded publish identity matches (fail-closed without identity).
+* **Fix:** Prepare/cancel keeps the 7z soft-lock until staging rollback and recovery-journal clear finish; rewrite-extract-archive failures clear the journal after successful rollback; cancel and quota-stop restore the child handle if kill fails so retry can finish stopping 7-Zip. Password create/update no longer treats `-stl` as an archive type.
+* **Fix (macOS):** Finder Sync sweeps orphaned `*.claimed` requests back into the drain queue; universal host Mach-O App Group checks run per `lipo -archs` slice and fail closed when lipo cannot thin a fat binary.
+* **Fix:** Selective picker folder toggles / Select all recurse only within rendered rows (same 1,000-row budget as the UI).
+* **Docs:** `SECURITY.md` documents Flatpak `--filesystem=/media` alongside `/run/media` and `/mnt`.
+* **Critical Fix:** Password create/update rejects multiple `-t` archive types (7-Zip honors the last), closing a silent-plaintext bypass.
+* **Fix:** Failed add-mode commits retract partial archive publishes before clearing the recovery journal.
+* **Fix:** Explicit Extract/Compress OS handoffs clear non-matching sessions instead of appending onto the wrong input list.
+* **Release:** Beta→`/latest` updater manifest sync runs only for published releases (not drafts); ensure-draft paginates release lists.
+* **Fix (macOS):** Finder Sync claims requests before emit (no duplicate drain); zip-macos verifies Finder Sync appex minos; TTL docs say 120s.
+* **Fix:** Flatpak resolves before the setup wizard and skips the Updates step; Power drop browse race-guards the primary path.
+
 ## Changes in `v0.6.0-beta.22:`
-* **Last beta** before `v0.6.0` stable.
+* **Beta** toward `v0.6.0` stable.
 * **UI:** Basic mode locks the main window size (non-resizable / non-maximizable) live when switching workspaces; Power mode restores free resizing on the same window. The custom titlebar Maximize control is disabled/ignored in Basic so it cannot bypass the lock.
 * **Fix (Windows):** OS Integration now reads the live default-app ProgId for each archive type (instead of always showing “Choose in Windows Settings”), so formats already set to Zinnia show as Default. Explorer context-action Ready detection also accepts Win11 sparse packages when classic Extract/Compress verbs were removed.
 * **Docs:** Windows context-menu QA checklist matches the fallback-only classic verb policy (no duplicate Extract/Compress under Show more options when packages register).

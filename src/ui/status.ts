@@ -57,6 +57,8 @@ export function hideProgress() {
 
 export function setRunning(active: boolean) {
   state.running = active;
+  const mutationLocked =
+    active || state.operationPreparing || state.incomingPathsApplying;
   const mode = getMode();
   if (mode === "add") {
     dom.runBtn.disabled = active;
@@ -94,7 +96,12 @@ export function setRunning(active: boolean) {
     "toggle-density",
   ]) {
     const el = document.getElementById(id) as HTMLButtonElement | null;
-    if (el) el.disabled = active;
+    if (!el) continue;
+    if (id === "add-files" || id === "add-folder" || id === "clear-inputs") {
+      el.disabled = mutationLocked;
+    } else {
+      el.disabled = active;
+    }
   }
 
   document

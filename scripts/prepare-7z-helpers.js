@@ -1,0 +1,156 @@
+import fs from "fs";
+import path from "path";
+
+const MAX_IDENTITY_SCAN_ENTRIES = 100_000;
+const MAX_IDENTITY_SCAN_DEPTH = 64;
+
+export function isPathInside(candidate, root) {
+  const relative = path.relative(root, candidate);
+  return (
+    relative === "" ||
+    (!relative.startsWith("..") && !path.isAbsolute(relative))
+  );
+}
+
+function canonicalizeAllowMissing(filePath) {
+  const missingParts = [];
+  let existing = path.resolve(filePath);
+  while (!fs.existsSync(existing)) {
+    const parent = path.dirname(existing);
+    if (parent === existing) break;
+    missingParts.unshift(path.basename(existing));
+    existing = parent;
+  }
+  return path.join(fs.realpathSync(existing), ...missingParts);
+}
+
+function sameFileIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function assertNoMatchingFileIdentity(trustedStat, root, label) {
+  const pending = [{ filePath: root, depth: 0 }];
+  let inspectedEntries = 0;
+
+  while (pending.length > 0) {
+    const current = pending.pop();
+    const currentStat = fs.lstatSync(current.filePath, {
+      bigint: true,
+      throwIfNoEntry: false,
+    });
+    if (!currentStat || currentStat.isSymbolicLink()) continue;
+
+    if (currentStat.isFile()) {
+      if (sameFileIdentity(trustedStat, currentStat)) {
+        throw new Error(
+          `Trusted 7-Zip extractor must not be the same file as a ${label} file: ${current.filePath}`,
+        );
+      }
+      continue;
+    }
+    if (!currentStat.isDirectory()) continue;
+    if (current.depth >= MAX_IDENTITY_SCAN_DEPTH) {
+      throw new Error(
+        `Could not safely inspect ${label} directory beyond ${MAX_IDENTITY_SCAN_DEPTH} levels: ${root}`,
+      );
+    }
+
+    const directory = fs.opendirSync(current.filePath);
+    try {
+      let entry;
+      while ((entry = directory.readSync()) !== null) {
+        inspectedEntries += 1;
+        if (inspectedEntries > MAX_IDENTITY_SCAN_ENTRIES) {
+          throw new Error(
+            `Could not safely inspect ${label} directory with more than ${MAX_IDENTITY_SCAN_ENTRIES} entries: ${root}`,
+          );
+        }
+        pending.push({
+          filePath: path.join(current.filePath, entry.name),
+          depth: current.depth + 1,
+        });
+      }
+    } finally {
+      directory.closeSync();
+    }
+  }
+}
+
+export function validateTrusted7zPath(
+  suppliedPath,
+  { assetsDirectory, outputDirectory },
+) {
+  if (!suppliedPath) {
+    throw new Error(
+      "Official .7z verification requires --trusted-7z <path> to an independently trusted extractor.",
+    );
+  }
+
+  const resolvedPath = path.resolve(suppliedPath);
+  let stat;
+  try {
+    stat = fs.statSync(resolvedPath, { bigint: true });
+  } catch {
+    throw new Error(`Trusted 7-Zip extractor does not exist: ${resolvedPath}`);
+  }
+  if (!stat.isFile()) {
+    throw new Error(`Trusted 7-Zip extractor is not a file: ${resolvedPath}`);
+  }
+
+  const canonicalPath = fs.realpathSync(resolvedPath);
+  for (const [label, directory] of [
+    ["candidate assets", assetsDirectory],
+    ["generated output", outputDirectory],
+  ]) {
+    const resolvedDirectory = path.resolve(directory);
+    const canonicalDirectory = canonicalizeAllowMissing(resolvedDirectory);
+    if (
+      isPathInside(resolvedPath, resolvedDirectory) ||
+      isPathInside(canonicalPath, canonicalDirectory)
+    ) {
+      throw new Error(
+        `Trusted 7-Zip extractor must be outside ${label} directory: ${resolvedDirectory}`,
+      );
+    }
+  }
+
+  const trustedStat = fs.statSync(canonicalPath, { bigint: true });
+  for (const [label, directory] of [
+    ["candidate assets", assetsDirectory],
+    ["generated output", outputDirectory],
+  ]) {
+    assertNoMatchingFileIdentity(
+      trustedStat,
+      canonicalizeAllowMissing(path.resolve(directory)),
+      label,
+    );
+  }
+  return canonicalPath;
+}
+
+export function officialArchiveExtractionCommand({
+  archivePath,
+  destination,
+  trusted7zPath,
+}) {
+  if (archivePath.endsWith(".tar.xz")) {
+    return {
+      command: "tar",
+      args: ["-xJf", archivePath, "-C", destination],
+    };
+  }
+  if (archivePath.endsWith(".7z")) {
+    if (!trusted7zPath) {
+      throw new Error(
+        "A trusted 7-Zip extractor is required for .7z archives.",
+      );
+    }
+    return {
+      command: trusted7zPath,
+      args: ["x", "-y", `-o${destination}`, archivePath],
+    };
+  }
+  throw new Error(
+    `Unsupported official source archive ${path.basename(archivePath)}.`,
+  );
+}

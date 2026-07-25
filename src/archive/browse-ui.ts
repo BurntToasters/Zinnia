@@ -23,14 +23,12 @@ import {
   buildEntryTree,
   computeNodeCheckState,
   clearPathSelection,
+  detectWindowsMemberPaths,
   filterBrowseEntriesByQuery,
+  resolveSelectiveExtractMemberPaths,
   selectEntries,
   toggleEntrySelection,
 } from "../selective-extract";
-
-function usesWindowsMemberPaths(): boolean {
-  return state.platformName === "windows" || state.platformName === "win32";
-}
 import type { TreeNode } from "../selective-extract";
 import { buildExtractArgsFor } from "./args";
 import { sanitizeCommandArgsForPreview } from "./preview";
@@ -164,15 +162,59 @@ function getCurrentArchiveSelectionPaths(
 ): string[] {
   const selected = state.browseSelectionsByArchive.get(archive);
   if (!selected || selected.size === 0) return [];
-  return info.entries
+  const selectedEntries = info.entries
     .filter((entry) => selected.has(entry.path))
     .map((entry) => entry.path);
+  // Strip non-empty folders so 7z cannot expand past the selection Set.
+  return resolveSelectiveExtractMemberPaths(
+    selectedEntries,
+    info.entries,
+    detectWindowsMemberPaths(info.entries),
+  );
+}
+
+function archiveHasRawSelection(archive: string): boolean {
+  const selected = state.browseSelectionsByArchive.get(archive);
+  return Boolean(selected && selected.size > 0);
+}
+
+/** Selection scope matches rendered rows so folder toggles cannot reach hidden members. */
+function collectRenderedSelectiveScope(
+  entries: BrowseEntry[],
+  searching: boolean,
+  windowsPaths: boolean,
+): BrowseEntry[] {
+  if (searching) {
+    return entries.slice(0, MAX_RENDERED_SELECTIVE_ROWS);
+  }
+  const byPath = new Map(entries.map((entry) => [entry.path, entry]));
+  const budget = { remaining: MAX_RENDERED_SELECTIVE_ROWS };
+  const scoped = new Map<string, BrowseEntry>();
+  const visit = (node: TreeNode) => {
+    if (budget.remaining <= 0) return;
+    budget.remaining -= 1;
+    const entry = byPath.get(node.path);
+    if (entry) scoped.set(entry.path, entry);
+    if (
+      node.isFolder &&
+      node.children.length > 0 &&
+      state.selectiveExpandedFolders.has(node.path)
+    ) {
+      for (const child of node.children) visit(child);
+    }
+  };
+  for (const node of buildEntryTree(entries, windowsPaths)) {
+    visit(node);
+    if (budget.remaining <= 0) break;
+  }
+  return [...scoped.values()];
 }
 
 function renderSelectiveFlatRow(
   archive: string,
   entry: BrowseEntry,
-  allEntries: BrowseEntry[],
+  scopeEntries: BrowseEntry[],
+  windowsPaths: boolean,
 ): HTMLElement {
   const selected = getOrCreateSelection(archive);
   const row = document.createElement("label");
@@ -187,8 +229,8 @@ function renderSelectiveFlatRow(
     const next = toggleEntrySelection(
       current,
       entry,
-      allEntries,
-      usesWindowsMemberPaths(),
+      scopeEntries,
+      windowsPaths,
     );
     cacheSelection(archive, next);
     renderSelectiveExtractModal();
@@ -214,7 +256,8 @@ function renderSelectiveFlatRow(
 function renderSelectiveTreeNode(
   archive: string,
   node: TreeNode,
-  allEntries: BrowseEntry[],
+  scopeEntries: BrowseEntry[],
+  windowsPaths: boolean,
   list: HTMLElement,
   budget: { remaining: number },
 ): void {
@@ -268,8 +311,8 @@ function renderSelectiveTreeNode(
     const next = toggleEntrySelection(
       current,
       entry,
-      allEntries,
-      usesWindowsMemberPaths(),
+      scopeEntries,
+      windowsPaths,
     );
     cacheSelection(archive, next);
     renderSelectiveExtractModal();
@@ -277,7 +320,9 @@ function renderSelectiveTreeNode(
 
   const name = document.createElement("span");
   name.className = "selective-row__path";
-  name.textContent = node.isFolder ? `${node.name}/` : node.name;
+  name.textContent = node.isFolder
+    ? `${node.name}${windowsPaths ? "\\" : "/"}`
+    : node.name;
   name.title = node.path;
 
   const meta = document.createElement("span");
@@ -292,7 +337,14 @@ function renderSelectiveTreeNode(
 
   if (expandable && expanded) {
     for (const child of node.children) {
-      renderSelectiveTreeNode(archive, child, allEntries, list, budget);
+      renderSelectiveTreeNode(
+        archive,
+        child,
+        scopeEntries,
+        windowsPaths,
+        list,
+        budget,
+      );
     }
   }
 }
@@ -302,6 +354,7 @@ function renderSelectiveEntryList(
   entries: BrowseEntry[],
   allEntries: BrowseEntry[],
   searching: boolean,
+  windowsPaths: boolean,
 ): void {
   const list = document.getElementById("selective-list");
   if (!list) return;
@@ -315,11 +368,20 @@ function renderSelectiveEntryList(
     return;
   }
 
+  // Folder toggles and Select all recurse only within rendered rows.
+  const scopeEntries = collectRenderedSelectiveScope(
+    searching ? entries : allEntries,
+    searching,
+    windowsPaths,
+  );
+
   // Searching shows a flat result list; otherwise a collapsible tree.
   if (searching) {
     list.removeAttribute("role");
     for (const entry of entries.slice(0, MAX_RENDERED_SELECTIVE_ROWS)) {
-      list.appendChild(renderSelectiveFlatRow(archive, entry, allEntries));
+      list.appendChild(
+        renderSelectiveFlatRow(archive, entry, scopeEntries, windowsPaths),
+      );
     }
     if (entries.length > MAX_RENDERED_SELECTIVE_ROWS) {
       const notice = document.createElement("div");
@@ -333,8 +395,15 @@ function renderSelectiveEntryList(
   list.setAttribute("role", "tree");
 
   const budget = { remaining: MAX_RENDERED_SELECTIVE_ROWS };
-  for (const node of buildEntryTree(entries, usesWindowsMemberPaths())) {
-    renderSelectiveTreeNode(archive, node, allEntries, list, budget);
+  for (const node of buildEntryTree(entries, windowsPaths)) {
+    renderSelectiveTreeNode(
+      archive,
+      node,
+      scopeEntries,
+      windowsPaths,
+      list,
+      budget,
+    );
     if (budget.remaining <= 0) break;
   }
   if (budget.remaining <= 0) {
@@ -357,14 +426,27 @@ export function renderSelectiveExtractModal(): void {
     state.selectiveSearchQuery,
   );
   state.selectiveVisiblePaths = filteredEntries.map((entry) => entry.path);
+  const windowsPaths = detectWindowsMemberPaths(info.entries);
 
-  renderSelectiveEntryList(archive, filteredEntries, info.entries, searching);
+  renderSelectiveEntryList(
+    archive,
+    filteredEntries,
+    info.entries,
+    searching,
+    windowsPaths,
+  );
 
   const summary = document.getElementById("selective-summary");
   if (summary) {
     const selectedCount = getOrCreateSelection(archive).size;
-    const shownCount = filteredEntries.length;
-    summary.textContent = `${selectedCount} selected \u00b7 ${shownCount} shown \u00b7 ${info.entries.length} total`;
+    const matchCount = filteredEntries.length;
+    const shownCount = searching
+      ? Math.min(matchCount, MAX_RENDERED_SELECTIVE_ROWS)
+      : Math.min(matchCount, MAX_RENDERED_SELECTIVE_ROWS);
+    summary.textContent =
+      matchCount > shownCount
+        ? `${selectedCount} selected \u00b7 ${shownCount} shown of ${matchCount} matches \u00b7 ${info.entries.length} total`
+        : `${selectedCount} selected \u00b7 ${shownCount} shown \u00b7 ${info.entries.length} total`;
   }
 }
 
@@ -432,17 +514,21 @@ export function selectAllVisibleInPicker(): void {
   if (!archive) return;
   const info = getCachedArchiveInfo(archive);
   if (!info) return;
+  const searching = state.selectiveSearchQuery.trim().length > 0;
   const visibleEntries = filterBrowseEntriesByQuery(
     info.entries,
     state.selectiveSearchQuery,
   );
-  const current = getOrCreateSelection(archive);
-  const next = selectEntries(
-    current,
-    visibleEntries,
-    info.entries,
-    usesWindowsMemberPaths(),
+  const windowsPaths = detectWindowsMemberPaths(info.entries);
+  // Select all must only touch rendered rows (same budget + expansion state as
+  // the picker), including non-search tree views with collapsed folders.
+  const scopeEntries = collectRenderedSelectiveScope(
+    searching ? visibleEntries : info.entries,
+    searching,
+    windowsPaths,
   );
+  const current = getOrCreateSelection(archive);
+  const next = selectEntries(current, scopeEntries, scopeEntries, windowsPaths);
   cacheSelection(archive, next);
   renderSelectiveExtractModal();
 }
@@ -570,6 +656,11 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
 
     const selectedPaths = getCurrentArchiveSelectionPaths(archive, info);
     if (selectedPaths.length === 0) {
+      if (archiveHasRawSelection(archive)) {
+        throw new Error(
+          "Selected folders do not include any extractable files or empty folders. Expand the tree or select individual files.",
+        );
+      }
       const extractAll = await confirm(
         "No entries are selected. Extract all files from the archive?",
         {

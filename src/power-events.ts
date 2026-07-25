@@ -60,7 +60,11 @@ import {
   wireQuickActionEvents,
   refreshQuickActionRepeatState,
 } from "./quick-actions";
-import { showSetupWizard, markSetupComplete } from "./setup-wizard";
+import {
+  showSetupWizard,
+  markSetupComplete,
+  type SetupWizardOptions,
+} from "./setup-wizard";
 import {
   deriveOutputArchivePath,
   resolveOutputArchiveAutofill,
@@ -88,9 +92,11 @@ export { openShortcutsModal } from "./power-shortcuts";
 
 const BASIC_RECENT_ARCHIVES_KEY = "zinnia.basic.recentArchives";
 
-export async function runSetupWizardFlow(): Promise<void> {
+export async function runSetupWizardFlow(
+  options: SetupWizardOptions = {},
+): Promise<void> {
   await resizeWorkspaceWindow("power");
-  const result = await showSetupWizard();
+  const result = await showSetupWizard(options);
   if (result) {
     state.currentSettings.workspaceMode = result.workspaceMode;
     state.currentSettings.theme = result.theme;
@@ -155,6 +161,13 @@ export function wireEvents() {
   $("add-files").addEventListener("click", addFiles);
   $("add-folder").addEventListener("click", addFolder);
   $("clear-inputs").addEventListener("click", () => {
+    if (
+      state.running ||
+      state.operationPreparing ||
+      state.incomingPathsApplying
+    ) {
+      return;
+    }
     state.inputs.length = 0;
     state.lastAutoOutputPath = null;
     renderInputs();
@@ -351,6 +364,7 @@ export function wireEvents() {
     .querySelectorAll<HTMLButtonElement>("[data-workspace-mode-btn]")
     .forEach((btn) => {
       btn.addEventListener("click", () => {
+        if (state.running || state.operationPreparing) return;
         const mode =
           btn.dataset.workspaceModeBtn === "power" ? "power" : "basic";
         if (mode === "power") {
@@ -426,7 +440,9 @@ export function wireEvents() {
   $("rerun-setup-wizard").addEventListener("click", async () => {
     closeSettingsModal();
     try {
-      await runSetupWizardFlow();
+      await runSetupWizardFlow({
+        skipUpdates: document.body.classList.contains("platform-flatpak"),
+      });
       renderInputs();
       refreshQuickActionRepeatState();
       log("Setup wizard completed.");

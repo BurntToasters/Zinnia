@@ -8,9 +8,14 @@ const https = require('https');
 
 require('dotenv').config();
 
-const GH_TOKEN = process.env.GH_TOKEN;
-const REPO_OWNER = 'BurntToasters';
-const REPO_NAME = 'Zinnia';
+function resolveGithubToken(env = process.env) {
+  return env.GH_TOKEN || env.GITHUB_TOKEN;
+}
+
+const GH_TOKEN = resolveGithubToken();
+const REPO_OWNER = process.env.GH_REPO_OWNER || 'BurntToasters';
+// Keep default casing aligned with scripts/gpg-sign.js and updater URLs.
+const REPO_NAME = process.env.GH_REPO_NAME || 'zinnia';
 const GH_REQUEST_TIMEOUT_MS = Number.parseInt(process.env.GH_REQUEST_TIMEOUT_MS || '30000', 10);
 const GH_REQUEST_RETRIES = Number.parseInt(process.env.GH_REQUEST_RETRIES || '3', 10);
 const GH_REQUEST_RETRY_DELAY_MS = Number.parseInt(
@@ -175,32 +180,52 @@ async function githubRequestWithRetry(method, endpoint, body) {
   }
 }
 
-async function findExistingRelease() {
+/**
+ * Walk GitHub list endpoints page-by-page until an empty page or a short page.
+ * Kept in sync with scripts/gpg-sign.js `listAllGithubPages`.
+ */
+async function listAllGithubPages(fetchPage, { perPage = 100 } = {}) {
+  const pageSize = Math.max(1, Number(perPage) || 100);
+  const items = [];
+  for (let page = 1; ; page += 1) {
+    const batch = await fetchPage(page, pageSize);
+    if (!Array.isArray(batch) || batch.length === 0) break;
+    items.push(...batch);
+    if (batch.length < pageSize) break;
+  }
+  return items;
+}
+
+async function findMatchingReleases() {
   // Draft releases are not returned by the "get release by tag" endpoint
   // (no git tag exists yet), so we list and match on tag_name.
-  const releases = await githubRequestWithRetry(
-    'GET',
-    '/repos/' + REPO_OWNER + '/' + REPO_NAME + '/releases?per_page=100'
+  const releases = await listAllGithubPages((page, perPage) =>
+    githubRequestWithRetry(
+      'GET',
+      '/repos/' +
+        REPO_OWNER +
+        '/' +
+        REPO_NAME +
+        '/releases?per_page=' +
+        perPage +
+        '&page=' +
+        page
+    )
   );
+  return releases.filter((r) => r.tag_name === TAG_NAME);
+}
 
-  if (!Array.isArray(releases)) {
-    throw new Error('Unexpected releases payload type');
-  }
-
-  const matching = releases.filter((r) => r.tag_name === TAG_NAME);
-  if (matching.length === 0) {
-    return null;
-  }
-
-  // Prefer a draft (electron-builder publishes into drafts); fall back to any.
-  const draft = matching.find((r) => r.draft);
-  return draft || matching[0];
+async function findExistingRelease() {
+  const matching = await findMatchingReleases();
+  // Never treat a published release as a draft handoff target.
+  return matching.find((r) => r.draft) || null;
 }
 
 async function ensureDraftRelease() {
   console.log('Ensuring draft release exists for ' + TAG_NAME + '...');
 
-  const existing = await findExistingRelease();
+  const matching = await findMatchingReleases();
+  const existing = matching.find((r) => r.draft) || null;
   if (existing) {
     console.log(
       '   Draft already exists: ' +
@@ -212,6 +237,13 @@ async function ensureDraftRelease() {
         ' assets) - skipping create.'
     );
     return existing;
+  }
+  if (matching.some((r) => !r.draft)) {
+    throw new Error(
+      'Release ' +
+        TAG_NAME +
+        ' already exists as published. Refusing to create another draft for the same tag.'
+    );
   }
 
   console.log('   No release found. Creating draft...');
@@ -256,7 +288,8 @@ async function waitForDraftRelease() {
   let attempt = 0;
   for (;;) {
     attempt += 1;
-    const existing = await findExistingRelease();
+    const matching = await findMatchingReleases();
+    const existing = matching.find((r) => r.draft) || null;
     if (existing) {
       console.log(
         '   Found draft: ' +
@@ -268,6 +301,13 @@ async function waitForDraftRelease() {
           ' assets). Proceeding.'
       );
       return existing;
+    }
+    if (matching.some((r) => !r.draft)) {
+      throw new Error(
+        'Release ' +
+          TAG_NAME +
+          ' already exists as published. Refusing to wait for a draft for the same tag.'
+      );
     }
 
     if (Date.now() >= deadline) {
@@ -293,14 +333,14 @@ async function waitForDraftRelease() {
 
 async function main() {
   if (!GH_TOKEN) {
-    if (WAIT_MODE) {
-      console.warn('⚠ WARN: GH_TOKEN not set - cannot check for the draft release. Skipping wait.');
-    } else {
-      console.warn('⚠ WARN: GH_TOKEN not set - cannot pre-create draft release. Skipping.');
-      console.warn('   (electron-builder will create the draft itself, but the duplicate-draft');
-      console.warn('    race may reoccur without a pre-created draft.)');
-    }
-    return;
+    const action = WAIT_MODE
+      ? 'wait for the Windows-created draft release'
+      : 'create or reuse the draft release';
+    throw new Error(
+      'GH_TOKEN or GITHUB_TOKEN is required to ' +
+        action +
+        '. Set one of those environment variables and retry.'
+    );
   }
 
   if (WAIT_MODE) {
@@ -310,8 +350,15 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  const message = error && error.message ? error.message : String(error);
-  console.error('✗ ERROR: Failed to ensure draft release: ' + message);
-  process.exit(1);
-});
+module.exports = {
+  listAllGithubPages,
+  resolveGithubToken,
+};
+
+if (require.main === module) {
+  main().catch((error) => {
+    const message = error && error.message ? error.message : String(error);
+    console.error('✗ ERROR: Failed to ensure draft release: ' + message);
+    process.exit(1);
+  });
+}

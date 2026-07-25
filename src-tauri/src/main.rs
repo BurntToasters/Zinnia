@@ -176,6 +176,20 @@ fn main() {
         .manage(LogFileLock(Mutex::new(())))
         .manage(RunningProcess::new())
         .setup(move |app| {
+            // Primary instance only reaches setup. Resolve shell handoffs here
+            // (and in emit_open_paths); collect_cli_context must not consume them
+            // or warm-start Explorer selections are deleted by the secondary.
+            let (initial_paths, initial_mode) = {
+                let resolved = launch::resolve_cli_context_with_handoffs();
+                if let Ok(mut paths) = app.state::<InitialPaths>().0.lock() {
+                    *paths = resolved.0.clone();
+                }
+                if let Ok(mut mode) = app.state::<InitialMode>().0.lock() {
+                    *mode = resolved.1.clone();
+                }
+                resolved
+            };
+
             #[cfg(target_os = "macos")]
             let finder_sync_routed = finder_sync_requests::route_pending_requests(app.handle());
             #[cfg(not(target_os = "macos"))]
@@ -190,6 +204,15 @@ fn main() {
                 spawn_extract_window(app.handle(), initial_paths.clone())
                     .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
                 EXTRACT_ONLY_LAUNCH.store(true, Ordering::SeqCst);
+                // Extract-only never mounts main, so get_initial_paths would not
+                // consume these. Clear them now or a later warm main reopen would
+                // re-apply the same archive into the workspace.
+                if let Ok(mut paths) = app.state::<InitialPaths>().0.lock() {
+                    paths.clear();
+                }
+                if let Ok(mut mode) = app.state::<InitialMode>().0.lock() {
+                    *mode = String::new();
+                }
             } else if cfg!(target_os = "macos") && initial_paths.is_empty() {
                 let (tx, rx) = std::sync::mpsc::channel::<()>();
                 if let Ok(mut guard) = FILE_OPEN_SIGNAL.lock() {

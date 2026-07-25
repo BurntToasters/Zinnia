@@ -56,6 +56,23 @@ describe("promptInput", () => {
     expect(await p).toBeNull();
   });
 
+  it.each(["input-modal-cancel", "input-modal-cancel-x"])(
+    "cancels on Enter from %s",
+    async (id) => {
+      const p = promptInput({
+        title: "T",
+        label: "L",
+        defaultValue: "must-not-submit",
+      });
+      const cancel = document.getElementById(id) as HTMLButtonElement;
+      cancel.focus();
+      cancel.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+      );
+      expect(await p).toBeNull();
+    },
+  );
+
   it("applies password type when requested", async () => {
     const p = promptInput({ title: "T", label: "L", password: true });
     const field = document.getElementById(

@@ -238,6 +238,9 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
         }
         if separator_index.is_none() && lower.starts_with("-p") {
             password_switches += 1;
+            if arg.len() > 2 && arg[2..].contains(['\r', '\n']) {
+                return Err("Archive passwords cannot contain line breaks.".to_string());
+            }
         }
         if separator_index.is_none() && lower.starts_with("-ao") {
             overwrite_switches += 1;
@@ -283,6 +286,43 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
     }
     if overwrite_switches > 1 {
         return Err("Extraction overwrite policy may appear only once.".to_string());
+    }
+    // Rust is the security boundary: reject password create/update for formats
+    // Zinnia does not actually encrypt (frontend already hides the control).
+    // 7-Zip honors the last -t when several are present, so evaluate the last
+    // type and reject more than one -t with a password (fail closed).
+    if password_switches > 0 && matches!(cmd, "a" | "u") {
+        let formats: Vec<String> = args
+            .iter()
+            .take(separator_index.unwrap_or(args.len()))
+            .skip(1)
+            .filter_map(|arg| {
+                let lower = arg.to_lowercase();
+                // `-stl` / `-stx…` are not archive-type switches; only `-tTYPE`.
+                if lower == "-stl" || lower.starts_with("-stx") {
+                    return None;
+                }
+                lower
+                    .strip_prefix("-t")
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+            .collect();
+        if formats.len() > 1 {
+            return Err(
+                "Password-protected create/update allows at most one archive type (-t)."
+                    .to_string(),
+            );
+        }
+        match formats.last().map(String::as_str) {
+            // 7-Zip defaults to 7z when -t is omitted.
+            None | Some("7z") | Some("zip") => {}
+            Some(other) => {
+                return Err(format!(
+                    "Password encryption is not supported for archive format '{other}'."
+                ));
+            }
+        }
     }
 
     match cmd {
@@ -810,5 +850,81 @@ mod tests {
             assert!(!archive_member_path_is_unsafe(r"\literal-name"));
             assert!(!archive_member_path_is_unsafe(r"folder\..\literal"));
         }
+    }
+
+    #[test]
+    fn validate_run_7z_args_rejects_password_line_breaks() {
+        let err = validate_run_7z_args(&[
+            "a".to_string(),
+            "-t7z".to_string(),
+            "-psecret\nmore".to_string(),
+            "out.7z".to_string(),
+            "--".to_string(),
+            "in.txt".to_string(),
+        ])
+        .expect_err("line-break password");
+        assert!(err.contains("line breaks"), "{err}");
+    }
+
+    #[test]
+    fn validate_run_7z_args_rejects_password_for_non_encrypting_formats() {
+        for format in ["-tgzip", "-tbzip2", "-txz", "-ttar"] {
+            let err = validate_run_7z_args(&[
+                "a".to_string(),
+                format.to_string(),
+                "-psecret".to_string(),
+                "out.bin".to_string(),
+                "--".to_string(),
+                "in.txt".to_string(),
+            ])
+            .expect_err("password on non-encrypting format");
+            assert!(
+                err.contains("Password encryption is not supported"),
+                "format {format}: {err}"
+            );
+        }
+        validate_run_7z_args(&[
+            "a".to_string(),
+            "-t7z".to_string(),
+            "-psecret".to_string(),
+            "out.7z".to_string(),
+            "--".to_string(),
+            "in.txt".to_string(),
+        ])
+        .expect("7z password create");
+        validate_run_7z_args(&[
+            "a".to_string(),
+            "-tzip".to_string(),
+            "-psecret".to_string(),
+            "out.zip".to_string(),
+            "--".to_string(),
+            "in.txt".to_string(),
+        ])
+        .expect("zip password create");
+        validate_run_7z_args(&[
+            "a".to_string(),
+            "-t7z".to_string(),
+            "-stl".to_string(),
+            "-psecret".to_string(),
+            "out.7z".to_string(),
+            "--".to_string(),
+            "in.txt".to_string(),
+        ])
+        .expect("-stl is not an archive type");
+    }
+
+    #[test]
+    fn validate_run_7z_args_rejects_password_with_conflicting_types() {
+        let err = validate_run_7z_args(&[
+            "a".to_string(),
+            "-t7z".to_string(),
+            "-tgzip".to_string(),
+            "-psecret".to_string(),
+            "out.gz".to_string(),
+            "--".to_string(),
+            "in.txt".to_string(),
+        ])
+        .expect_err("multi -t with password");
+        assert!(err.contains("at most one archive type"), "{err}");
     }
 }

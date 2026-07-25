@@ -17,14 +17,19 @@ use crate::validation::validate_run_7z_args;
 
 use super::archive_snapshot::assert_archive_identity_unchanged;
 use super::commit::{commit_cleanup, commit_failure_should_scrub_staging, rollback_cleanup};
-use super::journal::{write_cleanup_journal, CleanupJournalGuard};
+use super::journal::{clear_cleanup_journal, write_cleanup_journal, CleanupJournalGuard};
 use super::quota::monitor_extract_quota;
-use super::recovery::{recover_interrupted_transaction, wait_for_startup_recovery};
+use super::recovery::{
+    recover_interrupted_transaction, retract_scrub_archive_journal_or_fail,
+    wait_for_startup_recovery,
+};
 use super::staging::{
     assert_extract_archive_members_safe, operation_output_path, prepare_cleanup_plan,
     rewrite_archive_output, rewrite_extract_archive, rewrite_extract_output,
 };
-use super::{ensure_idle, lock_process, RunResult, RunningProcess};
+use super::{
+    ensure_idle, lock_process, release_prepare_slot_best_effort, RunResult, RunningProcess,
+};
 
 fn read_command_stream<R, F>(reader: R, tx: Sender<CommandEvent>, wrap: F)
 where
@@ -160,36 +165,122 @@ pub(crate) fn terminate_child(child: &Arc<SharedChild>) {
     }
 }
 
-/// Spawn bundled 7-Zip with a closed/noninteractive stdin while retaining a
-/// shared native child handle for cancellation and quota enforcement.
-pub(crate) fn spawn_7z_noninteractive(
-    app: &tauri::AppHandle,
-    mut args: Vec<String>,
-) -> Result<(Receiver<CommandEvent>, Arc<SharedChild>), String> {
-    // A command-line password is visible to same-user process inspection on
-    // several desktop platforms. Remove it before spawn and answer 7-Zip's
-    // password prompt through a short-lived pipe instead. Multiple copies
-    // cover create-time confirmation and a single retry; EOF then guarantees
-    // that no unexpected prompt can leave the process waiting forever.
+/// Remove an attached 7-Zip password from the child argv and return it for
+/// prompt-based stdin transport. Create/update do not prompt automatically, so
+/// they require one bare `-p`; list/test/extract prompt when needed.
+pub(crate) fn prepare_password_transport(args: &mut Vec<String>) -> Result<Option<String>, String> {
+    let switch_end = args
+        .iter()
+        .position(|arg| arg == "--")
+        .unwrap_or(args.len());
     let mut password = None;
-    args.retain(|arg| {
-        if arg
-            .get(..2)
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("-p"))
-            && arg.len() > 2
+    for arg in args.iter().take(switch_end).skip(1) {
+        if arg.len() > 2
+            && arg
+                .get(..2)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("-p"))
         {
+            if password.is_some() {
+                return Err("Password switch may appear only once.".to_string());
+            }
             password = Some(arg[2..].to_string());
-            false
-        } else {
-            true
         }
-    });
+    }
     if password
         .as_deref()
         .is_some_and(|value| value.contains(['\r', '\n']))
     {
         return Err("Archive passwords cannot contain line breaks.".to_string());
     }
+
+    let command_uses_explicit_prompt = matches!(args.first().map(String::as_str), Some("a" | "u"));
+    let mut first_bare_password = None;
+    let mut rewritten = Vec::with_capacity(args.len());
+    for (index, arg) in std::mem::take(args).into_iter().enumerate() {
+        let is_password_switch = index > 0
+            && index < switch_end
+            && arg
+                .get(..2)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("-p"));
+        if !is_password_switch {
+            rewritten.push(arg);
+        } else if arg.len() == 2 && first_bare_password.is_none() {
+            first_bare_password = Some(arg);
+        }
+    }
+
+    if let Some(bare_password) = first_bare_password {
+        rewritten.insert(1, bare_password);
+    } else if password.is_some() && command_uses_explicit_prompt {
+        rewritten.insert(1, "-p".to_string());
+    }
+    *args = rewritten;
+    Ok(password)
+}
+
+/// Secret still owed to 7-Zip stdin after the child is registered for cancel.
+pub(crate) struct PendingPassword(String);
+
+type Spawned7z = (
+    Receiver<CommandEvent>,
+    Arc<SharedChild>,
+    Option<PendingPassword>,
+);
+
+/// Write the deferred password after `RunningProcess.child` is set so cancel can
+/// kill 7-Zip if stdin write blocks.
+pub(crate) fn complete_password_transport(
+    child: &Arc<SharedChild>,
+    pending: PendingPassword,
+) -> Result<(), String> {
+    let password = pending.0;
+    let child_for_password = child.clone();
+    let (password_tx, password_rx) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let result = (|| {
+            let mut stdin = child_for_password
+                .take_stdin()
+                .ok_or_else(|| "Could not open 7-Zip password input.".to_string())?;
+            for _ in 0..3 {
+                stdin
+                    .write_all(password.as_bytes())
+                    .and_then(|_| stdin.write_all(b"\n"))
+                    .map_err(|error| format!("Could not provide the archive password: {error}"))?;
+            }
+            drop(stdin);
+            Ok::<_, String>(())
+        })();
+        if result.is_err() {
+            terminate_child(&child_for_password);
+        }
+        let _ = password_tx.send(result);
+    });
+    match password_rx.recv() {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(error),
+        Err(_) => {
+            terminate_child(child);
+            Err("Password setup for 7-Zip did not complete.".to_string())
+        }
+    }
+}
+
+/// Spawn bundled 7-Zip with a closed/noninteractive stdin while retaining a
+/// shared native child handle for cancellation and quota enforcement.
+///
+/// When a password is required, it is returned as [`PendingPassword`] and must
+/// be completed with [`complete_password_transport`] only after the child is
+/// stored in `RunningProcess` so cancel can terminate a blocked stdin write.
+pub(crate) fn spawn_7z_noninteractive(
+    app: &tauri::AppHandle,
+    mut args: Vec<String>,
+) -> Result<Spawned7z, String> {
+    // A command-line password is visible to same-user process inspection on
+    // several desktop platforms. Remove it before spawn and answer 7-Zip's
+    // password prompt through a short-lived pipe. Multiple copies cover
+    // create-time confirmation and a single retry; EOF then guarantees that
+    // no unexpected prompt can leave the process waiting forever.
+    let password = prepare_password_transport(&mut args)?;
     // Always use a private response list for caller-selected paths. Besides
     // avoiding platform-specific execve/command-line ceilings, this keeps the
     // path transport identical across Windows, macOS, and Linux.
@@ -209,19 +300,10 @@ pub(crate) fn spawn_7z_noninteractive(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let child = Arc::new(SharedChild::spawn(&mut command).map_err(|error| error.to_string())?);
+    // Take stdout/stderr and start drain threads before writing the password.
+    // Writing first can fill the stdin pipe while 7-Zip blocks on a full
+    // stdout/stderr pipe (especially on Windows ~4 KiB defaults), deadlocking.
     let setup = (|| {
-        if let Some(password) = password {
-            let mut stdin = child
-                .take_stdin()
-                .ok_or_else(|| "Could not open 7-Zip password input.".to_string())?;
-            for _ in 0..3 {
-                stdin
-                    .write_all(password.as_bytes())
-                    .and_then(|_| stdin.write_all(b"\n"))
-                    .map_err(|error| format!("Could not provide the archive password: {error}"))?;
-            }
-            drop(stdin);
-        }
         let stdout = child
             .take_stdout()
             .ok_or_else(|| "Could not capture 7-Zip stdout.".to_string())?;
@@ -237,7 +319,10 @@ pub(crate) fn spawn_7z_noninteractive(
             return Err(error);
         }
     };
-    let (tx, rx) = channel(1);
+    // Capacity must exceed a typical 7-Zip banner plus prompt on both streams.
+    // A size-1 channel lets drain threads block on send while this function still
+    // writes the password, filling OS pipes and deadlocking before cancel can run.
+    let (tx, rx) = channel(512);
     let readers = Arc::new(RwLock::new(()));
     for (reader, wrap) in [
         (
@@ -284,7 +369,7 @@ pub(crate) fn spawn_7z_noninteractive(
         drop(listfile);
         let _ = block_on(async move { tx.send(event).await });
     });
-    Ok((rx, child))
+    Ok((rx, child, password.map(PendingPassword)))
 }
 
 pub(crate) fn harden_7z_args(args: &mut Vec<String>) {
@@ -594,8 +679,7 @@ pub async fn run_7z(
 
     if let Err(error) = recover_interrupted_transaction(&app) {
         if let Ok(mut process) = lock_process(&state) {
-            process.preparing = false;
-            process.owner_label = None;
+            process.release_prepare_slot();
         }
         return Err(format!(
             "A previous archive transaction still requires recovery: {error}"
@@ -607,8 +691,7 @@ pub async fn run_7z(
         Ok(dir) => Some(dir),
         Err(error) => {
             if let Ok(mut process) = lock_process(&state) {
-                process.preparing = false;
-                process.owner_label = None;
+                process.release_prepare_slot();
             }
             return Err(format!("Could not resolve app cache directory: {error}"));
         }
@@ -621,15 +704,13 @@ pub async fn run_7z(
         Ok(Ok(plan)) => plan,
         Ok(Err(error)) => {
             if let Ok(mut process) = lock_process(&state) {
-                process.preparing = false;
-                process.owner_label = None;
+                process.release_prepare_slot();
             }
             return Err(error);
         }
         Err(error) => {
             if let Ok(mut process) = lock_process(&state) {
-                process.preparing = false;
-                process.owner_label = None;
+                process.release_prepare_slot();
             }
             return Err(format!("Archive preparation task failed: {error}"));
         }
@@ -642,8 +723,7 @@ pub async fn run_7z(
         Err(error) => {
             let rollback_error = rollback_cleanup(&cleanup_plan).err();
             if let Ok(mut process) = lock_process(&state) {
-                process.preparing = false;
-                process.owner_label = None;
+                process.release_prepare_slot();
             }
             return Err(match rollback_error {
                 Some(rollback_error) => {
@@ -658,12 +738,26 @@ pub async fn run_7z(
     let mut snapshot_args = args.clone();
     if let Some(staged_archive) = &cleanup_plan.staged_input_archive {
         if let Err(error) = rewrite_extract_archive(&mut snapshot_args, staged_archive) {
-            let _ = rollback_cleanup(&cleanup_plan);
+            let rollback_error = rollback_cleanup(&cleanup_plan).err();
+            let journal_error = if rollback_error.is_none() {
+                journal_guard.clear().err()
+            } else {
+                None
+            };
             if let Ok(mut process) = lock_process(&state) {
-                process.preparing = false;
-                process.owner_label = None;
+                process.release_prepare_slot();
             }
-            return Err(error);
+            return Err(match rollback_error {
+                Some(rollback_error) => {
+                    format!("{error}; staging cleanup also failed: {rollback_error}")
+                }
+                None => match journal_error {
+                    Some(journal_error) => {
+                        format!("{error}; recovery journal cleanup also failed: {journal_error}")
+                    }
+                    None => error,
+                },
+            });
         }
     }
     let extract_archive_identity = if cleanup_plan.staged_extract.is_some() {
@@ -677,9 +771,8 @@ pub async fn run_7z(
                     None
                 };
                 if let Ok(mut process) = lock_process(&state) {
-                    process.preparing = false;
-                    process.owner_label = None;
                     process.child = None;
+                    process.release_prepare_slot();
                 }
                 return Err(match rollback_error {
                     Some(rollback_error) => {
@@ -703,12 +796,26 @@ pub async fn run_7z(
     let mut execution_args = args.clone();
     if let Some(staged_archive) = &cleanup_plan.staged_input_archive {
         if let Err(error) = rewrite_extract_archive(&mut execution_args, staged_archive) {
-            let _ = rollback_cleanup(&cleanup_plan);
+            let rollback_error = rollback_cleanup(&cleanup_plan).err();
+            let journal_error = if rollback_error.is_none() {
+                journal_guard.clear().err()
+            } else {
+                None
+            };
             if let Ok(mut process) = lock_process(&state) {
-                process.preparing = false;
-                process.owner_label = None;
+                process.release_prepare_slot();
             }
-            return Err(error);
+            return Err(match rollback_error {
+                Some(rollback_error) => {
+                    format!("{error}; staging cleanup also failed: {rollback_error}")
+                }
+                None => match journal_error {
+                    Some(journal_error) => {
+                        format!("{error}; recovery journal cleanup also failed: {journal_error}")
+                    }
+                    None => error,
+                },
+            });
         }
     }
     let rewrite_result = if let Some((staged, _)) = &cleanup_plan.staged_extract {
@@ -726,8 +833,7 @@ pub async fn run_7z(
             None
         };
         if let Ok(mut process) = lock_process(&state) {
-            process.preparing = false;
-            process.owner_label = None;
+            process.release_prepare_slot();
         }
         return Err(match rollback_error {
             Some(rollback_error) => format!("{error}; rollback also failed: {rollback_error}"),
@@ -749,8 +855,7 @@ pub async fn run_7z(
                 None
             };
             if let Ok(mut process) = lock_process(&state) {
-                process.preparing = false;
-                process.owner_label = None;
+                process.release_prepare_slot();
             }
             return Err(match rollback_error {
                 Some(rollback_error) => {
@@ -767,19 +872,21 @@ pub async fn run_7z(
     }
 
     let mut rx = {
-        let (rx, child) = match spawn_7z_noninteractive(&app, execution_args.clone()) {
+        let (rx, child, pending_password) = match spawn_7z_noninteractive(
+            &app,
+            execution_args.clone(),
+        ) {
             Ok(result) => result,
             Err(e) => {
-                if let Ok(mut process) = lock_process(&state) {
-                    process.preparing = false;
-                    process.owner_label = None;
-                }
                 let rollback_error = rollback_cleanup(&cleanup_plan).err();
                 let journal_error = if rollback_error.is_none() {
                     journal_guard.clear().err()
                 } else {
                     None
                 };
+                if let Ok(mut process) = lock_process(&state) {
+                    process.release_prepare_slot();
+                }
                 return Err(match rollback_error {
                     Some(rollback_error) => {
                         format!("{e}; staging cleanup also failed: {rollback_error}")
@@ -804,37 +911,141 @@ pub async fn run_7z(
                 } else {
                     None
                 };
+                release_prepare_slot_best_effort(&state);
                 return Err(match rollback_error {
                     Some(rollback_error) => {
                         format!("{error}; staging cleanup also failed: {rollback_error}")
                     }
-                    None => {
-                        match journal_error {
-                            Some(journal_error) => {
-                                format!("{error}; recovery journal cleanup also failed: {journal_error}")
-                            }
-                            None => error,
+                    None => match journal_error {
+                        Some(journal_error) => {
+                            format!(
+                                "{error}; recovery journal cleanup also failed: {journal_error}"
+                            )
                         }
-                    }
+                        None => error,
+                    },
                 });
             }
         };
         if process.cancelling {
-            process.preparing = false;
-            process.cancelling = false;
-            process.owner_label = None;
+            process.child = None;
+            // Keep preparing/cancelling until rollback and journal clear finish.
             drop(process);
             terminate_child(&child);
-            rollback_cleanup(&cleanup_plan)?;
-            journal_guard.clear()?;
-            return Err("Archive operation was cancelled during preparation.".to_string());
+            let rollback_error = rollback_cleanup(&cleanup_plan).err();
+            let journal_error = if rollback_error.is_none() {
+                journal_guard.clear().err()
+            } else {
+                None
+            };
+            release_prepare_slot_best_effort(&state);
+            return Err(match rollback_error {
+                Some(rollback_error) => format!(
+                    "Archive operation was cancelled during preparation.; staging cleanup also failed: {rollback_error}"
+                ),
+                None => match journal_error {
+                    Some(journal_error) => format!(
+                        "Archive operation was cancelled during preparation.; recovery journal cleanup also failed: {journal_error}"
+                    ),
+                    None => "Archive operation was cancelled during preparation.".to_string(),
+                },
+            });
         }
 
-        process.child = Some(child);
-        process.preparing = false;
-        process.cancelling = false;
+        // Register the child before password stdin so cancel can kill a blocked write.
+        process.child = Some(child.clone());
         process.owner_label = Some(window.label().to_string());
         process.cleanup_plan = Some(cleanup_plan.clone());
+        drop(process);
+
+        if let Some(pending_password) = pending_password {
+            if let Err(error) = complete_password_transport(&child, pending_password) {
+                let cancelled = lock_process(&state)
+                    .map(|process| process.cancelling)
+                    .unwrap_or(false);
+                if let Ok(mut process) = lock_process(&state) {
+                    process.child = None;
+                }
+                let rollback_error = rollback_cleanup(&cleanup_plan).err();
+                let journal_error = if rollback_error.is_none() {
+                    journal_guard.clear().err()
+                } else {
+                    None
+                };
+                release_prepare_slot_best_effort(&state);
+                let error = if cancelled {
+                    "Archive operation was cancelled during preparation.".to_string()
+                } else {
+                    error
+                };
+                return Err(match rollback_error {
+                    Some(rollback_error) => {
+                        format!("{error}; staging cleanup also failed: {rollback_error}")
+                    }
+                    None => match journal_error {
+                        Some(journal_error) => {
+                            format!(
+                                "{error}; recovery journal cleanup also failed: {journal_error}"
+                            )
+                        }
+                        None => error,
+                    },
+                });
+            }
+        }
+
+        let mut process = match lock_process(&state) {
+            Ok(process) => process,
+            Err(error) => {
+                terminate_child(&child);
+                let rollback_error = rollback_cleanup(&cleanup_plan).err();
+                let journal_error = if rollback_error.is_none() {
+                    journal_guard.clear().err()
+                } else {
+                    None
+                };
+                release_prepare_slot_best_effort(&state);
+                return Err(match rollback_error {
+                    Some(rollback_error) => {
+                        format!("{error}; staging cleanup also failed: {rollback_error}")
+                    }
+                    None => match journal_error {
+                        Some(journal_error) => {
+                            format!(
+                                "{error}; recovery journal cleanup also failed: {journal_error}"
+                            )
+                        }
+                        None => error,
+                    },
+                });
+            }
+        };
+        if process.cancelling {
+            process.child = None;
+            drop(process);
+            terminate_child(&child);
+            let rollback_error = rollback_cleanup(&cleanup_plan).err();
+            let journal_error = if rollback_error.is_none() {
+                journal_guard.clear().err()
+            } else {
+                None
+            };
+            release_prepare_slot_best_effort(&state);
+            return Err(match rollback_error {
+                Some(rollback_error) => format!(
+                    "Archive operation was cancelled during preparation.; staging cleanup also failed: {rollback_error}"
+                ),
+                None => match journal_error {
+                    Some(journal_error) => format!(
+                        "Archive operation was cancelled during preparation.; recovery journal cleanup also failed: {journal_error}"
+                    ),
+                    None => "Archive operation was cancelled during preparation.".to_string(),
+                },
+            });
+        }
+
+        process.preparing = false;
+        process.cancelling = false;
         rx
     };
 
@@ -941,8 +1152,25 @@ pub async fn run_7z(
                 Err(error) => {
                     if commit_failure_should_scrub_staging(&finalize_plan, &error) {
                         // Safe orphan scrub (add-mode / no recovery backups).
+                        // Retract any partial publishes from the journal BEFORE
+                        // clearing it — clearing alone left destinations orphaned
+                        // when live retract during commit also failed.
                         match rollback_cleanup(&finalize_plan) {
-                            Ok(()) => Err(error),
+                            Ok(()) => {
+                                if let Err(retract_error) =
+                                    retract_scrub_archive_journal_or_fail(&finalize_app)
+                                {
+                                    return Err(format!(
+                                        "{error}; also failed to retract partial archive outputs: {retract_error}"
+                                    ));
+                                }
+                                match clear_cleanup_journal(&finalize_app) {
+                                    Ok(()) => Err(error),
+                                    Err(journal_error) => Err(format!(
+                                        "{error}; also failed to clear recovery journal: {journal_error}"
+                                    )),
+                                }
+                            }
                             Err(rollback_error) => Err(format!(
                                 "{error}; also failed to clean staging: {rollback_error}"
                             )),
@@ -1005,7 +1233,8 @@ pub async fn probe_7z(
     }
 
     let result = async {
-        let (mut rx, child) = spawn_7z_noninteractive(&app, vec!["i".to_string()])?;
+        let (mut rx, child, _pending_password) =
+            spawn_7z_noninteractive(&app, vec!["i".to_string()])?;
 
         let probe = async {
             let collected = collect_command_output(&mut rx, PROBE_OUTPUT_LIMIT, |_| {}).await;
@@ -1091,6 +1320,12 @@ pub fn cancel_7z(
                 if is_non_running_kill_error(&msg) {
                     Ok(())
                 } else {
+                    // Put the handle back so a later cancel can retry the kill.
+                    if let Ok(mut process) = lock_process(&state) {
+                        if process.child.is_none() {
+                            process.child = Some(child);
+                        }
+                    }
                     eprintln!("Failed to kill 7z process: {msg}");
                     Err(format!("Could not stop 7z safely: {msg}. Restart Zinnia before starting another operation."))
                 }

@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -9,10 +9,17 @@ const pkgPath = path.join(repoRoot, "package.json");
 const xmlPath = path.join(repoRoot, "run.rosie.zinnia.metainfo.xml");
 
 function formatDate(date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function hasExactReleaseVersion(xml, version) {
+  const escapedVersion = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(
+    `<release\\b[^>]*\\bversion\\s*=\\s*(["'])${escapedVersion}\\1`,
+  ).test(xml);
 }
 
 function run({
@@ -117,7 +124,17 @@ function run({
   return { updated: true, version, date: dateStr };
 }
 
-if (import.meta.main) {
+function isDirectExecution(
+  moduleUrl = import.meta.url,
+  executablePath = process.argv[1],
+) {
+  return Boolean(
+    executablePath &&
+    pathToFileURL(path.resolve(executablePath)).href === moduleUrl,
+  );
+}
+
+if (isDirectExecution()) {
   try {
     const result = run({ check: process.argv.slice(2).includes("--check") });
     if (result.updated) {
@@ -137,4 +154,4 @@ if (import.meta.main) {
   }
 }
 
-export { formatDate, run };
+export { formatDate, hasExactReleaseVersion, isDirectExecution, run };

@@ -138,6 +138,12 @@ export function setWorkspaceMode(
   options: ContextPersistOptions = {},
 ): void {
   const previousMode = getWorkspaceMode();
+  if ((state.running || state.operationPreparing) && mode !== previousMode) {
+    // Keep settings and rendered workspace coherent until the active command's
+    // completion hooks have cleaned up the workspace that started it.
+    state.currentSettings.workspaceMode = previousMode;
+    return;
+  }
   dom.appEl.dataset.workspaceMode = mode;
   document.querySelectorAll("[data-workspace-mode-btn]").forEach((btn) => {
     const el = btn as HTMLButtonElement;

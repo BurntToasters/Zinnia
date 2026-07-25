@@ -123,10 +123,19 @@
 !macroend
 
 !macro ZINNIA_UNREGISTER_WIN11_CONTEXT_MENU
-  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Get-AppxPackage -Name run.rosie.zinnia.contextmenu -ErrorAction SilentlyContinue | Remove-AppxPackage -ErrorAction SilentlyContinue"'
+  ; Retry once, then fail the PowerShell step if either sparse package remains.
+  ; Leaving packages registered against a deleted ExternalLocation breaks modern
+  ; menus after uninstall; surface that instead of claiming cleanup succeeded.
+  DetailPrint "Unregistering Win11 sparse context-menu packages…"
+  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference=\"Stop\"; $names=@(\"run.rosie.zinnia.contextmenu\",\"run.rosie.zinnia.extractmenu\"); for($attempt=0;$attempt -lt 2;$attempt++){ foreach($name in $names){ Get-AppxPackage -Name $name -ErrorAction SilentlyContinue | Remove-AppxPackage -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 400 }; $left=@(); foreach($name in $names){ $left += @(Get-AppxPackage -Name $name -ErrorAction SilentlyContinue) }; if($left.Count -gt 0){ $joined=(($left | ForEach-Object Name) -join \", \"); Write-Error \"Zinnia AppX packages still registered after uninstall: $joined\"; exit 1 }"'
   Pop $0
-  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Get-AppxPackage -Name run.rosie.zinnia.extractmenu -ErrorAction SilentlyContinue | Remove-AppxPackage -ErrorAction SilentlyContinue"'
-  Pop $0
+  IntCmp $0 0 zinnia_win11_unregister_ok 0 0
+  DetailPrint "WARNING: Could not fully unregister Win11 sparse context-menu packages (exit $0). Remove run.rosie.zinnia.contextmenu / extractmenu manually if menus misbehave."
+  FileOpen $R8 "$INSTDIR\zinnia-context-menu-register.log" a
+  FileSeek $R8 0 END
+  FileWrite $R8 "WARNING: Win11 sparse package unregister incomplete during uninstall (exit $0)$\r$\n"
+  FileClose $R8
+  zinnia_win11_unregister_ok:
 !macroend
 
 !macro ZINNIA_CLEAN_SHELL_PAYLOADS KEEPDIR LABELPREFIX

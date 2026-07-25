@@ -3,6 +3,18 @@
   display: none !important;
 }
 
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
 .skip-link {
   position: absolute;
   left: -9999px;
@@ -22,19 +34,27 @@
 
 .startup-recovery-banner {
   display: flex;
+  flex: 0 0 auto;
+  min-width: 0;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   padding: 10px 14px;
   background: var(--danger-bg, #3b1d1d);
   color: var(--text);
-  border-bottom: 1px solid var(--danger, #e25a4a);
+  border-bottom: 1px solid var(--danger, #c44738);
   font-size: 0.8125rem;
   z-index: 10001;
 }
 
-.startup-recovery-banner[hidden] {
-  display: none !important;
+.startup-recovery-banner > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.startup-recovery-banner > button {
+  flex: 0 0 auto;
 }
 
 *,
@@ -51,6 +71,8 @@ body {
 }
 
 body {
+  display: flex;
+  flex-direction: column;
   margin: 0;
   font-family:
     system-ui,

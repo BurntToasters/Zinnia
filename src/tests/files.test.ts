@@ -15,7 +15,13 @@ vi.mock("../ui", () => ({
   registerIconRefreshHook: vi.fn(),
 }));
 
-import { addFiles, addFolder, chooseExtract, chooseOutput } from "../files";
+import {
+  addFiles,
+  addFolder,
+  addFilesIfCurrent,
+  chooseExtract,
+  chooseOutput,
+} from "../files";
 
 const openMock = vi.mocked(open);
 const saveMock = vi.mocked(save);
@@ -23,6 +29,9 @@ const saveMock = vi.mocked(save);
 beforeEach(() => {
   mode = "add";
   state.inputs.length = 0;
+  state.running = false;
+  state.operationPreparing = false;
+  state.incomingPathsApplying = false;
   state.lastAutoOutputPath = "/tmp/auto-output.7z";
   state.lastAutoExtractDestination = "/tmp/auto-extract";
   (document.getElementById("output-path") as HTMLInputElement).value = "";
@@ -64,6 +73,24 @@ describe("chooseOutput", () => {
     ).toBe("/tmp/original.7z");
     expect(state.lastAutoOutputPath).toBe("/tmp/auto-output.7z");
   });
+
+  it.each([
+    ["gzip", "gz"],
+    ["bzip2", "bz2"],
+    ["xz", "xz"],
+  ])(
+    "uses the archive extension mapping for empty-input %s output",
+    async (format, extension) => {
+      (document.getElementById("format") as HTMLSelectElement).value = format;
+      saveMock.mockResolvedValue(null);
+
+      await chooseOutput();
+
+      expect(saveMock).toHaveBeenCalledWith(
+        expect.objectContaining({ defaultPath: `zinnia.${extension}` }),
+      );
+    },
+  );
 });
 
 describe("chooseExtract", () => {
@@ -110,7 +137,7 @@ describe("addFiles", () => {
     await addFiles();
 
     expect(state.inputs).toEqual(["/tmp/a.txt", "/tmp/b.txt"]);
-    expect(renderInputsMock).toHaveBeenCalledOnce();
+    expect(renderInputsMock).toHaveBeenCalled();
   });
 
   it("hides browse password when primary input changes in browse mode", async () => {
@@ -131,6 +158,26 @@ describe("addFiles", () => {
 
     expect(setBrowsePasswordFieldVisibleMock).not.toHaveBeenCalled();
   });
+
+  it("works under Basic preparation without treating operationPreparing as busy", async () => {
+    state.operationPreparing = true;
+    openMock.mockResolvedValue(["/tmp/basic-add.txt"]);
+
+    await addFilesIfCurrent(() => true, { underBasicPreparation: true });
+
+    expect(state.inputs).toEqual(["/tmp/basic-add.txt"]);
+    expect(renderInputsMock).toHaveBeenCalled();
+  });
+
+  it("no-ops while preparing when not marked under Basic preparation", async () => {
+    state.operationPreparing = true;
+    openMock.mockResolvedValue(["/tmp/blocked.txt"]);
+
+    await addFiles();
+
+    expect(openMock).not.toHaveBeenCalled();
+    expect(state.inputs).toEqual([]);
+  });
 });
 
 describe("addFolder", () => {
@@ -149,7 +196,7 @@ describe("addFolder", () => {
     await addFolder();
 
     expect(state.inputs).toEqual(["/tmp/my-folder"]);
-    expect(renderInputsMock).toHaveBeenCalledOnce();
+    expect(renderInputsMock).toHaveBeenCalled();
   });
 
   it("hides browse password when browse primary changes", async () => {
@@ -169,7 +216,7 @@ describe("addFolder", () => {
     await addFolder();
 
     expect(state.inputs).toEqual(["/tmp/existing-folder"]);
-    expect(renderInputsMock).toHaveBeenCalledOnce();
+    expect(renderInputsMock).toHaveBeenCalled();
     expect(setBrowsePasswordFieldVisibleMock).not.toHaveBeenCalled();
   });
 });

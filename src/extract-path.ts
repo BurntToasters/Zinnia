@@ -178,8 +178,7 @@ export function deriveOutputArchivePath(
   if (!name) return null;
   const archiveStem = customName && customName.length > 0 ? customName : name;
   if (!archiveStem) return null;
-  const extension =
-    format === "gzip" ? "gz" : format === "bzip2" ? "bz2" : format;
+  const extension = archiveExtensionForFormat(format);
   const fileName = `${archiveStem}.${extension}`;
   if (isPreferredCompressParent(parent)) {
     return joinPath(parent, fileName, separator);
@@ -191,6 +190,10 @@ export function deriveOutputArchivePath(
   }
   // Last resort: bare name for OS save dialogs only, never for silent Run.
   return fileName;
+}
+
+export function archiveExtensionForFormat(format: string): string {
+  return format === "gzip" ? "gz" : format === "bzip2" ? "bz2" : format;
 }
 
 export function shouldAutofillOutputPath(

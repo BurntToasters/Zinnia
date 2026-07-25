@@ -7,7 +7,7 @@ use super::extract_window::{
 use super::open_path::{derive_extract_destination_path, normalize_destination_path};
 use super::open_routing::{
     enqueue_pending_batch, looks_like_archive_path, parse_open_request_args,
-    parse_shell_handoff_contents, should_use_extract_window,
+    parse_open_request_args_ex, parse_shell_handoff_contents, should_use_extract_window,
 };
 use super::OpenPathsPayload;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -249,6 +249,26 @@ fn parse_open_request_args_keeps_compress_mode_for_folder_input() {
     assert!(!should_use_extract_window(&paths, &mode));
 
     let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
+fn parse_open_request_args_can_defer_shell_handoff_consume() {
+    let argv = [
+        "--extract".to_string(),
+        "--zinnia-shell-handoff".to_string(),
+        "/tmp/zinnia-shell-handoff-{deadbeef}.tmp".to_string(),
+    ];
+    let (paths, mode) = parse_open_request_args_ex(argv.clone(), false);
+    assert!(
+        paths.is_empty(),
+        "deferred consume must not load handoff paths"
+    );
+    assert_eq!(mode, "extract");
+
+    // Consuming a missing handoff must not panic; paths stay empty.
+    let (consumed_paths, consumed_mode) = parse_open_request_args(argv);
+    assert!(consumed_paths.is_empty());
+    assert_eq!(consumed_mode, "extract");
 }
 
 #[test]

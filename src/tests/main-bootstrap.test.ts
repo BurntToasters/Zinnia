@@ -1192,7 +1192,9 @@ describe("main bootstrap", () => {
     await loadMainModule();
 
     expect(mocks.ui.resizeWorkspaceWindow).toHaveBeenCalledWith("power");
-    expect(mocks.setupWizard.showSetupWizard).toHaveBeenCalled();
+    expect(mocks.setupWizard.showSetupWizard).toHaveBeenCalledWith({
+      skipUpdates: false,
+    });
     expect(
       mocks.ui.resizeWorkspaceWindow.mock.invocationCallOrder[0],
     ).toBeLessThan(
@@ -1310,6 +1312,142 @@ describe("main bootstrap", () => {
     expect(mocks.ui.log).toHaveBeenCalledWith(
       expect.stringContaining("1 excess path(s) were not added"),
     );
+  });
+
+  it("defers OS handoffs while Basic preparation is in progress", async () => {
+    vi.useFakeTimers();
+    try {
+      const { applyIncomingPaths } = await import("../incoming-paths");
+      const { state } = await import("../state");
+      mocks.archiveRules.validateArchivePaths.mockImplementation(
+        async (paths) =>
+          (paths as string[]).map((path) => ({ path, valid: true })),
+      );
+      mocks.runtime.mode = "extract";
+      state.inputs = ["/tmp/locked.7z"];
+      state.running = false;
+      state.operationPreparing = true;
+
+      const pending = applyIncomingPaths(
+        ["/tmp/handoff.7z"],
+        "extract",
+        "Explorer",
+      );
+      await vi.advanceTimersByTimeAsync(250);
+      expect(state.inputs).toEqual(["/tmp/locked.7z"]);
+
+      state.operationPreparing = false;
+      await vi.advanceTimersByTimeAsync(150);
+      await pending;
+
+      expect(state.inputs).toEqual(["/tmp/locked.7z", "/tmp/handoff.7z"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("defers OS handoffs while another mutator holds incomingPathsApplying", async () => {
+    vi.useFakeTimers();
+    try {
+      const {
+        applyIncomingPaths,
+        acquireIncomingPathLock,
+        releaseIncomingPathLock,
+      } = await import("../incoming-paths");
+      const { state } = await import("../state");
+      mocks.archiveRules.validateArchivePaths.mockImplementation(
+        async (paths) =>
+          (paths as string[]).map((path) => ({ path, valid: true })),
+      );
+      mocks.runtime.mode = "extract";
+      state.inputs = ["/tmp/locked.7z"];
+      state.running = false;
+      state.operationPreparing = false;
+      await acquireIncomingPathLock();
+
+      const pending = applyIncomingPaths(
+        ["/tmp/handoff.7z"],
+        "extract",
+        "Explorer",
+      );
+      await vi.advanceTimersByTimeAsync(250);
+      expect(state.inputs).toEqual(["/tmp/locked.7z"]);
+
+      releaseIncomingPathLock();
+      await vi.advanceTimersByTimeAsync(150);
+      await pending;
+
+      expect(state.inputs).toEqual(["/tmp/locked.7z", "/tmp/handoff.7z"]);
+    } finally {
+      const { releaseIncomingPathLock } = await import("../incoming-paths");
+      releaseIncomingPathLock();
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears non-extract leftovers on explicit extract handoff, then appends", async () => {
+    const { applyIncomingPaths } = await import("../incoming-paths");
+    const { state } = await import("../state");
+    mocks.archiveRules.validateArchivePaths.mockImplementation(async (paths) =>
+      (paths as string[]).map((path) => ({ path, valid: true })),
+    );
+
+    mocks.runtime.mode = "add";
+    state.inputs = ["/tmp/compress-leftover.txt"];
+    await applyIncomingPaths(["/tmp/a.7z"], "extract", "Explorer");
+    expect(state.inputs).toEqual(["/tmp/a.7z"]);
+    expect(mocks.ui.setMode).toHaveBeenCalledWith("extract");
+
+    mocks.runtime.mode = "extract";
+    await applyIncomingPaths(["/tmp/b.7z"], "extract", "Explorer");
+    expect(state.inputs).toEqual(["/tmp/a.7z", "/tmp/b.7z"]);
+  });
+
+  it("clears non-compress leftovers on compress handoff, then appends", async () => {
+    const { applyIncomingPaths } = await import("../incoming-paths");
+    const { state } = await import("../state");
+
+    mocks.runtime.mode = "extract";
+    state.inputs = ["/tmp/extract-leftover.7z"];
+    await applyIncomingPaths(["/tmp/file.txt"], "compress", "Explorer");
+    expect(state.inputs).toEqual(["/tmp/file.txt"]);
+    expect(mocks.ui.setMode).toHaveBeenCalledWith("add");
+
+    mocks.runtime.mode = "add";
+    await applyIncomingPaths(["/tmp/other.txt"], "compress", "Explorer");
+    expect(state.inputs).toEqual(["/tmp/file.txt", "/tmp/other.txt"]);
+  });
+
+  it("adds platform-flatpak early and skips setup updates on Flatpak", async () => {
+    document.body.className = "";
+    mocks.setupWizard.shouldShowSetupWizard.mockReturnValue(true);
+    mocks.setupWizard.showSetupWizard.mockResolvedValueOnce({
+      workspaceMode: "basic",
+      theme: "system",
+      autoCheckUpdates: false,
+      updateChannel: "stable",
+      osIntegrationDismissed: true,
+    });
+    setInvokeRouter((command) => {
+      if (command === "probe_7z") return undefined;
+      if (command === "get_cpu_count") return 8;
+      if (command === "get_log_dir") return "/tmp/logs";
+      if (command === "get_platform_info") return "linux";
+      if (command === "is_packaged") return true;
+      if (command === "is_flatpak") return true;
+      if (command === "get_initial_mode") return "";
+      if (command === "get_initial_paths") return [];
+      if (command === "drain_pending_paths") return [];
+      return undefined;
+    });
+
+    await loadMainModule();
+
+    expect(document.body.classList.contains("platform-flatpak")).toBe(true);
+    expect(mocks.setupWizard.showSetupWizard).toHaveBeenCalledWith({
+      skipUpdates: true,
+    });
+    expect(mocks.updater.autoCheckUpdates).not.toHaveBeenCalled();
   });
 
   it("applies platform-windows class and wires titlebar for Windows", async () => {

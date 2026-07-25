@@ -113,22 +113,48 @@ export function getMode(): "add" | "extract" | "browse" {
   return "add";
 }
 
+function resetBrowsePasswordControl(inputId: string, toggleId: string): void {
+  const input = document.getElementById(inputId) as HTMLInputElement | null;
+  const toggle = document.getElementById(toggleId) as HTMLButtonElement | null;
+  if (input) {
+    input.value = "";
+    input.type = "password";
+  }
+  if (!toggle) return;
+
+  const isIconOnly = toggle.classList.contains("basic-password-toggle--icon");
+  if (isIconOnly) {
+    const icon = toggle.querySelector<HTMLElement>("[data-lucide]");
+    icon?.setAttribute("data-lucide", "eye");
+    toggle.setAttribute("aria-label", "Show password");
+    triggerIconRefresh();
+  } else {
+    toggle.textContent = "Show";
+  }
+  toggle.setAttribute("aria-pressed", "false");
+}
+
+/** Clears Basic then Power browse password fields and resets Show/Hide toggles. */
+export function clearBrowsePasswordFields(): void {
+  resetBrowsePasswordControl(
+    "basic-browse-password",
+    "basic-toggle-browse-password",
+  );
+  resetBrowsePasswordControl("browse-password", "toggle-browse-password");
+}
+
 export function setBrowsePasswordFieldVisible(visible: boolean) {
   const field = document.getElementById(
     "browse-password-field",
   ) as HTMLElement | null;
-  const input = document.getElementById(
-    "browse-password",
-  ) as HTMLInputElement | null;
-  const toggle = document.getElementById(
-    "toggle-browse-password",
-  ) as HTMLButtonElement | null;
-  if (!field || !input || !toggle) return;
-  field.hidden = !visible;
+  if (field) {
+    field.hidden = !visible;
+  }
   if (!visible) {
-    input.value = "";
-    input.type = "password";
-    toggle.textContent = "Show";
+    // Clear Basic before Power so a later sync-to-Power cannot restore the secret.
+    clearBrowsePasswordFields();
+    const basicField = document.getElementById("basic-browse-password-field");
+    if (basicField) basicField.hidden = true;
   }
 }
 
@@ -310,8 +336,16 @@ export function renderInputs() {
     remove.className = "btn btn--ghost btn--sm";
     remove.setAttribute("aria-label", `Remove ${path}`);
     remove.innerHTML = '<i data-lucide="trash-2" class="lucide-icon"></i>';
-    remove.disabled = state.running;
+    remove.disabled =
+      state.running || state.operationPreparing || state.incomingPathsApplying;
     remove.addEventListener("click", () => {
+      if (
+        state.running ||
+        state.operationPreparing ||
+        state.incomingPathsApplying
+      ) {
+        return;
+      }
       const removedPrimary = index === 0;
       state.inputs.splice(index, 1);
       if (

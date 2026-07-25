@@ -232,6 +232,8 @@ fn windows_volume_guid_path_is_absolute(path: &str) -> bool {
 
 #[cfg(windows)]
 fn load_shell_handoff(path: &str) -> Result<Vec<String>, String> {
+    use std::io::Read;
+
     let path = std::path::Path::new(path);
     let name = path
         .file_name()
@@ -250,16 +252,40 @@ fn load_shell_handoff(path: &str) -> Result<Vec<String>, String> {
     if parent != temp {
         return Err("Windows shell handoff is outside the temporary directory.".to_string());
     }
-    let metadata = std::fs::symlink_metadata(path).map_err(|error| error.to_string())?;
-    if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_file() {
-        return Err("Windows shell handoff is not a regular file.".to_string());
+    // Open without following reparse points, deny write/delete sharing while
+    // reading, then verify the owner matches the current user before parsing.
+    let file = crate::path_safety::open_regular_file_nofollow_for_snapshot(path)?;
+    if let Err(error) = crate::fs_secure::assert_handle_owned_by_current_user(&file) {
+        drop(file);
+        if let Err(remove_error) = std::fs::remove_file(path) {
+            if remove_error.kind() != std::io::ErrorKind::NotFound {
+                eprintln!("Could not remove rejected Windows shell handoff: {remove_error}");
+            }
+        }
+        return Err(error);
     }
+    let metadata = file.metadata().map_err(|error| error.to_string())?;
     if metadata.len() > MAX_SHELL_HANDOFF_BYTES {
+        drop(file);
+        if let Err(error) = std::fs::remove_file(path) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                eprintln!("Could not remove oversized Windows shell handoff: {error}");
+            }
+        }
         return Err("Windows shell handoff exceeds the 4 MiB safety limit.".to_string());
     }
-    let result = std::fs::read_to_string(path)
-        .map_err(|error| error.to_string())
-        .and_then(|contents| parse_shell_handoff_contents(&contents));
+    let mut contents = String::new();
+    let read = file
+        .take(MAX_SHELL_HANDOFF_BYTES.saturating_add(1))
+        .read_to_string(&mut contents)
+        .map_err(|error| error.to_string());
+    // Drop the exclusive-ish handle before DeleteFile so removal can succeed.
+    let result = read.and_then(|_| {
+        if contents.len() as u64 > MAX_SHELL_HANDOFF_BYTES {
+            return Err("Windows shell handoff exceeds the 4 MiB safety limit.".to_string());
+        }
+        parse_shell_handoff_contents(&contents)
+    });
     if let Err(error) = std::fs::remove_file(path) {
         if error.kind() != std::io::ErrorKind::NotFound {
             eprintln!("Could not remove consumed Windows shell handoff: {error}");
@@ -268,7 +294,23 @@ fn load_shell_handoff(path: &str) -> Result<Vec<String>, String> {
     result
 }
 
+/// Parse launch/open argv into paths + mode.
+///
+/// When `consume_shell_handoff` is false, `--zinnia-shell-handoff` is skipped
+/// without reading or deleting the file. Secondary single-instance processes
+/// must use that mode so the primary can still load the handoff from forwarded
+/// argv (Tauri closes the secondary after forwarding).
 pub(crate) fn parse_open_request_args<I>(args: I) -> (Vec<String>, String)
+where
+    I: IntoIterator<Item = String>,
+{
+    parse_open_request_args_ex(args, true)
+}
+
+pub(crate) fn parse_open_request_args_ex<I>(
+    args: I,
+    consume_shell_handoff: bool,
+) -> (Vec<String>, String)
 where
     I: IntoIterator<Item = String>,
 {
@@ -292,6 +334,10 @@ where
                 eprintln!("Ignoring Windows shell handoff without a file path.");
                 continue;
             };
+            if !consume_shell_handoff {
+                let _ = handoff;
+                continue;
+            }
             #[cfg(windows)]
             match load_shell_handoff(&handoff) {
                 Ok(mut handoff_paths) => paths.append(&mut handoff_paths),
@@ -450,10 +496,20 @@ pub fn emit_open_urls(app: &tauri::AppHandle, urls: Vec<Url>) {
 }
 
 pub fn emit_open_paths(app: &tauri::AppHandle, argv: Vec<String>) -> bool {
+    // Primary (or sole) instance: consume Windows shell handoffs now.
     let (paths, mode) = parse_open_request_args(argv.into_iter().skip(1));
     route_open_request(app, paths, mode)
 }
 
 pub fn collect_cli_context() -> (Vec<String>, String) {
-    parse_open_request_args(std::env::args().skip(1))
+    // Do not consume shell handoffs here. A secondary single-instance process
+    // would delete the file before the primary receives forwarded argv.
+    parse_open_request_args_ex(std::env::args().skip(1), false)
+}
+
+/// Resolve launch argv including Windows shell handoffs. Call only from the
+/// primary instance (app setup / open routing), never from a process that may
+/// exit as a single-instance secondary.
+pub fn resolve_cli_context_with_handoffs() -> (Vec<String>, String) {
+    parse_open_request_args_ex(std::env::args().skip(1), true)
 }

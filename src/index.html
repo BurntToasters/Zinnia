@@ -18,6 +18,7 @@
   </head>
   <body>
     <a href="#main-content" class="skip-link">Skip to main content</a>
+    <h1 class="visually-hidden">Zinnia</h1>
     <div
       id="startup-recovery-banner"
       class="startup-recovery-banner"
@@ -88,7 +89,7 @@
       </div>
       <header class="header">
         <div class="header__brand">
-          <h1>Zinnia</h1>
+          <span class="header__title">Zinnia</span>
         </div>
         <div class="header__actions">
           <div
@@ -147,6 +148,7 @@
             rel="noopener noreferrer"
             class="btn btn--ghost btn--sm support-btn"
             id="support-link"
+            aria-label="Support Zinnia"
           >
             <i data-lucide="heart" class="lucide-icon support-heart"></i>
             <span>Support</span>
@@ -248,7 +250,7 @@
                 role="tabpanel"
                 aria-labelledby="tab-general"
               >
-                <section class="settings-section">
+                <section class="settings-section" data-update-ui>
                   <h3 class="settings-section__title">Updates</h3>
                   <div class="setting-item-pair">
                     <div class="setting-item setting-item--switch-wrap">
@@ -259,14 +261,11 @@
                           >Auto-updates</span
                         >
                         <div class="setting-desc-wrap">
-                          <label
-                            class="switch"
-                            data-update-ui
-                            aria-labelledby="title-auto-check-updates"
-                          >
+                          <label class="switch">
                             <input
                               type="checkbox"
                               id="s-auto-check-updates"
+                              aria-labelledby="title-auto-check-updates"
                               checked
                             />
                             <span class="switch__track"></span>
@@ -279,7 +278,7 @@
                       </div>
                     </div>
 
-                    <div class="setting-item" data-update-ui>
+                    <div class="setting-item">
                       <div class="setting-info">
                         <span class="setting-title">Manual update</span>
                         <span class="setting-desc"
@@ -292,7 +291,7 @@
                     </div>
                   </div>
 
-                  <div class="setting-item" data-update-ui>
+                  <div class="setting-item">
                     <div class="setting-info">
                       <span class="setting-title" id="title-update-channel"
                         >Update channel</span
@@ -372,11 +371,12 @@
                         Windows).</span
                       >
                     </div>
-                    <label
-                      class="switch"
-                      aria-labelledby="title-basic-window-effects"
-                    >
-                      <input type="checkbox" id="s-basic-window-effects" />
+                    <label class="switch">
+                      <input
+                        type="checkbox"
+                        id="s-basic-window-effects"
+                        aria-labelledby="title-basic-window-effects"
+                      />
                       <span class="switch__track"></span>
                     </label>
                   </div>
@@ -415,11 +415,12 @@
                         >OS integration stays available under its own tab.</span
                       >
                     </div>
-                    <label
-                      class="switch"
-                      aria-labelledby="title-os-integration-dismissed"
-                    >
-                      <input type="checkbox" id="s-os-integration-dismissed" />
+                    <label class="switch">
+                      <input
+                        type="checkbox"
+                        id="s-os-integration-dismissed"
+                        aria-labelledby="title-os-integration-dismissed"
+                      />
                       <span class="switch__track"></span>
                     </label>
                   </div>
@@ -437,11 +438,12 @@
                         timeout.</span
                       >
                     </div>
-                    <label
-                      class="switch"
-                      aria-labelledby="title-quick-extract-keep-warm"
-                    >
-                      <input type="checkbox" id="s-quick-extract-keep-warm" />
+                    <label class="switch">
+                      <input
+                        type="checkbox"
+                        id="s-quick-extract-keep-warm"
+                        aria-labelledby="title-quick-extract-keep-warm"
+                      />
                       <span class="switch__track"></span>
                     </label>
                   </div>
@@ -506,8 +508,12 @@
                         only.</span
                       >
                     </div>
-                    <label class="switch" aria-labelledby="title-local-logging">
-                      <input type="checkbox" id="s-local-logging" />
+                    <label class="switch">
+                      <input
+                        type="checkbox"
+                        id="s-local-logging"
+                        aria-labelledby="title-local-logging"
+                      />
                       <span class="switch__track"></span>
                     </label>
                   </div>
@@ -734,8 +740,13 @@
                         >Not bundled in this build.</span
                       >
                     </div>
-                    <label class="switch" aria-labelledby="title-sfx">
-                      <input type="checkbox" id="s-sfx" disabled />
+                    <label class="switch">
+                      <input
+                        type="checkbox"
+                        id="s-sfx"
+                        aria-labelledby="title-sfx"
+                        disabled
+                      />
                       <span class="switch__track"></span>
                     </label>
                   </div>
@@ -745,11 +756,12 @@
                         >Encrypt file names</span
                       >
                     </div>
-                    <label
-                      class="switch"
-                      aria-labelledby="title-encrypt-headers"
-                    >
-                      <input type="checkbox" id="s-encrypt-headers" />
+                    <label class="switch">
+                      <input
+                        type="checkbox"
+                        id="s-encrypt-headers"
+                        aria-labelledby="title-encrypt-headers"
+                      />
                       <span class="switch__track"></span>
                     </label>
                   </div>
@@ -763,8 +775,13 @@
                         archive.</span
                       >
                     </div>
-                    <label class="switch" aria-labelledby="title-delete-after">
-                      <input type="checkbox" id="s-delete-after" disabled />
+                    <label class="switch">
+                      <input
+                        type="checkbox"
+                        id="s-delete-after"
+                        aria-labelledby="title-delete-after"
+                        disabled
+                      />
                       <span class="switch__track"></span>
                     </label>
                   </div>
@@ -1382,6 +1399,16 @@
       <main id="main-content">
         <div id="basic-workspace" class="basic-workspace">
           <div class="basic-toolbar" id="basic-toolbar" hidden>
+            <button
+              class="basic-toolbar__back"
+              id="basic-tab-home"
+              title="Go home"
+              type="button"
+            >
+              <i data-lucide="arrow-left" class="lucide-icon"></i>
+              <span>Back</span>
+            </button>
+            <span class="basic-toolbar__separator" aria-hidden="true"></span>
             <div
               class="basic-toolbar__nav"
               role="tablist"
@@ -1389,20 +1416,12 @@
             >
               <button
                 class="basic-toolbar__tab"
-                id="basic-tab-home"
-                title="Go home"
-                type="button"
-              >
-                <i data-lucide="arrow-left" class="lucide-icon"></i>
-                <span>Back</span>
-              </button>
-              <span class="basic-toolbar__separator"></span>
-              <button
-                class="basic-toolbar__tab"
                 id="basic-tab-compress"
                 data-basic-tab="compress"
                 type="button"
                 role="tab"
+                aria-selected="false"
+                aria-controls="basic-compress"
               >
                 <i data-lucide="package" class="lucide-icon"></i>
                 <span>Compress</span>
@@ -1413,6 +1432,8 @@
                 data-basic-tab="extract"
                 type="button"
                 role="tab"
+                aria-selected="false"
+                aria-controls="basic-extract"
               >
                 <i data-lucide="archive-restore" class="lucide-icon"></i>
                 <span>Extract</span>
@@ -1423,6 +1444,8 @@
                 data-basic-tab="browse"
                 type="button"
                 role="tab"
+                aria-selected="false"
+                aria-controls="basic-browse"
               >
                 <i data-lucide="eye" class="lucide-icon"></i>
                 <span>Browse</span>
@@ -1481,7 +1504,12 @@
             </div>
           </div>
 
-          <div id="basic-compress" class="basic-view">
+          <div
+            id="basic-compress"
+            class="basic-view"
+            role="tabpanel"
+            aria-labelledby="basic-tab-compress"
+          >
             <div class="basic-view-scroll-content">
               <div class="basic-view-header">
                 <div>
@@ -1746,7 +1774,12 @@
             </div>
           </div>
 
-          <div id="basic-extract" class="basic-view">
+          <div
+            id="basic-extract"
+            class="basic-view"
+            role="tabpanel"
+            aria-labelledby="basic-tab-extract"
+          >
             <div class="basic-view-scroll-content">
               <div class="basic-view-header">
                 <div>
@@ -1927,7 +1960,12 @@
             </div>
           </div>
 
-          <div id="basic-browse" class="basic-view">
+          <div
+            id="basic-browse"
+            class="basic-view"
+            role="tabpanel"
+            aria-labelledby="basic-tab-browse"
+          >
             <div class="basic-view-header">
               <div>
                 <h2 class="basic-section-title">Browse archive</h2>
@@ -1968,9 +2006,11 @@
                 </table>
               </div>
             </div>
-            <div class="field" id="basic-browse-password-field" hidden>
-              <label for="basic-browse-password">Archive password</label>
-              <div class="password-field">
+            <div class="basic-field" id="basic-browse-password-field" hidden>
+              <label class="basic-field__label" for="basic-browse-password"
+                >Archive password</label
+              >
+              <div class="basic-input-row">
                 <input
                   id="basic-browse-password"
                   type="password"
@@ -1979,7 +2019,7 @@
                 />
                 <button
                   type="button"
-                  class="icon-btn"
+                  class="basic-password-toggle basic-password-toggle--icon"
                   id="basic-toggle-browse-password"
                   aria-label="Show password"
                 >
@@ -2298,8 +2338,8 @@
                   <button
                     class="btn btn--primary btn--shortcut"
                     id="run-action"
-                    title="Run operation (Ctrl+Enter)"
-                    aria-keyshortcuts="Control+Return"
+                    title="Run operation (Ctrl/⌘+Enter)"
+                    aria-keyshortcuts="Control+Enter Meta+Enter"
                   >
                     Run
                   </button>
@@ -2376,8 +2416,8 @@
                   <button
                     class="btn btn--primary btn--shortcut"
                     id="extract-run"
-                    title="Extract archives (Ctrl+Enter)"
-                    aria-keyshortcuts="Control+Return"
+                    title="Extract archives (Ctrl/⌘+Enter)"
+                    aria-keyshortcuts="Control+Enter Meta+Enter"
                   >
                     Extract
                   </button>

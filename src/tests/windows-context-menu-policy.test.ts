@@ -219,6 +219,27 @@ describe("Windows 11 context-menu manifest", () => {
     expect(shellSource).not.toContain("volume <= 999");
   });
 
+  it("retries Win11 sparse package removal and warns if packages remain", () => {
+    const hooks = fs.readFileSync(
+      path.resolve(process.cwd(), "src-tauri/windows/nsis-hooks.nsh"),
+      "utf8",
+    );
+    const unregister = hooks.slice(
+      hooks.indexOf("!macro ZINNIA_UNREGISTER_WIN11_CONTEXT_MENU"),
+      hooks.indexOf("!macro ZINNIA_CLEAN_SHELL_PAYLOADS"),
+    );
+    expect(unregister).toContain("for($attempt=0;$attempt -lt 2;$attempt++)");
+    expect(unregister).toContain(
+      "Zinnia AppX packages still registered after uninstall",
+    );
+    expect(unregister).toContain("zinnia_win11_unregister_ok");
+    expect(unregister).toContain(
+      "Could not fully unregister Win11 sparse context-menu packages",
+    );
+    expect(unregister).toContain("Pop $0");
+    expect(unregister).toContain("IntCmp $0 0 zinnia_win11_unregister_ok");
+  });
+
   it("avoids stacking classic HKCU verbs on top of Win11 package verbs", () => {
     const hooks = fs.readFileSync(
       path.resolve(process.cwd(), "src-tauri/windows/nsis-hooks.nsh"),
@@ -278,6 +299,11 @@ describe("Windows 11 context-menu manifest", () => {
     expect(shellSource).toContain("--zinnia-shell-handoff");
     expect(shellSource).toContain("kMaxHandoffBytes = 4 * 1024 * 1024");
     expect(shellSource).toContain("CREATE_NEW");
+    expect(shellSource).toContain(
+      "ConvertStringSecurityDescriptorToSecurityDescriptorW",
+    );
+    expect(shellSource).toContain("D:P(A;OICI;FA;;;");
+    expect(shellSource).toContain("IsValidWindowsSidString");
     expect(shellSource).not.toContain("GetTempFileNameW");
     expect(shellSource).not.toContain("kMaxPathsPerBatch");
     expect(shellSource).not.toContain("kSafeParameterChars");
@@ -288,6 +314,10 @@ describe("Windows 11 context-menu manifest", () => {
       "MAX_SHELL_HANDOFF_BYTES: u64 = 4 * 1024 * 1024",
     );
     expect(openRoutingSource).toContain("parse_shell_handoff_contents");
+    expect(openRoutingSource).toContain(
+      "open_regular_file_nofollow_for_snapshot",
+    );
+    expect(openRoutingSource).toContain("assert_handle_owned_by_current_user");
     expect(openRoutingSource).toContain("--zinnia-shell-handoff");
     expect(openRoutingSource).toContain(
       "total_paths + paths.len() > MAX_PENDING_PATHS",

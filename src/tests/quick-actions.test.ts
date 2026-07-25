@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   openSelectiveExtractModal: vi.fn().mockResolvedValue(undefined),
   applyPreset: vi.fn(),
   onCompressionOptionChange: vi.fn(),
+  resolveOutputArchiveAutofill: vi.fn(),
   getCompressionSecuritySupport: vi.fn(() => ({
     password: true,
     encryptHeaders: true,
@@ -34,6 +35,11 @@ vi.mock("../presets", () => ({
   onCompressionOptionChange: mocks.onCompressionOptionChange,
 }));
 
+vi.mock("../extract-path", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../extract-path")>()),
+  resolveOutputArchiveAutofill: mocks.resolveOutputArchiveAutofill,
+}));
+
 vi.mock("../compression-security", () => ({
   getCompressionSecuritySupport: mocks.getCompressionSecuritySupport,
 }));
@@ -48,6 +54,15 @@ beforeEach(() => {
   format.value = "7z";
   const password = document.getElementById("password") as HTMLInputElement;
   password.value = "";
+  (document.getElementById("extract-password") as HTMLInputElement).value = "";
+  const archiveName =
+    (document.getElementById("archive-name") as HTMLInputElement | null) ??
+    document.body.appendChild(document.createElement("input"));
+  archiveName.id = "archive-name";
+  archiveName.value = "";
+  (document.getElementById("output-path") as HTMLInputElement).value = "";
+  state.inputs = [];
+  state.lastAutoOutputPath = null;
   const feedback = document.getElementById(
     "quick-action-feedback",
   ) as HTMLElement;
@@ -61,6 +76,8 @@ beforeEach(() => {
   mocks.openSelectiveExtractModal.mockClear();
   mocks.applyPreset.mockClear();
   mocks.onCompressionOptionChange.mockClear();
+  mocks.resolveOutputArchiveAutofill.mockReset();
+  mocks.resolveOutputArchiveAutofill.mockReturnValue(null);
   mocks.getCompressionSecuritySupport.mockClear();
   mocks.getCompressionSecuritySupport.mockReturnValue({
     password: true,
@@ -76,6 +93,33 @@ describe("executeQuickAction", () => {
     expect(mocks.runAction).toHaveBeenCalled();
     expect(state.lastQuickActionByMode.add).toBe("add-run-balanced");
   });
+
+  it.each(["add-run-balanced", "add-run-ultra"])(
+    "rederives an auto output extension after %s applies its preset",
+    async (action) => {
+      state.inputs = ["/tmp/input"];
+      state.lastAutoOutputPath = "/tmp/input.zip";
+      (document.getElementById("output-path") as HTMLInputElement).value =
+        "/tmp/input.zip";
+      mocks.applyPreset.mockImplementationOnce(() => {
+        (document.getElementById("format") as HTMLSelectElement).value = "7z";
+      });
+      mocks.resolveOutputArchiveAutofill.mockReturnValueOnce("/tmp/input.7z");
+
+      await executeQuickAction(action);
+
+      expect(mocks.resolveOutputArchiveAutofill).toHaveBeenCalledWith(
+        "/tmp/input.zip",
+        "/tmp/input.zip",
+        ["/tmp/input"],
+        "7z",
+        undefined,
+      );
+      expect(
+        (document.getElementById("output-path") as HTMLInputElement).value,
+      ).toBe("/tmp/input.7z");
+    },
+  );
 
   it("shows feedback when repeating without prior quick action", async () => {
     await executeQuickAction("add-repeat");
@@ -117,6 +161,26 @@ describe("executeQuickAction", () => {
     await executeQuickAction("extract-test-then-extract");
 
     expect(mocks.runAction).toHaveBeenCalled();
+  });
+
+  it("preserves an extract password only between test and extract", async () => {
+    const app = document.getElementById("app") as HTMLElement;
+    app.dataset.mode = "extract";
+    const password = document.getElementById(
+      "extract-password",
+    ) as HTMLInputElement;
+    password.value = "transient-secret";
+    mocks.testArchive.mockImplementationOnce(async () => {
+      password.value = "";
+      return "passed";
+    });
+    mocks.runAction.mockImplementationOnce(async () => {
+      expect(password.value).toBe("transient-secret");
+    });
+
+    await executeQuickAction("extract-test-then-extract");
+
+    expect(password.value).toBe("");
   });
 
   it("runs encrypt quick action when password is present", async () => {

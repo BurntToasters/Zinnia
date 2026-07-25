@@ -37,7 +37,7 @@ describe("cross-platform release policy", () => {
     const signer = read("scripts/gpg-sign.js");
     expect(signer).toContain('REQUIRED_LINUX_TARGETS || ""');
     expect(signer).toContain(
-      'String(process.env.REQUIRE_LINUX_AARCH64 || "").trim()',
+      "isExplicitTruthy(\n  process.env.REQUIRE_LINUX_AARCH64",
     );
     expect(signer).toContain("requiredLinuxTargetKeys(");
     expect(signer).toContain(
@@ -77,6 +77,7 @@ describe("cross-platform release policy", () => {
     const manifest = read("run.rosie.zinnia.yml");
     expect(manifest).toContain("--filesystem=/run/media");
     expect(manifest).toContain("--filesystem=/media");
+    expect(manifest).toContain("--filesystem=/mnt");
   });
 
   it("uploads checksum manifests for prerelease target keys", () => {

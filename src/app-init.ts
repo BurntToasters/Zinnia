@@ -38,7 +38,13 @@ import { shouldShowSetupWizard } from "./setup-wizard";
 import { initBasicWorkspace, handleBasicDragDrop } from "./basic";
 import { refreshOsIntegrationStatus } from "./os-integration";
 import { refreshIcons } from "./icons";
-import { allPathsAreArchives, applyIncomingPaths } from "./incoming-paths";
+import {
+  allPathsAreArchives,
+  applyIncomingPaths,
+  acquireIncomingPathLock,
+  isIncomingPathBusy,
+  releaseIncomingPathLock,
+} from "./incoming-paths";
 import {
   wireEvents,
   openShortcutsModal,
@@ -182,9 +188,20 @@ export async function init() {
   state.lastPersistedSettings = { ...loadedSettings.settings };
   state.settingsExtras = { ...loadedSettings.extras };
 
+  let isFlatpak = false;
+  try {
+    isFlatpak = await invoke<boolean>("is_flatpak");
+    if (isFlatpak) {
+      document.body.classList.add("platform-flatpak");
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    devLog(`Unable to detect Flatpak context: ${msg}`);
+  }
+
   if (shouldShowSetupWizard()) {
     try {
-      await runSetupWizardFlow();
+      await runSetupWizardFlow({ skipUpdates: isFlatpak });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       // Don't abort app startup: Skip / finish should still leave a usable UI.
@@ -290,19 +307,11 @@ export async function init() {
     devLog(`Unable to read OS integration status: ${msg}`);
   });
 
-  void invoke<boolean>("is_flatpak")
-    .then((flatpak) => {
-      if (flatpak) {
-        document.body.classList.add("platform-flatpak");
-      } else if (state.currentSettings.autoCheckUpdates) {
-        void autoCheckUpdates();
-      }
-    })
-    .catch((err) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      devLog(`Unable to detect Flatpak context: ${msg}`);
-      if (state.currentSettings.autoCheckUpdates) void autoCheckUpdates();
-    });
+  // Flatpak has no in-app updater; skip auto-check using the flag resolved
+  // before the setup wizard so we do not race a second is_flatpak probe.
+  if (!isFlatpak && state.currentSettings.autoCheckUpdates) {
+    void autoCheckUpdates();
+  }
 
   let initialMode = "";
   let initialPaths: string[] = [];
@@ -333,7 +342,9 @@ export async function init() {
   const appWindow = getCurrentWebviewWindow();
   await appWindow.onDragDropEvent(async (event) => {
     try {
-      if (state.running) {
+      const isDrop = event.payload.type === "drop";
+      // Enter/over/leave still ignore while busy; drops wait on the lock.
+      if (!isDrop && (state.running || isIncomingPathBusy())) {
         dom.inputList.classList.remove("list--dragover");
         handleBasicDragDrop("leave");
         return;
@@ -349,15 +360,18 @@ export async function init() {
         dom.inputList.classList.add("list--dragover");
       } else if (event.payload.type === "leave") {
         dom.inputList.classList.remove("list--dragover");
-      } else if (event.payload.type === "drop") {
+      } else if (isDrop) {
         dom.inputList.classList.remove("list--dragover");
         const paths = event.payload.paths;
-        if (paths.length) {
+        if (!paths.length) return;
+        await acquireIncomingPathLock();
+        try {
           const previousPrimary = state.inputs[0] ?? null;
+          const maxIncoming = 4096;
           for (const path of paths) {
-            if (!state.inputs.includes(path)) {
-              state.inputs.push(path);
-            }
+            if (state.inputs.includes(path)) continue;
+            if (state.inputs.length >= maxIncoming) break;
+            state.inputs.push(path);
           }
           if (
             getMode() === "browse" &&
@@ -366,13 +380,20 @@ export async function init() {
             setBrowsePasswordFieldVisible(false);
           }
           renderInputs();
-          if (
-            getMode() === "browse" &&
-            state.inputs.length > 0 &&
-            (await allPathsAreArchives([state.inputs[0]]))
-          ) {
-            void browseArchive();
+          if (getMode() === "browse" && state.inputs.length > 0) {
+            // Snapshot before the async archive probe so a concurrent mode or
+            // input change cannot browse a different primary after await.
+            const primary = state.inputs[0];
+            if (
+              (await allPathsAreArchives([primary])) &&
+              getMode() === "browse" &&
+              state.inputs[0] === primary
+            ) {
+              void browseArchive();
+            }
           }
+        } finally {
+          releaseIncomingPathLock();
         }
       }
     } catch (err) {

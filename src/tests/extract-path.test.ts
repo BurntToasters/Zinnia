@@ -186,6 +186,13 @@ describe("deriveOutputArchivePath", () => {
     );
   });
 
+  it("maps stream formats to their conventional extensions", () => {
+    expect(deriveOutputArchivePath(["/tmp/file"], "gzip")).toBe("/tmp/file.gz");
+    expect(deriveOutputArchivePath(["/tmp/file"], "bzip2")).toBe(
+      "/tmp/file.bz2",
+    );
+  });
+
   it("returns null for empty inputs", () => {
     expect(deriveOutputArchivePath([], "7z")).toBeNull();
   });

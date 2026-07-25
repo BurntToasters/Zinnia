@@ -13,6 +13,7 @@ import {
   setWorkspaceMode,
   getUiDensity,
   setUiDensity,
+  clearBrowsePasswordFields,
   setBrowsePasswordFieldVisible,
   setStatus,
   setProgress,
@@ -234,6 +235,27 @@ describe("workspace and density", () => {
     expect(state.currentSettings.workspaceMode).toBe("power");
   });
 
+  it("blocks workspace and settings mode changes during a run", () => {
+    state.running = true;
+    state.currentSettings.workspaceMode = "power";
+
+    setWorkspaceMode("power", { persist: false });
+
+    expect(getWorkspaceMode()).toBe("basic");
+    expect(state.currentSettings.workspaceMode).toBe("basic");
+  });
+
+  it("blocks workspace changes during Basic operation preparation", () => {
+    state.operationPreparing = true;
+    state.currentSettings.workspaceMode = "power";
+
+    setWorkspaceMode("power", { persist: false });
+
+    expect(getWorkspaceMode()).toBe("basic");
+    expect(state.currentSettings.workspaceMode).toBe("basic");
+    state.operationPreparing = false;
+  });
+
   it("sets data-window-fx from supports + basic effects", async () => {
     document.documentElement.setAttribute("data-theme", "dark");
     state.currentSettings.basicWindowEffects = true;
@@ -371,6 +393,44 @@ describe("workspace and density", () => {
 });
 
 describe("setBrowsePasswordFieldVisible", () => {
+  function ensureBasicBrowsePasswordDom(): {
+    field: HTMLElement;
+    input: HTMLInputElement;
+    toggle: HTMLButtonElement;
+  } {
+    let field = document.getElementById(
+      "basic-browse-password-field",
+    ) as HTMLElement | null;
+    if (!field) {
+      field = document.createElement("div");
+      field.id = "basic-browse-password-field";
+      document.body.appendChild(field);
+    }
+    let input = document.getElementById(
+      "basic-browse-password",
+    ) as HTMLInputElement | null;
+    if (!input) {
+      input = document.createElement("input");
+      input.id = "basic-browse-password";
+      input.type = "password";
+      document.body.appendChild(input);
+    }
+    let toggle = document.getElementById(
+      "basic-toggle-browse-password",
+    ) as HTMLButtonElement | null;
+    if (!toggle) {
+      toggle = document.createElement("button");
+      toggle.id = "basic-toggle-browse-password";
+      toggle.className = "basic-password-toggle basic-password-toggle--icon";
+      toggle.setAttribute("aria-label", "Show password");
+      const icon = document.createElement("i");
+      icon.dataset.lucide = "eye";
+      toggle.appendChild(icon);
+      document.body.appendChild(toggle);
+    }
+    return { field, input, toggle };
+  }
+
   it("shows the browse password field", () => {
     const field = document.getElementById("browse-password-field")!;
     field.hidden = true;
@@ -397,6 +457,75 @@ describe("setBrowsePasswordFieldVisible", () => {
     expect(input.value).toBe("");
     expect(input.type).toBe("password");
     expect(toggle.textContent).toBe("Show");
+  });
+
+  it("hides Power browse password and clears Basic too", () => {
+    const powerField = document.getElementById("browse-password-field")!;
+    const power = document.getElementById(
+      "browse-password",
+    ) as HTMLInputElement;
+    const powerToggle = document.getElementById(
+      "toggle-browse-password",
+    ) as HTMLButtonElement;
+    const basic = ensureBasicBrowsePasswordDom();
+
+    powerField.hidden = false;
+    basic.field.hidden = false;
+    power.value = "power-secret";
+    power.type = "text";
+    powerToggle.textContent = "Hide";
+    basic.input.value = "basic-secret";
+    basic.input.type = "text";
+    basic.toggle.setAttribute("aria-label", "Hide password");
+    basic.toggle
+      .querySelector("[data-lucide]")
+      ?.setAttribute("data-lucide", "eye-off");
+
+    setBrowsePasswordFieldVisible(false);
+
+    expect(powerField.hidden).toBe(true);
+    expect(basic.field.hidden).toBe(true);
+    expect(power.value).toBe("");
+    expect(power.type).toBe("password");
+    expect(powerToggle.textContent).toBe("Show");
+    expect(basic.input.value).toBe("");
+    expect(basic.input.type).toBe("password");
+    expect(basic.toggle.getAttribute("aria-label")).toBe("Show password");
+  });
+
+  it("clearBrowsePasswordFields clears Basic before Power", () => {
+    const power = document.getElementById(
+      "browse-password",
+    ) as HTMLInputElement;
+    const basic = ensureBasicBrowsePasswordDom();
+    const order: string[] = [];
+    const basicDesc = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )!;
+    const spy = vi
+      .spyOn(HTMLInputElement.prototype, "value", "set")
+      .mockImplementation(function (this: HTMLInputElement, next: string) {
+        if (
+          this.id === "basic-browse-password" ||
+          this.id === "browse-password"
+        ) {
+          order.push(this.id);
+        }
+        basicDesc.set!.call(this, next);
+      });
+
+    basic.input.value = "basic-secret";
+    power.value = "power-secret";
+    order.length = 0;
+
+    clearBrowsePasswordFields();
+
+    spy.mockRestore();
+    expect(order[0]).toBe("basic-browse-password");
+    expect(order).toContain("browse-password");
+    expect(basic.input.value).toBe("");
+    expect(power.value).toBe("");
   });
 });
 

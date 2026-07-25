@@ -10,6 +10,7 @@
 #include <shlobj.h>
 #include <shobjidl.h>
 #include <shlwapi.h>
+#include <sddl.h>
 #include <string>
 #include <vector>
 #include <new>
@@ -22,6 +23,7 @@
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "advapi32.lib")
 
 // Root submenu "Zinnia"
 // {B7E2A91C-6D4F-4A3E-9C1B-8F0E2D3A4B5C}
@@ -275,6 +277,87 @@ static bool Utf8PathLine(const std::wstring& path, std::string* out) {
   return true;
 }
 
+// Match Rust fs_secure::is_valid_windows_sid_string before SDDL interpolation.
+static bool IsValidWindowsSidString(const std::wstring& sid) {
+  constexpr size_t kMaxSidChars = 256;
+  if (sid.size() < 7 || sid.size() > kMaxSidChars) return false;
+  if (sid.compare(0, 4, L"S-1-") != 0) return false;
+  size_t i = 4;
+  auto read_digits = [&]() -> bool {
+    if (i >= sid.size() || sid[i] < L'0' || sid[i] > L'9') return false;
+    while (i < sid.size() && sid[i] >= L'0' && sid[i] <= L'9') ++i;
+    return true;
+  };
+  if (!read_digits()) return false;
+  size_t subauths = 0;
+  while (i < sid.size()) {
+    if (sid[i] != L'-') return false;
+    ++i;
+    if (!read_digits()) return false;
+    ++subauths;
+  }
+  return subauths >= 1;
+}
+
+static HRESULT CurrentUserSidString(std::wstring* sid_text) {
+  if (!sid_text) return E_POINTER;
+  HANDLE token = nullptr;
+  if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+    return HRESULT_FROM_WIN32(GetLastError());
+  }
+  DWORD needed = 0;
+  if (!GetTokenInformation(token, TokenUser, nullptr, 0, &needed) &&
+      GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
+    const DWORD error = GetLastError();
+    CloseHandle(token);
+    return HRESULT_FROM_WIN32(error);
+  }
+  if (needed == 0) {
+    CloseHandle(token);
+    return E_FAIL;
+  }
+  std::vector<BYTE> buffer(needed);
+  if (!GetTokenInformation(token, TokenUser, buffer.data(), needed, &needed)) {
+    const DWORD error = GetLastError();
+    CloseHandle(token);
+    return HRESULT_FROM_WIN32(error);
+  }
+  CloseHandle(token);
+  const auto* user = reinterpret_cast<TOKEN_USER*>(buffer.data());
+  LPWSTR sid_raw = nullptr;
+  if (!ConvertSidToStringSidW(user->User.Sid, &sid_raw) || !sid_raw) {
+    return HRESULT_FROM_WIN32(GetLastError());
+  }
+  *sid_text = sid_raw;
+  LocalFree(sid_raw);
+  if (!IsValidWindowsSidString(*sid_text)) return E_FAIL;
+  return S_OK;
+}
+
+// Private DACL matching Rust fs_secure::private_directory_sddl: current user
+// owner, protected DACL, full control for current user + SYSTEM.
+static HRESULT CreatePrivateHandoffSecurityAttributes(
+    SECURITY_ATTRIBUTES* attributes, PSECURITY_DESCRIPTOR* descriptor_out) {
+  if (!attributes || !descriptor_out) return E_POINTER;
+  *descriptor_out = nullptr;
+  std::wstring sid;
+  HRESULT hr = CurrentUserSidString(&sid);
+  if (FAILED(hr)) return hr;
+  const std::wstring sddl =
+      L"O:" + sid + L"D:P(A;OICI;FA;;;" + sid + L")(A;OICI;FA;;;SY)";
+  PSECURITY_DESCRIPTOR descriptor = nullptr;
+  if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+          sddl.c_str(), SDDL_REVISION_1, &descriptor, nullptr) ||
+      !descriptor) {
+    return HRESULT_FROM_WIN32(GetLastError());
+  }
+  attributes->nLength = sizeof(SECURITY_ATTRIBUTES);
+  attributes->lpSecurityDescriptor = descriptor;
+  attributes->bInheritHandle = FALSE;
+  *descriptor_out = descriptor;
+  return S_OK;
+}
+
 // Persist the complete Explorer selection before spawning Zinnia. One command
 // launch is then sufficient regardless of selection size, so a later batch
 // launch can never partially deliver a request.
@@ -303,13 +386,22 @@ static HRESULT WriteShellHandoff(const std::vector<std::wstring>& paths,
   }
   const std::wstring name = std::wstring(temp.data()) +
       L"zinnia-shell-handoff-" + guid_text + L".tmp";
+  SECURITY_ATTRIBUTES attributes = {};
+  PSECURITY_DESCRIPTOR descriptor = nullptr;
+  HRESULT sec_hr =
+      CreatePrivateHandoffSecurityAttributes(&attributes, &descriptor);
+  if (FAILED(sec_hr)) return sec_hr;
   // CREATE_NEW avoids a temp-file replacement window before the Rust process
-  // validates and consumes the payload.
-  HANDLE file = CreateFileW(name.c_str(), GENERIC_WRITE, 0, nullptr,
+  // validates and consumes the payload. Explicit private SDDL avoids inheriting
+  // a world-writable Temp DACL.
+  HANDLE file = CreateFileW(name.c_str(), GENERIC_WRITE, 0, &attributes,
       CREATE_NEW, FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_WRITE_THROUGH, nullptr);
   if (file == INVALID_HANDLE_VALUE) {
-    return HRESULT_FROM_WIN32(GetLastError());
+    const DWORD create_error = GetLastError();
+    LocalFree(descriptor);
+    return HRESULT_FROM_WIN32(create_error);
   }
+  LocalFree(descriptor);
   DWORD written = 0;
   const bool wrote = payload.size() <= MAXDWORD &&
       WriteFile(file, payload.data(), static_cast<DWORD>(payload.size()), &written, nullptr) &&

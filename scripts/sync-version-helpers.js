@@ -38,6 +38,44 @@ export function updateWindowsResourceFlags(resource, version) {
   return resource.replace(pattern, flagsBlock);
 }
 
+export function updateWindowsResourceVersion(resource, version) {
+  const numericVersion = windowsPackageVersionFromSemver(version).replaceAll(
+    ".",
+    ",",
+  );
+  let updated = updateWindowsResourceFlags(resource, version);
+  const replacements = [
+    [/^ FILEVERSION .+$/m, ` FILEVERSION ${numericVersion}`, "FILEVERSION"],
+    [
+      /^ PRODUCTVERSION .+$/m,
+      ` PRODUCTVERSION ${numericVersion}`,
+      "PRODUCTVERSION",
+    ],
+    [
+      /^      VALUE "FileVersion", ".*\\0"$/m,
+      `      VALUE "FileVersion", "${version}\\0"`,
+      'VALUE "FileVersion"',
+    ],
+    [
+      /^      VALUE "ProductVersion", ".*\\0"$/m,
+      `      VALUE "ProductVersion", "${version}\\0"`,
+      'VALUE "ProductVersion"',
+    ],
+  ];
+  for (const [pattern, replacement, label] of replacements) {
+    const matches = updated.match(
+      new RegExp(pattern.source, `${pattern.flags}g`),
+    );
+    if (matches?.length !== 1) {
+      throw new Error(
+        `Windows resource ${label} field must appear exactly once; found ${matches?.length ?? 0}`,
+      );
+    }
+    updated = updated.replace(pattern, replacement);
+  }
+  return updated;
+}
+
 const WINDOWS_SHELL_RESOURCES = Object.freeze({
   "windows/shell/out/zinnia_shell.dll": "zinnia_shell.dll",
   "windows/shell/out/zinnia_extract_shell.dll": "zinnia_extract_shell.dll",

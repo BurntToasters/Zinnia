@@ -43,7 +43,10 @@ pub fn create_private_dir(path: &Path) -> io::Result<()> {
 pub fn create_inheriting_stage_dir(path: &Path) -> io::Result<()> {
     #[cfg(unix)]
     {
-        create_private_dir(path)
+        use std::os::unix::fs::DirBuilderExt;
+        // Owner-only while the stage holds in-progress extract/compress output.
+        // Published paths receive the destination parent's mode at commit time.
+        std::fs::DirBuilder::new().mode(0o700).create(path)
     }
 
     #[cfg(windows)]
@@ -55,6 +58,24 @@ pub fn create_inheriting_stage_dir(path: &Path) -> io::Result<()> {
     {
         std::fs::create_dir(path)
     }
+}
+
+/// After an atomic extract-root rename, match the destination parent's mode so
+/// a private 0o700 stage does not leave a permanently restrictive directory.
+#[cfg(unix)]
+pub fn apply_parent_directory_mode(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no parent"))?;
+    let mode = std::fs::metadata(parent)?.permissions().mode() & 0o7777;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+}
+
+#[cfg(not(unix))]
+pub fn apply_parent_directory_mode(_path: &Path) -> io::Result<()> {
+    Ok(())
 }
 
 /// Remove an app-owned directory tree, clearing Windows read-only attributes
@@ -161,6 +182,37 @@ pub fn sync_directory(path: &Path) -> Result<(), String> {
 }
 
 #[cfg(any(windows, test))]
+const MAX_WINDOWS_SID_CHARS: usize = 256;
+
+/// Strict SID check before interpolating into SDDL. Rejects `)`, spaces,
+/// letters in subauthorities, and other injection shapes. Matches
+/// `^S-1-[0-9]+(-[0-9]+)+$` with a 256-character ceiling.
+#[cfg(any(windows, test))]
+fn is_valid_windows_sid_string(sid: &str) -> bool {
+    if sid.len() < 7 || sid.len() > MAX_WINDOWS_SID_CHARS {
+        return false;
+    }
+    let Some(rest) = sid.strip_prefix("S-1-") else {
+        return false;
+    };
+    let mut parts = rest.split('-');
+    let Some(authority) = parts.next() else {
+        return false;
+    };
+    if authority.is_empty() || !authority.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    let mut subauths = 0usize;
+    for part in parts {
+        if part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit()) {
+            return false;
+        }
+        subauths += 1;
+    }
+    subauths >= 1
+}
+
+#[cfg(any(windows, test))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WindowsUserIdentity {
     /// SID string, e.g. `S-1-5-21-...`
@@ -202,7 +254,7 @@ fn parse_whoami_user_csv(line: &str) -> Result<WindowsUserIdentity, String> {
     if account.is_empty() {
         return Err(format!("Could not parse account from whoami: {line}"));
     }
-    if !sid.starts_with("S-1-") || sid.len() < 7 {
+    if !is_valid_windows_sid_string(sid) {
         return Err(format!(
             "Could not parse current user SID from whoami: {line}"
         ));
@@ -257,7 +309,10 @@ fn decode_windows_command_file(bytes: &[u8]) -> Result<String, String> {
 }
 
 #[cfg(windows)]
-fn run_hidden_output(program: &str, args: &[&str]) -> io::Result<std::process::Output> {
+fn run_hidden_output(
+    program: impl AsRef<std::ffi::OsStr>,
+    args: &[&str],
+) -> io::Result<std::process::Output> {
     use std::os::windows::process::CommandExt;
     // Zinnia is a windows_subsystem app; without CREATE_NO_WINDOW the
     // `whoami` fallback flashes a console during staging ACL setup.
@@ -265,6 +320,30 @@ fn run_hidden_output(program: &str, args: &[&str]) -> io::Result<std::process::O
         .args(args)
         .creation_flags(CREATE_NO_WINDOW)
         .output()
+}
+
+/// Resolve `%SystemRoot%\System32\whoami.exe` and fail closed if missing.
+/// Never search PATH: a hijacked whoami on PATH could inject SDDL via SID text.
+#[cfg(windows)]
+fn system32_whoami_path() -> Result<std::path::PathBuf, String> {
+    let system_root = std::env::var_os("SystemRoot")
+        .ok_or_else(|| "SystemRoot is unset; cannot resolve System32\\whoami.exe".to_string())?;
+    let path = std::path::PathBuf::from(system_root)
+        .join("System32")
+        .join("whoami.exe");
+    let metadata = std::fs::symlink_metadata(&path).map_err(|error| {
+        format!(
+            "System32\\whoami.exe not found at {}: {error}",
+            path.display()
+        )
+    })?;
+    if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_file() {
+        return Err(format!(
+            "System32\\whoami.exe at {} is not a regular file",
+            path.display()
+        ));
+    }
+    Ok(path)
 }
 
 #[cfg(windows)]
@@ -337,7 +416,7 @@ fn current_user_sid_from_token() -> Result<String, String> {
         let wide = std::slice::from_raw_parts(sid_str, len);
         let sid = String::from_utf16_lossy(wide);
         LocalFree(sid_str.cast());
-        if !sid.starts_with("S-1-") || sid.len() < 7 {
+        if !is_valid_windows_sid_string(&sid) {
             return Err(format!("Process token returned an invalid SID: {sid}"));
         }
         Ok(sid)
@@ -354,7 +433,8 @@ fn current_user_identity() -> Result<WindowsUserIdentity, String> {
         return Ok(identity.clone());
     }
     // Prefer the process token SID (Win32) over whoami / USERNAME env.
-    // whoami remains a documented fallback when token APIs are unavailable.
+    // whoami remains a documented fallback when token APIs are unavailable;
+    // it must be the absolute System32 binary, never a PATH search.
     let identity = match current_user_sid_from_token() {
         Ok(sid) => WindowsUserIdentity {
             sid,
@@ -362,8 +442,11 @@ fn current_user_identity() -> Result<WindowsUserIdentity, String> {
             account: String::new(),
         },
         Err(token_error) => {
+            let whoami = system32_whoami_path().map_err(|path_error| {
+                format!("token SID unavailable ({token_error}); whoami path failed: {path_error}")
+            })?;
             let output =
-                run_hidden_output("whoami", &["/user", "/fo", "csv", "/nh"]).map_err(|e| {
+                run_hidden_output(&whoami, &["/user", "/fo", "csv", "/nh"]).map_err(|e| {
                     format!("token SID unavailable ({token_error}); whoami failed to start: {e}")
                 })?;
             if !output.status.success() {
@@ -381,6 +464,44 @@ fn current_user_identity() -> Result<WindowsUserIdentity, String> {
     };
     let _ = CACHED.set(identity.clone());
     Ok(identity)
+}
+
+/// Verify that an open file/directory handle is owned by the current user.
+/// Used for Windows shell handoff consumption after a nofollow open.
+#[cfg(windows)]
+pub(crate) fn assert_handle_owned_by_current_user(file: &std::fs::File) -> Result<(), String> {
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
+
+    let expected_sid = current_user_identity()?.sid;
+    let storage = read_directory_security_descriptor(file).map_err(|error| {
+        format!("Could not read object security descriptor for owner check: {error}")
+    })?;
+    let descriptor = storage.as_ptr().cast_mut().cast();
+    let owner = security_descriptor_owner(descriptor)?;
+    unsafe {
+        let mut sid_str: windows_sys::core::PWSTR = std::ptr::null_mut();
+        if ConvertSidToStringSidW(owner, &mut sid_str) == 0 || sid_str.is_null() {
+            return Err(format!(
+                "ConvertSidToStringSidW failed during owner check: {}",
+                io::Error::last_os_error()
+            ));
+        }
+        let mut len = 0usize;
+        while *sid_str.add(len) != 0 {
+            len += 1;
+        }
+        let wide = std::slice::from_raw_parts(sid_str, len);
+        let owner_sid = String::from_utf16_lossy(wide);
+        LocalFree(sid_str.cast());
+        if !is_valid_windows_sid_string(&owner_sid) {
+            return Err(format!("Object owner SID is invalid: {owner_sid}"));
+        }
+        if owner_sid != expected_sid {
+            return Err("Object owner is not the current user.".to_string());
+        }
+    }
+    Ok(())
 }
 
 #[cfg(any(windows, test))]
@@ -862,6 +983,28 @@ mod tests {
     }
 
     #[test]
+    fn windows_sid_string_rejects_injection_and_malformed_shapes() {
+        assert!(is_valid_windows_sid_string("S-1-5-18"));
+        assert!(is_valid_windows_sid_string("S-1-5-21-1-2-3-1001"));
+        assert!(!is_valid_windows_sid_string(""));
+        assert!(!is_valid_windows_sid_string("S-1-5"));
+        assert!(!is_valid_windows_sid_string("S-1-"));
+        assert!(!is_valid_windows_sid_string("S-1-5-21-1)(A;;FA;;;WD"));
+        assert!(!is_valid_windows_sid_string("S-1-5-21 1001"));
+        assert!(!is_valid_windows_sid_string("S-1-5-21-abc-1001"));
+        assert!(!is_valid_windows_sid_string("S-1-5-21-1-2-3-1001 "));
+        assert!(!is_valid_windows_sid_string(&format!(
+            "S-1-5-{}",
+            "1".repeat(300)
+        )));
+        assert!(parse_whoami_user_csv(r#""u","S-1-5-21-1)(A;;FA;;;WD)""#).is_err());
+        assert!(parse_whoami_user_csv(r#""u","S-1-5-21 1001""#).is_err());
+        assert!(parse_whoami_user_csv(r#""u","S-1-5-21-abc""#).is_err());
+        assert!(parse_whoami_user_csv(r#""u","""#).is_err());
+        assert!(parse_whoami_user_csv(r#""u","S-1-5""#).is_err());
+    }
+
+    #[test]
     fn decode_windows_command_file_accepts_utf8_and_utf16() {
         assert_eq!(
             decode_windows_command_file(b"path\r\nD:P(A;;FA;;;SY)\r\n").unwrap(),
@@ -1109,17 +1252,37 @@ mod tests {
     #[test]
     fn current_user_sid_from_token_returns_sid_string() {
         let sid = current_user_sid_from_token().expect("process token SID");
-        assert!(
-            sid.starts_with("S-1-") && sid.len() >= 7,
-            "unexpected SID: {sid}"
-        );
+        assert!(is_valid_windows_sid_string(&sid), "unexpected SID: {sid}");
     }
 
     #[cfg(windows)]
     #[test]
     fn current_user_identity_prefers_token_sid() {
         let identity = current_user_identity().expect("identity");
-        assert!(identity.sid.starts_with("S-1-"));
-        assert!(identity.sid.len() >= 7);
+        assert!(is_valid_windows_sid_string(&identity.sid));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn system32_whoami_path_resolves_under_system_root() {
+        let path = system32_whoami_path().expect("System32 whoami");
+        assert!(path.ends_with(std::path::Path::new("System32").join("whoami.exe")));
+        assert!(path.is_file());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn private_file_handle_is_owned_by_current_user() {
+        let mut random = [0u8; 8];
+        getrandom::fill(&mut random).expect("random owner-check suffix");
+        let suffix: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+        let dir = std::env::temp_dir().join(format!("zinnia-owner-check-{suffix}"));
+        create_private_dir(&dir).expect("private dir");
+        let path = dir.join("owned.tmp");
+        std::fs::write(&path, b"owned").expect("write owned file");
+        let file = std::fs::File::open(&path).expect("open owned file");
+        assert_handle_owned_by_current_user(&file).expect("current-user owner");
+        drop(file);
+        std::fs::remove_dir_all(&dir).expect("cleanup owner-check tree");
     }
 }

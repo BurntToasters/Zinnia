@@ -4,7 +4,6 @@
   flex: 1;
   min-height: 0;
 }
-
 .grid.show-activity {
   grid-template-columns: minmax(0, 1fr) minmax(200px, 340px);
 }
@@ -129,7 +128,7 @@
 
 .quick-actions__feedback {
   font-size: 0.6875rem;
-  color: var(--danger);
+  color: var(--danger-fg);
   min-height: 14px;
 }
 
@@ -297,7 +296,7 @@ input:focus-visible,
 select:focus-visible {
   outline: none;
   border-color: var(--accent-fg);
-  box-shadow: 0 0 0 2px var(--accent-bg);
+  box-shadow: 0 0 0 2px var(--accent-fg);
 }
 
 input:disabled,
@@ -576,6 +575,9 @@ input[type="number"] {
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+  direction: rtl;
+  unicode-bidi: plaintext;
+  text-align: left;
 }
 
 .list__item-badge {
@@ -605,7 +607,7 @@ input[type="number"] {
 }
 
 .list__item-badge--invalid {
-  color: var(--danger);
+  color: var(--danger-fg);
   background: var(--danger-bg);
   border-color: var(--danger-border);
 }
@@ -634,7 +636,7 @@ input[type="number"] {
 }
 
 .list__item button:hover {
-  color: var(--danger);
+  color: var(--danger-fg);
   background: var(--danger-bg);
 }
 
@@ -689,6 +691,10 @@ input[type="number"] {
   border: 1px solid var(--shortcut-chip-border);
   border-radius: 999px;
   padding: 2px 6px;
+}
+
+body.platform-macos .btn--shortcut::after {
+  content: "\2318+\23CE";
 }
 
 .grid.show-activity .panel--log {
@@ -848,7 +854,7 @@ input[type="number"] {
   position: fixed;
   bottom: 16px;
   right: 16px;
-  z-index: 600;
+  z-index: 2000;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -885,7 +891,7 @@ input[type="number"] {
 
 .toast--error {
   border-color: var(--danger-border);
-  color: var(--danger);
+  color: var(--danger-fg);
   background: var(--danger-bg);
 }
 
@@ -1387,7 +1393,7 @@ input[type="number"] {
 }
 
 .text-danger {
-  color: var(--danger);
+  color: var(--danger-fg);
 }
 
 .cell-break {
@@ -1558,6 +1564,9 @@ input[type="number"] {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  direction: rtl;
+  unicode-bidi: plaintext;
+  text-align: left;
 }
 
 .selective-row__meta {
@@ -1803,9 +1812,4 @@ input[type="number"] {
   .setup-wizard-card {
     animation: none;
   }
-}
-
-/* Remove redundant branding header */
-.header__brand {
-  display: none !important;
 }

@@ -3,6 +3,7 @@ import os from "os";
 import path from "path";
 import { execFileSync, spawnSync } from "child_process";
 import { isDeepStrictEqual } from "util";
+import { assertUniversalBinaryContainsAppGroup } from "./zip-macos-helpers.js";
 
 if (process.platform !== "darwin") {
   console.log("zip-macos can only run on macOS.");
@@ -210,6 +211,9 @@ if (!fs.existsSync(finderSyncAppex)) {
     `Missing Finder Sync extension: ${finderSyncAppex}. Run npm run prepare:macos:finder-sync before building.`,
   );
 }
+verifyMachOCompatibility(
+  path.join(finderSyncAppex, "Contents", "MacOS", "ZinniaFinderSync"),
+);
 execFileSync(
   "codesign",
   ["--verify", "--deep", "--strict", "--verbose=2", finderSyncAppex],
@@ -279,6 +283,13 @@ if (
     "Finder Sync Info.plist App Group does not match its Team ID.",
   );
 }
+// build.rs bakes ZINNIA_APP_GROUP_ID into the host; entitlements alone cannot
+// catch a host built without APPLE_TEAM_ID against a Team-ID appex.
+assertUniversalBinaryContainsAppGroup(
+  path.join(appPath, "Contents", "MacOS", "zinnia"),
+  expectedAppGroup,
+  "macOS host Mach-O",
+);
 verifySignedEntitlements(appPath, hostEntitlements);
 // Tauri signs externalBin sidecars with the same entitlements.plist as the app.
 verifySignedEntitlements(sidecarPath, hostEntitlements);

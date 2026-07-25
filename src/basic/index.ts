@@ -16,8 +16,6 @@ export {
   updateBasicSplitCustomVisibility,
   setBasicBrowsePasswordVisible,
   renderBasicInputs,
-  renderBasicBrowseTable,
-  setBasicBrowseSummary,
   updateBasicExtractInfo,
   updateBasicBrowseInfo,
 } from "./sync";
@@ -29,6 +27,7 @@ export {
   hideBasicCompletion,
   setBasicBarDeterminate,
   resetBasicBar,
+  updateBasicPreparingState,
   updateBasicRunningState,
   updateBasicStatus,
 } from "./progress";
@@ -44,6 +43,11 @@ export {
   isArchiveEncrypted,
   openPathWithFeedback,
   togglePasswordVisibility,
+  beginBasicPreparation,
+  finishBasicPreparation,
+  isBasicInteractionLocked,
+  isBasicPreparationCurrent,
+  type BasicPreparation,
 } from "./actions";
 
 export {

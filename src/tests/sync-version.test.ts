@@ -5,6 +5,7 @@ import {
   macMarketingVersionFromSemver,
   updateCargoLockPackageVersion,
   updateWindowsResourceFlags,
+  updateWindowsResourceVersion,
   updateWindowsShellResourceDestinations,
   windowsPackageVersionFromSemver,
 } from "../../scripts/sync-version-helpers.js";
@@ -73,6 +74,31 @@ describe("Windows resource version flags", () => {
     expect(() => updateWindowsResourceFlags("FILEFLAGS 0", "0.6.0")).toThrow(
       /FILEFLAGS block was not found/,
     );
+  });
+});
+
+describe("Windows resource version fields", () => {
+  const fullResource = ` FILEVERSION 0,5,0,1
+ PRODUCTVERSION 0,5,0,1
+${resource}
+      VALUE "FileVersion", "0.5.0\\0"
+      VALUE "ProductVersion", "0.5.0\\0"`;
+
+  it("updates every required numeric and string version field", () => {
+    const updated = updateWindowsResourceVersion(fullResource, "0.6.0");
+    expect(updated).toContain(" FILEVERSION 0,6,0,65535");
+    expect(updated).toContain(" PRODUCTVERSION 0,6,0,65535");
+    expect(updated).toContain('VALUE "FileVersion", "0.6.0\\0"');
+    expect(updated).toContain('VALUE "ProductVersion", "0.6.0\\0"');
+  });
+
+  it("fails if any expected RC version replacement is missing", () => {
+    expect(() =>
+      updateWindowsResourceVersion(
+        fullResource.replace(/^ PRODUCTVERSION .+\n/m, ""),
+        "0.6.0",
+      ),
+    ).toThrow(/PRODUCTVERSION.*exactly once/);
   });
 });
 
