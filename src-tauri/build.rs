@@ -207,6 +207,38 @@ fn load_checksums(path: &Path) -> std::collections::HashMap<String, String> {
     map
 }
 
+fn validate_provenance(path: &Path, checksums: &std::collections::HashMap<String, String>) {
+    let contents = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("failed to read provenance manifest {}: {e}", path.display()));
+    assert!(
+        contents.contains("\"officialDownloadPage\": \"https://www.7-zip.org/download.html\""),
+        "7z-provenance.json must identify the official download page"
+    );
+    assert!(
+        contents.contains("\"sourceArchives\"") && contents.contains("\"artifacts\""),
+        "7z-provenance.json must record source archives and extracted artifacts"
+    );
+    for source in checksums.keys() {
+        assert!(
+            contents.contains(&format!("\"{source}\"")),
+            "7z-provenance.json has no record for {source}"
+        );
+    }
+}
+
+fn required_sidecar_for_target(target_triple: &str) -> Option<&'static str> {
+    match target_triple {
+        "x86_64-pc-windows-msvc" => Some("7z-x86_64-pc-windows-msvc.exe"),
+        "aarch64-pc-windows-msvc" => Some("7z-aarch64-pc-windows-msvc.exe"),
+        "x86_64-apple-darwin" => Some("7z-x86_64-apple-darwin"),
+        "aarch64-apple-darwin" => Some("7z-aarch64-apple-darwin"),
+        "universal-apple-darwin" => Some("7z-universal-apple-darwin"),
+        "x86_64-unknown-linux-gnu" => Some("7z-x86_64-unknown-linux-gnu"),
+        "aarch64-unknown-linux-gnu" => Some("7z-aarch64-unknown-linux-gnu"),
+        _ => None,
+    }
+}
+
 fn prepare_7z_binaries() {
     let manifest_dir =
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR should be set by Cargo");
@@ -217,18 +249,36 @@ fn prepare_7z_binaries() {
     let assets_dir = root.join("assets");
     let out_dir = tauri_dir.join("binaries");
     let checksums_path = root.join("assets").join("7z-checksums.json");
+    let provenance_path = root.join("assets").join("7z-provenance.json");
+    // Cargo always sets TARGET for build scripts; HOST is a last-resort fallback.
+    let target_triple = std::env::var("TARGET")
+        .or_else(|_| std::env::var("HOST"))
+        .unwrap_or_default();
 
     println!("cargo:rerun-if-changed={}", checksums_path.display());
+    println!("cargo:rerun-if-changed={}", provenance_path.display());
+    println!("cargo:rerun-if-env-changed=TARGET");
     let checksums = load_checksums(&checksums_path);
+    validate_provenance(&provenance_path, &checksums);
 
     std::fs::create_dir_all(&out_dir).expect("failed to create src-tauri/binaries");
+
+    let required_sidecar = required_sidecar_for_target(&target_triple);
+    let mut prepared_required = false;
 
     for (source, target) in BINARIES {
         let source_path = assets_dir.join(source);
         let target_path = out_dir.join(target);
         println!("cargo:rerun-if-changed={}", source_path.display());
 
+        let is_required = required_sidecar == Some(*target);
         if !source_path.exists() {
+            if is_required {
+                panic!(
+                    "Missing required 7z asset for target {target_triple}: {}\nRun `npm run prepare:7z` (or `npm run prepare:7z:all`) before building.",
+                    source_path.display()
+                );
+            }
             continue;
         }
 
@@ -237,13 +287,13 @@ fn prepare_7z_binaries() {
         if let Some(expected) = checksums.get(*source) {
             if actual_hash != *expected {
                 panic!(
-                    "Checksum mismatch for {}\n  expected: {}\n  actual:   {}\nRun `node scripts/prepare-7z.js --update-checksums` after verifying the binary.",
+                    "Checksum mismatch for {}\n  expected: {}\n  actual:   {}\nRun `node scripts/prepare-7z.js --update-checksums --all --version <verified-version> --verify-downloads <directory> --trusted-7z <independently-trusted-7z-path>` after verifying the official archives.",
                     source, expected, actual_hash
                 );
             }
         } else {
             panic!(
-                "No checksum entry for {} in 7z-checksums.json. Run `node scripts/prepare-7z.js --update-checksums` after verifying the binary.",
+                "No checksum entry for {} in 7z-checksums.json. Run `node scripts/prepare-7z.js --update-checksums --all --version <verified-version> --verify-downloads <directory> --trusted-7z <independently-trusted-7z-path>` after verifying the official archives.",
                 source
             );
         }
@@ -266,16 +316,40 @@ fn prepare_7z_binaries() {
             std::fs::set_permissions(&target_path, permissions)
                 .expect("failed to make prepared 7z binary executable");
         }
+
+        if is_required {
+            prepared_required = true;
+        }
+    }
+
+    if let Some(sidecar) = required_sidecar {
+        if !prepared_required || !out_dir.join(sidecar).exists() {
+            panic!(
+                "Required 7z sidecar `{sidecar}` for target `{target_triple}` was not prepared.\nRun `npm run prepare:7z` before building."
+            );
+        }
     }
 }
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=APPLE_TEAM_ID");
+    let app_group = match std::env::var("APPLE_TEAM_ID") {
+        Ok(team_id) if !team_id.trim().is_empty() => {
+            format!("{}.run.rosie.zinnia.findersync", team_id.trim())
+        }
+        // Matches unsigned local Finder Sync builds. The signed release
+        // verifier rejects this fallback because it cannot match a real Team ID.
+        _ => "group.run.rosie.zinnia.findersync".to_string(),
+    };
+    println!("cargo:rustc-env=ZINNIA_APP_GROUP_ID={app_group}");
     prepare_7z_binaries();
     const COMMANDS: &[&str] = &[
         "run_7z",
         "cancel_7z",
         "is_7z_running",
         "probe_7z",
+        "probe_compress_inputs",
+        "get_startup_recovery_status",
         "validate_archive_paths",
         "load_settings",
         "save_settings",
@@ -286,6 +360,7 @@ fn main() {
         "clear_logs",
         "open_log_dir",
         "open_path",
+        "register_extract_open_path",
         "get_initial_paths",
         "get_initial_mode",
         "drain_pending_paths",
@@ -293,8 +368,12 @@ fn main() {
         "close_extract_window",
         "mark_main_window_ready",
         "get_platform_info",
+        "get_beta_updater_target",
         "get_os_integration_status",
         "open_os_integration_settings",
+        "open_finder_services_settings",
+        "open_finder_sync_settings",
+        "enable_finder_sync",
         "reset_preferred_archiver_to_system",
         "set_zinnia_default_archiver",
         "get_cpu_count",
@@ -302,6 +381,9 @@ fn main() {
         "is_packaged",
         "create_temp_extract_dir",
         "remove_managed_temp_dir",
+        "list_managed_temp_children",
+        "set_workspace_window_fx",
+        "supports_workspace_window_fx",
     ];
     tauri_build::try_build(
         tauri_build::Attributes::new()

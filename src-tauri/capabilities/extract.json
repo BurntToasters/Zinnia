@@ -4,9 +4,9 @@
   "description": "Permissions for extract-only windows",
   "windows": ["extract-*"],
   "permissions": [
-    "core:default",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
     "core:window:allow-close",
-    "core:window:allow-destroy",
     "core:window:allow-start-dragging",
     "core:window:allow-minimize",
     "allow-run-7z",
@@ -14,6 +14,10 @@
     "allow-get-extract-paths",
     "allow-close-extract-window",
     "allow-open-path",
-    "allow-get-platform-info"
+    "allow-register-extract-open-path",
+    "allow-get-platform-info",
+    "allow-load-settings",
+    "allow-set-workspace-window-fx",
+    "allow-supports-workspace-window-fx"
   ]
 }

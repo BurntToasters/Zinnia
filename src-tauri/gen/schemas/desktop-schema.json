@@ -423,10 +423,22 @@
           "markdownDescription": "Enables the drain_pending_paths command without any pre-configured scope."
         },
         {
+          "description": "Enables the enable_finder_sync command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-enable-finder-sync",
+          "markdownDescription": "Enables the enable_finder_sync command without any pre-configured scope."
+        },
+        {
           "description": "Enables the export_logs command without any pre-configured scope.",
           "type": "string",
           "const": "allow-export-logs",
           "markdownDescription": "Enables the export_logs command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_beta_updater_target command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-beta-updater-target",
+          "markdownDescription": "Enables the get_beta_updater_target command without any pre-configured scope."
         },
         {
           "description": "Enables the get_cpu_count command without any pre-configured scope.",
@@ -471,6 +483,12 @@
           "markdownDescription": "Enables the get_platform_info command without any pre-configured scope."
         },
         {
+          "description": "Enables the get_startup_recovery_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-startup-recovery-status",
+          "markdownDescription": "Enables the get_startup_recovery_status command without any pre-configured scope."
+        },
+        {
           "description": "Enables the is_7z_running command without any pre-configured scope.",
           "type": "string",
           "const": "allow-is-7z-running",
@@ -489,6 +507,12 @@
           "markdownDescription": "Enables the is_packaged command without any pre-configured scope."
         },
         {
+          "description": "Enables the list_managed_temp_children command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-list-managed-temp-children",
+          "markdownDescription": "Enables the list_managed_temp_children command without any pre-configured scope."
+        },
+        {
           "description": "Enables the load_settings command without any pre-configured scope.",
           "type": "string",
           "const": "allow-load-settings",
@@ -499,6 +523,18 @@
           "type": "string",
           "const": "allow-mark-main-window-ready",
           "markdownDescription": "Enables the mark_main_window_ready command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_finder_services_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-finder-services-settings",
+          "markdownDescription": "Enables the open_finder_services_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_finder_sync_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-finder-sync-settings",
+          "markdownDescription": "Enables the open_finder_sync_settings command without any pre-configured scope."
         },
         {
           "description": "Enables the open_log_dir command without any pre-configured scope.",
@@ -523,6 +559,18 @@
           "type": "string",
           "const": "allow-probe-7z",
           "markdownDescription": "Enables the probe_7z command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the probe_compress_inputs command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-probe-compress-inputs",
+          "markdownDescription": "Enables the probe_compress_inputs command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the register_extract_open_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-register-extract-open-path",
+          "markdownDescription": "Enables the register_extract_open_path command without any pre-configured scope."
         },
         {
           "description": "Enables the remove_managed_temp_dir command without any pre-configured scope.",
@@ -555,10 +603,22 @@
           "markdownDescription": "Enables the save_settings command without any pre-configured scope."
         },
         {
+          "description": "Enables the set_workspace_window_fx command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-workspace-window-fx",
+          "markdownDescription": "Enables the set_workspace_window_fx command without any pre-configured scope."
+        },
+        {
           "description": "Enables the set_zinnia_default_archiver command without any pre-configured scope.",
           "type": "string",
           "const": "allow-set-zinnia-default-archiver",
           "markdownDescription": "Enables the set_zinnia_default_archiver command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the supports_workspace_window_fx command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-supports-workspace-window-fx",
+          "markdownDescription": "Enables the supports_workspace_window_fx command without any pre-configured scope."
         },
         {
           "description": "Enables the validate_archive_paths command without any pre-configured scope.",
@@ -603,10 +663,22 @@
           "markdownDescription": "Denies the drain_pending_paths command without any pre-configured scope."
         },
         {
+          "description": "Denies the enable_finder_sync command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-enable-finder-sync",
+          "markdownDescription": "Denies the enable_finder_sync command without any pre-configured scope."
+        },
+        {
           "description": "Denies the export_logs command without any pre-configured scope.",
           "type": "string",
           "const": "deny-export-logs",
           "markdownDescription": "Denies the export_logs command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_beta_updater_target command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-beta-updater-target",
+          "markdownDescription": "Denies the get_beta_updater_target command without any pre-configured scope."
         },
         {
           "description": "Denies the get_cpu_count command without any pre-configured scope.",
@@ -651,6 +723,12 @@
           "markdownDescription": "Denies the get_platform_info command without any pre-configured scope."
         },
         {
+          "description": "Denies the get_startup_recovery_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-startup-recovery-status",
+          "markdownDescription": "Denies the get_startup_recovery_status command without any pre-configured scope."
+        },
+        {
           "description": "Denies the is_7z_running command without any pre-configured scope.",
           "type": "string",
           "const": "deny-is-7z-running",
@@ -669,6 +747,12 @@
           "markdownDescription": "Denies the is_packaged command without any pre-configured scope."
         },
         {
+          "description": "Denies the list_managed_temp_children command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-list-managed-temp-children",
+          "markdownDescription": "Denies the list_managed_temp_children command without any pre-configured scope."
+        },
+        {
           "description": "Denies the load_settings command without any pre-configured scope.",
           "type": "string",
           "const": "deny-load-settings",
@@ -679,6 +763,18 @@
           "type": "string",
           "const": "deny-mark-main-window-ready",
           "markdownDescription": "Denies the mark_main_window_ready command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_finder_services_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-finder-services-settings",
+          "markdownDescription": "Denies the open_finder_services_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_finder_sync_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-finder-sync-settings",
+          "markdownDescription": "Denies the open_finder_sync_settings command without any pre-configured scope."
         },
         {
           "description": "Denies the open_log_dir command without any pre-configured scope.",
@@ -703,6 +799,18 @@
           "type": "string",
           "const": "deny-probe-7z",
           "markdownDescription": "Denies the probe_7z command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the probe_compress_inputs command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-probe-compress-inputs",
+          "markdownDescription": "Denies the probe_compress_inputs command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the register_extract_open_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-register-extract-open-path",
+          "markdownDescription": "Denies the register_extract_open_path command without any pre-configured scope."
         },
         {
           "description": "Denies the remove_managed_temp_dir command without any pre-configured scope.",
@@ -735,10 +843,22 @@
           "markdownDescription": "Denies the save_settings command without any pre-configured scope."
         },
         {
+          "description": "Denies the set_workspace_window_fx command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-workspace-window-fx",
+          "markdownDescription": "Denies the set_workspace_window_fx command without any pre-configured scope."
+        },
+        {
           "description": "Denies the set_zinnia_default_archiver command without any pre-configured scope.",
           "type": "string",
           "const": "deny-set-zinnia-default-archiver",
           "markdownDescription": "Denies the set_zinnia_default_archiver command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the supports_workspace_window_fx command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-supports-workspace-window-fx",
+          "markdownDescription": "Denies the supports_workspace_window_fx command without any pre-configured scope."
         },
         {
           "description": "Denies the validate_archive_paths command without any pre-configured scope.",

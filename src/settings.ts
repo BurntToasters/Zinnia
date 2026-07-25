@@ -9,6 +9,9 @@ import {
   parseSettingsRaw,
 } from "./settings-model";
 import { getCompressionSecuritySupport } from "./compression-security";
+import { syncWorkspaceWindowFx } from "./window-fx";
+
+let settingsModalBasicWindowEffects: boolean | null = null;
 
 export function applyTheme(pref: string) {
   const resolved =
@@ -18,6 +21,7 @@ export function applyTheme(pref: string) {
         : "light"
       : pref;
   document.documentElement.setAttribute("data-theme", resolved);
+  void syncWorkspaceWindowFx();
 }
 
 export async function loadSettings(): Promise<UserSettings> {
@@ -57,7 +61,7 @@ export function applySettingsToForm() {
   $<HTMLSelectElement>("word-size").value = state.currentSettings.wordSize;
   $<HTMLSelectElement>("solid").value = state.currentSettings.solid;
   $<HTMLInputElement>("threads").value = String(state.currentSettings.threads);
-  $<HTMLSelectElement>("path-mode").value = state.currentSettings.pathMode;
+  $<HTMLInputElement>("path-mode").value = "relative";
   $<HTMLInputElement>("sfx").checked = false;
   $<HTMLInputElement>("sfx").disabled = true;
   $<HTMLInputElement>("encrypt-headers").checked =
@@ -76,7 +80,7 @@ export function populateSettingsModal() {
   $<HTMLInputElement>("s-threads").value = String(
     state.currentSettings.threads,
   );
-  $<HTMLSelectElement>("s-path-mode").value = state.currentSettings.pathMode;
+  $<HTMLInputElement>("s-path-mode").value = "relative";
   $<HTMLInputElement>("s-sfx").checked = false;
   $<HTMLInputElement>("s-sfx").disabled = true;
   $<HTMLInputElement>("s-encrypt-headers").checked =
@@ -95,11 +99,29 @@ export function populateSettingsModal() {
   $<HTMLSelectElement>("s-ui-density").value = state.currentSettings.uiDensity;
   $<HTMLInputElement>("s-os-integration-dismissed").checked =
     state.currentSettings.osIntegrationDismissed;
+  $<HTMLInputElement>("s-quick-extract-keep-warm").checked =
+    state.currentSettings.quickExtractKeepWarm;
+  $<HTMLSelectElement>("s-quick-extract-warm-idle").value = String(
+    state.currentSettings.quickExtractWarmIdleMinutes,
+  );
+  $<HTMLSelectElement>("s-extract-auto-close").value = String(
+    state.currentSettings.extractAutoCloseSeconds,
+  );
+  const basicFx = document.getElementById(
+    "s-basic-window-effects",
+  ) as HTMLInputElement | null;
+  if (basicFx) {
+    basicFx.checked = state.currentSettings.basicWindowEffects;
+  }
+  syncQuickExtractWarmIdleControl();
   syncSettingsSecurityControlsForFormat(state.currentSettings.format);
+  void syncBasicWindowEffectsVisibility();
 
   const logDir = document.getElementById("s-log-dir");
   if (logDir) {
-    logDir.textContent = state.logDirectory || "Unavailable";
+    const text = state.logDirectory || "Unavailable";
+    logDir.textContent = text;
+    logDir.title = state.logDirectory ? state.logDirectory : "";
   }
 }
 
@@ -130,8 +152,9 @@ export function readSettingsModal(): UserSettings {
       $<HTMLInputElement>("s-threads").value,
       SETTING_DEFAULTS.threads,
     ),
-    pathMode: $<HTMLSelectElement>("s-path-mode")
-      .value as UserSettings["pathMode"],
+    // Absolute member paths make archives non-relocatable and fail Zinnia's
+    // secure extraction preflight. Preserve the setting only for migration.
+    pathMode: "relative",
     sfx: false,
     encryptHeaders:
       securitySupport.encryptHeaders &&
@@ -151,6 +174,21 @@ export function readSettingsModal(): UserSettings {
       .value as UserSettings["uiDensity"],
     osIntegrationDismissed: $<HTMLInputElement>("s-os-integration-dismissed")
       .checked,
+    quickExtractKeepWarm: $<HTMLInputElement>("s-quick-extract-keep-warm")
+      .checked,
+    quickExtractWarmIdleMinutes: parseWarmIdleMinutes(
+      $<HTMLSelectElement>("s-quick-extract-warm-idle").value,
+      SETTING_DEFAULTS.quickExtractWarmIdleMinutes,
+    ),
+    extractAutoCloseSeconds: Number(
+      $<HTMLSelectElement>("s-extract-auto-close").value,
+    ) as UserSettings["extractAutoCloseSeconds"],
+    basicWindowEffects: (() => {
+      const el = document.getElementById(
+        "s-basic-window-effects",
+      ) as HTMLInputElement | null;
+      return el ? el.checked : state.currentSettings.basicWindowEffects;
+    })(),
     customPresets: state.currentSettings.customPresets,
     powerWindowWidth: state.currentSettings.powerWindowWidth,
     powerWindowHeight: state.currentSettings.powerWindowHeight,
@@ -158,10 +196,62 @@ export function readSettingsModal(): UserSettings {
   };
 }
 
+function parseWarmIdleMinutes(raw: string, fallback: number): number {
+  const n = Number(raw);
+  if (n === 5 || n === 10 || n === 30 || n === 60) return n;
+  return fallback;
+}
+
+export function syncQuickExtractWarmIdleControl(): void {
+  const enabled = $<HTMLInputElement>("s-quick-extract-keep-warm").checked;
+  $<HTMLSelectElement>("s-quick-extract-warm-idle").disabled = !enabled;
+}
+
+export async function syncBasicWindowEffectsVisibility(): Promise<void> {
+  const row = document.getElementById("setting-basic-window-effects");
+  if (!row) return;
+  let supports = false;
+  try {
+    supports = await invoke<boolean>("supports_workspace_window_fx");
+  } catch {
+    supports = false;
+  }
+  row.hidden = !supports;
+}
+
+function syncSettingsTriggerState(open: boolean) {
+  const trigger = document.getElementById("open-settings");
+  if (!trigger) return;
+  trigger.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
 export function openSettingsModal() {
-  populateSettingsModal();
   const overlay = $("settings-overlay");
+  if (!overlay.hidden) return;
+
+  settingsModalBasicWindowEffects ??= state.currentSettings.basicWindowEffects;
+  populateSettingsModal();
+  const keepWarm = document.getElementById(
+    "s-quick-extract-keep-warm",
+  ) as HTMLInputElement | null;
+  if (keepWarm && !keepWarm.dataset.warmIdleBound) {
+    keepWarm.dataset.warmIdleBound = "1";
+    keepWarm.addEventListener("change", () => {
+      syncQuickExtractWarmIdleControl();
+    });
+  }
+  const basicFx = document.getElementById(
+    "s-basic-window-effects",
+  ) as HTMLInputElement | null;
+  if (basicFx && !basicFx.dataset.liveFxBound) {
+    basicFx.dataset.liveFxBound = "1";
+    basicFx.addEventListener("change", () => {
+      state.currentSettings.basicWindowEffects = basicFx.checked;
+      void syncWorkspaceWindowFx();
+    });
+  }
   overlay.hidden = false;
+  syncSettingsTriggerState(true);
   const modal = overlay.querySelector<HTMLElement>(".modal");
   if (modal) {
     trapFocus(modal);
@@ -172,9 +262,28 @@ export function openSettingsModal() {
   }
 }
 
-export function closeSettingsModal() {
+export function toggleSettingsModal() {
+  if ($("settings-overlay").hidden) {
+    openSettingsModal();
+  } else {
+    closeSettingsModal();
+  }
+}
+
+export function closeSettingsModal(
+  options: { preserveLivePreview?: boolean } = {},
+) {
+  if (
+    !options.preserveLivePreview &&
+    settingsModalBasicWindowEffects !== null
+  ) {
+    state.currentSettings.basicWindowEffects = settingsModalBasicWindowEffects;
+    void syncWorkspaceWindowFx();
+  }
+  settingsModalBasicWindowEffects = null;
   const overlay = $("settings-overlay");
   overlay.hidden = true;
+  syncSettingsTriggerState(false);
   const modal = overlay.querySelector<HTMLElement>(".modal");
   if (modal) releaseFocusTrap(modal);
   const trigger = document.getElementById("open-settings");

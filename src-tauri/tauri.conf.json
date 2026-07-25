@@ -1,15 +1,16 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Zinnia",
-  "version": "0.5.4-beta.1",
+  "version": "0.6.0",
   "identifier": "run.rosie.zinnia",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run prepare:macos:finder-sync && npm run build",
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "create": false,
@@ -20,11 +21,12 @@
         "minHeight": 400,
         "resizable": true,
         "visible": false,
+        "transparent": true,
         "titleBarStyle": "Overlay"
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self';"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; frame-src 'none'; worker-src 'none';"
     }
   },
   "bundle": {
@@ -93,13 +95,6 @@
         ],
         "mimeType": "application/x-xz",
         "description": "XZ Archive"
-      },
-      {
-        "ext": [
-          "rar"
-        ],
-        "mimeType": "application/vnd.rar",
-        "description": "RAR Archive"
       }
     ],
     "createUpdaterArtifacts": true,
@@ -111,9 +106,13 @@
       }
     },
     "macOS": {
-      "entitlements": "entitlements.plist",
+      "entitlements": "macos/build/Zinnia.entitlements",
       "hardenedRuntime": true,
-      "minimumSystemVersion": "10.15"
+      "minimumSystemVersion": "26.0",
+      "bundleVersion": "0.6.99",
+      "files": {
+        "PlugIns/ZinniaFinderSync.appex": "macos/build/ZinniaFinderSync.appex"
+      }
     },
     "linux": {
       "appimage": {
@@ -132,7 +131,9 @@
       "active": true,
       "endpoints": [
         "https://github.com/BurntToasters/zinnia/releases/latest/download/latest-{{target}}-{{arch}}.json",
-        "https://github.com/BurntToasters/zinnia/releases/download/v{{current_version}}/latest-{{target}}-{{arch}}.json"
+        "https://github.com/BurntToasters/zinnia/releases/latest/download/latest-{{target}}.json",
+        "https://github.com/BurntToasters/zinnia/releases/download/v{{current_version}}/latest-{{target}}-{{arch}}.json",
+        "https://github.com/BurntToasters/zinnia/releases/download/v{{current_version}}/latest-{{target}}.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEY5RTAwQ0YyRjU4NENCNkMKUldSc3k0VDE4Z3pnK2NQaXdzYXkzWklabm9tTTZvSTErcmNQSkZFL2d3VnpXNnlHL2R0WjAwMHcK"
     }

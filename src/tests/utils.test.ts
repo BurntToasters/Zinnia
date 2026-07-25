@@ -8,6 +8,7 @@ import {
   redactSensitiveText,
   safeHref,
   isArchiveFile,
+  assertRunResult,
   trapFocus,
   releaseFocusTrap,
 } from "../utils";
@@ -136,7 +137,7 @@ describe("parseThreads", () => {
 
 describe("formatSize", () => {
   it("returns dash for zero bytes", () => {
-    expect(formatSize(0)).toBe("\u2014");
+    expect(formatSize(0)).toBe("-");
   });
 
   it("formats bytes", () => {
@@ -156,16 +157,42 @@ describe("formatSize", () => {
   });
 });
 
+describe("assertRunResult", () => {
+  it("accepts a well-shaped run_7z payload", () => {
+    expect(() =>
+      assertRunResult({
+        stdout: "",
+        stderr: "",
+        code: 0,
+        stdout_truncated: false,
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects malformed payloads", () => {
+    expect(() => assertRunResult(null)).toThrow(/Unexpected run_7z response/);
+    expect(() => assertRunResult({ stdout: "", stderr: "" })).toThrow(
+      /Unexpected run_7z response/,
+    );
+  });
+});
+
 describe("safeHref", () => {
   it("allows http/https URLs", () => {
     expect(safeHref("https://example.com")).toBe("https://example.com");
     expect(safeHref("http://example.com")).toBe("http://example.com");
+    expect(safeHref("https://example.com?a=1&b=2")).toBe(
+      "https://example.com?a=1&b=2",
+    );
   });
 
   it("blocks non-http schemes", () => {
     expect(safeHref("javascript:alert(1)")).toBe("#");
     expect(safeHref("data:text/html,test")).toBe("#");
     expect(safeHref("file:///etc/passwd")).toBe("#");
+    expect(safeHref("https://user:secret@example.com")).toBe("#");
+    expect(safeHref("https://")).toBe("#");
+    expect(safeHref("https://example.com\njavascript:alert(1)")).toBe("#");
   });
 
   it("blocks empty strings", () => {
@@ -231,5 +258,126 @@ describe("focus trap helpers", () => {
     releaseFocusTrap(container);
 
     container.remove();
+  });
+
+  it("makes modal siblings inert and restores their prior state", () => {
+    const background = document.createElement("main");
+    const alreadyInert = document.createElement("aside");
+    alreadyInert.inert = true;
+    const overlay = document.createElement("div");
+    const container = document.createElement("div");
+    const button = document.createElement("button");
+    container.appendChild(button);
+    overlay.appendChild(container);
+    document.body.append(background, alreadyInert, overlay);
+    setVisibleForFocus(button, container);
+
+    trapFocus(container);
+    expect(background.inert).toBe(true);
+    expect(alreadyInert.inert).toBe(true);
+
+    releaseFocusTrap(container);
+    expect(background.inert).toBe(false);
+    expect(alreadyInert.inert).toBe(true);
+    background.remove();
+    alreadyInert.remove();
+    overlay.remove();
+  });
+
+  it("keeps titlebar and header interactive while a modal is open", () => {
+    const app = document.createElement("div");
+    app.id = "app";
+    const titlebar = document.createElement("div");
+    titlebar.id = "titlebar";
+    const closeBtn = document.createElement("button");
+    closeBtn.id = "titlebar-close";
+    titlebar.appendChild(closeBtn);
+    const header = document.createElement("header");
+    header.className = "header";
+    const settingsBtn = document.createElement("button");
+    settingsBtn.id = "open-settings";
+    header.appendChild(settingsBtn);
+    const overlay = document.createElement("div");
+    overlay.id = "settings-overlay";
+    const modal = document.createElement("div");
+    modal.className = "modal";
+    const modalBtn = document.createElement("button");
+    modal.appendChild(modalBtn);
+    overlay.appendChild(modal);
+    const main = document.createElement("main");
+    app.append(titlebar, header, overlay, main);
+    document.body.appendChild(app);
+    setVisibleForFocus(modalBtn, modal);
+
+    trapFocus(modal);
+    expect(Boolean(titlebar.inert)).toBe(false);
+    expect(Boolean(header.inert)).toBe(false);
+    expect(main.inert).toBe(true);
+    expect(closeBtn.closest("[inert]")).toBeNull();
+    expect(settingsBtn.closest("[inert]")).toBeNull();
+
+    releaseFocusTrap(modal);
+    expect(main.inert).toBe(false);
+    app.remove();
+  });
+
+  it("returns escaped focus to the modal on Tab", () => {
+    const outside = document.createElement("button");
+    const modal = document.createElement("div");
+    const first = document.createElement("button");
+    const last = document.createElement("button");
+    modal.append(first, last);
+    document.body.append(outside, modal);
+    setVisibleForFocus(first, modal);
+    setVisibleForFocus(last, modal);
+    trapFocus(modal);
+    outside.focus();
+
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Tab", bubbles: true }),
+    );
+    expect(document.activeElement).toBe(first);
+
+    outside.focus();
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Tab",
+        shiftKey: true,
+        bubbles: true,
+      }),
+    );
+    expect(document.activeElement).toBe(last);
+    releaseFocusTrap(modal);
+    outside.remove();
+    modal.remove();
+  });
+
+  it("lets only the topmost focus trap own Tab", () => {
+    const lower = document.createElement("div");
+    const lowerFirst = document.createElement("button");
+    const lowerLast = document.createElement("button");
+    lower.append(lowerFirst, lowerLast);
+    const upper = document.createElement("div");
+    const upperFirst = document.createElement("button");
+    const upperLast = document.createElement("button");
+    upper.append(upperFirst, upperLast);
+    document.body.append(lower, upper);
+    setVisibleForFocus(lowerFirst, lower);
+    setVisibleForFocus(lowerLast, lower);
+    setVisibleForFocus(upperFirst, upper);
+    setVisibleForFocus(upperLast, upper);
+
+    trapFocus(lower);
+    trapFocus(upper);
+    lowerLast.focus();
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Tab", bubbles: true }),
+    );
+    expect(document.activeElement).toBe(upperFirst);
+
+    releaseFocusTrap(upper);
+    releaseFocusTrap(lower);
+    lower.remove();
+    upper.remove();
   });
 });

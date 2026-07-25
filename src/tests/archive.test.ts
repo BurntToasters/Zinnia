@@ -2,6 +2,79 @@ import { describe, it, expect } from "vitest";
 import { parseArchiveListing } from "../archive";
 
 describe("parseArchiveListing", () => {
+  it("parses real 7-Zip 26.02 blank-line records and Attributes folders", () => {
+    const stdout = [
+      "Listing archive: real.7z",
+      "",
+      "--",
+      "Path = real.7z",
+      "Type = 7z",
+      "Physical Size = 321",
+      "Headers Size = 201",
+      "Method = LZMA2:12",
+      "Solid = -",
+      "Blocks = 1",
+      "",
+      "----------",
+      "Path = empty",
+      "Size = 0",
+      "Packed Size = 0",
+      "Modified = 2026-07-22 12:00:00",
+      "Attributes = D drwxr-xr-x",
+      "CRC = ",
+      "Encrypted = -",
+      "Method = ",
+      "Block = ",
+      "",
+      "Path = first.txt",
+      "Size = 5",
+      "Packed Size = 9",
+      "Modified = 2026-07-22 12:00:01",
+      "Attributes = A -rw-r--r--",
+      "CRC = 3610A686",
+      "Encrypted = -",
+      "Method = LZMA2:12",
+      "Block = 0",
+      "",
+      "Path = second.txt",
+      "Size = 6",
+      "Packed Size = ",
+      "Modified = 2026-07-22 12:00:02",
+      "Attributes = A -rw-r--r--",
+      "CRC = 3A771143",
+      "Encrypted = -",
+      "Method = LZMA2:12",
+      "Block = 0",
+      "",
+    ].join("\n");
+
+    const info = parseArchiveListing(stdout);
+    expect(info.entries.map((entry) => entry.path)).toEqual([
+      "empty",
+      "first.txt",
+      "second.txt",
+    ]);
+    expect(info.entries[0].isFolder).toBe(true);
+    expect(info.entries[1].isFolder).toBe(false);
+  });
+
+  it("preserves spaces and backslashes in member names", () => {
+    const stdout = [
+      "--",
+      "Type = 7z",
+      "",
+      "----------",
+      "Path =  literal\\name.txt ",
+      "Size = 1",
+      "Attributes = A -rw-r--r--",
+      "",
+    ].join("\n");
+
+    expect(parseArchiveListing(stdout).entries[0].path).toBe(
+      " literal\\name.txt ",
+    );
+  });
+
   it("parses a standard 7z listing", () => {
     const stdout = [
       "Listing archive: test.7z",

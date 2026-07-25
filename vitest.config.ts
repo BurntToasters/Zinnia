@@ -14,10 +14,10 @@ export default defineConfig({
       include: ["src/**/*.ts"],
       exclude: ["src/tests/**", "src/vite-env.d.ts"],
       thresholds: {
-        lines: 77,
+        lines: 79.5,
         functions: 76,
-        branches: 60,
-        statements: 75,
+        branches: 63,
+        statements: 77.5,
       },
     },
   },

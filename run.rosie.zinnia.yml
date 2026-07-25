@@ -1,6 +1,6 @@
 app-id: run.rosie.zinnia
 runtime: org.gnome.Platform
-runtime-version: "48"
+runtime-version: "50"
 sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.node22
@@ -10,9 +10,20 @@ separate-locales: false
 
 finish-args:
   - --share=ipc
-  - --socket=x11
+  - --socket=fallback-x11
   - --socket=wayland
   - --device=dri
+  # Broad FS access is intentional for a file archiver: the 7z sidecar must
+  # read/write user-selected paths. Portals alone are not enough today.
+  # See SECURITY.md "Flatpak filesystem access".
+  - --filesystem=home
+  # Common download / removable mount points outside $HOME (USB, etc.).
+  - --filesystem=xdg-download
+  - --filesystem=/media
+  - --filesystem=/run/media
+  - --filesystem=/mnt
+  # No --share=network: Flatpak builds update via the host store / reinstall,
+  # not the in-app GitHub updater (UI is hidden under .platform-flatpak).
 
 environment:
   GTK_USE_PORTAL: "1"
@@ -21,6 +32,8 @@ modules:
   - name: zinnia
     buildsystem: simple
     build-options:
+      # npm and Cargo fetch only integrity-locked dependencies. Application
+      # sources come from the clean commit export prepared by the host script.
       build-args:
         - --share=network
       append-path: /usr/lib/sdk/node22/bin:/usr/lib/sdk/rust-stable/bin
@@ -33,13 +46,12 @@ modules:
     build-commands:
       - npm ci
       - npm run sync-version
-      - npm run prepare:7z
+      - npm run prepare:7z:all
       - npm run licenses
       - npm run build
-      - npx tauri build --no-bundle
+      - npx tauri build --no-bundle -- --locked
       - install -Dm755 src-tauri/target/release/zinnia /app/bin/zinnia
-      - install -Dm755 src-tauri/binaries/7z-aarch64-unknown-linux-gnu /app/bin/7z-aarch64-unknown-linux-gnu
-      - install -Dm755 src-tauri/binaries/7z-x86_64-unknown-linux-gnu /app/bin/7z-x86_64-unknown-linux-gnu
+      - if [ "$FLATPAK_ARCH" = "aarch64" ]; then install -Dm755 src-tauri/binaries/7z-aarch64-unknown-linux-gnu /app/bin/7z-aarch64-unknown-linux-gnu; else install -Dm755 src-tauri/binaries/7z-x86_64-unknown-linux-gnu /app/bin/7z-x86_64-unknown-linux-gnu; fi
       - install -Dm644 run.rosie.zinnia.desktop /app/share/applications/run.rosie.zinnia.desktop
       - install -Dm644 run.rosie.zinnia.metainfo.xml /app/share/metainfo/run.rosie.zinnia.metainfo.xml
       - install -Dm644 src-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/run.rosie.zinnia.png
@@ -47,7 +59,7 @@ modules:
       - install -Dm644 src-tauri/icons/icon.png /app/share/icons/hicolor/512x512/apps/run.rosie.zinnia.png
     sources:
       - type: dir
-        path: .
+        path: .flatpak-source
         skip:
           - .git
           - .github

@@ -5,13 +5,17 @@ import {
   buildEntryTree,
   computeNodeCheckState,
   clearPathSelection,
+  detectWindowsMemberPaths,
   filterBrowseEntriesByQuery,
   isPathWithinFolder,
   normalizeSelectiveSearchQuery,
+  resolveSelectiveExtractMemberPaths,
   selectEntries,
   selectPaths,
   toggleEntrySelection,
   togglePathSelection,
+  MAX_ARCHIVE_MEMBER_PATH_BYTES,
+  MAX_ARCHIVE_TREE_DEPTH,
 } from "../selective-extract";
 import type { TreeNode } from "../selective-extract";
 
@@ -80,7 +84,13 @@ describe("isPathWithinFolder", () => {
   });
 
   it("detects paths within folder (backslash)", () => {
-    expect(isPathWithinFolder("docs\\guide\\install.md", "docs")).toBe(true);
+    expect(isPathWithinFolder("docs\\guide\\install.md", "docs", true)).toBe(
+      true,
+    );
+  });
+
+  it("does not treat a POSIX literal backslash as a separator", () => {
+    expect(isPathWithinFolder("docs\\guide.txt", "docs")).toBe(false);
   });
 
   it("rejects paths outside folder", () => {
@@ -152,11 +162,125 @@ describe("selectEntries", () => {
     );
     expect(selected.has("docs/guides")).toBe(true);
   });
+
+  it("limits recursion to the filtered search scope", () => {
+    const visible = filterBrowseEntriesByQuery(SAMPLE_ENTRIES, "readme");
+    const selected = selectEntries(new Set<string>(), visible, visible);
+    expect([...selected]).toEqual(["docs/readme.md"]);
+    expect(selected.has("docs/guide/install.md")).toBe(false);
+  });
+
+  it("does not recurse into children omitted from a capped render scope", () => {
+    const entries: BrowseEntry[] = [
+      {
+        path: "big",
+        isFolder: true,
+        size: 0,
+        packedSize: 0,
+        modified: "",
+      },
+      {
+        path: "big/hidden.txt",
+        isFolder: false,
+        size: 1,
+        packedSize: 1,
+        modified: "",
+      },
+    ];
+    const scope = [entries[0]];
+    const selected = selectEntries(new Set(), scope, scope, false);
+    expect(selected.has("big")).toBe(true);
+    expect(selected.has("big/hidden.txt")).toBe(false);
+  });
+});
+
+describe("detectWindowsMemberPaths", () => {
+  it("prefers backslash listings over host OS assumptions", () => {
+    expect(
+      detectWindowsMemberPaths([
+        {
+          path: "docs\\readme.md",
+          size: 1,
+          packedSize: 1,
+          modified: "",
+          isFolder: false,
+        },
+        {
+          path: "docs\\guide\\install.md",
+          size: 1,
+          packedSize: 1,
+          modified: "",
+          isFolder: false,
+        },
+      ]),
+    ).toBe(true);
+  });
+
+  it("keeps forward-slash archives on POSIX semantics", () => {
+    expect(detectWindowsMemberPaths(SAMPLE_ENTRIES)).toBe(false);
+  });
+
+  it("builds a Windows-style tree from backslash member paths", () => {
+    const tree = buildEntryTree(
+      [
+        {
+          path: "docs",
+          size: 0,
+          packedSize: 0,
+          modified: "",
+          isFolder: true,
+        },
+        {
+          path: "docs\\readme.md",
+          size: 1,
+          packedSize: 1,
+          modified: "",
+          isFolder: false,
+        },
+      ],
+      true,
+    );
+    expect(tree[0]?.children.map((child) => child.path)).toEqual([
+      "docs\\readme.md",
+    ]);
+  });
 });
 
 describe("clearPathSelection", () => {
   it("returns empty set", () => {
     expect(clearPathSelection().size).toBe(0);
+  });
+});
+
+describe("resolveSelectiveExtractMemberPaths", () => {
+  it("omits non-empty folders so 7z cannot expand past the selection", () => {
+    expect(
+      resolveSelectiveExtractMemberPaths(
+        ["docs", "docs/readme.md"],
+        SAMPLE_ENTRIES,
+      ),
+    ).toEqual(["docs/readme.md"]);
+  });
+
+  it("keeps empty folders so 7z can create them", () => {
+    const entries: BrowseEntry[] = [
+      {
+        path: "empty",
+        size: 0,
+        packedSize: 0,
+        modified: "2025-01-01 12:00:00",
+        isFolder: true,
+      },
+    ];
+    expect(resolveSelectiveExtractMemberPaths(["empty"], entries)).toEqual([
+      "empty",
+    ]);
+  });
+
+  it("does not extract hidden siblings when only a search-hit folder is selected", () => {
+    expect(
+      resolveSelectiveExtractMemberPaths(["docs"], SAMPLE_ENTRIES),
+    ).toEqual([]);
   });
 });
 
@@ -174,9 +298,9 @@ describe("buildSelectiveExtractArgs", () => {
       "x",
       "-o/tmp/output",
       "-aou",
+      "-spd",
       "-psecret",
       "-aos",
-      "-spd",
       "--",
       "/tmp/archive.7z",
       "docs/readme.md",
@@ -207,7 +331,7 @@ describe("buildSelectiveExtractArgs", () => {
   it("extracts everything when no paths selected", () => {
     expect(
       buildSelectiveExtractArgs("/tmp/archive.7z", "/tmp/output", "", [], []),
-    ).toEqual(["x", "-o/tmp/output", "-aou", "--", "/tmp/archive.7z"]);
+    ).toEqual(["x", "-o/tmp/output", "-aou", "-spd", "--", "/tmp/archive.7z"]);
   });
 });
 
@@ -266,6 +390,43 @@ describe("buildEntryTree", () => {
     expect(findNode(tree, "a/b")?.isFolder).toBe(true);
   });
 
+  it("promotes a file node when a later entry makes it a parent", () => {
+    const tree = buildEntryTree([
+      {
+        path: "parent",
+        size: 4,
+        packedSize: 4,
+        modified: "",
+        isFolder: false,
+      },
+      {
+        path: "parent/child.txt",
+        size: 1,
+        packedSize: 1,
+        modified: "",
+        isFolder: false,
+      },
+    ]);
+    expect(tree[0].isFolder).toBe(true);
+    expect(tree[0].size).toBe(0);
+    expect(tree[0].children[0].path).toBe("parent/child.txt");
+  });
+
+  it("preserves a literal POSIX backslash member as one leaf", () => {
+    const tree = buildEntryTree([
+      {
+        path: "a\\b.txt",
+        size: 1,
+        packedSize: 1,
+        modified: "",
+        isFolder: false,
+      },
+    ]);
+    expect(tree).toHaveLength(1);
+    expect(tree[0].path).toBe("a\\b.txt");
+    expect(tree[0].name).toBe("a\\b.txt");
+  });
+
   it("sorts folders before files alphabetically", () => {
     const tree = buildEntryTree(SAMPLE_ENTRIES);
     const topNames = tree.map((n) => n.name);
@@ -273,13 +434,49 @@ describe("buildEntryTree", () => {
     const fileIdx = topNames.indexOf("-leading-switch-name.txt");
     expect(docsIdx).toBeLessThan(fileIdx);
   });
+
+  it("rejects hostile member depth before recursive UI rendering", () => {
+    const path = Array.from(
+      { length: MAX_ARCHIVE_TREE_DEPTH + 1 },
+      (_, index) => `d${index}`,
+    ).join("/");
+    expect(() =>
+      buildEntryTree([
+        {
+          path,
+          size: 1,
+          packedSize: 1,
+          modified: "",
+          isFolder: false,
+        },
+      ]),
+    ).toThrow(/256-level browsing limit/);
+  });
+
+  it("rejects member paths over the backend UTF-8 byte limit", () => {
+    expect(() =>
+      buildEntryTree([
+        {
+          path: "é".repeat(MAX_ARCHIVE_MEMBER_PATH_BYTES / 2 + 1),
+          size: 1,
+          packedSize: 1,
+          modified: "",
+          isFolder: false,
+        },
+      ]),
+    ).toThrow(/8192-byte browsing limit/);
+  });
 });
 
 describe("computeNodeCheckState", () => {
   it("returns checked when all descendant files are selected", () => {
     const tree = buildEntryTree(SAMPLE_ENTRIES);
     const docs = tree.find((n) => n.path === "docs")!;
-    const selected = new Set(["docs/readme.md", "docs/guide/install.md"]);
+    const selected = new Set([
+      "docs/readme.md",
+      "docs/guide/install.md",
+      "docs/guides",
+    ]);
     expect(computeNodeCheckState(docs, selected)).toBe("checked");
   });
 
@@ -294,6 +491,36 @@ describe("computeNodeCheckState", () => {
     const tree = buildEntryTree(SAMPLE_ENTRIES);
     const docs = tree.find((n) => n.path === "docs")!;
     expect(computeNodeCheckState(docs, new Set())).toBe("unchecked");
+  });
+
+  it("reflects an empty folder's own selected state", () => {
+    const emptyFolder: TreeNode = {
+      name: "empty",
+      path: "empty",
+      isFolder: true,
+      size: 0,
+      depth: 0,
+      children: [],
+    };
+    expect(computeNodeCheckState(emptyFolder, new Set(["empty"]))).toBe(
+      "checked",
+    );
+    expect(computeNodeCheckState(emptyFolder, new Set())).toBe("unchecked");
+  });
+
+  it("includes selected nested childless folders in parent state", () => {
+    const tree = buildEntryTree(SAMPLE_ENTRIES);
+    const docs = tree.find((node) => node.path === "docs")!;
+
+    expect(computeNodeCheckState(docs, new Set(["docs/guides"]))).toBe(
+      "indeterminate",
+    );
+    expect(
+      computeNodeCheckState(
+        docs,
+        new Set(["docs/readme.md", "docs/guide/install.md", "docs/guides"]),
+      ),
+    ).toBe("checked");
   });
 
   it("reflects a single file's own state", () => {

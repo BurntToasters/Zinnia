@@ -39,31 +39,35 @@ export function clearPathSelection(): Set<string> {
   return new Set();
 }
 
-function normalizeFolderPath(path: string): string {
-  return path.replace(/[\\/]+$/g, "");
+function normalizeFolderPath(path: string, windowsPaths: boolean): string {
+  return windowsPaths
+    ? path.replace(/[\\/]+$/g, "")
+    : path.replace(/\/+$/g, "");
 }
 
 export function isPathWithinFolder(
   entryPath: string,
   folderPath: string,
+  windowsPaths = false,
 ): boolean {
-  const normalizedFolder = normalizeFolderPath(folderPath);
+  const normalizedFolder = normalizeFolderPath(folderPath, windowsPaths);
   if (!normalizedFolder) return entryPath === folderPath;
   if (entryPath === normalizedFolder) return true;
-  return (
-    entryPath.startsWith(`${normalizedFolder}/`) ||
-    entryPath.startsWith(`${normalizedFolder}\\`)
-  );
+  return windowsPaths
+    ? entryPath.startsWith(`${normalizedFolder}/`) ||
+        entryPath.startsWith(`${normalizedFolder}\\`)
+    : entryPath.startsWith(`${normalizedFolder}/`);
 }
 
 export function getRecursiveSelectionPaths(
-  allEntries: BrowseEntry[],
+  scopeEntries: BrowseEntry[],
   targetPath: string,
   isFolder: boolean,
+  windowsPaths = false,
 ): string[] {
   if (!isFolder) return [targetPath];
-  const recursive = allEntries
-    .filter((entry) => isPathWithinFolder(entry.path, targetPath))
+  const recursive = scopeEntries
+    .filter((entry) => isPathWithinFolder(entry.path, targetPath, windowsPaths))
     .map((entry) => entry.path);
   return recursive.length > 0 ? recursive : [targetPath];
 }
@@ -71,12 +75,14 @@ export function getRecursiveSelectionPaths(
 export function toggleEntrySelection(
   current: Set<string>,
   targetEntry: BrowseEntry,
-  allEntries: BrowseEntry[],
+  scopeEntries: BrowseEntry[],
+  windowsPaths = false,
 ): Set<string> {
   const recursiveTargets = getRecursiveSelectionPaths(
-    allEntries,
+    scopeEntries,
     targetEntry.path,
     targetEntry.isFolder,
+    windowsPaths,
   );
   const shouldSelect = recursiveTargets.some((path) => !current.has(path));
   const next = new Set(current);
@@ -91,18 +97,35 @@ export function toggleEntrySelection(
 export function selectEntries(
   current: Set<string>,
   targetEntries: BrowseEntry[],
-  allEntries: BrowseEntry[],
+  scopeEntries: BrowseEntry[],
+  windowsPaths = false,
 ): Set<string> {
   const next = new Set(current);
   for (const entry of targetEntries) {
     const recursiveTargets = getRecursiveSelectionPaths(
-      allEntries,
+      scopeEntries,
       entry.path,
       entry.isFolder,
+      windowsPaths,
     );
     for (const path of recursiveTargets) next.add(path);
   }
   return next;
+}
+
+/**
+ * Infer member-path separator style from the listing, not the host OS.
+ * Windows-built archives usually use `\`; POSIX archives use `/`. A lone
+ * literal `\` in a name is rare; majority wins when both appear.
+ */
+export function detectWindowsMemberPaths(entries: BrowseEntry[]): boolean {
+  let backslashPaths = 0;
+  let forwardPaths = 0;
+  for (const entry of entries) {
+    if (entry.path.includes("\\")) backslashPaths += 1;
+    if (entry.path.includes("/")) forwardPaths += 1;
+  }
+  return backslashPaths > forwardPaths;
 }
 
 export interface TreeNode {
@@ -114,13 +137,21 @@ export interface TreeNode {
   children: TreeNode[];
 }
 
-function splitPathSegments(path: string): string[] {
-  return path.split(/[\\/]+/).filter((s) => s.length > 0);
+export const MAX_ARCHIVE_TREE_DEPTH = 256;
+export const MAX_ARCHIVE_MEMBER_PATH_BYTES = 8_192;
+
+function splitPathSegments(path: string, windowsPaths: boolean): string[] {
+  return path
+    .split(windowsPaths ? /[\\/]+/ : /\/+/)
+    .filter((s) => s.length > 0);
 }
 
 // Build a nested folder/file tree from flat archive entries. Intermediate
 // folders missing from the entry list are synthesized so the tree is complete.
-export function buildEntryTree(entries: BrowseEntry[]): TreeNode[] {
+export function buildEntryTree(
+  entries: BrowseEntry[],
+  windowsPaths = false,
+): TreeNode[] {
   const root: TreeNode = {
     name: "",
     path: "",
@@ -132,37 +163,52 @@ export function buildEntryTree(entries: BrowseEntry[]): TreeNode[] {
   const byPath = new Map<string, TreeNode>();
   byPath.set("", root);
 
-  const ensureNode = (
-    path: string,
-    isFolder: boolean,
-    size: number,
-  ): TreeNode => {
-    const existing = byPath.get(path);
-    if (existing) {
-      if (isFolder) existing.isFolder = true;
-      else existing.size = size;
-      return existing;
-    }
-    const segments = splitPathSegments(path);
-    const name = segments[segments.length - 1] ?? path;
-    const parentPath = segments.slice(0, -1).join("/");
-    const parent = ensureNode(parentPath, true, 0);
-    const node: TreeNode = {
-      name,
-      path,
-      isFolder,
-      size,
-      depth: segments.length - 1,
-      children: [],
-    };
-    parent.children.push(node);
-    byPath.set(path, node);
-    return node;
-  };
-
+  const separator = windowsPaths ? "\\" : "/";
   for (const entry of entries) {
-    const normalized = splitPathSegments(entry.path).join("/");
-    ensureNode(normalized, entry.isFolder, entry.size);
+    if (
+      new TextEncoder().encode(entry.path).byteLength >
+      MAX_ARCHIVE_MEMBER_PATH_BYTES
+    ) {
+      throw new Error(
+        `Archive member path exceeds the ${MAX_ARCHIVE_MEMBER_PATH_BYTES}-byte browsing limit.`,
+      );
+    }
+    const segments = splitPathSegments(entry.path, windowsPaths);
+    if (segments.length > MAX_ARCHIVE_TREE_DEPTH) {
+      throw new Error(
+        `Archive member path exceeds the ${MAX_ARCHIVE_TREE_DEPTH}-level browsing limit.`,
+      );
+    }
+    let parent = root;
+    const pathSegments: string[] = [];
+    for (let index = 0; index < segments.length; index += 1) {
+      const name = segments[index];
+      pathSegments.push(name);
+      const nodePath = pathSegments.join(separator);
+      const isLeaf = index === segments.length - 1;
+      let node = byPath.get(nodePath);
+      if (!node) {
+        node = {
+          name,
+          path: nodePath,
+          isFolder: isLeaf ? entry.isFolder : true,
+          size: isLeaf && !entry.isFolder ? entry.size : 0,
+          depth: index,
+          children: [],
+        };
+        parent.children.push(node);
+        byPath.set(nodePath, node);
+      } else if (isLeaf) {
+        if (entry.isFolder) node.isFolder = true;
+        else node.size = entry.size;
+      } else if (!node.isFolder) {
+        // A malformed/unsorted listing can describe a path as a file before a
+        // later entry requires it to be a parent. The tree shape wins.
+        node.isFolder = true;
+        node.size = 0;
+      }
+      parent = node;
+    }
   }
 
   sortTree(root);
@@ -170,11 +216,15 @@ export function buildEntryTree(entries: BrowseEntry[]): TreeNode[] {
 }
 
 function sortTree(node: TreeNode): void {
-  node.children.sort((a, b) => {
-    if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
-    return a.name.localeCompare(b.name);
-  });
-  for (const child of node.children) sortTree(child);
+  const pending = [node];
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    current.children.sort((a, b) => {
+      if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    pending.push(...current.children);
+  }
 }
 
 export type NodeCheckState = "checked" | "unchecked" | "indeterminate";
@@ -188,10 +238,18 @@ export function computeNodeCheckState(
   if (!node.isFolder) {
     return selected.has(node.path) ? "checked" : "unchecked";
   }
+  if (node.children.length === 0) {
+    return selected.has(node.path) ? "checked" : "unchecked";
+  }
   let hasChecked = false;
   let hasUnchecked = false;
   const visit = (n: TreeNode): void => {
     if (!n.isFolder) {
+      if (selected.has(n.path)) hasChecked = true;
+      else hasUnchecked = true;
+      return;
+    }
+    if (n.children.length === 0) {
       if (selected.has(n.path)) hasChecked = true;
       else hasUnchecked = true;
       return;
@@ -204,6 +262,43 @@ export function computeNodeCheckState(
   return "unchecked";
 }
 
+/**
+ * Map UI selection paths to 7-Zip member filters. Never pass a non-empty folder
+ * path: `7z x … folder` expands the full archive subtree, including members
+ * outside the rendered/search selection scope.
+ */
+export function resolveSelectiveExtractMemberPaths(
+  selectedPaths: string[],
+  entries: BrowseEntry[],
+  windowsPaths = false,
+): string[] {
+  const byPath = new Map(entries.map((entry) => [entry.path, entry]));
+  const resolved: string[] = [];
+  const seen = new Set<string>();
+  for (const path of selectedPaths) {
+    const entry = byPath.get(path);
+    if (!entry) continue;
+    if (!entry.isFolder) {
+      if (!seen.has(path)) {
+        seen.add(path);
+        resolved.push(path);
+      }
+      continue;
+    }
+    const hasArchiveChildren = entries.some(
+      (candidate) =>
+        candidate.path !== path &&
+        isPathWithinFolder(candidate.path, path, windowsPaths),
+    );
+    // Empty folders must still be passed so 7-Zip creates the directory.
+    if (!hasArchiveChildren && !seen.has(path)) {
+      seen.add(path);
+      resolved.push(path);
+    }
+  }
+  return resolved;
+}
+
 export function buildSelectiveExtractArgs(
   archive: string,
   destination: string,
@@ -211,11 +306,11 @@ export function buildSelectiveExtractArgs(
   extraArgs: string[],
   selectedPaths: string[],
 ): string[] {
-  const args = ["x", `-o${destination}`, SAFE_EXTRACT_OVERWRITE_MODE];
+  const args = ["x", `-o${destination}`, SAFE_EXTRACT_OVERWRITE_MODE, "-spd"];
   if (password) args.push(`-p${password}`);
   args.push(...extraArgs);
   if (selectedPaths.length > 0) {
-    args.push("-spd", "--", archive, ...selectedPaths);
+    args.push("--", archive, ...selectedPaths);
   } else {
     args.push("--", archive);
   }

@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { confirm, message } from "@tauri-apps/plugin-dialog";
+import { confirm, message, open, save } from "@tauri-apps/plugin-dialog";
 import {
+  addFilesToArchive,
   browseArchive,
   cancelAction,
   closeCommandPreviewModal,
+  convertArchive,
   copyCommandPreview,
   clearPickerSelection,
   openSelectiveExtractModal,
@@ -20,13 +22,31 @@ import {
 } from "../archive";
 import { state } from "../state";
 import type { ArchiveInfo } from "../browse-model";
+import { SAFE_EXTRACT_OVERWRITE_MODE } from "../extract-policy";
+import { MAX_ARCHIVE_TREE_DEPTH } from "../selective-extract";
 
 const invokeMock = vi.mocked(invoke);
 const messageMock = vi.mocked(message);
 const confirmMock = vi.mocked(confirm);
+const openMock = vi.mocked(open);
+const saveMock = vi.mocked(save);
 
 function uniqueArchivePath(prefix: string): string {
   return `/tmp/${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}.7z`;
+}
+
+function pathsFromValidationPayload(payload: unknown): string[] {
+  const pathsJson = (payload as { pathsJson?: unknown } | undefined)?.pathsJson;
+  if (typeof pathsJson !== "string") return [];
+  try {
+    const parsed: unknown = JSON.parse(pathsJson);
+    return Array.isArray(parsed) &&
+      parsed.every((path) => typeof path === "string")
+      ? parsed
+      : [];
+  } catch {
+    return [];
+  }
 }
 
 function ensureElement<T extends HTMLElement>(id: string, factory: () => T): T {
@@ -122,19 +142,92 @@ beforeEach(() => {
 
   const app = document.getElementById("app") as HTMLElement;
   app.dataset.mode = "extract";
+  app.dataset.workspaceMode = "power";
 
   (document.getElementById("browse-password-field") as HTMLElement).hidden =
     true;
   (document.getElementById("browse-password") as HTMLInputElement).value = "";
   (document.getElementById("extract-password") as HTMLInputElement).value = "";
+  (document.getElementById("password") as HTMLInputElement).value = "";
+  (document.getElementById("encrypt-headers") as HTMLInputElement).checked =
+    false;
+  (document.getElementById("store-timestamps") as HTMLInputElement).checked =
+    false;
+  (document.getElementById("split-size") as HTMLSelectElement).value = "";
   (document.getElementById("extract-path") as HTMLInputElement).value = "";
   (document.getElementById("selective-dest") as HTMLInputElement).value = "";
+  (document.getElementById("format") as HTMLSelectElement).value = "7z";
 
   messageMock.mockReset();
   messageMock.mockResolvedValue("Ok");
   confirmMock.mockReset();
   confirmMock.mockResolvedValue(true);
+  openMock.mockReset();
+  openMock.mockResolvedValue(null);
+  saveMock.mockReset();
+  saveMock.mockResolvedValue(null);
   invokeMock.mockReset();
+});
+
+describe("addFilesToArchive", () => {
+  it("updates the archive and refreshes its listing", async () => {
+    const archive = uniqueArchivePath("add-files");
+    state.inputs = [archive];
+    openMock.mockResolvedValue(["/tmp/one.txt", "/tmp/two.txt"]);
+
+    const runArgs: string[][] = [];
+    setInvokeRouter((command, payload) => {
+      if (command === "probe_7z") return undefined;
+      if (command === "validate_archive_paths") {
+        return pathsFromValidationPayload(payload).map((path) => ({
+          path,
+          valid: true,
+        }));
+      }
+      if (command === "run_7z") {
+        const args = (payload as { args?: string[] } | undefined)?.args ?? [];
+        runArgs.push(args);
+        if (args[0] === "l") {
+          return {
+            stdout: sltListing([
+              {
+                path: "one.txt",
+                size: 3,
+                packedSize: 3,
+                modified: "2026-07-22",
+                isFolder: false,
+              },
+            ]),
+            stderr: "",
+            code: 0,
+          };
+        }
+        return { stdout: "Everything is Ok", stderr: "", code: 0 };
+      }
+      return undefined;
+    });
+
+    await addFilesToArchive();
+
+    expect(openMock).toHaveBeenCalledWith({ multiple: true, directory: false });
+    expect(runArgs[0]).toEqual(
+      expect.arrayContaining([
+        "u",
+        "-sse",
+        "-snl",
+        "-snh",
+        "-spd",
+        archive,
+        "--",
+        "/tmp/one.txt",
+        "/tmp/two.txt",
+      ]),
+    );
+    expect(runArgs.some(([operation]) => operation === "l")).toBe(true);
+    expect(document.getElementById("browse-summary")?.textContent).toContain(
+      "1 file",
+    );
+  });
 });
 
 describe("archive test/browse/selective flows", () => {
@@ -147,13 +240,24 @@ describe("archive test/browse/selective flows", () => {
     });
   });
 
+  it("clears the Basic browse password after an archive test", async () => {
+    const basicBrowsePassword = document.createElement("input");
+    basicBrowsePassword.id = "basic-browse-password";
+    basicBrowsePassword.value = "must-clear";
+    document.body.appendChild(basicBrowsePassword);
+
+    await testArchive();
+
+    expect(basicBrowsePassword.value).toBe("");
+    basicBrowsePassword.remove();
+  });
+
   it("returns passed_with_warnings when testArchive exits with code 1", async () => {
     state.inputs = ["/tmp/sample.7z"];
 
     setInvokeRouter((command, payload) => {
       if (command === "validate_archive_paths") {
-        const paths =
-          (payload as { paths?: string[] } | undefined)?.paths ?? [];
+        const paths = pathsFromValidationPayload(payload);
         return paths.map((path) => ({ path, valid: true }));
       }
       if (command === "probe_7z") return undefined;
@@ -166,8 +270,11 @@ describe("archive test/browse/selective flows", () => {
     const result = await testArchive();
 
     expect(result).toBe("passed_with_warnings");
-    expect(invokeMock.mock.calls.some(([name]) => name === "probe_7z")).toBe(
-      true,
+    expect(invokeMock).toHaveBeenCalledWith(
+      "run_7z",
+      expect.objectContaining({
+        args: expect.arrayContaining(["t", "/tmp/sample.7z"]),
+      }),
     );
   });
 
@@ -176,8 +283,7 @@ describe("archive test/browse/selective flows", () => {
 
     setInvokeRouter((command, payload) => {
       if (command === "validate_archive_paths") {
-        const paths =
-          (payload as { paths?: string[] } | undefined)?.paths ?? [];
+        const paths = pathsFromValidationPayload(payload);
         return paths.map((path) => ({ path, valid: true }));
       }
       if (command === "probe_7z") return undefined;
@@ -209,8 +315,7 @@ describe("archive test/browse/selective flows", () => {
 
     setInvokeRouter((command, payload) => {
       if (command === "validate_archive_paths") {
-        const paths =
-          (payload as { paths?: string[] } | undefined)?.paths ?? [];
+        const paths = pathsFromValidationPayload(payload);
         return paths.map((path) => ({ path, valid: true }));
       }
       if (command === "probe_7z") return undefined;
@@ -263,8 +368,7 @@ describe("archive test/browse/selective flows", () => {
 
     setInvokeRouter((command, payload) => {
       if (command === "validate_archive_paths") {
-        const paths =
-          (payload as { paths?: string[] } | undefined)?.paths ?? [];
+        const paths = pathsFromValidationPayload(payload);
         return paths.map((path) => ({ path, valid: true }));
       }
       return undefined;
@@ -278,14 +382,53 @@ describe("archive test/browse/selective flows", () => {
     expect(document.getElementById("selective-list")?.children.length).toBe(1);
   });
 
+  it("reports hostile member depth without opening a broken selective modal", async () => {
+    const archive = "/tmp/hostile-depth.7z";
+    const hostilePath = Array.from(
+      { length: MAX_ARCHIVE_TREE_DEPTH + 1 },
+      (_, index) => `d${index}`,
+    ).join("/");
+    state.inputs = [archive];
+    state.browseArchiveInfoByPath.set(
+      archive,
+      archiveInfo([
+        {
+          path: hostilePath,
+          size: 1,
+          packedSize: 1,
+          modified: "",
+          isFolder: false,
+        },
+      ]),
+    );
+
+    setInvokeRouter((command, payload) => {
+      if (command === "validate_archive_paths") {
+        const paths = pathsFromValidationPayload(payload);
+        return paths.map((path) => ({ path, valid: true }));
+      }
+      return undefined;
+    });
+
+    await openSelectiveExtractModal();
+
+    expect(
+      (document.getElementById("selective-overlay") as HTMLElement).hidden,
+    ).toBe(true);
+    expect(state.selectiveActiveArchive).toBeNull();
+    expect(messageMock).toHaveBeenCalledWith(
+      expect.stringContaining("256-level browsing limit"),
+      { title: "Archive browsing unavailable", kind: "error" },
+    );
+  });
+
   it("shows error when selective extract destination is missing", async () => {
     const archive = "/tmp/selection.7z";
     state.inputs = [archive];
 
     setInvokeRouter((command, payload) => {
       if (command === "validate_archive_paths") {
-        const paths =
-          (payload as { paths?: string[] } | undefined)?.paths ?? [];
+        const paths = pathsFromValidationPayload(payload);
         return paths.map((path) => ({ path, valid: true }));
       }
       if (command === "probe_7z") return undefined;
@@ -325,8 +468,7 @@ describe("archive test/browse/selective flows", () => {
 
     setInvokeRouter((command, payload) => {
       if (command === "validate_archive_paths") {
-        const paths =
-          (payload as { paths?: string[] } | undefined)?.paths ?? [];
+        const paths = pathsFromValidationPayload(payload);
         return paths.map((path) => ({ path, valid: true }));
       }
       if (command === "probe_7z") return undefined;
@@ -365,7 +507,7 @@ describe("archive test/browse/selective flows", () => {
     const runCall = invokeMock.mock.calls.find(([name, payload]) => {
       if (name !== "run_7z") return false;
       const args = (payload as { args?: string[] } | undefined)?.args ?? [];
-      return args.includes("-spd");
+      return args[0] === "x" && args.includes("-spd");
     });
     const args = (runCall?.[1] as { args?: string[] } | undefined)?.args ?? [];
     expect(args).toContain("-spd");
@@ -390,8 +532,7 @@ describe("archive test/browse/selective flows", () => {
 
     setInvokeRouter((command, payload) => {
       if (command === "validate_archive_paths") {
-        const paths =
-          (payload as { paths?: string[] } | undefined)?.paths ?? [];
+        const paths = pathsFromValidationPayload(payload);
         return paths.map((path) => ({
           path,
           valid: false,
@@ -416,8 +557,7 @@ describe("archive test/browse/selective flows", () => {
 
     setInvokeRouter((command, payload) => {
       if (command === "validate_archive_paths") {
-        const paths =
-          (payload as { paths?: string[] } | undefined)?.paths ?? [];
+        const paths = pathsFromValidationPayload(payload);
         return paths.map((path) => ({ path, valid: true }));
       }
       if (command === "probe_7z") return undefined;
@@ -453,8 +593,7 @@ describe("archive test/browse/selective flows", () => {
 
     setInvokeRouter((command, payload) => {
       if (command === "validate_archive_paths") {
-        const paths =
-          (payload as { paths?: string[] } | undefined)?.paths ?? [];
+        const paths = pathsFromValidationPayload(payload);
         return paths.map((path) => ({ path, valid: true }));
       }
       if (command === "probe_7z") return undefined;
@@ -545,8 +684,7 @@ describe("archive test/browse/selective flows", () => {
 
     setInvokeRouter((command, payload) => {
       if (command === "validate_archive_paths") {
-        const paths =
-          (payload as { paths?: string[] } | undefined)?.paths ?? [];
+        const paths = pathsFromValidationPayload(payload);
         return paths.map((path) => ({ path, valid: true }));
       }
       if (command === "probe_7z") return undefined;
@@ -561,35 +699,37 @@ describe("archive test/browse/selective flows", () => {
     );
   });
 
-  it("skips runAction when delete-after confirmation is declined", async () => {
+  it("rejects runAction when delete-after is checked", async () => {
     const app = document.getElementById("app") as HTMLElement;
     app.dataset.mode = "add";
+    app.dataset.workspaceMode = "power";
     state.inputs = ["/tmp/input.txt"];
     (document.getElementById("output-path") as HTMLInputElement).value =
       "/tmp/output.7z";
     (document.getElementById("delete-after") as HTMLInputElement).checked =
       true;
-    confirmMock.mockResolvedValueOnce(false);
 
     setInvokeRouter((command) => {
       if (command === "probe_7z") return undefined;
       if (command === "run_7z") {
-        throw new Error("run_7z should not run when confirmation is declined");
+        throw new Error("run_7z should not run when delete-after is checked");
       }
       return undefined;
     });
 
     await runAction();
 
-    expect(confirmMock).toHaveBeenCalledOnce();
+    expect(confirmMock).not.toHaveBeenCalled();
     expect(invokeMock.mock.calls.some(([name]) => name === "run_7z")).toBe(
       false,
     );
+    expect(messageMock).toHaveBeenCalled();
   });
 
   it("rolls back add-mode output on warning exit code", async () => {
     const app = document.getElementById("app") as HTMLElement;
     app.dataset.mode = "add";
+    app.dataset.workspaceMode = "power";
     state.inputs = ["/tmp/input.txt"];
     (document.getElementById("output-path") as HTMLInputElement).value =
       "/tmp/output.7z";
@@ -625,14 +765,14 @@ describe("archive test/browse/selective flows", () => {
     const archiveB = uniqueArchivePath("batch-b");
     const app = document.getElementById("app") as HTMLElement;
     app.dataset.mode = "extract";
+    app.dataset.workspaceMode = "power";
     state.inputs = [archiveA, archiveB];
     (document.getElementById("extract-path") as HTMLInputElement).value =
       "/tmp/out";
 
     setInvokeRouter((command, payload) => {
       if (command === "validate_archive_paths") {
-        const paths =
-          (payload as { paths?: string[] } | undefined)?.paths ?? [];
+        const paths = pathsFromValidationPayload(payload);
         return paths.map((path) => ({ path, valid: true }));
       }
       if (command === "probe_7z") return undefined;
@@ -655,6 +795,8 @@ describe("archive test/browse/selective flows", () => {
   it("reports mixed batch extraction outcomes", async () => {
     const archiveA = uniqueArchivePath("mixed-a");
     const archiveB = uniqueArchivePath("mixed-b");
+    const app = document.getElementById("app") as HTMLElement;
+    app.dataset.workspaceMode = "power";
     state.inputs = [archiveA, archiveB];
     (document.getElementById("extract-path") as HTMLInputElement).value =
       "/tmp/out";
@@ -662,8 +804,7 @@ describe("archive test/browse/selective flows", () => {
     let runCount = 0;
     setInvokeRouter((command, payload) => {
       if (command === "validate_archive_paths") {
-        const paths =
-          (payload as { paths?: string[] } | undefined)?.paths ?? [];
+        const paths = pathsFromValidationPayload(payload);
         return paths.map((path) => ({ path, valid: true }));
       }
       if (command === "probe_7z") return undefined;
@@ -681,6 +822,115 @@ describe("archive test/browse/selective flows", () => {
       title: "Batch extraction complete",
       kind: "warning",
     });
+  });
+
+  it("skips native dialogs for basic-mode batch extract outcomes", async () => {
+    const archiveA = uniqueArchivePath("basic-batch-a");
+    const archiveB = uniqueArchivePath("basic-batch-b");
+    const app = document.getElementById("app") as HTMLElement;
+    app.dataset.workspaceMode = "basic";
+    state.inputs = [archiveA, archiveB];
+    (document.getElementById("extract-path") as HTMLInputElement).value =
+      "/tmp/out";
+
+    setInvokeRouter((command, payload) => {
+      if (command === "validate_archive_paths") {
+        const paths = pathsFromValidationPayload(payload);
+        return paths.map((path) => ({ path, valid: true }));
+      }
+      if (command === "probe_7z") return undefined;
+      if (command === "run_7z") return { stdout: "", stderr: "", code: 0 };
+      return undefined;
+    });
+
+    await runBatchExtract();
+
+    expect(messageMock).not.toHaveBeenCalled();
+  });
+
+  it("skips native dialogs for basic-mode batch extract failures and cancel", async () => {
+    const archiveA = uniqueArchivePath("basic-fail-a");
+    const archiveB = uniqueArchivePath("basic-fail-b");
+    const app = document.getElementById("app") as HTMLElement;
+    app.dataset.workspaceMode = "basic";
+    state.inputs = [archiveA, archiveB];
+    (document.getElementById("extract-path") as HTMLInputElement).value =
+      "/tmp/out";
+
+    let runCount = 0;
+    setInvokeRouter((command, payload) => {
+      if (command === "validate_archive_paths") {
+        const paths = pathsFromValidationPayload(payload);
+        return paths.map((path) => ({ path, valid: true }));
+      }
+      if (command === "probe_7z") return undefined;
+      if (command === "run_7z") {
+        runCount += 1;
+        if (runCount === 1) return { stdout: "", stderr: "bad", code: 2 };
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      return undefined;
+    });
+
+    await runBatchExtract();
+    expect(messageMock).not.toHaveBeenCalled();
+
+    messageMock.mockClear();
+    runCount = 0;
+    state.inputs = [archiveA, archiveB];
+    setInvokeRouter((command, payload) => {
+      if (command === "validate_archive_paths") {
+        const paths = pathsFromValidationPayload(payload);
+        return paths.map((path) => ({ path, valid: true }));
+      }
+      if (command === "probe_7z") return undefined;
+      if (command === "run_7z") {
+        state.batchCancelled = true;
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      return undefined;
+    });
+
+    await runBatchExtract();
+    expect(messageMock).not.toHaveBeenCalled();
+  });
+
+  it("skips native dialogs for basic-mode operation and batch errors", async () => {
+    const app = document.getElementById("app") as HTMLElement;
+    app.dataset.mode = "add";
+    app.dataset.workspaceMode = "basic";
+    state.inputs = ["/tmp/input.txt"];
+    (document.getElementById("output-path") as HTMLInputElement).value =
+      "/tmp/output.7z";
+    (document.getElementById("delete-after") as HTMLInputElement).checked =
+      false;
+
+    setInvokeRouter((command) => {
+      if (command === "probe_7z") return undefined;
+      if (command === "run_7z") {
+        return { stdout: "", stderr: "fail", code: 2 };
+      }
+      return undefined;
+    });
+
+    await runAction();
+    expect(messageMock).not.toHaveBeenCalled();
+
+    messageMock.mockClear();
+    setInvokeRouter((command) => {
+      if (command === "probe_7z") return undefined;
+      if (command === "run_7z") throw new Error("backend down");
+      return undefined;
+    });
+    await runAction();
+    expect(messageMock).not.toHaveBeenCalled();
+
+    messageMock.mockClear();
+    app.dataset.mode = "extract";
+    state.inputs = [uniqueArchivePath("basic-err")];
+    (document.getElementById("extract-path") as HTMLInputElement).value = "";
+    await runBatchExtract();
+    expect(messageMock).not.toHaveBeenCalled();
   });
 
   it("resets cancellation state and reports backend errors", async () => {
@@ -781,5 +1031,191 @@ describe("archive test/browse/selective flows", () => {
       (document.getElementById("copy-command-preview") as HTMLButtonElement)
         .textContent,
     ).toBe("Copied");
+  });
+});
+
+describe("convertArchive", () => {
+  it("requires an open archive before converting", async () => {
+    state.inputs = [];
+    await convertArchive();
+    expect(messageMock).toHaveBeenCalledWith(
+      "Open an archive first to convert it.",
+      expect.objectContaining({ title: "No archive", kind: "warning" }),
+    );
+    expect(saveMock).not.toHaveBeenCalled();
+  });
+
+  it("extracts with the safe overwrite policy then recompresses", async () => {
+    const archive = uniqueArchivePath("convert-src");
+    state.inputs = [archive];
+    saveMock.mockResolvedValueOnce("/tmp/converted.7z");
+
+    const runArgs: string[][] = [];
+    setInvokeRouter((command, payload) => {
+      if (command === "probe_7z") return undefined;
+      if (command === "create_temp_extract_dir")
+        return "/tmp/zinnia-convert-tmp";
+      if (command === "list_managed_temp_children")
+        return ["/tmp/zinnia-convert-tmp/document.txt"];
+      if (command === "remove_managed_temp_dir") return undefined;
+      if (command === "run_7z") {
+        const args = (payload as { args?: string[] } | undefined)?.args ?? [];
+        runArgs.push(args);
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      return undefined;
+    });
+
+    await convertArchive();
+
+    expect(runArgs).toHaveLength(2);
+    expect(runArgs[0][0]).toBe("x");
+    expect(runArgs[0]).toContain("-o/tmp/zinnia-convert-tmp");
+    expect(runArgs[0]).toContain(SAFE_EXTRACT_OVERWRITE_MODE);
+    expect(runArgs[0]).not.toContain("-y");
+    expect(runArgs[1][0]).toBe("a");
+    expect(runArgs[1]).toContain("/tmp/converted.7z");
+    expect(invokeMock).toHaveBeenCalledWith("remove_managed_temp_dir", {
+      path: "/tmp/zinnia-convert-tmp",
+    });
+  });
+
+  it("fails conversion safely when extraction produces no children", async () => {
+    state.inputs = [uniqueArchivePath("convert-empty")];
+    saveMock.mockResolvedValueOnce("/tmp/converted.7z");
+
+    const runArgs: string[][] = [];
+    setInvokeRouter((command, payload) => {
+      if (command === "probe_7z") return undefined;
+      if (command === "create_temp_extract_dir")
+        return "/tmp/zinnia-convert-empty";
+      if (command === "list_managed_temp_children") return [];
+      if (command === "remove_managed_temp_dir") return undefined;
+      if (command === "run_7z") {
+        const args = (payload as { args?: string[] } | undefined)?.args ?? [];
+        runArgs.push(args);
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      return undefined;
+    });
+
+    await convertArchive();
+
+    expect(runArgs).toHaveLength(1);
+    expect(messageMock).toHaveBeenCalledWith(
+      "Conversion extract produced no files to recompress.",
+      { title: "Conversion error", kind: "error" },
+    );
+    expect(invokeMock).toHaveBeenCalledWith("remove_managed_temp_dir", {
+      path: "/tmp/zinnia-convert-empty",
+    });
+  });
+
+  it("cancels ZIP conversion when extracted links may not round-trip", async () => {
+    state.inputs = [uniqueArchivePath("convert-zip-risk")];
+    (document.getElementById("format") as HTMLSelectElement).value = "zip";
+    saveMock.mockResolvedValueOnce("/tmp/converted.zip");
+    confirmMock.mockResolvedValueOnce(false);
+
+    const runArgs: string[][] = [];
+    setInvokeRouter((command, payload) => {
+      if (command === "probe_7z") return undefined;
+      if (command === "create_temp_extract_dir")
+        return "/tmp/zinnia-convert-zip";
+      if (command === "list_managed_temp_children") {
+        return ["/tmp/zinnia-convert-zip/Demo.app"];
+      }
+      if (command === "probe_compress_inputs") {
+        return {
+          nestedSymlinks: 1,
+          appBundles: 1,
+          nestedReparsePoints: 0,
+          examples: ["/tmp/zinnia-convert-zip/Demo.app"],
+        };
+      }
+      if (command === "remove_managed_temp_dir") return undefined;
+      if (command === "run_7z") {
+        const args = (payload as { args?: string[] } | undefined)?.args ?? [];
+        runArgs.push(args);
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      return undefined;
+    });
+
+    await convertArchive();
+
+    expect(runArgs).toHaveLength(1);
+    expect(confirmMock).toHaveBeenCalledWith(
+      expect.stringContaining("ZIP often fails to preserve"),
+      expect.objectContaining({ title: "ZIP may break app bundles" }),
+    );
+    expect(invokeMock).toHaveBeenCalledWith("remove_managed_temp_dir", {
+      path: "/tmp/zinnia-convert-zip",
+    });
+  });
+
+  it("preserves conversion passwords, timestamps, and split settings", async () => {
+    state.inputs = [uniqueArchivePath("convert-options")];
+    (document.getElementById("format") as HTMLSelectElement).value = "zip";
+    (document.getElementById("extract-password") as HTMLInputElement).value =
+      "source-secret";
+    (document.getElementById("password") as HTMLInputElement).value =
+      "dest-secret";
+    (document.getElementById("encrypt-headers") as HTMLInputElement).checked =
+      true;
+    (document.getElementById("store-timestamps") as HTMLInputElement).checked =
+      true;
+    (document.getElementById("split-size") as HTMLSelectElement).value = "100m";
+    saveMock.mockResolvedValueOnce("/tmp/converted.zip");
+
+    const runArgs: string[][] = [];
+    setInvokeRouter((command, payload) => {
+      if (command === "probe_7z") return undefined;
+      if (command === "create_temp_extract_dir")
+        return "/tmp/zinnia-convert-options";
+      if (command === "list_managed_temp_children") {
+        return ["/tmp/zinnia-convert-options/document.txt"];
+      }
+      if (command === "probe_compress_inputs") {
+        return {
+          nestedSymlinks: 0,
+          appBundles: 0,
+          nestedReparsePoints: 0,
+          examples: [],
+        };
+      }
+      if (command === "remove_managed_temp_dir") return undefined;
+      if (command === "run_7z") {
+        const args = (payload as { args?: string[] } | undefined)?.args ?? [];
+        runArgs.push(args);
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      return undefined;
+    });
+
+    await convertArchive();
+
+    expect(runArgs).toHaveLength(2);
+    expect(runArgs[0]).toContain("-psource-secret");
+    expect(runArgs[1]).toEqual(
+      expect.arrayContaining([
+        "-pdest-secret",
+        "-mem=AES256",
+        "-mtc=on",
+        "-mta=on",
+        "-v100m",
+      ]),
+    );
+  });
+
+  it("aborts cleanly when the save dialog is cancelled", async () => {
+    state.inputs = [uniqueArchivePath("convert-cancel")];
+    saveMock.mockResolvedValueOnce(null);
+
+    await convertArchive();
+
+    expect(invokeMock.mock.calls.some(([name]) => name === "run_7z")).toBe(
+      false,
+    );
   });
 });

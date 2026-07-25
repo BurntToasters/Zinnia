@@ -1,6 +1,5 @@
-#!/usr/bin/env node
-
 import fs from "fs";
+import crypto from "crypto";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -19,8 +18,29 @@ const BUILD_ONLY_DIRECTORIES = [
   "nsis",
   "rpm",
 ];
-const BUILD_ONLY_FILES = ["builder-debug.yml", "builder-effective-config.yaml"];
+const BUILD_ONLY_FILES = [
+  "builder-debug.yml",
+  "builder-effective-config.yaml",
+  ".build-session.json",
+];
 const CLI_FLAG = "--finalize-release-assets";
+const HASH_BUFFER_BYTES = 1024 * 1024;
+
+function sha256File(filePath) {
+  const hash = crypto.createHash("sha256");
+  const buffer = Buffer.allocUnsafe(HASH_BUFFER_BYTES);
+  const fd = fs.openSync(filePath, "r");
+  try {
+    let bytesRead;
+    do {
+      bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
+      if (bytesRead > 0) hash.update(buffer.subarray(0, bytesRead));
+    } while (bytesRead > 0);
+  } finally {
+    fs.closeSync(fd);
+  }
+  return hash.digest("hex");
+}
 
 function removePath(targetPath) {
   fs.rmSync(targetPath, {
@@ -62,7 +82,22 @@ function isDirectExecution(argv = process.argv, platform = process.platform) {
   if (argv.includes(CLI_FLAG)) {
     return true;
   }
-  return Boolean(argv[1] && pathsEqual(argv[1], __filename, platform));
+  const entry = argv[1];
+  if (!entry) {
+    return false;
+  }
+  // Basename-only check: full-path identity breaks on Windows ESM
+  // (argv vs import.meta.url / slash / case / symlink mismatches) and
+  // previously caused a silent no-op with zero log output.
+  // Use the platform's path module so tests can simulate win32 on darwin/linux.
+  const basename =
+    platform === "win32" ? path.win32.basename(entry) : path.basename(entry);
+  return basename.toLowerCase() === "post-release-assets.js";
+}
+
+function isMirrorableReleaseEntry(name) {
+  // Dotfiles are build/session markers (e.g. .build-session.json), never ship artifacts.
+  return Boolean(name) && !name.startsWith(".");
 }
 
 function getReleaseEntries(releaseDir) {
@@ -70,7 +105,7 @@ function getReleaseEntries(releaseDir) {
     throw new Error(`release directory does not exist: ${releaseDir}`);
   }
 
-  const entries = fs.readdirSync(releaseDir);
+  const entries = fs.readdirSync(releaseDir).filter(isMirrorableReleaseEntry);
   if (!entries.length) {
     throw new Error(`release directory is empty: ${releaseDir}`);
   }
@@ -89,10 +124,17 @@ function verifyCopiedPath(sourcePath, destinationPath) {
   if (source.isDirectory() !== destination.isDirectory()) {
     throw new Error(`mirrored path type differs: ${destinationPath}`);
   }
-  if (source.isFile() && source.size !== destination.size) {
-    throw new Error(
-      `mirrored file size differs: ${destinationPath} (${destination.size} bytes; expected ${source.size})`,
-    );
+  if (source.isFile()) {
+    if (source.size !== destination.size) {
+      throw new Error(
+        `mirrored file size differs: ${destinationPath} (${destination.size} bytes; expected ${source.size})`,
+      );
+    }
+    const sourceDigest = sha256File(sourcePath);
+    const destinationDigest = sha256File(destinationPath);
+    if (sourceDigest !== destinationDigest) {
+      throw new Error(`mirrored file hash differs: ${destinationPath}`);
+    }
   }
 
   if (source.isDirectory()) {
@@ -106,13 +148,65 @@ function verifyCopiedPath(sourcePath, destinationPath) {
   }
 }
 
-function copyReleaseAssets(releaseDir = RELEASE_DIR, destination) {
+function progress(logger, message) {
+  if (logger && typeof logger.error === "function") {
+    logger.error(`[release:mirror] ${message}`);
+  }
+}
+
+/**
+ * Copy without fs.cpSync's native recursive fast-path.
+ * On Windows mapped drives (Z:), that native path can abort the whole Node
+ * process instead of throwing a catchable error, which matched the
+ * "banners print, then silent exit, nothing mirrored" failure mode.
+ */
+function copyFileForMirror(sourcePath, destinationPath) {
+  try {
+    fs.copyFileSync(sourcePath, destinationPath);
+  } catch (error) {
+    // SMB/CIFS often rejects permission-bit preservation; plain bytes work.
+    const code =
+      error && typeof error === "object" && "code" in error
+        ? String(error.code)
+        : "";
+    if (code !== "EPERM" && code !== "EACCES") {
+      throw error;
+    }
+    fs.writeFileSync(destinationPath, fs.readFileSync(sourcePath));
+  }
+}
+
+function copyPathRecursive(sourcePath, destinationPath) {
+  const source = fs.statSync(sourcePath);
+  if (source.isDirectory()) {
+    fs.mkdirSync(destinationPath, { recursive: true });
+    for (const entry of fs.readdirSync(sourcePath)) {
+      copyPathRecursive(
+        path.join(sourcePath, entry),
+        path.join(destinationPath, entry),
+      );
+    }
+    return;
+  }
+  fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+  copyFileForMirror(sourcePath, destinationPath);
+}
+
+function copyReleaseAssets(
+  releaseDir = RELEASE_DIR,
+  destination,
+  { logger = console } = {},
+) {
   if (!destination) {
     throw new Error("AFTER_PACK_LOC is empty");
   }
 
   const resolvedReleaseDir = path.resolve(releaseDir);
   const resolvedDestination = path.resolve(destination);
+  progress(
+    logger,
+    `copy resolve: src=${resolvedReleaseDir} dest=${resolvedDestination}`,
+  );
 
   if (pathsEqual(resolvedDestination, resolvedReleaseDir)) {
     throw new Error("AFTER_PACK_LOC cannot be the release directory");
@@ -129,32 +223,49 @@ function copyReleaseAssets(releaseDir = RELEASE_DIR, destination) {
     throw new Error("AFTER_PACK_LOC cannot be inside the release directory");
   }
 
+  progress(logger, `mkdir ${resolvedDestination}`);
   fs.mkdirSync(resolvedDestination, { recursive: true });
+  // Prove the destination is actually writable before copying big artifacts.
+  const probePath = path.join(
+    resolvedDestination,
+    `.zinnia-mirror-probe-${process.pid}`,
+  );
+  fs.writeFileSync(probePath, "ok");
+  fs.rmSync(probePath, { force: true });
+  progress(logger, "destination writable");
+
   const entries = getReleaseEntries(resolvedReleaseDir);
+  progress(logger, `copying ${entries.length} entries`);
 
   for (const entry of entries) {
     const sourcePath = path.join(resolvedReleaseDir, entry);
     const destinationPath = path.join(resolvedDestination, entry);
-    fs.cpSync(sourcePath, destinationPath, {
-      recursive: true,
-      force: true,
-      errorOnExist: false,
-    });
+    progress(logger, `copy ${entry}`);
+    copyPathRecursive(sourcePath, destinationPath);
     verifyCopiedPath(sourcePath, destinationPath);
+    progress(logger, `verified ${entry}`);
   }
 
   return entries.length;
 }
 
-function run({ releaseDir = RELEASE_DIR, env = process.env } = {}) {
-  cleanReleaseArtifacts(releaseDir);
-
+function run({
+  releaseDir = RELEASE_DIR,
+  env = process.env,
+  logger = console,
+} = {}) {
   const destination = getAfterPackLocation(env);
   if (!destination) {
-    return { mirrored: false, destination: null };
+    throw new Error(
+      "AFTER_PACK_LOC is empty; refusing to clean release assets before a verified mirror.",
+    );
   }
 
-  const copiedEntries = copyReleaseAssets(releaseDir, destination);
+  progress(logger, "cleaning build-only release artifacts");
+  cleanReleaseArtifacts(releaseDir);
+  progress(logger, "clean complete");
+
+  const copiedEntries = copyReleaseAssets(releaseDir, destination, { logger });
   return {
     mirrored: true,
     destination: path.resolve(destination),
@@ -167,16 +278,10 @@ function finalizeReleaseAssets({
   env = process.env,
   logger = console,
 } = {}) {
-  const result = run({ releaseDir, env });
-  if (result.mirrored) {
-    logger.log(
-      `Mirrored and verified ${result.copiedEntries} cleaned release entries to: ${result.destination}`,
-    );
-  } else {
-    logger.warn(
-      "WARNING: Cleaned release assets, but AFTER_PACK_LOC is not set; mirror intentionally skipped.",
-    );
-  }
+  const result = run({ releaseDir, env, logger });
+  logger.log(
+    `Mirrored and verified ${result.copiedEntries} cleaned release entries to: ${result.destination}`,
+  );
   return result;
 }
 
@@ -215,6 +320,7 @@ export {
   getAfterPackLocation,
   pathsEqual,
   isDirectExecution,
+  isMirrorableReleaseEntry,
   getReleaseEntries,
   verifyCopiedPath,
   copyReleaseAssets,

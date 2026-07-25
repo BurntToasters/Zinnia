@@ -10,6 +10,7 @@ import type {
   UpdateChannel,
 } from "./settings-model";
 import { trapFocus, releaseFocusTrap } from "./utils";
+import { setProgressPercentClass } from "./progress-bar";
 
 const SETUP_WIZARD_VERSION = 3;
 const LAST_STEP = 4;
@@ -22,6 +23,11 @@ interface SetupWizardResult {
   osIntegrationDismissed: boolean;
 }
 
+export interface SetupWizardOptions {
+  /** Flatpak has no in-app updater; skip the updates step and force off. */
+  skipUpdates?: boolean;
+}
+
 function $(id: string): HTMLElement {
   const el = document.getElementById(id);
   if (!el) throw new Error(`#${id} not found`);
@@ -31,7 +37,7 @@ function $(id: string): HTMLElement {
 function setProgress(step: number): void {
   const bar = $("setup-wizard-progress-bar");
   const pct = (step / LAST_STEP) * 100;
-  bar.style.width = `${pct}%`;
+  setProgressPercentClass(bar, pct);
 }
 
 function showStep(step: number): void {
@@ -52,20 +58,28 @@ export function shouldShowSetupWizard(): boolean {
   }
 
   const storedVersion = state.settingsExtras._setupWizardVersion;
-  return (
-    typeof storedVersion === "number" && storedVersion !== SETUP_WIZARD_VERSION
-  );
+  return storedVersion !== SETUP_WIZARD_VERSION;
 }
 
 export async function markSetupComplete(): Promise<void> {
   state.currentSettings.setupComplete = true;
   state.settingsExtras._setupComplete = true;
   state.settingsExtras._setupWizardVersion = SETUP_WIZARD_VERSION;
-  await saveSettings(state.currentSettings, state.settingsExtras);
-  state.lastPersistedSettings = { ...state.currentSettings };
+  try {
+    await saveSettings(state.currentSettings, state.settingsExtras);
+    state.lastPersistedSettings = { ...state.currentSettings };
+  } catch (err) {
+    // Keep in-memory completion so Skip/finish still dismisses the wizard this
+    // session even if disk persistence fails (e.g. Windows dir fsync denied).
+    state.lastPersistedSettings = { ...state.currentSettings };
+    throw err;
+  }
 }
 
-export function showSetupWizard(): Promise<SetupWizardResult | null> {
+export function showSetupWizard(
+  options: SetupWizardOptions = {},
+): Promise<SetupWizardResult | null> {
+  const skipUpdates = options.skipUpdates === true;
   return new Promise((resolve) => {
     const overlay = $("setup-wizard-overlay");
     const card = overlay.querySelector<HTMLElement>(".setup-wizard-card");
@@ -74,7 +88,9 @@ export function showSetupWizard(): Promise<SetupWizardResult | null> {
 
     let selectedWorkspace: WorkspaceMode = state.currentSettings.workspaceMode;
     let selectedTheme: ThemePreference = state.currentSettings.theme;
-    let selectedAutoUpdates = state.currentSettings.autoCheckUpdates;
+    let selectedAutoUpdates = skipUpdates
+      ? false
+      : state.currentSettings.autoCheckUpdates;
     let selectedChannel: UpdateChannel =
       state.currentSettings.updateChannel === "beta" ||
       state.currentSettings.updateChannel === "auto"
@@ -199,7 +215,8 @@ export function showSetupWizard(): Promise<SetupWizardResult | null> {
     }
 
     function onThemeNext(): void {
-      goTo(3);
+      // Flatpak: skip updates (step 3) and go straight to OS integration.
+      goTo(skipUpdates ? 4 : 3);
     }
 
     function onUpdatesBack(): void {
@@ -211,7 +228,7 @@ export function showSetupWizard(): Promise<SetupWizardResult | null> {
     }
 
     function onOsBack(): void {
-      goTo(3);
+      goTo(skipUpdates ? 2 : 3);
     }
 
     function onOsOpen(): void {
@@ -222,7 +239,7 @@ export function showSetupWizard(): Promise<SetupWizardResult | null> {
       const result: SetupWizardResult = {
         workspaceMode: selectedWorkspace,
         theme: selectedTheme,
-        autoCheckUpdates: selectedAutoUpdates,
+        autoCheckUpdates: skipUpdates ? false : selectedAutoUpdates,
         updateChannel: selectedChannel,
         osIntegrationDismissed: true,
       };

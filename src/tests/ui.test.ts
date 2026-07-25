@@ -13,6 +13,7 @@ import {
   setWorkspaceMode,
   getUiDensity,
   setUiDensity,
+  clearBrowsePasswordFields,
   setBrowsePasswordFieldVisible,
   setStatus,
   setProgress,
@@ -24,6 +25,7 @@ import {
   toggleActivity,
   registerBasicHooks,
   persistSettingsImmediately,
+  syncWorkspaceWindowFx,
 } from "../ui";
 import { state, dom } from "../state";
 import { SETTING_DEFAULTS } from "../settings-model";
@@ -233,25 +235,100 @@ describe("workspace and density", () => {
     expect(state.currentSettings.workspaceMode).toBe("power");
   });
 
+  it("blocks workspace and settings mode changes during a run", () => {
+    state.running = true;
+    state.currentSettings.workspaceMode = "power";
+
+    setWorkspaceMode("power", { persist: false });
+
+    expect(getWorkspaceMode()).toBe("basic");
+    expect(state.currentSettings.workspaceMode).toBe("basic");
+  });
+
+  it("blocks workspace changes during Basic operation preparation", () => {
+    state.operationPreparing = true;
+    state.currentSettings.workspaceMode = "power";
+
+    setWorkspaceMode("power", { persist: false });
+
+    expect(getWorkspaceMode()).toBe("basic");
+    expect(state.currentSettings.workspaceMode).toBe("basic");
+    state.operationPreparing = false;
+  });
+
+  it("sets data-window-fx from supports + basic effects", async () => {
+    document.documentElement.setAttribute("data-theme", "dark");
+    state.currentSettings.basicWindowEffects = true;
+    dom.appEl.dataset.workspaceMode = "basic";
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === "supports_workspace_window_fx") return true;
+      if (cmd === "set_workspace_window_fx") return undefined;
+      return undefined;
+    });
+
+    await syncWorkspaceWindowFx();
+    expect(document.documentElement.dataset.windowFx).toBe("basic");
+    expect(invoke).toHaveBeenCalledWith("set_workspace_window_fx", {
+      enabled: true,
+      dark: true,
+    });
+
+    state.currentSettings.basicWindowEffects = false;
+    await syncWorkspaceWindowFx();
+    expect(document.documentElement.dataset.windowFx).toBe("opaque");
+    expect(invoke).toHaveBeenCalledWith("set_workspace_window_fx", {
+      enabled: false,
+      dark: true,
+    });
+  });
+
   it("resizes to the basic portrait window size", async () => {
     const appWindow = {
       onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
       setSize: vi.fn().mockResolvedValue(undefined),
+      setResizable: vi.fn().mockResolvedValue(undefined),
+      setMaximizable: vi.fn().mockResolvedValue(undefined),
+      isMaximized: vi.fn().mockResolvedValue(false),
+      unmaximize: vi.fn().mockResolvedValue(undefined),
     };
     vi.mocked(getCurrentWebviewWindow).mockReturnValue(appWindow as never);
 
     await resizeWorkspaceWindow("basic");
 
+    expect(appWindow.setResizable).toHaveBeenCalledWith(false);
+    expect(appWindow.setMaximizable).toHaveBeenCalledWith(false);
     expect(appWindow.setSize).toHaveBeenCalledOnce();
     const [size] = appWindow.setSize.mock.calls[0];
     expect(size.width).toBe(500);
     expect(size.height).toBe(650);
   });
 
+  it("unmaximizes before locking the basic window size", async () => {
+    const appWindow = {
+      onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
+      setSize: vi.fn().mockResolvedValue(undefined),
+      setResizable: vi.fn().mockResolvedValue(undefined),
+      setMaximizable: vi.fn().mockResolvedValue(undefined),
+      isMaximized: vi.fn().mockResolvedValue(true),
+      unmaximize: vi.fn().mockResolvedValue(undefined),
+    };
+    vi.mocked(getCurrentWebviewWindow).mockReturnValue(appWindow as never);
+
+    await resizeWorkspaceWindow("basic");
+
+    expect(appWindow.unmaximize).toHaveBeenCalledOnce();
+    expect(appWindow.setResizable).toHaveBeenCalledWith(false);
+    expect(appWindow.setSize).toHaveBeenCalledOnce();
+  });
+
   it("clamps restored power window size before resizing", () => {
     const appWindow = {
       onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
-      setSize: vi.fn(),
+      setSize: vi.fn().mockResolvedValue(undefined),
+      setResizable: vi.fn().mockResolvedValue(undefined),
+      setMaximizable: vi.fn().mockResolvedValue(undefined),
+      isMaximized: vi.fn().mockResolvedValue(false),
+      unmaximize: vi.fn().mockResolvedValue(undefined),
     };
     vi.mocked(getCurrentWebviewWindow).mockReturnValue(appWindow as never);
     state.currentSettings.powerWindowWidth = -20;
@@ -259,16 +336,43 @@ describe("workspace and density", () => {
 
     setWorkspaceMode("power", { persist: false });
 
+    expect(appWindow.setResizable).toHaveBeenCalledWith(true);
+    expect(appWindow.setMaximizable).toHaveBeenCalledWith(true);
     expect(appWindow.setSize).toHaveBeenCalledOnce();
     const [size] = appWindow.setSize.mock.calls[0];
     expect(size.width).toBe(800);
     expect(size.height).toBe(2160);
   });
 
+  it("disables the titlebar maximize control in Basic mode", async () => {
+    const maxBtn = document.createElement("button");
+    maxBtn.id = "titlebar-max";
+    document.body.appendChild(maxBtn);
+    const appWindow = {
+      onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
+      setSize: vi.fn().mockResolvedValue(undefined),
+      setResizable: vi.fn().mockResolvedValue(undefined),
+      setMaximizable: vi.fn().mockResolvedValue(undefined),
+      isMaximized: vi.fn().mockResolvedValue(false),
+      unmaximize: vi.fn().mockResolvedValue(undefined),
+    };
+    vi.mocked(getCurrentWebviewWindow).mockReturnValue(appWindow as never);
+
+    await resizeWorkspaceWindow("basic");
+    expect(maxBtn.disabled).toBe(true);
+
+    await resizeWorkspaceWindow("power");
+    expect(maxBtn.disabled).toBe(false);
+  });
+
   it("logs and continues when workspace resizing fails", async () => {
     const appWindow = {
       onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
       setSize: vi.fn().mockRejectedValue(new Error("permission denied")),
+      setResizable: vi.fn().mockResolvedValue(undefined),
+      setMaximizable: vi.fn().mockResolvedValue(undefined),
+      isMaximized: vi.fn().mockResolvedValue(false),
+      unmaximize: vi.fn().mockResolvedValue(undefined),
     };
     vi.mocked(getCurrentWebviewWindow).mockReturnValue(appWindow as never);
     state.currentSettings.logVerbosity = "debug";
@@ -289,6 +393,44 @@ describe("workspace and density", () => {
 });
 
 describe("setBrowsePasswordFieldVisible", () => {
+  function ensureBasicBrowsePasswordDom(): {
+    field: HTMLElement;
+    input: HTMLInputElement;
+    toggle: HTMLButtonElement;
+  } {
+    let field = document.getElementById(
+      "basic-browse-password-field",
+    ) as HTMLElement | null;
+    if (!field) {
+      field = document.createElement("div");
+      field.id = "basic-browse-password-field";
+      document.body.appendChild(field);
+    }
+    let input = document.getElementById(
+      "basic-browse-password",
+    ) as HTMLInputElement | null;
+    if (!input) {
+      input = document.createElement("input");
+      input.id = "basic-browse-password";
+      input.type = "password";
+      document.body.appendChild(input);
+    }
+    let toggle = document.getElementById(
+      "basic-toggle-browse-password",
+    ) as HTMLButtonElement | null;
+    if (!toggle) {
+      toggle = document.createElement("button");
+      toggle.id = "basic-toggle-browse-password";
+      toggle.className = "basic-password-toggle basic-password-toggle--icon";
+      toggle.setAttribute("aria-label", "Show password");
+      const icon = document.createElement("i");
+      icon.dataset.lucide = "eye";
+      toggle.appendChild(icon);
+      document.body.appendChild(toggle);
+    }
+    return { field, input, toggle };
+  }
+
   it("shows the browse password field", () => {
     const field = document.getElementById("browse-password-field")!;
     field.hidden = true;
@@ -315,6 +457,75 @@ describe("setBrowsePasswordFieldVisible", () => {
     expect(input.value).toBe("");
     expect(input.type).toBe("password");
     expect(toggle.textContent).toBe("Show");
+  });
+
+  it("hides Power browse password and clears Basic too", () => {
+    const powerField = document.getElementById("browse-password-field")!;
+    const power = document.getElementById(
+      "browse-password",
+    ) as HTMLInputElement;
+    const powerToggle = document.getElementById(
+      "toggle-browse-password",
+    ) as HTMLButtonElement;
+    const basic = ensureBasicBrowsePasswordDom();
+
+    powerField.hidden = false;
+    basic.field.hidden = false;
+    power.value = "power-secret";
+    power.type = "text";
+    powerToggle.textContent = "Hide";
+    basic.input.value = "basic-secret";
+    basic.input.type = "text";
+    basic.toggle.setAttribute("aria-label", "Hide password");
+    basic.toggle
+      .querySelector("[data-lucide]")
+      ?.setAttribute("data-lucide", "eye-off");
+
+    setBrowsePasswordFieldVisible(false);
+
+    expect(powerField.hidden).toBe(true);
+    expect(basic.field.hidden).toBe(true);
+    expect(power.value).toBe("");
+    expect(power.type).toBe("password");
+    expect(powerToggle.textContent).toBe("Show");
+    expect(basic.input.value).toBe("");
+    expect(basic.input.type).toBe("password");
+    expect(basic.toggle.getAttribute("aria-label")).toBe("Show password");
+  });
+
+  it("clearBrowsePasswordFields clears Basic before Power", () => {
+    const power = document.getElementById(
+      "browse-password",
+    ) as HTMLInputElement;
+    const basic = ensureBasicBrowsePasswordDom();
+    const order: string[] = [];
+    const basicDesc = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )!;
+    const spy = vi
+      .spyOn(HTMLInputElement.prototype, "value", "set")
+      .mockImplementation(function (this: HTMLInputElement, next: string) {
+        if (
+          this.id === "basic-browse-password" ||
+          this.id === "browse-password"
+        ) {
+          order.push(this.id);
+        }
+        basicDesc.set!.call(this, next);
+      });
+
+    basic.input.value = "basic-secret";
+    power.value = "power-secret";
+    order.length = 0;
+
+    clearBrowsePasswordFields();
+
+    spy.mockRestore();
+    expect(order[0]).toBe("basic-browse-password");
+    expect(order).toContain("browse-password");
+    expect(basic.input.value).toBe("");
+    expect(power.value).toBe("");
   });
 });
 

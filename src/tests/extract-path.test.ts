@@ -3,6 +3,7 @@ import {
   deriveExtractDestinationPath,
   deriveExtractFolderName,
   deriveOutputArchivePath,
+  isPreferredCompressParent,
   resolveExtractDestinationAutofill,
   resolveOutputArchiveAutofill,
   shouldAutofillExtractDestination,
@@ -40,6 +41,44 @@ describe("deriveExtractDestinationPath", () => {
       "/downloads/example_extracted",
     );
   });
+
+  it("keeps POSIX and Windows drive roots as parents", () => {
+    expect(deriveExtractDestinationPath("/example.zip")).toBe("/example");
+    expect(deriveExtractDestinationPath("C:/example.zip")).toBe("C:/example");
+    expect(deriveExtractDestinationPath("C:\\example.zip")).toBe("C:\\example");
+  });
+
+  it("preserves UNC and extended Windows path namespaces", () => {
+    expect(
+      deriveExtractDestinationPath("\\\\server\\share\\folder\\example.zip"),
+    ).toBe("\\\\server\\share\\folder\\example");
+    expect(
+      deriveExtractDestinationPath(
+        "\\\\?\\UNC\\server\\share\\folder\\example.7z",
+      ),
+    ).toBe("\\\\?\\UNC\\server\\share\\folder\\example");
+    expect(
+      deriveExtractDestinationPath(
+        "\\\\?\\Volume{12345678-1234-1234-1234-123456789abc}\\folder\\example.zip",
+      ),
+    ).toBe(
+      "\\\\?\\Volume{12345678-1234-1234-1234-123456789abc}\\folder\\example",
+    );
+  });
+
+  it("returns empty for blank input", () => {
+    expect(deriveExtractDestinationPath("")).toBe("");
+    expect(deriveExtractFolderName("")).toBe("");
+  });
+
+  it("preserves leading and trailing whitespace in legitimate file names", () => {
+    expect(deriveExtractDestinationPath("/downloads/ archive.zip")).toBe(
+      "/downloads/ archive",
+    );
+    expect(deriveExtractDestinationPath("/downloads/archive.zip ")).toBe(
+      "/downloads/archive.zip _extracted",
+    );
+  });
 });
 
 describe("deriveExtractFolderName", () => {
@@ -59,13 +98,13 @@ describe("shouldAutofillExtractDestination", () => {
     expect(shouldAutofillExtractDestination("", null)).toBe(true);
   });
 
-  it("returns true when destination matches previous autofill (trimmed)", () => {
+  it("preserves whitespace because it can be part of a real path", () => {
     expect(
       shouldAutofillExtractDestination(
         " /downloads/example ",
         "/downloads/example",
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("returns false when user has customized destination", () => {
@@ -119,6 +158,22 @@ describe("deriveOutputArchivePath", () => {
     );
   });
 
+  it("derives outputs beside UNC and volume-GUID inputs", () => {
+    expect(
+      deriveOutputArchivePath(["\\\\server\\share\\folder\\readme.txt"], "zip"),
+    ).toBe("\\\\server\\share\\folder\\readme.txt.zip");
+    expect(
+      deriveOutputArchivePath(
+        [
+          "\\\\?\\Volume{12345678-1234-1234-1234-123456789abc}\\folder\\readme.txt",
+        ],
+        "7z",
+      ),
+    ).toBe(
+      "\\\\?\\Volume{12345678-1234-1234-1234-123456789abc}\\folder\\readme.txt.7z",
+    );
+  });
+
   it("strips trailing separators", () => {
     expect(deriveOutputArchivePath(["/home/user/folder/"], "7z")).toBe(
       "/home/user/folder.7z",
@@ -131,12 +186,46 @@ describe("deriveOutputArchivePath", () => {
     );
   });
 
+  it("maps stream formats to their conventional extensions", () => {
+    expect(deriveOutputArchivePath(["/tmp/file"], "gzip")).toBe("/tmp/file.gz");
+    expect(deriveOutputArchivePath(["/tmp/file"], "bzip2")).toBe(
+      "/tmp/file.bz2",
+    );
+  });
+
   it("returns null for empty inputs", () => {
     expect(deriveOutputArchivePath([], "7z")).toBeNull();
   });
 
-  it("returns null when first input is whitespace", () => {
-    expect(deriveOutputArchivePath(["  "], "7z")).toBeNull();
+  it("preserves whitespace-only names rather than rewriting them", () => {
+    expect(deriveOutputArchivePath(["/home/user/  "], "7z")).toBe(
+      "/home/user/  .7z",
+    );
+  });
+
+  it("avoids Start Menu and Program Files parents (Windows .lnk defaults)", () => {
+    expect(
+      deriveOutputArchivePath(
+        [
+          "C:\\Users\\dev\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\GitHub Desktop.lnk",
+        ],
+        "7z",
+      ),
+    ).toBe("C:\\Users\\dev\\Desktop\\GitHub Desktop.lnk.7z");
+    expect(
+      deriveOutputArchivePath(
+        ["C:\\Program Files\\Some App\\readme.txt"],
+        "zip",
+      ),
+    ).toBe("readme.txt.zip");
+  });
+
+  it("still allows paths under Microsoft\\Windows user folders", () => {
+    expect(
+      isPreferredCompressParent(
+        "C:\\Users\\dev\\AppData\\Local\\Microsoft\\Windows\\Fonts",
+      ),
+    ).toBe(true);
   });
 });
 

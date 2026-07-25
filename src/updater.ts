@@ -11,12 +11,12 @@ import {
 import { log, devLog, setStatus } from "./ui";
 import { state } from "./state";
 
-let cachedUpdaterTargetBase: string | null = null;
 let pendingUpdate: Update | null = null;
 let pendingVersion: string | null = null;
 let pendingTarget: string | undefined;
 let updateCheckInFlight: Promise<void> | null = null;
 let inFlightCheckIsInteractive = false;
+let updateGeneration = 0;
 const UPDATE_CHECK_TIMEOUT_MS = 30_000;
 const UPDATE_DOWNLOAD_TIMEOUT_MS = 120_000;
 
@@ -37,6 +37,7 @@ function clearPendingUpdate(closeResource: boolean): void {
 
 /** Discard a downloaded update when the user changes channel or resets settings. */
 export function discardPendingUpdate(): void {
+  updateGeneration += 1;
   clearPendingUpdate(true);
 }
 
@@ -52,36 +53,19 @@ async function archiveOperationIsRunning(): Promise<boolean> {
   }
 }
 
-async function getUpdaterTargetBase(): Promise<string> {
-  if (cachedUpdaterTargetBase) {
-    return cachedUpdaterTargetBase;
-  }
-  const platform = await invoke<string>("get_platform_info");
-  if (platform === "win32" || platform === "windows") {
-    cachedUpdaterTargetBase = "windows";
-  } else if (platform === "macos") {
-    cachedUpdaterTargetBase = "darwin";
-  } else {
-    cachedUpdaterTargetBase = platform;
-  }
-  return cachedUpdaterTargetBase;
-}
-
 async function getUpdateCheckTarget(): Promise<string | undefined> {
   const channel = state.currentSettings.updateChannel;
   if (channel === "stable") {
     return undefined;
   }
   if (channel === "beta") {
-    const base = await getUpdaterTargetBase();
-    return `${base}-beta`;
+    return invoke<string>("get_beta_updater_target");
   }
-  // auto: follow the installed version — beta if version contains a pre-release tag
+  // auto: follow the installed version; beta if version contains a pre-release tag
   const version = await getVersion();
   const isBeta = /-(beta|alpha|rc)/i.test(version);
   if (!isBeta) return undefined;
-  const base = await getUpdaterTargetBase();
-  return `${base}-beta`;
+  return invoke<string>("get_beta_updater_target");
 }
 
 export async function notify(title: string, body: string) {
@@ -101,18 +85,29 @@ async function notifyIfAlreadyGranted(title: string, body: string) {
   }
 }
 
-async function promptInstallAndRestart(version: string, update: Update) {
+async function promptInstallAndRestart(
+  version: string,
+  update: Update,
+  generation: number,
+) {
+  if (generation !== updateGeneration) {
+    await update.close().catch(() => {});
+    return;
+  }
   pendingUpdate = update;
   pendingVersion = version;
   setStatus("Update ready");
   if (await archiveOperationIsRunning()) {
+    if (generation !== updateGeneration) return;
     await message(
       `Version ${version} is downloaded. Zinnia will not install it while an archive operation is running. Use Check now after the operation finishes.`,
       { title: "Update deferred", kind: "info" },
     );
+    if (generation !== updateGeneration) return;
     setStatus("Update ready");
     return;
   }
+  if (generation !== updateGeneration) return;
   const restart = await ask(
     `Version ${version} has been downloaded and is ready to install.\n\nRestart now to apply the update?`,
     {
@@ -122,8 +117,11 @@ async function promptInstallAndRestart(version: string, update: Update) {
       cancelLabel: "Later",
     },
   );
+  if (generation !== updateGeneration) return;
   if (restart) {
+    if (generation !== updateGeneration) return;
     if (await archiveOperationIsRunning()) {
+      if (generation !== updateGeneration) return;
       await message(
         "An archive operation started before the update could be installed. The update remains ready and can be installed after it finishes.",
         { title: "Update deferred", kind: "info" },
@@ -131,6 +129,7 @@ async function promptInstallAndRestart(version: string, update: Update) {
       setStatus("Update ready");
       return;
     }
+    if (generation !== updateGeneration) return;
     setStatus("Installing update");
     await update.install();
     clearPendingUpdate(false);
@@ -146,12 +145,21 @@ async function promptInstallAndRestart(version: string, update: Update) {
 
 async function runUpdateCheck(interactive: boolean): Promise<void> {
   let checkedUpdate: Update | null = null;
+  let generation = updateGeneration;
   try {
     const target = await getUpdateCheckTarget();
-    if (pendingUpdate && pendingTarget !== target) discardPendingUpdate();
+    if (generation !== updateGeneration) return;
+    if (pendingUpdate && pendingTarget !== target) {
+      discardPendingUpdate();
+      generation = updateGeneration;
+    }
     if (pendingUpdate && pendingVersion) {
       if (interactive) {
-        await promptInstallAndRestart(pendingVersion, pendingUpdate);
+        await promptInstallAndRestart(
+          pendingVersion,
+          pendingUpdate,
+          generation,
+        );
       }
       return;
     }
@@ -160,6 +168,10 @@ async function runUpdateCheck(interactive: boolean): Promise<void> {
       ...(target ? { target } : {}),
       timeout: UPDATE_CHECK_TIMEOUT_MS,
     });
+    if (generation !== updateGeneration) {
+      await checkedUpdate?.close().catch(() => {});
+      return;
+    }
     if (!checkedUpdate) {
       devLog(
         interactive
@@ -185,9 +197,17 @@ async function runUpdateCheck(interactive: boolean): Promise<void> {
     await checkedUpdate.download(undefined, {
       timeout: UPDATE_DOWNLOAD_TIMEOUT_MS,
     });
+    if (generation !== updateGeneration) {
+      await checkedUpdate.close().catch(() => {});
+      return;
+    }
     pendingTarget = target;
     log(`Update ${checkedUpdate.version} downloaded and ready to install.`);
-    await promptInstallAndRestart(checkedUpdate.version, checkedUpdate);
+    await promptInstallAndRestart(
+      checkedUpdate.version,
+      checkedUpdate,
+      generation,
+    );
     checkedUpdate = null;
   } catch (err) {
     if (checkedUpdate && checkedUpdate !== pendingUpdate) {

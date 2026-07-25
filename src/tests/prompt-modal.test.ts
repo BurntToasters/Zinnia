@@ -56,6 +56,23 @@ describe("promptInput", () => {
     expect(await p).toBeNull();
   });
 
+  it.each(["input-modal-cancel", "input-modal-cancel-x"])(
+    "cancels on Enter from %s",
+    async (id) => {
+      const p = promptInput({
+        title: "T",
+        label: "L",
+        defaultValue: "must-not-submit",
+      });
+      const cancel = document.getElementById(id) as HTMLButtonElement;
+      cancel.focus();
+      cancel.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+      );
+      expect(await p).toBeNull();
+    },
+  );
+
   it("applies password type when requested", async () => {
     const p = promptInput({ title: "T", label: "L", password: true });
     const field = document.getElementById(
@@ -66,5 +83,65 @@ describe("promptInput", () => {
       .getElementById("input-modal-cancel")
       ?.dispatchEvent(new MouseEvent("click"));
     await p;
+  });
+
+  it("applies placeholder and confirm label options", async () => {
+    const p = promptInput({
+      title: "Name",
+      label: "Preset",
+      placeholder: "My preset",
+      confirmLabel: "Save",
+    });
+    const field = document.getElementById(
+      "input-modal-field",
+    ) as HTMLInputElement;
+    expect(field.placeholder).toBe("My preset");
+    expect(document.getElementById("input-modal-confirm")?.textContent).toBe(
+      "Save",
+    );
+    document
+      .getElementById("input-modal-cancel")
+      ?.dispatchEvent(new MouseEvent("click"));
+    await p;
+  });
+
+  it("cancels when the overlay backdrop is clicked", async () => {
+    const p = promptInput({ title: "T", label: "L" });
+    const overlay = document.getElementById(
+      "input-modal-overlay",
+    ) as HTMLElement;
+    const event = new MouseEvent("click", { bubbles: true });
+    Object.defineProperty(event, "target", { value: overlay });
+    overlay.dispatchEvent(event);
+    expect(await p).toBeNull();
+  });
+
+  it("cancels via the X button when present", async () => {
+    const p = promptInput({ title: "T", label: "L" });
+    const cancelX = document.getElementById("input-modal-cancel-x");
+    expect(cancelX).toBeTruthy();
+    cancelX!.dispatchEvent(new MouseEvent("click"));
+    expect(await p).toBeNull();
+  });
+
+  it("rejects a concurrent prompt instead of sharing or overwriting it", async () => {
+    const first = promptInput({ title: "First", label: "Password" });
+    const second = promptInput({ title: "Second", label: "Other" });
+    expect(await second).toBeNull();
+    expect(document.getElementById("input-modal-title")?.textContent).toBe(
+      "First",
+    );
+    document
+      .getElementById("input-modal-cancel")
+      ?.dispatchEvent(new MouseEvent("click"));
+    expect(await first).toBeNull();
+  });
+
+  it("returns null when required modal nodes are missing", async () => {
+    const field = document.getElementById("input-modal-field");
+    const parent = field?.parentElement;
+    field?.remove();
+    expect(await promptInput({ title: "T", label: "L" })).toBeNull();
+    if (parent && field) parent.appendChild(field);
   });
 });

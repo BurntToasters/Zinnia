@@ -5,19 +5,35 @@ import path from "path";
 import crypto from "crypto";
 import { execSync, spawnSync } from "child_process";
 import https from "https";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
+import {
+  normalizeUpdaterSignature,
+  verifyUpdaterSignatures,
+} from "./updater-signature-verifier.js";
+import { verifyReleaseSession } from "./release-session.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
 const releaseDir = path.join(root, "release");
-const buildSessionPath = path.join(releaseDir, ".build-session.json");
 const pkg = JSON.parse(
   fs.readFileSync(path.join(root, "package.json"), "utf-8"),
 );
 
 const VERSION = pkg.version;
 const TAG = `v${VERSION}`;
-const IS_PRERELEASE = /-(?:beta|alpha|rc)(?:[.-]?\d+)?/i.test(VERSION);
+const NUMERIC_VERSION = "(?:0|[1-9]\\d*)";
+const BETA_VERSION = new RegExp(
+  `^${NUMERIC_VERSION}\\.${NUMERIC_VERSION}\\.${NUMERIC_VERSION}-beta\\.${NUMERIC_VERSION}$`,
+);
+const STABLE_VERSION = new RegExp(
+  `^${NUMERIC_VERSION}\\.${NUMERIC_VERSION}\\.${NUMERIC_VERSION}$`,
+);
+if (!BETA_VERSION.test(VERSION) && !STABLE_VERSION.test(VERSION)) {
+  throw new Error(
+    `Unsupported release version '${VERSION}'; Zinnia releases use beta or stable only.`,
+  );
+}
+const IS_PRERELEASE = BETA_VERSION.test(VERSION);
 const EXPECTED_TAG = (process.env.EXPECTED_TAG || "").trim();
 
 const GPG_KEY_ID = process.env.GPG_KEY_ID;
@@ -32,25 +48,28 @@ const RELEASE_DOWNLOAD_BASE_URL = (
 const RELEASE_NOTES = process.env.RELEASE_NOTES || "";
 const RELEASE_PUB_DATE =
   process.env.RELEASE_PUB_DATE || new Date().toISOString();
-const ALLOW_ASSET_REPLACE = !/^(0|false|no|off)$/i.test(
-  String(process.env.ALLOW_ASSET_REPLACE || "false").trim(),
-);
+function isExplicitTruthy(value) {
+  return /^(1|true|yes|on)$/i.test(String(value || "").trim());
+}
+
+const ALLOW_ASSET_REPLACE = isExplicitTruthy(process.env.ALLOW_ASSET_REPLACE);
 const REQUIRED_LINUX_TARGETS = (
   process.env.REQUIRED_LINUX_TARGETS || ""
 ).trim();
-const REQUIRE_LINUX_AARCH64 = /^(1|true|yes|on)$/i.test(
-  String(process.env.REQUIRE_LINUX_AARCH64 || "").trim(),
+const REQUIRE_LINUX_AARCH64 = isExplicitTruthy(
+  process.env.REQUIRE_LINUX_AARCH64,
 );
 const ENFORCE_LINUX_X64_PACKAGE_SET = !/^(0|false|no|off)$/i.test(
-  String(process.env.ENFORCE_LINUX_X64_PACKAGE_SET || "true").trim(),
+  String(process.env.ENFORCE_LINUX_X64_PACKAGE_SET || "").trim(),
 );
 
 const ext = (e) => (n) => n.toLowerCase().endsWith(e);
 const rx = (r) => (n) => r.test(n);
 const exact = (f) => (n) => n === f;
-const isPerTargetManifest = rx(/^latest-[a-z0-9-]+-[a-z0-9_]+\.json$/i);
+const isPerTargetManifest = rx(/^latest-[a-z0-9_-]+\.json$/i);
 const isChecksumTextName = rx(
-  /^SHA256SUMS(?:-[a-z0-9_]+(?:-[a-z0-9_]+)?)?\.txt$/i,
+  // Target keys include prerelease names such as darwin-beta-aarch64.
+  /^SHA256SUMS(?:-[a-z0-9_-]+)?\.txt$/i,
 );
 
 const ARTIFACT_RULES = [
@@ -94,8 +113,6 @@ const SIGN_RULES = [
 
 const isArtifact = (name) => ARTIFACT_RULES.some((r) => r(name));
 const isSignable = (name) => SIGN_RULES.some((r) => r(name));
-const shouldUploadReleaseEntry = (name) =>
-  isArtifact(name) || name.endsWith(".asc") || isChecksumTextName(name);
 
 function releaseArtifactSearchDirs() {
   const targetRoot = path.join(root, "src-tauri", "target");
@@ -116,30 +133,60 @@ function releaseArtifactSearchDirs() {
 // up stale debug outputs, fixtures, or unrelated zip files with misleading names.
 const SEARCH_DIRS = releaseArtifactSearchDirs();
 
-function artifactMatchesVersion(name) {
+function artifactMatchesVersion(name, releaseVersion = VERSION) {
   if (name === "latest.json" || isPerTargetManifest(name)) return true;
+  if (/\.rpm(?:\.sig)?$/i.test(name)) {
+    return rpmArtifactMatchesVersion(name, releaseVersion);
+  }
   const versions = name.match(
     /\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?/g,
   );
   if (!versions || versions.length === 0) return true;
-  return versions.some((v) => v === VERSION || v.startsWith(VERSION + "-"));
+  return versions.some((candidate) => candidate === releaseVersion);
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function rpmArtifactMatchesVersion(name, releaseVersion = VERSION) {
+  if (!/\.rpm(?:\.sig)?$/i.test(name)) return false;
+
+  const numericVersions = name.match(/\d+\.\d+\.\d+/g);
+  if (!numericVersions || numericVersions.length === 0) return true;
+
+  const betaMatch = releaseVersion.match(
+    /^(\d+\.\d+\.\d+)-beta\.(0|[1-9]\d*)$/,
+  );
+  const stableMatch = releaseVersion.match(/^(\d+\.\d+\.\d+)$/);
+  if (!betaMatch && !stableMatch) return false;
+
+  const numericVersion = betaMatch?.[1] ?? stableMatch[1];
+  const escapedNumericVersion = escapeRegExp(numericVersion);
+  const versionPattern = betaMatch
+    ? `${escapedNumericVersion}(?:-beta\\.${betaMatch[2]}|[._~]beta[._-]${betaMatch[2]})`
+    : escapedNumericVersion;
+  // RPM names conventionally end in NAME-VERSION-RELEASE.ARCH.rpm. Tauri and
+  // distro tooling vary the release and architecture tokens, and updater
+  // signatures append another .sig. A release must begin with a digit, which
+  // keeps a sanitized beta marker from matching a stable application version.
+  const rpmRelease = "[0-9][0-9A-Za-z_+~%^.-]*";
+  const rpmArch =
+    "(?:x86_64|amd64|aarch64|arm64|i[3-6]86|noarch|ppc64le|ppc64|s390x|riscv64|armv[67]hl)";
+  return new RegExp(
+    `(?:^|[^0-9A-Za-z])${versionPattern}(?:-${rpmRelease})?(?:\\.${rpmArch})?\\.rpm(?:\\.sig)?$`,
+    "i",
+  ).test(name);
 }
 
 function readBuildSession() {
-  let session;
   try {
-    session = JSON.parse(fs.readFileSync(buildSessionPath, "utf8"));
+    return verifyReleaseSession(root);
   } catch (error) {
     throw new Error(
       `Release build session is missing or invalid. Run npm run release:prepare before building: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  if (session.version !== VERSION || !Number.isFinite(session.startedAt)) {
-    throw new Error(
-      `Release build session does not match package version ${VERSION}. Run npm run release:prepare again.`,
-    );
-  }
-  return session;
 }
 
 function wasBuiltInSession(filePath, session) {
@@ -279,11 +326,21 @@ function normalizeArchToken(token) {
   return null;
 }
 
-function requiredLinuxTargetKeys(channelVariants) {
+function requiredLinuxTargetKeys(channelVariants, byName) {
   const tokens = REQUIRED_LINUX_TARGETS.split(/[,\s]+/)
     .map((t) => t.trim())
     .filter(Boolean);
   if (REQUIRE_LINUX_AARCH64) tokens.push("aarch64");
+  // Platform release commands sign independently. Automatically require an
+  // AppImage updater for each Linux architecture represented in this signing
+  // session, while allowing Windows/macOS-only sessions to proceed. Operators
+  // can still demand additional architectures through the environment.
+  for (const [name] of byName) {
+    if (name.endsWith(".sig")) continue;
+    for (const target of resolveUpdaterTargets(name)) {
+      if (target.os === "linux") tokens.push(target.arch);
+    }
+  }
   const targetKeys = new Set();
   for (const token of tokens) {
     const explicitMatch = token
@@ -388,25 +445,17 @@ function releaseAssetUrl(fileName, baseUrl = RELEASE_DOWNLOAD_BASE_URL) {
   return `${baseUrl}/${encodeURIComponent(fileName)}`;
 }
 
-function normalizeUpdaterSignature(sigPath) {
-  const trimmed = fs.readFileSync(sigPath, "utf8").trim();
-  if (!trimmed) {
-    return trimmed;
-  }
-
-  // Tauri v2 `.sig` files are base64
-  try {
-    const decoded = Buffer.from(trimmed, "base64").toString("utf8");
-    if (decoded.includes("untrusted comment:")) {
-      return trimmed;
-    }
-  } catch {}
-
-  if (trimmed.includes("untrusted comment:")) {
-    return Buffer.from(trimmed, "utf8").toString("base64");
-  }
-
-  return trimmed;
+function updaterChannelVariants(
+  _isPrerelease,
+  releaseBaseUrl = RELEASE_DOWNLOAD_BASE_URL,
+  tagBaseUrl = TAG_DOWNLOAD_BASE_URL,
+) {
+  // Stable releases also publish beta-target endpoints. Beta clients use
+  // those endpoints and must be able to move from the final beta to stable.
+  return [
+    { targetSuffix: "", baseUrl: releaseBaseUrl },
+    { targetSuffix: "-beta", baseUrl: tagBaseUrl },
+  ];
 }
 
 function generateUpdaterManifests(files) {
@@ -422,19 +471,21 @@ function generateUpdaterManifests(files) {
       signatureByBaseName.set(name.slice(0, -4), filePath);
     }
   }
+  verifyUpdaterSignatures({
+    root,
+    releaseDir,
+    byName,
+    signatureByBaseName,
+    resolveUpdaterTargets,
+  });
 
   const manifests = new Map();
   const requiredTargetKeys = new Set();
-  const channelVariants = [
-    { targetSuffix: "", baseUrl: RELEASE_DOWNLOAD_BASE_URL },
-  ];
-  if (IS_PRERELEASE) {
-    channelVariants.push({
-      targetSuffix: "-beta",
-      baseUrl: TAG_DOWNLOAD_BASE_URL,
-    });
-  }
-  const expectedLinuxTargetKeys = requiredLinuxTargetKeys(channelVariants);
+  const channelVariants = updaterChannelVariants(IS_PRERELEASE);
+  const expectedLinuxTargetKeys = requiredLinuxTargetKeys(
+    channelVariants,
+    byName,
+  );
   const generatedLinuxAppImageTargets = new Set();
   const missingSignatures = [];
 
@@ -476,6 +527,19 @@ function generateUpdaterManifests(files) {
         const installerKey = `${targetName}-${target.arch}-${target.installer}`;
         const fallbackKey = `${targetName}-${target.arch}`;
         manifest.platforms[installerKey] = { url, signature };
+        if (channel.targetSuffix) {
+          // A beta check uses the full installer-aware key as its custom Tauri
+          // target. Give that key its own endpoint manifest so DEB/RPM installs
+          // never fall through to the AppImage fallback (and vice versa).
+          const installerManifestName = `latest-${installerKey}.json`;
+          manifests.set(installerManifestName, {
+            version: VERSION,
+            notes: RELEASE_NOTES,
+            pub_date: RELEASE_PUB_DATE,
+            platforms: { [installerKey]: { url, signature } },
+            fallbackPriority: -1,
+          });
+        }
         if (target.os === "linux" && target.installer === "appimage") {
           generatedLinuxAppImageTargets.add(fallbackKey);
         }
@@ -556,22 +620,43 @@ function generateUpdaterManifests(files) {
     );
   }
 
+  const validation = spawnSync(
+    process.execPath,
+    [path.join(root, "scripts", "validate-updater-manifest.js"), ...generated],
+    { cwd: root, encoding: "utf8" },
+  );
+  if (validation.error) throw validation.error;
+  if (validation.status !== 0) {
+    throw new Error(
+      `Generated updater manifest validation failed: ${validation.stderr || validation.stdout}`,
+    );
+  }
+
   return generated;
 }
 
 function parseManifestTargetKey(name) {
-  const m = name.match(/^latest-([a-z0-9-]+)-([a-z0-9_]+)\.json$/i);
+  const m = name.match(/^latest-([a-z0-9_-]+)\.json$/i);
   if (!m) return null;
-  return `${m[1].toLowerCase()}-${m[2].toLowerCase()}`;
+  return m[1].toLowerCase();
 }
 
-function targetKeysForArtifactName(name) {
+function checksumTargetKeysForArtifactName(
+  name,
+  channelVariants = updaterChannelVariants(IS_PRERELEASE),
+) {
   const manifestKey = parseManifestTargetKey(name);
   if (manifestKey) return [manifestKey];
 
   const baseName = name.endsWith(".sig") ? name.slice(0, -4) : name;
   return Array.from(
-    new Set(resolveUpdaterTargets(baseName).map((t) => `${t.os}-${t.arch}`)),
+    new Set(
+      resolveUpdaterTargets(baseName).flatMap((target) =>
+        channelVariants.map(
+          (channel) => `${target.os}${channel.targetSuffix}-${target.arch}`,
+        ),
+      ),
+    ),
   );
 }
 
@@ -704,6 +789,7 @@ function generateChecksums(files) {
     const name = path.basename(f);
     return !name.endsWith(".asc") && !isChecksumTextName(name);
   });
+  const channelVariants = updaterChannelVariants(IS_PRERELEASE);
 
   const manifestTargetKeys = Array.from(
     new Set(
@@ -723,25 +809,12 @@ function generateChecksums(files) {
 
   for (const filePath of candidates) {
     const name = path.basename(filePath);
-    let targetKeys = targetKeysForArtifactName(name);
+    let targetKeys = checksumTargetKeysForArtifactName(name, channelVariants);
     if (targetKeys.length === 0 && manifestTargetKeys.length > 0) {
       targetKeys = manifestTargetKeys;
     }
     if (targetKeys.length === 0) {
       targetKeys = ["generic"];
-    }
-    if (IS_PRERELEASE) {
-      const betaKeys = [];
-      for (const key of targetKeys) {
-        if (key.includes("-beta-")) continue;
-        const dashIdx = key.indexOf("-");
-        if (dashIdx > 0) {
-          betaKeys.push(
-            `${key.slice(0, dashIdx)}-beta-${key.slice(dashIdx + 1)}`,
-          );
-        }
-      }
-      targetKeys = [...targetKeys, ...betaKeys];
     }
     for (const targetKey of targetKeys) {
       addToBucket(targetKey, filePath);
@@ -853,6 +926,22 @@ function ghRequest(method, endpoint, body) {
   });
 }
 
+/**
+ * Walk GitHub list endpoints page-by-page until an empty page or a short page.
+ * `fetchPage(page, perPage)` should return the parsed JSON body for that page.
+ */
+async function listAllGithubPages(fetchPage, { perPage = 100 } = {}) {
+  const pageSize = Math.max(1, Number(perPage) || 100);
+  const items = [];
+  for (let page = 1; ; page += 1) {
+    const batch = await fetchPage(page, pageSize);
+    if (!Array.isArray(batch) || batch.length === 0) break;
+    items.push(...batch);
+    if (batch.length < pageSize) break;
+  }
+  return items;
+}
+
 async function getOrCreateRelease() {
   try {
     return await ghRequest(
@@ -863,9 +952,11 @@ async function getOrCreateRelease() {
     if (error?.statusCode !== 404) throw error;
   }
 
-  const releases = await ghRequest(
-    "GET",
-    `/repos/${REPO_OWNER}/${REPO_NAME}/releases?per_page=30`,
+  const releases = await listAllGithubPages((page, perPage) =>
+    ghRequest(
+      "GET",
+      `/repos/${REPO_OWNER}/${REPO_NAME}/releases?per_page=${perPage}&page=${page}`,
+    ),
   );
   const draft = releases.find((r) => r.draft && r.tag_name === TAG);
   if (draft) return draft;
@@ -947,11 +1038,12 @@ async function uploadAsset(uploadUrl, filePath) {
 }
 
 async function listReleaseAssets(releaseId) {
-  const assets = await ghRequest(
-    "GET",
-    `/repos/${REPO_OWNER}/${REPO_NAME}/releases/${releaseId}/assets?per_page=100`,
+  return listAllGithubPages((page, perPage) =>
+    ghRequest(
+      "GET",
+      `/repos/${REPO_OWNER}/${REPO_NAME}/releases/${releaseId}/assets?per_page=${perPage}&page=${page}`,
+    ),
   );
-  return Array.isArray(assets) ? assets : [];
 }
 
 async function uploadAssetWithReplace(
@@ -990,7 +1082,7 @@ async function syncBetaManifestsToLatestStable(
   currentReleaseId,
 ) {
   const betaManifests = uploadedFiles.filter((filePath) =>
-    /^latest-[a-z0-9]+-beta-[a-z0-9_]+\.json$/i.test(path.basename(filePath)),
+    /^latest-[a-z0-9]+-beta-[a-z0-9_-]+\.json$/i.test(path.basename(filePath)),
   );
   if (betaManifests.length === 0) return;
 
@@ -1009,7 +1101,7 @@ async function syncBetaManifestsToLatestStable(
   if (!latestStable?.id || !latestStable?.upload_url) return;
   if (latestStable.id === currentReleaseId) {
     console.warn(
-      "  ! syncBetaManifests: latest stable is the current release — sync skipped. Publish a stable release before running beta builds.",
+      "  ! syncBetaManifests: latest stable is the current release; sync skipped. Publish a stable release before running beta builds.",
     );
     return;
   }
@@ -1024,8 +1116,51 @@ async function syncBetaManifestsToLatestStable(
   }
 }
 
+function buildUploadList({
+  artifacts,
+  checksumFiles,
+  signatureFiles,
+  stagingDirectory = releaseDir,
+}) {
+  const resolvedStagingDirectory = path.resolve(stagingDirectory);
+  const unsigned = new Set(
+    [...artifacts, ...checksumFiles].map((filePath) => path.resolve(filePath)),
+  );
+  const groups = [
+    [artifacts, (name) => isArtifact(name), "artifact or manifest"],
+    [checksumFiles, (name) => isChecksumTextName(name), "checksum manifest"],
+    [
+      signatureFiles,
+      (name, filePath) =>
+        name.endsWith(".asc") &&
+        unsigned.has(path.resolve(filePath.slice(0, -4))),
+      "signature of a vetted file",
+    ],
+  ];
+  const vetted = [];
+  const seen = new Set();
+  for (const [files, isExpected, description] of groups) {
+    for (const filePath of files) {
+      const resolved = path.resolve(filePath);
+      if (
+        path.dirname(resolved) !== resolvedStagingDirectory ||
+        !isExpected(path.basename(resolved), resolved)
+      ) {
+        throw new Error(
+          `Refusing unvetted release upload ${filePath}; expected ${description} in ${stagingDirectory}.`,
+        );
+      }
+      if (!seen.has(resolved)) {
+        seen.add(resolved);
+        vetted.push(resolved);
+      }
+    }
+  }
+  return vetted;
+}
+
 async function main() {
-  console.log(`\nZinnia ${VERSION} — release pipeline\n`);
+  console.log(`\nZinnia ${VERSION}: release pipeline\n`);
 
   if (EXPECTED_TAG && EXPECTED_TAG !== TAG) {
     throw new Error(
@@ -1063,7 +1198,7 @@ async function main() {
   }
 
   if (!GH_TOKEN) {
-    console.log("\n[5/5] GH_TOKEN not set — skipping GitHub upload.");
+    console.log("\n[5/5] GH_TOKEN not set; skipping GitHub upload.");
     console.log(`Artifacts staged in: ${releaseDir}\n`);
     return;
   }
@@ -1077,24 +1212,104 @@ async function main() {
   }
   console.log(`  Release: ${release.html_url || TAG}`);
 
-  const everything = fs
-    .readdirSync(releaseDir)
-    .filter((name) => shouldUploadReleaseEntry(name))
-    .map((n) => path.join(releaseDir, n));
+  const everything = buildUploadList({
+    artifacts,
+    checksumFiles,
+    signatureFiles: ascFiles,
+  });
   for (const f of everything) {
     await uploadAssetWithReplace(release, f);
     console.log(`  ^ ${path.basename(f)}`);
   }
+  // Beta clients poll /releases/latest for latest-*-beta-*.json. Sync those
+  // manifests onto the latest *stable* release during every beta sign upload,
+  // including while this tag is still a draft (same automatic behavior as
+  // beta.22). Keep release:sync-beta-manifests for recovery/re-sync only.
   if (IS_PRERELEASE) {
     await syncBetaManifestsToLatestStable(everything, release.id);
   }
 
   console.log(
-    `\nDone — ${TAG} uploaded as ${release.draft ? "draft" : "published"}.\n`,
+    `\nDone: ${TAG} uploaded as ${release.draft ? "draft" : "published"}.\n`,
   );
 }
 
-main().catch((err) => {
-  console.error(err.message || err);
-  process.exit(1);
-});
+async function syncBetaManifestsAfterPublish() {
+  if (!IS_PRERELEASE) {
+    throw new Error(
+      "release:sync-beta-manifests is only for beta versions (syncs latest-*-beta-*.json onto /releases/latest).",
+    );
+  }
+  if (!GH_TOKEN) {
+    throw new Error(
+      "GH_TOKEN or GITHUB_TOKEN is required to sync beta manifests.",
+    );
+  }
+  // Post-publish sync only needs the staged beta manifests + GitHub token.
+  // Do not re-bind the dirty working tree to a release build session here.
+  const betaManifests = fs
+    .readdirSync(releaseDir)
+    .filter((name) => /^latest-[a-z0-9]+-beta-[a-z0-9_-]+\.json$/i.test(name))
+    .map((name) => path.join(releaseDir, name));
+  if (betaManifests.length === 0) {
+    throw new Error(
+      `No beta updater manifests found in ${releaseDir}. Run release:sign:gpg first.`,
+    );
+  }
+
+  let currentRelease;
+  try {
+    currentRelease = await ghRequest(
+      "GET",
+      `/repos/${REPO_OWNER}/${REPO_NAME}/releases/tags/${TAG}`,
+    );
+  } catch (error) {
+    if (error?.statusCode === 404) {
+      throw new Error(
+        `Published release ${TAG} not found. Publish the draft on GitHub, then re-run release:sync-beta-manifests.`,
+      );
+    }
+    throw error;
+  }
+  if (currentRelease.draft) {
+    throw new Error(
+      `Release ${TAG} is still a draft. Publish it on GitHub before syncing beta manifests to /latest.`,
+    );
+  }
+
+  console.log(
+    `Syncing ${betaManifests.length} beta updater manifest(s) from ${TAG} onto /releases/latest…`,
+  );
+  await syncBetaManifestsToLatestStable(betaManifests, currentRelease.id);
+  console.log("Done: beta manifests synced to latest stable release.\n");
+}
+
+function isDirectExecution() {
+  return Boolean(
+    process.argv[1] &&
+    pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url,
+  );
+}
+
+if (isDirectExecution()) {
+  const syncOnly = process.argv.includes("--sync-beta-manifests");
+  const run = syncOnly ? syncBetaManifestsAfterPublish : main;
+  run().catch((err) => {
+    console.error(err.message || err);
+    process.exit(1);
+  });
+}
+
+export {
+  artifactMatchesVersion,
+  buildUploadList,
+  checksumTargetKeysForArtifactName,
+  isChecksumTextName,
+  isDirectExecution,
+  isExplicitTruthy,
+  listAllGithubPages,
+  rpmArtifactMatchesVersion,
+  requiredLinuxTargetKeys,
+  syncBetaManifestsToLatestStable,
+  updaterChannelVariants,
+};

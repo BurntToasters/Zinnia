@@ -52,11 +52,11 @@ describe("setup wizard state", () => {
     expect(shouldShowSetupWizard()).toBe(false);
   });
 
-  it("does not show wizard for legacy completed settings without new flag", () => {
+  it("shows the upgraded wizard for legacy completion without a version", () => {
     state.currentSettings.setupComplete = false;
     state.settingsExtras._setupComplete = true;
     delete state.settingsExtras._setupWizardVersion;
-    expect(shouldShowSetupWizard()).toBe(false);
+    expect(shouldShowSetupWizard()).toBe(true);
   });
 
   it("shows wizard again when setup version is outdated", () => {
@@ -174,5 +174,49 @@ describe("showSetupWizard", () => {
     await promise;
 
     expect(mockRunDefaultArchiverAction).toHaveBeenCalledWith(setupOsOpen);
+  });
+
+  it("skips the updates step and forces autoCheckUpdates off when requested", async () => {
+    state.currentSettings.autoCheckUpdates = true;
+    state.currentSettings.updateChannel = "stable";
+    const promise = showSetupWizard({ skipUpdates: true });
+
+    (
+      document.getElementById("setup-welcome-next") as HTMLButtonElement
+    ).click();
+    (
+      document.getElementById("setup-workspace-next") as HTMLButtonElement
+    ).click();
+    (document.getElementById("setup-theme-dark") as HTMLButtonElement).click();
+    (document.getElementById("setup-theme-next") as HTMLButtonElement).click();
+
+    const updatesStep = document.querySelector<HTMLElement>(
+      '.setup-wizard-step[data-step="3"]',
+    );
+    const osStep = document.querySelector<HTMLElement>(
+      '.setup-wizard-step[data-step="4"]',
+    );
+    const themeStep = document.querySelector<HTMLElement>(
+      '.setup-wizard-step[data-step="2"]',
+    );
+    expect(updatesStep?.hidden).toBe(true);
+    expect(osStep?.hidden).toBe(false);
+
+    (document.getElementById("setup-os-back") as HTMLButtonElement).click();
+    expect(osStep?.hidden).toBe(true);
+    expect(themeStep?.hidden).toBe(false);
+    expect(updatesStep?.hidden).toBe(true);
+
+    (document.getElementById("setup-theme-next") as HTMLButtonElement).click();
+    (document.getElementById("setup-os-next") as HTMLButtonElement).click();
+
+    const result = await promise;
+    expect(result).toEqual({
+      workspaceMode: "basic",
+      theme: "dark",
+      autoCheckUpdates: false,
+      updateChannel: "stable",
+      osIntegrationDismissed: true,
+    });
   });
 });

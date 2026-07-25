@@ -1,0 +1,5 @@
+/* Platform-specific chrome overrides (Flatpak, etc.). */
+
+.platform-flatpak [data-update-ui] {
+  display: none;
+}

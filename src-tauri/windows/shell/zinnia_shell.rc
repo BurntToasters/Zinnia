@@ -1,0 +1,40 @@
+#include <winuser.h>
+#include <winver.h>
+#include "resource.h"
+
+1 RT_MANIFEST "msix_identity.manifest"
+
+IDI_ZINNIA ICON "..\\..\\icons\\icon.ico"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION 0,6,0,65535
+ PRODUCTVERSION 0,6,0,65535
+ FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+#ifdef _DEBUG
+ FILEFLAGS VS_FF_DEBUG
+#else
+ FILEFLAGS 0
+#endif
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_DLL
+ FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "CompanyName", "BurntToasters\0"
+      VALUE "FileDescription", "Zinnia File Explorer context menu\0"
+      VALUE "FileVersion", "0.6.0\0"
+      VALUE "InternalName", "zinnia_shell.dll\0"
+      VALUE "LegalCopyright", "Copyright (c) 2025-2026 BurntToasters\0"
+      VALUE "OriginalFilename", "zinnia_shell.dll\0"
+      VALUE "ProductName", "Zinnia\0"
+      VALUE "ProductVersion", "0.6.0\0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0409, 1200
+  END
+END

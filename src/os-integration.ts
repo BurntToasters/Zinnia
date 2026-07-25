@@ -11,6 +11,22 @@ export interface OsIntegrationStatus {
   defaultArchiverActionAvailable?: boolean;
   defaultArchiverActionLabel?: string;
   defaultArchiverHelp?: string;
+  /** macOS only: Finder Services (Extract/Compress) row is shown when true. */
+  finderServicesAvailable?: boolean;
+  /** false when registration/prefs probes both fail → show Unknown. */
+  finderServicesKnown?: boolean;
+  finderServicesEnabled?: boolean;
+  finderServicesHelp?: string;
+  /** macOS Finder Sync appex for primary Finder context menus. */
+  finderSyncAvailable?: boolean;
+  finderSyncKnown?: boolean;
+  finderSyncEnabled?: boolean;
+  finderSyncHelp?: string;
+  /** Windows: sparse MSIX identity for Win11 menu (not a full AppX app install). */
+  win11ModernMenuAvailable?: boolean;
+  win11ModernMenuKnown?: boolean;
+  win11ModernMenuRegistered?: boolean;
+  win11ModernMenuHelp?: string;
   archiveDefaults?: ArchiveDefaultStatus[];
 }
 
@@ -34,6 +50,13 @@ interface DefaultArchiverResult {
 
 let latestStatus: OsIntegrationStatus | null = null;
 
+const FINDER_SYNC_ENABLED_MESSAGE = [
+  "Zinnia's Finder extension is enabled.",
+  "",
+  "Right-click files in Finder to use Extract with Zinnia / Compress with Zinnia in the main menu.",
+  "If items are missing, open Login Items & Extensions and confirm Zinnia Finder is on.",
+].join("\n");
+
 function platformLabel(platform: string): string {
   if (platform === "windows") return "Windows";
   if (platform === "macos") return "macOS";
@@ -52,6 +75,50 @@ function setBadge(
   el.textContent = ok ? ready : action;
   el.classList.toggle("status-pill--ok", ok);
   el.classList.toggle("status-pill--warn", !ok);
+  el.classList.remove("status-pill--unknown");
+}
+
+function setTriStatePill(
+  id: string,
+  known: boolean,
+  ok: boolean,
+  okLabel: string,
+  offLabel: string,
+  unknownLabel = "Unknown",
+): void {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.remove(
+    "status-pill--ok",
+    "status-pill--warn",
+    "status-pill--unknown",
+  );
+  if (!known) {
+    el.textContent = unknownLabel;
+    el.classList.add("status-pill--unknown");
+    return;
+  }
+  if (ok) {
+    el.textContent = okLabel;
+    el.classList.add("status-pill--ok");
+    return;
+  }
+  el.textContent = offLabel;
+  el.classList.add("status-pill--warn");
+}
+
+function setFinderServicesBadge(
+  known: boolean,
+  enabled: boolean,
+  packaged: boolean,
+): void {
+  setTriStatePill(
+    "os-finder-services-status",
+    known,
+    enabled,
+    "Enabled",
+    packaged ? "Not enabled" : "Action needed",
+  );
 }
 
 function setText(id: string, value: string): void {
@@ -140,14 +207,119 @@ export function renderOsIntegrationStatus(status: OsIntegrationStatus): void {
       ? "Verify manually"
       : "Action needed",
   );
-  setBadge(
-    "os-context-status",
-    status.contextActionsKnown,
-    "Ready",
-    status.platform === "linux" && status.packaged
-      ? "Verify manually"
-      : "Action needed",
-  );
+  {
+    let contextReady = "Ready";
+    let contextAction = "Action needed";
+    if (status.platform === "linux" && status.packaged) {
+      contextAction = "Verify manually";
+    } else if (
+      status.platform === "macos" &&
+      status.packaged &&
+      status.finderServicesAvailable
+    ) {
+      if (status.finderServicesKnown === false) {
+        contextAction = "Unknown";
+      } else if (!status.finderServicesEnabled) {
+        contextAction = "Not enabled";
+      }
+    }
+    setBadge(
+      "os-context-status",
+      status.contextActionsKnown,
+      contextReady,
+      contextAction,
+    );
+  }
+
+  const finderSyncRow = document.getElementById(
+    "os-finder-sync-row",
+  ) as HTMLElement | null;
+  const finderSyncAvailable = status.finderSyncAvailable === true;
+  if (finderSyncRow) {
+    finderSyncRow.hidden = !finderSyncAvailable;
+  }
+  if (finderSyncAvailable) {
+    const syncKnown = status.finderSyncKnown !== false;
+    const syncEnabled = status.finderSyncEnabled === true;
+    setTriStatePill(
+      "os-finder-sync-status",
+      syncKnown,
+      syncEnabled,
+      "Enabled",
+      status.packaged ? "Not enabled" : "Action needed",
+    );
+    setText(
+      "os-finder-sync-help",
+      status.finderSyncHelp ??
+        "Primary Finder right-click Extract / Compress via Finder Sync (Login Items & Extensions).",
+    );
+    const syncBtn = document.getElementById(
+      "open-finder-sync-settings",
+    ) as HTMLButtonElement | null;
+    if (syncBtn) {
+      syncBtn.textContent =
+        syncKnown && syncEnabled ? "Open Extensions…" : "Enable…";
+      syncBtn.disabled = false;
+      syncBtn.title =
+        syncKnown && syncEnabled
+          ? "Open Login Items & Extensions"
+          : "Enable Zinnia Finder Sync for primary Finder context menus";
+    }
+  }
+
+  const finderRow = document.getElementById(
+    "os-finder-services-row",
+  ) as HTMLElement | null;
+  const finderAvailable = status.finderServicesAvailable === true;
+  if (finderRow) {
+    finderRow.hidden = !finderAvailable;
+  }
+  if (finderAvailable) {
+    const finderKnown = status.finderServicesKnown !== false;
+    const finderEnabled = status.finderServicesEnabled === true;
+    setFinderServicesBadge(finderKnown, finderEnabled, status.packaged);
+    setText(
+      "os-finder-services-help",
+      status.finderServicesHelp ??
+        "Extract / Compress with Zinnia under Keyboard Shortcuts → Services (not Login Items & Extensions).",
+    );
+    const finderBtn = document.getElementById(
+      "open-finder-services-settings",
+    ) as HTMLButtonElement | null;
+    if (finderBtn) {
+      finderBtn.textContent =
+        finderKnown && finderEnabled ? "Open Services…" : "Enable…";
+      finderBtn.disabled = false;
+      finderBtn.title =
+        finderKnown && finderEnabled
+          ? "Open Keyboard Shortcuts → Services → Files and Folders"
+          : "Enable Extract / Compress with Zinnia for Finder";
+    }
+  }
+
+  const win11Row = document.getElementById(
+    "os-win11-menu-row",
+  ) as HTMLElement | null;
+  const win11Available = status.win11ModernMenuAvailable === true;
+  if (win11Row) {
+    win11Row.hidden = !win11Available;
+  }
+  if (win11Available) {
+    const win11Known = status.win11ModernMenuKnown !== false;
+    const win11Registered = status.win11ModernMenuRegistered === true;
+    setTriStatePill(
+      "os-win11-menu-status",
+      win11Known,
+      win11Registered,
+      "Registered",
+      status.packaged ? "Not registered" : "Action needed",
+    );
+    setText(
+      "os-win11-menu-help",
+      status.win11ModernMenuHelp ??
+        "Sparse identity package for the primary right-click menu (Zinnia stays a normal NSIS install).",
+    );
+  }
 
   const help = document.getElementById("os-integration-help");
   if (help) {
@@ -157,11 +329,12 @@ export function renderOsIntegrationStatus(status: OsIntegrationStatus): void {
     } else if (status.platform === "macos") {
       help.textContent =
         status.defaultArchiverHelp ??
-        "Use Finder's Open With or Get Info panel to make Zinnia the default archive app.";
+        "Use Finder's Open With or Get Info for defaults. Packaged builds also add Services: Extract / Compress with Zinnia.";
     } else if (status.platform === "windows") {
       help.textContent =
+        status.win11ModernMenuHelp ??
         status.defaultArchiverHelp ??
-        "Use File Explorer or Default Apps to map archive extensions to Zinnia.";
+        "Zinnia installs as a normal NSIS app. Win11 modern menu uses a sparse identity package; classic Extract/Compress registry verbs are only a fallback when that package is unavailable. Open with Zinnia stays on the file-association ProgId.";
     } else if (status.platform === "linux") {
       help.textContent =
         status.defaultArchiverHelp ??
@@ -234,6 +407,74 @@ export async function openOsIntegrationSettings(): Promise<void> {
     const msg = err instanceof Error ? err.message : String(err);
     await message(msg, {
       title: "Default app settings",
+      kind: "info",
+    });
+  }
+}
+
+export async function openFinderSyncSettings(): Promise<void> {
+  const needsEnable =
+    latestStatus?.finderSyncAvailable === true &&
+    latestStatus.finderSyncEnabled !== true;
+  try {
+    if (needsEnable) {
+      await invoke("enable_finder_sync");
+      await refreshOsIntegrationStatus();
+      if (latestStatus?.finderSyncEnabled) {
+        await message(FINDER_SYNC_ENABLED_MESSAGE, {
+          title: "Finder context menu enabled",
+          kind: "info",
+        });
+      } else {
+        await invoke("open_finder_sync_settings");
+        await message(
+          [
+            "System Settings will open to Login Items & Extensions.",
+            "",
+            "Find Zinnia Finder (or Zinnia) and turn it on.",
+            "Return here and click Refresh when enabled.",
+          ].join("\n"),
+          { title: "Enable Finder context menu", kind: "info" },
+        );
+      }
+      return;
+    }
+    await invoke("open_finder_sync_settings");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await message(msg, {
+      title: "Finder context menu",
+      kind: "info",
+    });
+  }
+}
+
+export async function openFinderServicesSettings(): Promise<void> {
+  const needsEnable =
+    latestStatus?.finderServicesAvailable === true &&
+    latestStatus.finderServicesEnabled !== true;
+  try {
+    if (needsEnable) {
+      await invoke("open_finder_services_settings");
+      await message(
+        [
+          "System Settings will open to Keyboard Shortcuts.",
+          "",
+          "Open Services → Files and Folders, then enable Extract with Zinnia and Compress with Zinnia.",
+          "Return here and click Refresh when finished.",
+        ].join("\n"),
+        {
+          title: "Enable Finder Services",
+          kind: "info",
+        },
+      );
+      return;
+    }
+    await invoke("open_finder_services_settings");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await message(msg, {
+      title: "Finder Services",
       kind: "info",
     });
   }
@@ -359,4 +600,16 @@ export function wireOsIntegrationEvents(): void {
   $("reset-os-integration-defaults").addEventListener("click", () => {
     void resetPreferredArchiverToSystem();
   });
+  const finderBtn = document.getElementById("open-finder-services-settings");
+  if (finderBtn) {
+    finderBtn.addEventListener("click", () => {
+      void openFinderServicesSettings();
+    });
+  }
+  const finderSyncBtn = document.getElementById("open-finder-sync-settings");
+  if (finderSyncBtn) {
+    finderSyncBtn.addEventListener("click", () => {
+      void openFinderSyncSettings();
+    });
+  }
 }

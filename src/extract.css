@@ -1,9 +1,15 @@
 @import "./variables.css";
+@import "./progress-pct.css";
 
 *,
 *::before,
 *::after {
   box-sizing: border-box;
+}
+
+/* Author `display` rules on .btn beat the UA [hidden] stylesheet without this. */
+[hidden] {
+  display: none !important;
 }
 
 html,
@@ -14,11 +20,11 @@ body {
 body {
   margin: 0;
   font-family:
-    "Segoe UI Variable",
-    "Segoe UI",
     system-ui,
     -apple-system,
     BlinkMacSystemFont,
+    "Segoe UI Variable",
+    "Segoe UI",
     "Helvetica Neue",
     Arial,
     sans-serif;
@@ -27,6 +33,12 @@ body {
   background: var(--bg);
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Native glass: let OS vibrancy show through (matches Basic main window). */
+html[data-window-fx="basic"],
+html[data-window-fx="basic"] body {
+  background: transparent;
 }
 
 .extract-app {
@@ -122,6 +134,15 @@ body.platform-macos .extract-app {
   animation: indeterminate 1.8s ease-in-out infinite;
 }
 
+.extract-progress-fill.is-indeterminate {
+  animation: indeterminate 1.8s ease-in-out infinite;
+}
+
+.extract-progress-fill.is-determinate {
+  animation: none;
+  margin-left: 0;
+}
+
 .extract-progress-fill--error {
   background: var(--danger);
   animation: none;
@@ -150,7 +171,7 @@ body.platform-macos .extract-app {
 
 .extract-error {
   background: var(--danger-bg);
-  border: 1px solid var(--danger);
+  border: 1px solid var(--danger-border);
   border-radius: var(--radius);
   padding: 10px 12px;
   display: flex;
@@ -158,14 +179,10 @@ body.platform-macos .extract-app {
   gap: 6px;
 }
 
-.extract-error[hidden] {
-  display: none;
-}
-
 .extract-error-title {
   font-size: 0.75rem;
   font-weight: 600;
-  color: var(--danger);
+  color: var(--danger-fg);
 }
 
 .extract-error-detail {
@@ -176,7 +193,7 @@ body.platform-macos .extract-app {
   word-break: break-word;
   max-height: 120px;
   overflow-y: auto;
-  font-family: "Cascadia Code", "Consolas", monospace;
+  font-family: "Cascadia Code", "SF Mono", "Fira Code", "Consolas", monospace;
   user-select: text;
 }
 
@@ -188,6 +205,25 @@ body.platform-macos .extract-app {
   border-top: 1px solid var(--border);
 }
 
+html[data-window-fx="basic"] .extract-footer {
+  border-top-color: color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+html[data-window-fx="basic"] body.platform-windows #titlebar {
+  background: transparent;
+  border-bottom-color: color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+html[data-window-fx="basic"] .extract-input-modal {
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+html[data-window-fx="basic"] .extract-input-modal-overlay {
+  background: rgb(0 0 0 / 28%);
+}
+
 .extract-input-modal-overlay {
   position: fixed;
   inset: 0;
@@ -196,10 +232,6 @@ body.platform-macos .extract-app {
   padding: 20px;
   background: rgb(0 0 0 / 45%);
   z-index: 10;
-}
-
-.extract-input-modal-overlay[hidden] {
-  display: none;
 }
 
 .extract-input-modal {
@@ -276,6 +308,11 @@ body.platform-macos .extract-app {
   border-color: var(--border-strong);
 }
 
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .btn--sm {
   padding: 4px 10px;
 }
@@ -287,24 +324,24 @@ body.platform-macos .extract-app {
 .btn--close {
   background: var(--accent);
   color: var(--text-on-accent);
-  border-color: var(--accent);
+  border-color: var(--accent-fg);
 }
 
 .btn--open {
   background: transparent;
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--accent-fg);
+  color: var(--accent-fg);
 }
 
 .btn--open:hover {
   background: var(--accent-bg-strong);
-  border-color: var(--accent-hover);
-  color: var(--accent-hover);
+  border-color: var(--accent-fg-hover);
+  color: var(--accent-fg-hover);
 }
 
 .btn--close:hover {
   background: var(--accent-hover);
-  border-color: var(--accent-hover);
+  border-color: var(--accent-fg-hover);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -389,8 +426,8 @@ body.platform-linux #titlebar {
   color: var(--text-secondary);
   cursor: default !important;
   transition:
-    background 150ms ease,
-    color 150ms ease;
+    background var(--transition),
+    color var(--transition);
   -webkit-app-region: no-drag !important;
 }
 

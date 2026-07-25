@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +10,7 @@ import {
   isDirectExecution,
   pathsEqual,
   run,
+  verifyCopiedPath,
 } from "../../scripts/post-release-assets.js";
 
 const temporaryDirectories: string[] = [];
@@ -43,6 +44,24 @@ describe("post-release assets", () => {
     );
   });
 
+  it("detects direct execution by basename so Windows path identity cannot no-op", () => {
+    expect(
+      isDirectExecution(
+        ["node", "C:\\Users\\Main\\Zinnia\\scripts\\post-release-assets.js"],
+        "win32",
+      ),
+    ).toBe(true);
+    expect(
+      isDirectExecution(
+        [
+          "node",
+          "C:\\Users\\Main\\Zinnia\\scripts\\finalize-release-assets.js",
+        ],
+        "win32",
+      ),
+    ).toBe(false);
+  });
+
   it("cleans, mirrors, and verifies release entries", () => {
     const root = makeTemporaryDirectory();
     const releaseDir = path.join(root, "release");
@@ -57,6 +76,10 @@ describe("post-release assets", () => {
       path.join(releaseDir, "SHA256SUMS-windows-x86_64.txt"),
       "hash",
     );
+    fs.writeFileSync(
+      path.join(releaseDir, ".build-session.json"),
+      '{"version":"0.0.0"}\n',
+    );
 
     const result = run({
       releaseDir,
@@ -69,6 +92,12 @@ describe("post-release assets", () => {
       copiedEntries: 2,
     });
     expect(fs.existsSync(path.join(releaseDir, "nsis"))).toBe(false);
+    expect(fs.existsSync(path.join(releaseDir, ".build-session.json"))).toBe(
+      false,
+    );
+    expect(fs.existsSync(path.join(destination, ".build-session.json"))).toBe(
+      false,
+    );
     expect(
       fs.readFileSync(path.join(destination, "Zinnia-Windows-x64.exe"), "utf8"),
     ).toBe("installer");
@@ -78,6 +107,29 @@ describe("post-release assets", () => {
         "utf8",
       ),
     ).toBe("hash");
+  });
+
+  it("fails before cleanup when the mirror destination is missing", () => {
+    const root = makeTemporaryDirectory();
+    const releaseDir = path.join(root, "release");
+    fs.mkdirSync(path.join(releaseDir, "nsis"), { recursive: true });
+    const buildOnly = path.join(releaseDir, "nsis", "build-only.exe");
+    fs.writeFileSync(buildOnly, "build");
+
+    expect(() => run({ releaseDir, env: {} })).toThrow(
+      /AFTER_PACK_LOC is empty/,
+    );
+    expect(fs.existsSync(buildOnly)).toBe(true);
+  });
+
+  it("detects same-size mirror corruption by hash", () => {
+    const root = makeTemporaryDirectory();
+    const source = path.join(root, "source.bin");
+    const destination = path.join(root, "destination.bin");
+    fs.writeFileSync(source, "good");
+    fs.writeFileSync(destination, "evil");
+
+    expect(() => verifyCopiedPath(source, destination)).toThrow(/hash differs/);
   });
 
   it("dedicated runner executes finalization without an argv guard", () => {
@@ -100,7 +152,7 @@ describe("post-release assets", () => {
       "installer",
     );
 
-    const output = execFileSync(
+    const ran = spawnSync(
       process.execPath,
       [path.join(scriptsDir, "finalize-release-assets.js")],
       {
@@ -108,8 +160,14 @@ describe("post-release assets", () => {
         env: { ...process.env, AFTER_PACK_LOC: destination },
       },
     );
+    const combined = `${ran.stdout ?? ""}${ran.stderr ?? ""}`;
 
-    expect(output).toContain("Mirrored and verified 1 cleaned release entries");
+    expect(ran.status).toBe(0);
+    expect(combined).toContain(
+      "Mirrored and verified 1 cleaned release entries",
+    );
+    expect(combined).toContain("[release:mirror] starting");
+    expect(combined).toContain(`AFTER_PACK_LOC=${JSON.stringify(destination)}`);
     expect(
       fs.readFileSync(path.join(destination, "Zinnia-Windows-x64.exe"), "utf8"),
     ).toBe("installer");

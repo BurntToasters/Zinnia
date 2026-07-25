@@ -2,6 +2,10 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import {
+  clearQualityGateProof,
+  recordSuccessfulQualityGate,
+} from "./release-session.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -14,7 +18,19 @@ const coverageSummaryPath = resolve(
 );
 const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
 const appVersion = packageJson.version ?? "unknown";
-const scriptVersion = "1.1.0";
+const scriptVersion = "1.1.2";
+const criticalCoverageThresholds = {
+  // Directory keys (trailing `/`) aggregate all matching `src/<dir>/**/*.ts` files.
+  "archive/": { lines: 80, branches: 62, functions: 88 },
+  "basic/": { lines: 60, branches: 44, functions: 44 },
+  "extract-window.ts": { lines: 72, branches: 53, functions: 66 },
+  "app-init.ts": { lines: 70, branches: 50, functions: 52 },
+  "updater.ts": { lines: 76, branches: 62, functions: 68 },
+  // Peeled from power-events.ts; keep these high so boot helpers stay tested.
+  "power-helpers.ts": { lines: 90, branches: 70, functions: 90 },
+  "power-shortcuts.ts": { lines: 85, branches: 50, functions: 90 },
+  "power-logs.ts": { lines: 85, branches: 70, functions: 90 },
+};
 
 const colors = {
   reset: "\x1b[0m",
@@ -31,6 +47,9 @@ function createInitialResults() {
     typecheck: { status: "pending" },
     lint: { status: "pending" },
     format: { status: "pending" },
+    changelog: { status: "pending" },
+    updater: { status: "pending" },
+    flatpak: { status: "pending" },
     test: { status: "pending", passed: null, failed: null, files: null },
     coverage: {
       status: "pending",
@@ -39,6 +58,9 @@ function createInitialResults() {
       functions: null,
       branches: null,
     },
+    rustfmt: { status: "pending" },
+    rustprep: { status: "pending" },
+    clippy: { status: "pending" },
     rust: { status: "pending" },
   };
 }
@@ -51,11 +73,12 @@ function stripAnsi(value) {
   return value.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "");
 }
 
-function printTail(output) {
+function printTail(output, label) {
   const cleanOutput = stripAnsi(output).trim();
   if (!cleanOutput) return;
   const lines = cleanOutput.split("\n");
-  const tail = lines.slice(-20).join("\n");
+  const tail = lines.slice(-120).join("\n");
+  console.log(`${colors.red}${label}:${colors.reset}`);
   console.log(`${colors.red}${tail}${colors.reset}`);
 }
 
@@ -75,17 +98,89 @@ function parseTest(output, results) {
   }
 }
 
+function aggregateCoverageEntries(entries) {
+  const metrics = ["lines", "branches", "functions", "statements"];
+  const totals = Object.fromEntries(
+    metrics.map((metric) => [metric, { total: 0, covered: 0 }]),
+  );
+  for (const entry of entries) {
+    for (const metric of metrics) {
+      const block = entry?.[metric];
+      if (!block || typeof block.total !== "number") continue;
+      totals[metric].total += block.total;
+      totals[metric].covered += block.covered ?? 0;
+    }
+  }
+  const result = {};
+  for (const metric of metrics) {
+    const { total, covered } = totals[metric];
+    result[metric] = {
+      total,
+      covered,
+      skipped: 0,
+      pct: total === 0 ? 100 : Math.round((covered / total) * 10000) / 100,
+    };
+  }
+  return result;
+}
+
+function findCriticalCoverageEntry(summary, fileName) {
+  const normalizedName = fileName.replaceAll("\\", "/");
+  const summaryEntries = Object.entries(summary).filter(
+    ([key]) => key !== "total",
+  );
+
+  if (normalizedName.endsWith("/")) {
+    const needle = `/src/${normalizedName}`;
+    const matches = summaryEntries
+      .filter(([filePath]) => {
+        const normalizedPath = filePath.replaceAll("\\", "/");
+        return (
+          normalizedPath.includes(needle) && normalizedPath.endsWith(".ts")
+        );
+      })
+      .map(([, entry]) => entry);
+    if (matches.length === 0) return undefined;
+    return aggregateCoverageEntries(matches);
+  }
+
+  return summaryEntries.find(([filePath]) =>
+    filePath.replaceAll("\\", "/").endsWith(`/src/${normalizedName}`),
+  )?.[1];
+}
+
 function parseCoverage(results) {
   try {
     const summary = JSON.parse(readFileSync(coverageSummaryPath, "utf8"));
     const total = summary?.total;
     if (!total) throw new Error("Missing total coverage block");
 
-    results.coverage.status = "passed";
     results.coverage.lines = total.lines?.pct ?? null;
     results.coverage.statements = total.statements?.pct ?? null;
     results.coverage.functions = total.functions?.pct ?? null;
     results.coverage.branches = total.branches?.pct ?? null;
+    const failures = [];
+    for (const [fileName, thresholds] of Object.entries(
+      criticalCoverageThresholds,
+    )) {
+      const entry = findCriticalCoverageEntry(summary, fileName);
+      if (!entry) {
+        failures.push(`${fileName} missing from coverage summary`);
+        continue;
+      }
+      for (const [metric, minimum] of Object.entries(thresholds)) {
+        const actual = entry[metric]?.pct;
+        if (typeof actual !== "number" || actual < minimum) {
+          failures.push(
+            `${fileName} ${metric} ${actual ?? "n/a"}% < ${minimum}%`,
+          );
+        }
+      }
+    }
+    if (failures.length > 0) {
+      throw new Error(`critical coverage regression: ${failures.join("; ")}`);
+    }
+    results.coverage.status = "passed";
   } catch (err) {
     results.coverage.status = "failed";
     const reason = err instanceof Error ? err.message : String(err);
@@ -107,7 +202,9 @@ function runCommand(name, command, args, parser, results, options = {}) {
     timeout,
   });
 
-  const output = `${run.stdout || ""}${run.stderr || ""}`;
+  const stdout = run.stdout || "";
+  const stderr = run.stderr || "";
+  const output = `${stdout}${stderr}`;
   if (parser) parser(output, results);
 
   if (!run.error && run.status === 0) {
@@ -123,7 +220,8 @@ function runCommand(name, command, args, parser, results, options = {}) {
       ? `signal ${run.signal || "unknown"}`
       : `exit code ${run.status}`;
   console.log(`${colors.red}✗ ${name} failed (${reason})${colors.reset}`);
-  printTail(output);
+  printTail(stdout, "stdout tail");
+  printTail(stderr, "stderr tail");
   console.log("");
   return false;
 }
@@ -171,6 +269,27 @@ ${colors.reset}`);
     }${colors.reset}`,
   );
   console.log(
+    `${colors.bold}Changelog:${colors.reset}  ${
+      results.changelog.status === "passed"
+        ? `${colors.green}✓ PASS`
+        : `${colors.red}✗ FAIL`
+    }${colors.reset}`,
+  );
+  console.log(
+    `${colors.bold}Updater:${colors.reset}    ${
+      results.updater.status === "passed"
+        ? `${colors.green}✓ PASS`
+        : `${colors.red}✗ FAIL`
+    }${colors.reset}`,
+  );
+  console.log(
+    `${colors.bold}Flatpak:${colors.reset}    ${
+      results.flatpak.status === "passed"
+        ? `${colors.green}✓ PASS`
+        : `${colors.red}✗ FAIL`
+    }${colors.reset}`,
+  );
+  console.log(
     `${colors.bold}Tests:${colors.reset}      ${
       results.test.status === "passed"
         ? `${colors.green}✓ PASS`
@@ -187,6 +306,27 @@ ${colors.reset}`);
         ? `${colors.green}✓ PASS`
         : `${colors.red}✗ FAIL`
     }${colors.reset} (lines ${results.coverage.lines ?? "n/a"}%, statements ${results.coverage.statements ?? "n/a"}%, functions ${results.coverage.functions ?? "n/a"}%, branches ${results.coverage.branches ?? "n/a"}%)`,
+  );
+  console.log(
+    `${colors.bold}Rust Format:${colors.reset} ${
+      results.rustfmt.status === "passed"
+        ? `${colors.green}✓ PASS`
+        : `${colors.red}✗ FAIL`
+    }${colors.reset}`,
+  );
+  console.log(
+    `${colors.bold}Rust Prep:${colors.reset}   ${
+      results.rustprep.status === "passed"
+        ? `${colors.green}✓ PASS`
+        : `${colors.red}✗ FAIL`
+    }${colors.reset}`,
+  );
+  console.log(
+    `${colors.bold}Clippy:${colors.reset}      ${
+      results.clippy.status === "passed"
+        ? `${colors.green}✓ PASS`
+        : `${colors.red}✗ FAIL`
+    }${colors.reset}`,
   );
   console.log(
     `${colors.bold}Rust Tests:${colors.reset} ${
@@ -211,6 +351,8 @@ ${colors.reset}`);
 }
 
 function main() {
+  // A failed or interrupted run must invalidate any earlier release proof.
+  clearQualityGateProof(resolve(__dirname, ".."));
   const results = createInitialResults();
   const npm = getNpmCommand();
   printBanner();
@@ -218,6 +360,9 @@ function main() {
   runCommand("typecheck", npm, ["run", "typecheck"], null, results);
   runCommand("lint", npm, ["run", "lint"], null, results);
   runCommand("format", npm, ["run", "format:check"], null, results);
+  runCommand("changelog", npm, ["run", "validate:changelog"], null, results);
+  runCommand("updater", npm, ["run", "validate:updater"], null, results);
+  runCommand("flatpak", npm, ["run", "validate:flatpak"], null, results);
   const testPassed = runCommand(
     "test",
     npm,
@@ -231,15 +376,77 @@ function main() {
     results.coverage.status = "failed";
   }
   runCommand(
-    "rust",
+    "rustfmt",
     "cargo",
-    ["test", "--manifest-path", "src-tauri/Cargo.toml"],
+    [
+      "fmt",
+      "--manifest-path",
+      "src-tauri/Cargo.toml",
+      "--all",
+      "--",
+      "--check",
+    ],
     null,
     results,
     { timeout: rustTimeoutMs },
   );
+  const rustPrepared = runCommand(
+    "rustprep",
+    npm,
+    ["run", "prepare:rust-tests"],
+    null,
+    results,
+    { timeout: rustTimeoutMs },
+  );
+  if (rustPrepared) {
+    runCommand(
+      "clippy",
+      "cargo",
+      [
+        "clippy",
+        "--manifest-path",
+        "src-tauri/Cargo.toml",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings",
+      ],
+      null,
+      results,
+      { timeout: rustTimeoutMs },
+    );
+    runCommand(
+      "rust",
+      "cargo",
+      ["test", "--manifest-path", "src-tauri/Cargo.toml", "--all-targets"],
+      null,
+      results,
+      { timeout: rustTimeoutMs },
+    );
+  } else {
+    results.clippy.status = "failed";
+    results.rust.status = "failed";
+    console.log(
+      `${colors.red}Skipping clippy and Rust tests because Rust test assets could not be prepared.${colors.reset}\n`,
+    );
+  }
 
-  return printSummary(results);
+  const exitCode = printSummary(results);
+  if (exitCode === 0) {
+    const qualityGate = recordSuccessfulQualityGate(resolve(__dirname, ".."));
+    if (qualityGate.recorded) {
+      console.log("Release quality-gate proof recorded for this clean commit.");
+    } else {
+      console.log(
+        "Release quality-gate proof not recorded because the working tree is dirty.",
+      );
+      if (qualityGate.dirtyFiles) {
+        console.log("Dirty files:");
+        console.log(qualityGate.dirtyFiles);
+      }
+    }
+  }
+  return exitCode;
 }
 
 process.exit(main());

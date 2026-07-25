@@ -7,6 +7,8 @@ import {
   syncSettingsSecurityControlsForFormat,
   openSettingsModal,
   closeSettingsModal,
+  toggleSettingsModal,
+  syncQuickExtractWarmIdleControl,
 } from "../settings";
 import { state } from "../state";
 import { SETTING_DEFAULTS } from "../settings-model";
@@ -81,7 +83,7 @@ describe("applySettingsToForm", () => {
       wordSize: "128",
       solid: "solid",
       threads: 4,
-      pathMode: "absolute",
+      pathMode: "relative",
       sfx: true,
       encryptHeaders: true,
       deleteAfter: true,
@@ -96,7 +98,7 @@ describe("applySettingsToForm", () => {
     expect(getSelectValue("word-size")).toBe("128");
     expect(getSelectValue("solid")).toBe("solid");
     expect(getInputValue("threads")).toBe("4");
-    expect(getSelectValue("path-mode")).toBe("absolute");
+    expect(getSelectValue("path-mode")).toBe("relative");
     expect(getChecked("sfx")).toBe(false);
     expect(getChecked("encrypt-headers")).toBe(true);
     expect(getChecked("delete-after")).toBe(false);
@@ -126,7 +128,7 @@ describe("populateSettingsModal", () => {
       wordSize: "32",
       solid: "4g",
       threads: 8,
-      pathMode: "absolute",
+      pathMode: "relative",
       sfx: true,
       encryptHeaders: false,
       deleteAfter: true,
@@ -147,7 +149,7 @@ describe("populateSettingsModal", () => {
     expect(getSelectValue("s-word-size")).toBe("32");
     expect(getSelectValue("s-solid")).toBe("4g");
     expect(getInputValue("s-threads")).toBe("8");
-    expect(getSelectValue("s-path-mode")).toBe("absolute");
+    expect(getSelectValue("s-path-mode")).toBe("relative");
     expect(getChecked("s-sfx")).toBe(false);
     expect(getChecked("s-encrypt-headers")).toBe(false);
     expect(getChecked("s-delete-after")).toBe(false);
@@ -157,6 +159,8 @@ describe("populateSettingsModal", () => {
     expect(getSelectValue("s-log-verbosity")).toBe("debug");
     expect(getSelectValue("s-workspace-mode")).toBe("basic");
     expect(getSelectValue("s-ui-density")).toBe("comfortable");
+    expect(getChecked("s-quick-extract-keep-warm")).toBe(false);
+    expect(getSelectValue("s-quick-extract-warm-idle")).toBe("10");
   });
 
   it("sets log directory text", () => {
@@ -164,6 +168,7 @@ describe("populateSettingsModal", () => {
     populateSettingsModal();
     const logDir = document.getElementById("s-log-dir")!;
     expect(logDir.textContent).toBe("/home/user/.local/share/zinnia/logs");
+    expect(logDir.title).toBe("/home/user/.local/share/zinnia/logs");
   });
 
   it('shows "Unavailable" when log directory is empty', () => {
@@ -171,6 +176,7 @@ describe("populateSettingsModal", () => {
     populateSettingsModal();
     const logDir = document.getElementById("s-log-dir")!;
     expect(logDir.textContent).toBe("Unavailable");
+    expect(logDir.title).toBe("");
   });
 });
 
@@ -195,6 +201,9 @@ describe("readSettingsModal", () => {
     setSelectValue("s-workspace-mode", "power");
     setSelectValue("s-ui-density", "compact");
     setChecked("s-os-integration-dismissed", true);
+    setChecked("s-quick-extract-keep-warm", false);
+    setSelectValue("s-quick-extract-warm-idle", "30");
+    setChecked("s-basic-window-effects", true);
 
     const settings = readSettingsModal();
     expect(settings.theme).toBe("dark");
@@ -216,6 +225,9 @@ describe("readSettingsModal", () => {
     expect(settings.workspaceMode).toBe("power");
     expect(settings.uiDensity).toBe("compact");
     expect(settings.osIntegrationDismissed).toBe(true);
+    expect(settings.quickExtractKeepWarm).toBe(false);
+    expect(settings.quickExtractWarmIdleMinutes).toBe(30);
+    expect(settings.basicWindowEffects).toBe(true);
   });
 
   it("disables encryptHeaders for formats that don't support it", () => {
@@ -292,18 +304,85 @@ describe("syncSettingsSecurityControlsForFormat", () => {
   });
 });
 
+describe("syncQuickExtractWarmIdleControl", () => {
+  it("disables idle timeout select when keep-warm is off", () => {
+    setChecked("s-quick-extract-keep-warm", false);
+    syncQuickExtractWarmIdleControl();
+    expect(
+      (
+        document.getElementById(
+          "s-quick-extract-warm-idle",
+        ) as HTMLSelectElement
+      ).disabled,
+    ).toBe(true);
+
+    setChecked("s-quick-extract-keep-warm", true);
+    syncQuickExtractWarmIdleControl();
+    expect(
+      (
+        document.getElementById(
+          "s-quick-extract-warm-idle",
+        ) as HTMLSelectElement
+      ).disabled,
+    ).toBe(false);
+  });
+});
+
 describe("openSettingsModal / closeSettingsModal", () => {
   it("shows settings overlay on open", () => {
     const overlay = document.getElementById("settings-overlay")!;
+    const trigger = document.getElementById("open-settings")!;
     overlay.hidden = true;
+    openSettingsModal();
+    expect(overlay.hidden).toBe(false);
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("is a no-op when settings are already open", () => {
+    const overlay = document.getElementById("settings-overlay")!;
+    overlay.hidden = true;
+    openSettingsModal();
+    const basicFx = document.getElementById(
+      "s-basic-window-effects",
+    ) as HTMLInputElement | null;
+    if (basicFx) basicFx.checked = !basicFx.checked;
     openSettingsModal();
     expect(overlay.hidden).toBe(false);
   });
 
+  it("toggles settings open and closed", () => {
+    const overlay = document.getElementById("settings-overlay")!;
+    const trigger = document.getElementById("open-settings")!;
+    overlay.hidden = true;
+    toggleSettingsModal();
+    expect(overlay.hidden).toBe(false);
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    toggleSettingsModal();
+    expect(overlay.hidden).toBe(true);
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+  });
+
   it("hides settings overlay on close", () => {
     const overlay = document.getElementById("settings-overlay")!;
+    const trigger = document.getElementById("open-settings")!;
     overlay.hidden = false;
     closeSettingsModal();
     expect(overlay.hidden).toBe(true);
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("restores the live window-effects preview when settings are cancelled", () => {
+    state.currentSettings.basicWindowEffects = true;
+    openSettingsModal();
+    const basicFx = document.getElementById(
+      "s-basic-window-effects",
+    ) as HTMLInputElement;
+    basicFx.checked = false;
+    basicFx.dispatchEvent(new Event("change"));
+
+    expect(state.currentSettings.basicWindowEffects).toBe(false);
+    closeSettingsModal();
+
+    expect(state.currentSettings.basicWindowEffects).toBe(true);
   });
 });

@@ -25,7 +25,11 @@ vi.mock("@tauri-apps/api/app", () => ({
 vi.mock("@tauri-apps/api/webviewWindow", () => ({
   getCurrentWebviewWindow: vi.fn().mockReturnValue({
     onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
-    setSize: vi.fn(),
+    setSize: vi.fn().mockResolvedValue(undefined),
+    setResizable: vi.fn().mockResolvedValue(undefined),
+    setMaximizable: vi.fn().mockResolvedValue(undefined),
+    isMaximized: vi.fn().mockResolvedValue(false),
+    unmaximize: vi.fn().mockResolvedValue(undefined),
   }),
 }));
 vi.mock("@tauri-apps/plugin-updater", () => ({
@@ -38,6 +42,9 @@ vi.mock("@tauri-apps/plugin-notification", () => ({
   isPermissionGranted: vi.fn().mockResolvedValue(false),
   requestPermission: vi.fn().mockResolvedValue("denied"),
   sendNotification: vi.fn(),
+}));
+vi.mock("@tauri-apps/plugin-shell", () => ({
+  open: vi.fn().mockResolvedValue(undefined),
 }));
 
 // ── DOM elements ──
@@ -104,11 +111,13 @@ addEl("button", "open-settings");
 
 // Browse buttons
 addEl("button", "browse-list");
+addEl("button", "browse-cancel");
 addEl("button", "browse-test");
 addEl("button", "browse-extract");
 addEl("button", "browse-selective");
 addEl("button", "browse-add-files");
 addEl("button", "browse-convert");
+addEl("button", "basic-browse-cancel");
 for (const [quickActionId, quickAction] of [
   ["quick-add-balanced", "add-run-balanced"],
   ["quick-add-ultra", "add-run-ultra"],
@@ -234,6 +243,14 @@ const sll = addEl("input", "s-local-logging") as HTMLInputElement;
 sll.type = "checkbox";
 const soid = addEl("input", "s-os-integration-dismissed") as HTMLInputElement;
 soid.type = "checkbox";
+const sqekw = addEl("input", "s-quick-extract-keep-warm") as HTMLInputElement;
+sqekw.type = "checkbox";
+addSelect("s-quick-extract-warm-idle", ["5", "10", "30", "60"]);
+addSelect("s-extract-auto-close", ["-1", "0", "1.5", "3", "5", "10"]);
+const sBasicFx = addEl("input", "s-basic-window-effects") as HTMLInputElement;
+sBasicFx.type = "checkbox";
+const basicFxRow = addEl("div", "setting-basic-window-effects");
+basicFxRow.hidden = true;
 addEl("div", "s-log-dir");
 addEl("button", "run-benchmark");
 addEl("div", "benchmark-result");
@@ -243,6 +260,20 @@ addEl("div", "os-package-label");
 addEl("div", "os-file-assoc-status");
 addEl("div", "os-context-status");
 addEl("div", "os-archive-default-list");
+const finderSyncRow = addEl("div", "os-finder-sync-row");
+finderSyncRow.hidden = true;
+addEl("div", "os-finder-sync-help");
+addEl("div", "os-finder-sync-status");
+addEl("button", "open-finder-sync-settings");
+const finderRow = addEl("div", "os-finder-services-row");
+finderRow.hidden = true;
+addEl("div", "os-finder-services-help");
+addEl("div", "os-finder-services-status");
+addEl("button", "open-finder-services-settings");
+const win11Row = addEl("div", "os-win11-menu-row");
+win11Row.hidden = true;
+addEl("div", "os-win11-menu-help");
+addEl("div", "os-win11-menu-status");
 addEl("button", "open-os-integration-settings");
 addEl("button", "reset-os-integration-defaults");
 addEl("button", "refresh-os-integration-status");

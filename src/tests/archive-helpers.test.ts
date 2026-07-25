@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { listen } from "@tauri-apps/api/event";
 import {
   isEncryptedFlag,
   methodLooksEncrypted,
@@ -8,6 +9,7 @@ import {
   withPassword,
   formatBatchEta,
 } from "../archive";
+import { withLiveProgress } from "../archive/runtime";
 
 describe("isEncryptedFlag", () => {
   it('returns true for "+"', () => {
@@ -97,10 +99,10 @@ describe("looksLikePasswordRequiredError", () => {
     ).toBe(true);
   });
 
-  it("detects 'data error in encrypted file'", () => {
+  it("does not mistake corrupted encrypted data for a password prompt", () => {
     expect(
       looksLikePasswordRequiredError("", "Data Error in encrypted file: x.dat"),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("detects 'encrypted headers'", () => {
@@ -113,9 +115,9 @@ describe("looksLikePasswordRequiredError", () => {
     expect(looksLikePasswordRequiredError("Enter password:", "")).toBe(true);
   });
 
-  it("detects 'is encrypted'", () => {
+  it("requires an actionable password diagnostic", () => {
     expect(looksLikePasswordRequiredError("Archive is encrypted", "")).toBe(
-      true,
+      false,
     );
   });
 
@@ -188,6 +190,28 @@ describe("describe7zError", () => {
     expect(describe7zError("", "Unsupported Method")).toMatch(/method/i);
   });
 
+  it("hints for unsupported archive open failures", () => {
+    expect(describe7zError("", "Can not open the file as archive")).toMatch(
+      /not a supported archive|corrupted/i,
+    );
+    expect(describe7zError("", "Can not open file as archive")).toMatch(
+      /not a supported archive|corrupted/i,
+    );
+  });
+
+  it("hints when a path disappeared mid-operation", () => {
+    expect(
+      describe7zError("", "The system cannot find the path specified"),
+    ).toMatch(/no longer exists/i);
+    expect(describe7zError("", "file not found")).toMatch(/no longer exists/i);
+  });
+
+  it("hints for create/permission failures", () => {
+    expect(describe7zError("", "Can not create output file")).toMatch(
+      /permission/i,
+    );
+  });
+
   it("returns empty string for unrecognized output", () => {
     expect(describe7zError("Everything is Ok", "")).toBe("");
   });
@@ -234,5 +258,34 @@ describe("formatBatchEta", () => {
   it("estimates seconds and minutes", () => {
     expect(formatBatchEta(10_000, 50)).toBe("~10s left");
     expect(formatBatchEta(18_000, 10)).toBe("~2m 42s left");
+  });
+});
+
+describe("withLiveProgress", () => {
+  it("renders file progress and removes its listener after completion", async () => {
+    let handler: ((event: { payload: unknown }) => void) | undefined;
+    const unlisten = vi.fn();
+    vi.mocked(listen).mockImplementation(async (_eventName, callback) => {
+      handler = callback as (event: { payload: unknown }) => void;
+      return unlisten;
+    });
+
+    let complete: ((value: string) => void) | undefined;
+    const action = new Promise<string>((resolve) => {
+      complete = resolve;
+    });
+    const result = withLiveProgress(() => action);
+    await Promise.resolve();
+
+    handler?.({
+      payload: { percent: 50, currentFile: "/tmp/nested/archive.7z" },
+    });
+    expect(document.getElementById("progress")?.textContent).toContain(
+      "archive.7z",
+    );
+
+    complete?.("done");
+    await expect(result).resolves.toBe("done");
+    expect(unlisten).toHaveBeenCalledOnce();
   });
 });

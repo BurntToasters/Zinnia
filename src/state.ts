@@ -44,6 +44,8 @@ export const state = {
   settingsExtras: {} as Record<string, unknown>,
   inputs: [] as string[],
   running: false,
+  operationPreparing: false,
+  incomingPathsApplying: false,
   batchCancelled: false,
   cancelRequested: false,
   statusTimeout: undefined as number | undefined,

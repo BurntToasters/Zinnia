@@ -11,14 +11,14 @@ Prerequisites per platform are in [build-setup.md](build-setup.md).
 
 ## Checks
 
-| Command | What it does |
-| --- | --- |
-| `npm run typecheck` | `tsc --noEmit` (strict) |
-| `npm run lint` | ESLint over `src/` and `scripts/` |
+| Command                | What it does                                 |
+| ---------------------- | -------------------------------------------- |
+| `npm run typecheck`    | `tsc --noEmit` (strict)                      |
+| `npm run lint`         | ESLint over `src/` and `scripts/`            |
 | `npm run format:check` | Prettier check (use `npm run format` to fix) |
-| `npm test` | Vitest (frontend) |
-| `npm run test:rust` | `cargo test` (backend) |
-| `npm run test:all` | All of the above, the way CI runs them |
+| `npm test`             | Vitest (frontend)                            |
+| `npm run test:rust`    | `cargo test` (backend)                       |
+| `npm run test:all`     | All of the above, the way CI runs them       |
 
 Rust changes should also pass `cargo clippy --manifest-path src-tauri/Cargo.toml
 --all-targets -- -D warnings`.
@@ -48,9 +48,21 @@ branch:
 
 ## Conventions
 
-- Match the surrounding code's style; no framework — vanilla TS + DOM.
+- Match the surrounding code's style; no framework: vanilla TS + DOM.
 - Add tests with each change. Pure logic is unit-tested directly; DOM-dependent
   code uses the jsdom fixture in [`src/tests/setup-dom.ts`](src/tests/setup-dom.ts).
 - New 7z switches/commands need both a Vitest arg-builder test and a Rust
   `validate_run_7z_args` test.
 - See [ARCHITECTURE.md](ARCHITECTURE.md) for the module map.
+
+### Where to put new code
+
+| Change                             | Prefer                                   |
+| ---------------------------------- | ---------------------------------------- |
+| Basic workspace UI / sync          | `src/basic/`                             |
+| 7z arg building or archive ops     | `src/archive/`                           |
+| Shared status/progress/mode chrome | `src/ui/`                                |
+| App boot / Power event wiring      | `src/app-init.ts`, `src/power-events.ts`, `src/power-helpers.ts`, `src/power-shortcuts.ts`, `src/power-logs.ts` |
+| Staging, journal, `run_7z`         | `src-tauri/src/process/`                 |
+| OS integration / defaults          | `src-tauri/src/platform/`                |
+| File-open / extract window routing | `src-tauri/src/launch/`                  |

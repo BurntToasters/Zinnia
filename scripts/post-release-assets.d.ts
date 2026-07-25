@@ -17,6 +17,7 @@ export function isDirectExecution(
   platform?: NodeJS.Platform,
 ): boolean;
 export function getReleaseEntries(releaseDir: string): string[];
+export function isMirrorableReleaseEntry(name: string): boolean;
 export function verifyCopiedPath(
   sourcePath: string,
   destinationPath: string,
@@ -24,17 +25,17 @@ export function verifyCopiedPath(
 export function copyReleaseAssets(
   releaseDir: string | undefined,
   destination: string,
+  options?: { logger?: Pick<Console, "log" | "warn" | "error"> },
 ): number;
 
-export type FinalizeResult =
-  | { mirrored: false; destination: null }
-  | {
-      mirrored: true;
-      destination: string;
-      copiedEntries: number;
-    };
+export type FinalizeResult = {
+  mirrored: true;
+  destination: string;
+  copiedEntries: number;
+};
 
 export function run(options?: {
   releaseDir?: string;
   env?: Record<string, string | undefined>;
+  logger?: Pick<Console, "log" | "warn" | "error">;
 }): FinalizeResult;

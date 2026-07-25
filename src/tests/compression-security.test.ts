@@ -36,11 +36,11 @@ describe("getCompressionSecuritySupport", () => {
 });
 
 describe("normalizeCompressionSecurityOptions", () => {
-  it("trims password and preserves encryptHeaders for 7z", () => {
+  it("preserves password bytes and encryptHeaders for 7z", () => {
     expect(
       normalizeCompressionSecurityOptions("7z", "  secret  ", true),
     ).toEqual({
-      password: "secret",
+      password: "  secret  ",
       encryptHeaders: true,
     });
   });
@@ -65,6 +65,12 @@ describe("normalizeCompressionSecurityOptions", () => {
 });
 
 describe("validateCompressionSecurityOptions", () => {
+  it("rejects line breaks because passwords are supplied over a native pipe", () => {
+    expect(validateCompressionSecurityOptions("7z", "one\ntwo", false)).toBe(
+      "Archive passwords cannot contain line breaks.",
+    );
+  });
+
   it("errors when encryptHeaders set without password on 7z", () => {
     expect(validateCompressionSecurityOptions("7z", "", true)).toBe(
       "Enter a password to enable file-name encryption.",

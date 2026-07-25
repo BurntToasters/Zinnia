@@ -9,6 +9,40 @@ fn managed_base(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     Ok(dir.join("convert"))
 }
 
+/// If `path` lives under a managed `convert/tmp-*` directory, return that tmp root.
+/// Used so convert recompress can store top-level symlink members with `-snl`.
+pub fn managed_convert_tmp_root_for(
+    app: &tauri::AppHandle,
+    path: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let base = managed_base(app).ok()?;
+    let mut cursor = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(path)
+    };
+    // Include the path itself when it is the tmp root.
+    loop {
+        let name = cursor.file_name()?.to_string_lossy();
+        if name.starts_with("tmp-") && name.len() > 4 {
+            let parent = cursor.parent()?;
+            if parent == base
+                || parent
+                    .canonicalize()
+                    .ok()
+                    .zip(base.canonicalize().ok())
+                    .is_some_and(|(p, b)| p == b)
+            {
+                return Some(cursor);
+            }
+        }
+        if !cursor.pop() {
+            break;
+        }
+    }
+    None
+}
+
 /// Best-effort cleanup for conversion directories left behind by a crash or a
 /// forced shutdown. Only direct `tmp-*` children older than 24 hours are
 /// considered; symlinks and anything outside the managed base are ignored.
@@ -29,7 +63,7 @@ pub fn cleanup_stale_temp_dirs(app: &tauri::AppHandle) -> Result<(), String> {
         let Ok(meta) = std::fs::symlink_metadata(entry.path()) else {
             continue;
         };
-        if meta.file_type().is_symlink() || !meta.is_dir() {
+        if crate::path_safety::is_link_or_reparse(&meta) || !meta.is_dir() {
             continue;
         }
         let old_enough = meta
@@ -53,15 +87,7 @@ pub fn create_temp_extract_dir(app: tauri::AppHandle) -> Result<String, String> 
         getrandom::fill(&mut random).map_err(|e| e.to_string())?;
         let token: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
         let dir = base.join(format!("tmp-{token}"));
-        #[cfg(unix)]
-        let result = {
-            use std::os::unix::fs::DirBuilderExt;
-            let mut builder = std::fs::DirBuilder::new();
-            builder.mode(0o700).create(&dir)
-        };
-        #[cfg(not(unix))]
-        let result = std::fs::create_dir(&dir);
-        match result {
+        match crate::fs_secure::create_private_dir(&dir) {
             Ok(()) => return Ok(dir.to_string_lossy().to_string()),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error.to_string()),
@@ -78,15 +104,13 @@ fn is_direct_managed_child(base: &std::path::Path, target: &std::path::Path) -> 
             .is_some_and(|name| name.starts_with("tmp-") && name.len() > 4)
 }
 
-#[tauri::command]
-pub fn remove_managed_temp_dir(app: tauri::AppHandle, path: String) -> Result<(), String> {
-    let base = managed_base(&app)?;
-    let target = std::path::PathBuf::from(&path);
+fn remove_managed_temp_dir_blocking(app: &tauri::AppHandle, path: &str) -> Result<(), String> {
+    let base = managed_base(app)?;
+    let target = std::path::PathBuf::from(path);
 
     let raw_meta = std::fs::symlink_metadata(&target).map_err(|e| e.to_string())?;
-    if raw_meta.file_type().is_symlink() {
-        return Err("Temp path cannot be a symbolic link.".to_string());
-    }
+    crate::path_safety::reject_link_or_reparse(&target, &raw_meta)
+        .map_err(|_| "Temp path cannot be a symbolic link or reparse point.".to_string())?;
 
     // Refuse anything outside the managed base.
     let canonical_base = base.canonicalize().unwrap_or(base.clone());
@@ -99,6 +123,45 @@ pub fn remove_managed_temp_dir(app: tauri::AppHandle, path: String) -> Result<()
     }
 
     std::fs::remove_dir_all(&canonical_target).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn remove_managed_temp_dir(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || remove_managed_temp_dir_blocking(&app, &path))
+        .await
+        .map_err(|error| format!("Temp-directory cleanup worker failed: {error}"))?
+}
+
+/// List direct children of a managed conversion temp dir (includes dotfiles).
+#[tauri::command]
+pub fn list_managed_temp_children(
+    app: tauri::AppHandle,
+    path: String,
+) -> Result<Vec<String>, String> {
+    let base = managed_base(&app)?;
+    let target = std::path::PathBuf::from(&path);
+    let raw_meta = std::fs::symlink_metadata(&target).map_err(|e| e.to_string())?;
+    crate::path_safety::reject_link_or_reparse(&target, &raw_meta)
+        .map_err(|_| "Temp path cannot be a symbolic link or reparse point.".to_string())?;
+    let canonical_base = base.canonicalize().unwrap_or(base.clone());
+    let canonical_target = target.canonicalize().map_err(|e| e.to_string())?;
+    if !is_direct_managed_child(&canonical_base, &canonical_target) {
+        return Err("Refusing to list a path outside the managed temp area.".to_string());
+    }
+    if !canonical_target.is_dir() {
+        return Err("Temp path is not a directory.".to_string());
+    }
+    let mut children = Vec::new();
+    for entry in std::fs::read_dir(&canonical_target).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let name = entry.file_name();
+        if name == "." || name == ".." {
+            continue;
+        }
+        children.push(entry.path().to_string_lossy().to_string());
+    }
+    children.sort();
+    Ok(children)
 }
 
 #[cfg(test)]
@@ -130,5 +193,30 @@ mod tests {
             base,
             std::path::Path::new("/cache/convert/unrelated")
         ));
+    }
+
+    #[test]
+    fn convert_tmp_root_naming_walk_finds_tmp_ancestor() {
+        use std::path::Path;
+        let path = Path::new("/cache/convert/tmp-abc123/link");
+        let mut cursor = path.to_path_buf();
+        let mut found = None;
+        loop {
+            let name = cursor.file_name().unwrap().to_string_lossy();
+            if name.starts_with("tmp-")
+                && name.len() > 4
+                && cursor.parent() == Some(Path::new("/cache/convert"))
+            {
+                found = Some(cursor.clone());
+                break;
+            }
+            if !cursor.pop() {
+                break;
+            }
+        }
+        assert_eq!(
+            found,
+            Some(Path::new("/cache/convert/tmp-abc123").to_path_buf())
+        );
     }
 }

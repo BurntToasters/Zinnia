@@ -1,0 +1,325 @@
+/* ==========================================================================
+   IYERIS V3 INSPIRED GLASSMORPHISM & NATIVE LOOK & FEEL
+   ========================================================================== */
+
+/* 1. Basic brand + glass tokens (Power keeps global --accent) */
+#app[data-workspace-mode="basic"] {
+  --accent: #c44738;
+  --accent-hover: #b13c2f;
+  --accent-pressed: #9b3026;
+  --accent-fg: #ff9b8f;
+  --accent-fg-hover: #ffb0a7;
+  --accent-fg-pressed: #f78476;
+  --accent-bg: rgba(196, 71, 56, 0.14);
+  --accent-bg-strong: rgba(196, 71, 56, 0.22);
+  --accent-shadow: rgba(196, 71, 56, 0.28);
+  --accent-shadow-hover: rgba(196, 71, 56, 0.4);
+  --drag-bg: rgba(196, 71, 56, 0.1);
+  --drag-shadow: rgba(196, 71, 56, 0.16);
+  --basic-glass-bg: color-mix(in srgb, var(--surface) 64%, transparent);
+  --basic-glass-blur: 24px;
+  --basic-glass-saturate: 145%;
+  --basic-glass-border: color-mix(in srgb, var(--text) 11%, transparent);
+  --basic-glass-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+[data-theme="light"] #app[data-workspace-mode="basic"] {
+  --accent: #b43b30;
+  --accent-hover: #a9362c;
+  --accent-pressed: #922b22;
+  --accent-fg: #a9362c;
+  --accent-fg-hover: #922b22;
+  --accent-fg-pressed: #7f241d;
+  --accent-bg: rgba(180, 59, 48, 0.1);
+  --accent-bg-strong: rgba(180, 59, 48, 0.16);
+  --accent-shadow: rgba(180, 59, 48, 0.18);
+  --accent-shadow-hover: rgba(180, 59, 48, 0.28);
+  --basic-glass-bg: rgba(255, 255, 255, 0.72);
+  --basic-glass-border: rgba(0, 0, 0, 0.08);
+  --basic-glass-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) #app[data-workspace-mode="basic"] {
+    --accent: #b43b30;
+    --accent-hover: #a9362c;
+    --accent-pressed: #922b22;
+    --accent-fg: #a9362c;
+    --accent-fg-hover: #922b22;
+    --accent-fg-pressed: #7f241d;
+    --accent-bg: rgba(180, 59, 48, 0.1);
+    --accent-bg-strong: rgba(180, 59, 48, 0.16);
+    --accent-shadow: rgba(180, 59, 48, 0.18);
+    --accent-shadow-hover: rgba(180, 59, 48, 0.28);
+    --basic-glass-bg: rgba(255, 255, 255, 0.72);
+    --basic-glass-border: rgba(0, 0, 0, 0.08);
+    --basic-glass-shadow:
+      0 8px 24px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  }
+}
+
+/* Opaque Basic (Linux / effects off): solid surfaces, no desktop bleed */
+html[data-window-fx="opaque"] #app[data-workspace-mode="basic"],
+html:not([data-window-fx]) #app[data-workspace-mode="basic"] {
+  background: var(--bg);
+}
+
+/* Fake CSS glass only when native FX is off; opaque path never blurs. */
+html[data-window-fx="opaque"] #app[data-workspace-mode="basic"] .basic-dropzone,
+html[data-window-fx="opaque"] #app[data-workspace-mode="basic"] .basic-progress,
+html[data-window-fx="opaque"]
+  #app[data-workspace-mode="basic"]
+  .basic-completion,
+html[data-window-fx="opaque"]
+  #app[data-workspace-mode="basic"]
+  .basic-archive-info,
+html[data-window-fx="opaque"]
+  #app[data-workspace-mode="basic"]
+  .basic-browse-table-wrap,
+html[data-window-fx="opaque"]
+  #app[data-workspace-mode="basic"]
+  .basic-browse-table-wrap
+  th,
+html[data-window-fx="opaque"] #app[data-workspace-mode="basic"] input,
+html[data-window-fx="opaque"] #app[data-workspace-mode="basic"] select,
+html[data-window-fx="opaque"]
+  #app[data-workspace-mode="basic"]
+  .modal--settings,
+html[data-window-fx="opaque"]
+  #app[data-workspace-mode="basic"]
+  .modal--settings
+  .modal__header,
+html[data-window-fx="opaque"]
+  #app[data-workspace-mode="basic"]
+  .modal--settings
+  .modal__footer,
+html:not([data-window-fx]) #app[data-workspace-mode="basic"] .basic-dropzone,
+html:not([data-window-fx]) #app[data-workspace-mode="basic"] .basic-progress,
+html:not([data-window-fx]) #app[data-workspace-mode="basic"] .basic-completion,
+html:not([data-window-fx])
+  #app[data-workspace-mode="basic"]
+  .basic-archive-info,
+html:not([data-window-fx])
+  #app[data-workspace-mode="basic"]
+  .basic-browse-table-wrap,
+html:not([data-window-fx])
+  #app[data-workspace-mode="basic"]
+  .basic-browse-table-wrap
+  th,
+html:not([data-window-fx]) #app[data-workspace-mode="basic"] input,
+html:not([data-window-fx]) #app[data-workspace-mode="basic"] select,
+html:not([data-window-fx]) #app[data-workspace-mode="basic"] .modal--settings,
+html:not([data-window-fx])
+  #app[data-workspace-mode="basic"]
+  .modal--settings
+  .modal__header,
+html:not([data-window-fx])
+  #app[data-workspace-mode="basic"]
+  .modal--settings
+  .modal__footer {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Native glass active: prefer OS vibrancy; skip heavy CSS blur on full surfaces. */
+html[data-window-fx="basic"] #app[data-workspace-mode="basic"] .basic-dropzone,
+html[data-window-fx="basic"] #app[data-workspace-mode="basic"] .basic-progress,
+html[data-window-fx="basic"]
+  #app[data-workspace-mode="basic"]
+  .basic-browse-table-wrap,
+html[data-window-fx="basic"]
+  #app[data-workspace-mode="basic"]
+  .basic-browse-table-wrap
+  th,
+html[data-window-fx="basic"] #app[data-workspace-mode="basic"] input,
+html[data-window-fx="basic"] #app[data-workspace-mode="basic"] select {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background: color-mix(in srgb, var(--surface) 55%, transparent) !important;
+}
+
+/* Password / prompt modal: frosted panel over vibrancy (matches extract window). */
+html[data-window-fx="basic"] #input-modal-overlay {
+  background: rgb(0 0 0 / 28%);
+}
+
+html[data-window-fx="basic"] #input-modal-overlay .modal {
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+/* 2. Custom Sleek Scrollbars */
+#app[data-workspace-mode="basic"] .basic-view-scroll-content::-webkit-scrollbar,
+#app[data-workspace-mode="basic"] .modal__body::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+#app[data-workspace-mode="basic"]
+  .basic-view-scroll-content::-webkit-scrollbar-track,
+#app[data-workspace-mode="basic"] .modal__body::-webkit-scrollbar-track {
+  background: transparent;
+}
+#app[data-workspace-mode="basic"]
+  .basic-view-scroll-content::-webkit-scrollbar-thumb,
+#app[data-workspace-mode="basic"] .modal__body::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 99px;
+}
+#app[data-workspace-mode="basic"]
+  .basic-view-scroll-content::-webkit-scrollbar-thumb:hover,
+#app[data-workspace-mode="basic"] .modal__body::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* 3. Native Cursor Mapping */
+#app[data-workspace-mode="basic"] button,
+#app[data-workspace-mode="basic"] select,
+#app[data-workspace-mode="basic"] label,
+#app[data-workspace-mode="basic"] [role="button"],
+#app[data-workspace-mode="basic"] .basic-home__link,
+#app[data-workspace-mode="basic"] .basic-dropzone,
+#app[data-workspace-mode="basic"] .basic-preset-pill,
+#app[data-workspace-mode="basic"] .settings-tab,
+#app[data-workspace-mode="basic"] .switch,
+#app[data-workspace-mode="basic"] i[data-lucide],
+#app[data-workspace-mode="basic"] svg,
+#app[data-workspace-mode="basic"] summary {
+  cursor: default !important;
+}
+
+#app[data-workspace-mode="basic"] a,
+#app[data-workspace-mode="basic"] a * {
+  cursor: pointer !important;
+}
+
+/* 4. Layout Element Upgrades */
+#app[data-workspace-mode="basic"] .basic-dropzone {
+  background: var(--basic-glass-bg) !important;
+  backdrop-filter: blur(var(--basic-glass-blur))
+    saturate(var(--basic-glass-saturate)) !important;
+  -webkit-backdrop-filter: blur(var(--basic-glass-blur))
+    saturate(var(--basic-glass-saturate)) !important;
+  border: 1px dashed var(--basic-glass-border) !important;
+  border-radius: 12px !important;
+  box-shadow: var(--basic-glass-shadow) !important;
+  transition:
+    transform var(--transition),
+    background var(--transition),
+    border-color var(--transition) !important;
+}
+
+#app[data-workspace-mode="basic"] .basic-dropzone:hover {
+  background: color-mix(in srgb, var(--surface) 74%, transparent) !important;
+  border-color: var(--accent) !important;
+  box-shadow:
+    var(--basic-glass-shadow),
+    0 0 0 3px var(--accent-shadow) !important;
+}
+
+html[data-window-fx="basic"] #app[data-workspace-mode="basic"] .basic-dropzone {
+  border-width: 2px !important;
+  border-style: dashed !important;
+}
+
+#app[data-workspace-mode="basic"] input[type="text"],
+#app[data-workspace-mode="basic"] input[type="password"],
+#app[data-workspace-mode="basic"] input[type="number"],
+#app[data-workspace-mode="basic"] select {
+  background: var(--basic-glass-bg) !important;
+  border: 1px solid var(--basic-glass-border) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+  box-shadow: var(--basic-glass-shadow) !important;
+}
+
+#app[data-workspace-mode="basic"] input[type="text"]:focus,
+#app[data-workspace-mode="basic"] input[type="password"]:focus,
+#app[data-workspace-mode="basic"] input[type="number"]:focus,
+#app[data-workspace-mode="basic"] select:focus {
+  border-color: var(--accent-fg) !important;
+  box-shadow:
+    var(--basic-glass-shadow),
+    0 0 0 2px var(--accent-fg) !important;
+}
+
+/* 5. Glassmorphism Settings overlay (native vibrancy only). */
+html[data-window-fx="basic"]
+  #app[data-workspace-mode="basic"]
+  .modal--settings {
+  background: color-mix(in srgb, var(--bg) 85%, transparent) !important;
+  backdrop-filter: blur(32px) saturate(150%) !important;
+  -webkit-backdrop-filter: blur(32px) saturate(150%) !important;
+}
+
+html[data-window-fx="basic"]
+  #app[data-workspace-mode="basic"]
+  .modal--settings
+  .modal__header {
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border-bottom: none !important;
+}
+
+html[data-window-fx="basic"]
+  #app[data-workspace-mode="basic"]
+  .modal--settings
+  .modal__main {
+  background: transparent !important;
+}
+
+html[data-window-fx="basic"]
+  #app[data-workspace-mode="basic"]
+  .modal--settings
+  .settings-tabs {
+  background: color-mix(
+    in srgb,
+    var(--surface-alt) 80%,
+    transparent
+  ) !important;
+  border-bottom: 1px solid var(--basic-glass-border) !important;
+}
+
+html[data-window-fx="basic"]
+  #app[data-workspace-mode="basic"]
+  .modal--settings
+  .modal__footer {
+  background: color-mix(in srgb, var(--surface) 80%, transparent) !important;
+  backdrop-filter: blur(20px) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
+  border-top: 1px solid var(--basic-glass-border) !important;
+}
+
+#app[data-workspace-mode="basic"] #basic-name-location-divider,
+#app[data-workspace-mode="basic"] #basic-name-location-section,
+#app[data-workspace-mode="basic"] #basic-extract-destination-divider,
+#app[data-workspace-mode="basic"] #basic-extract-destination-head,
+#app[data-workspace-mode="basic"] #basic-extract-destination-field,
+#app[data-workspace-mode="basic"] #basic-extract-password-field {
+  display: none !important;
+}
+
+.basic-completion__close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  min-width: 24px;
+  min-height: 24px;
+  background: transparent;
+  border: none;
+  font-size: 1.35rem;
+  line-height: 1;
+  color: var(--text-secondary);
+  cursor: default !important;
+  padding: 4px;
+  border-radius: 4px;
+  transition: all var(--transition);
+}
+
+.basic-completion__close:hover {
+  color: var(--text);
+  background: var(--hover-overlay);
+}

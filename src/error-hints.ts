@@ -7,10 +7,9 @@ export function looksLikePasswordRequiredError(
     combined.includes("wrong password") ||
     combined.includes("can not open encrypted archive") ||
     combined.includes("can't open encrypted archive") ||
-    combined.includes("data error in encrypted file") ||
     combined.includes("encrypted headers") ||
     combined.includes("enter password") ||
-    combined.includes("is encrypted")
+    combined.includes("password is required")
   );
 }
 

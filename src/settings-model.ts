@@ -2,12 +2,13 @@ import { parseThreads } from "./utils.ts";
 
 export type ThemePreference = "system" | "light" | "dark";
 export type ArchiveFormat = "7z" | "zip" | "tar" | "gzip" | "bzip2" | "xz";
-export type PathMode = "relative" | "absolute";
+export type PathMode = "relative";
 export type LogVerbosity = "info" | "debug";
 export type UpdateChannel = "auto" | "stable" | "beta";
 export type WorkingMode = "add" | "extract" | "browse";
 export type WorkspaceMode = "basic" | "power";
 export type UiDensity = "comfortable" | "compact";
+export type AutoCloseDelay = -1 | 0 | 1.5 | 3 | 5 | 10;
 
 export const POWER_WINDOW_WIDTH_MIN = 800;
 export const POWER_WINDOW_WIDTH_MAX = 4096;
@@ -46,10 +47,20 @@ export interface UserSettings {
   workspaceMode: WorkspaceMode;
   uiDensity: UiDensity;
   osIntegrationDismissed: boolean;
+  /** Keep process resident after quick-extract so the next file-open is warm. */
+  quickExtractKeepWarm: boolean;
+  /** Idle minutes before warm-resident quick-extract exits (5/10/30/60). */
+  quickExtractWarmIdleMinutes: number;
+  /**
+   * macOS/Windows: translucent Basic window with OS-native blur.
+   * Ignored on Linux (Basic stays opaque).
+   */
+  basicWindowEffects: boolean;
   customPresets: CustomPreset[];
   powerWindowWidth: number;
   powerWindowHeight: number;
   setupComplete: boolean;
+  extractAutoCloseSeconds: AutoCloseDelay;
 }
 
 export interface LoadSettingsResult {
@@ -81,10 +92,16 @@ export const SETTING_DEFAULTS: UserSettings = {
   workspaceMode: "basic",
   uiDensity: "comfortable",
   osIntegrationDismissed: false,
+  // Off by default: quick-extract should fully quit when its window closes.
+  // Opt in via Settings for faster subsequent file-association opens.
+  quickExtractKeepWarm: false,
+  quickExtractWarmIdleMinutes: 10,
+  basicWindowEffects: true,
   customPresets: [],
   powerWindowWidth: 1100,
   powerWindowHeight: 720,
   setupComplete: false,
+  extractAutoCloseSeconds: 1.5,
 };
 
 function clampWindowDimension(
@@ -129,14 +146,14 @@ const FORMATS = new Set<ArchiveFormat>([
   "bzip2",
   "xz",
 ]);
-const PATH_MODES = new Set<PathMode>(["relative", "absolute"]);
+const PATH_MODES = new Set<PathMode>(["relative"]);
 const LOG_VERBOSITY = new Set<LogVerbosity>(["info", "debug"]);
 const UPDATE_CHANNELS = new Set<UpdateChannel>(["auto", "stable", "beta"]);
 const WORKING_MODES = new Set<WorkingMode>(["add", "extract", "browse"]);
 const WORKSPACE_MODES = new Set<WorkspaceMode>(["basic", "power"]);
 const UI_DENSITIES = new Set<UiDensity>(["comfortable", "compact"]);
 
-// Compression parameter allow-sets — reject corrupt/hostile persisted values
+// Compression parameter allow-sets: reject corrupt/hostile persisted values
 // that would otherwise flow into 7z as -mx=, -m0=, -md=, -mfb=, -ms= switches.
 const VALID_LEVELS = new Set(["0", "1", "3", "5", "7", "9"]);
 const VALID_METHODS = new Set([
@@ -224,11 +241,47 @@ const USER_SETTING_KEYS = new Set<keyof UserSettings>([
   "workspaceMode",
   "uiDensity",
   "osIntegrationDismissed",
+  "quickExtractKeepWarm",
+  "quickExtractWarmIdleMinutes",
+  "basicWindowEffects",
   "customPresets",
   "powerWindowWidth",
   "powerWindowHeight",
   "setupComplete",
+  "extractAutoCloseSeconds",
 ]);
+
+const WARM_IDLE_MINUTES = new Set([5, 10, 30, 60]);
+
+function asWarmIdleMinutes(value: unknown, fallback: number): number {
+  const n =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number(value)
+        : NaN;
+  if (!Number.isFinite(n)) return fallback;
+  const rounded = Math.round(n);
+  return WARM_IDLE_MINUTES.has(rounded) ? rounded : fallback;
+}
+
+const AUTO_CLOSE_DELAYS = new Set<AutoCloseDelay>([-1, 0, 1.5, 3, 5, 10]);
+
+function asAutoCloseDelay(
+  value: unknown,
+  fallback: AutoCloseDelay,
+): AutoCloseDelay {
+  const n =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number(value)
+        : NaN;
+  if (!Number.isFinite(n)) return fallback;
+  return AUTO_CLOSE_DELAYS.has(n as AutoCloseDelay)
+    ? (n as AutoCloseDelay)
+    : fallback;
+}
 
 const MAX_CUSTOM_PRESETS = 50;
 
@@ -345,6 +398,18 @@ export function normalizeUserSettings(
       settings.osIntegrationDismissed,
       fallback.osIntegrationDismissed,
     ),
+    quickExtractKeepWarm: asBoolean(
+      settings.quickExtractKeepWarm,
+      fallback.quickExtractKeepWarm,
+    ),
+    quickExtractWarmIdleMinutes: asWarmIdleMinutes(
+      settings.quickExtractWarmIdleMinutes,
+      fallback.quickExtractWarmIdleMinutes,
+    ),
+    basicWindowEffects: asBoolean(
+      settings.basicWindowEffects,
+      fallback.basicWindowEffects,
+    ),
     customPresets: asCustomPresets(
       settings.customPresets,
       fallback.customPresets,
@@ -352,6 +417,10 @@ export function normalizeUserSettings(
     powerWindowWidth: powerWindowSize.width,
     powerWindowHeight: powerWindowSize.height,
     setupComplete: asBoolean(settings.setupComplete, fallback.setupComplete),
+    extractAutoCloseSeconds: asAutoCloseDelay(
+      settings.extractAutoCloseSeconds,
+      fallback.extractAutoCloseSeconds,
+    ),
   };
 }
 

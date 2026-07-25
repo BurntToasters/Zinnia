@@ -1,6 +1,6 @@
 [package]
 name = "zinnia"
-version = "0.5.4-beta.1"
+version = "0.6.0"
 description = "Cross-platform 7z GUI built with Tauri."
 authors = ["BurntToasters <code@rosie.run>"]
 edition = "2021"
@@ -9,7 +9,7 @@ edition = "2021"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-plugin-shell = "2"
@@ -17,17 +17,38 @@ tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"
 tauri-plugin-notification = "2"
 tokio = { version = "1", features = ["time"] }
+shared_child = "1.1"
 getrandom = "0.3"
+# Tauri 2 already uses 0.6. Keeping one version avoids duplicate Objective-C
+# class symbols in the final macOS bundle.
+window-vibrancy = "0.6"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-core-foundation = "0.10"
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = { version = "0.3", features = ["block2", "objc2-uniform-type-identifiers"] }
+objc2-uniform-type-identifiers = "0.3"
+block2 = "0.6"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Storage_FileSystem",
+  "Win32_System_SystemServices",
+  "Win32_System_Threading",
+] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[dev-dependencies]
+minisign-verify = "0.2.5"
 
 [profile.release]
 panic = "abort"

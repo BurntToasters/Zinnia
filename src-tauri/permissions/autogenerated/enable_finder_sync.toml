@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-enable-finder-sync"
+description = "Enables the enable_finder_sync command without any pre-configured scope."
+commands.allow = ["enable_finder_sync"]
+
+[[permission]]
+identifier = "deny-enable-finder-sync"
+description = "Denies the enable_finder_sync command without any pre-configured scope."
+commands.deny = ["enable_finder_sync"]

@@ -1,0 +1,183 @@
+//! 7z process lifecycle: single-slot state, shared drain helper, run/probe/cancel.
+
+use shared_child::SharedChild;
+use std::sync::Mutex;
+
+mod archive_snapshot;
+mod commands;
+mod commit;
+mod compress_preflight;
+mod journal;
+mod quota;
+mod recovery;
+mod staging;
+
+#[cfg(test)]
+mod tests;
+
+// Public API + tauri command companions (needed by generate_handler!).
+#[allow(unused_imports)] // re-exported for main.rs / invoke_handler
+pub use commands::{
+    cancel_7z, is_7z_running, is_non_running_kill_error, parse_7z_version, probe_7z,
+    probe_compress_inputs, probed_7z_version, run_7z,
+};
+#[allow(unused_imports)]
+pub use journal::cleanup_orphan_stages;
+#[allow(unused_imports)]
+pub use recovery::{
+    get_startup_recovery_status, mark_startup_recovery_done, recover_interrupted_transaction,
+    set_startup_recovery_error,
+};
+
+// `#[tauri::command]` emits these beside each command; generate_handler looks them
+// up on the same path as the function (`process::run_7z` → `process::__cmd__run_7z`).
+#[doc(hidden)]
+pub use commands::{
+    __cmd__cancel_7z, __cmd__is_7z_running, __cmd__probe_7z, __cmd__probe_compress_inputs,
+    __cmd__run_7z, __tauri_command_name_cancel_7z, __tauri_command_name_is_7z_running,
+    __tauri_command_name_probe_7z, __tauri_command_name_probe_compress_inputs,
+    __tauri_command_name_run_7z,
+};
+#[doc(hidden)]
+pub use recovery::{
+    __cmd__get_startup_recovery_status, __tauri_command_name_get_startup_recovery_status,
+};
+
+// Bridge helpers that `archive_snapshot` still calls via `super::`.
+pub(crate) use journal::unregister_pending_stage;
+pub(crate) use quota::available_space_for_path;
+pub(crate) use staging::{create_private_stage_dir, resolve_existing_target};
+
+#[cfg(test)]
+pub(crate) use commands::{
+    prepare_password_transport, rewrite_args_for_managed_listfile, terminate_child, version_cmp,
+};
+#[cfg(all(test, target_os = "windows"))]
+pub(crate) use commands::{store_probed_7z_version, windows_rar_extract_blocked};
+#[cfg(all(test, unix))]
+pub(crate) use commit::assert_safe_extract_target_ancestors;
+#[cfg(test)]
+pub(crate) use commit::{
+    archive_backup_path, archive_stage_has_recovery_backups, commit_failure_should_scrub_staging,
+    merge_staged_extract, merge_staged_extract_with_commit, promote_archive_family,
+    publish_file_no_replace, rollback_cleanup, rollback_persisted_move_plan, write_move_plan,
+    MAX_EXTRACTED_BYTES,
+};
+#[cfg(test)]
+pub(crate) use journal::{
+    is_safe_stage_dir_name, move_identity_log_path, move_plan_path, read_pending_stages,
+    register_pending_stage, unregister_plan_stages, ArchiveJournalPhase, CleanupJournal,
+    ExtractJournalPhase, ExtractStagePlacement, MoveRecord,
+};
+#[cfg(test)]
+pub(crate) use quota::staged_tree_usage;
+#[cfg(test)]
+pub(crate) use recovery::{
+    archive_journal_is_committed, cleanup_committed_archive_journal,
+    cleanup_extract_journal_artifacts, extract_journal_is_committed, recover_missing_extract_stage,
+    retract_scrub_archive_journal_at, rollback_archive_journal,
+};
+#[cfg(test)]
+pub(crate) use staging::{
+    assert_slt_archive_members_safe, extract_member_list_args, operation_output_path,
+    prepare_cleanup_plan, random_token,
+};
+
+#[derive(serde::Serialize)]
+pub struct RunResult {
+    pub stdout: String,
+    pub stderr: String,
+    pub code: i32,
+    pub stdout_truncated: bool,
+    pub stderr_truncated: bool,
+}
+
+pub struct ProcessState {
+    /// Native shared handle. Passwords use a bounded pipe; all other commands
+    /// receive EOF so unexpected 7-Zip prompts cannot hang the app.
+    pub child: Option<std::sync::Arc<SharedChild>>,
+    pub preparing: bool,
+    pub cancelling: bool,
+    pub owner_label: Option<String>,
+    pub(crate) abort_reason: Option<String>,
+    pub(crate) cleanup_plan: Option<CleanupPlan>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CleanupPlan {
+    // Every extraction is directed to a contained staging directory first.
+    // New destinations use a sibling stage; existing destinations use a hidden
+    // child stage so published files inherit that destination's actual policy.
+    pub(crate) staged_extract: Option<(std::path::PathBuf, std::path::PathBuf)>,
+    // Create/update output is written to a sibling staging basename. This also
+    // covers split-volume families (`.001`, `.002`, ...).
+    pub(crate) staged_archive: Option<(std::path::PathBuf, std::path::PathBuf)>,
+    /// Private snapshot used by both member preflight and extraction. This
+    /// avoids reopening a user-controlled source path between the two steps.
+    pub(crate) staged_input_archive: Option<std::path::PathBuf>,
+    /// App cache dir used to register pending stage paths for orphan cleanup.
+    pub(crate) cache_dir: Option<std::path::PathBuf>,
+    pub(crate) max_extract_bytes: Option<u64>,
+    pub(crate) min_free_bytes: Option<u64>,
+}
+
+impl ProcessState {
+    pub fn idle() -> Self {
+        ProcessState {
+            child: None,
+            preparing: false,
+            cancelling: false,
+            owner_label: None,
+            abort_reason: None,
+            cleanup_plan: None,
+        }
+    }
+
+    /// Release the prepare/cancel soft-lock without touching a live child.
+    /// Every prepare-exit path that does not enter running/finalize must call this
+    /// so `cancelling` cannot strand `ensure_idle` until restart.
+    pub fn release_prepare_slot(&mut self) {
+        self.preparing = false;
+        self.cancelling = false;
+        self.owner_label = None;
+        self.abort_reason = None;
+        self.cleanup_plan = None;
+    }
+}
+
+pub struct RunningProcess(pub Mutex<ProcessState>);
+
+impl RunningProcess {
+    pub fn new() -> Self {
+        RunningProcess(Mutex::new(ProcessState::idle()))
+    }
+}
+
+pub(crate) fn lock_process(
+    state: &RunningProcess,
+) -> Result<std::sync::MutexGuard<'_, ProcessState>, String> {
+    state
+        .0
+        .lock()
+        .map_err(|_| "Process lock poisoned".to_string())
+}
+
+/// Free the prepare slot even if the mutex is poisoned (best-effort unwind).
+pub(crate) fn release_prepare_slot_best_effort(state: &RunningProcess) {
+    match state.0.lock() {
+        Ok(mut process) => process.release_prepare_slot(),
+        Err(poisoned) => poisoned.into_inner().release_prepare_slot(),
+    }
+}
+
+// By design, only one 7z process runs at a time across all windows.
+// A second invocation (e.g. a concurrent extract window) gets a clear error;
+// the frontend prevents this in normal flow. This keeps resource use
+// predictable and avoids partial-output races on shared state.
+pub fn ensure_idle(state: &ProcessState) -> Result<(), String> {
+    if state.child.is_some() || state.preparing || state.cancelling {
+        Err("Another archive operation is already running.".to_string())
+    } else {
+        Ok(())
+    }
+}

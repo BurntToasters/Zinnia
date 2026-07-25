@@ -5,6 +5,8 @@ type AnyInvoke = (cmd: string, payload?: unknown) => unknown;
 function mountExtractDom(): void {
   document.body.innerHTML = `
     <div id="extract-app" class="extract-app">
+      <button id="titlebar-min">Minimize</button>
+      <button id="titlebar-close">Close</button>
       <div class="extract-header"><h1>Extracting</h1></div>
       <div class="extract-body">
         <span id="archive-name"></span>
@@ -32,11 +34,18 @@ async function flushAsync(): Promise<void> {
   await Promise.resolve();
 }
 
-async function setupAndRun(invokeImpl?: AnyInvoke): Promise<{
+async function setupAndRun(
+  invokeImpl?: AnyInvoke,
+  options?: {
+    injected?: { archive: string; destination: string };
+    listenerRegistrations?: Array<Promise<() => void>>;
+  },
+): Promise<{
   invokeMock: ReturnType<
     typeof vi.mocked<(typeof import("@tauri-apps/api/core"))["invoke"]>
   >;
   appWindow: {
+    minimize: ReturnType<typeof vi.fn>;
     close: ReturnType<typeof vi.fn>;
     destroy: ReturnType<typeof vi.fn>;
   };
@@ -44,6 +53,15 @@ async function setupAndRun(invokeImpl?: AnyInvoke): Promise<{
 }> {
   vi.resetModules();
   mountExtractDom();
+  delete (window as Window & { __ZINNIA_EXTRACT__?: unknown })
+    .__ZINNIA_EXTRACT__;
+  if (options?.injected) {
+    (
+      window as Window & {
+        __ZINNIA_EXTRACT__?: { archive: string; destination: string };
+      }
+    ).__ZINNIA_EXTRACT__ = options.injected;
+  }
 
   const core = await import("@tauri-apps/api/core");
   const eventApi = await import("@tauri-apps/api/event");
@@ -52,11 +70,15 @@ async function setupAndRun(invokeImpl?: AnyInvoke): Promise<{
   const invokeMock = vi.mocked(core.invoke);
   const progressUnlisten = vi.fn();
   const appWindow = {
+    minimize: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
     destroy: vi.fn().mockResolvedValue(undefined),
   };
 
-  vi.mocked(eventApi.listen).mockImplementation(async () => progressUnlisten);
+  const listenerRegistrations = [...(options?.listenerRegistrations ?? [])];
+  vi.mocked(eventApi.listen).mockImplementation(
+    () => listenerRegistrations.shift() ?? Promise.resolve(progressUnlisten),
+  );
   vi.mocked(webviewApi.getCurrentWebviewWindow).mockReturnValue(
     appWindow as never,
   );
@@ -84,9 +106,40 @@ async function setupAndRun(invokeImpl?: AnyInvoke): Promise<{
 
 beforeEach(() => {
   vi.useRealTimers();
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    writable: true,
+    value: undefined,
+  });
 });
 
 describe("extract-window", () => {
+  it("applies the system dark theme and enabled window effects", async () => {
+    const matchMedia = vi.fn().mockReturnValue({ matches: true });
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: matchMedia,
+    });
+
+    const { invokeMock } = await setupAndRun(async (cmd) => {
+      if (cmd === "get_extract_paths") return [];
+      if (cmd === "supports_workspace_window_fx") return true;
+      if (cmd === "load_settings") {
+        return JSON.stringify({ basicWindowEffects: true, theme: "system" });
+      }
+      return undefined;
+    });
+    await flushAsync();
+
+    expect(matchMedia).toHaveBeenCalledWith("(prefers-color-scheme: dark)");
+    expect(document.documentElement.dataset.windowFx).toBe("basic");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+    expect(invokeMock).toHaveBeenCalledWith("set_workspace_window_fx", {
+      enabled: true,
+      dark: true,
+    });
+  });
+
   it("shows no-archive state when no extract path is provided", async () => {
     const { invokeMock } = await setupAndRun(async (cmd) => {
       if (cmd === "get_extract_paths") return [];
@@ -105,6 +158,54 @@ describe("extract-window", () => {
     expect(invokeMock.mock.calls.some(([name]) => name === "probe_7z")).toBe(
       false,
     );
+  });
+
+  it("uses injected archive/destination without waiting on get_extract_paths", async () => {
+    const claim = {
+      resolve: null as ((value: string[]) => void) | null,
+    };
+    const { invokeMock } = await setupAndRun(
+      async (cmd) => {
+        if (cmd === "get_extract_paths") {
+          return await new Promise<string[]>((resolve) => {
+            claim.resolve = resolve;
+          });
+        }
+        if (cmd === "run_7z") {
+          return { stdout: "", stderr: "", code: 0 };
+        }
+        return undefined;
+      },
+      {
+        injected: {
+          archive: "/Downloads/packed.7z",
+          destination: "/Downloads/packed",
+        },
+      },
+    );
+
+    await flushAsync();
+
+    expect(
+      (document.getElementById("archive-name") as HTMLElement).textContent,
+    ).toBe("packed.7z");
+    expect(
+      (document.getElementById("extract-dest") as HTMLElement).textContent,
+    ).toBe("/Downloads/packed");
+    expect(invokeMock).toHaveBeenCalledWith("run_7z", {
+      args: [
+        "x",
+        "-o/Downloads/packed",
+        "-aou",
+        "-bb1",
+        "-bsp1",
+        "--",
+        "/Downloads/packed.7z",
+      ],
+    });
+
+    claim.resolve?.([]);
+    await flushAsync();
   });
 
   it("shows error when extraction process fails to start", async () => {
@@ -167,7 +268,7 @@ describe("extract-window", () => {
     ).toBe("fatal extraction error");
   });
 
-  it("auto-closes after successful extraction", async () => {
+  it("keeps successful extraction visible until the user acts", async () => {
     vi.useFakeTimers();
 
     const { invokeMock } = await setupAndRun();
@@ -181,10 +282,19 @@ describe("extract-window", () => {
 
     expect(
       invokeMock.mock.calls.some(([name]) => name === "close_extract_window"),
-    ).toBe(true);
+    ).toBe(false);
   });
 
-  it("cancels auto-close when the user opens the destination", async () => {
+  it("wires the native minimize titlebar action", async () => {
+    const { appWindow } = await setupAndRun();
+
+    (document.getElementById("titlebar-min") as HTMLButtonElement).click();
+    await flushAsync();
+
+    expect(appWindow.minimize).toHaveBeenCalledOnce();
+  });
+
+  it("does not close after the user opens the destination", async () => {
     vi.useFakeTimers();
 
     const { invokeMock } = await setupAndRun();
@@ -196,12 +306,82 @@ describe("extract-window", () => {
     vi.advanceTimersByTime(1201);
     await flushAsync();
 
+    expect(invokeMock).toHaveBeenCalledWith("register_extract_open_path", {
+      path: "/tmp/archive",
+    });
     expect(invokeMock).toHaveBeenCalledWith("open_path", {
       path: "/tmp/archive",
     });
     expect(
       invokeMock.mock.calls.some(([name]) => name === "close_extract_window"),
     ).toBe(false);
+  });
+
+  it("cancels a running extraction via cancel_7z", async () => {
+    let resolveRun: ((value: unknown) => void) | null = null;
+    const { invokeMock } = await setupAndRun(async (cmd) => {
+      if (cmd === "get_extract_paths") return ["/tmp/archive.7z"];
+      if (cmd === "run_7z") {
+        return await new Promise((resolve) => {
+          resolveRun = resolve;
+        });
+      }
+      if (cmd === "cancel_7z") {
+        resolveRun?.({ stdout: "", stderr: "", code: -1 });
+        return undefined;
+      }
+      return undefined;
+    });
+
+    expect(
+      (document.getElementById("cancel-btn") as HTMLButtonElement).disabled,
+    ).toBe(false);
+
+    (document.getElementById("cancel-btn") as HTMLButtonElement).click();
+    await flushAsync();
+    await flushAsync();
+
+    expect(invokeMock).toHaveBeenCalledWith("cancel_7z");
+  });
+
+  it("removes a registered progress listener when its sibling registration fails", async () => {
+    const unlistenStructured = vi.fn();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await setupAndRun(undefined, {
+      listenerRegistrations: [
+        Promise.resolve(unlistenStructured),
+        Promise.reject(new Error("raw listener unavailable")),
+      ],
+    });
+
+    expect(unlistenStructured).toHaveBeenCalledOnce();
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringContaining("raw listener unavailable"),
+    );
+    warning.mockRestore();
+  });
+
+  it("removes every registered progress listener when one cleanup throws", async () => {
+    const failingUnlisten = vi.fn(() => {
+      throw new Error("structured cleanup unavailable");
+    });
+    const rawUnlisten = vi.fn();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await setupAndRun(undefined, {
+      listenerRegistrations: [
+        Promise.resolve(failingUnlisten),
+        Promise.resolve(rawUnlisten),
+      ],
+    });
+
+    expect(failingUnlisten).toHaveBeenCalledOnce();
+    expect(rawUnlisten).toHaveBeenCalledOnce();
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringContaining("structured cleanup unavailable"),
+    );
+    warning.mockRestore();
   });
 
   it("extracts opened archives into a sibling folder named after the archive", async () => {
@@ -282,6 +462,29 @@ describe("extract-window", () => {
     expect(
       (document.getElementById("error-detail") as HTMLElement).textContent,
     ).toContain("permission denied");
+  });
+});
+
+describe("sanitizeStatusFileName", () => {
+  it("strips leading symbol junk before the real filename", async () => {
+    mountExtractDom();
+    const { sanitizeStatusFileName } = await import("../extract-window");
+    expect(sanitizeStatusFileName("░░░░ ░░░░- insurance 2026.pdf")).toBe(
+      "insurance 2026.pdf",
+    );
+  });
+
+  it("keeps unicode letters and hidden-style names", async () => {
+    mountExtractDom();
+    const { sanitizeStatusFileName } = await import("../extract-window");
+    expect(sanitizeStatusFileName("报告.pdf")).toBe("报告.pdf");
+    expect(sanitizeStatusFileName(".hidden.txt")).toBe(".hidden.txt");
+  });
+
+  it("returns empty for replacement-only junk", async () => {
+    mountExtractDom();
+    const { sanitizeStatusFileName } = await import("../extract-window");
+    expect(sanitizeStatusFileName("\uFFFD\uFFFD")).toBe("");
   });
 });
 

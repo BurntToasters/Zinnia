@@ -1,7 +1,24 @@
 import { invoke } from "@tauri-apps/api/core";
 
+/** Keep in sync with validation.rs is_allowed_method_switch / compress extras. */
+export const ALLOWED_METHOD_PREFIXES = [
+  "-mx",
+  "-m0=",
+  "-md",
+  "-mfb",
+  "-ms",
+  "-mmt",
+  "-mem=",
+  "-mhe=",
+  "-mtc=",
+  "-mta=",
+  "-mhc=",
+  "-mcu=",
+  "-mcl=",
+];
+
 export const ALLOWED_EXTRA_PREFIXES = [
-  "-m",
+  ...ALLOWED_METHOD_PREFIXES,
   "-x",
   "-i",
   "-ao",
@@ -13,7 +30,6 @@ export const ALLOWED_EXTRA_PREFIXES = [
   "-stl",
   "-slp",
   "-ssp",
-  "-ssw",
   "-sse",
   "-y",
   "-r",
@@ -30,9 +46,14 @@ export type ProbeArchivePaths = (
 ) => Promise<ArchivePathValidation[]>;
 
 const SWITCH_PATH_PREFIXES = ["-i", "-x", "-w", "-o"];
+export const MAX_ARCHIVE_PATHS = 4096;
+/** Keep in sync with `archive_detect.rs`; bound serialized IPC payloads too. */
+export const MAX_ARCHIVE_PATHS_IPC_BYTES = 4 * 1024 * 1024;
 
 function normalizePath(path: string): string {
-  return path.trim();
+  // File names may legally start or end with whitespace. File-dialog and OS
+  // launch paths are already tokenized, so preserve them exactly.
+  return path;
 }
 
 function hasParentDirComponent(path: string): boolean {
@@ -50,10 +71,39 @@ function switchContainsParentTraversal(arg: string): boolean {
     .some((segment) => hasParentDirComponent(segment));
 }
 
+/** Keep aligned with validation.rs is_allowed_method_switch. */
+function isAllowedMethodSwitch(lower: string): boolean {
+  for (const prefix of ALLOWED_METHOD_PREFIXES) {
+    if (!lower.startsWith(prefix)) continue;
+    const rest = lower.slice(prefix.length);
+    if (prefix.endsWith("=")) {
+      return (
+        rest.length > 0 &&
+        !rest.includes("/") &&
+        !rest.includes("\\") &&
+        !rest.includes("..")
+      );
+    }
+    return (
+      rest.length === 0 ||
+      rest.startsWith("=") ||
+      (rest.charCodeAt(0) >= 48 && rest.charCodeAt(0) <= 57)
+    );
+  }
+  return false;
+}
+
 export async function validateArchivePaths(
   paths: string[],
 ): Promise<ArchivePathValidation[]> {
   const normalized = paths.map(normalizePath);
+  if (normalized.length > MAX_ARCHIVE_PATHS) {
+    return normalized.map((path) => ({
+      path,
+      valid: false,
+      reason: `At most ${MAX_ARCHIVE_PATHS} paths can be validated at once.`,
+    }));
+  }
   const byPath = new Map<string, ArchivePathValidation>();
   const toProbe = new Set<string>();
 
@@ -67,9 +117,20 @@ export async function validateArchivePaths(
 
   if (toProbe.size > 0) {
     const probeList = [...toProbe];
+    const pathsJson = JSON.stringify(probeList);
+    if (
+      new TextEncoder().encode(pathsJson).byteLength >
+      MAX_ARCHIVE_PATHS_IPC_BYTES
+    ) {
+      return normalized.map((path) => ({
+        path,
+        valid: false,
+        reason: `The archive-path validation request exceeds the ${MAX_ARCHIVE_PATHS_IPC_BYTES / (1024 * 1024)} MiB safety limit.`,
+      }));
+    }
     const probed = await invoke<ArchivePathValidation[]>(
       "validate_archive_paths",
-      { paths: probeList },
+      { pathsJson },
     );
     for (const result of probed) {
       const normalizedPath = normalizePath(result.path);
@@ -100,7 +161,7 @@ export async function validateArchivePaths(
 }
 
 export function validateExtraArgs(args: string[]): void {
-  const blocked = ["-sdel", "-p", "-mhe", "-o", "-si", "-so", "-t"];
+  const blocked = ["-sdel", "-p", "-mhe", "-o", "-si", "-so", "-t", "-ssw"];
 
   for (const arg of args) {
     if (!arg.startsWith("-")) {
@@ -108,13 +169,24 @@ export function validateExtraArgs(args: string[]): void {
     }
 
     const lower = arg.toLowerCase();
+    if (lower === "-aoa" || lower === "-aot") {
+      throw new Error(
+        `"${arg}" is not allowed. Zinnia only permits safe extract overwrite modes (-aou / -aos).`,
+      );
+    }
     if (blocked.some((b) => lower.startsWith(b))) {
       throw new Error(
         `"${arg}" is not allowed in extra args. Use the dedicated fields instead.`,
       );
     }
 
-    if (!ALLOWED_EXTRA_PREFIXES.some((p) => lower.startsWith(p))) {
+    if (lower.startsWith("-m")) {
+      if (!isAllowedMethodSwitch(lower)) {
+        throw new Error(
+          `"${arg}" is not an allowed compression method switch.`,
+        );
+      }
+    } else if (!ALLOWED_EXTRA_PREFIXES.some((p) => lower.startsWith(p))) {
       throw new Error(
         `Unknown argument "${arg}". Only recognized 7z switches are allowed.`,
       );

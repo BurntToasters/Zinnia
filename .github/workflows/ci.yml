@@ -1,5 +1,8 @@
 name: CI
 
+# Note: CI workflows are only run on the main and beta branches.
+# Additionally, CI workflows only run tests and smoke runs, not actually release builds.
+
 on:
   push:
     branches: [main, beta]
@@ -17,18 +20,21 @@ jobs:
   quality-gate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 22.12
           cache: npm
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           toolchain: stable
+          components: rustfmt
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            appstream \
+            desktop-file-utils \
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
@@ -40,11 +46,13 @@ jobs:
     needs: quality-gate
     strategy:
       matrix:
-        os: [windows-latest, macos-latest]
+        # Pin macos-26: bundled 7-Zip / minimumSystemVersion require 26.0+.
+        # macos-latest still resolves to macOS 15 arm64 on GitHub-hosted runners.
+        os: [windows-latest, macos-26]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 22.12
           cache: npm
@@ -54,13 +62,104 @@ jobs:
       - run: npm ci
       - run: npm run test:cov
       - run: npm run prepare:7z
-      - run: cargo test --manifest-path src-tauri/Cargo.toml
+      - name: Compile Finder Sync extension smoke
+        if: runner.os == 'macOS'
+        run: npm run prepare:macos:finder-sync
+      # Empty stubs only: CI never builds/signs the real Win11 shell package.
+      - run: npm run prepare:win-shell-stubs
+      - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --all-targets
+
+  updater-manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22.12
+      - run: npm run validate:updater
+      # Feed-shape smoke only. Candidate-bound validation runs after publish.
+      - name: Published updater feed sanity
+        run: npm run validate:updater:live
+
+  # Unsigned compile smoke only: not a release. Signed NSIS/DMG/AppImage stay on build VMs.
+  smoke-build:
+    needs: quality-gate
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            sidecar: 7z-x86_64-unknown-linux-gnu
+            binary: zinnia
+          - os: ubuntu-24.04-arm
+            sidecar: 7z-aarch64-unknown-linux-gnu
+            binary: zinnia
+          - os: macos-26
+            sidecar: 7z-aarch64-apple-darwin
+            binary: zinnia
+          - os: macos-26-intel
+            sidecar: 7z-x86_64-apple-darwin
+            binary: zinnia
+          - os: windows-latest
+            sidecar: 7z-x86_64-pc-windows-msvc.exe
+            binary: zinnia.exe
+            cmake_arch: x64
+          - os: windows-11-arm
+            sidecar: 7z-aarch64-pc-windows-msvc.exe
+            binary: zinnia.exe
+            cmake_arch: ARM64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22.12
+          cache: npm
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: stable
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+      - run: npm ci
+      - run: npm run sync-version
+      - run: npm run prepare:7z
+      - run: npm run licenses
+      - name: Compile Finder Sync extension smoke
+        if: runner.os == 'macOS'
+        run: npm run prepare:macos:finder-sync
+      - name: Native Windows shell compile smoke
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          foreach ($name in 'msix_identity', 'msix_extract_identity') {
+            $template = Get-Content "src-tauri/windows/shell/$name.manifest.in" -Raw
+            $template.Replace('__PUBLISHER_DN__', 'CN=Zinnia CI') |
+              Set-Content "src-tauri/windows/shell/$name.manifest" -Encoding UTF8
+          }
+          cmake -S src-tauri/windows/shell -B src-tauri/windows/shell/build-ci -A ${{ matrix.cmake_arch }}
+          cmake --build src-tauri/windows/shell/build-ci --config Release
+      - run: npm run prepare:win-shell-stubs
+      - name: Unsigned tauri build (no bundle)
+        run: npx tauri build --no-bundle
+      - name: Verify host sidecar and smoke binary
+        shell: bash
+        run: |
+          test -e "src-tauri/binaries/${{ matrix.sidecar }}"
+          test -e "src-tauri/target/release/${{ matrix.binary }}"
 
   security-audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 22.12
           cache: npm

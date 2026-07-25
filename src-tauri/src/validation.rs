@@ -2,13 +2,17 @@
 
 // Large drag-and-drop selections are valid. This is still bounded to protect
 // the sidecar and IPC boundary without rejecting ordinary bulk operations.
-const MAX_7Z_ARGS: usize = 4096;
+// Archive validation accepts 4,096 user paths. Leave bounded room for the
+// command, output, safety, compression, and user-approved option arguments.
+const MAX_7Z_ARGS: usize = 8192;
 const MAX_7Z_ARG_BYTES: usize = 8192;
 
 const ALLOWED_7Z_COMMANDS: &[&str] = &["a", "u", "x", "l", "t", "b"];
-const BLOCKED_7Z_ARGS: &[&str] = &[
-    "-si", "-so", "-sdel", "-sfx", "-w", "-sns", "-sni", "-snl", "-snh", "-spf2",
-];
+// Store symbolic/hard links as links on create/update (-snl/-snh). Frontend
+// also passes them; run_7z injects as defense in depth. Keep them out of
+// BLOCKED so those switches validate; users cannot pass them via extra-args
+// (not in ALLOWED_EXTRA_PREFIXES).
+const BLOCKED_7Z_ARGS: &[&str] = &["-si", "-so", "-sdel", "-sfx", "-w", "-sns", "-sni", "-spf2"];
 
 fn has_embedded_listfile(arg: &str) -> bool {
     let lower = arg.to_ascii_lowercase();
@@ -43,6 +47,32 @@ fn is_common_diagnostic_switch(lower: &str) -> bool {
         || is_numbered_switch(lower, "-bb", 3)
         || is_stream_switch(lower)
         || (lower.starts_with("-scs") && lower.len() > 4)
+        || (lower.starts_with("-scc") && lower.len() > 4)
+}
+
+fn is_allowed_method_switch(lower: &str) -> bool {
+    // Intentionally narrow: reject open-ended -m* (and -ssw is blocked separately).
+    // Prefixes ending in '=' require a non-empty value. Others require end / '=' / digit
+    // so `-mxyz` does not match `-mx`.
+    const PREFIXES: &[&str] = &[
+        "-m0=", "-mem=", "-mhe=", "-mtc=", "-mta=", "-mhc=", "-mcu=", "-mcl=", "-mx", "-md",
+        "-mfb", "-ms", "-mmt",
+    ];
+    for prefix in PREFIXES {
+        let Some(rest) = lower.strip_prefix(prefix) else {
+            continue;
+        };
+        if prefix.ends_with('=') {
+            return !rest.is_empty()
+                && !rest.contains('/')
+                && !rest.contains('\\')
+                && !rest.contains("..");
+        }
+        return rest.is_empty()
+            || rest.starts_with('=')
+            || rest.chars().next().is_some_and(|ch| ch.is_ascii_digit());
+    }
+    false
 }
 
 fn is_allowed_switch(cmd: &str, arg: &str) -> bool {
@@ -54,17 +84,18 @@ fn is_allowed_switch(cmd: &str, arg: &str) -> bool {
     match cmd {
         "a" | "u" => {
             (lower.starts_with("-t") && lower.len() > 2)
-                || (lower.starts_with("-m") && lower.len() > 2)
+                || is_allowed_method_switch(&lower)
                 || (lower.starts_with("-p") && lower.len() > 2)
-                || lower == "-spf"
                 || lower == "-r"
                 || lower == "-r-"
                 || lower == "-r0"
                 || lower == "-stl"
                 || lower == "-slp"
                 || lower == "-ssp"
-                || lower == "-ssw"
                 || lower == "-sse"
+                || lower == "-snl"
+                || lower == "-snh"
+                || lower == "-spd"
                 || is_include_or_exclude(arg)
                 || (cmd == "a"
                     && lower.starts_with("-v")
@@ -76,9 +107,12 @@ fn is_allowed_switch(cmd: &str, arg: &str) -> bool {
         "x" => {
             (lower.starts_with("-o") && lower.len() > 2)
                 || (lower.starts_with("-p") && lower.len() > 2)
-                || matches!(lower.as_str(), "-aoa" | "-aos" | "-aou" | "-aot")
+                // Only auto-rename / skip existing; never overwrite-all (-aoa) or
+                // rename-existing (-aot). Frontend default is -aou.
+                || matches!(lower.as_str(), "-aos" | "-aou")
                 || lower == "-y"
                 || lower == "-spd"
+                || lower == "-spod"
                 || lower == "-r"
                 || lower == "-r-"
                 || lower == "-r0"
@@ -91,16 +125,46 @@ fn is_allowed_switch(cmd: &str, arg: &str) -> bool {
                 || lower == "-r"
                 || lower == "-r-"
                 || lower == "-r0"
+                || lower == "-spd"
                 || is_include_or_exclude(arg)
         }
-        "b" => lower.starts_with("-m") && lower.len() > 2,
+        "b" => is_allowed_method_switch(&lower),
         _ => false,
     }
 }
 
 // True if any path component is exactly "..". Substrings like "name..bak" are fine.
-fn has_parent_dir_component(path: &str) -> bool {
+pub(crate) fn has_parent_dir_component(path: &str) -> bool {
     path.split(['/', '\\']).any(|component| component == "..")
+}
+
+/// True when an archive member path could escape an extract `-o` root
+/// (`..`, absolute POSIX, drive-letter, or UNC).
+pub(crate) fn archive_member_path_is_unsafe(path: &str) -> bool {
+    if path.is_empty() {
+        return false;
+    }
+    #[cfg(target_os = "windows")]
+    let has_parent = path.split(['/', '\\']).any(|component| component == "..");
+    #[cfg(not(target_os = "windows"))]
+    let has_parent = path.split('/').any(|component| component == "..");
+    if has_parent {
+        return true;
+    }
+    let bytes = path.as_bytes();
+    if bytes[0] == b'/' {
+        return true;
+    }
+    #[cfg(target_os = "windows")]
+    if bytes[0] == b'\\' {
+        return true;
+    }
+    // Windows drive-absolute: `C:\...` or `C:/...`
+    #[cfg(target_os = "windows")]
+    if bytes.len() >= 2 && bytes[1] == b':' {
+        return true;
+    }
+    false
 }
 
 fn switch_contains_parent_traversal(arg: &str) -> bool {
@@ -174,6 +238,9 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
         }
         if separator_index.is_none() && lower.starts_with("-p") {
             password_switches += 1;
+            if arg.len() > 2 && arg[2..].contains(['\r', '\n']) {
+                return Err("Archive passwords cannot contain line breaks.".to_string());
+            }
         }
         if separator_index.is_none() && lower.starts_with("-ao") {
             overwrite_switches += 1;
@@ -220,6 +287,43 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
     if overwrite_switches > 1 {
         return Err("Extraction overwrite policy may appear only once.".to_string());
     }
+    // Rust is the security boundary: reject password create/update for formats
+    // Zinnia does not actually encrypt (frontend already hides the control).
+    // 7-Zip honors the last -t when several are present, so evaluate the last
+    // type and reject more than one -t with a password (fail closed).
+    if password_switches > 0 && matches!(cmd, "a" | "u") {
+        let formats: Vec<String> = args
+            .iter()
+            .take(separator_index.unwrap_or(args.len()))
+            .skip(1)
+            .filter_map(|arg| {
+                let lower = arg.to_lowercase();
+                // `-stl` / `-stx…` are not archive-type switches; only `-tTYPE`.
+                if lower == "-stl" || lower.starts_with("-stx") {
+                    return None;
+                }
+                lower
+                    .strip_prefix("-t")
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+            .collect();
+        if formats.len() > 1 {
+            return Err(
+                "Password-protected create/update allows at most one archive type (-t)."
+                    .to_string(),
+            );
+        }
+        match formats.last().map(String::as_str) {
+            // 7-Zip defaults to 7z when -t is omitted.
+            None | Some("7z") | Some("zip") => {}
+            Some(other) => {
+                return Err(format!(
+                    "Password encryption is not supported for archive format '{other}'."
+                ));
+            }
+        }
+    }
 
     match cmd {
         "a" | "u" => {
@@ -251,6 +355,13 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
             if output_switches != 1 {
                 return Err(
                     "Extraction command must include exactly one output directory (-o<path>)."
+                        .to_string(),
+                );
+            }
+            // Require a safe overwrite policy; never rely on interactive defaults.
+            if overwrite_switches != 1 {
+                return Err(
+                    "Extraction command must include exactly one overwrite policy (-aou or -aos)."
                         .to_string(),
                 );
             }
@@ -312,6 +423,18 @@ mod tests {
     }
 
     #[test]
+    fn validate_run_7z_args_accepts_public_maximum_path_batch() {
+        let mut args = vec![
+            "a".to_string(),
+            "-t7z".to_string(),
+            "out.7z".to_string(),
+            "--".to_string(),
+        ];
+        args.extend((0..4_096).map(|index| format!("input-{index}.txt")));
+        validate_run_7z_args(&args).expect("4,096 input paths plus bounded options should fit");
+    }
+
+    #[test]
     fn validate_run_7z_args_rejects_delete_after_outside_compress() {
         let args = vec![
             "x".to_string(),
@@ -332,6 +455,8 @@ mod tests {
             "-ms=on".to_string(),
             "-mmt=4".to_string(),
             "-mhe=on".to_string(),
+            "-snl".to_string(),
+            "-snh".to_string(),
             "-p secret".to_string(),
             "out.7z".to_string(),
             "--".to_string(),
@@ -345,12 +470,29 @@ mod tests {
         let args = vec![
             "x".to_string(),
             "-o/tmp/out".to_string(),
+            "-aou".to_string(),
             "-y".to_string(),
             "-spd".to_string(),
             "--".to_string(),
             "archive.7z".to_string(),
         ];
         assert!(validate_run_7z_args(&args).is_ok());
+    }
+
+    #[test]
+    fn validate_run_7z_args_requires_extract_overwrite_policy() {
+        let args = vec![
+            "x".to_string(),
+            "-o/tmp/out".to_string(),
+            "-y".to_string(),
+            "--".to_string(),
+            "archive.7z".to_string(),
+        ];
+        let err = validate_run_7z_args(&args).expect_err("missing -ao*");
+        assert!(
+            err.contains("overwrite"),
+            "expected overwrite policy error, got: {err}"
+        );
     }
 
     #[test]
@@ -371,8 +513,35 @@ mod tests {
     }
 
     #[test]
+    fn validate_run_7z_args_rejects_ssw_and_open_ended_method_switches() {
+        for bad in ["-ssw", "-mfoo=1", "-m", "-mxyz"] {
+            let err = validate_run_7z_args(&[
+                "a".to_string(),
+                bad.to_string(),
+                "out.7z".to_string(),
+                "--".to_string(),
+                "in.txt".to_string(),
+            ])
+            .expect_err("unsafe method/ssw switch");
+            assert!(
+                err.contains("not permitted"),
+                "expected '{bad}' to be rejected, got {err}"
+            );
+        }
+        validate_run_7z_args(&[
+            "a".to_string(),
+            "-mx=9".to_string(),
+            "-mhe=on".to_string(),
+            "out.7z".to_string(),
+            "--".to_string(),
+            "in.txt".to_string(),
+        ])
+        .expect("known method switches should pass");
+    }
+
+    #[test]
     fn validate_run_7z_args_rejects_unknown_switches() {
-        for bad in ["-sao", "-foo", "-an", "-c"] {
+        for bad in ["-sao", "-foo", "-an", "-c", "-ssw"] {
             let args = vec![
                 "a".to_string(),
                 bad.to_string(),
@@ -474,6 +643,7 @@ mod tests {
         let args = vec![
             "x".to_string(),
             "-o/tmp/out".to_string(),
+            "-aou".to_string(),
             "--".to_string(),
             "../../etc/passwd".to_string(),
         ];
@@ -485,6 +655,7 @@ mod tests {
         let args = vec![
             "x".to_string(),
             "-o/tmp/../etc".to_string(),
+            "-aou".to_string(),
             "--".to_string(),
             "archive.7z".to_string(),
         ];
@@ -496,6 +667,7 @@ mod tests {
         let args = vec![
             "x".to_string(),
             "-o/tmp/out".to_string(),
+            "-aou".to_string(),
             "-ir!../../secret".to_string(),
             "--".to_string(),
             "archive.7z".to_string(),
@@ -508,6 +680,7 @@ mod tests {
         let args = vec![
             "x".to_string(),
             "-o/tmp/out".to_string(),
+            "-aou".to_string(),
             "-w../../tmp".to_string(),
             "--".to_string(),
             "archive.7z".to_string(),
@@ -541,6 +714,7 @@ mod tests {
     fn validate_run_7z_args_rejects_extract_without_output_dir() {
         let args = vec![
             "x".to_string(),
+            "-aou".to_string(),
             "-y".to_string(),
             "--".to_string(),
             "archive.7z".to_string(),
@@ -582,6 +756,7 @@ mod tests {
         let args = vec![
             "x".to_string(),
             "-o/tmp/out".to_string(),
+            "-aou".to_string(),
             "-spf".to_string(),
             "--".to_string(),
             "archive.7z".to_string(),
@@ -590,11 +765,54 @@ mod tests {
     }
 
     #[test]
+    fn validate_run_7z_args_rejects_absolute_path_storage_for_create_and_update() {
+        for command in ["a", "u"] {
+            let args = vec![
+                command.to_string(),
+                "-spf".to_string(),
+                "out.7z".to_string(),
+                "--".to_string(),
+                "input.txt".to_string(),
+            ];
+            assert!(
+                validate_run_7z_args(&args).is_err(),
+                "expected -spf to be rejected for {command}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_run_7z_args_rejects_overwrite_all_extract_modes() {
+        for bad in ["-aoa", "-aot"] {
+            let args = vec![
+                "x".to_string(),
+                "-o/tmp/out".to_string(),
+                bad.to_string(),
+                "--".to_string(),
+                "archive.7z".to_string(),
+            ];
+            assert!(
+                validate_run_7z_args(&args).is_err(),
+                "expected {bad} to be rejected"
+            );
+        }
+        let ok = vec![
+            "x".to_string(),
+            "-o/tmp/out".to_string(),
+            "-aou".to_string(),
+            "--".to_string(),
+            "archive.7z".to_string(),
+        ];
+        assert!(validate_run_7z_args(&ok).is_ok());
+    }
+
+    #[test]
     fn validate_run_7z_args_rejects_duplicate_extract_output() {
         let args = vec![
             "x".to_string(),
             "-o/tmp/one".to_string(),
             "-o/tmp/two".to_string(),
+            "-aou".to_string(),
             "--".to_string(),
             "archive.7z".to_string(),
         ];
@@ -613,5 +831,100 @@ mod tests {
             ];
             assert!(validate_run_7z_args(&args).is_err(), "accepted {switch}");
         }
+    }
+
+    #[test]
+    fn archive_member_path_is_unsafe_detects_traversal_and_absolutes() {
+        assert!(!archive_member_path_is_unsafe("folder/file.txt"));
+        assert!(!archive_member_path_is_unsafe("name..bak.txt"));
+        assert!(archive_member_path_is_unsafe("../sibling/file.txt"));
+        assert!(archive_member_path_is_unsafe("a/../../b"));
+        assert!(archive_member_path_is_unsafe("/etc/passwd"));
+        #[cfg(target_os = "windows")]
+        assert!(archive_member_path_is_unsafe(r"C:\Windows\evil.dll"));
+        #[cfg(target_os = "windows")]
+        assert!(archive_member_path_is_unsafe(r"\\server\share\file"));
+        #[cfg(not(target_os = "windows"))]
+        {
+            assert!(!archive_member_path_is_unsafe(r"a:b"));
+            assert!(!archive_member_path_is_unsafe(r"\literal-name"));
+            assert!(!archive_member_path_is_unsafe(r"folder\..\literal"));
+        }
+    }
+
+    #[test]
+    fn validate_run_7z_args_rejects_password_line_breaks() {
+        let err = validate_run_7z_args(&[
+            "a".to_string(),
+            "-t7z".to_string(),
+            "-psecret\nmore".to_string(),
+            "out.7z".to_string(),
+            "--".to_string(),
+            "in.txt".to_string(),
+        ])
+        .expect_err("line-break password");
+        assert!(err.contains("line breaks"), "{err}");
+    }
+
+    #[test]
+    fn validate_run_7z_args_rejects_password_for_non_encrypting_formats() {
+        for format in ["-tgzip", "-tbzip2", "-txz", "-ttar"] {
+            let err = validate_run_7z_args(&[
+                "a".to_string(),
+                format.to_string(),
+                "-psecret".to_string(),
+                "out.bin".to_string(),
+                "--".to_string(),
+                "in.txt".to_string(),
+            ])
+            .expect_err("password on non-encrypting format");
+            assert!(
+                err.contains("Password encryption is not supported"),
+                "format {format}: {err}"
+            );
+        }
+        validate_run_7z_args(&[
+            "a".to_string(),
+            "-t7z".to_string(),
+            "-psecret".to_string(),
+            "out.7z".to_string(),
+            "--".to_string(),
+            "in.txt".to_string(),
+        ])
+        .expect("7z password create");
+        validate_run_7z_args(&[
+            "a".to_string(),
+            "-tzip".to_string(),
+            "-psecret".to_string(),
+            "out.zip".to_string(),
+            "--".to_string(),
+            "in.txt".to_string(),
+        ])
+        .expect("zip password create");
+        validate_run_7z_args(&[
+            "a".to_string(),
+            "-t7z".to_string(),
+            "-stl".to_string(),
+            "-psecret".to_string(),
+            "out.7z".to_string(),
+            "--".to_string(),
+            "in.txt".to_string(),
+        ])
+        .expect("-stl is not an archive type");
+    }
+
+    #[test]
+    fn validate_run_7z_args_rejects_password_with_conflicting_types() {
+        let err = validate_run_7z_args(&[
+            "a".to_string(),
+            "-t7z".to_string(),
+            "-tgzip".to_string(),
+            "-psecret".to_string(),
+            "out.gz".to_string(),
+            "--".to_string(),
+            "in.txt".to_string(),
+        ])
+        .expect_err("multi -t with password");
+        assert!(err.contains("at most one archive type"), "{err}");
     }
 }

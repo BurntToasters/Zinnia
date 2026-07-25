@@ -40,13 +40,13 @@ describe("normalizeUserSettings", () => {
     expect(result.theme).toBe(SETTING_DEFAULTS.theme);
   });
 
-  it("accepts valid format and pathMode", () => {
+  it("migrates unsafe absolute pathMode to relative", () => {
     const result = normalizeUserSettings({
       format: "zip",
       pathMode: "absolute",
     });
     expect(result.format).toBe("zip");
-    expect(result.pathMode).toBe("absolute");
+    expect(result.pathMode).toBe("relative");
   });
 
   it("rejects wrong types for boolean fields", () => {
@@ -80,6 +80,28 @@ describe("normalizeUserSettings", () => {
       updateChannel: "beta",
     });
     expect(result.updateChannel).toBe("beta");
+  });
+
+  it("accepts quick-extract warm-idle prefs and clamps invalid minutes", () => {
+    const ok = normalizeUserSettings({
+      quickExtractKeepWarm: false,
+      quickExtractWarmIdleMinutes: 30,
+      basicWindowEffects: false,
+    });
+    expect(ok.quickExtractKeepWarm).toBe(false);
+    expect(ok.quickExtractWarmIdleMinutes).toBe(30);
+    expect(ok.basicWindowEffects).toBe(false);
+    expect(SETTING_DEFAULTS.basicWindowEffects).toBe(true);
+
+    const clamped = normalizeUserSettings({
+      quickExtractWarmIdleMinutes: 7,
+    });
+    expect(clamped.quickExtractWarmIdleMinutes).toBe(10);
+
+    const fromString = normalizeUserSettings({
+      quickExtractWarmIdleMinutes: "60",
+    });
+    expect(fromString.quickExtractWarmIdleMinutes).toBe(60);
   });
 
   it("accepts valid working context settings", () => {
@@ -133,6 +155,50 @@ describe("normalizeUserSettings", () => {
       updateChannel: "auto",
     });
     expect(result.updateChannel).toBe("auto");
+  });
+
+  it("normalizes custom presets and drops invalid or duplicate names", () => {
+    const result = normalizeUserSettings({
+      customPresets: [
+        { name: "  Fast  ", format: "zip", level: "1" },
+        { name: "Fast", format: "7z", level: "9" },
+        { name: "", format: "7z" },
+        "not-an-object",
+        {
+          name: "Solid",
+          method: "lzma2",
+          dict: "64m",
+          wordSize: "32",
+          solid: "8g",
+        },
+      ],
+    });
+    expect(result.customPresets).toHaveLength(2);
+    expect(result.customPresets[0]).toMatchObject({
+      name: "Fast",
+      format: "zip",
+      level: "1",
+    });
+    expect(result.customPresets[1].name).toBe("Solid");
+    expect(result.customPresets[1].format).toBe(SETTING_DEFAULTS.format);
+  });
+
+  it("falls back when customPresets is not an array", () => {
+    const result = normalizeUserSettings({
+      customPresets: { nope: true },
+    });
+    expect(result.customPresets).toEqual(SETTING_DEFAULTS.customPresets);
+  });
+
+  it("caps custom presets at 50 entries", () => {
+    const presets = Array.from({ length: 60 }, (_, i) => ({
+      name: `Preset ${i}`,
+      format: "7z",
+    }));
+    const result = normalizeUserSettings({ customPresets: presets });
+    expect(result.customPresets).toHaveLength(50);
+    expect(result.customPresets[0].name).toBe("Preset 0");
+    expect(result.customPresets[49].name).toBe("Preset 49");
   });
 });
 

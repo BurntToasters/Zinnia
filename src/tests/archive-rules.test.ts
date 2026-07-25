@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ensureArchivePaths,
+  MAX_ARCHIVE_PATHS,
+  MAX_ARCHIVE_PATHS_IPC_BYTES,
   validateArchivePaths,
   validateExtraArgs,
 } from "../archive-rules";
@@ -29,6 +31,12 @@ describe("validateExtraArgs", () => {
     expect(() => validateExtraArgs(["-psecret"])).toThrow();
   });
 
+  it("rejects overwrite-all extract modes", () => {
+    expect(() => validateExtraArgs(["-aoa"])).toThrow(/safe extract/);
+    expect(() => validateExtraArgs(["-aot"])).toThrow(/safe extract/);
+    expect(() => validateExtraArgs(["-aou"])).not.toThrow();
+  });
+
   it("rejects blocked archive type args", () => {
     expect(() => validateExtraArgs(["-tzip"])).toThrow(
       /not allowed in extra args/,
@@ -47,11 +55,33 @@ describe("validateExtraArgs", () => {
   it("rejects unknown double-dash args", () => {
     expect(() => validateExtraArgs(["--totally-unknown"])).toThrow();
   });
+
+  it("accepts known method switches with digit/= boundaries", () => {
+    expect(() =>
+      validateExtraArgs(["-mx9", "-mx=9", "-mmt=on", "-md=64m", "-mtc=on"]),
+    ).not.toThrow();
+  });
+
+  it("rejects method values with path separators or parent segments", () => {
+    expect(() => validateExtraArgs(["-m0=../x"])).toThrow(/compression method/);
+    expect(() => validateExtraArgs(["-mem=/tmp/x"])).toThrow(
+      /compression method/,
+    );
+    expect(() => validateExtraArgs(["-mtc=a\\b"])).toThrow(
+      /compression method/,
+    );
+    expect(() => validateExtraArgs(["-m0="])).toThrow(/compression method/);
+  });
+
+  it("rejects open-ended method prefixes that only share a substring", () => {
+    expect(() => validateExtraArgs(["-mxyz"])).toThrow(/compression method/);
+    expect(() => validateExtraArgs(["-mfoo"])).toThrow(/compression method/);
+  });
 });
 
 describe("validateArchivePaths", () => {
-  it("normalizes paths, validates empties locally, and keeps input order", async () => {
-    const path = uniqueArchivePath("normalized");
+  it("preserves paths, validates empties locally, and keeps input order", async () => {
+    const path = `  ${uniqueArchivePath("spaced-name")}  `;
     invokeMock.mockResolvedValueOnce([
       {
         path,
@@ -59,10 +89,10 @@ describe("validateArchivePaths", () => {
       },
     ]);
 
-    const results = await validateArchivePaths([`  ${path}  `, "   "]);
+    const results = await validateArchivePaths([path, ""]);
 
     expect(invokeMock).toHaveBeenCalledWith("validate_archive_paths", {
-      paths: [path],
+      pathsJson: JSON.stringify([path]),
     });
     expect(results[0]).toEqual({ path, valid: true, reason: undefined });
     expect(results[1]).toEqual({
@@ -70,6 +100,28 @@ describe("validateArchivePaths", () => {
       valid: false,
       reason: "Path is empty.",
     });
+  });
+
+  it("rejects oversized batches without invoking the backend", async () => {
+    const paths = Array.from(
+      { length: MAX_ARCHIVE_PATHS + 1 },
+      (_, index) => `/tmp/archive-${index}.zip`,
+    );
+
+    const results = await validateArchivePaths(paths);
+
+    expect(invokeMock).not.toHaveBeenCalled();
+    expect(results).toHaveLength(MAX_ARCHIVE_PATHS + 1);
+    expect(results[0]).toMatchObject({ valid: false, reason: /At most 4096/ });
+  });
+
+  it("rejects oversized serialized IPC requests without invoking the backend", async () => {
+    const paths = ["x".repeat(MAX_ARCHIVE_PATHS_IPC_BYTES)];
+
+    const results = await validateArchivePaths(paths);
+
+    expect(invokeMock).not.toHaveBeenCalled();
+    expect(results[0]).toMatchObject({ valid: false, reason: /safety limit/ });
   });
 
   it("revalidates repeated probes so replaced files cannot use stale results", async () => {
@@ -105,10 +157,10 @@ describe("validateArchivePaths", () => {
 });
 
 describe("ensureArchivePaths", () => {
-  it("returns early when all paths are empty after trimming", async () => {
+  it("returns early when all paths are empty", async () => {
     const probe = vi.fn();
 
-    await ensureArchivePaths(["   ", ""], "extract", probe);
+    await ensureArchivePaths(["", ""], "extract", probe);
 
     expect(probe).not.toHaveBeenCalled();
   });

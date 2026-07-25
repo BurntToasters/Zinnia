@@ -1,4 +1,5 @@
-//! Parse 7z stdout progress lines, e.g. ` 23% 5 + path/file.txt`, ` 45%`.
+//! Parse 7z stdout progress lines, e.g. ` 23% 5 + path/file.txt`, ` 45%`,
+//! `Progress: 45%`, `Total percent: 80%`.
 
 #[derive(serde::Serialize, Clone, Debug, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -22,18 +23,10 @@ pub fn parse_progress_line(line: &str) -> Option<ProgressUpdate> {
         .unwrap_or("")
         .trim_start();
 
-    let percent_end = segment.find('%')?;
-    let percent_str = segment[..percent_end].trim();
-    if percent_str.is_empty() || !percent_str.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    let percent: u16 = percent_str.parse().ok()?;
-    if percent > 100 {
-        return None;
-    }
+    let (percent, percent_end) = find_percent_token(segment)?;
 
     let mut update = ProgressUpdate {
-        percent: Some(percent as u8),
+        percent: Some(percent),
         ..Default::default()
     };
 
@@ -46,6 +39,31 @@ pub fn parse_progress_line(line: &str) -> Option<ProgressUpdate> {
     } else {
         Some(update)
     }
+}
+
+/// Locate the first valid `0…100%` token (supports `Progress: 45%` prefixes).
+fn find_percent_token(segment: &str) -> Option<(u8, usize)> {
+    let bytes = segment.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit() {
+            let start = i;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            if i < bytes.len() && bytes[i] == b'%' {
+                let percent_str = &segment[start..i];
+                if let Ok(percent) = percent_str.parse::<u16>() {
+                    if percent <= 100 {
+                        return Some((percent as u8, i));
+                    }
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
+    None
 }
 
 fn parse_files_done<'a>(rest: &'a str, update: &mut ProgressUpdate) -> &'a str {
@@ -71,9 +89,49 @@ fn parse_current_file(rest: &str, update: &mut ProgressUpdate) {
         _ => trimmed,
     };
 
-    if !name.is_empty() {
-        update.current_file = Some(name.to_string());
+    if let Some(clean) = sanitize_progress_filename(name) {
+        update.current_file = Some(clean);
     }
+}
+
+/// Drop controls/bidi/replacement junk and leading non-name symbols so the UI
+/// never flashes tofu boxes from partial or noisy 7-Zip progress chunks.
+fn sanitize_progress_filename(name: &str) -> Option<String> {
+    let cleaned: String = name
+        .chars()
+        .filter(|c| {
+            !c.is_control()
+                && *c != '\u{fffd}'
+                && *c != '\u{feff}'
+                && !matches!(
+                    *c,
+                    '\u{200b}'..='\u{200f}'
+                        | '\u{202a}'..='\u{202e}'
+                        | '\u{2060}'..='\u{2064}'
+                )
+        })
+        .collect();
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    // Prefer the first path-like character so symbol runs like "░░░░ ░░░░- name"
+    // become "name", while still keeping ".hidden" / "_tmp" names.
+    let start = trimmed
+        .char_indices()
+        .find(|(_, c)| c.is_alphanumeric() || matches!(*c, '.' | '_' | '~'))
+        .map(|(i, _)| i)?;
+    let meaningful = trimmed[start..].trim();
+    if meaningful.is_empty() {
+        return None;
+    }
+    const MAX_PROGRESS_FILENAME_CHARS: usize = 200;
+    let capped: String = meaningful
+        .chars()
+        .take(MAX_PROGRESS_FILENAME_CHARS)
+        .collect();
+    Some(capped)
 }
 
 #[cfg(test)]
@@ -105,6 +163,14 @@ mod tests {
     }
 
     #[test]
+    fn parses_progress_label_shapes() {
+        let u = parse_progress_line("Progress: 45%").expect("should parse");
+        assert_eq!(u.percent, Some(45));
+        let u = parse_progress_line("Total percent: 80%").expect("should parse");
+        assert_eq!(u.percent, Some(80));
+    }
+
+    #[test]
     fn takes_latest_state_after_carriage_returns() {
         let u = parse_progress_line("\r 10% a.txt\r 80% + b.txt").expect("should parse");
         assert_eq!(u.percent, Some(80));
@@ -129,5 +195,32 @@ mod tests {
         let u = parse_progress_line(" 50% 2 + weird%name.txt").expect("should parse");
         assert_eq!(u.percent, Some(50));
         assert_eq!(u.current_file.as_deref(), Some("weird%name.txt"));
+    }
+
+    #[test]
+    fn strips_leading_symbol_junk_before_filename() {
+        let u = parse_progress_line(" 3% - \u{2591}\u{2591}\u{2591}\u{2591} \u{2591}\u{2591}\u{2591}\u{2591}- insurance 2026.pdf")
+            .expect("should parse");
+        assert_eq!(u.current_file.as_deref(), Some("insurance 2026.pdf"));
+    }
+
+    #[test]
+    fn keeps_unicode_letters_in_filenames() {
+        let u = parse_progress_line(" 10% - 报告.pdf").expect("should parse");
+        assert_eq!(u.current_file.as_deref(), Some("报告.pdf"));
+    }
+
+    #[test]
+    fn drops_filenames_that_are_only_junk() {
+        let u = parse_progress_line(" 10% - \u{fffd}\u{fffd}").expect("should parse");
+        assert_eq!(u.percent, Some(10));
+        assert_eq!(u.current_file, None);
+    }
+
+    #[test]
+    fn caps_long_progress_filenames() {
+        let long = format!(" 10% - {}", "a".repeat(300));
+        let u = parse_progress_line(&long).expect("should parse");
+        assert_eq!(u.current_file.as_ref().map(String::len), Some(200));
     }
 }

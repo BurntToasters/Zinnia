@@ -33,6 +33,65 @@ const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
 
 const activeFocusTraps = new Map<HTMLElement, (e: KeyboardEvent) => void>();
+const focusTrapStack: HTMLElement[] = [];
+const isolatedForModal = new Map<HTMLElement, HTMLElement[]>();
+const activatedAncestorsForModal = new Map<HTMLElement, HTMLElement[]>();
+const isolationState = new Map<
+  HTMLElement,
+  { count: number; wasInert: boolean }
+>();
+
+/** Window chrome that stays clickable above modal sheets (gear, Support, close). */
+function keepInteractiveDuringModal(element: HTMLElement): boolean {
+  return element.id === "titlebar" || element.classList.contains("header");
+}
+
+function isolateModalBackground(container: HTMLElement): void {
+  const isolated: HTMLElement[] = [];
+  const activatedAncestors: HTMLElement[] = [];
+  let branch: HTMLElement = container;
+  while (branch.parentElement && branch !== document.body) {
+    if (branch.inert && isolationState.has(branch)) {
+      branch.inert = false;
+      activatedAncestors.push(branch);
+    }
+    for (const sibling of branch.parentElement.children) {
+      if (!(sibling instanceof HTMLElement) || sibling === branch) continue;
+      if (keepInteractiveDuringModal(sibling)) continue;
+      const existing = isolationState.get(sibling);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        isolationState.set(sibling, {
+          count: 1,
+          wasInert: sibling.inert === true,
+        });
+        sibling.inert = true;
+      }
+      isolated.push(sibling);
+    }
+    branch = branch.parentElement;
+  }
+  isolatedForModal.set(container, isolated);
+  activatedAncestorsForModal.set(container, activatedAncestors);
+}
+
+function restoreModalBackground(container: HTMLElement): void {
+  for (const element of isolatedForModal.get(container) ?? []) {
+    const state = isolationState.get(element);
+    if (!state) continue;
+    state.count -= 1;
+    if (state.count === 0) {
+      element.inert = state.wasInert;
+      isolationState.delete(element);
+    }
+  }
+  for (const element of activatedAncestorsForModal.get(container) ?? []) {
+    if (isolationState.has(element)) element.inert = true;
+  }
+  isolatedForModal.delete(container);
+  activatedAncestorsForModal.delete(container);
+}
 
 export function trapFocus(container: HTMLElement): void {
   if (activeFocusTraps.has(container)) {
@@ -40,12 +99,19 @@ export function trapFocus(container: HTMLElement): void {
   }
   const handler = (e: KeyboardEvent) => {
     if (e.key !== "Tab") return;
+    // Only the topmost trapped sheet owns Tab (settings can open over selective).
+    if (focusTrapStack[focusTrapStack.length - 1] !== container) return;
     const focusable = Array.from(
       container.querySelectorAll<HTMLElement>(FOCUSABLE),
     ).filter((el) => el.offsetParent !== null);
     if (focusable.length === 0) return;
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
+    if (!container.contains(document.activeElement)) {
+      e.preventDefault();
+      (e.shiftKey ? last : first).focus();
+      return;
+    }
     if (e.shiftKey) {
       if (document.activeElement === first) {
         e.preventDefault();
@@ -59,7 +125,9 @@ export function trapFocus(container: HTMLElement): void {
     }
   };
   activeFocusTraps.set(container, handler);
+  focusTrapStack.push(container);
   document.addEventListener("keydown", handler);
+  isolateModalBackground(container);
   const first = container.querySelector<HTMLElement>(FOCUSABLE);
   if (first) first.focus();
 }
@@ -70,6 +138,9 @@ export function releaseFocusTrap(container: HTMLElement): void {
     document.removeEventListener("keydown", handler);
     activeFocusTraps.delete(container);
   }
+  const stackIndex = focusTrapStack.lastIndexOf(container);
+  if (stackIndex >= 0) focusTrapStack.splice(stackIndex, 1);
+  restoreModalBackground(container);
 }
 
 export function parseThreads(raw: string, fallback: number): number {
@@ -80,7 +151,7 @@ export function parseThreads(raw: string, fallback: number): number {
 }
 
 export function formatSize(bytes: number): string {
-  if (bytes === 0) return "\u2014";
+  if (bytes === 0) return "-";
   const units = ["B", "KB", "MB", "GB", "TB"];
   const i = Math.min(
     Math.floor(Math.log(bytes) / Math.log(1024)),
@@ -124,7 +195,23 @@ export function redactSensitiveText(input: string): string {
 }
 
 export function safeHref(url: string): string {
-  return SAFE_URL_PATTERN.test(url) ? escapeHtml(url) : "#";
+  if (
+    !SAFE_URL_PATTERN.test(url) ||
+    url.trim() !== url ||
+    /[\u0000-\u001F]/.test(url)
+  ) {
+    return "#";
+  }
+  try {
+    const parsed = new URL(url);
+    return (parsed.protocol === "https:" || parsed.protocol === "http:") &&
+      !parsed.username &&
+      !parsed.password
+      ? url
+      : "#";
+  } catch {
+    return "#";
+  }
 }
 
 export function isArchiveFile(path: string): boolean {

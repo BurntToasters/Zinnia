@@ -90,8 +90,10 @@ function updateSecurityControlsForFormat(format: string) {
   } else {
     passwordInput.placeholder = PASSWORD_PLACEHOLDER_UNSUPPORTED;
     passwordInput.title = `${format.toUpperCase()} archives do not support password protection in this app.`;
+    passwordInput.value = "";
     passwordInput.type = "password";
     passwordToggle.textContent = "Show";
+    passwordToggle.setAttribute("aria-pressed", "false");
   }
 
   if (!support.encryptHeaders) {

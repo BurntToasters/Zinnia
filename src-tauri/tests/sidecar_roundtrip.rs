@@ -1,8 +1,9 @@
 //! End-to-end test against the real bundled 7-Zip binary. Skips (passes) when the
 //! per-host sidecar binary is absent (run `npm run prepare:7z` to provide it).
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 fn binary_path() -> Option<PathBuf> {
     // CARGO_MANIFEST_DIR is src-tauri/. Pick the sidecar for the host arch/os.
@@ -40,6 +41,59 @@ fn temp_dir(tag: &str) -> PathBuf {
     ));
     std::fs::create_dir_all(&base).unwrap();
     base
+}
+
+fn output_with_piped_password(command: &mut Command, password: &str) -> std::process::Output {
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("7z should run");
+    let mut stdin = child.stdin.take().expect("7z stdin pipe");
+    for _ in 0..3 {
+        stdin.write_all(password.as_bytes()).unwrap();
+        stdin.write_all(b"\n").unwrap();
+    }
+    drop(stdin);
+    child.wait_with_output().unwrap()
+}
+
+#[cfg(windows)]
+fn volume_guid_alias(path: &Path) -> Option<PathBuf> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::{OsStrExt as _, OsStringExt as _};
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetVolumeNameForVolumeMountPointW, GetVolumePathNameW,
+    };
+
+    let input: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut mount = vec![0u16; 32_768];
+    if unsafe { GetVolumePathNameW(input.as_ptr(), mount.as_mut_ptr(), mount.len() as u32) } == 0 {
+        return None;
+    }
+    let mount_len = mount.iter().position(|unit| *unit == 0)?;
+    let mount_path = PathBuf::from(OsString::from_wide(&mount[..mount_len]));
+    let relative = path.strip_prefix(&mount_path).ok()?;
+
+    let mount_wide: Vec<u16> = mount_path
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let mut volume = [0u16; 50];
+    if unsafe {
+        GetVolumeNameForVolumeMountPointW(
+            mount_wide.as_ptr(),
+            volume.as_mut_ptr(),
+            volume.len() as u32,
+        )
+    } == 0
+    {
+        return None;
+    }
+    let volume_len = volume.iter().position(|unit| *unit == 0)?;
+    Some(PathBuf::from(OsString::from_wide(&volume[..volume_len])).join(relative))
 }
 
 #[test]
@@ -115,6 +169,64 @@ fn create_list_test_extract_roundtrip() {
     let _ = std::fs::remove_dir_all(work);
 }
 
+#[cfg(windows)]
+#[test]
+fn create_extract_roundtrip_supports_extended_and_volume_guid_paths() {
+    use std::ffi::OsString;
+
+    let Some(bin) = binary_path() else {
+        eprintln!("skipping: bundled 7z binary not found (run npm run prepare:7z)");
+        return;
+    };
+
+    let work = temp_dir("windows-namespaces");
+    let Some(volume_work) = volume_guid_alias(&work) else {
+        eprintln!("skipping: temporary directory has no volume-GUID alias");
+        let _ = std::fs::remove_dir_all(work);
+        return;
+    };
+    let extended_work = PathBuf::from(format!(r"\\?\{}", work.display()));
+    let source = extended_work.join("namespace-input.txt");
+    std::fs::write(&source, b"windows namespace roundtrip\n").unwrap();
+    let archive = volume_work.join("namespace-output.7z");
+
+    let add = Command::new(&bin)
+        .args(["a", "-t7z"])
+        .arg(&archive)
+        .arg("--")
+        .arg(&source)
+        .output()
+        .expect("7z add through extended paths should run");
+    assert!(
+        add.status.success(),
+        "extended-path add failed: {}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+
+    let out = volume_work.join("namespace-extracted");
+    let mut output_arg = OsString::from("-o");
+    output_arg.push(&out);
+    let extract = Command::new(&bin)
+        .arg("x")
+        .arg(output_arg)
+        .arg("-y")
+        .arg("--")
+        .arg(&archive)
+        .output()
+        .expect("7z extract through volume-GUID path should run");
+    assert!(
+        extract.status.success(),
+        "volume-GUID extract failed: {}",
+        String::from_utf8_lossy(&extract.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(out.join("namespace-input.txt")).unwrap(),
+        "windows namespace roundtrip\n"
+    );
+
+    let _ = std::fs::remove_dir_all(work);
+}
+
 #[test]
 fn rejects_extract_with_wrong_password() {
     let Some(bin) = binary_path() else {
@@ -154,6 +266,134 @@ fn rejects_extract_with_wrong_password() {
         .output()
         .expect("7z extract should run");
     assert!(!extract.status.success(), "wrong password should fail");
+
+    let _ = std::fs::remove_dir_all(work);
+}
+
+#[test]
+fn encrypted_archive_without_password_reaches_eof_instead_of_hanging() {
+    let Some(bin) = binary_path() else {
+        return;
+    };
+    let work = temp_dir("password-eof");
+    let src = work.join("secret.txt");
+    std::fs::write(&src, b"secret\n").unwrap();
+    let archive = work.join("encrypted.7z");
+    assert!(Command::new(&bin)
+        .args([
+            "a",
+            "-t7z",
+            "-pcorrect",
+            "-mhe=on",
+            archive.to_str().unwrap(),
+            "--",
+            src.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap()
+        .status
+        .success());
+
+    let mut child = Command::new(&bin)
+        .args(["l", "--", archive.to_str().unwrap()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            assert!(!status.success(), "listing should require a password");
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            panic!("7-Zip waited indefinitely after password input reached EOF");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let _ = std::fs::remove_dir_all(work);
+}
+
+#[test]
+fn password_prompt_accepts_the_bounded_pipe_used_by_zinnia() {
+    let Some(bin) = binary_path() else {
+        return;
+    };
+    let work = temp_dir("password-pipe");
+    let src = work.join("secret.txt");
+    std::fs::write(&src, b"secret\n").unwrap();
+    let archive = work.join("encrypted.7z");
+    let add = output_with_piped_password(
+        Command::new(&bin).args([
+            "a",
+            "-t7z",
+            "-p",
+            "-mhe=on",
+            archive.to_str().unwrap(),
+            "--",
+            src.to_str().unwrap(),
+        ]),
+        "correct",
+    );
+    assert!(
+        add.status.success(),
+        "pipe password failed: {}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+
+    let list_without_password = Command::new(&bin)
+        .args(["l", "--", archive.to_str().unwrap()])
+        .stdin(Stdio::null())
+        .output()
+        .expect("7z list should run");
+    assert!(
+        !list_without_password.status.success(),
+        "encrypted archive listed without a password"
+    );
+
+    let test_without_password = Command::new(&bin)
+        .args(["t", "--", archive.to_str().unwrap()])
+        .stdin(Stdio::null())
+        .output()
+        .expect("7z test should run");
+    assert!(
+        !test_without_password.status.success(),
+        "encrypted archive tested without a password"
+    );
+
+    let out = work.join("without-password");
+    let extract_without_password = Command::new(&bin)
+        .args([
+            "x",
+            &format!("-o{}", out.display()),
+            "-y",
+            "--",
+            archive.to_str().unwrap(),
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .expect("7z extract should run");
+    assert!(
+        !extract_without_password.status.success(),
+        "encrypted archive extracted without a password"
+    );
+
+    let encrypted_listing = output_with_piped_password(
+        Command::new(&bin).args(["l", "-slt", "--", archive.to_str().unwrap()]),
+        "correct",
+    );
+    assert!(
+        encrypted_listing.status.success(),
+        "listing with piped password failed: {}",
+        String::from_utf8_lossy(&encrypted_listing.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&encrypted_listing.stdout).contains("Encrypted = +"),
+        "7z listing did not mark the archived file as encrypted:\n{}",
+        String::from_utf8_lossy(&encrypted_listing.stdout)
+    );
 
     let _ = std::fs::remove_dir_all(work);
 }
