@@ -29,6 +29,16 @@ pub fn create_private_dir(path: &Path) -> io::Result<()> {
     }
 }
 
+/// Create a new private file owned by the current user (CREATE_NEW).
+///
+/// On Windows this applies the same protected SDDL as shell handoffs / private
+/// directories. Elevated processes otherwise default new-object owners to the
+/// Administrators group, which must not pass the shell-handoff owner check.
+#[cfg(windows)]
+pub(crate) fn create_private_file(path: &Path) -> io::Result<std::fs::File> {
+    create_private_file_windows(path)
+}
+
 /// Create a publish staging directory with the parent directory's normal policy.
 ///
 /// On Windows this deliberately uses the parent directory's default security
@@ -498,7 +508,9 @@ pub(crate) fn assert_handle_owned_by_current_user(file: &std::fs::File) -> Resul
             return Err(format!("Object owner SID is invalid: {owner_sid}"));
         }
         if owner_sid != expected_sid {
-            return Err("Object owner is not the current user.".to_string());
+            return Err(format!(
+                "Object owner is not the current user (owner={owner_sid}, expected={expected_sid})."
+            ));
         }
     }
     Ok(())
@@ -864,6 +876,81 @@ fn create_inheriting_stage_dir_windows(path: &Path) -> io::Result<()> {
         };
     }
     Ok(())
+}
+
+#[cfg(windows)]
+fn create_private_file_windows(path: &Path) -> io::Result<std::fs::File> {
+    use std::mem::size_of;
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::io::{FromRawHandle, OwnedHandle};
+    use std::ptr;
+    use windows_sys::Win32::Foundation::{LocalFree, GENERIC_READ, GENERIC_WRITE};
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+    };
+    use windows_sys::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+    use windows_sys::Win32::Storage::FileSystem::{CreateFileW, CREATE_NEW, FILE_ATTRIBUTE_NORMAL};
+
+    let identity = current_user_identity().map_err(io::Error::other)?;
+    let sddl = private_directory_sddl(&identity.sid);
+    let sddl_wide: Vec<u16> = sddl.encode_utf16().chain(Some(0)).collect();
+    let mut path_wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+    if path_wide.contains(&0) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Private file path contains an embedded NUL.",
+        ));
+    }
+    path_wide.push(0);
+    let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
+    if unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl_wide.as_ptr(),
+            SDDL_REVISION_1,
+            &mut descriptor,
+            ptr::null_mut(),
+        )
+    } == 0
+    {
+        return Err(io::Error::other(format!(
+            "Could not build the private file security descriptor: {}",
+            io::Error::last_os_error()
+        )));
+    }
+    if descriptor.is_null() {
+        return Err(io::Error::other(
+            "Windows returned an empty private file security descriptor.",
+        ));
+    }
+
+    let result = (|| -> io::Result<std::fs::File> {
+        let attributes = SECURITY_ATTRIBUTES {
+            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: descriptor,
+            bInheritHandle: 0,
+        };
+        let handle = unsafe {
+            CreateFileW(
+                path_wide.as_ptr(),
+                GENERIC_READ | GENERIC_WRITE,
+                0,
+                &attributes,
+                CREATE_NEW,
+                FILE_ATTRIBUTE_NORMAL,
+                ptr::null_mut(),
+            )
+        };
+        if handle.is_null() || handle == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error());
+        }
+        let owned = unsafe { OwnedHandle::from_raw_handle(handle as _) };
+        Ok(std::fs::File::from(owned))
+    })();
+
+    unsafe {
+        LocalFree(descriptor);
+    }
+    result
 }
 
 #[cfg(windows)]
@@ -1273,14 +1360,18 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn private_file_handle_is_owned_by_current_user() {
+        use std::io::Write as _;
+
         let mut random = [0u8; 8];
         getrandom::fill(&mut random).expect("random owner-check suffix");
         let suffix: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
         let dir = std::env::temp_dir().join(format!("zinnia-owner-check-{suffix}"));
         create_private_dir(&dir).expect("private dir");
         let path = dir.join("owned.tmp");
-        std::fs::write(&path, b"owned").expect("write owned file");
-        let file = std::fs::File::open(&path).expect("open owned file");
+        // Match shell-handoff creation: elevated tokens otherwise own new files as
+        // Administrators, which must fail the consume-side owner check.
+        let mut file = create_private_file(&path).expect("private owned file");
+        file.write_all(b"owned").expect("write owned file");
         assert_handle_owned_by_current_user(&file).expect("current-user owner");
         drop(file);
         std::fs::remove_dir_all(&dir).expect("cleanup owner-check tree");
