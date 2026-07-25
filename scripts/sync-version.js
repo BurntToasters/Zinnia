@@ -7,7 +7,7 @@ import {
   macBundleVersionFromSemver,
   macMarketingVersionFromSemver,
   updateCargoLockPackageVersion,
-  updateWindowsResourceFlags,
+  updateWindowsResourceVersion,
   updateWindowsShellResourceDestinations,
   windowsPackageVersionFromSemver,
 } from "./sync-version-helpers.js";
@@ -118,28 +118,24 @@ if (updatedLock !== cargoLock) {
   console.log(`Cargo.lock      → ${version}`);
 }
 
-let windowsPackageVersion;
 try {
-  windowsPackageVersion = windowsPackageVersionFromSemver(version);
+  windowsPackageVersionFromSemver(version);
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
 }
-const numericVersion = windowsPackageVersion.replaceAll(".", ",");
 for (const rcName of ["zinnia_shell.rc", "zinnia_extract_shell.rc"]) {
   const rcPath = path.join(root, "src-tauri", "windows", "shell", rcName);
   const rc = fs.readFileSync(rcPath, "utf8");
-  const updatedRc = updateWindowsResourceFlags(rc, version)
-    .replace(/^ FILEVERSION .+$/m, ` FILEVERSION ${numericVersion}`)
-    .replace(/^ PRODUCTVERSION .+$/m, ` PRODUCTVERSION ${numericVersion}`)
-    .replace(
-      /^      VALUE "FileVersion", ".*\\0"$/m,
-      `      VALUE "FileVersion", "${version}\\0"`,
-    )
-    .replace(
-      /^      VALUE "ProductVersion", ".*\\0"$/m,
-      `      VALUE "ProductVersion", "${version}\\0"`,
+  let updatedRc;
+  try {
+    updatedRc = updateWindowsResourceVersion(rc, version);
+  } catch (error) {
+    console.error(
+      `${rcName}: ${error instanceof Error ? error.message : String(error)}`,
     );
+    process.exit(1);
+  }
   if (updatedRc !== rc) {
     fs.writeFileSync(rcPath, updatedRc);
     console.log(`${rcName} → ${version}`);

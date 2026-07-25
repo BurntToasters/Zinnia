@@ -206,10 +206,27 @@ pub(crate) fn stop_extract_for_quota(app: &tauri::AppHandle, reason: String) {
     };
     if let Some(child) = child {
         if let Err(error) = child.kill() {
+            let msg = error.to_string();
+            // Same predicates as cancel_7z / is_non_running_kill_error.
+            if msg.contains("finished")
+                || msg.contains("not running")
+                || msg.contains("No such process")
+            {
+                return;
+            }
+            // Put the handle back so cancel_7z can retry the kill (same as cancel_7z).
             if let Ok(mut process) = lock_process(&state) {
-                process.abort_reason = Some(format!(
-                    "Extraction exceeded a safety limit, but its process could not be stopped: {error}"
-                ));
+                if process.child.is_none() {
+                    process.child = Some(child);
+                }
+                let prior = process.abort_reason.take().unwrap_or_default();
+                process.abort_reason = Some(if prior.is_empty() {
+                    format!(
+                        "Extraction exceeded a safety limit, but its process could not be stopped: {msg}"
+                    )
+                } else {
+                    format!("{prior}; process could not be stopped: {msg}")
+                });
             }
         }
     }

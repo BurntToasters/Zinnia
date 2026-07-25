@@ -12,4 +12,9 @@ interface UpdateMetainfoResult {
 }
 
 export function formatDate(date: Date): string;
+export function hasExactReleaseVersion(xml: string, version: string): boolean;
+export function isDirectExecution(
+  moduleUrl?: string,
+  executablePath?: string,
+): boolean;
 export function run(options?: UpdateMetainfoOptions): UpdateMetainfoResult;

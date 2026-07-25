@@ -1,4 +1,6 @@
 import { spawnSync } from "node:child_process";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const SCRIPT_VERSION = "1.0.0";
 
@@ -240,7 +242,17 @@ export function main(argv = process.argv) {
   return skipped.length > 0 && !options.dryRun ? 1 : 0;
 }
 
-if (import.meta.main) {
+export function isDirectExecution(
+  moduleUrl = import.meta.url,
+  executablePath = process.argv[1],
+) {
+  return Boolean(
+    executablePath &&
+    pathToFileURL(path.resolve(executablePath)).href === moduleUrl,
+  );
+}
+
+if (isDirectExecution()) {
   try {
     process.exit(main());
   } catch (error) {

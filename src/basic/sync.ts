@@ -1,10 +1,10 @@
-import { open } from "@tauri-apps/plugin-dialog";
 import { $ } from "../utils";
 import { state } from "../state";
 import {
   getWorkspaceMode,
   getMode,
   renderInputs,
+  clearBrowsePasswordFields,
   setBrowsePasswordFieldVisible,
   triggerIconRefresh,
 } from "../ui";
@@ -40,6 +40,12 @@ export function getBasicView(): BasicView {
 }
 
 export function setBasicView(view: BasicView): void {
+  if (
+    (state.running || state.operationPreparing) &&
+    view !== currentBasicView
+  ) {
+    return;
+  }
   currentBasicView = view;
   const views = document.querySelectorAll<HTMLElement>(
     "#basic-workspace .basic-view",
@@ -56,6 +62,8 @@ export function setBasicView(view: BasicView): void {
       const el = tab as HTMLButtonElement;
       const isActive = el.dataset.basicTab === view;
       el.classList.toggle("is-active", isActive);
+      el.setAttribute("aria-selected", String(isActive));
+      el.tabIndex = isActive ? 0 : -1;
     });
   }
 
@@ -100,14 +108,16 @@ export function syncBasicToPower(): void {
     "basic-split-size",
   ) as HTMLSelectElement | null;
 
-  if (basicFormat) {
-    $<HTMLSelectElement>("format").value = basicFormat.value;
-    updateCompressionOptionsForFormat(basicFormat.value);
-  }
-
   if (basicPreset) {
     applyPreset(basicPreset.value);
     $<HTMLSelectElement>("preset").value = basicPreset.value;
+  }
+
+  // Presets provide compression tuning, but Basic's explicitly selected
+  // format is authoritative.
+  if (basicFormat) {
+    $<HTMLSelectElement>("format").value = basicFormat.value;
+    updateCompressionOptionsForFormat(basicFormat.value);
   }
 
   if (basicArchiveName) {
@@ -236,6 +246,10 @@ export function syncBasicBrowsePasswordToPower(): void {
 }
 
 export function setBasicBrowsePasswordVisible(visible: boolean): void {
+  if (!visible) {
+    // Clear Basic before any sync-to-Power path can copy the secret back.
+    clearBrowsePasswordFields();
+  }
   const field = document.getElementById("basic-browse-password-field");
   if (field) {
     field.hidden = !visible;
@@ -328,8 +342,13 @@ export function renderBasicInputs(): void {
   list.innerHTML = "";
 
   if (state.inputs.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "basic-archive-info cursor-default";
+    const empty = document.createElement("button");
+    empty.id = "basic-empty-input-picker";
+    empty.type = "button";
+    empty.className = "basic-archive-info basic-empty-input-picker";
+    empty.dataset.basicInputPicker = "";
+    empty.disabled =
+      state.running || state.operationPreparing || state.incomingPathsApplying;
     empty.innerHTML = `
       <span class="basic-archive-info__icon">
         <i data-lucide="file-plus" class="lucide-icon"></i>
@@ -339,21 +358,6 @@ export function renderBasicInputs(): void {
         <span class="basic-archive-info__meta">Click to select files or folders</span>
       </div>
     `;
-    empty.addEventListener("click", async () => {
-      const selection = await open({
-        title: "Select files or folders",
-        multiple: true,
-      });
-      if (!selection) return;
-      const paths = Array.isArray(selection) ? selection : [selection];
-      if (paths.length > 0) {
-        state.inputs.length = 0;
-        for (const p of paths) {
-          if (!state.inputs.includes(p)) state.inputs.push(p);
-        }
-        renderInputs();
-      }
-    });
     list.appendChild(empty);
     triggerIconRefresh();
     return;
@@ -373,9 +377,17 @@ export function renderBasicInputs(): void {
     removeBtn.className = "basic-file-item__remove";
     removeBtn.textContent = "\u00d7";
     removeBtn.title = "Remove";
-    removeBtn.disabled = state.running;
+    removeBtn.disabled =
+      state.running || state.operationPreparing || state.incomingPathsApplying;
     const index = i;
     removeBtn.addEventListener("click", () => {
+      if (
+        state.running ||
+        state.operationPreparing ||
+        state.incomingPathsApplying
+      ) {
+        return;
+      }
       state.inputs.splice(index, 1);
       renderInputs();
     });
@@ -453,54 +465,6 @@ export function updateBasicPasswordField(): void {
   if (encryptHeadersRow) {
     encryptHeadersRow.hidden = !support.encryptHeaders;
   }
-}
-
-export function renderBasicBrowseTable(
-  entries: Array<{
-    path: string;
-    size: string;
-    packed: string;
-    modified: string;
-    isDir: boolean;
-  }>,
-): void {
-  const tbody = document.getElementById("basic-browse-tbody");
-  if (!tbody) return;
-
-  tbody.innerHTML = "";
-  for (const entry of entries) {
-    const tr = document.createElement("tr");
-    if (entry.isDir) tr.className = "browse-folder";
-
-    const tdName = document.createElement("td");
-    const iconName = entry.isDir ? "folder" : "file";
-    tdName.innerHTML = `<i data-lucide="${iconName}" class="lucide-icon lucide-icon--inline"></i><span></span>`;
-    tdName.querySelector("span")!.textContent = entry.path;
-    tdName.classList.add("cell-break");
-
-    const tdSize = document.createElement("td");
-    tdSize.textContent = entry.size;
-    tdSize.classList.add("cell-tabular");
-
-    const tdPacked = document.createElement("td");
-    tdPacked.textContent = entry.packed;
-    tdPacked.classList.add("cell-tabular");
-
-    const tdModified = document.createElement("td");
-    tdModified.textContent = entry.modified;
-
-    tr.appendChild(tdName);
-    tr.appendChild(tdSize);
-    tr.appendChild(tdPacked);
-    tr.appendChild(tdModified);
-    tbody.appendChild(tr);
-  }
-  triggerIconRefresh();
-}
-
-export function setBasicBrowseSummary(text: string): void {
-  const el = document.getElementById("basic-browse-summary");
-  if (el) el.textContent = text;
 }
 
 export function syncBasicBeforeRun(): void {

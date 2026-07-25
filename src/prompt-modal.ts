@@ -70,7 +70,8 @@ export function promptInput(options: PromptOptions): Promise<string | null> {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Enter") {
         e.preventDefault();
-        finish(field.value);
+        const target = e.target;
+        finish(target === cancelBtn || target === cancelX ? null : field.value);
       } else if (e.key === "Escape") {
         e.preventDefault();
         finish(null);

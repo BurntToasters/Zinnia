@@ -1,9 +1,18 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { $ } from "../utils";
 import { state } from "../state";
-import { setMode, renderInputs, registerBasicHooks } from "../ui";
+import {
+  setMode,
+  renderInputs,
+  registerBasicHooks,
+  clearBrowsePasswordFields,
+} from "../ui";
 import { cancelAction } from "../archive";
-import { chooseOutput, addFiles, addFolder } from "../files";
+import {
+  chooseOutputIfCurrent,
+  addFilesIfCurrent,
+  addFolderIfCurrent,
+} from "../files";
 import { deriveOutputArchivePath } from "../extract-path";
 import {
   setBasicView,
@@ -26,6 +35,10 @@ import {
   openPathWithFeedback,
   togglePasswordVisibility,
   parentDirForPath,
+  beginBasicPreparation,
+  finishBasicPreparation,
+  isBasicInteractionLocked,
+  isBasicPreparationCurrent,
 } from "./actions";
 import { refreshRecentArchives, setRecentArchiveHandler } from "./recent";
 import { wireBasicBrowseEvents } from "./browse-events";
@@ -47,17 +60,20 @@ export function initBasicWorkspace(): void {
 
   if (dropzone) {
     const activateDropzone = async (): Promise<void> => {
-      if (state.running) return;
-      const selection = await open({
-        title: "Select files or archives",
-        multiple: true,
-      });
-      if (state.running) return;
-      if (!selection) return;
-      const paths = Array.isArray(selection) ? selection : [selection];
-      if (paths.length > 0) {
-        await handleBasicDrop(paths);
+      const preparation = beginBasicPreparation();
+      if (!preparation) return;
+      let paths: string[] = [];
+      try {
+        const selection = await open({
+          title: "Select files or archives",
+          multiple: true,
+        });
+        if (!selection || !isBasicPreparationCurrent(preparation)) return;
+        paths = Array.isArray(selection) ? selection : [selection];
+      } finally {
+        finishBasicPreparation(preparation);
       }
+      if (paths.length > 0) await handleBasicDrop(paths);
     };
     dropzone.addEventListener("click", () => void activateDropzone());
     dropzone.addEventListener("keydown", (e: KeyboardEvent) => {
@@ -70,7 +86,7 @@ export function initBasicWorkspace(): void {
 
   if (compressCard) {
     compressCard.addEventListener("click", async () => {
-      if (state.running) return;
+      if (isBasicInteractionLocked()) return;
       state.inputs.length = 0;
       state.lastAutoOutputPath = null;
       setMode("add");
@@ -81,30 +97,35 @@ export function initBasicWorkspace(): void {
 
   if (openCard) {
     openCard.addEventListener("click", async () => {
-      if (state.running) return;
-      const selection = await open({
-        title: "Open archive",
-        multiple: true,
-        filters: [
-          {
-            name: "Archives",
-            extensions: [
-              "7z",
-              "zip",
-              "tar",
-              "gz",
-              "tgz",
-              "bz2",
-              "tbz2",
-              "xz",
-              "txz",
-              "rar",
-            ],
-          },
-        ],
-      });
-      if (state.running) return;
-      if (!selection) return;
+      const preparation = beginBasicPreparation();
+      if (!preparation) return;
+      let selection: string | string[] | null = null;
+      try {
+        selection = await open({
+          title: "Open archive",
+          multiple: true,
+          filters: [
+            {
+              name: "Archives",
+              extensions: [
+                "7z",
+                "zip",
+                "tar",
+                "gz",
+                "tgz",
+                "bz2",
+                "tbz2",
+                "xz",
+                "txz",
+                "rar",
+              ],
+            },
+          ],
+        });
+        if (!selection || !isBasicPreparationCurrent(preparation)) return;
+      } finally {
+        finishBasicPreparation(preparation);
+      }
       const paths = Array.isArray(selection) ? selection : [selection];
       if (paths.length > 0) {
         state.inputs.length = 0;
@@ -131,28 +152,35 @@ export function initBasicWorkspace(): void {
   );
   if (extractArchiveInfo) {
     extractArchiveInfo.addEventListener("click", async () => {
-      const selection = await open({
-        title: "Open archive",
-        multiple: false,
-        filters: [
-          {
-            name: "Archives",
-            extensions: [
-              "7z",
-              "zip",
-              "tar",
-              "gz",
-              "tgz",
-              "bz2",
-              "tbz2",
-              "xz",
-              "txz",
-              "rar",
-            ],
-          },
-        ],
-      });
-      if (!selection) return;
+      const preparation = beginBasicPreparation();
+      if (!preparation) return;
+      let selection: string | string[] | null = null;
+      try {
+        selection = await open({
+          title: "Open archive",
+          multiple: false,
+          filters: [
+            {
+              name: "Archives",
+              extensions: [
+                "7z",
+                "zip",
+                "tar",
+                "gz",
+                "tgz",
+                "bz2",
+                "tbz2",
+                "xz",
+                "txz",
+                "rar",
+              ],
+            },
+          ],
+        });
+        if (!selection || !isBasicPreparationCurrent(preparation)) return;
+      } finally {
+        finishBasicPreparation(preparation);
+      }
       const path = typeof selection === "string" ? selection : selection[0];
       if (path) {
         state.inputs = [path];
@@ -166,30 +194,39 @@ export function initBasicWorkspace(): void {
   );
   if (browseArchiveInfo) {
     browseArchiveInfo.addEventListener("click", async () => {
-      const selection = await open({
-        title: "Open archive",
-        multiple: false,
-        filters: [
-          {
-            name: "Archives",
-            extensions: [
-              "7z",
-              "zip",
-              "tar",
-              "gz",
-              "tgz",
-              "bz2",
-              "tbz2",
-              "xz",
-              "txz",
-              "rar",
-            ],
-          },
-        ],
-      });
-      if (!selection) return;
+      const preparation = beginBasicPreparation();
+      if (!preparation) return;
+      let selection: string | string[] | null = null;
+      try {
+        selection = await open({
+          title: "Open archive",
+          multiple: false,
+          filters: [
+            {
+              name: "Archives",
+              extensions: [
+                "7z",
+                "zip",
+                "tar",
+                "gz",
+                "tgz",
+                "bz2",
+                "tbz2",
+                "xz",
+                "txz",
+                "rar",
+              ],
+            },
+          ],
+        });
+        if (!selection || !isBasicPreparationCurrent(preparation)) return;
+      } finally {
+        finishBasicPreparation(preparation);
+      }
       const path = typeof selection === "string" ? selection : selection[0];
       if (path) {
+        clearBrowsePasswordFields();
+        setBasicBrowsePasswordVisible(false);
         state.inputs = [path];
         renderInputs();
         void runBasicBrowseArchive();
@@ -205,12 +242,14 @@ export function initBasicWorkspace(): void {
   const tabHome = document.getElementById("basic-tab-home");
   if (tabHome) {
     tabHome.addEventListener("click", () => {
+      if (isBasicInteractionLocked()) return;
       setBasicView("home");
     });
   }
   const tabCompress = document.getElementById("basic-tab-compress");
   if (tabCompress) {
     tabCompress.addEventListener("click", () => {
+      if (isBasicInteractionLocked()) return;
       setBasicView("compress");
       setMode("add");
       renderInputs();
@@ -219,6 +258,7 @@ export function initBasicWorkspace(): void {
   const tabExtract = document.getElementById("basic-tab-extract");
   if (tabExtract) {
     tabExtract.addEventListener("click", () => {
+      if (isBasicInteractionLocked()) return;
       setBasicView("extract");
       setMode("extract");
       renderInputs();
@@ -227,6 +267,7 @@ export function initBasicWorkspace(): void {
   const tabBrowse = document.getElementById("basic-tab-browse");
   if (tabBrowse) {
     tabBrowse.addEventListener("click", () => {
+      if (isBasicInteractionLocked()) return;
       setBasicView("browse");
       setMode("browse");
       renderInputs();
@@ -241,24 +282,59 @@ export function initBasicWorkspace(): void {
   void refreshRecentArchives();
 }
 
+async function activateBasicAddFiles(): Promise<void> {
+  const preparation = beginBasicPreparation();
+  if (!preparation) return;
+  try {
+    await addFilesIfCurrent(() => isBasicPreparationCurrent(preparation), {
+      underBasicPreparation: true,
+    });
+  } finally {
+    finishBasicPreparation(preparation);
+  }
+}
+
 export function wireBasicCompressEvents(): void {
   const addFilesBtn = document.getElementById("basic-add-files");
   if (addFilesBtn) {
-    addFilesBtn.addEventListener("click", async () => {
-      await addFiles();
+    addFilesBtn.addEventListener("click", () => void activateBasicAddFiles());
+  }
+
+  const inputList = document.getElementById("basic-input-list");
+  if (inputList) {
+    inputList.addEventListener("click", (event) => {
+      if (!(event.target instanceof Element)) return;
+      const picker = event.target.closest("[data-basic-input-picker]");
+      if (!picker || !inputList.contains(picker)) return;
+      void activateBasicAddFiles();
     });
   }
 
   const addFolderBtn = document.getElementById("basic-add-folder");
   if (addFolderBtn) {
     addFolderBtn.addEventListener("click", async () => {
-      await addFolder();
+      const preparation = beginBasicPreparation();
+      if (!preparation) return;
+      try {
+        await addFolderIfCurrent(() => isBasicPreparationCurrent(preparation), {
+          underBasicPreparation: true,
+        });
+      } finally {
+        finishBasicPreparation(preparation);
+      }
     });
   }
 
   const clearBtn = document.getElementById("basic-clear-inputs");
   if (clearBtn) {
     clearBtn.addEventListener("click", () => {
+      if (
+        state.running ||
+        state.operationPreparing ||
+        state.incomingPathsApplying
+      ) {
+        return;
+      }
       state.inputs.length = 0;
       state.lastAutoOutputPath = null;
       renderInputs();
@@ -276,8 +352,19 @@ export function wireBasicCompressEvents(): void {
   const chooseOutputBtn = document.getElementById("basic-choose-output");
   if (chooseOutputBtn) {
     chooseOutputBtn.addEventListener("click", async () => {
-      syncBasicToPower();
-      await chooseOutput();
+      const preparation = beginBasicPreparation();
+      if (!preparation) return;
+      let accepted = false;
+      try {
+        syncBasicToPower();
+        await chooseOutputIfCurrent(() =>
+          isBasicPreparationCurrent(preparation),
+        );
+        accepted = isBasicPreparationCurrent(preparation);
+      } finally {
+        finishBasicPreparation(preparation);
+      }
+      if (!accepted) return;
       const outputVal = $<HTMLInputElement>("output-path").value;
       const basicOutput = document.getElementById(
         "basic-output-path",

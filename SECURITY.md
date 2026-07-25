@@ -86,29 +86,27 @@ These checks are defense in depth around 7-Zip's own path sanitization. They do
 not make untrusted archives harmless: users should still keep Zinnia and its
 bundled 7-Zip current and avoid opening extracted executables they do not trust.
 
-### Password handling (known limitation)
+### Password handling
 
-7-Zip's CLI accepts a password only through the `-p` switch. On most platforms
-the process command line is visible to other processes owned by the same user
-(e.g. `ps`), so a password passed to a running 7z process can be observed
-locally during the operation.
+Zinnia removes `-pPASSWORD` before spawning 7-Zip and supplies the password to
+7-Zip's prompt through a short-lived stdin pipe. Create/update receives a bare
+`-p` switch so 7-Zip prompts instead of silently creating an unencrypted
+archive; list/test/extract prompt automatically. The pipe is bounded and then
+closed so an unexpected prompt cannot leave the sidecar waiting indefinitely.
+The password is therefore not present in the spawned process's command line or
+ordinary process listings.
 
-Mitigations in place:
+Passwords are never written to the activity log, command preview, or persisted
+settings (redacted via `sanitizeCommandArgsForPreview` /
+`redactSensitiveText`). Passwords containing line breaks are rejected because
+the prompt transport is line-oriented.
 
-- Passwords are never written to the activity log, command preview, or persisted
-  settings (redacted via `sanitizeCommandArgsForPreview` /
-  `redactSensitiveText`).
-- This exposure is local-user-only and transient (the lifetime of the
-  operation).
-
-A full fix requires linking 7-Zip as a library (e.g. `sevenz-rust2`) for the
-encrypted paths so the password never reaches a process command line. This is
-tracked as release-security debt and is out of scope for the CLI sidecar today.
-Do not represent encrypted-archive passwords as protected from other same-user
-processes until that architecture changes.
-
-Avoid sharing screen recordings or process listings while an encrypted
-operation is running.
+The password necessarily exists transiently in Zinnia and 7-Zip process memory
+and in the OS pipe buffer. A process with sufficient same-user debugging or
+memory-inspection access, a crash dump, or a compromised user session may still
+recover it. This transport protects against incidental command-line disclosure;
+it does not protect secrets from an attacker who can inspect or control the
+running user account.
 
 ### Vendored 7-Zip binaries
 
@@ -125,10 +123,14 @@ for new advisories. When a new 7-Zip version addresses a security issue, update
 `assets/` with the new binaries, run
 `assets/7z-provenance.json` with the exact official archive URLs, archive
 SHA-256 values, and extracted member mapping, then run
-`node scripts/prepare-7z.js --update-checksums --version <verified-version> --verify-downloads <download-directory>`
+`node scripts/prepare-7z.js --update-checksums --all --version <verified-version> --verify-downloads <download-directory> --trusted-7z <independently-trusted-7z-path>`
 and cut a Zinnia release. The update command refuses to run when its explicit
 version does not match the reviewed provenance manifest or the downloaded
-archives and extracted members do not match that manifest.
+archives and extracted members do not match that manifest. The trusted
+extractor must be an independently installed file outside this repository's
+candidate `assets/` and generated `src-tauri/binaries/` roots; it is used only
+to unpack the official Windows `.7z`, while official `.tar.xz` sources use the
+system `tar`.
 
 #### Temporary Windows RAR restriction
 
@@ -160,7 +162,7 @@ does not expand filesystem or network reach.
 ### Flatpak filesystem access
 
 The Flatpak package grants `--filesystem=home`, `--filesystem=xdg-download`,
-`--filesystem=/run/media`, and `--filesystem=/mnt` because the bundled 7-Zip
+`--filesystem=/run/media`, `--filesystem=/media`, and `--filesystem=/mnt` because the bundled 7-Zip
 sidecar must read/write user-selected archive paths, including common USB and
 download locations outside `$HOME`. Document portals alone cannot cover sidecar
 I/O today. This expands the sandbox blast radius relative to a portal-only app;

@@ -2,7 +2,14 @@ import { open, confirm, save, message } from "@tauri-apps/plugin-dialog";
 import { promptInput } from "../prompt-modal";
 import { invoke } from "@tauri-apps/api/core";
 import { state } from "../state";
-import { log, getWorkspaceMode, setMode, renderInputs } from "../ui";
+import {
+  log,
+  getWorkspaceMode,
+  getMode,
+  setMode,
+  renderInputs,
+  triggerIconRefresh,
+} from "../ui";
 import { validateArchivePaths } from "../archive-rules";
 import {
   runAction,
@@ -12,6 +19,7 @@ import {
   parseArchiveListing,
 } from "../archive";
 import {
+  archiveExtensionForFormat,
   isPreferredCompressParent,
   fallbackCompressParent,
 } from "../extract-path";
@@ -27,6 +35,7 @@ import {
   showBasicProgress,
   hideBasicCompletion,
   showBasicCompletion,
+  updateBasicPreparingState,
 } from "./progress";
 import { setRecentArchiveHandler } from "./recent";
 
@@ -79,46 +88,111 @@ export async function partitionByArchive(
 function loadInputs(paths: string[]): void {
   state.inputs.length = 0;
   for (const p of paths) {
-    if (!state.inputs.includes(p)) state.inputs.push(p);
+    if (state.inputs.includes(p)) continue;
+    if (state.inputs.length >= 4096) break;
+    state.inputs.push(p);
   }
 }
 
-let basicDropPending = false;
-let basicActionPending = false;
+export interface BasicPreparation {
+  generation: number;
+  inputs: string[];
+  mode: ReturnType<typeof getMode>;
+  view: ReturnType<typeof getBasicView>;
+}
 
-async function handleBasicDropOnce(paths: string[]): Promise<void> {
-  if (paths.length === 0 || state.running) return;
+let basicPreparationGeneration = 0;
+
+export function isBasicInteractionLocked(): boolean {
+  return (
+    state.running || state.operationPreparing || state.incomingPathsApplying
+  );
+}
+
+export function beginBasicPreparation(): BasicPreparation | null {
+  if (isBasicInteractionLocked() || getWorkspaceMode() !== "basic") return null;
+  const preparation: BasicPreparation = {
+    generation: ++basicPreparationGeneration,
+    inputs: [...state.inputs],
+    mode: getMode(),
+    view: getBasicView(),
+  };
+  updateBasicPreparingState(true);
+  return preparation;
+}
+
+export function isBasicPreparationCurrent(
+  preparation: BasicPreparation,
+): boolean {
+  return (
+    state.operationPreparing &&
+    !state.running &&
+    preparation.generation === basicPreparationGeneration &&
+    getWorkspaceMode() === "basic" &&
+    getBasicView() === preparation.view &&
+    getMode() === preparation.mode &&
+    preparation.inputs.length === state.inputs.length &&
+    preparation.inputs.every((path, index) => path === state.inputs[index])
+  );
+}
+
+export function finishBasicPreparation(preparation: BasicPreparation): void {
+  if (preparation.generation !== basicPreparationGeneration) return;
+  updateBasicPreparingState(false);
+}
+
+async function handleBasicDropOnce(
+  paths: string[],
+  preparation: BasicPreparation,
+): Promise<void> {
+  if (paths.length === 0) return;
 
   const { archives, others } = await partitionByArchive(paths);
-  if (state.running) return;
+  if (!isBasicPreparationCurrent(preparation)) return;
   const allArchives = others.length === 0 && archives.length > 0;
   const mixed = archives.length > 0 && others.length > 0;
 
   // Mixed drop: let the user choose extract-the-archives vs compress-everything.
   if (mixed) {
     const extractThem = await confirm(
-      `You dropped ${archives.length} archive(s) and ${others.length} other file(s). Extract the archives, or compress everything into a new archive?`,
+      `You dropped ${archives.length} archive(s) and ${others.length} other file(s). Extract the archives?`,
       {
         title: "Mixed selection",
         okLabel: "Extract archives",
-        cancelLabel: "Compress all",
+        cancelLabel: "More options",
       },
     );
-    if (state.running) return;
+    if (!isBasicPreparationCurrent(preparation)) return;
     if (extractThem) {
+      finishBasicPreparation(preparation);
       loadInputs(archives);
       setMode("extract");
       setBasicView("extract");
       renderInputs();
-    } else {
-      loadInputs(paths);
-      setMode("add");
-      setBasicView("compress");
-      renderInputs();
+      return;
     }
+
+    // A dismissed native confirmation is indistinguishable from its cancel
+    // button. Require a second affirmative choice before compressing so
+    // dismissal can never start an unintended operation.
+    const compressAll = await confirm(
+      "Compress all dropped files into a new archive?",
+      {
+        title: "Mixed selection",
+        okLabel: "Compress all",
+        cancelLabel: "Cancel",
+      },
+    );
+    if (!isBasicPreparationCurrent(preparation) || !compressAll) return;
+    finishBasicPreparation(preparation);
+    loadInputs(paths);
+    setMode("add");
+    setBasicView("compress");
+    renderInputs();
     return;
   }
 
+  finishBasicPreparation(preparation);
   loadInputs(paths);
 
   if (allArchives) {
@@ -140,16 +214,24 @@ async function handleBasicDropOnce(paths: string[]): Promise<void> {
 }
 
 export async function handleBasicDrop(paths: string[]): Promise<void> {
-  if (basicDropPending || state.running) return;
-  basicDropPending = true;
+  if (paths.length === 0) return;
+  // Wait only for OS handoff / Power apply locks. Do not wait on
+  // operationPreparing — that would deadlock behind destination/password dialogs.
+  const { waitUntilIncomingPathsApplyingClear } =
+    await import("../incoming-paths");
+  await waitUntilIncomingPathsApplyingClear();
+  const preparation = beginBasicPreparation();
+  if (!preparation) return;
   try {
-    await handleBasicDropOnce(paths);
+    await handleBasicDropOnce(paths, preparation);
   } finally {
-    basicDropPending = false;
+    finishBasicPreparation(preparation);
   }
 }
 
-async function handleBasicCompressActionOnce(): Promise<void> {
+async function handleBasicCompressActionOnce(
+  preparation: BasicPreparation,
+): Promise<void> {
   if (state.inputs.length === 0) {
     showBasicCompletion(
       "compress",
@@ -180,22 +262,23 @@ async function handleBasicCompressActionOnce(): Promise<void> {
     "basic-format",
   ) as HTMLSelectElement | null;
   const format = formatSelect?.value ?? "7z";
+  const outputExtension = archiveExtensionForFormat(format);
 
   // Prefer saving next to the source, but not under Start Menu / Program Files
   // (common for .lnk shortcuts) where staging dirs get Access Denied.
-  let defaultPath = `Archive.${format}`;
+  let defaultPath = `Archive.${outputExtension}`;
   if (state.inputs[0]) {
     const parent = parentDirForPath(state.inputs[0]);
     if (parent && isPreferredCompressParent(parent)) {
       const sep = state.inputs[0].includes("\\") ? "\\" : "/";
       defaultPath = parent.endsWith(sep)
-        ? `${parent}Archive.${format}`
-        : `${parent}${sep}Archive.${format}`;
+        ? `${parent}Archive.${outputExtension}`
+        : `${parent}${sep}Archive.${outputExtension}`;
     } else {
       const fallback = fallbackCompressParent(state.inputs[0]);
       if (fallback) {
         const sep = fallback.includes("\\") ? "\\" : "/";
-        defaultPath = `${fallback}${sep}Archive.${format}`;
+        defaultPath = `${fallback}${sep}Archive.${outputExtension}`;
       }
     }
   }
@@ -205,7 +288,11 @@ async function handleBasicCompressActionOnce(): Promise<void> {
     defaultPath,
   });
 
-  if (!output) {
+  if (
+    !output ||
+    !isBasicPreparationCurrent(preparation) ||
+    formatSelect?.value !== format
+  ) {
     return;
   }
 
@@ -227,16 +314,22 @@ async function handleBasicCompressActionOnce(): Promise<void> {
   setMode("add");
   showBasicProgress("compress");
   hideBasicCompletion("compress");
+  // Re-validate immediately before unlocking prep and starting the job so a
+  // late input mutation cannot slip past the post-save check.
+  if (!isBasicPreparationCurrent(preparation)) return;
+  // Unlock prep, then enter runAction synchronously so setRunning(true) closes
+  // the gap before any OS-handoff waiter can resume.
+  finishBasicPreparation(preparation);
   await runAction();
 }
 
 export async function handleBasicCompressAction(): Promise<void> {
-  if (basicActionPending || state.running) return;
-  basicActionPending = true;
+  const preparation = beginBasicPreparation();
+  if (!preparation) return;
   try {
-    await handleBasicCompressActionOnce();
+    await handleBasicCompressActionOnce(preparation);
   } finally {
-    basicActionPending = false;
+    finishBasicPreparation(preparation);
   }
 }
 
@@ -281,7 +374,16 @@ export async function isArchiveEncrypted(
   }
 }
 
-async function handleBasicExtractActionOnce(): Promise<void> {
+function clearBasicExtractionPasswords(): void {
+  for (const id of ["basic-extract-password", "extract-password"]) {
+    const input = document.getElementById(id) as HTMLInputElement | null;
+    if (input) input.value = "";
+  }
+}
+
+async function handleBasicExtractActionOnce(
+  preparation: BasicPreparation,
+): Promise<void> {
   const archive = state.inputs[0];
   if (!archive) {
     showBasicCompletion(
@@ -295,6 +397,7 @@ async function handleBasicExtractActionOnce(): Promise<void> {
 
   // 1. Check if archive is encrypted
   const isEncrypted = await isArchiveEncrypted(archive);
+  if (!isBasicPreparationCurrent(preparation)) return;
   let password = "";
 
   if (isEncrypted) {
@@ -306,13 +409,14 @@ async function handleBasicExtractActionOnce(): Promise<void> {
         password: true,
       });
 
-      if (input === null) {
+      if (!isBasicPreparationCurrent(preparation) || input === null) {
         // User cancelled the prompt modal
         return;
       }
 
       // Test the password
       const ok = await testArchivePassword(archive, input);
+      if (!isBasicPreparationCurrent(preparation)) return;
       if (ok) {
         password = input;
         correctPassword = true;
@@ -321,6 +425,7 @@ async function handleBasicExtractActionOnce(): Promise<void> {
           title: "Error",
           kind: "error",
         });
+        if (!isBasicPreparationCurrent(preparation)) return;
       }
     }
   }
@@ -332,7 +437,11 @@ async function handleBasicExtractActionOnce(): Promise<void> {
     directory: true,
   });
 
-  if (!output || typeof output !== "string") {
+  if (
+    !output ||
+    typeof output !== "string" ||
+    !isBasicPreparationCurrent(preparation)
+  ) {
     return;
   }
 
@@ -362,16 +471,23 @@ async function handleBasicExtractActionOnce(): Promise<void> {
   setMode("extract");
   showBasicProgress("extract");
   hideBasicCompletion("extract");
+  // Re-validate immediately before unlocking prep and starting the job so a
+  // late input mutation cannot apply a verified password to another archive.
+  if (!isBasicPreparationCurrent(preparation)) return;
+  // Unlock prep, then enter runAction synchronously so setRunning(true) closes
+  // the gap before any OS-handoff waiter can resume.
+  finishBasicPreparation(preparation);
   await runAction();
 }
 
 export async function handleBasicExtractAction(): Promise<void> {
-  if (basicActionPending || state.running) return;
-  basicActionPending = true;
+  const preparation = beginBasicPreparation();
+  if (!preparation) return;
   try {
-    await handleBasicExtractActionOnce();
+    await handleBasicExtractActionOnce(preparation);
   } finally {
-    basicActionPending = false;
+    clearBasicExtractionPasswords();
+    finishBasicPreparation(preparation);
   }
 }
 
@@ -381,15 +497,29 @@ export function togglePasswordVisibility(inputId: string, btnId: string): void {
   if (!input || !btn) return;
 
   const isPassword = input.type === "password";
+  const isIconOnly = btn.classList.contains("basic-password-toggle--icon");
   if (isPassword) {
     input.type = "text";
-    btn.textContent = "Hide";
+    if (isIconOnly) {
+      const icon = btn.querySelector<HTMLElement>("[data-lucide]");
+      icon?.setAttribute("data-lucide", "eye-off");
+      btn.setAttribute("aria-label", "Hide password");
+    } else {
+      btn.textContent = "Hide";
+    }
     btn.setAttribute("aria-pressed", "true");
   } else {
     input.type = "password";
-    btn.textContent = "Show";
+    if (isIconOnly) {
+      const icon = btn.querySelector<HTMLElement>("[data-lucide]");
+      icon?.setAttribute("data-lucide", "eye");
+      btn.setAttribute("aria-label", "Show password");
+    } else {
+      btn.textContent = "Show";
+    }
     btn.setAttribute("aria-pressed", "false");
   }
+  if (isIconOnly) triggerIconRefresh();
 }
 
 export function handleBasicDragDrop(type: string, paths?: string[]): void {
@@ -402,7 +532,17 @@ export function handleBasicDragDrop(type: string, paths?: string[]): void {
   const target = getBasicView() === "home" && dropzone ? dropzone : workspace;
   if (!target) return;
 
-  if (state.running) {
+  if (type === "drop") {
+    dropzone?.classList.remove("is-drag-over");
+    workspace?.classList.remove("is-drag-over");
+    if (paths && paths.length > 0) {
+      // Queue behind OS handoffs instead of silently discarding.
+      void handleBasicDrop(paths);
+    }
+    return;
+  }
+
+  if (isBasicInteractionLocked()) {
     dropzone?.classList.remove("is-drag-over");
     workspace?.classList.remove("is-drag-over");
     return;
@@ -413,12 +553,6 @@ export function handleBasicDragDrop(type: string, paths?: string[]): void {
   } else if (type === "leave") {
     dropzone?.classList.remove("is-drag-over");
     workspace?.classList.remove("is-drag-over");
-  } else if (type === "drop") {
-    dropzone?.classList.remove("is-drag-over");
-    workspace?.classList.remove("is-drag-over");
-    if (paths && paths.length > 0) {
-      void handleBasicDrop(paths);
-    }
   }
 }
 

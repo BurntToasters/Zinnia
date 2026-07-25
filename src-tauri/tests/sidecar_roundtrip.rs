@@ -43,6 +43,22 @@ fn temp_dir(tag: &str) -> PathBuf {
     base
 }
 
+fn output_with_piped_password(command: &mut Command, password: &str) -> std::process::Output {
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("7z should run");
+    let mut stdin = child.stdin.take().expect("7z stdin pipe");
+    for _ in 0..3 {
+        stdin.write_all(password.as_bytes()).unwrap();
+        stdin.write_all(b"\n").unwrap();
+    }
+    drop(stdin);
+    child.wait_with_output().unwrap()
+}
+
 #[cfg(windows)]
 fn volume_guid_alias(path: &Path) -> Option<PathBuf> {
     use std::ffi::OsString;
@@ -309,28 +325,75 @@ fn password_prompt_accepts_the_bounded_pipe_used_by_zinnia() {
     let src = work.join("secret.txt");
     std::fs::write(&src, b"secret\n").unwrap();
     let archive = work.join("encrypted.7z");
-    let mut child = Command::new(&bin)
-        .args([
+    let add = output_with_piped_password(
+        Command::new(&bin).args([
             "a",
             "-t7z",
+            "-p",
             "-mhe=on",
             archive.to_str().unwrap(),
             "--",
             src.to_str().unwrap(),
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let mut stdin = child.stdin.take().unwrap();
-    stdin.write_all(b"correct\ncorrect\ncorrect\n").unwrap();
-    drop(stdin);
-    let output = child.wait_with_output().unwrap();
-    assert!(
-        output.status.success(),
-        "pipe password failed: {}",
-        String::from_utf8_lossy(&output.stderr)
+        ]),
+        "correct",
     );
+    assert!(
+        add.status.success(),
+        "pipe password failed: {}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+
+    let list_without_password = Command::new(&bin)
+        .args(["l", "--", archive.to_str().unwrap()])
+        .stdin(Stdio::null())
+        .output()
+        .expect("7z list should run");
+    assert!(
+        !list_without_password.status.success(),
+        "encrypted archive listed without a password"
+    );
+
+    let test_without_password = Command::new(&bin)
+        .args(["t", "--", archive.to_str().unwrap()])
+        .stdin(Stdio::null())
+        .output()
+        .expect("7z test should run");
+    assert!(
+        !test_without_password.status.success(),
+        "encrypted archive tested without a password"
+    );
+
+    let out = work.join("without-password");
+    let extract_without_password = Command::new(&bin)
+        .args([
+            "x",
+            &format!("-o{}", out.display()),
+            "-y",
+            "--",
+            archive.to_str().unwrap(),
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .expect("7z extract should run");
+    assert!(
+        !extract_without_password.status.success(),
+        "encrypted archive extracted without a password"
+    );
+
+    let encrypted_listing = output_with_piped_password(
+        Command::new(&bin).args(["l", "-slt", "--", archive.to_str().unwrap()]),
+        "correct",
+    );
+    assert!(
+        encrypted_listing.status.success(),
+        "listing with piped password failed: {}",
+        String::from_utf8_lossy(&encrypted_listing.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&encrypted_listing.stdout).contains("Encrypted = +"),
+        "7z listing did not mark the archived file as encrypted:\n{}",
+        String::from_utf8_lossy(&encrypted_listing.stdout)
+    );
+
     let _ = std::fs::remove_dir_all(work);
 }

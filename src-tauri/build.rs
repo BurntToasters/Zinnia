@@ -287,13 +287,13 @@ fn prepare_7z_binaries() {
         if let Some(expected) = checksums.get(*source) {
             if actual_hash != *expected {
                 panic!(
-                    "Checksum mismatch for {}\n  expected: {}\n  actual:   {}\nRun `node scripts/prepare-7z.js --update-checksums --version <verified-version> --verify-downloads <directory>` after verifying the official archives.",
+                    "Checksum mismatch for {}\n  expected: {}\n  actual:   {}\nRun `node scripts/prepare-7z.js --update-checksums --all --version <verified-version> --verify-downloads <directory> --trusted-7z <independently-trusted-7z-path>` after verifying the official archives.",
                     source, expected, actual_hash
                 );
             }
         } else {
             panic!(
-                "No checksum entry for {} in 7z-checksums.json. Run `node scripts/prepare-7z.js --update-checksums --version <verified-version> --verify-downloads <directory>` after verifying the official archives.",
+                "No checksum entry for {} in 7z-checksums.json. Run `node scripts/prepare-7z.js --update-checksums --all --version <verified-version> --verify-downloads <directory> --trusted-7z <independently-trusted-7z-path>` after verifying the official archives.",
                 source
             );
         }

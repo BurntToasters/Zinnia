@@ -215,6 +215,38 @@ pub(crate) fn cleanup_committed_archive_journal(journal: &CleanupJournal) -> Res
     Ok(())
 }
 
+/// Fail closed when a scrub must retract partial archive output recorded in the
+/// recovery journal path. Missing journals are fine; corrupt ones must not be
+/// cleared silently by the caller.
+pub(crate) fn retract_scrub_archive_journal_at(path: &std::path::Path) -> Result<(), String> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(format!(
+                "Could not inspect recovery journal for scrub: {error}"
+            ));
+        }
+        Ok(metadata) => metadata,
+    };
+    if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_file() {
+        return Err("Recovery journal is not a regular file.".to_string());
+    }
+    let json = std::fs::read_to_string(path)
+        .map_err(|error| format!("Could not read recovery journal for scrub: {error}"))?;
+    let journal = serde_json::from_str::<CleanupJournal>(&json)
+        .map_err(|error| format!("Could not parse recovery journal for scrub: {error}"))?;
+    if journal.archive && !archive_journal_is_committed(&journal) {
+        rollback_archive_journal(&journal)?;
+    }
+    Ok(())
+}
+
+/// Fail closed when a scrub must retract partial archive output recorded in the
+/// active journal. Missing or corrupt journals must not be cleared silently.
+pub(crate) fn retract_scrub_archive_journal_or_fail(app: &tauri::AppHandle) -> Result<(), String> {
+    retract_scrub_archive_journal_at(&cleanup_journal_path(app)?)
+}
+
 pub(crate) fn rollback_archive_journal(journal: &CleanupJournal) -> Result<(), String> {
     // Validate every recovery backup before deleting any partially published
     // output. If a shared-folder race replaced a backup, preserve all paths and
@@ -367,6 +399,10 @@ pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), Str
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             if !journal.archive {
                 recover_missing_extract_stage(&journal)?;
+            } else if !archive_journal_is_committed(&journal) {
+                // Stage may have been scrubbed after a failed add-mode commit
+                // while partial destinations remain. Retract them before drop.
+                rollback_archive_journal(&journal)?;
             }
             return clear_cleanup_journal(app);
         }

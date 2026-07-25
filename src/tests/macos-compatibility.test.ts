@@ -87,6 +87,10 @@ describe("macOS compatibility", () => {
     expect(releaseVerifier).toContain("const hostEntitlements");
     expect(releaseVerifier).toContain("ZinniaFinderSync.entitlements");
     expect(releaseVerifier).toContain("Zinnia.entitlements");
+    expect(releaseVerifier).toContain(
+      'path.join(finderSyncAppex, "Contents", "MacOS", "ZinniaFinderSync")',
+    );
+    expect(releaseVerifier).toContain("verifyMachOCompatibility");
     expect(releaseVerifier).toContain("TeamIdentifier");
     expect(releaseVerifier).toContain("expectedAppGroup");
     expect(releaseVerifier).toContain("hostTeam !== extensionTeam");

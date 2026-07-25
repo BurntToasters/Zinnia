@@ -20,6 +20,7 @@ import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
 import { spawnSync } from "child_process";
+import { githubAuthorizationForUrl } from "./updater-live-helpers.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
@@ -105,8 +106,12 @@ async function fetchManifest(target) {
     Accept: "application/json",
     "User-Agent": "zinnia-ci",
   };
-  if (process.env.GITHUB_TOKEN) {
-    headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  const authorization = githubAuthorizationForUrl(
+    url,
+    process.env.GH_TOKEN || process.env.GITHUB_TOKEN,
+  );
+  if (authorization) {
+    headers.Authorization = authorization;
   }
   const response = await fetch(url, {
     headers,

@@ -1,8 +1,14 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { run } from "../../scripts/update-metainfo.js";
+import {
+  formatDate,
+  hasExactReleaseVersion,
+  isDirectExecution,
+  run,
+} from "../../scripts/update-metainfo.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -32,6 +38,29 @@ afterEach(() => {
 });
 
 describe("update-metainfo", () => {
+  it("formats release dates in UTC", () => {
+    expect(formatDate(new Date("2026-07-25T00:30:00+14:00"))).toBe(
+      "2026-07-24",
+    );
+  });
+
+  it("matches the exact release version attribute", () => {
+    const xml =
+      '<releases><release version="0.6.0-beta.22" date="2026-07-24"/></releases>';
+    expect(hasExactReleaseVersion(xml, "0.6.0-beta.22")).toBe(true);
+    expect(hasExactReleaseVersion(xml, "0.6.0")).toBe(false);
+  });
+
+  it("detects direct execution without import.meta.main", () => {
+    const scriptPath = path.resolve("scripts/update-metainfo.js");
+    expect(isDirectExecution(pathToFileURL(scriptPath).href, scriptPath)).toBe(
+      true,
+    );
+    expect(
+      isDirectExecution(pathToFileURL(scriptPath).href, "/tmp/other.js"),
+    ).toBe(false);
+  });
+
   it("preserves the historical date of an existing version", () => {
     const paths = fixture(
       "0.6.0-beta.4",

@@ -22,14 +22,35 @@ export function verifyUpdaterSignatures({
   resolveUpdaterTargets,
 }) {
   const pairs = [];
+  const eligibleArtifacts = [];
+  const missingSignatures = [];
   for (const [name, artifactPath] of byName) {
     if (name.endsWith(".sig") || resolveUpdaterTargets(name).length === 0) {
       continue;
     }
+    eligibleArtifacts.push(name);
     const signaturePath = signatureByBaseName.get(name);
-    if (signaturePath) pairs.push([artifactPath, signaturePath]);
+    if (signaturePath) {
+      pairs.push([artifactPath, signaturePath]);
+    } else {
+      missingSignatures.push(`${name}.sig`);
+    }
   }
-  if (pairs.length === 0) return;
+  if (missingSignatures.length > 0) {
+    throw new Error(
+      `Missing updater signature file(s): ${missingSignatures.sort().join(", ")}.`,
+    );
+  }
+  if (eligibleArtifacts.length === 0) {
+    throw new Error(
+      "Updater signature verification found no updater-eligible artifacts.",
+    );
+  }
+  if (pairs.length === 0) {
+    throw new Error(
+      "Updater signature verification found zero eligible pairs.",
+    );
+  }
 
   const tauriConfig = JSON.parse(
     fs.readFileSync(path.join(root, "src-tauri", "tauri.conf.json"), "utf8"),

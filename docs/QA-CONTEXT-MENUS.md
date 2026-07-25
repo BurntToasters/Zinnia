@@ -41,7 +41,7 @@ below before publishing.
 6. Confirm both items are in Finder's **primary** menu (not only under Services),
    then refresh OS Integration: Finder context menu shows **Enabled**.
 7. Trigger Compress and then Extract rapidly. Confirm they arrive oldest-first,
-   exactly once, and no action from a failed/aborted launch appears more than 60
+   exactly once, and no action from a failed/aborted launch appears more than 120
    seconds later.
 8. On the release VM, verify `codesign -dvvv` reports the same `TeamIdentifier`
    for the app, Finder Sync appex, and `Contents/MacOS/7z`. Confirm both app and

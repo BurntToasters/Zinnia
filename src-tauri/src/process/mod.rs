@@ -49,7 +49,9 @@ pub(crate) use quota::available_space_for_path;
 pub(crate) use staging::{create_private_stage_dir, resolve_existing_target};
 
 #[cfg(test)]
-pub(crate) use commands::{rewrite_args_for_managed_listfile, terminate_child, version_cmp};
+pub(crate) use commands::{
+    prepare_password_transport, rewrite_args_for_managed_listfile, terminate_child, version_cmp,
+};
 #[cfg(all(test, target_os = "windows"))]
 pub(crate) use commands::{store_probed_7z_version, windows_rar_extract_blocked};
 #[cfg(all(test, unix))]
@@ -73,7 +75,7 @@ pub(crate) use quota::staged_tree_usage;
 pub(crate) use recovery::{
     archive_journal_is_committed, cleanup_committed_archive_journal,
     cleanup_extract_journal_artifacts, extract_journal_is_committed, recover_missing_extract_stage,
-    rollback_archive_journal,
+    retract_scrub_archive_journal_at, rollback_archive_journal,
 };
 #[cfg(test)]
 pub(crate) use staging::{
@@ -130,6 +132,17 @@ impl ProcessState {
             cleanup_plan: None,
         }
     }
+
+    /// Release the prepare/cancel soft-lock without touching a live child.
+    /// Every prepare-exit path that does not enter running/finalize must call this
+    /// so `cancelling` cannot strand `ensure_idle` until restart.
+    pub fn release_prepare_slot(&mut self) {
+        self.preparing = false;
+        self.cancelling = false;
+        self.owner_label = None;
+        self.abort_reason = None;
+        self.cleanup_plan = None;
+    }
 }
 
 pub struct RunningProcess(pub Mutex<ProcessState>);
@@ -147,6 +160,14 @@ pub(crate) fn lock_process(
         .0
         .lock()
         .map_err(|_| "Process lock poisoned".to_string())
+}
+
+/// Free the prepare slot even if the mutex is poisoned (best-effort unwind).
+pub(crate) fn release_prepare_slot_best_effort(state: &RunningProcess) {
+    match state.0.lock() {
+        Ok(mut process) => process.release_prepare_slot(),
+        Err(poisoned) => poisoned.into_inner().release_prepare_slot(),
+    }
 }
 
 // By design, only one 7z process runs at a time across all windows.

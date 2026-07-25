@@ -63,7 +63,7 @@ pub use open_path::{
 #[allow(unused_imports)]
 pub use open_routing::emit_open_urls;
 #[allow(unused_imports)]
-pub use open_routing::{collect_cli_context, emit_open_paths};
+pub use open_routing::{collect_cli_context, emit_open_paths, resolve_cli_context_with_handoffs};
 
 #[doc(hidden)]
 pub use extract_window::{

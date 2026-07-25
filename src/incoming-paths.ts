@@ -4,6 +4,7 @@ import {
   log,
   renderInputs,
   setMode,
+  getMode,
   getWorkspaceMode,
   setBrowsePasswordFieldVisible,
 } from "./ui";
@@ -59,6 +60,71 @@ function logIncomingPathLimit(source: string, rejected: number): void {
   );
 }
 
+function isIncomingPathMutationBlocked(): boolean {
+  // Basic preparation (password / destination dialogs) shares the input model
+  // with OS handoffs. Block both active jobs and in-flight preparation so a
+  // verified password cannot be applied to a different archive.
+  return state.running || state.operationPreparing;
+}
+
+/** True while Power/Basic drops or another handoff must not mutate `state.inputs`. */
+export function isIncomingPathBusy(): boolean {
+  return isIncomingPathMutationBlocked() || state.incomingPathsApplying;
+}
+
+function refreshIncomingPathMutationControls(): void {
+  const locked =
+    state.running || state.operationPreparing || state.incomingPathsApplying;
+  for (const id of ["add-files", "add-folder", "clear-inputs"]) {
+    const el = document.getElementById(id) as HTMLButtonElement | null;
+    if (el) el.disabled = locked;
+  }
+}
+
+/**
+ * Wait for jobs/prep and any other mutator to finish, then take the applying
+ * lock. No await between the free check and the set — JS is single-threaded, so
+ * Power drops and OS handoffs cannot both hold the lock.
+ */
+export async function acquireIncomingPathLock(): Promise<void> {
+  for (;;) {
+    while (isIncomingPathBusy()) {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
+    }
+    state.incomingPathsApplying = true;
+    if (!isIncomingPathMutationBlocked()) {
+      refreshIncomingPathMutationControls();
+      return;
+    }
+    state.incomingPathsApplying = false;
+  }
+}
+
+export function releaseIncomingPathLock(): void {
+  state.incomingPathsApplying = false;
+  refreshIncomingPathMutationControls();
+}
+
+/** Wait until jobs/prep/applying clear without taking the lock. */
+export async function waitUntilIncomingPathIdle(): Promise<void> {
+  while (isIncomingPathBusy()) {
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
+  }
+}
+
+/** Wait only for the applying lock (not Basic prep / running jobs). */
+export async function waitUntilIncomingPathsApplyingClear(): Promise<void> {
+  while (state.incomingPathsApplying) {
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
+  }
+}
+
+async function waitUntilJobOrPrepAllowsMutation(): Promise<void> {
+  while (isIncomingPathMutationBlocked()) {
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
+  }
+}
+
 export async function applyIncomingPaths(
   paths: string[],
   mode: string,
@@ -66,13 +132,27 @@ export async function applyIncomingPaths(
 ): Promise<void> {
   if (!paths.length) return;
 
-  // Do not mutate the shared input model underneath an active job. Keeping
-  // this promise pending also preserves file-open FIFO ordering.
-  while (state.running) {
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
+  // Serialize against Power drops and other handoffs, and against active jobs /
+  // Basic preparation. Keeping this promise pending also preserves file-open FIFO.
+  await acquireIncomingPathLock();
+  try {
+    await applyIncomingPathsUnlocked(paths, mode, source);
+  } finally {
+    releaseIncomingPathLock();
   }
+}
 
+async function applyIncomingPathsUnlocked(
+  paths: string[],
+  mode: string,
+  source: string,
+): Promise<void> {
   if (mode === "compress") {
+    // Append only within an existing compress session; otherwise drop leftovers
+    // from extract/browse before merging the new handoff.
+    if (getMode() !== "add") {
+      state.inputs.length = 0;
+    }
     setMode("add");
     const { rejected } = mergeIncomingPaths(paths);
     renderInputs();
@@ -85,14 +165,14 @@ export async function applyIncomingPaths(
   }
 
   let allArchives: boolean;
-  // Archive detection crosses the IPC boundary. An operation may start while
-  // that await is pending, so re-check and retry before touching shared input.
+  // Archive detection crosses the IPC boundary. An operation or Basic
+  // preparation may start while that await is pending, so re-check and retry
+  // before touching shared input. Wait only on job/prep — we already hold
+  // incomingPathsApplying and must not deadlock on ourselves.
   for (;;) {
     allArchives = await allPathsAreArchives(paths);
-    if (!state.running) break;
-    while (state.running) {
-      await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
-    }
+    if (!isIncomingPathMutationBlocked()) break;
+    await waitUntilJobOrPrepAllowsMutation();
   }
   const shouldAutoBrowse =
     mode !== "extract" && paths.length === 1 && allArchives;
@@ -100,15 +180,16 @@ export async function applyIncomingPaths(
     mode === "extract" ||
     (mode !== "extract" && paths.length > 1 && allArchives);
   if (shouldAutoExtract) {
-    setMode("extract");
-    // OS integrations may split one Explorer/Finder selection across several
-    // process handoffs. Append and de-duplicate explicit extract batches just
-    // like compress batches so a later handoff can never erase an earlier one.
-    // The UI does not auto-run, so retaining an existing visible archive is
-    // safer than silently replacing work the user already selected.
-    if (mode !== "extract") {
+    // Explicit extract handoffs may arrive as multiple Explorer/Finder batches.
+    // Append only when the UI is already in extract; otherwise clear leftovers
+    // from compress/browse so they are not mixed into the extract session.
+    // Auto-detected extract (multi-archive drop without explicit mode) always
+    // starts a fresh extract input list.
+    const keepExistingInputs = mode === "extract" && getMode() === "extract";
+    if (!keepExistingInputs) {
       state.inputs.length = 0;
     }
+    setMode("extract");
   } else if (shouldAutoBrowse) {
     setMode("browse");
     state.inputs.length = 0;

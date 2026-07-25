@@ -3,6 +3,10 @@ import crypto from "crypto";
 import os from "os";
 import path from "path";
 import { spawnSync } from "child_process";
+import {
+  officialArchiveExtractionCommand,
+  validateTrusted7zPath,
+} from "./prepare-7z-helpers.js";
 
 const root = process.cwd();
 const assetsDir = path.join(root, "assets");
@@ -11,6 +15,7 @@ const checksumPath = path.join(assetsDir, "7z-checksums.json");
 const provenancePath = path.join(assetsDir, "7z-provenance.json");
 const updateChecksums = process.argv.includes("--update-checksums");
 const verifyDownloadsDir = optionValue("--verify-downloads");
+const suppliedTrusted7z = optionValue("--trusted-7z");
 
 function optionValue(name) {
   const index = process.argv.indexOf(name);
@@ -64,6 +69,12 @@ const checksumOnlySources = [
 
 const requireAll =
   process.argv.includes("--all") || process.env.ZINNIA_REQUIRE_ALL_7Z === "1";
+
+if (updateChecksums && !process.argv.includes("--all")) {
+  throw new Error(
+    "Checksum updates require --all so the complete 7-Zip checksum manifest is regenerated.",
+  );
+}
 
 function requiredSourcesForHost() {
   if (requireAll) {
@@ -166,6 +177,9 @@ for (const source of Object.keys(expectedChecksums)) {
   }
 }
 if (updateChecksums) {
+  console.warn(
+    "TRUST BOOTSTRAP: checksum updates trust local assets only after matching independently verified official archives extracted by system tar or the explicitly trusted 7-Zip.",
+  );
   const requestedVersion = optionValue("--version");
   if (requestedVersion !== provenance.version) {
     throw new Error(
@@ -178,6 +192,12 @@ if (updateChecksums) {
     );
   }
 }
+const trusted7zPath = verifyDownloadsDir
+  ? validateTrusted7zPath(suppliedTrusted7z, {
+      assetsDirectory: assetsDir,
+      outputDirectory: outDir,
+    })
+  : undefined;
 const regeneratedChecksums = {};
 
 let copied = 0;
@@ -204,7 +224,7 @@ for (const source of checksumOnlySources) {
     const expected = expectedChecksums[source];
     if (!expected) {
       console.error(
-        `FATAL: No tracked checksum for ${source}. Update provenance, then run with --update-checksums --version ${provenance.version}.`,
+        `FATAL: No tracked checksum for ${source}. Update provenance, then run \`node scripts/prepare-7z.js --update-checksums --all --version ${provenance.version} --verify-downloads <download-directory> --trusted-7z <independently-trusted-7z-path>\`.`,
       );
       process.exit(1);
     }
@@ -243,7 +263,7 @@ for (const mapping of mappings) {
     }
     if (!expected) {
       console.error(
-        `FATAL: No tracked checksum for ${mapping.source}. Update provenance, then run with --update-checksums --version ${provenance.version}.`,
+        `FATAL: No tracked checksum for ${mapping.source}. Update provenance, then run \`node scripts/prepare-7z.js --update-checksums --all --version ${provenance.version} --verify-downloads <download-directory> --trusted-7z <independently-trusted-7z-path>\`.`,
       );
       process.exit(1);
     }
@@ -291,26 +311,15 @@ function verifyOfficialDownloads(downloadDirectory) {
       }
       const destination = path.join(extractionRoot, sourceName);
       fs.mkdirSync(destination);
-      const extraction = archiveName.endsWith(".tar.xz")
-        ? runTool("tar", ["-xJf", archivePath, "-C", destination])
-        : runTool(
-            process.platform === "win32"
-              ? path.join(
-                  outDir,
-                  process.arch === "arm64"
-                    ? "7z-aarch64-pc-windows-msvc.exe"
-                    : "7z-x86_64-pc-windows-msvc.exe",
-                )
-              : path.join(
-                  outDir,
-                  process.platform === "darwin"
-                    ? "7z-universal-apple-darwin"
-                    : process.arch === "arm64"
-                      ? "7z-aarch64-unknown-linux-gnu"
-                      : "7z-x86_64-unknown-linux-gnu",
-                ),
-            ["x", "-y", `-o${destination}`, archivePath],
-          );
+      const extractionCommand = officialArchiveExtractionCommand({
+        archivePath,
+        destination,
+        trusted7zPath,
+      });
+      const extraction = runTool(
+        extractionCommand.command,
+        extractionCommand.args,
+      );
       if (!extraction.ok) {
         throw new Error(
           `Could not extract official archive ${archiveName}: ${extraction.message}`,

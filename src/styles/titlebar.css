@@ -71,8 +71,8 @@ html[data-window-fx="basic"] body.platform-windows #titlebar {
   color: var(--text-secondary);
   cursor: default !important;
   transition:
-    background 150ms ease,
-    color 150ms ease;
+    background var(--transition),
+    color var(--transition);
   -webkit-app-region: no-drag !important;
 }
 

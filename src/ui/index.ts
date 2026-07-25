@@ -30,6 +30,7 @@ export {
   truncateValidationReason,
   mapArchiveValidationResult,
   getMode,
+  clearBrowsePasswordFields,
   setBrowsePasswordFieldVisible,
   setMode,
   renderInputs,

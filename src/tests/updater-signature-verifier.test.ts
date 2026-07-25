@@ -2,7 +2,10 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { afterEach, describe, expect, it } from "vitest";
-import { normalizeUpdaterSignature } from "../../scripts/updater-signature-verifier.js";
+import {
+  normalizeUpdaterSignature,
+  verifyUpdaterSignatures,
+} from "../../scripts/updater-signature-verifier.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -35,5 +38,36 @@ describe("updater signature normalization", () => {
   it("preserves an already wrapped Minisign envelope", () => {
     const wrapped = Buffer.from(envelope, "utf8").toString("base64");
     expect(normalizeUpdaterSignature(writeSignature(wrapped))).toBe(wrapped);
+  });
+});
+
+describe("updater signature verification safeguards", () => {
+  const resolveUpdaterTargets = (name: string) =>
+    name.endsWith(".AppImage") ? [{ os: "linux" }] : [];
+
+  it("fails when an updater-eligible artifact lacks its signature", () => {
+    expect(() =>
+      verifyUpdaterSignatures({
+        root: "/tmp",
+        releaseDir: "/tmp",
+        byName: new Map([
+          ["Zinnia-Linux-x64.AppImage", "/tmp/Zinnia-Linux-x64.AppImage"],
+        ]),
+        signatureByBaseName: new Map(),
+        resolveUpdaterTargets,
+      }),
+    ).toThrow(/Missing updater signature.*AppImage\.sig/);
+  });
+
+  it("fails when no updater-eligible artifact pairs are present", () => {
+    expect(() =>
+      verifyUpdaterSignatures({
+        root: "/tmp",
+        releaseDir: "/tmp",
+        byName: new Map([["Zinnia-Linux-x64.flatpak", "/tmp/file"]]),
+        signatureByBaseName: new Map(),
+        resolveUpdaterTargets,
+      }),
+    ).toThrow(/no updater-eligible artifacts/);
   });
 });

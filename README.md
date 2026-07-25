@@ -85,6 +85,10 @@ native build runs.
   verifies that the live updater manifests for the current stable or beta
   channel report the exact release version; use `REQUIRED_UPDATER_TARGETS` for
   any target set that must be present in that release.
+- After publishing a **beta** draft, also run `npm run release:sync-beta-manifests`.
+  Draft signing intentionally skips copying `latest-*-beta-*.json` onto
+  `/releases/latest`; this post-publish step uploads those manifests to the
+  latest stable release so existing beta installs can discover the new beta.
 - Each full release command prepares and tests once. If `release:prepare` was
   already run separately on the same VM, use the matching `release:*:resume`
   command; its build session is bound to the exact commit, lockfiles, platform,

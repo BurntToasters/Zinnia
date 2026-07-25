@@ -719,3 +719,9 @@ body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
     opacity: 1;
   }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  #app[data-workspace-mode="basic"] .modal--settings {
+    animation: none;
+  }
+}

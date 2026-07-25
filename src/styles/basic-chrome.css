@@ -52,12 +52,13 @@
 }
 
 #app[data-workspace-mode="basic"] .segmented--workspace {
-  height: 26px;
+  height: 28px;
   padding: 2px;
 }
 
 #app[data-workspace-mode="basic"] .segmented--workspace .segmented__btn {
-  height: 22px;
+  min-width: 24px;
+  height: 24px;
   padding: 0 10px;
   font-size: 0.75rem;
 }
@@ -113,8 +114,8 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
 }
 
 #app[data-workspace-mode="basic"] {
-  height: 100vh;
-  max-height: 100vh;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -167,6 +168,8 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
 
 #basic-home.is-active {
   justify-content: flex-start;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 #app[data-workspace-mode="basic"] .basic-view.is-active {
@@ -185,15 +188,8 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  @keyframes basic-fade-in {
-    from {
-      opacity: 1;
-      transform: none;
-    }
-    to {
-      opacity: 1;
-      transform: none;
-    }
+  .basic-view {
+    animation: none;
   }
 }
 
@@ -460,7 +456,11 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
 .header-recent__item:hover,
 .header-recent__item:focus-visible {
   background: var(--hover-overlay);
-  outline: none;
+}
+
+.header-recent__item:focus-visible {
+  outline: 2px solid var(--accent-fg);
+  outline-offset: -2px;
 }
 
 .basic-back-link {
@@ -474,6 +474,8 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
   cursor: pointer;
   padding: 4px 8px;
   margin-left: -8px;
+  min-height: 24px;
+  min-width: 24px;
   border-radius: 8px;
   font-family: inherit;
   transition:
@@ -586,11 +588,14 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
   text-overflow: ellipsis;
   white-space: nowrap;
   direction: rtl;
+  unicode-bidi: plaintext;
   text-align: left;
 }
 
 .basic-file-item__remove {
   flex-shrink: 0;
+  min-width: 24px;
+  min-height: 24px;
   background: none;
   border: none;
   color: var(--text-secondary);
@@ -605,7 +610,7 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
 }
 
 .basic-file-item__remove:hover {
-  color: var(--danger);
+  color: var(--danger-fg);
   background: var(--danger-bg);
 }
 
@@ -619,6 +624,7 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  min-height: 24px;
   margin: 4px 0 8px;
   font-size: var(--basic-font);
   color: var(--text);
@@ -743,6 +749,7 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-height: 24px;
 }
 
 .basic-more-options summary::-webkit-details-marker {
@@ -793,12 +800,23 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
 }
 
 .basic-btn:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-fg);
   outline-offset: 2px;
 }
 
 .basic-dropzone:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-fg);
+  outline-offset: 2px;
+}
+
+#app[data-workspace-mode="basic"]
+  :where(button, a[href], summary, [role="button"]):focus-visible {
+  outline: 2px solid var(--accent-fg);
+  outline-offset: 2px;
+}
+
+#app[data-workspace-mode="basic"] .switch input:focus-visible + .switch__track {
+  outline: 2px solid var(--accent-fg);
   outline-offset: 2px;
 }
 
@@ -846,7 +864,7 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
 }
 
 .basic-btn--danger {
-  color: var(--danger);
+  color: var(--danger-fg);
 }
 
 .basic-btn--danger:hover {
@@ -934,12 +952,18 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  @keyframes basic-progress-indeterminate {
-    0%,
-    100% {
-      margin-left: 0%;
-      width: 60%;
-    }
+  .basic-progress__bar-fill {
+    transition: none !important;
+  }
+
+  .basic-progress__bar-fill.is-indeterminate {
+    width: 60%;
+    margin-left: 0;
+    animation: none;
+  }
+
+  .basic-completion {
+    animation: none !important;
   }
 }
 
@@ -1028,7 +1052,7 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
 }
 
 .basic-completion--success {
-  border-color: rgba(40, 167, 69, 0.35) !important;
+  border-color: var(--success-border) !important;
   background: color-mix(
     in srgb,
     var(--success) 6%,
@@ -1038,13 +1062,13 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
 }
 
 .basic-completion--error {
-  border-color: rgba(220, 53, 69, 0.35) !important;
+  border-color: var(--danger-border) !important;
   background: color-mix(
     in srgb,
-    var(--danger) 6%,
+    var(--danger-fg) 6%,
     var(--basic-glass-bg)
   ) !important;
-  border-left: 3px solid var(--danger) !important;
+  border-left: 3px solid var(--danger-fg) !important;
 }
 
 .basic-archive-info {
@@ -1060,6 +1084,28 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
   -webkit-backdrop-filter: blur(8px) !important;
   box-shadow: var(--basic-glass-shadow) !important;
   cursor: default !important;
+}
+
+.basic-empty-input-picker {
+  width: 100%;
+  min-height: 24px;
+  margin: 0;
+  appearance: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer !important;
+}
+
+.basic-empty-input-picker:disabled {
+  cursor: not-allowed !important;
+  opacity: 0.65;
+}
+
+.basic-empty-input-picker:disabled:hover {
+  border-color: var(--border-strong) !important;
+  background: var(--basic-glass-bg) !important;
+  box-shadow: var(--basic-glass-shadow) !important;
 }
 
 .basic-archive-info:hover {
@@ -1192,6 +1238,9 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
 .basic-password-toggle {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
   font-family: inherit;
   font-size: var(--basic-label);
   color: var(--text-secondary);
@@ -1210,6 +1259,16 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
   background: var(--hover-overlay);
 }
 
+.basic-password-toggle--icon {
+  align-self: center;
+  padding: 4px 6px;
+}
+
+.basic-password-toggle--icon .lucide-icon {
+  width: 16px;
+  height: 16px;
+}
+
 @media (max-width: 560px) {
   #app[data-workspace-mode="basic"] .basic-workspace {
     padding: 16px 14px;
@@ -1225,6 +1284,9 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
 }
 
 .basic-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   width: 100%;
   max-width: var(--basic-max-width);
   margin-bottom: var(--basic-spacing);
@@ -1241,7 +1303,8 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
   gap: 4px;
 }
 
-.basic-toolbar__tab {
+.basic-toolbar__tab,
+.basic-toolbar__back {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -1258,9 +1321,16 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
   transition: all var(--transition);
 }
 
-.basic-toolbar__tab:hover {
+.basic-toolbar__tab:hover,
+.basic-toolbar__back:hover {
   color: var(--text);
   background: var(--hover-overlay);
+}
+
+.basic-toolbar__tab:focus-visible,
+.basic-toolbar__back:focus-visible {
+  outline: 2px solid var(--accent-fg);
+  outline-offset: -2px;
 }
 
 .basic-toolbar__tab.is-active {
@@ -1268,7 +1338,28 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
   color: var(--accent-fg);
 }
 
-.basic-toolbar__tab .lucide-icon {
+.basic-toolbar__tab:disabled,
+.basic-toolbar__back:disabled,
+.basic-toolbar__tab.is-disabled,
+.basic-toolbar__back.is-disabled,
+.basic-toolbar__tab[aria-disabled="true"],
+.basic-toolbar__back[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed !important;
+}
+
+.basic-toolbar__tab:hover:disabled,
+.basic-toolbar__back:hover:disabled,
+.basic-toolbar__tab.is-disabled:hover,
+.basic-toolbar__back.is-disabled:hover,
+.basic-toolbar__tab[aria-disabled="true"]:hover,
+.basic-toolbar__back[aria-disabled="true"]:hover {
+  color: var(--text-secondary);
+  background: transparent;
+}
+
+.basic-toolbar__tab .lucide-icon,
+.basic-toolbar__back .lucide-icon {
   width: 16px;
   height: 16px;
 }

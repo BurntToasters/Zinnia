@@ -8,6 +8,7 @@ import {
 } from "./archive";
 import { applyPreset, onCompressionOptionChange } from "./presets";
 import { getCompressionSecuritySupport } from "./compression-security";
+import { resolveOutputArchiveAutofill } from "./extract-path";
 import { state } from "./state";
 import { getMode, setMode } from "./ui";
 import type { ArchiveFormat } from "./settings-model";
@@ -58,6 +59,22 @@ function getReplayTarget(
   return action as QuickActionKey;
 }
 
+function rederiveQuickPresetOutput(): void {
+  const format = $<HTMLSelectElement>("format").value;
+  const output = $<HTMLInputElement>("output-path");
+  const archiveName = $<HTMLInputElement>("archive-name").value || undefined;
+  const next = resolveOutputArchiveAutofill(
+    output.value,
+    state.lastAutoOutputPath,
+    state.inputs,
+    format,
+    archiveName,
+  );
+  if (!next) return;
+  output.value = next;
+  state.lastAutoOutputPath = next;
+}
+
 export function refreshQuickActionRepeatState(): void {
   const mode = getMode();
   const repeatButtons: Array<{ id: string; targetMode: typeof mode }> = [
@@ -83,11 +100,13 @@ async function runQuickAction(
     case "add-run-balanced":
       applyPreset("balanced");
       onCompressionOptionChange();
+      rederiveQuickPresetOutput();
       await runAction();
       return true;
     case "add-run-ultra":
       applyPreset("ultra");
       onCompressionOptionChange();
+      rederiveQuickPresetOutput();
       await runAction();
       return true;
     case "add-encrypt-run": {
@@ -120,6 +139,8 @@ async function runQuickAction(
       await runAction();
       return true;
     case "extract-test-then-extract": {
+      const passwordField = $<HTMLInputElement>("extract-password");
+      const password = passwordField.value;
       const result = await testArchive();
       if (result !== "passed" && result !== "passed_with_warnings") {
         setQuickActionFeedback(
@@ -127,7 +148,14 @@ async function runQuickAction(
         );
         return false;
       }
-      await runAction();
+      // testArchive clears password fields. Keep the password only in this
+      // local composed action and restore it for the immediate extraction.
+      passwordField.value = password;
+      try {
+        await runAction();
+      } finally {
+        passwordField.value = "";
+      }
       return true;
     }
     case "extract-selective":

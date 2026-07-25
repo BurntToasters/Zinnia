@@ -1,15 +1,15 @@
 //! Promote/merge staged outputs, commit and rollback cleanup.
 
+#[cfg(windows)]
+use super::journal::move_identity_log_path;
 use super::journal::{
     ensure_path_identity, ensure_regular_file_identity, file_identities_match, file_identity,
-    mark_archive_journal_committed, mark_extract_journal_committed, move_plan_path,
+    mark_archive_journal_committed, mark_extract_journal_committed, move_plan_path, path_identity,
     record_archive_journal_backup, record_archive_journal_published, regular_file_identity,
     remove_move_plan_sidecars, remove_regular_file_if_matches, sync_directory,
     unregister_plan_stages, update_archive_journal, FileIdentity, MoveRecord,
     LEGACY_MOVE_PLAN_FILE_NAME,
 };
-#[cfg(windows)]
-use super::journal::{move_identity_log_path, path_identity};
 use super::quota::MAX_EXTRACT_ENTRIES;
 use super::staging::{assert_real_directory, path_entry_exists};
 use super::CleanupPlan;
@@ -1486,6 +1486,7 @@ pub(crate) fn validate_move_record(
             }
         }
     } else if record.publish_identity.is_some() {
+        #[cfg(windows)]
         return Err("Refusing extraction publish identity without a publish path.".to_string());
     }
     Ok(())
@@ -1590,7 +1591,26 @@ pub(crate) fn rollback_move_records(
             continue;
         };
         if source_exists {
-            // The move was planned but never executed.
+            // Hard-link / exclusive-copy publish can leave the stage source while
+            // the target is already visible. Retract the published target so a
+            // failed commit does not leave partial extract output behind.
+            // (Rename-only publishes remove the source, so both existing means
+            // a non-move publish path ran.)
+            if path_entry_exists(&record.target).unwrap_or(false) {
+                let Some(identity) = &record.publish_identity else {
+                    failures.push(format!(
+                        "Refusing to retract published extraction target without a recorded identity: {}",
+                        record.target.display()
+                    ));
+                    continue;
+                };
+                if let Err(error) = remove_path_if_matches(&record.target, identity) {
+                    failures.push(format!(
+                        "Could not retract published extraction target {}: {error}",
+                        record.target.display()
+                    ));
+                }
+            }
             continue;
         }
         // Rename operates on the link/reparse entry itself and does not follow
@@ -1694,6 +1714,20 @@ where
             Err(error) => return Err(error.to_string()),
         }
         rename_file_no_replace(staged, destination)?;
+        if let Err(error) = crate::fs_secure::apply_parent_directory_mode(destination) {
+            let rollback = rename_file_no_replace(destination, staged).and_then(|()| {
+                if let Some(parent) = destination.parent() {
+                    sync_directory(parent)?;
+                }
+                Ok(())
+            });
+            return Err(match rollback {
+                Ok(()) => error.to_string(),
+                Err(rollback_error) => {
+                    format!("{error}; extraction mode rollback also failed: {rollback_error}")
+                }
+            });
+        }
         let durability = if let Some(parent) = destination.parent() {
             sync_directory(parent)
         } else {
@@ -1746,46 +1780,55 @@ where
     #[cfg(windows)]
     let mut identity_log = MoveIdentityLogWriter::create(staged)?;
     for index in 0..plan.len() {
-        let record = &plan[index];
-        validate_move_record(staged, destination, record)?;
-        if let Err(error) = assert_safe_extract_target_ancestors(destination, &record.target) {
-            let rollback = rollback_move_records(staged, destination, &plan);
-            return Err(match rollback {
-                Ok(()) => error,
-                Err(rollback_error) => format!("{error}; rollback also failed: {rollback_error}"),
-            });
-        }
-        if path_entry_exists(&record.target)? {
-            let error = format!(
-                "Extraction destination changed during commit: {}",
-                record.target.display()
-            );
-            let rollback = rollback_move_records(staged, destination, &plan);
-            return Err(match rollback {
-                Ok(()) => error,
-                Err(rollback_error) => format!("{error}; rollback also failed: {rollback_error}"),
-            });
-        }
-        #[cfg(windows)]
-        if record.publish_temp.is_some() {
-            if let Err(error) = publish_target_local_copy(&mut identity_log, &mut plan, index) {
-                let rollback = rollback_move_records(staged, destination, &plan);
-                return Err(match rollback {
-                    Ok(()) => error,
-                    Err(rollback_error) => {
-                        format!("{error}; rollback also failed: {rollback_error}")
-                    }
-                });
+        let mut publish_one = || -> Result<(), String> {
+            let record = &plan[index];
+            validate_move_record(staged, destination, record)?;
+            assert_safe_extract_target_ancestors(destination, &record.target)?;
+            if path_entry_exists(&record.target)? {
+                return Err(format!(
+                    "Extraction destination changed during commit: {}",
+                    record.target.display()
+                ));
             }
-            continue;
-        }
-        let metadata = std::fs::symlink_metadata(&record.source).map_err(|e| e.to_string())?;
-        let result = if metadata.is_file() {
-            publish_file_no_replace(&record.source, &record.target)
-        } else {
-            rename_file_no_replace(&record.source, &record.target)
+            #[cfg(windows)]
+            if record.publish_temp.is_some() {
+                return publish_target_local_copy(&mut identity_log, &mut plan, index);
+            }
+            let metadata = std::fs::symlink_metadata(&record.source).map_err(|e| e.to_string())?;
+            if metadata.is_file() {
+                // Journal identity before visibility so hard-link retract cannot
+                // fail closed with both source and target present and no id.
+                if !crate::path_safety::is_link_or_reparse(&metadata) {
+                    let expected = path_identity(&record.source)?;
+                    plan[index].publish_identity = Some(expected);
+                    write_move_plan(staged, &plan)?;
+                }
+                publish_file_no_replace(&plan[index].source, &plan[index].target)?;
+                if let Some(expected) = plan[index].publish_identity.clone() {
+                    let actual = path_identity(&plan[index].target)?;
+                    if !file_identities_match(&actual, &expected) {
+                        plan[index].publish_identity = Some(actual);
+                        write_move_plan(staged, &plan)?;
+                    }
+                }
+                return Ok(());
+            }
+            rename_file_no_replace(&record.source, &record.target)?;
+            // Stage roots are 0o700 while private. Renamed directories must
+            // inherit the destination parent's mode so merge publishes are
+            // not left owner-only under shared/group-readable trees.
+            if metadata.is_dir() {
+                crate::fs_secure::apply_parent_directory_mode(&plan[index].target)
+                    .map_err(|error| error.to_string())?;
+            }
+            if !crate::path_safety::is_link_or_reparse(&metadata) {
+                let identity = path_identity(&plan[index].target)?;
+                plan[index].publish_identity = Some(identity);
+                write_move_plan(staged, &plan)?;
+            }
+            Ok(())
         };
-        if let Err(error) = result {
+        if let Err(error) = publish_one() {
             let rollback = rollback_move_records(staged, destination, &plan);
             return Err(match rollback {
                 Ok(()) => error,

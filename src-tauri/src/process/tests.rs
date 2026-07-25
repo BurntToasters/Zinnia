@@ -166,6 +166,142 @@ fn operation_output_path_none_for_list() {
 }
 
 #[test]
+fn create_password_transport_uses_one_bare_prompt_without_secret_in_argv() {
+    for command in ["a", "u"] {
+        let mut args = vec![
+            command.to_string(),
+            "-t7z".to_string(),
+            "-pPASSWORD".to_string(),
+            "archive.7z".to_string(),
+            "--".to_string(),
+            "-preserved-input-name".to_string(),
+        ];
+
+        let password = prepare_password_transport(&mut args).expect("password transport");
+
+        assert_eq!(password.as_deref(), Some("PASSWORD"));
+        assert_eq!(args.get(1).map(String::as_str), Some("-p"));
+        assert_eq!(
+            args.iter()
+                .filter(|arg| arg.eq_ignore_ascii_case("-p"))
+                .count(),
+            1
+        );
+        assert!(!args.iter().any(|arg| arg.contains("PASSWORD")));
+        assert!(args.iter().any(|arg| arg == "-preserved-input-name"));
+    }
+}
+
+#[test]
+fn password_transport_rejects_duplicate_attached_password_switches() {
+    let mut args = vec![
+        "a".to_string(),
+        "-pone".to_string(),
+        "-pTWO".to_string(),
+        "archive.7z".to_string(),
+        "--".to_string(),
+        "input.txt".to_string(),
+    ];
+    let original = args.clone();
+
+    assert_eq!(
+        prepare_password_transport(&mut args),
+        Err("Password switch may appear only once.".to_string())
+    );
+    assert_eq!(args, original);
+}
+
+#[test]
+fn password_transport_preserves_password_like_paths_after_separator() {
+    let mut args = vec![
+        "u".to_string(),
+        "-psecret".to_string(),
+        "archive.7z".to_string(),
+        "--".to_string(),
+        "-pinput-name".to_string(),
+    ];
+
+    let password = prepare_password_transport(&mut args).expect("password transport");
+
+    assert_eq!(password.as_deref(), Some("secret"));
+    assert_eq!(args, ["u", "-p", "archive.7z", "--", "-pinput-name"]);
+}
+
+#[test]
+fn password_transport_rejects_line_breaks() {
+    for password_arg in ["-pfirst\nsecond", "-pfirst\rsecond"] {
+        let mut args = vec![
+            "a".to_string(),
+            password_arg.to_string(),
+            "archive.7z".to_string(),
+            "--".to_string(),
+            "input.txt".to_string(),
+        ];
+
+        assert_eq!(
+            prepare_password_transport(&mut args),
+            Err("Archive passwords cannot contain line breaks.".to_string())
+        );
+    }
+}
+
+#[test]
+fn password_transport_collapses_bare_duplicates_without_inventing_a_secret() {
+    let mut args = vec![
+        "a".to_string(),
+        "-p".to_string(),
+        "-P".to_string(),
+        "archive.7z".to_string(),
+        "--".to_string(),
+        "input.txt".to_string(),
+    ];
+
+    let password = prepare_password_transport(&mut args).expect("password transport");
+
+    assert_eq!(password, None);
+    assert_eq!(
+        args.iter()
+            .filter(|arg| arg.eq_ignore_ascii_case("-p"))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn password_transport_treats_empty_attached_password_as_bare_prompt() {
+    let mut args = vec![
+        "a".to_string(),
+        "-p".to_string(),
+        "archive.7z".to_string(),
+        "--".to_string(),
+        "input.txt".to_string(),
+    ];
+
+    let password = prepare_password_transport(&mut args).expect("password transport");
+
+    assert_eq!(password, None);
+    assert_eq!(args, ["a", "-p", "archive.7z", "--", "input.txt"]);
+}
+
+#[test]
+fn read_password_transport_relies_on_automatic_prompt() {
+    for command in ["l", "t", "x"] {
+        let mut args = vec![
+            command.to_string(),
+            "-psecret-value".to_string(),
+            "--".to_string(),
+            "archive.7z".to_string(),
+        ];
+
+        let password = prepare_password_transport(&mut args).expect("password transport");
+
+        assert_eq!(password.as_deref(), Some("secret-value"));
+        assert!(!args.iter().any(|arg| arg.starts_with("-p")));
+        assert!(!args.iter().any(|arg| arg.contains("secret-value")));
+    }
+}
+
+#[test]
 fn windows_listfile_rewrite_places_reference_before_any_separator() {
     let mut compress = vec![
         "a".to_string(),
@@ -745,6 +881,49 @@ fn inside_destination_extract_stage_merges_without_self_conflict() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[cfg(unix)]
+#[test]
+fn merge_publish_applies_destination_parent_mode_to_directories() {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+
+    let root = temp_root("zinnia-merge-dir-mode");
+    let destination = root.join("destination");
+    std::fs::DirBuilder::new()
+        .mode(0o755)
+        .recursive(true)
+        .create(&destination)
+        .expect("destination");
+    let staged = destination.join(".zinnia-extract-0123456789abcdef0123456789abcdef");
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&staged)
+        .expect("private stage");
+    let nested = staged.join("folder");
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&nested)
+        .expect("private nested dir");
+    std::fs::write(nested.join("file.txt"), b"payload").expect("nested file");
+
+    merge_staged_extract(&staged, &destination, MAX_EXTRACTED_BYTES).expect("merge");
+
+    let published = destination.join("folder");
+    let mode = std::fs::metadata(&published)
+        .expect("published dir")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(
+        mode, 0o755,
+        "merged directory must inherit destination mode"
+    );
+    assert_eq!(
+        std::fs::read(published.join("file.txt")).expect("file"),
+        b"payload"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
 #[test]
 fn extraction_commit_point_precedes_stage_cleanup() {
     let root = temp_root("zinnia-extract-commit-point");
@@ -1038,6 +1217,55 @@ fn inside_destination_move_plan_rolls_back_a_partial_merge() {
     assert!(!target.exists());
     assert!(move_plan_path(&staged).is_file());
     let _ = std::fs::remove_file(move_plan_path(&staged));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn hardlink_partial_publish_rollback_uses_recorded_identity() {
+    use super::commit::rollback_move_records;
+
+    let root = temp_root("zinnia-hardlink-rollback");
+    let staged = root.join("staged");
+    let destination = root.join("destination");
+    std::fs::create_dir_all(&staged).expect("staged tree");
+    std::fs::create_dir_all(&destination).expect("destination tree");
+    let source = staged.join("new.txt");
+    let target = destination.join("new.txt");
+    std::fs::write(&source, b"staged copy").expect("staged source");
+    std::fs::write(&target, b"published").expect("published target");
+    let identity = super::journal::path_identity(&target).expect("target identity");
+    let plan = vec![MoveRecord {
+        source: source.clone(),
+        target: target.clone(),
+        publish_temp: None,
+        publish_identity: Some(identity),
+    }];
+    rollback_move_records(&staged, &destination, &plan).expect("identity retract");
+    assert!(source.exists());
+    assert!(!target.exists());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn hardlink_partial_publish_rollback_fails_closed_without_identity() {
+    use super::commit::rollback_move_records;
+
+    let root = temp_root("zinnia-hardlink-rollback-missing-id");
+    let staged = root.join("staged");
+    let destination = root.join("destination");
+    std::fs::create_dir_all(&staged).expect("staged tree");
+    std::fs::create_dir_all(&destination).expect("destination tree");
+    let source = staged.join("new.txt");
+    let target = destination.join("new.txt");
+    std::fs::write(&source, b"staged copy").expect("staged source");
+    std::fs::write(&target, b"published").expect("published target");
+    let plan = vec![MoveRecord {
+        source,
+        target,
+        publish_temp: None,
+        publish_identity: None,
+    }];
+    assert!(rollback_move_records(&staged, &destination, &plan).is_err());
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -1971,6 +2199,97 @@ fn archive_journal_not_committed_while_staged_outputs_remain() {
     assert!(!archive_journal_is_committed(&journal));
     rollback_archive_journal(&journal).expect("rollback partial new archive");
     assert!(!destination.exists());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn scrub_retract_skips_missing_journal() {
+    let root = temp_root("zinnia-scrub-missing-journal");
+    let path = root.join("active-transaction.json");
+    retract_scrub_archive_journal_at(&path).expect("missing journal is fine");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn scrub_retract_fails_closed_on_corrupt_journal() {
+    let root = temp_root("zinnia-scrub-corrupt-journal");
+    std::fs::create_dir_all(&root).expect("root");
+    let path = root.join("active-transaction.json");
+    std::fs::write(&path, b"{not-json").expect("corrupt journal");
+    let error = retract_scrub_archive_journal_at(&path).expect_err("corrupt journal");
+    assert!(error.contains("parse") || error.contains("Could not parse"));
+    assert!(path.is_file(), "corrupt journal must remain for recovery");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn scrub_retract_removes_partial_archive_publish() {
+    let root = temp_root("zinnia-scrub-retract-partial");
+    let stage = root.join(".zinnia-archive-abc");
+    let destination = root.join("out.7z");
+    std::fs::create_dir_all(&stage).expect("stage");
+    std::fs::write(stage.join("out.7z"), b"staged").expect("staged output");
+    std::fs::write(&destination, b"partial").expect("partial dest");
+    let journal = CleanupJournal {
+        stage: stage.clone(),
+        destination: destination.clone(),
+        archive: true,
+        extract_stage_placement: None,
+        move_plan_sidecar: false,
+        previous_archive_family: Vec::new(),
+        previous_archive_identities: Vec::new(),
+        next_archive_family: vec![destination.clone()],
+        next_archive_identities: vec![Some(
+            super::journal::regular_file_identity(&destination).unwrap(),
+        )],
+        extract_stage_identity: None,
+        extract_phase: None,
+        archive_phase: Some(ArchiveJournalPhase::InProgress),
+    };
+    let path = root.join("active-transaction.json");
+    std::fs::write(
+        &path,
+        serde_json::to_string(&journal).expect("serialize journal"),
+    )
+    .expect("write journal");
+
+    retract_scrub_archive_journal_at(&path).expect("retract partial publish");
+    assert!(!destination.exists());
+    assert!(
+        path.is_file(),
+        "scrub caller clears the journal after retract"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn scrub_retract_ignores_non_archive_journals() {
+    let root = temp_root("zinnia-scrub-extract-journal");
+    let destination = root.join("destination");
+    let stage = destination.join(".zinnia-extract-0123456789abcdef0123456789abcdef");
+    std::fs::create_dir_all(&stage).expect("stage");
+    let journal = CleanupJournal {
+        stage: stage.clone(),
+        destination: destination.clone(),
+        archive: false,
+        extract_stage_placement: Some(ExtractStagePlacement::InsideDestination),
+        move_plan_sidecar: true,
+        previous_archive_family: Vec::new(),
+        previous_archive_identities: Vec::new(),
+        next_archive_family: Vec::new(),
+        next_archive_identities: Vec::new(),
+        extract_stage_identity: None,
+        extract_phase: Some(ExtractJournalPhase::InProgress),
+        archive_phase: None,
+    };
+    let path = root.join("active-transaction.json");
+    std::fs::write(
+        &path,
+        serde_json::to_string(&journal).expect("serialize journal"),
+    )
+    .expect("write journal");
+    retract_scrub_archive_journal_at(&path).expect("extract journals do not scrub-retract");
+    assert!(stage.is_dir());
     let _ = std::fs::remove_dir_all(root);
 }
 

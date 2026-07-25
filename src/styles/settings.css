@@ -132,7 +132,10 @@
 .switch {
   position: relative;
   display: inline-flex;
+  align-items: center;
   flex-shrink: 0;
+  min-width: 40px;
+  min-height: 24px;
   cursor: pointer;
 }
 

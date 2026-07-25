@@ -3,7 +3,7 @@ import { state } from "../state";
 import { setMode, renderInputs } from "../ui";
 import { applyPreset } from "../presets";
 import { cancelAction } from "../archive";
-import { chooseExtract } from "../files";
+import { chooseExtractIfCurrent } from "../files";
 import {
   setBasicView,
   syncBasicBrowsePasswordToPower,
@@ -15,6 +15,9 @@ import {
   openPathWithFeedback,
   runBasicBrowseArchive,
   togglePasswordVisibility,
+  beginBasicPreparation,
+  finishBasicPreparation,
+  isBasicPreparationCurrent,
 } from "./actions";
 
 function resetCompressCompletion(): void {
@@ -37,7 +40,18 @@ export function wireBasicExtractEvents(): void {
   document
     .getElementById("basic-choose-extract")
     ?.addEventListener("click", async () => {
-      await chooseExtract();
+      const preparation = beginBasicPreparation();
+      if (!preparation) return;
+      let accepted = false;
+      try {
+        await chooseExtractIfCurrent(() =>
+          isBasicPreparationCurrent(preparation),
+        );
+        accepted = isBasicPreparationCurrent(preparation);
+      } finally {
+        finishBasicPreparation(preparation);
+      }
+      if (!accepted) return;
       const basicExtract = document.getElementById(
         "basic-extract-path",
       ) as HTMLInputElement | null;
@@ -110,9 +124,6 @@ export function wireBasicExtractEvents(): void {
         }
       });
     });
-  document
-    .getElementById("basic-compress-another")
-    ?.addEventListener("click", resetCompressCompletion);
   document
     .getElementById("basic-compress-home")
     ?.addEventListener("click", resetCompressCompletion);

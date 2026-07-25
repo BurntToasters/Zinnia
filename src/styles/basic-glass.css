@@ -4,15 +4,18 @@
 
 /* 1. Basic brand + glass tokens (Power keeps global --accent) */
 #app[data-workspace-mode="basic"] {
-  --accent: #e25a4a;
-  --accent-hover: #ef6d5c;
-  --accent-bg: rgba(226, 90, 74, 0.14);
-  --accent-bg-strong: rgba(226, 90, 74, 0.22);
-  --accent-pressed: #c44738;
-  --accent-shadow: rgba(226, 90, 74, 0.28);
-  --accent-shadow-hover: rgba(226, 90, 74, 0.4);
-  --drag-bg: rgba(226, 90, 74, 0.1);
-  --drag-shadow: rgba(226, 90, 74, 0.16);
+  --accent: #c44738;
+  --accent-hover: #b13c2f;
+  --accent-pressed: #9b3026;
+  --accent-fg: #ff9b8f;
+  --accent-fg-hover: #ffb0a7;
+  --accent-fg-pressed: #f78476;
+  --accent-bg: rgba(196, 71, 56, 0.14);
+  --accent-bg-strong: rgba(196, 71, 56, 0.22);
+  --accent-shadow: rgba(196, 71, 56, 0.28);
+  --accent-shadow-hover: rgba(196, 71, 56, 0.4);
+  --drag-bg: rgba(196, 71, 56, 0.1);
+  --drag-shadow: rgba(196, 71, 56, 0.16);
   --basic-glass-bg: color-mix(in srgb, var(--surface) 64%, transparent);
   --basic-glass-blur: 24px;
   --basic-glass-saturate: 145%;
@@ -22,17 +25,39 @@
 }
 
 [data-theme="light"] #app[data-workspace-mode="basic"] {
-  --accent: #d14a3b;
-  --accent-hover: #e25a4a;
-  --accent-bg: rgba(209, 74, 59, 0.1);
-  --accent-bg-strong: rgba(209, 74, 59, 0.16);
-  --accent-pressed: #b13c2f;
-  --accent-shadow: rgba(209, 74, 59, 0.18);
-  --accent-shadow-hover: rgba(209, 74, 59, 0.28);
+  --accent: #b43b30;
+  --accent-hover: #a9362c;
+  --accent-pressed: #922b22;
+  --accent-fg: #a9362c;
+  --accent-fg-hover: #922b22;
+  --accent-fg-pressed: #7f241d;
+  --accent-bg: rgba(180, 59, 48, 0.1);
+  --accent-bg-strong: rgba(180, 59, 48, 0.16);
+  --accent-shadow: rgba(180, 59, 48, 0.18);
+  --accent-shadow-hover: rgba(180, 59, 48, 0.28);
   --basic-glass-bg: rgba(255, 255, 255, 0.72);
   --basic-glass-border: rgba(0, 0, 0, 0.08);
   --basic-glass-shadow:
     0 8px 24px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) #app[data-workspace-mode="basic"] {
+    --accent: #b43b30;
+    --accent-hover: #a9362c;
+    --accent-pressed: #922b22;
+    --accent-fg: #a9362c;
+    --accent-fg-hover: #922b22;
+    --accent-fg-pressed: #7f241d;
+    --accent-bg: rgba(180, 59, 48, 0.1);
+    --accent-bg-strong: rgba(180, 59, 48, 0.16);
+    --accent-shadow: rgba(180, 59, 48, 0.18);
+    --accent-shadow-hover: rgba(180, 59, 48, 0.28);
+    --basic-glass-bg: rgba(255, 255, 255, 0.72);
+    --basic-glass-border: rgba(0, 0, 0, 0.08);
+    --basic-glass-shadow:
+      0 8px 24px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  }
 }
 
 /* Opaque Basic (Linux / effects off): solid surfaces, no desktop bleed */
@@ -44,6 +69,12 @@ html:not([data-window-fx]) #app[data-workspace-mode="basic"] {
 /* Fake CSS glass only when native FX is off; opaque path never blurs. */
 html[data-window-fx="opaque"] #app[data-workspace-mode="basic"] .basic-dropzone,
 html[data-window-fx="opaque"] #app[data-workspace-mode="basic"] .basic-progress,
+html[data-window-fx="opaque"]
+  #app[data-workspace-mode="basic"]
+  .basic-completion,
+html[data-window-fx="opaque"]
+  #app[data-workspace-mode="basic"]
+  .basic-archive-info,
 html[data-window-fx="opaque"]
   #app[data-workspace-mode="basic"]
   .basic-browse-table-wrap,
@@ -66,6 +97,10 @@ html[data-window-fx="opaque"]
   .modal__footer,
 html:not([data-window-fx]) #app[data-workspace-mode="basic"] .basic-dropzone,
 html:not([data-window-fx]) #app[data-workspace-mode="basic"] .basic-progress,
+html:not([data-window-fx]) #app[data-workspace-mode="basic"] .basic-completion,
+html:not([data-window-fx])
+  #app[data-workspace-mode="basic"]
+  .basic-archive-info,
 html:not([data-window-fx])
   #app[data-workspace-mode="basic"]
   .basic-browse-table-wrap,
@@ -190,6 +225,7 @@ html[data-window-fx="basic"] #app[data-workspace-mode="basic"] .basic-dropzone {
 }
 
 #app[data-workspace-mode="basic"] input[type="text"],
+#app[data-workspace-mode="basic"] input[type="password"],
 #app[data-workspace-mode="basic"] input[type="number"],
 #app[data-workspace-mode="basic"] select {
   background: var(--basic-glass-bg) !important;
@@ -200,33 +236,45 @@ html[data-window-fx="basic"] #app[data-workspace-mode="basic"] .basic-dropzone {
 }
 
 #app[data-workspace-mode="basic"] input[type="text"]:focus,
+#app[data-workspace-mode="basic"] input[type="password"]:focus,
 #app[data-workspace-mode="basic"] input[type="number"]:focus,
 #app[data-workspace-mode="basic"] select:focus {
-  border-color: var(--accent) !important;
+  border-color: var(--accent-fg) !important;
   box-shadow:
     var(--basic-glass-shadow),
-    0 0 0 3px var(--accent-shadow) !important;
+    0 0 0 2px var(--accent-fg) !important;
 }
 
-/* 5. Glassmorphism Settings overlay */
-#app[data-workspace-mode="basic"] .modal--settings {
+/* 5. Glassmorphism Settings overlay (native vibrancy only). */
+html[data-window-fx="basic"]
+  #app[data-workspace-mode="basic"]
+  .modal--settings {
   background: color-mix(in srgb, var(--bg) 85%, transparent) !important;
   backdrop-filter: blur(32px) saturate(150%) !important;
   -webkit-backdrop-filter: blur(32px) saturate(150%) !important;
 }
 
-#app[data-workspace-mode="basic"] .modal--settings .modal__header {
+html[data-window-fx="basic"]
+  #app[data-workspace-mode="basic"]
+  .modal--settings
+  .modal__header {
   background: transparent !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   border-bottom: none !important;
 }
 
-#app[data-workspace-mode="basic"] .modal--settings .modal__main {
+html[data-window-fx="basic"]
+  #app[data-workspace-mode="basic"]
+  .modal--settings
+  .modal__main {
   background: transparent !important;
 }
 
-#app[data-workspace-mode="basic"] .modal--settings .settings-tabs {
+html[data-window-fx="basic"]
+  #app[data-workspace-mode="basic"]
+  .modal--settings
+  .settings-tabs {
   background: color-mix(
     in srgb,
     var(--surface-alt) 80%,
@@ -235,7 +283,10 @@ html[data-window-fx="basic"] #app[data-workspace-mode="basic"] .basic-dropzone {
   border-bottom: 1px solid var(--basic-glass-border) !important;
 }
 
-#app[data-workspace-mode="basic"] .modal--settings .modal__footer {
+html[data-window-fx="basic"]
+  #app[data-workspace-mode="basic"]
+  .modal--settings
+  .modal__footer {
   background: color-mix(in srgb, var(--surface) 80%, transparent) !important;
   backdrop-filter: blur(20px) !important;
   -webkit-backdrop-filter: blur(20px) !important;
@@ -255,6 +306,8 @@ html[data-window-fx="basic"] #app[data-workspace-mode="basic"] .basic-dropzone {
   position: absolute;
   top: 10px;
   right: 12px;
+  min-width: 24px;
+  min-height: 24px;
   background: transparent;
   border: none;
   font-size: 1.35rem;

@@ -118,13 +118,62 @@ export function resetBasicBar(section: "compress" | "extract"): void {
   setProgressIndeterminateClass(bar);
 }
 
+const disabledBeforeBasicLock = new Map<HTMLButtonElement, boolean>();
+const basicCancelIds = new Set([
+  "basic-compress-cancel",
+  "basic-extract-cancel",
+  "basic-browse-cancel",
+]);
+
+function setButtonInteractionLock(
+  button: HTMLButtonElement,
+  active: boolean,
+): void {
+  if (active) {
+    if (!disabledBeforeBasicLock.has(button)) {
+      disabledBeforeBasicLock.set(button, button.disabled);
+    }
+    button.disabled = true;
+    return;
+  }
+  const previous = disabledBeforeBasicLock.get(button);
+  if (previous === undefined) return;
+  button.disabled = previous;
+  disabledBeforeBasicLock.delete(button);
+}
+
+function updateBasicInteractionLock(active: boolean): void {
+  document
+    .querySelectorAll<HTMLButtonElement>(
+      "#basic-workspace button, [data-workspace-mode-btn]",
+    )
+    .forEach((button) => {
+      const keepCancelAvailable =
+        active && state.running && basicCancelIds.has(button.id);
+      setButtonInteractionLock(button, active && !keepCancelAvailable);
+    });
+
+  const dropzone = document.getElementById("basic-dropzone");
+  if (dropzone) {
+    dropzone.setAttribute("aria-disabled", String(active));
+    dropzone.classList.toggle("is-disabled", active);
+  }
+}
+
+export function updateBasicPreparingState(active: boolean): void {
+  state.operationPreparing = active;
+  if (getWorkspaceMode() !== "basic") return;
+  updateBasicInteractionLock(active || state.running);
+}
+
 export function updateBasicRunningState(active: boolean): void {
   if (getWorkspaceMode() !== "basic") return;
 
+  updateBasicInteractionLock(active || state.operationPreparing);
   const browsing = getMode() === "browse";
   for (const id of ["basic-browse-extract-all", "basic-browse-test"]) {
     const button = document.getElementById(id) as HTMLButtonElement | null;
-    if (button) button.disabled = active;
+    if (button) button.disabled = active || state.operationPreparing;
   }
   const browseCancel = document.getElementById(
     "basic-browse-cancel",
@@ -199,7 +248,7 @@ export function updateBasicRunningState(active: boolean): void {
   ];
   for (const id of btns) {
     const el = document.getElementById(id) as HTMLButtonElement | null;
-    if (el) el.disabled = active;
+    if (el) el.disabled = active || state.operationPreparing;
   }
   for (const id of [
     "basic-dropzone",
@@ -208,9 +257,10 @@ export function updateBasicRunningState(active: boolean): void {
   ]) {
     const el = document.getElementById(id);
     if (!el) continue;
-    el.setAttribute("aria-disabled", String(active));
-    el.classList.toggle("is-disabled", active);
-    if (el instanceof HTMLButtonElement) el.disabled = active;
+    const locked = active || state.operationPreparing;
+    el.setAttribute("aria-disabled", String(locked));
+    el.classList.toggle("is-disabled", locked);
+    if (el instanceof HTMLButtonElement) el.disabled = locked;
   }
 }
 
@@ -232,7 +282,7 @@ export function updateBasicStatus(text: string, errorDetail?: string): void {
     const pathCandidates =
       section === "compress"
         ? [outputPath, state.lastAutoOutputPath]
-        : [state.lastAutoExtractDestination, extractPath];
+        : [extractPath, state.lastAutoExtractDestination];
     const pathLabel =
       pathCandidates.find((candidate) => (candidate?.length ?? 0) > 0) ??
       undefined;

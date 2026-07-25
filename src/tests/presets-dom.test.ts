@@ -10,6 +10,7 @@ import {
   PRESETS,
 } from "../presets";
 import { state } from "../state";
+import { syncBasicToPower } from "../basic/sync";
 
 function getSelectValue(id: string): string {
   return (document.getElementById(id) as HTMLSelectElement).value;
@@ -71,6 +72,26 @@ describe("applyPreset", () => {
     for (const name of Object.keys(PRESETS)) {
       expect(() => applyPreset(name)).not.toThrow();
     }
+  });
+});
+
+describe("Basic preset synchronization", () => {
+  it("keeps the explicitly selected Basic format with real preset behavior", () => {
+    const basicPreset = document.createElement("select");
+    basicPreset.id = "basic-preset";
+    basicPreset.append(new Option("Ultra", "ultra"));
+    const basicFormat = document.createElement("select");
+    basicFormat.id = "basic-format";
+    basicFormat.append(new Option("ZIP", "zip"));
+    document.body.append(basicPreset, basicFormat);
+
+    syncBasicToPower();
+
+    expect(getSelectValue("format")).toBe("zip");
+    expect(getSelectValue("level")).toBe("9");
+
+    basicPreset.remove();
+    basicFormat.remove();
   });
 });
 
@@ -244,6 +265,26 @@ describe("updateCompressionOptionsForFormat", () => {
     setSelectValue("level", "0");
     updateCompressionOptionsForFormat("zip");
     expect(getSelectValue("level")).toBe("0");
+  });
+
+  it("clears Power password and resets toggle when format lacks encryption", () => {
+    const password = document.getElementById("password") as HTMLInputElement;
+    const toggle = document.getElementById(
+      "toggle-password",
+    ) as HTMLButtonElement;
+    password.value = "secret";
+    password.type = "text";
+    toggle.textContent = "Hide";
+    toggle.setAttribute("aria-pressed", "true");
+
+    updateCompressionOptionsForFormat("tar");
+
+    expect(password.value).toBe("");
+    expect(password.type).toBe("password");
+    expect(password.disabled).toBe(true);
+    expect(toggle.textContent).toBe("Show");
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(toggle.disabled).toBe(true);
   });
 });
 

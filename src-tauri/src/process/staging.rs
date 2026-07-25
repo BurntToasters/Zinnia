@@ -4,7 +4,7 @@ use crate::output::sanitize_output;
 use crate::validation::archive_member_path_is_unsafe;
 
 use super::archive_snapshot::{archive_file_identity, stage_extract_input, ArchiveFileIdentity};
-use super::commands::collect_command_output;
+use super::commands::{collect_command_output, terminate_child};
 use super::journal::{register_pending_stage, unregister_pending_stage};
 use super::quota::available_space_for_path;
 use super::{lock_process, CleanupPlan, RunningProcess};
@@ -319,14 +319,40 @@ pub(crate) async fn assert_extract_archive_members_safe(
         .ok_or_else(|| "Extraction member list is missing an archive path.".to_string())?;
     let archive_path = std::path::PathBuf::from(&archive);
     let identity = archive_file_identity(&archive_path)?;
-    let (mut rx, child) = super::commands::spawn_7z_noninteractive(app, list_args)?;
+    let (mut rx, child, pending_password) =
+        super::commands::spawn_7z_noninteractive(app, list_args)?;
     {
         let mut process = lock_process(state)?;
         if process.cancelling {
+            process.child = None;
+            // Keep preparing/cancelling until run_7z finishes rollback/journal clear.
             let _ = child.kill();
             return Err("Operation cancelled.".to_string());
         }
-        process.child = Some(child);
+        // Register before password stdin so cancel can kill a blocked write.
+        process.child = Some(child.clone());
+    }
+    if let Some(pending_password) = pending_password {
+        if let Err(error) = super::commands::complete_password_transport(&child, pending_password) {
+            let cancelled = lock_process(state)
+                .map(|process| process.cancelling)
+                .unwrap_or(false);
+            if let Ok(mut process) = lock_process(state) {
+                process.child = None;
+            }
+            return Err(if cancelled {
+                "Operation cancelled.".to_string()
+            } else {
+                error
+            });
+        }
+        let mut process = lock_process(state)?;
+        if process.cancelling {
+            process.child = None;
+            drop(process);
+            terminate_child(&child);
+            return Err("Operation cancelled.".to_string());
+        }
     }
     const LIST_OUTPUT_LIMIT: usize = 32 * 1024 * 1024;
     const LIST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);

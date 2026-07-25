@@ -71,6 +71,7 @@ export function clearPasswordFields(): void {
     "browse-password",
     "basic-password",
     "basic-extract-password",
+    "basic-browse-password",
   ]) {
     const field = document.getElementById(id) as HTMLInputElement | null;
     if (field) field.value = "";

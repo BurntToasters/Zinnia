@@ -27,7 +27,7 @@ launch, on reopen, and while already running. This avoids relying on launch
 arguments, which macOS ignores when supplied by a sandboxed extension.
 
 Requests carry a millisecond timestamp, are processed oldest-first, and expire
-after 60 seconds. Invalid, oversized, future-dated, and over-1,000-path requests
+after 120 seconds. Invalid, oversized, future-dated, and over-1,000-path requests
 are discarded. If activating the host fails, the extension removes the queued
 request so it cannot run during an unrelated later launch.
 
