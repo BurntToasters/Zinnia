@@ -22,6 +22,27 @@ function hasExactReleaseVersion(xml, version) {
   ).test(xml);
 }
 
+function isStableReleaseVersion(version) {
+  return /^\d+\.\d+\.\d+$/.test(String(version || "").trim());
+}
+
+/**
+ * AppStream treats `X.Y.Z-beta.N` as newer than `X.Y.Z`, so listing both with
+ * stable first trips `releases-not-in-order`. Drop superseded prereleases of
+ * the same base version when shipping the stable.
+ */
+function stripSupersededPrereleases(releasesSection, stableVersion) {
+  if (!isStableReleaseVersion(stableVersion)) return releasesSection;
+  const escaped = stableVersion.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return releasesSection.replace(
+    new RegExp(
+      `\\s*<release\\b[^>]*\\bversion\\s*=\\s*["']${escaped}-(?:alpha|beta|rc)\\.[^"']+["'][^>]*(?:/>|>[\\s\\S]*?</release>)`,
+      "gi",
+    ),
+    "",
+  );
+}
+
 function run({
   now = new Date(),
   packagePath = pkgPath,
@@ -85,7 +106,19 @@ function run({
     // deterministic and does not dirty a clean source export.
     const currentDateMatch = existingReleaseMatch[0].match(/date="([^"]+)"/);
     if (currentDateMatch) {
-      return { updated: false, version, date: currentDateMatch[1] };
+      const pruned = stripSupersededPrereleases(updatedSection, version);
+      if (pruned === updatedSection) {
+        return { updated: false, version, date: currentDateMatch[1] };
+      }
+      if (check) {
+        throw new Error(
+          `AppStream still lists superseded prereleases of ${version}; remove them before release preparation`,
+        );
+      }
+      updatedSection = pruned;
+      const updatedXml = xml.replace(releasesSectionRegex, updatedSection);
+      fs.writeFileSync(metadataPath, updatedXml, "utf8");
+      return { updated: true, version, date: currentDateMatch[1] };
     }
     if (check) {
       throw new Error(
@@ -114,6 +147,8 @@ function run({
       `<releases>\n${newReleaseTag}\n${releaseIndent}`,
     );
   }
+
+  updatedSection = stripSupersededPrereleases(updatedSection, version);
 
   if (updatedSection === releasesSectionMatch[0]) {
     return { updated: false, version, date: dateStr };
@@ -154,4 +189,11 @@ if (isDirectExecution()) {
   }
 }
 
-export { formatDate, hasExactReleaseVersion, isDirectExecution, run };
+export {
+  formatDate,
+  hasExactReleaseVersion,
+  isDirectExecution,
+  isStableReleaseVersion,
+  run,
+  stripSupersededPrereleases,
+};

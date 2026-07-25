@@ -9,7 +9,11 @@
     <name>BurntToasters</name>
   </developer>
   <description>
-    <p>Zinnia is a fast, focused GUI for 7z archives on Windows, macOS, and Linux.</p>
+    <p>
+      Zinnia is a fast, focused graphical front end for 7-Zip archives on
+      Windows, macOS, and Linux, with Basic and Power modes for everyday
+      extract, compress, browse, and convert workflows.
+    </p>
   </description>
   <launchable type="desktop-id">run.rosie.zinnia.desktop</launchable>
   <categories>
@@ -33,29 +37,6 @@
   <content_rating type="oars-1.1" />
   <releases>
     <release version="0.6.0" date="2026-07-25"/>
-    <release version="0.6.0-beta.23" date="2026-07-24"/>
-    <release version="0.6.0-beta.22" date="2026-07-24"/>
-    <release version="0.6.0-beta.21" date="2026-07-23"/>
-    <release version="0.6.0-beta.20" date="2026-07-23"/>
-    <release version="0.6.0-beta.19" date="2026-07-23"/>
-    <release version="0.6.0-beta.18" date="2026-07-23"/>
-    <release version="0.6.0-beta.17" date="2026-07-22"/>
-    <release version="0.6.0-beta.16" date="2026-07-22"/>
-    <release version="0.6.0-beta.15" date="2026-07-22"/>
-    <release version="0.6.0-beta.14" date="2026-07-21"/>
-    <release version="0.6.0-beta.13" date="2026-07-21"/>
-    <release version="0.6.0-beta.12" date="2026-07-21"/>
-    <release version="0.6.0-beta.11" date="2026-07-21"/>
-    <release version="0.6.0-beta.10" date="2026-07-21"/>
-    <release version="0.6.0-beta.9" date="2026-07-21"/>
-    <release version="0.6.0-beta.8" date="2026-07-20"/>
-    <release version="0.6.0-beta.7" date="2026-07-20"/>
-    <release version="0.6.0-beta.6" date="2026-07-20"/>
-    <release version="0.6.0-beta.5" date="2026-07-20"/>
-    <release version="0.6.0-beta.4" date="2026-07-20"/>
-    <release version="0.6.0-beta.3" date="2026-07-20"/>
-    <release version="0.6.0-beta.2" date="2026-07-20"/>
-    <release version="0.6.0-beta.1" date="2026-07-17"/>
     <release version="0.5.4-beta.3" date="2026-07-17"/>
     <release version="0.5.4-beta.2" date="2026-07-17"/>
     <release version="0.5.4-beta.1" date="2026-07-17"/>
