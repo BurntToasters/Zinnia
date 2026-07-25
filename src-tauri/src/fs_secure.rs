@@ -34,7 +34,7 @@ pub fn create_private_dir(path: &Path) -> io::Result<()> {
 /// On Windows this applies the same protected SDDL as shell handoffs / private
 /// directories. Elevated processes otherwise default new-object owners to the
 /// Administrators group, which must not pass the shell-handoff owner check.
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 pub(crate) fn create_private_file(path: &Path) -> io::Result<std::fs::File> {
     create_private_file_windows(path)
 }
@@ -878,7 +878,7 @@ fn create_inheriting_stage_dir_windows(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 fn create_private_file_windows(path: &Path) -> io::Result<std::fs::File> {
     use std::mem::size_of;
     use std::os::windows::ffi::OsStrExt;
