@@ -23,7 +23,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
 ## Changes in `v0.6.0:`
 
-### v0.6.0 is a large feature-packed update — thank you for testing through the beta line!
+### v0.6.0 is a large feature-packed update :) a lot of painstaking work went into integrating Zinnia with the Windows 11 Context-menu :P
 
 - **NEW - Basic mode:** Drop-first home, warmer floral accent, friendlier copy, and Basic/Power, Support, and Settings in the custom titlebar; Power keeps a separate header row and free resizing.
 - **NEW - Basic window effects:** Translucent Basic window with macOS vibrancy and Windows Mica/Acrylic (Linux Basic stays opaque); toggle in Settings with live apply and opaque fallback when FX are off or unsupported.
