@@ -1,14 +1,14 @@
-> [!NOTE]
-> 🅱️ This is a Beta build.
+<!-- > [!NOTE]
+> 🅱️ This is a Beta build. -->
 
 # ⬇️ Downloads
 
 | <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                                            | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux         |
 | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------- |
-| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.23/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.23/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.23/Zinnia-macOS.dmg)**  | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.23/Zinnia-Linux-x64.AppImage) |
-| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>-->                       | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.23/Zinnia-macOS.zip)**  | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.23/Zinnia-Linux-x64.deb)           |
-| <!--*See MSI note below*-->                                                                                                                                                                                                  |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.23/Zinnia-Linux-x64.rpm)           |
-|                                                                                                                                                                                                                              |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0-beta.23/Zinnia-Linux-x64.flatpak)   |
+| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0/Zinnia-macOS.dmg)**  | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0/Zinnia-Linux-x64.AppImage) |
+| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>-->                       | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0/Zinnia-macOS.zip)**  | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0/Zinnia-Linux-x64.deb)           |
+| <!--*See MSI note below*-->                                                                                                                                                                                                  |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0/Zinnia-Linux-x64.rpm)           |
+|                                                                                                                                                                                                                              |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.0/Zinnia-Linux-x64.flatpak)   |
 
 > macOS downloads require macOS 26 or later.
 
@@ -21,285 +21,53 @@
 
 Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
-## Changes in `v0.6.0-beta.23:`
-* **Actual Final beta** before `v0.6.0` stable. (I know there's been a lot of betas for `v0.6.0`. This is the biggest and more major update to Zinnia ever and I want to make sure everything is stable!)
-* **Critical Fix:** Creating or updating password-protected archives now keeps 7-Zip’s bare `-p` encryption switch and pipes the secret on stdin, so archives are actually encrypted (not silent plaintext after stripping `-pPASSWORD`).
-* **Updater:** Stable releases also publish beta-channel updater manifests so beta.22+ installs are not stranded when updating to stable.
-* **Release:** Upload allowlists, RPM/`*.rpm.sig` matching, fail-closed signature checks, Flatpak exact-version validation, and trusted `--trusted-7z` bootstrap identity checks are tightened for cutover safety.
-* **Fix:** Basic prep locks OS handoffs and file-remove controls until a job is running, so Explorer/Finder batches cannot swap inputs under a verified password or destination dialog.
-* **Security:** Password stdin is written only after stdout/stderr drain starts (avoids pipe deadlock); scrubbed failed commits clear recovery journals; create/update rejects passwords for non-encrypting formats and line-break secrets at validation.
-* **Fix (Windows):** Shell/context-menu builds locate CMake and `Launch-VsDevShell` via `vswhere` (VS 2026 CE updates often drop stale VS 2022 CMake from PATH); errors call out re-enabling **C++ CMake tools for Windows** after an installer upgrade.
-* **Security (macOS):** Finder Sync requests expire after 120s and are read with nofollow.
-* **Fix:** Basic/Power browse password hide/clear now clears both fields so a secret cannot sync back after hide or archive swap.
-* **Release:** Draft ensure accepts `GITHUB_TOKEN`; GitHub asset/draft listing paginates past 100 items.
-* **Accessibility:** Contrast tokens (focus rings, dark danger buttons, extract focus), Flatpak Updates section hide, path ellipsis RTL, and Basic chrome target sizing updated for WCAG-friendly controls.
-* **Fix:** Selective extract “Select all” / folder toggles while searching only select visible matches (no hidden recursive children).
-* **Fix:** Selective browse tree path separators follow the archive listing (`\` vs `/`), not the host OS.
-* **Fix (Windows):** Uninstall retries Win11 sparse AppX removal and warns if packages remain registered.
-* **Release (macOS):** `zip-macos` verifies the host Mach-O contains the baked App Group ID matching the signed entitlements.
-* **Critical Fix:** 7-Zip password spawn uses a buffered event channel and a dedicated stdin thread so banner/prompt output cannot deadlock before cancel can terminate the child; the child is registered in the process slot before password stdin so Cancel works during password setup.
-* **Fix:** Failed add-mode commit scrub now fail-closes when the recovery journal cannot be read or parsed before retracting partial archive output (no silent journal clear).
-* **Security (Unix):** Publish stages are `0o700` while in progress; atomic extract-root rename and merged directory publishes restore the destination parent's mode (including setgid/sticky) after commit.
-* **Fix:** Cancel during prepare always clears the global 7z soft-lock (`cancelling`); extract merge rolls back on every mid-loop failure and journals publish identity before hard-link visibility.
-* **Fix:** Selective “Select all” only selects rendered rows (including collapsed-tree views); extract-only launches clear `InitialPaths` so warm main reopen cannot re-apply the archive.
-* **Fix:** Power drops and OS handoffs serialize on `incomingPathsApplying`; Basic drops wait for that apply lock, then take prep (no-op if still prep-locked). Add Files/Folder/Remove honor the busy predicate; Basic Add holds prep without self-deadlocking on it. Selective extract never passes non-empty folder paths to 7z (avoids over-extract past the rendered selection).
-* **Release:** After publishing a beta draft, run `npm run release:sync-beta-manifests` so `latest-*-beta-*.json` is copied onto `/releases/latest` (draft signing intentionally skips that sync). `release:wait-draft` fails fast when the tag is already published.
-* **Fix (macOS):** Finder Sync sweeps claimed orphans before `read_dir`; after a successful emit, claims are invalidated then renamed to `.acked` so crash-before-ack cannot redeliver.
-* **Security (Unix):** Hard-link/copy extract rollback retracts published targets only when a recorded publish identity matches (fail-closed without identity).
-* **Fix:** Prepare/cancel keeps the 7z soft-lock until staging rollback and recovery-journal clear finish; rewrite-extract-archive failures clear the journal after successful rollback; cancel and quota-stop restore the child handle if kill fails so retry can finish stopping 7-Zip. Password create/update no longer treats `-stl` as an archive type.
-* **Fix (macOS):** Finder Sync sweeps orphaned `*.claimed` requests back into the drain queue; universal host Mach-O App Group checks run per `lipo -archs` slice and fail closed when lipo cannot thin a fat binary.
-* **Fix:** Selective picker folder toggles / Select all recurse only within rendered rows (same 1,000-row budget as the UI).
-* **Docs:** `SECURITY.md` documents Flatpak `--filesystem=/media` alongside `/run/media` and `/mnt`.
-* **Critical Fix:** Password create/update rejects multiple `-t` archive types (7-Zip honors the last), closing a silent-plaintext bypass.
-* **Fix:** Failed add-mode commits retract partial archive publishes before clearing the recovery journal.
-* **Fix:** Explicit Extract/Compress OS handoffs clear non-matching sessions instead of appending onto the wrong input list.
-* **Release:** Beta→`/latest` updater manifest sync runs only for published releases (not drafts); ensure-draft paginates release lists.
-* **Fix (macOS):** Finder Sync claims requests before emit (no duplicate drain); zip-macos verifies Finder Sync appex minos; TTL docs say 120s.
-* **Fix:** Flatpak resolves before the setup wizard and skips the Updates step; Power drop browse race-guards the primary path.
+## Changes in `v0.6.0:`
 
-## Changes in `v0.6.0-beta.22:`
-* **Beta** toward `v0.6.0` stable.
-* **UI:** Basic mode locks the main window size (non-resizable / non-maximizable) live when switching workspaces; Power mode restores free resizing on the same window. The custom titlebar Maximize control is disabled/ignored in Basic so it cannot bypass the lock.
-* **Fix (Windows):** OS Integration now reads the live default-app ProgId for each archive type (instead of always showing “Choose in Windows Settings”), so formats already set to Zinnia show as Default. Explorer context-action Ready detection also accepts Win11 sparse packages when classic Extract/Compress verbs were removed.
-* **Docs:** Windows context-menu QA checklist matches the fallback-only classic verb policy (no duplicate Extract/Compress under Show more options when packages register).
+### v0.6.0 is a large feature-packed update — thank you for testing through the beta line!
 
-## Changes in `v0.6.0-beta.21:`
-* **Fix (Windows):** Legacy “Show more options” no longer stacks duplicate Open/Extract/Compress Zinnia entries when the Win11 sparse packages register successfully. Upgrade also removes leftover `ZinniaOpen` keys from earlier betas; classic Extract/Compress verbs are kept only as a fallback if package registration fails.
-
-## Changes in `v0.6.0-beta.20:`
-* **Windows:** Adds migration logic in the NSIS installer/updater to finalize the upgrade from `v0.5.3`'s legacy context menu implementation to `v0.6.0`'s new implementation.
-
-## Changes in `v0.6.0-beta.19:`
-* **Release Candidate:** RC4 V3.
-* **Updater:** Addresses issues with malformed json Tauri V2 Updater files.
-
-## Changes in `v0.6.0-beta.18:`
-* **Release Candidate:** RC4 V2.
-* **Windows - SID/ACL:** Attempting fixes for the new Private SID/ACL implementations for Zinnia.
-
-## Changes in `v0.6.0-beta.17:`
-
-* **Release Candidate:** RC4.
-- **Feature:** Added an "Auto-close window" setting for the extraction window. Users can now choose to have the window automatically close immediately or after a countdown on a successful extraction (default: 1.5 seconds).
-- **Fix:** Resolved a critical bug on Windows where the secure staging directory ACL would fail to apply the current user's SID (resulting in an extraction failure) because of an obscure argument parsing bug in the Windows `icacls` command.
-
-## Changes in `v0.6.0-beta.16:`
-
-* **Release Candidate:** RC3.
-- **Fix:** Support / About / license http(s) links open once in the system browser via `shell:default` (`target="_blank"`); the app menu uses a single programmatic `open` (beta.15 also called `open` from a click interceptor and double-opened tabs).
-- **Fix:** Settings and other modals no longer mark the titlebar / header `inert`, so window controls and the settings gear stay clickable while a sheet is open.
-- **Critical Fix:** Split-archive startup rollback no longer aborts when a later volume has no recorded identity; InProgress journals also clear a plain file published before the identity write so backups can restore.
-- **Fix:** In-process archive promote recovery deletes a published volume when the staged source still exists (hard-link/copy fallback), then restores backups with no-replace rename.
-- **Fix:** Stacked modal focus traps (e.g. Settings over selective extract) only let the topmost sheet own Tab.
-- **Data integrity:** Archive publication uses atomic no-replace moves and never overwrites an existing public destination on the publish path; split-archive recovery uses an explicit durable commit phase so a crash during backup cleanup cannot mix old and new volumes.
-- **Reliability:** Cancelling during preparation kills the already-spawned 7-Zip child before staging rollback, caps synchronous reaping at five seconds, and finishes delayed cleanup in the background.
-- **Windows:** Large selections use a UTF-8 7-Zip list file in a syntactically active position; Explorer context-menu launches cap each single-instance batch at 1,000 paths; partial virtual selections no longer fall back to compressing the current folder.
-- **OS integration:** Consecutive Extract handoffs append instead of replacing earlier batches, Explorer caps the complete request at the executable 4,096-path ceiling, and Windows/Finder agree on first-volume `.001` detection.
-- **Filesystem compatibility:** Archive publication falls back to an exclusive, journal-recoverable copy on volumes that support neither atomic no-replace rename nor hard links, without overwriting an existing destination.
-- **Release:** Per-platform signing requires Linux updater artifacts only for Linux architectures present in that signing session, so Windows and macOS release pipelines are no longer blocked by absent Linux bundles.
-- **Security / UI:** Selective browsing uses iterative tree construction with member path/depth limits, preventing hostile archives from exhausting the JavaScript stack and reporting a controlled error before opening the picker.
-- **Accessibility:** Basic progress clears `aria-busy` when an operation finishes.
-
-## Changes in `v0.6.0-beta.15:`
-
-* **Release Candidate:** RC2.
-- **Fix:** Support / About / license http(s) links open in the system browser via `shell:default` (`target="_blank"`; plain `window.open` does not work in the webview).
-- **UI:** Settings Export logs path no longer overlaps action buttons; multi-button rows stack under the path in Basic; setup wizard moved to its own settings row.
-- **UI:** Settings gear and ⌘/, toggle open/close (with `aria-expanded`); update channel explains Auto; About credit wraps; OS Integration keeps flex layout while settings rows keep the narrower action max-width.
-
-## Changes in `v0.6.0-beta.14:`
-
-- **Fix:** Linux release VMs no longer fail after `test:all` when only generated `src-tauri/gen/schemas/*` files are dirty — quality-gate recording no longer strips git porcelain leading spaces (` M path`), so schema ignore works.
-- **Critical Fix:** Windows updates now install Explorer context-menu DLLs side by side in a versioned directory, preventing a loaded `zinnia_shell.dll` from blocking NSIS and soft-locking the app mid-update; identical same-version reinstalls skip unchanged payloads, while legacy and older versioned payloads are removed immediately or scheduled for deletion after reboot, including during uninstall.
-- **Fix:** Windows shell DLL and sparse-package numeric versions now preserve the beta number and reserve the maximum revision for stable builds, so promoting `0.6.0-beta.14` (`0.6.0.14`) to stable `0.6.0` (`0.6.0.65535`) always moves forward.
-- **Fix:** Windows builds that disable the modern context menu now forcibly replace any stale shell artifacts with empty stubs, preventing an older DLL/MSIX payload from leaking into a later installer.
-- **Release:** Release tooling now accepts only Zinnia's supported beta and stable version formats and rejects alpha, RC, malformed, or leading-zero versions before artifact creation.
-- **Feature:** Added the Zinnia logo icon to macOS Finder context menu items (**Extract with Zinnia** / **Compress with Zinnia**), styled as an adaptive system template image (Keka-style).
-- **Performance & Automation:** Optimized `release:*` scripts with `:continue` and `:resume` pipelines to reuse prepared versions, licenses, and sidecars without repeating redundant preparation steps.
-- **Security & Quality Gate:** Introduced a commit-bound release build session proof system (`release-session.js`), ensuring quality gates pass on a clean working tree prior to artifact creation and GPG signing.
-- **Fix:** Extraction allows relative in-tree symlinks (macOS `.app` / `.framework` bundles) while still rejecting absolute or escaping links and Windows reparse points.
-- **Fix:** Compress/create now stores symbolic and hard links (`-snl` / `-snh`) so archiving a `.app` round-trips correctly (frontend + backend inject); ZIP compress warns when inputs contain symlinks or app bundles.
-- **Fix:** Convert recompress can include top-level relative symlink members from the managed temp dir; ACL grants for probe/list temp commands.
-- **UI:** Main password/prompt modal is frosted under Basic glass (like the extract window).
-- **UX:** Completion notes when Unix extract restores execute bits on binaries/scripts.
-- **Fix:** After extract on macOS, clears Gatekeeper quarantine on promoted `.app` bundles (not the whole tree) and surfaces counts in completion UI.
-- **Fix:** Windows extract propagates Mark-of-the-Web via 7-Zip `-snz` (does not strip Zone.Identifier).
-- **Fix:** Convert recompress includes dotfiles (no longer uses `tempDir/*`).
-- **Fix:** Compress fails closed on nested Windows junction/cloud reparse points inside input trees.
-- **Fix:** Unix extract restores execute bits on obvious binaries/scripts when the archive omitted modes.
-- **UI:** Timestamp option label matches behavior (created + accessed; modification always stored).
-- **UI:** Basic glass mode no longer paints a solid black dock behind the Compress button.
-- **UI:** Extract-only window follows Basic glass / opaque window effects and theme; password modal is frosted under glass.
-- **UX:** Clearer errors when an archive or compress input path is itself a symbolic link or reparse point.
-
-## Changes in `v0.6.0-beta.13:`
-
-- **Feature:** macOS **Finder Sync** extension adds **Extract with Zinnia** / **Compress with Zinnia** to Finder's primary right-click menu (Keka-style), alongside existing Services.
-- **Fix:** macOS Finder Services **Enable…** writes `pbs` enable prefs directly (System Settings checkboxes often leave status stuck on Not enabled) and no longer uses Accessibility / Automation UI scripting.
-
-## Changes in `v0.6.0-beta.12:`
-
-- **Fix:** macOS Finder Services **Enable…** no longer scripts System Settings (no Accessibility / Automation prompts); it opens Keyboard Shortcuts and shows in-app steps to expand **Files and Folders** and turn on Extract / Compress under **Services**.
-- **Fix:** `sync-version` keeps the root crate version in `Cargo.lock` in sync so Flatpak `--locked` builds and clean-tree source export do not fail after a version bump.
-- **Fix:** `npm run u` / `u2` use `workspace:prepare` instead of `release:prepare`, so release branch/clean-tree preflight no longer blocks dependency updates and local testing on feature branches.
-- **Fix:** `workspace:prepare` / `release:prepare` write AppStream metainfo before `test:all` so Flatpak validation sees the new package version.
-
-## Changes in `v0.6.0-beta.11:`
-
-- **Fix:** Removed the invalid sparse-package file-association declaration that caused MakeAppx to reject the Windows 11 context-menu manifest.
-- **Fix:** Split Windows 11 Root and Extract verbs into separate sparse identities so Explorer shows standalone **Extract with Zinnia** beside the **Zinnia** submenu instead of grouping both into a broken outer flyout.
-- **Fix:** Kept the Extract-only sparse identity out of **Open with** by registering archive targets solely through Explorer context-menu item types.
-- **Test:** Added manifest regression coverage enforcing separate one-command Root and Extract identities for every supported archive type.
-
-## Changes in `v0.6.0-beta.10:`
-
-- **Fix:** Repaired Windows 11 modern context-menu layout: removed redundant iconless **Zinnia > Zinnia** nesting and restored top-level **Extract with Zinnia** for supported archives.
-- **Fix:** Added sparse-package archive associations for `.7z`, `.zip`, TAR/compressed TAR formats, and split `.001` volumes; false-positive `.001` files stay hidden by dynamic validation.
-- **Performance:** Split-volume detection performs one `.002` sibling probe on Explorer's UI path instead of scanning up to 999 possible volumes.
-- **Release:** Expanded the full gate to include Rust formatting and warning-free Clippy checks.
-- **Release:** Release VMs now refuse dirty, unpushed, or wrong-branch source and rerun the complete local suite before building artifacts.
-- **Fix:** Enforced LF text checkouts, tolerated existing Windows line endings in Prettier, and removed shebangs from importable scripts so Vitest parses them correctly on Windows.
-- **Fix:** Windows extraction disk-space checks now resolve an existing directory and pass a directory-form path to the native API, fixing four release-VM Rust test failures.
-- **Test:** Fixed Windows-only Rust warnings/Clippy failures and added Clippy to the Windows/macOS CI matrix.
-
-## Changes in `v0.6.0-beta.9:`
-
-- **Recents:** Moved to a compact titlebar dropdown in Basic mode; missing (deleted) paths are dropped automatically.
-  - Misc fixes to recents.
-
-## Changes in `v0.6.0-beta.8:`
-
-- **Misc:** Modular refactor: split large frontend (`archive/`, `basic/`, `ui/`) and Rust (`process/`, `platform/`, `launch/`) modules for maintainability; behavior unchanged.
-- **Fix:** Win11 modern menu shows the Zinnia icon on **Zinnia** / **Extract with Zinnia** (`GetIcon` uses embedded `zinnia_shell.dll,-101`); top-level **Extract with Zinnia** is registered on `Type="*"` and hidden for non-archives (per-extension verbs alone often never appeared without package FTAs); package DisplayName stays **Zinnia**, submenu children are Extract/Compress.
-- **Fix:** macOS **Enable…** for Finder Services opens Keyboard Shortcuts and selects **Services** (URL alone often left Modifier Keys selected); copy clarifies this is not Login Items & Extensions / File Providers (Keka-style Finder Sync appex; Zinnia uses `NSServices`).
-- **Fix:** Windows Basic titlebar is transparent under native glass so it matches the blurred body (no solid chrome strip).
-- **Fix:** `release:prepare` / `npm run u` write AppStream metainfo again (no longer `--check`-only).
-- **Test:** Basic-mode batch/single extract paths cover the no-native-dialog branches (`archive/` coverage gate).
-- **Fix:** Flatpak grants `xdg-download`, `/run/media`, and `/mnt` (aligned with SECURITY.md); ExtractTop stays hidden until Explorer supplies archive paths.
-- **Misc:** Peeled Power helpers/shortcuts/logs from `power-events.ts`; live updater manifest CI check (read-only, not a release); Windows promote open uses `FILE_FLAG_OPEN_REPARSE_POINT`; staging ACL prefers process-token SID.
-- **Fix:** Win11 shell treats split volumes (`.7z.001`) like open routing; ExtractTop disables (not hides) when a selection cannot resolve filesystem paths.
-- **Fix:** Archive promote copies from the held nofollow handle when hard links are unavailable; Windows open shares `FILE_SHARE_DELETE`.
-- **Test:** `power-logs` coverage gate; Windows nofollow/token-SID unit tests.
-
-## Changes in `v0.6.0-beta.6:`
-
-- **Fix:** Win11 modern menu no longer double-registers Root on archives (was nesting duplicate **Zinnia** arrows under **Zinnia Context Menu**); package DisplayName is **Zinnia**, submenu children are Extract/Compress, top-level Extract remains on archives.
-- **Fix:** Archive publish treats all post-promote cleanup as best-effort and never `remove_dir_all`s while `backup-*` recovery files remain (avoids mixed old/new volumes after a crash); leftover stages stay in `pending-stages` so startup orphan cleanup can retry; commit-failure scrub stays fail-closed when the stage cannot be listed.
-- **Fix:** Protected compress sources (Start Menu `.lnk`, etc.) default to the user Desktop instead of a bare/relative filename that staged under the install CWD; relative compress outputs are rejected.
-- **Fix:** Basic multi-archive extract uses the in-app completion panel (no stacked native dialogs); Windows `whoami` failures are not cached forever for staging ACL.
-
-## Changes in `v0.6.0-beta.5:`
-
-- **Fix:** Finder Services status shows **Not enabled** instead of **Unknown** when `NSServicesStatus` has no explicit enable override; **Enabled** only after both Extract/Compress are toggled on in Keyboard Shortcuts → Services.
-- **Fix:** macOS “Open Default Apps” deep-links to Desktop & Dock → Default Apps (not Extensions).
-- **Fix:** Windows classic Explorer verbs are probed via HKCU (`reg query`); Linux file-association Ready uses live `xdg-mime` handlers when available.
-- **Fix:** Windows compress no longer flashes console windows for `whoami` / `icacls` / `taskkill` staging helpers (`CREATE_NO_WINDOW`); whoami SID is cached and ACL removals are batched.
-- **Fix:** Default compress output avoids Start Menu / Program Files / other protected parents (common for `.lnk` shortcuts) so staging no longer fails with Access Denied; clearer staging permission error text.
-- **Fix:** Basic mode no longer doubles compress/extract failures with a native Error dialog on top of the in-app completion panel.
-
-## Changes in `v0.6.0-beta.4:`
-
-- **Fix:** Updater manifest validation accepts Tauri’s prehashed Minisign alg id (`ED`) as well as legacy `Ed`.
-- **Fix:** Updater signature verifier uses a heap read buffer (avoids Windows stack overflow / exit `3221225725` on large installers).
-- **Fix:** Flatpak source export keeps git porcelain leading spaces (so ` M gen/schemas…` is recognized) and allows dirty generated ACL schemas after `tauri build`.
-- **Fix:** macOS zip verifier expects the 7z sidecar to carry the same `allow-jit` entitlement Tauri applies from `entitlements.plist`.
-- **Fix:** Windows sparse context-menu MSIX packing uses `makeappx /nv` and UTF-8-without-BOM manifests (fixes “manifest is not valid”).
-- **Fix:** macOS release entitlement verify requests `codesign --xml` so plutil can parse modern entitlements dumps (not `[Dict]` text).
-- **CI:** macOS rust-check and smoke-build runners pin `macos-26` (not `macos-latest` / macOS 15) so bundled 7-Zip and `minimumSystemVersion` 26.0+ can execute.
-- **Reliability:** Archive commit/rollback finalization runs on `spawn_blocking` so large extract trees do not stall the async runtime; the operation slot is cleared even if that task panics (avoids soft-lock until restart).
-- **Reliability:** Timed-out OS integration commands kill the process group (Unix) or process tree (`taskkill /T`, Windows) so descendant pipe holders cannot leave reader threads blocked.
-- **Compatibility:** macOS builds require macOS 26 or later because the official bundled 7-Zip 26.02 binary has a native macOS 26 deployment floor; the bundle and release checks enforce 26.0+.
-- **Security:** Extract preflights archive member paths (`7z l -slt`) and rejects `..` / absolute paths that could write into existing sibling folders; sibling name snapshot still catches new top-level escapes.
-- **Security:** Windows staging ACL verify uses SID/SDDL (`icacls /save`) instead of locale-specific account-name matching; broad principals are removed by well-known SID (unblocks Desktop compress where name-only verify failed).
-- **Fix:** Directory fsync `PermissionDenied` is ignored only on Windows (Unix still surfaces the error).
-- **Fix:** Pending stage registry cleans orphan `.zinnia-*` dirs after a crash before the transaction journal is written; recovery journal is written immediately after staging is created.
-- **Fix:** Removed Absolute path archive creation because those unsafe member paths correctly fail Zinnia's extraction preflight; all new archives are relocatable.
-- **Security:** Extraction preflight and extraction now use the same private snapshot of the complete input volume family, closing the normal source-path mutation window.
-- **Security:** Updater publication cryptographically verifies every artifact/Minisign pair with Zinnia's embedded public key and validates the generated manifests before upload.
-- **Security:** 7-Zip provenance records the exact official 26.02 archives, archive hashes, and extracted members; checksum updates require an explicit reviewed version.
-- **macOS:** Default-archiver integration now uses macOS 26 `NSWorkspace` and `UTType` APIs instead of deprecated Launch Services/CoreServices calls; signed artifacts enforce an exact entitlement allowlist.
-- **Windows:** Authenticode verification now checks the full certificate Subject DN in addition to the publisher Common Name.
-- **Linux:** Flatpak builds consume an exact clean Git commit export so dirty or untracked workspace files cannot enter sideload bundles.
-
-## Changes in `v0.6.0-beta.3:`
-
-- **Fix:** Setup wizard Skip no longer fails with Windows `Access is denied (os error 5)` from AppData directory fsync; startup continues if settings persistence warns.
-- **Fix:** Basic-mode titlebar no longer meshes brand text with Support/Settings on Windows (hide centered logo while chrome overlays the strip).
-
-## Changes in `v0.6.0-beta.2:`
-
-- **Fix:** Sparse context-menu MSIX declares `uap10:AllowExternalContent` (fixes `Add-AppxPackage -ExternalLocation` `0x80073D2E`).
-
-## Changes in `v0.6.0-beta.1:`
-
-_I had so many new ideas for the UI this turned from version `0.5.4` to `0.6.0`._
-
-- **UI:** Major Basic mode redesign: drop-first home, warmer floral accent, friendlier copy, and Basic/Power + Support + Settings folded into the custom titlebar.
-- **UI:** Translucent Basic window with OS-native blur on macOS (vibrancy) and Windows (Mica / Acrylic). Linux Basic stays fully opaque. Toggle in Settings (live-applies).
-- **UI:** Basic Settings sheet is roomier (sectioned tabs, collapsed title into the tab row); related General rows sit side-by-side (Updates / Appearance) with compact controls.
-- **UI:** `Ctrl`/`⌘` + `,` opens Settings (listed in the keyboard shortcuts help).
-- **UI:** macOS menu bar: About, Check for Updates, Settings (`⌘,`), Edit/Window standards, plus Help (shortcuts, Support, Licenses).
-- **UI:** macOS Finder Services: Extract with Zinnia / Compress with Zinnia; OS Integration tab shows Enabled/Off/Unknown and an Enable button that opens Keyboard Shortcuts → Services.
-- **UI:** Windows 11 modern context menu (signed NSIS): **Zinnia** submenu (Extract / Compress) plus top-level **Extract with Zinnia** on archives; classic Explorer verbs kept for Show more options. Uses a sparse identity MSIX for the shell DLL only; Zinnia remains a normal NSIS install (not a Store/AppX app). OS Integration shows Registered / Not registered.
-- **Fix:** Win11 shell DLL resolves `zinnia.exe` beside itself or in the parent dir; NSIS finds the register script next to the DLL (`$INSTDIR`); Appx remove-before-add with visible install warning on failure; builds require full `AZURE_ARTIFACT_SIGNING_PUBLISHER_DN`.
-- **Fix:** macOS Services Extract no longer forces the main window open (keeps quick-extract); cold-start fallback is cancelled/hidden to avoid a main-window flash; `NSApplicationIdentifier` nested under `NSRequiredContext`; Extract UTIs use `public.archive` (not broad `public.data`).
-- **Fix:** Win11 modern menu + classic NSIS verbs register on folder background (`Directory\Background`); shell DLL resolves the open folder via Explorer site when selection is empty.
-- **Fix:** macOS Services Compress cancels the cold-start main-window fallback so a later Extract cannot destroy that workspace; the 150ms fallback also skips if main already exists.
-- **Fix:** Basic Escape/Enter shortcuts respect overlay `[hidden]` (modals no longer swallow keyboard).
-- **Fix:** Basic Settings category tabs hide inactive panels again (Compression / OS / About no longer stuck under General).
-- **Fix:** Opaque native background when FX are off / unsupported; Windows Acrylic tint follows light/dark theme.
-- **Fix:** Basic completion surfaces real `errorDetail` text and output/extract path labels; recent archives list on home.
-- **Fix:** Quick-extract no longer leaves a Dock/app zombie after the window closes. “Keep ready after quick extract” is off by default; when enabled, macOS hides the Dock and uses a menu-bar tray until idle timeout or Quit.
-- **Fix:** Warm-idle exit re-checks on the main thread so a newly opened extract window cannot race an idle quit; waking from warm clears the tray; tray has Open Zinnia (left-click / menu).
-- **Fix:** Extract-window teardown clears bindings on OS close; extract capability no longer allows direct `destroy` (must use cancel-aware close).
-- **Security:** Extract promote rejects sibling writes outside the stage directory; `run_7z` re-validates archive headers for extract/list/test; `probe_7z` attests 7-Zip version for the Windows RAR gate.
-- **Security:** Base file associations omit `.rar` (macOS/Linux configs re-add); Unix promote opens use `O_NOFOLLOW` where available.
-- **CI:** `validate:changelog` + `validate:updater` run inside `npm run test:all`. Job renamed to `smoke-build` (unsigned `--no-bundle` only); signed releases stay on build VMs.
+- **NEW - Basic mode:** Drop-first home, warmer floral accent, friendlier copy, and Basic/Power, Support, and Settings in the custom titlebar; Power keeps a separate header row and free resizing.
+- **NEW - Basic window effects:** Translucent Basic window with macOS vibrancy and Windows Mica/Acrylic (Linux Basic stays opaque); toggle in Settings with live apply and opaque fallback when FX are off or unsupported.
+- **NEW - macOS Finder Sync:** **Extract with Zinnia** / **Compress with Zinnia** on Finder’s primary right-click menu (Keka-style), with Zinnia logo as an adaptive template image.
+- **NEW - macOS Finder Services:** Extract/Compress services with OS Integration status (Enabled/Off/Unknown) and **Enable…** that writes `pbs` prefs directly when System Settings checkboxes stall.
+- **NEW - Windows 11 context menu:** Signed sparse-package **Zinnia** submenu (Extract/Compress) plus top-level **Extract with Zinnia** on archives; classic Explorer verbs remain for Show more options and as fallback when package registration fails.
+- **NEW - Auto-close extract window:** Setting to close the extract window immediately or after a countdown on success (default 1.5 seconds).
+- **NEW - Recents:** Compact titlebar dropdown in Basic mode; missing paths drop automatically.
+- **UI:** Basic locks main window size when active (non-resizable/non-maximizable); titlebar Maximize is disabled in Basic; roomier Settings sheet; `Ctrl`/`⌘` + `,` opens Settings; stacked modal focus traps; Basic progress clears `aria-busy` when finished.
+- **UI:** Selective extract picker uses archive-native path separators; folder toggles and Select all respect rendered rows, search visibility, and the 1,000-row budget; browse tree construction is iterative with depth/member limits.
+- **UI:** Completion notes for Unix execute-bit restore, macOS `.app` quarantine clearing, and clearer errors for symlink/reparse inputs.
+- **UI:** Timestamp option label matches behavior (created + accessed; modification always stored); Basic glass no longer paints a solid dock behind Compress; extract-only window matches Basic glass/opaque theming.
+- **Windows:** NSIS migrates legacy `v0.5.3` context-menu registration to the `v0.6.0` shell layout; versioned side-by-side shell DLL/MSIX payloads prevent loaded DLLs from blocking updates; uninstall retries sparse AppX removal.
+- **Windows:** OS Integration reads live default-app ProgId per format; Ready detection accepts Win11 sparse packages when classic verbs were removed; legacy duplicate Open/Extract/Compress stacking under Show more options is removed on upgrade.
+- **Windows:** Large Explorer selections use a private UTF-8 list file; handoffs use a private SDDL temp file with nofollow/owner-checked consume; selection batches cap at 1,000 paths with a 4,096-path hard ceiling.
+- **Windows:** Extract propagates Mark-of-the-Web via 7-Zip `-snz`; compress fails closed on nested junction/cloud reparse points; staging ACL uses token SID/SDDL verification instead of locale-specific account names.
+- **macOS:** Requires macOS 26+ for the bundled 7-Zip 26.02 binary; default-archiver integration uses `NSWorkspace`/`UTType`; signed artifacts enforce an entitlement allowlist.
+- **Linux:** Flatpak resolves before the setup wizard, skips the Updates step, and grants `xdg-download`, `/run/media`, `/mnt`, and `/media` per `SECURITY.md`; WebKitGTK-blocked flows use in-app dialogs.
+- **Linux:** RPM/DEB/AppImage/Flatpak x64 release set with updater manifests validated before upload.
+- **Security:** Password-protected create/update keeps 7-Zip’s bare `-p` switch and pipes secrets on stdin after stdout/stderr drain; rejects multiple `-t` types, non-encrypting formats, line-break secrets, and `-stl` mistaken as a type.
+- **Security:** 7-Zip password spawn uses a buffered channel and registers the child before stdin so Cancel works during password setup; validation and backend output redact secrets.
+- **Security:** Extract staging uses private snapshots, reparse/symlink gates, member preflight (`7z l -slt`), relative in-tree symlinks allowed where safe, and publish paths that never overwrite existing destinations without recorded identity.
+- **Security:** Unix publish stages are `0o700` while in progress; merged directories restore destination parent mode; hard-link/copy rollback retracts targets only with matching publish identity.
+- **Security:** Updater publication verifies every artifact/Minisign pair with the embedded public key; 7-Zip provenance is pinned in `7z-checksums.json`.
+- **Security:** Archive create/update stores symlinks and hard links (`-snl`/`-snh`) for `.app`/`.framework` round-trips; ZIP compress warns on symlinks and bundles.
+- **Fix:** Basic prep locks OS handoffs and file-remove controls until a job runs; Power/Basic drops serialize on incoming-path apply locks; Add Files/Folder/Remove/Clear honor busy state; selective extract never passes bare folder paths to 7z.
+- **Fix:** Cancel/prepare/quota-stop keep the global 7z soft-lock until staging rollback and journal clear finish; failed commits fail-closed on journal parse errors and retract partial publishes before clearing journals.
+- **Fix:** Split-archive recovery, in-process promote recovery, and durable commit phases prevent mixed volumes after interruption; cancel during prepare kills spawned 7z before rollback.
+- **Fix:** Protected compress sources (shortcuts, Start Menu paths) default to Desktop; relative compress outputs are rejected; Basic no longer double-shows native error dialogs on failure.
+- **Fix:** Quick-extract warm idle, tray, and extract-window teardown avoid Dock zombies and racey idle quit; explicit Extract/Compress handoffs clear mismatched sessions instead of appending.
+- **Fix:** Settings/modals no longer mark the titlebar `inert`; Support/About/license links open once in the system browser; macOS Services Extract avoids flashing the main window on cold start.
+- **Fix:** Setup wizard Skip no longer fails on AppData directory fsync; Basic titlebar brand layout on Windows; modals respect overlay `[hidden]` for keyboard shortcuts.
+- **Updater:** Stable releases also publish beta-channel updater manifests so final-beta installs can move to stable; beta manifest sync to `/releases/latest` runs automatically during release signing.
+- **Accessibility:** Contrast tokens, focus rings, danger buttons, path ellipsis RTL, and Basic touch targets updated for WCAG-friendly controls; Flatpak hides the Updates section when updates are unavailable.
+- **Codebase:** Modular frontend (`archive/`, `basic/`, `ui/`) and Rust (`process/`, `platform/`, `launch/`) splits; archive commit finalization on `spawn_blocking`; OS integration commands kill process trees on timeout.
+- **Testing:** Changelog/updater validation in `npm run test:all`; expanded Rust Clippy/format gates; Windows/macOS CI smoke compiles the shell DLL and universal macOS builds.
+- **Docs:** Windows context-menu QA checklist; `SECURITY.md` Flatpak and hard-link TOCTOU notes.
 - **Known:** Windows RAR **extraction** stays disabled while attested 7-Zip remains ≤ `26.02` (CVE-2026-58052); browse/test for RAR remain available.
-- **Known:** Archive passwords are passed to 7-Zip via `-p` and can appear in process listings even when entered in the UI (see `SECURITY.md`).
+- **PKG:** Updated packages.
 
-## Changes in `v0.5.4-beta.3:`
+### FULL CHANGELOG:
 
-- **Fix:** Quick-extract no longer leaves a Dock/app zombie after the window closes. “Keep ready after quick extract” is off by default; when enabled, macOS hides the Dock and uses a menu-bar tray until idle timeout or Quit.
-- **Fix:** Warm-idle exit re-checks on the main thread so a newly opened extract window cannot race an idle quit; waking from warm clears the tray; tray has Open Zinnia (left-click / menu).
-- **Fix:** Extract-window teardown clears bindings on OS close; extract capability no longer allows direct `destroy` (must use cancel-aware close).
-- **Security:** Extract promote rejects sibling writes outside the stage directory; `run_7z` re-validates archive headers for extract/list/test.
-- **UI:** Basic mode home redesign (drop-first layout, friendlier copy, warmer floral accent). On macOS/Windows, Basic can use a translucent window with OS-native blur (toggle in Settings); Linux Basic stays opaque.
-- **UI:** In Basic mode, Basic/Power, Support, and Settings sit in the custom titlebar; Power keeps the separate header row.
-
-## Changes in `v0.5.4-beta.2:`
-
-- **Performance:** Quick-extract (file association / Open with Zinnia) injects archive + destination at window create, skips recovery lock when no journal exists, lazy-loads the password prompt, and can stay warm for faster follow-up opens.
-- **Settings:** “Keep ready after quick extract” toggle plus idle timeout (5/10/30/60 minutes).
-- **UI:** Quick-extract status no longer flashes missing-glyph boxes from noisy 7-Zip progress text; `hidden` controls work again in both main and extract windows.
-- **UI:** Prefer system fonts before Segoe so non-Latin glyphs fall back correctly on macOS.
-
-## Changes in `v0.5.4-beta.1:`
-
-- **Security:** Hardened extract staging against Windows reparse points (junctions/cloud placeholders), not only classic symlinks.
-- **Security:** Main-window “open folder” is limited to destinations from recent successful compress/extract; extract windows bind `-o` and open-folder to the spawn-time destination.
-- **Security:** Tightened 7z extra-arg allow-lists (dropped `-ssw`, narrowed `-m*`), require a safe extract overwrite policy (`-aou`/`-aos`), and redact `-p` secrets in backend output/logs.
-- **Security:** Interrupted-transaction recovery only accepts strict `.zinnia-extract-` / `.zinnia-archive-` stage directory names.
-- **Windows:** RAR **extraction** stays disabled while bundled 7-Zip remains on `26.02` (CVE-2026-58052); browse/test for RAR remain available. File associations still omit `.rar` on Windows.
-- **Basic mode:** Compress runs force relative path mode and disable update-mode so Power-only options cannot leak into Basic.
-- **UI:** Password sync and browse/extract flows improved across Basic and Power; convert extract uses the same safe overwrite policy as other extract paths.
-- **CI:** Updater manifest JSON fixtures are schema-checked; unsigned release dry-run covers Linux, macOS, and Windows.
-- **Docs:** Clarified Flatpak filesystem access, open-folder allowlists, and the temporary Windows RAR extract restriction in `SECURITY.md`.
-- **Misc:** General bug fixes and reliability improvements around staging, cancel/close, and journal recovery.
-
-## Changes in `v0.5.3:`
-
-- **Misc:** General bug fixes and improvements.
-- **Release reliability:** Release-asset mirroring now reports source/destination failures and stops before VM cleanup; script entrypoints no longer depend on path-string comparisons.
-- **Dependencies:** Updated JavaScript and Rust dependencies using the current stable toolchain.
-
-## Changes in `v0.5.1:`
-
-- **License menu:** Fixed an issue with the license menu rendering in basic mode.
-
-* **NEW - Windows code signing:** WOO HOO!! Windows Binaries are now signed by Azure Artifact Signing!
-  - After a good while of not having it, Windows Binaries are now signed by Azure Artifact Signing!
-* **Windows security:** Temporarily disabled RAR operations and RAR file associations while conflicting CVE-2026-58052 affected-version data is resolved.
+<details>
+  <summary>ℹ️ Click here to see previous major releases!</summary>
 
 ## Changes in `v0.5.0:`
 
@@ -338,6 +106,26 @@ _I had so many new ideas for the UI this turned from version `0.5.4` to `0.6.0`.
 - **Security:** Added CI security gates with `npm audit`, `cargo audit`, and Clippy `-D warnings`.
 - **Misc:** General bug fixes and final UI polish.
 - **PKG:** Updated packages.
+
+## Changes in `v0.4.0:`
+
+### IMPORTANT: THIS IS A SECURITY UPDATE. UPDATE NOW!
+
+- **Security:** Updated Tauri V2 updater signer key.
+  - I accidentally leaked the (still encrypted) private key via a `package.json` entry on another project. Zinnia sadly shared the same signer key (bad practice; lessons learned). Rookie mistake — I am very sorry, I know how annoying this is. You will have to manually download and install from this release to update the pubkey.
+  - Since the private key that was leaked was still encrypted with a password, it is a better state than if it was the full unencrypted privkey.
+  - All previous releases and accompanying binaries have been removed from github and my mirror. The tags still remain.
+- **UNZIP:** Added the new Unarchive UI feature set to all OS's! If you open an archive via your OS's context menu with Zinnia, the quick unarchive UI will open instead.
+- **UNZIP:** Modified the behavior for the custom unarchiver where unarchived items now go into a folder of their own in the parent folder.
+- **Licenses:** Cargo licenses are now included.
+- **NEW - Basic / Advanced mode:** Added two new views for essential items only (Basic) and more for power users (Advanced).
+  - Basic mode's UI is now a totally different UI from advanced with simple options and an easy/friendly UI!
+  - Advanced mode's spacing has been compressed for better space efficiency.
+- **PKG:** Updated packages.
+
+---
+
+</details>
 
 ## ℹ️ Release Info
 
