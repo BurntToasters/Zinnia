@@ -1385,6 +1385,59 @@ fn target_local_recovery_hydrates_append_only_identity_log() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[test]
+fn identity_log_hydration_uses_latest_record_per_index() {
+    use std::io::Write as _;
+
+    let root = temp_root("zinnia-identity-log-latest-wins");
+    let destination = root.join("destination");
+    let staged = destination.join(".zinnia-extract-0123456789abcdef0123456789abcdef");
+    std::fs::create_dir_all(&staged).expect("stage");
+    let source = staged.join("new.txt");
+    std::fs::write(&source, b"staged source").expect("source");
+
+    let publish_temp = destination.join(".zinnia-publish-0123456789abcdef0123456789abcdef");
+    std::fs::write(&publish_temp, b"corrected copy").expect("publish temp");
+    let pre_copy_identity = super::journal::path_identity(&source).expect("source identity");
+    let post_copy_identity =
+        super::journal::path_identity(&publish_temp).expect("publish identity");
+    assert_ne!(pre_copy_identity, post_copy_identity);
+
+    let target = destination.join("new.txt");
+    let plan = vec![MoveRecord {
+        source: source.clone(),
+        target: target.clone(),
+        publish_temp: Some(publish_temp.clone()),
+        publish_identity: None,
+    }];
+    write_move_plan(&staged, &plan).expect("move plan");
+
+    let mut log = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(move_identity_log_path(&staged))
+        .expect("identity log");
+    for identity in [pre_copy_identity, post_copy_identity.clone()] {
+        let record = serde_json::json!({
+            "index": 0,
+            "publish_temp": publish_temp,
+            "identity": identity,
+        });
+        writeln!(log, "{}", serde_json::to_string(&record).unwrap()).expect("record");
+    }
+    log.sync_all().expect("sync log");
+
+    rollback_persisted_move_plan(&staged, &destination, false)
+        .expect("hydrate must accept copy-fallback correction records");
+
+    assert_eq!(std::fs::read(&source).unwrap(), b"staged source");
+    assert!(!publish_temp.exists());
+    assert!(!target.exists());
+    let _ = std::fs::remove_file(move_plan_path(&staged));
+    let _ = std::fs::remove_file(move_identity_log_path(&staged));
+    let _ = std::fs::remove_dir_all(root);
+}
+
 #[cfg(windows)]
 #[test]
 fn target_local_publish_recovery_preserves_replacement_target() {

@@ -181,14 +181,6 @@ fn try_clone_snapshot_file(
     }
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn try_clone_snapshot_file(
-    _source: &std::fs::File,
-    _destination: &std::path::Path,
-) -> Result<bool, String> {
-    Ok(false)
-}
-
 fn copy_archive_snapshot_file(
     source: &mut std::fs::File,
     destination: &std::path::Path,
@@ -205,6 +197,13 @@ fn copy_archive_snapshot_file(
                 use std::os::unix::fs::PermissionsExt as _;
                 std::fs::set_permissions(destination, std::fs::Permissions::from_mode(0o600))
                     .map_err(|error| error.to_string())?;
+                // APFS clone creation is atomic, but fsync the snapshot inode
+                // before 7-Zip reads it so this path matches Linux CoW + copy.
+                let synced = std::fs::OpenOptions::new()
+                    .read(true)
+                    .open(destination)
+                    .map_err(|error| error.to_string())?;
+                synced.sync_all().map_err(|error| error.to_string())?;
                 return Ok(());
             }
             Ok(false) => {}
@@ -588,6 +587,8 @@ pub(super) fn stage_extract_input(
     const MIN_SNAPSHOT_DISK_RESERVE_BYTES: u64 = 512 * 1024 * 1024;
     let free_space = super::available_space_for_path(&anchor)?;
     let reserve = (free_space / 10).max(MIN_SNAPSHOT_DISK_RESERVE_BYTES);
+    // Worst case every volume falls back to a full byte copy (CoW unavailable
+    // or cross-filesystem). APFS/Btrfs clones usually need far less headroom.
     if total_len > free_space.saturating_sub(reserve) {
         return Err(format!(
             "Not enough free space to snapshot the complete archive volume family ({} MiB required, {} MiB available).",

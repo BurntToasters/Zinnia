@@ -52,8 +52,11 @@ fn record_shell_handoff_error(message: String) {
 /// then; use the same channel already used for queue-capacity drops.
 #[cfg(windows)]
 pub(crate) fn emit_pending_shell_handoff_error(app: &tauri::AppHandle) {
+    // Peek, do not take: cold launch surfaces the same error through
+    // `get_shell_handoff_error` after the frontend mounts. Taking here would
+    // drop the message if the event listener is not ready yet.
     let message = match LAST_SHELL_HANDOFF_ERROR.lock() {
-        Ok(mut guard) => guard.take(),
+        Ok(guard) => guard.clone(),
         Err(_) => None,
     };
     if let Some(message) = message {

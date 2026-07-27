@@ -424,16 +424,13 @@ async function handleBasicExtractActionOnce(
   // password requirement is never silently skipped.
   const encryptionCheck = await isArchiveEncrypted(archive);
   if (!isBasicPreparationCurrent(preparation)) return;
+  const isEncrypted = encryptionCheck ?? true;
   if (encryptionCheck === null) {
-    showBasicCompletion(
-      "extract",
-      false,
-      "Operation failed",
-      "Could not determine whether this archive is encrypted. Check the log for details and try again.",
+    log(
+      "Could not determine whether this archive is encrypted; treating it as encrypted.",
+      "debug",
     );
-    return;
   }
-  const isEncrypted = encryptionCheck;
   let password = "";
 
   if (isEncrypted) {

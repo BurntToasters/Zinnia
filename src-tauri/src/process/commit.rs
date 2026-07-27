@@ -1147,13 +1147,10 @@ fn hydrate_move_plan_identities(
         if planned.publish_temp != record.publish_temp {
             return Err("Extraction identity log does not match its move plan.".to_string());
         }
-        if let Some(existing) = &planned.publish_identity {
-            if !file_identities_match(&record.identity, existing) {
-                return Err("Extraction identity log contains conflicting records.".to_string());
-            }
-        } else {
-            planned.publish_identity = Some(record.identity);
-        }
+        // Append-only log: a later record for the same index replaces an
+        // earlier one (copy-fallback publish corrections journal the post-copy
+        // identity after the pre-publish source identity).
+        planned.publish_identity = Some(record.identity);
     }
     Ok(())
 }
