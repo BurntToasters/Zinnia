@@ -483,6 +483,12 @@
           "markdownDescription": "Enables the get_platform_info command without any pre-configured scope."
         },
         {
+          "description": "Enables the get_shell_handoff_error command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-shell-handoff-error",
+          "markdownDescription": "Enables the get_shell_handoff_error command without any pre-configured scope."
+        },
+        {
           "description": "Enables the get_startup_recovery_status command without any pre-configured scope.",
           "type": "string",
           "const": "allow-get-startup-recovery-status",
@@ -721,6 +727,12 @@
           "type": "string",
           "const": "deny-get-platform-info",
           "markdownDescription": "Denies the get_platform_info command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_shell_handoff_error command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-shell-handoff-error",
+          "markdownDescription": "Denies the get_shell_handoff_error command without any pre-configured scope."
         },
         {
           "description": "Denies the get_startup_recovery_status command without any pre-configured scope.",
