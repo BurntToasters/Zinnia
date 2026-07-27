@@ -7,13 +7,13 @@
 IDI_ZINNIA ICON "..\\..\\icons\\icon.ico"
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 0,6,0,65535
- PRODUCTVERSION 0,6,0,65535
+ FILEVERSION 0,6,1,1
+ PRODUCTVERSION 0,6,1,1
  FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
 #ifdef _DEBUG
- FILEFLAGS VS_FF_DEBUG
+ FILEFLAGS VS_FF_DEBUG | VS_FF_PRERELEASE
 #else
- FILEFLAGS 0
+ FILEFLAGS VS_FF_PRERELEASE
 #endif
  FILEOS VOS_NT_WINDOWS32
  FILETYPE VFT_DLL
@@ -25,12 +25,12 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "BurntToasters\0"
       VALUE "FileDescription", "Zinnia File Explorer context menu\0"
-      VALUE "FileVersion", "0.6.0\0"
+      VALUE "FileVersion", "0.6.1-beta.1\0"
       VALUE "InternalName", "zinnia_shell.dll\0"
       VALUE "LegalCopyright", "Copyright (c) 2025-2026 BurntToasters\0"
       VALUE "OriginalFilename", "zinnia_shell.dll\0"
       VALUE "ProductName", "Zinnia\0"
-      VALUE "ProductVersion", "0.6.0\0"
+      VALUE "ProductVersion", "0.6.1-beta.1\0"
     END
   END
   BLOCK "VarFileInfo"

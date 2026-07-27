@@ -1,11 +1,11 @@
 {
   "bundle": {
     "resources": {
-      "windows/shell/out/zinnia_shell.dll": "shell-0.6.0/zinnia_shell.dll",
-      "windows/shell/out/zinnia_extract_shell.dll": "shell-0.6.0/zinnia_extract_shell.dll",
-      "windows/shell/out/ZinniaContextMenu.msix": "shell-0.6.0/ZinniaContextMenu.msix",
-      "windows/shell/out/ZinniaExtractContextMenu.msix": "shell-0.6.0/ZinniaExtractContextMenu.msix",
-      "../scripts/register-windows-context-menu.ps1": "shell-0.6.0/register-windows-context-menu.ps1"
+      "windows/shell/out/zinnia_shell.dll": "shell-0.6.1-beta.1/zinnia_shell.dll",
+      "windows/shell/out/zinnia_extract_shell.dll": "shell-0.6.1-beta.1/zinnia_extract_shell.dll",
+      "windows/shell/out/ZinniaContextMenu.msix": "shell-0.6.1-beta.1/ZinniaContextMenu.msix",
+      "windows/shell/out/ZinniaExtractContextMenu.msix": "shell-0.6.1-beta.1/ZinniaExtractContextMenu.msix",
+      "../scripts/register-windows-context-menu.ps1": "shell-0.6.1-beta.1/register-windows-context-menu.ps1"
     },
     "fileAssociations": [
       {
