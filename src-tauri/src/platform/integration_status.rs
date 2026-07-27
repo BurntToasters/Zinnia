@@ -208,8 +208,14 @@ fn windows_modern_menu_registered() -> Option<bool> {
     let script = format!(
         "if ((Get-AppxPackage -Name '{ROOT_PACKAGE}' -ErrorAction SilentlyContinue) -and (Get-AppxPackage -Name '{EXTRACT_PACKAGE}' -ErrorAction SilentlyContinue)) {{ exit 0 }} else {{ exit 2 }}"
     );
+    // Resolve the absolute System32 path rather than a bare "powershell.exe"
+    // name: NSIS installs under installMode "currentUser", so Zinnia's own
+    // install directory is user-writable and would otherwise be searched
+    // before System32 for program-name resolution.
+    let powershell =
+        crate::fs_secure::system32_binary_path("WindowsPowerShell\\v1.0\\powershell.exe").ok()?;
     let output = command_output_with_timeout(
-        Command::new("powershell.exe")
+        Command::new(powershell)
             .args([
                 "-NoProfile",
                 "-NonInteractive",
@@ -242,9 +248,14 @@ fn windows_classic_verbs_registered() -> Option<bool> {
     const PROGID_OPEN: &str = r"HKCU\Software\Classes\run.rosie.zinnia.7z\shell\open";
     const CLASSIC_COMPRESS: &str = r"HKCU\Software\Classes\*\shell\ZinniaCompress";
 
+    // Resolve the absolute System32 path rather than a bare "reg" name: NSIS
+    // installs under installMode "currentUser", so Zinnia's own install
+    // directory is user-writable and would otherwise be searched before
+    // System32 for program-name resolution.
+    let reg = crate::fs_secure::system32_binary_path("reg.exe").ok()?;
     let progid_open = {
         let output = command_output_with_timeout(
-            Command::new("reg")
+            Command::new(&reg)
                 .args(["query", PROGID_OPEN])
                 .creation_flags(CREATE_NO_WINDOW),
             std::time::Duration::from_secs(5),
@@ -258,7 +269,7 @@ fn windows_classic_verbs_registered() -> Option<bool> {
 
     let classic_compress = {
         let output = command_output_with_timeout(
-            Command::new("reg")
+            Command::new(&reg)
                 .args(["query", CLASSIC_COMPRESS])
                 .creation_flags(CREATE_NO_WINDOW),
             std::time::Duration::from_secs(5),

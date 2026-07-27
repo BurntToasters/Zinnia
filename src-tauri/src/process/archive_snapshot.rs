@@ -113,10 +113,105 @@ pub(super) fn archive_file_identity(path: &std::path::Path) -> Result<ArchiveFil
     archive_file_identity_from_open_file(path, &file)
 }
 
+/// Attempt a copy-on-write clone of `source` into the already-created,
+/// still-empty `destination` file. Returns `Ok(true)` on a successful clone,
+/// `Ok(false)` when the filesystem/platform does not support cloning here
+/// (different filesystem, unsupported fs, no kernel support, etc: the plain
+/// byte copy remains correct in every one of those cases), and `Err` only for
+/// an I/O failure that is not a "clone unsupported" signal.
+///
+/// This exists because extraction snapshots the *entire* input archive (and
+/// every volume of a split family) into a private staging copy before 7-Zip
+/// ever touches it, so a byte-for-byte `io::copy` of a large archive read and
+/// wrote its full size again for every extraction. APFS/Btrfs/XFS/ReFS clone
+/// primitives make the snapshot instant and use no extra disk space until a
+/// write actually diverges the two files, while keeping the exact same
+/// TOCTOU-safe identity checks around this call unchanged.
+#[cfg(target_os = "macos")]
+fn try_clone_snapshot_file(
+    source: &std::fs::File,
+    destination: &std::path::Path,
+) -> Result<bool, String> {
+    use std::os::fd::AsRawFd as _;
+
+    // `fclonefileat` clones from an already-open source handle (closing the
+    // TOCTOU window between the caller's earlier identity check and this
+    // call) into a path that must not already exist, matching `create_new`.
+    let dest_c = std::ffi::CString::new(destination.as_os_str().as_encoded_bytes())
+        .map_err(|_| "Snapshot destination path contains a NUL byte.".to_string())?;
+    let result =
+        unsafe { libc::fclonefileat(source.as_raw_fd(), libc::AT_FDCWD, dest_c.as_ptr(), 0) };
+    if result == 0 {
+        return Ok(true);
+    }
+    match std::io::Error::last_os_error().raw_os_error() {
+        // Cross-device, unsupported filesystem, or no kernel/fs clone
+        // support: fall back to the byte copy. Anything else (e.g. the
+        // destination unexpectedly already existing) is a real error.
+        Some(libc::EXDEV | libc::ENOTSUP | libc::ENOTTY) => Ok(false),
+        _ => Err(std::io::Error::last_os_error().to_string()),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn try_clone_snapshot_file(
+    source: &std::fs::File,
+    destination_file: &std::fs::File,
+) -> Result<bool, String> {
+    use std::os::fd::AsRawFd as _;
+
+    // linux/fs.h: `#define FICLONE _IOW(0x94, 9, int)`. Not exposed by the
+    // `libc` crate; the encoding is a stable kernel UAPI constant.
+    const FICLONE: libc::c_ulong = 0x4004_9409;
+    let result = unsafe {
+        libc::ioctl(
+            destination_file.as_raw_fd(),
+            FICLONE as _,
+            source.as_raw_fd(),
+        )
+    };
+    if result == 0 {
+        return Ok(true);
+    }
+    match std::io::Error::last_os_error().raw_os_error() {
+        // Cross-device, unsupported filesystem, or no kernel/fs clone
+        // support: fall back to the byte copy.
+        Some(libc::EXDEV | libc::EOPNOTSUPP | libc::ENOTTY | libc::EINVAL) => Ok(false),
+        _ => Err(std::io::Error::last_os_error().to_string()),
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn try_clone_snapshot_file(
+    _source: &std::fs::File,
+    _destination: &std::path::Path,
+) -> Result<bool, String> {
+    Ok(false)
+}
+
 fn copy_archive_snapshot_file(
     source: &mut std::fs::File,
     destination: &std::path::Path,
 ) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        match try_clone_snapshot_file(source, destination) {
+            Ok(true) => {
+                // `clonefile`/`fclonefileat` preserves the *source* archive's
+                // mode bits, which can be more permissive than the private
+                // snapshot's 0o600. Force it back down so the clone fast path
+                // never weakens the private-snapshot guarantee the byte-copy
+                // path provides via `create_new` + `mode(0o600)`.
+                use std::os::unix::fs::PermissionsExt as _;
+                std::fs::set_permissions(destination, std::fs::Permissions::from_mode(0o600))
+                    .map_err(|error| error.to_string())?;
+                return Ok(());
+            }
+            Ok(false) => {}
+            Err(error) => return Err(error),
+        }
+    }
+
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -138,6 +233,50 @@ fn copy_archive_snapshot_file(
     let mut destination_file = options
         .open(destination)
         .map_err(|error| error.to_string())?;
+
+    #[cfg(target_os = "linux")]
+    {
+        match try_clone_snapshot_file(source, &destination_file) {
+            Ok(true) => {
+                let result = destination_file
+                    .sync_all()
+                    .map_err(|error| error.to_string());
+                drop(destination_file);
+                if let Err(error) = result {
+                    let cleanup = crate::fs_secure::remove_file_for_cleanup(destination);
+                    return Err(match cleanup {
+                        Ok(()) => error,
+                        Err(cleanup_error)
+                            if cleanup_error.kind() == std::io::ErrorKind::NotFound =>
+                        {
+                            error
+                        }
+                        Err(cleanup_error) => {
+                            format!(
+                                "{error}; partial snapshot cleanup also failed: {cleanup_error}"
+                            )
+                        }
+                    });
+                }
+                return Ok(());
+            }
+            Ok(false) => {}
+            Err(error) => {
+                drop(destination_file);
+                let cleanup = crate::fs_secure::remove_file_for_cleanup(destination);
+                return Err(match cleanup {
+                    Ok(()) => error,
+                    Err(cleanup_error) if cleanup_error.kind() == std::io::ErrorKind::NotFound => {
+                        error
+                    }
+                    Err(cleanup_error) => {
+                        format!("{error}; partial snapshot cleanup also failed: {cleanup_error}")
+                    }
+                });
+            }
+        }
+    }
+
     let result = std::io::copy(source, &mut destination_file)
         .map_err(|error| error.to_string())
         .and_then(|_| {
@@ -297,10 +436,30 @@ pub(super) fn archive_input_family(
         .ok_or_else(|| "Archive input has an invalid file name.".to_string())?;
     let lower = name.to_ascii_lowercase();
     let bytes = name.as_bytes();
-    let split_base = (bytes.len() > 4
+    let numeric_suffix = bytes.len() > 4
         && bytes[bytes.len() - 4] == b'.'
-        && bytes[bytes.len() - 3..].iter().all(u8::is_ascii_digit))
-    .then(|| &name[..name.len() - 4]);
+        && bytes[bytes.len() - 3..].iter().all(u8::is_ascii_digit);
+    // A bare `name.123`-shaped file is only a 7-Zip split-volume member when
+    // its base ends in a recognized archive extension (`archive.7z.001`) or a
+    // sibling `.002` volume actually exists next to it. Without one of those,
+    // an ordinary numbered file like `photo.123` or `backup.100` was rejected
+    // outright with "Select the first (.001) archive volume", even though it
+    // is not part of any split archive at all.
+    let split_base = numeric_suffix
+        .then(|| &name[..name.len() - 4])
+        .filter(|base| {
+            const KNOWN_ARCHIVE_SUFFIXES: &[&str] = &[
+                ".7z", ".zip", ".tar", ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz",
+            ];
+            let base_lower = base.to_ascii_lowercase();
+            if KNOWN_ARCHIVE_SUFFIXES
+                .iter()
+                .any(|suffix| base_lower.ends_with(suffix))
+            {
+                return true;
+            }
+            parent.join(format!("{base}.002")).is_file()
+        });
     if let Some(base) = split_base {
         if !lower.ends_with(".001") {
             return Err("Select the first (.001) archive volume for extraction.".to_string());

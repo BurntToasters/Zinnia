@@ -160,16 +160,24 @@ describe("buildArgs (add mode)", () => {
     expect(args).toContain("new.txt");
   });
 
-  it("omits SFX and split in update mode", () => {
+  it("omits SFX in update mode", () => {
     state.inputs = ["new.txt"];
     setInputValue("output-path", "existing.7z");
     setChecked("update-mode", true);
     setChecked("sfx", true);
-    setSelectValue("split-size", "100m");
 
     const args = buildArgs();
     expect(args).not.toContain("-sfx");
     expect(args.some((a) => a.startsWith("-v"))).toBe(false);
+  });
+
+  it("rejects a chosen split size in update mode instead of silently dropping it", () => {
+    state.inputs = ["new.txt"];
+    setInputValue("output-path", "existing.7z");
+    setChecked("update-mode", true);
+    setSelectValue("split-size", "100m");
+
+    expect(() => buildArgs()).toThrow(/split volumes/i);
   });
 
   it("upgrades zip encryption to AES-256 when a password is set", () => {

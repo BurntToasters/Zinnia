@@ -113,7 +113,17 @@ export function getMode(): "add" | "extract" | "browse" {
   return "add";
 }
 
-function resetBrowsePasswordControl(inputId: string, toggleId: string): void {
+/**
+ * Clears a password field's value and resets its Show/Hide toggle back to
+ * hidden (`type="password"`, "Show" label/icon, `aria-pressed="false"`).
+ * Exported (originally browse-only) so any caller clearing a password value
+ * can also undo a prior "Show" click; clearing `.value` alone leaves the
+ * field visible in plaintext for whatever is typed into it next.
+ */
+export function resetPasswordFieldControl(
+  inputId: string,
+  toggleId: string,
+): void {
   const input = document.getElementById(inputId) as HTMLInputElement | null;
   const toggle = document.getElementById(toggleId) as HTMLButtonElement | null;
   if (input) {
@@ -136,11 +146,11 @@ function resetBrowsePasswordControl(inputId: string, toggleId: string): void {
 
 /** Clears Basic then Power browse password fields and resets Show/Hide toggles. */
 export function clearBrowsePasswordFields(): void {
-  resetBrowsePasswordControl(
+  resetPasswordFieldControl(
     "basic-browse-password",
     "basic-toggle-browse-password",
   );
-  resetBrowsePasswordControl("browse-password", "toggle-browse-password");
+  resetPasswordFieldControl("browse-password", "toggle-browse-password");
 }
 
 export function setBrowsePasswordFieldVisible(visible: boolean) {

@@ -1741,6 +1741,37 @@ fn archive_snapshot_collects_split_volume_family() {
 }
 
 #[test]
+fn archive_snapshot_treats_ordinary_numbered_file_as_not_split() {
+    let root = temp_root("zinnia-ordinary-numbered-file");
+    std::fs::create_dir_all(&root).expect("root");
+    // No archive-extension base and no sibling `.002`: not a split volume.
+    let photo = root.join("photo.123");
+    std::fs::write(&photo, b"not an archive volume").expect("photo");
+    assert_eq!(
+        archive_input_family(&photo).expect("ordinary file is its own family"),
+        vec![photo.clone()]
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn archive_snapshot_collects_bare_numbered_split_family_with_sibling_002() {
+    let root = temp_root("zinnia-bare-split-snapshot");
+    std::fs::create_dir_all(&root).expect("root");
+    // No recognized archive extension in the base name, but a `.002` sibling
+    // proves this really is a split-volume family.
+    let first = root.join("backup.001");
+    let second = root.join("backup.002");
+    std::fs::write(&first, b"first").expect("first");
+    std::fs::write(&second, b"second").expect("second");
+    assert_eq!(
+        archive_input_family(&first).expect("family"),
+        vec![first.clone(), second.clone()]
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn archive_snapshot_collects_part_rar_family() {
     let root = temp_root("zinnia-part-rar-snapshot");
     std::fs::create_dir_all(&root).expect("root");

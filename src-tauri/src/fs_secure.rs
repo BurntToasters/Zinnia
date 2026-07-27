@@ -163,7 +163,19 @@ pub fn sync_directory(path: &Path) -> Result<(), String> {
                 path.display()
             ));
         }
-        match std::fs::File::open(path).and_then(|directory| directory.sync_all()) {
+        // Plain `File::open` never sets FILE_FLAG_BACKUP_SEMANTICS, so opening a
+        // directory with it always fails with ERROR_ACCESS_DENIED (5) before a
+        // handle is even obtained. That used to make every Windows call in this
+        // function silently succeed without ever touching FlushFileBuffers, which
+        // defeated the durability semantics this helper promises to callers. Open
+        // with backup semantics explicitly so a real handle can be flushed.
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS;
+        let open_result = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(path);
+        match open_result.and_then(|directory| directory.sync_all()) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(()),
             Err(error)
@@ -332,28 +344,40 @@ fn run_hidden_output(
         .output()
 }
 
-/// Resolve `%SystemRoot%\System32\whoami.exe` and fail closed if missing.
-/// Never search PATH: a hijacked whoami on PATH could inject SDDL via SID text.
+/// Resolve `%SystemRoot%\System32\<name>` and fail closed if missing.
+///
+/// Rust's Windows program-name resolution for a bare executable name searches,
+/// in order: the child's `PATH` argument, the *current process's own
+/// directory*, System32, the Windows directory, then `PATH`. NSIS installs
+/// under `installMode: currentUser`, so Zinnia's own install directory is
+/// user-writable; a bare `Command::new("reg")`/`"taskkill"`/`"powershell.exe"`
+/// would resolve a same-named binary placed there before ever reaching the
+/// real System32 copy. Every OS-helper invocation must resolve through this
+/// function instead so a hijacked binary in the app directory cannot run with
+/// Zinnia's privileges (the same reasoning already applied to `whoami.exe`).
 #[cfg(windows)]
-fn system32_whoami_path() -> Result<std::path::PathBuf, String> {
+pub(crate) fn system32_binary_path(name: &str) -> Result<std::path::PathBuf, String> {
     let system_root = std::env::var_os("SystemRoot")
-        .ok_or_else(|| "SystemRoot is unset; cannot resolve System32\\whoami.exe".to_string())?;
+        .ok_or_else(|| format!("SystemRoot is unset; cannot resolve System32\\{name}"))?;
     let path = std::path::PathBuf::from(system_root)
         .join("System32")
-        .join("whoami.exe");
-    let metadata = std::fs::symlink_metadata(&path).map_err(|error| {
-        format!(
-            "System32\\whoami.exe not found at {}: {error}",
-            path.display()
-        )
-    })?;
+        .join(name);
+    let metadata = std::fs::symlink_metadata(&path)
+        .map_err(|error| format!("System32\\{name} not found at {}: {error}", path.display()))?;
     if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_file() {
         return Err(format!(
-            "System32\\whoami.exe at {} is not a regular file",
+            "System32\\{name} at {} is not a regular file",
             path.display()
         ));
     }
     Ok(path)
+}
+
+/// Resolve `%SystemRoot%\System32\whoami.exe` and fail closed if missing.
+/// Never search PATH: a hijacked whoami on PATH could inject SDDL via SID text.
+#[cfg(windows)]
+fn system32_whoami_path() -> Result<std::path::PathBuf, String> {
+    system32_binary_path("whoami.exe")
 }
 
 #[cfg(windows)]

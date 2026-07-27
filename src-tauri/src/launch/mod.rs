@@ -63,7 +63,10 @@ pub use open_path::{
 #[allow(unused_imports)]
 pub use open_routing::emit_open_urls;
 #[allow(unused_imports)]
-pub use open_routing::{collect_cli_context, emit_open_paths, resolve_cli_context_with_handoffs};
+pub use open_routing::{
+    collect_cli_context, emit_open_paths, get_shell_handoff_error,
+    resolve_cli_context_with_handoffs,
+};
 
 #[doc(hidden)]
 pub use extract_window::{
@@ -77,6 +80,10 @@ pub use open_path::{
     __cmd__open_path, __cmd__register_extract_open_path, __tauri_command_name_drain_pending_paths,
     __tauri_command_name_get_initial_mode, __tauri_command_name_get_initial_paths,
     __tauri_command_name_open_path, __tauri_command_name_register_extract_open_path,
+};
+#[doc(hidden)]
+pub use open_routing::{
+    __cmd__get_shell_handoff_error, __tauri_command_name_get_shell_handoff_error,
 };
 
 #[cfg(test)]

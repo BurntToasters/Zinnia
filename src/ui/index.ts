@@ -31,6 +31,7 @@ export {
   mapArchiveValidationResult,
   getMode,
   clearBrowsePasswordFields,
+  resetPasswordFieldControl,
   setBrowsePasswordFieldVisible,
   setMode,
   renderInputs,

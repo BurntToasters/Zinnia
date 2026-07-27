@@ -6,6 +6,7 @@ import {
   getWorkspaceMode,
   hideProgress,
   log,
+  resetPasswordFieldControl,
   setProgress,
   setStatus,
 } from "../ui";
@@ -64,17 +65,22 @@ export async function showOperationError(
   );
 }
 
+// Paired with each field's Show/Hide toggle button id. Clearing `.value`
+// alone left a field's `type="text"` state (and "Hide"/aria-pressed) intact
+// after a user clicked "Show", so the next password typed into that field
+// stayed visible in plaintext for the rest of the session.
+const PASSWORD_FIELD_TOGGLES: ReadonlyArray<readonly [string, string]> = [
+  ["password", "toggle-password"],
+  ["extract-password", "toggle-extract-password"],
+  ["browse-password", "toggle-browse-password"],
+  ["basic-password", "basic-toggle-password"],
+  ["basic-extract-password", "basic-toggle-extract-password"],
+  ["basic-browse-password", "basic-toggle-browse-password"],
+];
+
 export function clearPasswordFields(): void {
-  for (const id of [
-    "password",
-    "extract-password",
-    "browse-password",
-    "basic-password",
-    "basic-extract-password",
-    "basic-browse-password",
-  ]) {
-    const field = document.getElementById(id) as HTMLInputElement | null;
-    if (field) field.value = "";
+  for (const [inputId, toggleId] of PASSWORD_FIELD_TOGGLES) {
+    resetPasswordFieldControl(inputId, toggleId);
   }
 }
 

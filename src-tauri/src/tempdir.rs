@@ -72,10 +72,124 @@ pub fn cleanup_stale_temp_dirs(app: &tauri::AppHandle) -> Result<(), String> {
             .and_then(|modified| now.duration_since(modified).ok())
             .is_some_and(|age| age >= max_age);
         if old_enough {
-            let _ = std::fs::remove_dir_all(entry.path());
+            // Use the hardened cleanup helper (clears Windows read-only
+            // attributes first and refuses to traverse a link/reparse point)
+            // rather than a bare `remove_dir_all`.
+            let _ = crate::fs_secure::remove_dir_all_for_cleanup(&entry.path());
         }
     }
     Ok(())
+}
+
+/// Age past which orphaned launch-handoff temp material is considered safe to
+/// remove. Both the Windows shell handoff file and the private 7-Zip
+/// selection-list directory are normally consumed and deleted within seconds
+/// of being created; anything this old was orphaned by a hard kill / crash
+/// between creation and consumption.
+const STALE_LAUNCH_TEMP_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+fn is_older_than(metadata: &std::fs::Metadata, max_age: std::time::Duration) -> bool {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|modified| std::time::SystemTime::now().duration_since(modified).ok())
+        .is_some_and(|age| age >= max_age)
+}
+
+/// Remove `%TEMP%\zinnia-shell-handoff-*.tmp` files left behind when Zinnia is
+/// killed between the Windows shell extension writing a handoff and the app
+/// consuming it (see `launch::open_routing::load_shell_handoff`). Every
+/// candidate is opened without following a final-component link/reparse point
+/// and its owner is verified against the current user before removal, so this
+/// can never delete another user's file even if `%TEMP%` were ever shared.
+#[cfg(windows)]
+fn sweep_stale_shell_handoffs() {
+    const PREFIX: &str = "zinnia-shell-handoff-";
+    const SUFFIX: &str = ".tmp";
+
+    let temp = std::env::temp_dir();
+    let Ok(entries) = std::fs::read_dir(&temp) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !name.starts_with(PREFIX) || !name.ends_with(SUFFIX) {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_file() {
+            continue;
+        }
+        if !is_older_than(&metadata, STALE_LAUNCH_TEMP_MAX_AGE) {
+            continue;
+        }
+        let Ok(file) = crate::path_safety::open_regular_file_nofollow_for_snapshot(&path) else {
+            continue;
+        };
+        if crate::fs_secure::assert_handle_owned_by_current_user(&file).is_err() {
+            continue;
+        }
+        drop(file);
+        if let Err(error) = std::fs::remove_file(&path) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                eprintln!(
+                    "Could not remove an orphaned Windows shell handoff {}: {error}",
+                    path.display()
+                );
+            }
+        }
+    }
+}
+
+/// Remove `%TEMP%/zinnia-7z-list-*` directories left behind when Zinnia is
+/// killed while a `run_7z` invocation's private selection-list directory
+/// (`process::commands::ManagedListFile`) is still open; its `Drop` impl never
+/// runs on a hard kill.
+fn sweep_stale_7z_list_dirs() {
+    const PREFIX: &str = "zinnia-7z-list-";
+
+    let temp = std::env::temp_dir();
+    let Ok(entries) = std::fs::read_dir(&temp) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !name.starts_with(PREFIX) {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_dir() {
+            continue;
+        }
+        if !is_older_than(&metadata, STALE_LAUNCH_TEMP_MAX_AGE) {
+            continue;
+        }
+        if let Err(error) = crate::fs_secure::remove_dir_all_for_cleanup(&path) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                eprintln!(
+                    "Could not remove an orphaned 7-Zip list directory {}: {error}",
+                    path.display()
+                );
+            }
+        }
+    }
+}
+
+/// Best-effort startup sweep for launch-handoff temp material orphaned by a
+/// crash or hard kill between creation and normal (short-lived) consumption.
+/// Never fails the caller; every step is independently best-effort.
+pub fn sweep_stale_launch_temp_files() {
+    #[cfg(windows)]
+    sweep_stale_shell_handoffs();
+    sweep_stale_7z_list_dirs();
 }
 
 #[tauri::command]

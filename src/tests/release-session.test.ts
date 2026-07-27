@@ -146,6 +146,12 @@ describe("release build session", () => {
     ).toThrow(/quality-gate proof/);
   });
 
+  // Six synchronous `execFileSync("git", ...)` calls are fast in isolation,
+  // but this is one of the few tests in the suite that shells out to real
+  // subprocesses rather than doing only in-process work, so it can
+  // occasionally exceed vitest's 5s default under the full suite's ~55
+  // concurrent jsdom worker load (same class of flake fixed for the macOS
+  // 7-Zip compatibility test).
   it("binds a recorded clean-tree quality gate to the release session", () => {
     const root = fs.mkdtempSync(
       path.join(os.tmpdir(), "zinnia-release-session-"),
@@ -231,5 +237,5 @@ describe("release build session", () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 });

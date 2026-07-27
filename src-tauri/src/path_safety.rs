@@ -50,6 +50,27 @@ pub fn assert_relative_symlink_within_root(root: &Path, link_path: &Path) -> Res
             std::path::Component::Normal(part) => resolved.push(part),
             std::path::Component::CurDir => {}
             std::path::Component::ParentDir => {
+                // Real kernel `..` resolution is relative to a symlink's
+                // target, not its apparent name, if the component just being
+                // popped is itself a symlink on disk. This lexical walk pops
+                // it as an ordinary path segment instead, which only matches
+                // real resolution when that segment is a real directory. A
+                // target string like `linkdir/../evil` where `linkdir` is
+                // itself an existing symlink can otherwise compute a
+                // seemingly in-root `resolved` here while the kernel would
+                // actually open somewhere else, including outside the root.
+                // (A *chain of separate* symlinks validated independently,
+                // e.g. macOS's `Versions/Current` -> `A`, is unaffected: that
+                // never pops back through an already-pushed component within
+                // this same target string.)
+                if let Ok(metadata) = std::fs::symlink_metadata(&resolved) {
+                    if metadata.file_type().is_symlink() {
+                        return Err(format!(
+                            "Archive symbolic link target traverses another symbolic link and cannot be resolved safely: {}",
+                            link_path.display()
+                        ));
+                    }
+                }
                 if !resolved.pop() {
                     return Err(format!(
                         "Archive symbolic link escapes the extract root: {}",
@@ -117,7 +138,13 @@ pub fn open_regular_file_nofollow(path: &Path) -> Result<std::fs::File, String> 
 
         let c_path = std::ffi::CString::new(path.as_os_str().as_bytes())
             .map_err(|_| "Path contains interior null bytes.".to_string())?;
-        let flags = libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW;
+        // O_NONBLOCK prevents `open` itself from blocking forever on a FIFO
+        // with no writer (a same-user TOCTOU swap of the target between an
+        // earlier `is_file()`-style check and this open could otherwise hang
+        // every caller of this function indefinitely). It is cleared again
+        // right after the metadata check confirms a regular file, so normal
+        // reads from the returned handle behave exactly as before.
+        let flags = libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK;
         let fd = unsafe { libc::open(c_path.as_ptr(), flags) };
         if fd < 0 {
             return Err(format!(
@@ -130,6 +157,16 @@ pub fn open_regular_file_nofollow(path: &Path) -> Result<std::fs::File, String> 
         let meta = file.metadata().map_err(|e| e.to_string())?;
         if !meta.is_file() {
             return Err(format!("Path is not a regular file: {}", path.display()));
+        }
+        let current_flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if current_flags < 0
+            || unsafe { libc::fcntl(fd, libc::F_SETFL, current_flags & !libc::O_NONBLOCK) } < 0
+        {
+            return Err(format!(
+                "Could not clear O_NONBLOCK on {}: {}",
+                path.display(),
+                std::io::Error::last_os_error()
+            ));
         }
         Ok(file)
     }
@@ -380,6 +417,27 @@ mod tests {
         symlink("A", &link).expect("symlink");
         assert_relative_symlink_within_root(&root, &link).expect("in-tree relative link");
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_target_traversing_through_another_symlink_is_rejected() {
+        use std::os::unix::fs::symlink;
+        let root = temp_root("rel-link-chain-escape");
+        // `escape_via` is itself a symlink. A second symlink's target string
+        // names `escape_via/..`; naive lexical `..` handling pops it as an
+        // ordinary path segment, even though real kernel `..` resolution
+        // would follow `escape_via` to wherever it points first. Rejecting
+        // this is conservative (it can also reject some safe chains), which
+        // is the correct default for archive-derived symlinks.
+        std::fs::create_dir_all(&root).expect("dir");
+        std::fs::create_dir_all(root.join("real")).expect("real dir");
+        symlink("real", root.join("escape_via")).expect("chain symlink");
+        let link = root.join("chained");
+        symlink("escape_via/../secret", &link).expect("chained target symlink");
+        let error = assert_relative_symlink_within_root(&root, &link).expect_err("chained escape");
+        assert!(error.contains("traverses another symbolic link"), "{error}");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[cfg(unix)]

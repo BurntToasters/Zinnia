@@ -45,6 +45,7 @@
     "allow-open-path",
     "allow-get-initial-paths",
     "allow-get-initial-mode",
+    "allow-get-shell-handoff-error",
     "allow-drain-pending-paths",
     "allow-mark-main-window-ready",
     "allow-get-platform-info",

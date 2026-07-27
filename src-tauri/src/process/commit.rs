@@ -1,6 +1,5 @@
 //! Promote/merge staged outputs, commit and rollback cleanup.
 
-#[cfg(windows)]
 use super::journal::move_identity_log_path;
 use super::journal::{
     ensure_path_identity, ensure_regular_file_identity, file_identities_match, file_identity,
@@ -1042,33 +1041,44 @@ fn remove_path_if_matches(path: &std::path::Path, identity: &FileIdentity) -> Re
     }
 }
 
-#[cfg(windows)]
+/// Append-only per-entry identity record. Used on every platform so
+/// publishing a large extraction into an existing destination journals each
+/// entry's identity in O(1) instead of rewriting the whole move-plan JSON
+/// (`write_move_plan`) after every single file, which made a merge into an
+/// existing destination with n entries cost O(n^2) I/O.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct MoveIdentityLogRecord {
     index: usize,
-    publish_temp: std::path::PathBuf,
+    /// Windows target-local publish creates a temp object directly under the
+    /// real target parent so a copy inherits that parent's ACL; every other
+    /// publish path (rename / hard-link, on any platform) leaves this `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    publish_temp: Option<std::path::PathBuf>,
     identity: FileIdentity,
 }
 
-#[cfg(windows)]
 struct MoveIdentityLogWriter {
     file: std::fs::File,
 }
 
-#[cfg(windows)]
 impl MoveIdentityLogWriter {
     fn create(staged: &std::path::Path) -> Result<Self, String> {
-        use std::os::windows::fs::OpenOptionsExt as _;
-        use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
-
         let path = move_identity_log_path(staged);
         let mut options = std::fs::OpenOptions::new();
-        options
-            .write(true)
-            .create_new(true)
+        options.write(true).create_new(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt as _;
+            use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
             // Recovery readers are harmless. Deny concurrent writers, rename,
             // and deletion for the lifetime of this extraction commit.
-            .share_mode(FILE_SHARE_READ);
+            options.share_mode(FILE_SHARE_READ);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
         let file = options.open(&path).map_err(|error| error.to_string())?;
         sync_file_best_effort(&file)?;
         if let Some(parent) = path.parent() {
@@ -1089,7 +1099,6 @@ impl MoveIdentityLogWriter {
     }
 }
 
-#[cfg(windows)]
 fn hydrate_move_plan_identities(
     staged: &std::path::Path,
     plan: &mut [MoveRecord],
@@ -1135,7 +1144,7 @@ fn hydrate_move_plan_identities(
         let Some(planned) = plan.get_mut(record.index) else {
             return Err("Extraction identity log references an invalid move index.".to_string());
         };
-        if planned.publish_temp.as_ref() != Some(&record.publish_temp) {
+        if planned.publish_temp != record.publish_temp {
             return Err("Extraction identity log does not match its move plan.".to_string());
         }
         if let Some(existing) = &planned.publish_identity {
@@ -1149,7 +1158,9 @@ fn hydrate_move_plan_identities(
     Ok(())
 }
 
-#[cfg(windows)]
+/// Journal a publish identity in the append-only log and mirror it into the
+/// in-memory plan. Does not rewrite `write_move_plan`'s JSON: that would put
+/// the O(n^2) cost back for a merge into an existing destination.
 fn record_publish_identity(
     identity_log: &mut MoveIdentityLogWriter,
     plan: &mut [MoveRecord],
@@ -1158,8 +1169,7 @@ fn record_publish_identity(
 ) -> Result<(), String> {
     let publish_temp = plan
         .get(index)
-        .and_then(|record| record.publish_temp.clone())
-        .ok_or_else(|| "Extraction publish path was not planned.".to_string())?;
+        .and_then(|record| record.publish_temp.clone());
     identity_log.append(&MoveIdentityLogRecord {
         index,
         publish_temp,
@@ -1654,7 +1664,6 @@ pub(crate) fn rollback_persisted_move_plan(
     };
     #[allow(unused_mut)]
     let mut plan: Vec<MoveRecord> = serde_json::from_str(&json).map_err(|e| e.to_string())?;
-    #[cfg(windows)]
     hydrate_move_plan_identities(staged, &mut plan)?;
     rollback_move_records(staged, destination, &plan)
 }
@@ -1770,14 +1779,16 @@ where
     prepare_planned_links(staged, destination, &plan)?;
     #[cfg(windows)]
     prepare_target_local_publish_paths(&mut plan, &mut reserved)?;
-    #[cfg(windows)]
     match std::fs::remove_file(move_identity_log_path(staged)) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(error.to_string()),
     }
+    // Written once up front with every `publish_identity` still `None`. Per-file
+    // identities are journaled afterward through the append-only identity log
+    // (`identity_log`) instead of rewriting this JSON per entry, which used to
+    // make a merge into an existing destination with n entries cost O(n^2) I/O.
     write_move_plan(staged, &plan)?;
-    #[cfg(windows)]
     let mut identity_log = MoveIdentityLogWriter::create(staged)?;
     for index in 0..plan.len() {
         let mut publish_one = || -> Result<(), String> {
@@ -1800,15 +1811,18 @@ where
                 // fail closed with both source and target present and no id.
                 if !crate::path_safety::is_link_or_reparse(&metadata) {
                     let expected = path_identity(&record.source)?;
-                    plan[index].publish_identity = Some(expected);
-                    write_move_plan(staged, &plan)?;
+                    record_publish_identity(&mut identity_log, &mut plan, index, &expected)?;
                 }
                 publish_file_no_replace(&plan[index].source, &plan[index].target)?;
                 if let Some(expected) = plan[index].publish_identity.clone() {
                     let actual = path_identity(&plan[index].target)?;
                     if !file_identities_match(&actual, &expected) {
-                        plan[index].publish_identity = Some(actual);
-                        write_move_plan(staged, &plan)?;
+                        // Rename and hard-link publication preserve the source's
+                        // identity on every platform Zinnia ships for, so this
+                        // only fires for the rare copy fallback used when a
+                        // filesystem has neither atomic primitive. Append the
+                        // correction; hydration takes the latest record per index.
+                        record_publish_identity(&mut identity_log, &mut plan, index, &actual)?;
                     }
                 }
                 return Ok(());
@@ -1823,8 +1837,7 @@ where
             }
             if !crate::path_safety::is_link_or_reparse(&metadata) {
                 let identity = path_identity(&plan[index].target)?;
-                plan[index].publish_identity = Some(identity);
-                write_move_plan(staged, &plan)?;
+                record_publish_identity(&mut identity_log, &mut plan, index, &identity)?;
             }
             Ok(())
         };
@@ -1836,7 +1849,6 @@ where
             });
         }
     }
-    #[cfg(windows)]
     drop(identity_log);
     let promoted: Vec<_> = plan.iter().map(|record| record.target.clone()).collect();
     let durability = sync_directory(destination).and_then(|()| {

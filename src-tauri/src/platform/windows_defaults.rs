@@ -46,7 +46,12 @@ pub(crate) fn parse_reg_sz(stdout: &str, value_name: &str) -> Option<String> {
 }
 
 fn reg_query(key: &str, value: Option<&str>) -> Option<String> {
-    let mut command = Command::new("reg");
+    // Resolve the absolute System32 path rather than a bare "reg" name: NSIS
+    // installs under installMode "currentUser", so Zinnia's own install
+    // directory is user-writable and would otherwise be searched before
+    // System32 for program-name resolution.
+    let reg = crate::fs_secure::system32_binary_path("reg.exe").ok()?;
+    let mut command = Command::new(reg);
     command.arg("query").arg(key);
     match value {
         Some(name) => {

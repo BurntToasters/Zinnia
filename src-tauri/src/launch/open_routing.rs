@@ -28,6 +28,62 @@ const SHELL_HANDOFF_PREFIX: &str = "zinnia-shell-handoff-";
 #[cfg(windows)]
 const SHELL_HANDOFF_SUFFIX: &str = ".tmp";
 
+/// Most recent Windows shell-handoff load failure not yet surfaced to a
+/// frontend. Previously this was only `eprintln!`ed, so a rejected or
+/// unreadable handoff (oversized, wrong owner, malformed) silently opened
+/// Zinnia with no paths and no explanation visible to the user.
+///
+/// A cold launch resolves this handoff during `setup()`, before any window or
+/// event listener exists, so `app.emit(...)` at that point would be silently
+/// dropped. Expose it as a pollable command instead, read once at frontend
+/// boot the same way `get_startup_recovery_status` already is.
+#[cfg(windows)]
+static LAST_SHELL_HANDOFF_ERROR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+#[cfg(windows)]
+fn record_shell_handoff_error(message: String) {
+    if let Ok(mut guard) = LAST_SHELL_HANDOFF_ERROR.lock() {
+        *guard = Some(message);
+    }
+}
+
+/// A later, already-running-window open request (secondary instance argv
+/// forwarding, Reopen) can still emit live, since a window/listener exists by
+/// then; use the same channel already used for queue-capacity drops.
+#[cfg(windows)]
+pub(crate) fn emit_pending_shell_handoff_error(app: &tauri::AppHandle) {
+    let message = match LAST_SHELL_HANDOFF_ERROR.lock() {
+        Ok(mut guard) => guard.take(),
+        Err(_) => None,
+    };
+    if let Some(message) = message {
+        let _ = app.emit(
+            "open-paths-dropped",
+            format!("Could not read the file selection from Explorer: {message}"),
+        );
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn emit_pending_shell_handoff_error(_app: &tauri::AppHandle) {}
+
+/// Pollable counterpart for the cold-launch case, where `setup()` resolves the
+/// handoff before any window exists to receive an emitted event.
+#[tauri::command]
+pub fn get_shell_handoff_error() -> Option<String> {
+    #[cfg(windows)]
+    {
+        LAST_SHELL_HANDOFF_ERROR
+            .lock()
+            .ok()
+            .and_then(|mut guard| guard.take())
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
 pub(crate) fn enqueue_pending_batch(
     queue: &mut Vec<OpenPathsPayload>,
     paths: Vec<String>,
@@ -231,7 +287,7 @@ fn windows_volume_guid_path_is_absolute(path: &str) -> bool {
 }
 
 #[cfg(windows)]
-fn load_shell_handoff(path: &str) -> Result<Vec<String>, String> {
+pub(crate) fn load_shell_handoff(path: &str) -> Result<Vec<String>, String> {
     use std::io::Read;
 
     let path = std::path::Path::new(path);
@@ -341,7 +397,10 @@ where
             #[cfg(windows)]
             match load_shell_handoff(&handoff) {
                 Ok(mut handoff_paths) => paths.append(&mut handoff_paths),
-                Err(error) => eprintln!("Could not load Windows shell handoff: {error}"),
+                Err(error) => {
+                    eprintln!("Could not load Windows shell handoff: {error}");
+                    record_shell_handoff_error(error);
+                }
             }
             #[cfg(not(windows))]
             {
@@ -498,6 +557,7 @@ pub fn emit_open_urls(app: &tauri::AppHandle, urls: Vec<Url>) {
 pub fn emit_open_paths(app: &tauri::AppHandle, argv: Vec<String>) -> bool {
     // Primary (or sole) instance: consume Windows shell handoffs now.
     let (paths, mode) = parse_open_request_args(argv.into_iter().skip(1));
+    emit_pending_shell_handoff_error(app);
     route_open_request(app, paths, mode)
 }
 

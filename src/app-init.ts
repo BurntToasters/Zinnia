@@ -273,6 +273,25 @@ export async function init() {
       devLog(`Unable to read startup recovery status: ${msg}`);
     });
 
+  // A cold launch resolves a Windows shell handoff (Explorer's "Extract
+  // with Zinnia" / "Compress with Zinnia") during Rust setup(), before any
+  // window or event listener exists to receive an emitted failure. Poll it
+  // once here instead, same as the startup recovery status above, and reuse
+  // the toast already wired for the "open-paths-dropped" event so a rejected
+  // or unreadable handoff is visible instead of silently opening with no
+  // paths.
+  void invoke<string | null>("get_shell_handoff_error")
+    .then((message) => {
+      if (!message) return;
+      const detail = `Could not read the file selection from Explorer: ${message}`;
+      showToast(detail, "error", 5000);
+      log(detail, "error");
+    })
+    .catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      devLog(`Unable to read shell handoff status: ${msg}`);
+    });
+
   state.platformName = platform;
   const [versionResult, packagedResult] = await Promise.allSettled([
     getVersion(),

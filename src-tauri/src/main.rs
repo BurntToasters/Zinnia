@@ -279,6 +279,7 @@ fn main() {
                 if let Err(e) = tempdir::cleanup_stale_temp_dirs(&maintenance_handle) {
                     eprintln!("Failed to clean stale conversion directories: {e}");
                 }
+                tempdir::sweep_stale_launch_temp_files();
             });
             Ok(())
         })
@@ -302,6 +303,7 @@ fn main() {
             launch::register_extract_open_path,
             launch::get_initial_paths,
             launch::get_initial_mode,
+            launch::get_shell_handoff_error,
             launch::drain_pending_paths,
             launch::get_extract_paths,
             launch::close_extract_window,

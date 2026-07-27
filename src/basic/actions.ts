@@ -18,6 +18,7 @@ import {
   looksLikePasswordRequiredError,
   parseArchiveListing,
 } from "../archive";
+import { ensureRuntimeReady } from "../archive/runtime";
 import {
   archiveExtensionForFormat,
   isPreferredCompressParent,
@@ -333,10 +334,19 @@ export async function handleBasicCompressAction(): Promise<void> {
   }
 }
 
+export type PasswordCheckResult = "ok" | "wrong" | "error";
+
+/**
+ * Test a candidate password against `archive`. Distinguishes a genuinely
+ * wrong password from a transport/backend failure (busy backend, runtime
+ * probe failure, IPC error): those must not be reported to the user as
+ * "Incorrect password", which would loop forever on an unrelated problem.
+ */
 export async function testArchivePassword(
   archive: string,
   password?: string,
-): Promise<boolean> {
+): Promise<PasswordCheckResult> {
+  if (!(await ensureRuntimeReady())) return "error";
   try {
     const args = ["t", "-spd"];
     if (password) {
@@ -345,22 +355,33 @@ export async function testArchivePassword(
     args.push("--", archive);
     const result = await invoke<Run7zResult>("run_7z", { args });
     if (result.code > 1) {
-      return !looksLikePasswordRequiredError(result.stdout, result.stderr);
+      return looksLikePasswordRequiredError(result.stdout, result.stderr)
+        ? "wrong"
+        : "error";
     }
-    return true;
-  } catch {
-    return false;
+    return "ok";
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Password check failed: ${msg}`, "error");
+    return "error";
   }
 }
 
+/**
+ * `true`/`false` when the archive's encryption state is known, `null` when
+ * it could not be determined (backend/IPC failure). Callers must treat
+ * `null` as "assume encrypted": silently skipping the password prompt on an
+ * error would let an encrypted archive fail extraction with no explanation.
+ */
 export async function isArchiveEncrypted(
   archivePath: string,
-): Promise<boolean> {
+): Promise<boolean | null> {
   const cached = state.browseArchiveInfoByPath.get(archivePath);
   if (cached) {
     return cached.encrypted;
   }
 
+  if (!(await ensureRuntimeReady())) return null;
   try {
     const args = ["l", "-slt", "-spd", "--", archivePath];
     const result = await invoke<Run7zResult>("run_7z", { args });
@@ -369,8 +390,10 @@ export async function isArchiveEncrypted(
     }
     const info = parseArchiveListing(result.stdout);
     return info.encrypted;
-  } catch {
-    return false;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Encryption check failed: ${msg}`, "error");
+    return null;
   }
 }
 
@@ -395,9 +418,22 @@ async function handleBasicExtractActionOnce(
     return;
   }
 
-  // 1. Check if archive is encrypted
-  const isEncrypted = await isArchiveEncrypted(archive);
+  // 1. Check if archive is encrypted. `null` means the check itself failed
+  // (busy backend, runtime probe failure, IPC error) rather than confirming
+  // the archive is plaintext; treat that the same as "encrypted" so a real
+  // password requirement is never silently skipped.
+  const encryptionCheck = await isArchiveEncrypted(archive);
   if (!isBasicPreparationCurrent(preparation)) return;
+  if (encryptionCheck === null) {
+    showBasicCompletion(
+      "extract",
+      false,
+      "Operation failed",
+      "Could not determine whether this archive is encrypted. Check the log for details and try again.",
+    );
+    return;
+  }
+  const isEncrypted = encryptionCheck;
   let password = "";
 
   if (isEncrypted) {
@@ -414,18 +450,28 @@ async function handleBasicExtractActionOnce(
         return;
       }
 
-      // Test the password
-      const ok = await testArchivePassword(archive, input);
+      // Test the password. "error" means the check itself failed (busy
+      // backend, runtime probe, IPC) rather than confirming the password is
+      // wrong, so it must not loop the "Incorrect password" prompt forever.
+      const check = await testArchivePassword(archive, input);
       if (!isBasicPreparationCurrent(preparation)) return;
-      if (ok) {
+      if (check === "ok") {
         password = input;
         correctPassword = true;
-      } else {
+      } else if (check === "wrong") {
         await message("Incorrect password. Please try again.", {
           title: "Error",
           kind: "error",
         });
         if (!isBasicPreparationCurrent(preparation)) return;
+      } else {
+        showBasicCompletion(
+          "extract",
+          false,
+          "Operation failed",
+          "Could not verify the archive password. Check the log for details and try again.",
+        );
+        return;
       }
     }
   }

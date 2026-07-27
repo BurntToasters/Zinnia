@@ -47,6 +47,14 @@ describe("macOS compatibility", () => {
         expect(match?.[1]).toBe("26.0");
       }
     },
+    // Two synchronous `execFileSync` spawns are fast in isolation (tens of
+    // ms) but can occasionally exceed vitest's 5s default under the full
+    // suite's ~55 concurrent jsdom worker load, since this is one of the few
+    // tests that shells out to a real subprocess rather than only doing
+    // in-process work. This gate feeds npm run test:all's release
+    // quality-gate proof, so a load-induced timeout here must not be able to
+    // block an otherwise-clean release run.
+    30_000,
   );
 
   it("uses modern default-application APIs", () => {

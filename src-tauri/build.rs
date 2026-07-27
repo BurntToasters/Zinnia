@@ -363,6 +363,7 @@ fn main() {
         "register_extract_open_path",
         "get_initial_paths",
         "get_initial_mode",
+        "get_shell_handoff_error",
         "drain_pending_paths",
         "get_extract_paths",
         "close_extract_window",

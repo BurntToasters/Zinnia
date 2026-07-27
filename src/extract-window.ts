@@ -359,7 +359,13 @@ async function run() {
       await invoke("cancel_7z");
     } catch (err) {
       cancelRequested = false;
+      // All three buttons were disabled above before the cancel request. A
+      // failed cancel means extraction is still running, so re-opening the
+      // (not-yet-final) destination still doesn't make sense, but leaving
+      // `closeBtn` disabled stranded the window with only the titlebar close
+      // button as an escape hatch. Re-enable cancel (to retry) and close.
       cancelBtn.disabled = false;
+      closeBtn.disabled = false;
       const detail = err instanceof Error ? err.message : String(err);
       $("extract-error").hidden = false;
       const title = $("extract-error").querySelector<HTMLElement>(

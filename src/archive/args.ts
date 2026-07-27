@@ -199,9 +199,20 @@ export function buildArgs() {
     );
   }
 
-  if (!updateMode) {
-    const splitSize = readSplitSize();
-    if (splitSize) switches.push(`-v${splitSize}`);
+  // 7-Zip does not support -v (split volumes) with the "u" update command;
+  // Rust's validate_run_7z_args also rejects it there. Previously the UI
+  // simply omitted a chosen split size whenever update mode was checked,
+  // silently producing one unsplit archive with no indication that the
+  // user's split-size choice was ignored.
+  const splitSize = readSplitSize();
+  if (updateMode) {
+    if (splitSize) {
+      throw new Error(
+        "Split volumes are not available when updating an existing archive. Turn off split size, or turn off update mode.",
+      );
+    }
+  } else if (splitSize) {
+    switches.push(`-v${splitSize}`);
   }
 
   const args = [

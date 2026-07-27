@@ -387,9 +387,16 @@ export function wireBasicCompressEvents(): void {
   ) as HTMLSelectElement | null;
   if (formatSelect) {
     formatSelect.addEventListener("change", () => {
+      // Clear/disable the Basic password field for formats that don't
+      // support encryption *before* mirroring it to Power's hidden
+      // `#password` field. The previous order copied the still-present
+      // password into `#password` first, so switching from an encrypting
+      // format (e.g. 7z) to one that isn't (e.g. gzip) left the plaintext
+      // password resident in a hidden field even though the visible Basic
+      // field was cleared right after.
+      updateBasicPasswordField();
       syncBasicToPower();
       syncBasicOutputAutofill();
-      updateBasicPasswordField();
     });
   }
 

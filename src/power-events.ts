@@ -638,6 +638,17 @@ export function wireEvents() {
         !$("shortcuts-overlay").hidden
       )
         return;
+      // The backend runs at most one 7z operation at a time. Basic
+      // preparation (password probes, encryption checks) and incoming-path
+      // application both run with `state.running === false`, so this global
+      // shortcut must check them too or it can start a second, conflicting
+      // operation while one of those is in flight.
+      if (
+        state.running ||
+        state.operationPreparing ||
+        state.incomingPathsApplying
+      )
+        return;
       e.preventDefault();
       syncBasicBeforeRun();
       if (getMode() === "browse") void browseArchive();

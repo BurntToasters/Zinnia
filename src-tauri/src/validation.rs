@@ -168,7 +168,12 @@ pub(crate) fn archive_member_path_is_unsafe(path: &str) -> bool {
 }
 
 fn switch_contains_parent_traversal(arg: &str) -> bool {
-    let lower = arg.to_lowercase();
+    // ASCII-only lowercasing: `arg[2..]` below byte-slices the *original*
+    // string, and every allow-listed prefix compared against is ASCII, so
+    // Unicode-aware `to_lowercase()` (which can change a string's byte
+    // length, e.g. "İ" -> "i̇") buys nothing here and only risks a future
+    // allowlist edit reasoning about byte offsets against the wrong string.
+    let lower = arg.to_ascii_lowercase();
     if !(lower.starts_with("-i")
         || lower.starts_with("-x")
         || lower.starts_with("-w")
@@ -217,7 +222,10 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
             continue;
         }
 
-        let lower = arg.to_lowercase();
+        // ASCII-only: every allow/block-listed prefix compared against `lower`
+        // here is ASCII, and `arg[2..]` a few lines below byte-slices the
+        // original string using an offset derived from an ASCII prefix match.
+        let lower = arg.to_ascii_lowercase();
         if BLOCKED_7Z_ARGS.iter().any(|b| lower.starts_with(b)) {
             return Err(format!("7z argument '{arg}' is not permitted."));
         }
@@ -297,7 +305,9 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
             .take(separator_index.unwrap_or(args.len()))
             .skip(1)
             .filter_map(|arg| {
-                let lower = arg.to_lowercase();
+                // ASCII-only: compared prefixes/values are ASCII archive-type
+                // tokens (7z/zip/tar/gzip/...); no need for Unicode casing.
+                let lower = arg.to_ascii_lowercase();
                 // `-stl` / `-stx…` are not archive-type switches; only `-tTYPE`.
                 if lower == "-stl" || lower.starts_with("-stx") {
                     return None;

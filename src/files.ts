@@ -1,7 +1,13 @@
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { $ } from "./utils";
 import { state } from "./state";
-import { getMode, renderInputs, setBrowsePasswordFieldVisible } from "./ui";
+import {
+  getMode,
+  log,
+  renderInputs,
+  setBrowsePasswordFieldVisible,
+  setStatus,
+} from "./ui";
 import {
   archiveExtensionForFormat,
   deriveOutputArchivePath,
@@ -30,11 +36,19 @@ export async function chooseOutput() {
 export async function chooseOutputIfCurrent(isCurrent: () => boolean) {
   const format = $<HTMLSelectElement>("format").value;
   const derived = deriveOutputArchivePath(state.inputs, format);
-  const output = await save({
-    title: "Choose output archive",
-    defaultPath:
-      derived ?? `zinnia.${archiveExtensionForFormat(format.toLowerCase())}`,
-  });
+  let output: string | null;
+  try {
+    output = await save({
+      title: "Choose output archive",
+      defaultPath:
+        derived ?? `zinnia.${archiveExtensionForFormat(format.toLowerCase())}`,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Could not open the save-archive dialog: ${msg}`, "error");
+    setStatus("Could not open the save dialog", 3000);
+    return;
+  }
   if (
     output &&
     isCurrent() &&
@@ -50,10 +64,18 @@ export async function chooseExtract() {
 }
 
 export async function chooseExtractIfCurrent(isCurrent: () => boolean) {
-  const output = await open({
-    title: "Choose destination folder",
-    directory: true,
-  });
+  let output: string | string[] | null;
+  try {
+    output = await open({
+      title: "Choose destination folder",
+      directory: true,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Could not open the destination-folder dialog: ${msg}`, "error");
+    setStatus("Could not open the folder dialog", 3000);
+    return;
+  }
   if (output && typeof output === "string" && isCurrent()) {
     $<HTMLInputElement>("extract-path").value = output;
     state.lastAutoExtractDestination = null;
@@ -104,10 +126,18 @@ export async function addFilesIfCurrent(
     return;
   }
 
-  const selection = await open({
-    title: "Add files",
-    multiple: true,
-  });
+  let selection: string | string[] | null;
+  try {
+    selection = await open({
+      title: "Add files",
+      multiple: true,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Could not open the add-files dialog: ${msg}`, "error");
+    setStatus("Could not open the file dialog", 3000);
+    return;
+  }
   if (!selection || !isCurrent()) return;
 
   const newPaths = Array.isArray(selection) ? selection : [selection];
@@ -144,10 +174,18 @@ export async function addFolderIfCurrent(
     return;
   }
 
-  const selection = await open({
-    title: "Add folder",
-    directory: true,
-  });
+  let selection: string | string[] | null;
+  try {
+    selection = await open({
+      title: "Add folder",
+      directory: true,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Could not open the add-folder dialog: ${msg}`, "error");
+    setStatus("Could not open the folder dialog", 3000);
+    return;
+  }
   if (!selection || typeof selection !== "string" || !isCurrent()) return;
 
   if (underPrep) {

@@ -155,54 +155,14 @@ pub fn atomic_write_text(path: &std::path::Path, contents: &str) -> Result<(), S
     }
     drop(file);
 
-    #[cfg(windows)]
-    {
-        // On Windows, rename over existing file fails. Use a two-step approach:
-        // rename existing to .bak, rename tmp to target, then remove .bak.
-        // A recoverable .bak covers the short gap where the target does not exist.
-        if path.exists() {
-            let backup = backup_path(path);
-            // A backup can be left by an interrupted previous promotion. The
-            // current target is authoritative when it exists, so it is safe to
-            // replace that stale recovery copy only after the new temp is durable.
-            match std::fs::remove_file(&backup) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => {
-                    let _ = std::fs::remove_file(&tmp);
-                    return Err(format!("Could not remove stale settings backup: {error}"));
-                }
-            }
-            let backed_up = match std::fs::rename(path, &backup) {
-                Ok(()) => true,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-                Err(error) => {
-                    let _ = std::fs::remove_file(&tmp);
-                    return Err(format!("Could not create settings backup: {error}"));
-                }
-            };
-            if let Err(error) = std::fs::rename(&tmp, path) {
-                let restore_error = if backed_up {
-                    std::fs::rename(&backup, path).err()
-                } else {
-                    None
-                };
-                let _ = std::fs::remove_file(&tmp);
-                return Err(match restore_error {
-                    Some(restore_error) => format!(
-                        "Could not promote settings: {error}; backup restore also failed: {restore_error}"
-                    ),
-                    None => format!("Could not promote settings: {error}"),
-                });
-            }
-            if backed_up {
-                std::fs::remove_file(&backup)
-                    .map_err(|e| format!("Settings saved, but backup cleanup failed: {e}"))?;
-            }
-            return sync_parent_directory(path);
-        }
-    }
-
+    // `std::fs::rename` replaces an existing destination on every platform we
+    // ship for, including Windows: it calls `MoveFileExW` with
+    // `MOVEFILE_REPLACE_EXISTING` and falls back to `FileRenameInfoEx` with
+    // `POSIX_SEMANTICS` on access-denied. A separate rename-to-.bak dance is
+    // unnecessary and was itself a durability hazard: it left a window where
+    // the settings path did not exist, and treated backup-file cleanup
+    // failure as an overall failure even though the new settings were already
+    // durably in place by that point.
     std::fs::rename(&tmp, path).map_err(|e| {
         if let Err(cleanup_err) = std::fs::remove_file(&tmp) {
             eprintln!(
@@ -212,6 +172,18 @@ pub fn atomic_write_text(path: &std::path::Path, contents: &str) -> Result<(), S
         }
         e.to_string()
     })?;
+    // Best-effort: remove a `.bak` file that may have been left by an older
+    // Zinnia version's two-step replace. The rename above already promoted the
+    // new settings, so a leftover backup is stale recovery material only.
+    let backup = backup_path(path);
+    if let Err(error) = std::fs::remove_file(&backup) {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            eprintln!(
+                "Settings saved, but could not remove a stale backup file {}: {error}",
+                backup.display()
+            );
+        }
+    }
     sync_parent_directory(path)
 }
 

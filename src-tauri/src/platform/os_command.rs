@@ -74,15 +74,20 @@ pub(crate) fn kill_command_process_tree(pid: u32, child: &mut std::process::Chil
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        // /T terminates the full tree; trusted OS helpers only.
+        // /T terminates the full tree; trusted OS helpers only. Resolve the
+        // absolute System32 path rather than a bare name: NSIS installs under
+        // installMode "currentUser", so Zinnia's own install directory is
+        // user-writable and would otherwise be searched before System32.
         // CREATE_NO_WINDOW avoids a console flash in the GUI subsystem app.
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let _ = Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .creation_flags(CREATE_NO_WINDOW)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+        if let Ok(taskkill) = crate::fs_secure::system32_binary_path("taskkill.exe") {
+            let _ = Command::new(taskkill)
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
     }
     let _ = child.kill();
     let _ = child.wait();

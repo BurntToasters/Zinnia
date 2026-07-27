@@ -227,9 +227,11 @@ type Spawned7z = (
     Option<PendingPassword>,
 );
 
-/// Write the deferred password after `RunningProcess.child` is set so cancel can
-/// kill 7-Zip if stdin write blocks.
-pub(crate) fn complete_password_transport(
+/// Blocking implementation: write the deferred password after
+/// `RunningProcess.child` is set so cancel can kill 7-Zip if the stdin write
+/// blocks (e.g. an unexpectedly full pipe on Windows' smaller default pipe
+/// buffer, or 7-Zip not reading for some other reason).
+fn complete_password_transport_blocking(
     child: &Arc<SharedChild>,
     pending: PendingPassword,
 ) -> Result<(), String> {
@@ -263,6 +265,27 @@ pub(crate) fn complete_password_transport(
             Err("Password setup for 7-Zip did not complete.".to_string())
         }
     }
+}
+
+/// Write the deferred password after `RunningProcess.child` is set so cancel
+/// can kill 7-Zip if stdin write blocks.
+///
+/// Runs the blocking write-and-wait on a dedicated blocking-pool thread
+/// instead of directly on the calling async task. `validate_run_7z_args`
+/// bounds any single argument (including an attached `-pPASSWORD`) to 8 KiB,
+/// but 7-Zip prompts up to three times and this writes on every prompt, so an
+/// unusually long password combined with a small OS pipe buffer could still
+/// park the calling task's tokio worker thread until cancel intervenes.
+/// `spawn_blocking` keeps that wait off the worker pool that services every
+/// other in-flight async command.
+pub(crate) async fn complete_password_transport(
+    child: &Arc<SharedChild>,
+    pending: PendingPassword,
+) -> Result<(), String> {
+    let child = child.clone();
+    tokio::task::spawn_blocking(move || complete_password_transport_blocking(&child, pending))
+        .await
+        .map_err(|error| format!("Password setup worker failed: {error}"))?
 }
 
 /// Spawn bundled 7-Zip with a closed/noninteractive stdin while retaining a
@@ -901,9 +924,42 @@ pub async fn run_7z(
             }
         };
 
-        let mut process = match lock_process(&state) {
-            Ok(process) => process,
-            Err(error) => {
+        // Scoped so the `MutexGuard` this binds is provably dropped (not just
+        // logically unreachable after a `return`) before the `.await` below:
+        // `RunningProcess` is not `Send`-friendly to hold across an await
+        // point in a `#[tauri::command] async fn`, since Tauri's IPC layer
+        // requires every command future to be `Send`.
+        {
+            let mut process = match lock_process(&state) {
+                Ok(process) => process,
+                Err(error) => {
+                    terminate_child(&child);
+                    let rollback_error = rollback_cleanup(&cleanup_plan).err();
+                    let journal_error = if rollback_error.is_none() {
+                        journal_guard.clear().err()
+                    } else {
+                        None
+                    };
+                    release_prepare_slot_best_effort(&state);
+                    return Err(match rollback_error {
+                        Some(rollback_error) => {
+                            format!("{error}; staging cleanup also failed: {rollback_error}")
+                        }
+                        None => match journal_error {
+                            Some(journal_error) => {
+                                format!(
+                                    "{error}; recovery journal cleanup also failed: {journal_error}"
+                                )
+                            }
+                            None => error,
+                        },
+                    });
+                }
+            };
+            if process.cancelling {
+                process.child = None;
+                // Keep preparing/cancelling until rollback and journal clear finish.
+                drop(process);
                 terminate_child(&child);
                 let rollback_error = rollback_cleanup(&cleanup_plan).err();
                 let journal_error = if rollback_error.is_none() {
@@ -913,53 +969,26 @@ pub async fn run_7z(
                 };
                 release_prepare_slot_best_effort(&state);
                 return Err(match rollback_error {
-                    Some(rollback_error) => {
-                        format!("{error}; staging cleanup also failed: {rollback_error}")
-                    }
+                    Some(rollback_error) => format!(
+                        "Archive operation was cancelled during preparation.; staging cleanup also failed: {rollback_error}"
+                    ),
                     None => match journal_error {
-                        Some(journal_error) => {
-                            format!(
-                                "{error}; recovery journal cleanup also failed: {journal_error}"
-                            )
-                        }
-                        None => error,
+                        Some(journal_error) => format!(
+                            "Archive operation was cancelled during preparation.; recovery journal cleanup also failed: {journal_error}"
+                        ),
+                        None => "Archive operation was cancelled during preparation.".to_string(),
                     },
                 });
             }
-        };
-        if process.cancelling {
-            process.child = None;
-            // Keep preparing/cancelling until rollback and journal clear finish.
-            drop(process);
-            terminate_child(&child);
-            let rollback_error = rollback_cleanup(&cleanup_plan).err();
-            let journal_error = if rollback_error.is_none() {
-                journal_guard.clear().err()
-            } else {
-                None
-            };
-            release_prepare_slot_best_effort(&state);
-            return Err(match rollback_error {
-                Some(rollback_error) => format!(
-                    "Archive operation was cancelled during preparation.; staging cleanup also failed: {rollback_error}"
-                ),
-                None => match journal_error {
-                    Some(journal_error) => format!(
-                        "Archive operation was cancelled during preparation.; recovery journal cleanup also failed: {journal_error}"
-                    ),
-                    None => "Archive operation was cancelled during preparation.".to_string(),
-                },
-            });
+
+            // Register the child before password stdin so cancel can kill a blocked write.
+            process.child = Some(child.clone());
+            process.owner_label = Some(window.label().to_string());
+            process.cleanup_plan = Some(cleanup_plan.clone());
         }
 
-        // Register the child before password stdin so cancel can kill a blocked write.
-        process.child = Some(child.clone());
-        process.owner_label = Some(window.label().to_string());
-        process.cleanup_plan = Some(cleanup_plan.clone());
-        drop(process);
-
         if let Some(pending_password) = pending_password {
-            if let Err(error) = complete_password_transport(&child, pending_password) {
+            if let Err(error) = complete_password_transport(&child, pending_password).await {
                 let cancelled = lock_process(&state)
                     .map(|process| process.cancelling)
                     .unwrap_or(false);

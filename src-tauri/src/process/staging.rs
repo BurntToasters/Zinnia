@@ -333,7 +333,9 @@ pub(crate) async fn assert_extract_archive_members_safe(
         process.child = Some(child.clone());
     }
     if let Some(pending_password) = pending_password {
-        if let Err(error) = super::commands::complete_password_transport(&child, pending_password) {
+        if let Err(error) =
+            super::commands::complete_password_transport(&child, pending_password).await
+        {
             let cancelled = lock_process(state)
                 .map(|process| process.cancelling)
                 .unwrap_or(false);
