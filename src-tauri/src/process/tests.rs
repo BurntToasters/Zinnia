@@ -1385,11 +1385,65 @@ fn target_local_recovery_hydrates_append_only_identity_log() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[cfg(not(windows))]
 #[test]
 fn identity_log_hydration_uses_latest_record_per_index() {
     use std::io::Write as _;
 
     let root = temp_root("zinnia-identity-log-latest-wins");
+    let destination = root.join("destination");
+    let staged = destination.join(".zinnia-extract-0123456789abcdef0123456789abcdef");
+    std::fs::create_dir_all(&staged).expect("stage");
+    let source = staged.join("new.txt");
+    std::fs::write(&source, b"staged source").expect("source");
+
+    // Copy-fallback publish (rename/hard-link unavailable) journals a pre-copy
+    // source identity and then a post-copy target identity with `publish_temp`
+    // unset on every non-Windows-target-local path.
+    let target = destination.join("new.txt");
+    std::fs::write(&target, b"corrected copy").expect("published target");
+    let pre_copy_identity = super::journal::path_identity(&source).expect("source identity");
+    let post_copy_identity = super::journal::path_identity(&target).expect("target identity");
+    assert_ne!(pre_copy_identity, post_copy_identity);
+
+    let plan = vec![MoveRecord {
+        source: source.clone(),
+        target: target.clone(),
+        publish_temp: None,
+        publish_identity: None,
+    }];
+    write_move_plan(&staged, &plan).expect("move plan");
+
+    let mut log = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(move_identity_log_path(&staged))
+        .expect("identity log");
+    for identity in [pre_copy_identity, post_copy_identity.clone()] {
+        let record = serde_json::json!({
+            "index": 0,
+            "identity": identity,
+        });
+        writeln!(log, "{}", serde_json::to_string(&record).unwrap()).expect("record");
+    }
+    log.sync_all().expect("sync log");
+
+    rollback_persisted_move_plan(&staged, &destination, false)
+        .expect("hydrate must accept copy-fallback correction records");
+
+    assert_eq!(std::fs::read(&source).unwrap(), b"staged source");
+    assert!(!target.exists());
+    let _ = std::fs::remove_file(move_plan_path(&staged));
+    let _ = std::fs::remove_file(move_identity_log_path(&staged));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(windows)]
+#[test]
+fn identity_log_hydration_uses_latest_record_with_publish_temp() {
+    use std::io::Write as _;
+
+    let root = temp_root("zinnia-identity-log-latest-wins-win");
     let destination = root.join("destination");
     let staged = destination.join(".zinnia-extract-0123456789abcdef0123456789abcdef");
     std::fs::create_dir_all(&staged).expect("stage");
@@ -1428,7 +1482,7 @@ fn identity_log_hydration_uses_latest_record_per_index() {
     log.sync_all().expect("sync log");
 
     rollback_persisted_move_plan(&staged, &destination, false)
-        .expect("hydrate must accept copy-fallback correction records");
+        .expect("hydrate must accept Windows publish-temp correction records");
 
     assert_eq!(std::fs::read(&source).unwrap(), b"staged source");
     assert!(!publish_temp.exists());
