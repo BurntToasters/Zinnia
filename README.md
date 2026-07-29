@@ -88,10 +88,10 @@ native build runs.
   verifies that the live updater manifests for the current stable or beta
   channel report the exact release version; use `REQUIRED_UPDATER_TARGETS` for
   any target set that must be present in that release.
-- After publishing a beta, run `npm run release:sync-beta-manifests`. It first
-  verifies the published release, exact target set, public artifact downloads,
-  and updater signatures, then transactionally copies `latest-*-beta-*.json`
-  onto the stable `/releases/latest` endpoint used by beta clients.
+- Beta `release:sign:gpg` automatically copies `latest-*-beta-*.json` onto the
+  latest stable `/releases/latest` so beta clients can discover the new beta
+  (same as beta.22). If that sync was skipped or needs a re-run after publish,
+  use `npm run release:sync-beta-manifests`. (It being automatic is purposeful)
 - Each full release command prepares and tests once. If `release:prepare` was
   already run separately on the same VM, use the matching `release:*:resume`
   command; its build session is bound to the exact commit, lockfiles, platform,

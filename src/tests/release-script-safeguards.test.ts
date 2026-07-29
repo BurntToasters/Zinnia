@@ -328,15 +328,23 @@ describe("release script safeguards", () => {
     },
   );
 
-  it("never syncs draft beta manifests during release:sign:gpg", () => {
+  it("syncs beta→latest manifests automatically during release:sign:gpg", () => {
     const source = fs.readFileSync("scripts/gpg-sign.js", "utf8");
+    expect(source).toContain("if (IS_PRERELEASE)");
+    expect(source).toContain(
+      "await syncBetaManifestsToLatestStable(everything, release.id)",
+    );
+    // Must not gate the automatic path on draft/published; beta.23 briefly
+    // skipped drafts and stranded clients until a manual sync ran.
+    expect(source).not.toContain(
+      "syncBetaManifests: skipped because the current release is still a draft.",
+    );
     const syncBlock = source.slice(
       source.indexOf("for (const f of everything)"),
       source.indexOf("Done: ${TAG} uploaded as"),
     );
-    expect(syncBlock).not.toContain("syncBetaManifestsToLatestStable");
-    expect(source).toContain("loadAndVerifyPublishedBetaManifests");
-    expect(source).toContain("Release ${TAG} is still a draft");
+    expect(syncBlock).toContain("syncBetaManifestsToLatestStable");
+    expect(syncBlock).not.toContain("if (!release.draft)");
   });
 
   it("keeps a recovery beta→latest sync entry point", () => {
