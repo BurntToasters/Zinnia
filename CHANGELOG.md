@@ -24,15 +24,17 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 ## Changes in `v0.6.1-beta.1:`
 
 - **Fix:** Windows Explorer shell handoffs that fail during cold start (oversized selection, wrong owner, malformed list) now surface a toast via `get_shell_handoff_error` instead of silently opening with no paths.
-- **Fix:** Warm-idle Explorer handoff failures keep the error for the main-window poll instead of emitting into a void (no webview) and clearing it.
-- **Fix:** Cancel during an idle password-prompt gap no longer sticks a Cancelled result across a later successful extract (`cancel_7z` returns whether a job was armed).
+- **Fix:** Warm-idle / extract-only Explorer handoff failures keep the error until a main window can toast it (do not emit+clear into a non-listening extract webview).
+- **Fix:** Cancel during an idle password-prompt or between-batch gap keeps abort intent so retry/batch loops stop (`cancel_7z` still reports whether a child was armed).
+- **Fix:** macOS empty-launch fallback clears `MAC_FALLBACK_MAIN_PENDING` if main fails to open or is destroyed, so a later Extract cannot treat a real workspace as disposable.
 - **Fix:** Archive-probe IPC failures fail closed (toast) instead of auto-routing drops into Compress.
 - **Fix:** Basic extract password prompts distinguish wrong passwords from backend/IPC failures so unrelated errors no longer loop as “Incorrect password”.
 - **Fix:** Basic encryption probing treats probe failures as “assume encrypted” so password-protected archives are never skipped silently.
 - **Fix:** Windows settings saves use atomic `rename` replace-existing promotion (with stale `.bak` cleanup) instead of a rename-to-backup window that could briefly leave settings missing.
-- **Fix:** Main/batch/selective extract pass `-bsp1` so live percent progress matches the extract-only window.
+- **Fix:** Main/batch/selective extract pass `-bsp1` so live percent progress matches the extract-only window; progress IPC keeps CR so 7-Zip line rewrites stay parseable.
 - **Fix:** OS Integration help no longer claims classic Explorer verbs remain under Show more options after a successful Win11 package registration.
-- **Fix:** Extract-only window probes 7-Zip before extract so the Windows RAR gate can lift after a future attested sidecar bump.
+- **Fix:** Extract-only window probes 7-Zip before extract so the Windows RAR gate can lift after a future attested sidecar bump; auto-close delay uses the same allowlist as Settings.
+- **Fix:** macOS archive CoW snapshot cleanup removes partial clones when chmod/fsync fails (matches Linux).
 - **Performance:** Archive-input snapshots use APFS `fclonefileat` and Linux `FICLONE` when available before falling back to a byte copy (CoW clones share blocks on APFS/Btrfs; free-space preflight still reserves for full byte-copy worst case).
 - **Performance:** Large merge-into-existing extractions journal publish identities append-only instead of rewriting the full move-plan JSON after every file (avoids O(n²) I/O).
 - **Fix:** Startup sweeps orphaned `%TEMP%` shell-handoff files (owner-checked) and stale `zinnia-7z-list-*` directories (nofollow + age gate) after crashes; stale Zinnia temp dirs use hardened cleanup.

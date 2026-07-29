@@ -195,15 +195,34 @@ fn copy_archive_snapshot_file(
                 // never weakens the private-snapshot guarantee the byte-copy
                 // path provides via `create_new` + `mode(0o600)`.
                 use std::os::unix::fs::PermissionsExt as _;
-                std::fs::set_permissions(destination, std::fs::Permissions::from_mode(0o600))
-                    .map_err(|error| error.to_string())?;
-                // APFS clone creation is atomic, but fsync the snapshot inode
-                // before 7-Zip reads it so this path matches Linux CoW + copy.
-                let synced = std::fs::OpenOptions::new()
-                    .read(true)
-                    .open(destination)
-                    .map_err(|error| error.to_string())?;
-                synced.sync_all().map_err(|error| error.to_string())?;
+                let finalize = (|| {
+                    std::fs::set_permissions(destination, std::fs::Permissions::from_mode(0o600))
+                        .map_err(|error| error.to_string())?;
+                    // APFS clone creation is atomic, but fsync the snapshot inode
+                    // before 7-Zip reads it so this path matches Linux CoW + copy.
+                    let synced = std::fs::OpenOptions::new()
+                        .read(true)
+                        .open(destination)
+                        .map_err(|error| error.to_string())?;
+                    synced.sync_all().map_err(|error| error.to_string())?;
+                    Ok(())
+                })();
+                if let Err(error) = finalize {
+                    let cleanup = crate::fs_secure::remove_file_for_cleanup(destination);
+                    return Err(match cleanup {
+                        Ok(()) => error,
+                        Err(cleanup_error)
+                            if cleanup_error.kind() == std::io::ErrorKind::NotFound =>
+                        {
+                            error
+                        }
+                        Err(cleanup_error) => {
+                            format!(
+                                "{error}; partial snapshot cleanup also failed: {cleanup_error}"
+                            )
+                        }
+                    });
+                }
                 return Ok(());
             }
             Ok(false) => {}

@@ -356,7 +356,10 @@ export async function init() {
 
   // Drain any paths that queued up while we were initializing
   await drainPendingPaths();
-  await invoke("mark_main_window_ready").catch(() => {});
+  await invoke("mark_main_window_ready").catch((err) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Failed to mark main window ready: ${msg}`, "error");
+  });
 
   const appWindow = getCurrentWebviewWindow();
   await appWindow.onDragDropEvent(async (event) => {

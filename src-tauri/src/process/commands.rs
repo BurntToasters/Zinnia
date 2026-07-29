@@ -1320,9 +1320,9 @@ pub async fn probe_7z(
 /// Cancel the in-flight 7z job owned by this window.
 ///
 /// Returns `Ok(true)` when a child was killed or a prepare slot was marked
-/// cancelling. Returns `Ok(false)` when idle (nothing to cancel) so callers do
-/// not stick a "Cancelled" UI flag across a password-prompt gap and then treat
-/// a later successful retry as cancelled.
+/// cancelling. Returns `Ok(false)` when idle (nothing to kill). Callers should
+/// still treat a user Cancel click as abort intent (skip password retry / break
+/// batch loops) even when this returns false.
 #[tauri::command]
 pub fn cancel_7z(
     window: tauri::Window,

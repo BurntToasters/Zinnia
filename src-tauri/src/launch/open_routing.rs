@@ -63,9 +63,10 @@ pub(crate) fn take_shell_handoff_error() -> Option<String> {
 /// error in place for `get_shell_handoff_error` after main opens.
 #[cfg(windows)]
 pub(crate) fn emit_pending_shell_handoff_error(app: &tauri::AppHandle) {
-    let has_listener =
-        app.get_webview_window("main").is_some() || has_extract_windows(app);
-    if !has_listener {
+    // Only the main window listens for `open-paths-dropped`. Extract windows
+    // do not — taking the error while only an extract window exists emits into
+    // the void and clears the cold-poll buffer.
+    if app.get_webview_window("main").is_none() {
         return;
     }
     let message = take_shell_handoff_error();

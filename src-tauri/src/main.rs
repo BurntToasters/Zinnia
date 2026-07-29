@@ -239,6 +239,9 @@ fn main() {
                             }
                             MAC_FALLBACK_MAIN_PENDING.store(true, Ordering::SeqCst);
                             if let Err(e) = show_main_window(&main_thread_handle) {
+                                // Do not leave PENDING stuck: a later Extract would
+                                // treat any surviving main as disposable fallback.
+                                MAC_FALLBACK_MAIN_PENDING.store(false, Ordering::SeqCst);
                                 eprintln!("Failed to open main window: {e}");
                             }
                         });
@@ -385,6 +388,9 @@ fn main() {
             event: tauri::WindowEvent::Destroyed,
             ..
         } => {
+            if label == "main" {
+                MAC_FALLBACK_MAIN_PENDING.store(false, Ordering::SeqCst);
+            }
             if launch::is_extract_window_label(&label) {
                 launch::clear_extract_window_bindings(app_handle, &label);
             }
@@ -425,6 +431,9 @@ fn main() {
             ..
         } = &event
         {
+            if label == "main" {
+                MAC_FALLBACK_MAIN_PENDING.store(false, Ordering::SeqCst);
+            }
             if launch::is_extract_window_label(label) {
                 launch::clear_extract_window_bindings(app_handle, label);
             }

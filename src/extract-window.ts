@@ -8,6 +8,7 @@ import {
   setProgressIndeterminateClass,
   setProgressPercentClass,
 } from "./progress-bar";
+import { normalizeAutoCloseDelay } from "./settings-model";
 
 interface Run7zResult {
   stdout: string;
@@ -83,12 +84,21 @@ function readInjectedExtractSession(): InjectedExtractSession | null {
   return injected;
 }
 
-async function runWithPasswordRetry(args: string[]): Promise<Run7zResult> {
+async function runWithPasswordRetry(
+  args: string[],
+  shouldAbort: () => boolean,
+): Promise<Run7zResult> {
   let result = await invoke<Run7zResult>("run_7z", { args });
+  if (shouldAbort()) {
+    return result;
+  }
   if (
     result.code > 1 &&
     looksLikePasswordRequiredError(result.stdout ?? "", result.stderr ?? "")
   ) {
+    if (shouldAbort()) {
+      return result;
+    }
     const { promptInput } = await import("./prompt-modal");
     const password = await promptInput({
       title: "Password required",
@@ -96,6 +106,9 @@ async function runWithPasswordRetry(args: string[]): Promise<Run7zResult> {
       password: true,
       confirmLabel: "Extract",
     });
+    if (shouldAbort()) {
+      return result;
+    }
     if (password) {
       result = await invoke<Run7zResult>("run_7z", {
         args: withPassword(args, password),
@@ -268,9 +281,10 @@ async function run() {
   try {
     const raw = await invoke<string>("load_settings");
     const parsed = JSON.parse(raw) as { extractAutoCloseSeconds?: unknown };
-    if (typeof parsed.extractAutoCloseSeconds === "number") {
-      autoCloseDelay = parsed.extractAutoCloseSeconds;
-    }
+    autoCloseDelay = normalizeAutoCloseDelay(
+      parsed.extractAutoCloseSeconds,
+      1.5,
+    );
   } catch {}
 
   let autoCloseInterval: ReturnType<typeof setInterval> | null = null;
@@ -350,20 +364,14 @@ async function run() {
 
   cancelBtn.addEventListener("click", async () => {
     if (operationFinished) return;
+    // Record abort intent even when 7z is idle (password-prompt gap).
+    cancelRequested = true;
     cancelBtn.disabled = true;
     openDestinationBtn.disabled = true;
     closeBtn.disabled = true;
     $("extract-status").textContent = "Cancelling...";
     try {
-      const armed = await invoke<boolean>("cancel_7z");
-      cancelRequested = armed;
-      if (!armed) {
-        // Idle cancel (e.g. password-prompt gap): do not stick Cancelled across
-        // a later successful retry. Re-enable controls for the still-running UI.
-        cancelBtn.disabled = false;
-        closeBtn.disabled = false;
-        $("extract-status").textContent = "Extracting...";
-      }
+      await invoke<boolean>("cancel_7z");
     } catch (err) {
       cancelRequested = false;
       // All three buttons were disabled above before the cancel request. A
@@ -555,7 +563,7 @@ async function run() {
   ];
 
   try {
-    const result = await runWithPasswordRetry(args);
+    const result = await runWithPasswordRetry(args, () => cancelRequested);
     await removeProgressListeners();
 
     if (cancelRequested) {

@@ -275,19 +275,19 @@ export async function runBatchExtract() {
 
 export async function cancelAction() {
   if (!state.running) return;
+  // Always record user intent. Idle cancel_7z (password gap / between batch
+  // items) returns false — clearing flags here made Cancel a no-op and left
+  // password-retry / batch loops running.
   state.batchCancelled = true;
+  state.cancelRequested = true;
   setStatus("Cancelling...");
   try {
     const armed = await invoke<boolean>("cancel_7z");
-    // Idle Ok (password-prompt gap / between batch items) must not stick
-    // cancelRequested across a later successful run_7z.
-    state.cancelRequested = armed;
-    if (!armed) {
-      state.batchCancelled = false;
-      setStatus("Running");
-      return;
+    if (armed) {
+      devLog("Cancel signal sent to running process.");
+    } else {
+      devLog("Cancel requested while 7z was idle; aborting in-flight UI flow.");
     }
-    devLog("Cancel signal sent to running process.");
   } catch (err) {
     const messageText = err instanceof Error ? err.message : String(err);
     state.batchCancelled = false;

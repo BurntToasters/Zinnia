@@ -969,7 +969,7 @@ describe("archive test/browse/selective flows", () => {
     );
   });
 
-  it("does not stick cancelRequested when cancel_7z reports idle", async () => {
+  it("keeps cancel intent when cancel_7z reports idle", async () => {
     state.running = true;
     state.batchCancelled = false;
     state.cancelRequested = false;
@@ -980,8 +980,9 @@ describe("archive test/browse/selective flows", () => {
 
     await cancelAction();
 
-    expect(state.cancelRequested).toBe(false);
-    expect(state.batchCancelled).toBe(false);
+    // Idle Ok still records user abort intent so password retry / batch loops stop.
+    expect(state.cancelRequested).toBe(true);
+    expect(state.batchCancelled).toBe(true);
     expect(invokeMock).toHaveBeenCalledWith("cancel_7z");
   });
 
