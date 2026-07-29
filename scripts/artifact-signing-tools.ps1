@@ -46,11 +46,78 @@ function Get-ArtifactSigningClientRoots {
   @(
     $(if (${env:ProgramFiles(x86)}) { Join-Path ${env:ProgramFiles(x86)} 'Microsoft\ArtifactSigningClientTools' }),
     $(if ($env:ProgramFiles) { Join-Path $env:ProgramFiles 'Microsoft\ArtifactSigningClientTools' }),
-    # Official MSI / winget default (machine-wide).
+    $(if ($env:ProgramData) { Join-Path $env:ProgramData 'Microsoft\MicrosoftTrustedSigningClientTools' }),
+    $(if ($env:ProgramData) { Join-Path $env:ProgramData 'Microsoft\ArtifactSigningClientTools' }),
+    # Per-user installs (only used when Microsoft-signed).
     $(if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Microsoft\ArtifactSigningClientTools' }),
-    # Legacy / NuGet-style per-user layout (often unsigned — discovery skips those).
+    # Legacy / NuGet manual unpack — usually unsigned; removed by setup repair.
     $(if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Microsoft\MicrosoftArtifactSigningClientTools' })
   ) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Container) } | Select-Object -Unique
+}
+
+function Get-ArtifactSigningExplicitCandidates {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$LeafName
+  )
+
+  $paths = @()
+  if (${env:ProgramFiles(x86)}) {
+    $base = Join-Path ${env:ProgramFiles(x86)} 'Microsoft\ArtifactSigningClientTools'
+    $paths += @(
+      (Join-Path $base "bin\x64\$LeafName"),
+      (Join-Path $base "bin\x86\$LeafName"),
+      (Join-Path $base "bin\$LeafName")
+    )
+  }
+  if ($env:ProgramFiles) {
+    $base = Join-Path $env:ProgramFiles 'Microsoft\ArtifactSigningClientTools'
+    $paths += @(
+      (Join-Path $base "bin\x64\$LeafName"),
+      (Join-Path $base "bin\x86\$LeafName"),
+      (Join-Path $base "bin\$LeafName")
+    )
+  }
+  foreach ($path in $paths) {
+    if (Test-Path -LiteralPath $path -PathType Leaf) {
+      Get-Item -LiteralPath $path
+    }
+  }
+}
+
+function Remove-UnsignedLegacyArtifactSigningTrees {
+  $legacyRoots = @(
+    $(if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Microsoft\MicrosoftArtifactSigningClientTools' }),
+    $(if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Microsoft\ArtifactSigningClientTools' })
+  ) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Container) } | Select-Object -Unique
+
+  foreach ($root in $legacyRoots) {
+    $dlibs = @(Get-ChildItem -LiteralPath $root -Filter 'Azure.CodeSigning.Dlib.dll' -File -Recurse -ErrorAction SilentlyContinue)
+    if ($dlibs.Count -eq 0) { continue }
+    $signed = @($dlibs | Where-Object { Test-MicrosoftSignedFile -Path $_.FullName })
+    if ($signed.Count -gt 0) { continue }
+    Write-Host "Removing unsigned Artifact Signing tree: $root"
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction Stop
+  }
+}
+
+function Get-ArtifactSigningInstallDiagnostics {
+  $lines = New-Object System.Collections.Generic.List[string]
+  $checks = @(
+    $(if (${env:ProgramFiles(x86)}) { Join-Path ${env:ProgramFiles(x86)} 'Microsoft\ArtifactSigningClientTools\bin\x64\Azure.CodeSigning.Dlib.dll' }),
+    $(if (${env:ProgramFiles(x86)}) { Join-Path ${env:ProgramFiles(x86)} 'Microsoft\ArtifactSigningClientTools\bin\Azure.CodeSigning.Dlib.dll' }),
+    $(if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Microsoft\MicrosoftArtifactSigningClientTools\Azure.CodeSigning.Dlib.dll' })
+  ) | Where-Object { $_ }
+  foreach ($path in $checks) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+      $lines.Add("  missing: $path") | Out-Null
+      continue
+    }
+    Import-BundledPowerShellSecurityModule
+    $status = (Get-AuthenticodeSignature -LiteralPath $path).Status
+    $lines.Add("  present ($status): $path") | Out-Null
+  }
+  return ($lines -join "`n")
 }
 
 function Get-ArtifactSigningInstallRank {
@@ -110,10 +177,38 @@ function Select-MicrosoftSignedArtifactTool {
 
   throw (
     "$Label candidates were found but none have a valid Microsoft Authenticode signature. " +
-    "Install the official MSI/winget package with an elevated ``npm run setup:win:artifact-signing``, " +
-    "or set AZURE_ARTIFACT_SIGNING_DLIB_PATH / AZURE_ARTIFACT_SIGNING_SIGNTOOL_PATH to the signed Program Files tools. " +
+    "This usually means a manual/NuGet copy under AppData — not the official MSI. " +
+    "In an elevated PowerShell: npm run setup:win:artifact-signing:repair " +
+    "(or delete `$env:LOCALAPPDATA\Microsoft\MicrosoftArtifactSigningClientTools, then npm run setup:win:artifact-signing). " +
+    "Or set AZURE_ARTIFACT_SIGNING_DLIB_PATH to the signed Program Files (x86)\Microsoft\ArtifactSigningClientTools\bin\x64\Azure.CodeSigning.Dlib.dll. " +
     "Rejected: $($rejected -join '; ')"
   )
+}
+
+function Get-ArtifactSigningFileCandidates {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string[]]$ClientRoots,
+    [Parameter(Mandatory = $true)]
+    [string]$LeafName
+  )
+
+  $seen = @{}
+  $list = New-Object System.Collections.Generic.List[System.IO.FileInfo]
+  function Add-Candidate {
+    param([System.IO.FileInfo[]]$Files)
+    foreach ($file in $Files) {
+      if (-not $file -or -not $file.FullName) { continue }
+      if ($seen.ContainsKey($file.FullName)) { continue }
+      $seen[$file.FullName] = $true
+      $list.Add($file) | Out-Null
+    }
+  }
+  Add-Candidate @(Get-ArtifactSigningExplicitCandidates -LeafName $LeafName)
+  foreach ($root in $ClientRoots) {
+    Add-Candidate @(Get-ChildItem -LiteralPath $root -Filter $LeafName -File -Recurse -ErrorAction SilentlyContinue)
+  }
+  return @($list)
 }
 
 function Get-ArtifactSigningTools {
@@ -139,11 +234,7 @@ function Get-ArtifactSigningTools {
   if ($dlibOverride) {
     $dlibPath = $dlibOverride
   } else {
-    $dlibCandidates = @(
-      foreach ($root in $clientRoots) {
-        Get-ChildItem -LiteralPath $root -Filter 'Azure.CodeSigning.Dlib.dll' -File -Recurse -ErrorAction SilentlyContinue
-      }
-    )
+    $dlibCandidates = @(Get-ArtifactSigningFileCandidates -ClientRoots $clientRoots -LeafName 'Azure.CodeSigning.Dlib.dll')
     if ($dlibCandidates.Count -gt 0) {
       $dlibPath = Select-MicrosoftSignedArtifactTool -Candidates $dlibCandidates -Label 'Artifact Signing dlib'
     }
@@ -152,11 +243,7 @@ function Get-ArtifactSigningTools {
   if ($signToolOverride) {
     $signToolPath = $signToolOverride
   } else {
-    $signToolCandidates = @(
-      foreach ($root in $clientRoots) {
-        Get-ChildItem -LiteralPath $root -Filter 'signtool.exe' -File -Recurse -ErrorAction SilentlyContinue
-      }
-    )
+    $signToolCandidates = @(Get-ArtifactSigningFileCandidates -ClientRoots $clientRoots -LeafName 'signtool.exe')
     if ($signToolCandidates.Count -eq 0 -and ${env:ProgramFiles(x86)}) {
       $kitsRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
       if (Test-Path -LiteralPath $kitsRoot -PathType Container) {
