@@ -28,3 +28,8 @@ export function updatePlistStringValue(
   key: string,
   value: string,
 ): string;
+
+export function syncChangelogForVersion(
+  changelog: string,
+  version: string,
+): string;

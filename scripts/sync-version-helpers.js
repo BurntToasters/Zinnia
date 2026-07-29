@@ -200,3 +200,39 @@ export function updatePlistStringValue(plist, key, value) {
   }
   return plist.replace(pattern, `$1${value}$2`);
 }
+
+const CHANGELOG_INTRO_ANCHOR =
+  "Zinnia! A cross platform 7Z gui frontend built on Tauri V2!\n\n";
+
+/** Align CHANGELOG download URLs and section heading with package.json version. */
+export function syncChangelogForVersion(changelog, version) {
+  const tag = `v${version}`;
+  const sectionHeading = `## Changes in \`${tag}:\``;
+
+  const tableStart = changelog.indexOf("# ⬇️ Downloads");
+  const tableEnd = changelog.indexOf("\n> macOS");
+  if (tableStart === -1 || tableEnd === -1 || tableEnd <= tableStart) {
+    throw new Error("CHANGELOG.md download table markers not found");
+  }
+
+  const before = changelog.slice(0, tableStart);
+  const table = changelog.slice(tableStart, tableEnd);
+  const after = changelog.slice(tableEnd);
+  const syncedTable = table.replace(
+    /\/releases\/download\/v[^/]+\//g,
+    `/releases/download/${tag}/`,
+  );
+  let updated = before + syncedTable + after;
+
+  if (!updated.includes(sectionHeading)) {
+    if (!updated.includes(CHANGELOG_INTRO_ANCHOR)) {
+      throw new Error("CHANGELOG.md intro anchor not found");
+    }
+    updated = updated.replace(
+      CHANGELOG_INTRO_ANCHOR,
+      `${CHANGELOG_INTRO_ANCHOR}${sectionHeading}\n\n- **Fix:** (add release notes)\n\n`,
+    );
+  }
+
+  return updated;
+}
