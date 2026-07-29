@@ -52,6 +52,10 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Fix:** Extract-window Cancel re-enables after a failed `cancel_7z` so the user can retry the kill.
 - **Security:** Archive create/update crash-recovery backups now journal content fingerprints (sha256) with the inode/file-id identity, so same-inode rewrites cannot be restored as the user’s archive.
 - **Fix:** Failed update installs always attempt `release_update` through a dedicated path that does not treat IPC errors as “still busy”, avoiding a stuck archive prepare slot until restart.
+- **Security:** Extraction crash-recovery move plans reject `..` / non-normal path components so a tampered journal cannot roll back or publish outside the destination root.
+- **Fix:** Update install waits are bounded (3 minutes) and still release the archive prepare slot on timeout, matching download-timeout behavior.
+- **Fix:** Settings saves keep backend-owned `_`-prefixed keys (except setup-wizard fields) from being overwritten by incoming JSON.
+- **Docs:** README OS-integration wording matches Win11 modern-primary vs classic-fallback behavior.
 
 ## Changes in `v0.6.0:`
 
