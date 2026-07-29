@@ -25,19 +25,26 @@ function Install-ArtifactSigningClientToolsMsi {
   return [int]$process.ExitCode
 }
 
-if (-not $Force) {
+function Get-ArtifactSigningToolsOrNull {
   try {
-    $tools = Get-ArtifactSigningTools
-    Write-Host 'Artifact Signing Client Tools are already installed.'
-    Write-Host "SignTool: $($tools.SignToolPath)"
-    Write-Host "Dlib: $($tools.DlibPath)"
-    exit 0
+    return Get-ArtifactSigningTools
   } catch {
-    Write-Host "Artifact Signing tools are missing or not trusted: $($_.Exception.Message)"
-    Write-Host 'Installing or repairing official Microsoft Artifact Signing Client Tools...'
+    return $null
   }
+}
+
+if (-not $Force) {
+  $existing = Get-ArtifactSigningToolsOrNull
+  if ($existing) {
+    Write-Host 'Artifact Signing Client Tools are already installed.'
+    Write-Host "SignTool: $($existing.SignToolPath)"
+    Write-Host "Dlib: $($existing.DlibPath)"
+    exit 0
+  }
+  Write-Host 'Artifact Signing tools are missing or not trusted.'
+  Write-Host 'Installing or repairing official Microsoft Artifact Signing Client Tools...'
 } else {
-  Write-Host 'Force reinstall: removing legacy unsigned trees, then installing official tools...'
+  Write-Host 'Force reinstall: removing legacy unsigned trees and registered products, then installing official tools...'
 }
 
 Remove-UnsignedLegacyArtifactSigningTrees
@@ -52,6 +59,10 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     'If a broken NuGet copy was left under AppData, use:'
     '  npm run setup:win:artifact-signing:repair'
   ) -join "`n"
+}
+
+if ($Force) {
+  Uninstall-ArtifactSigningClientToolsProducts
 }
 
 $installed = $false
@@ -77,16 +88,32 @@ if (-not $installed) {
 
     $exitCode = Install-ArtifactSigningClientToolsMsi -MsiPath $msiPath
     if ($exitCode -eq 1638) {
-      # ERROR_PRODUCT_VERSION: another version already installed. Repair that
-      # product instead of failing; discovery may still find the existing files.
-      Write-Warning 'MSI exit 1638 (product already installed). Attempting repair (REINSTALL=ALL)...'
+      # ERROR_PRODUCT_VERSION: another version already installed.
+      Write-Warning 'MSI exit 1638 (product already installed). Checking whether tools are discoverable...'
+      $already = Get-ArtifactSigningToolsOrNull
+      if ($already) {
+        Write-Host 'Existing Microsoft-signed Artifact Signing tools are usable; skipping reinstall.'
+        Write-Host "SignTool: $($already.SignToolPath)"
+        Write-Host "Dlib: $($already.DlibPath)"
+        exit 0
+      }
+      Write-Warning 'Tools not discoverable. Attempting MSI repair (REINSTALL=ALL)...'
       $exitCode = Install-ArtifactSigningClientToolsMsi -MsiPath $msiPath -Repair
-      if ($exitCode -eq 1638) {
-        Write-Warning 'Repair also reported 1638; continuing with discovery of the already-installed tools.'
-        $exitCode = 0
+      if ($exitCode -notin @(0, 1641, 3010)) {
+        Write-Warning "Repair exited $exitCode. Uninstalling registered products, then installing fresh..."
+        Uninstall-ArtifactSigningClientToolsProducts
+        $exitCode = Install-ArtifactSigningClientToolsMsi -MsiPath $msiPath
       }
     }
     if ($exitCode -notin @(0, 1641, 3010)) {
+      # Last chance: broken MSI state but files may still be present.
+      $fallback = Get-ArtifactSigningToolsOrNull
+      if ($fallback) {
+        Write-Warning "MSI exited $exitCode, but discoverable Microsoft-signed tools were found; continuing."
+        Write-Host "SignTool: $($fallback.SignToolPath)"
+        Write-Host "Dlib: $($fallback.DlibPath)"
+        exit 0
+      }
       throw "Artifact Signing Client Tools MSI failed with exit code $exitCode"
     }
     if ($exitCode -in @(1641, 3010)) {
@@ -99,19 +126,19 @@ if (-not $installed) {
 
 Remove-UnsignedLegacyArtifactSigningTrees
 
-try {
-  $tools = Get-ArtifactSigningTools
-} catch {
+$tools = Get-ArtifactSigningToolsOrNull
+if (-not $tools) {
   $diag = Get-ArtifactSigningInstallDiagnostics
   throw @(
-    $_.Exception.Message
+    'Artifact Signing Client Tools are still missing after install/repair.'
     ''
     'Post-install diagnostics:'
     $diag
     ''
-    'If MSI reported 1638 earlier, uninstall "Artifact Signing Client Tools" /'
-    '"Trusted Signing Client Tools" from Apps and Features, then re-run:'
-    '  npm run setup:win:artifact-signing:repair'
+    'Manual recovery:'
+    '  1. Apps and Features: uninstall Artifact Signing / Trusted Signing Client Tools'
+    '  2. Elevated: npm run setup:win:artifact-signing:repair'
+    '  3. Or set AZURE_ARTIFACT_SIGNING_DLIB_PATH to a Microsoft-signed Azure.CodeSigning.Dlib.dll'
   ) -join "`n"
 }
 

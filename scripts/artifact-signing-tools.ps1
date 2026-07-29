@@ -81,6 +81,18 @@ function Get-ArtifactSigningExplicitCandidates {
   }
 }
 
+function Get-OptionalNoteProperty {
+  param(
+    [Parameter(Mandatory = $true)]
+    [object]$InputObject,
+    [Parameter(Mandatory = $true)]
+    [string]$Name
+  )
+  $prop = $InputObject.PSObject.Properties[$Name]
+  if (-not $prop) { return $null }
+  return $prop.Value
+}
+
 function Find-ArtifactSigningInstalledProducts {
   $products = New-Object System.Collections.Generic.List[object]
   $uninstallRoots = @(
@@ -89,23 +101,45 @@ function Find-ArtifactSigningInstalledProducts {
   )
   foreach ($root in $uninstallRoots) {
     if (-not (Test-Path -LiteralPath $root)) { continue }
-    Get-ChildItem -LiteralPath $root -ErrorAction SilentlyContinue | ForEach-Object {
-      $props = Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction SilentlyContinue
-      if (-not $props) { return }
-      $name = [string]$props.DisplayName
-      if ($name -notmatch '(?i)(Artifact Signing|Trusted Signing).*Client Tools|Client Tools.*(Artifact Signing|Trusted Signing)') {
-        return
-      }
+    foreach ($key in @(Get-ChildItem -LiteralPath $root -ErrorAction SilentlyContinue)) {
+      $props = Get-ItemProperty -LiteralPath $key.PSPath -ErrorAction SilentlyContinue
+      if (-not $props) { continue }
+      $name = [string](Get-OptionalNoteProperty -InputObject $props -Name 'DisplayName')
+      if ([string]::IsNullOrWhiteSpace($name)) { continue }
+      if ($name -notmatch '(?i)(Artifact Signing|Trusted Signing)') { continue }
+      if ($name -notmatch '(?i)Client Tools|CodeSigning|ArtifactSigning') { continue }
       $products.Add([PSCustomObject]@{
           DisplayName = $name
-          DisplayVersion = [string]$props.DisplayVersion
-          InstallLocation = [string]$props.InstallLocation
-          UninstallString = [string]$props.UninstallString
-          ProductCode = $_.PSChildName
+          DisplayVersion = [string](Get-OptionalNoteProperty -InputObject $props -Name 'DisplayVersion')
+          InstallLocation = [string](Get-OptionalNoteProperty -InputObject $props -Name 'InstallLocation')
+          UninstallString = [string](Get-OptionalNoteProperty -InputObject $props -Name 'UninstallString')
+          ProductCode = $key.PSChildName
         }) | Out-Null
     }
   }
   return @($products)
+}
+
+function Uninstall-ArtifactSigningClientToolsProducts {
+  $products = @(Find-ArtifactSigningInstalledProducts)
+  if ($products.Count -eq 0) {
+    Write-Host 'No Artifact/Trusted Signing Client Tools product registered in Apps and Features.'
+    return
+  }
+  foreach ($product in $products) {
+    $code = $product.ProductCode
+    if ($code -notmatch '^\{[0-9A-Fa-f-]{36}\}$') {
+      Write-Warning "Skipping uninstall for $($product.DisplayName): unrecognized product code '$code'."
+      continue
+    }
+    Write-Host "Uninstalling $($product.DisplayName) ($code)..."
+    $process = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
+      '/x', $code, '/quiet', '/norestart'
+    )
+    if ([int]$process.ExitCode -notin @(0, 1605, 1614, 1641, 3010)) {
+      Write-Warning "Uninstall of $($product.DisplayName) exited $($process.ExitCode)."
+    }
+  }
 }
 
 function Remove-UnsignedLegacyArtifactSigningTrees {
