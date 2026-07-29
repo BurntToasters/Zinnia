@@ -374,7 +374,7 @@ describe("release script safeguards", () => {
       source.indexOf("async function replaceReleaseAssetsTransactionally"),
       source.indexOf("async function uploadAssetWithReplace"),
     );
-    // GitHub strips leading periods from asset names — do not use dotfiles.
+    // GitHub strips leading periods from asset names  -  do not use dotfiles.
     expect(transaction).toContain("zinnia-pending-");
     expect(transaction).toContain("zinnia-previous-");
     expect(transaction).not.toContain(".zinnia-pending-");
@@ -461,6 +461,10 @@ describe("release script safeguards", () => {
     expect(pkg.scripts["setup:win:artifact-signing:repair"]).toContain(
       "-Force",
     );
+    expect(pkg.scripts["validate:no-em-dash"]).toContain(
+      "validate-no-em-dash.js",
+    );
+    expect(tools.match(/[^\x00-\x7F]/g)).toBeNull();
   });
 
   it("requires the baked App Group string in the macOS host Mach-O", () => {

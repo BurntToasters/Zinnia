@@ -24,6 +24,7 @@
     "validate:updater:live": "node scripts/validate-updater-live.js",
     "release:verify:published": "node scripts/validate-updater-live.js --expected-version=current",
     "validate:changelog": "node scripts/validate-changelog-version.js",
+    "validate:no-em-dash": "node scripts/validate-no-em-dash.js",
     "validate:flatpak": "node scripts/validate-flatpak-dry-run.js",
     "lint": "eslint src/ scripts/",
     "lint:fix": "eslint src/ scripts/ --fix",
