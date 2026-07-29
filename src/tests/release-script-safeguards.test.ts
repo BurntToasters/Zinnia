@@ -453,10 +453,15 @@ describe("release script safeguards", () => {
     expect(tools).toContain(
       "Program Files (x86)\\Microsoft\\ArtifactSigningClientTools",
     );
-    expect(setup).toContain("Assert-MicrosoftSignedFile -Path $msiPath");
+    expect(setup).toContain("Assert-MicrosoftSignedFile -Path $MsiPath");
     expect(setup).toContain("Remove-UnsignedLegacyArtifactSigningTrees");
     expect(setup).toContain("--scope machine");
     expect(setup).toContain("ALLUSERS=1");
+    expect(setup).toContain("1638");
+    expect(setup).toContain("REINSTALL=ALL");
+    expect(tools).toContain("AllowEmptyCollection");
+    expect(tools).toContain("Find-ArtifactSigningInstalledProducts");
+    expect(tools).toContain("MicrosoftTrustedSigningClientTools");
     const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
     expect(pkg.scripts["setup:win:artifact-signing:repair"]).toContain(
       "-Force",
@@ -465,6 +470,7 @@ describe("release script safeguards", () => {
       "validate-no-em-dash.js",
     );
     expect(tools.match(/[^\x00-\x7F]/g)).toBeNull();
+    expect(setup.match(/[^\x00-\x7F]/g)).toBeNull();
   });
 
   it("requires the baked App Group string in the macOS host Mach-O", () => {
