@@ -1163,6 +1163,7 @@ fn publish_rejects_symlink_swapped_ancestor_before_rename() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[cfg(not(windows))]
 #[test]
 fn persisted_move_plan_rolls_back_a_partial_merge() {
     let root = temp_root("zinnia-move-recovery-test");
@@ -1193,6 +1194,7 @@ fn persisted_move_plan_rolls_back_a_partial_merge() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[cfg(not(windows))]
 #[test]
 fn inside_destination_move_plan_rolls_back_a_partial_merge() {
     let root = temp_root("zinnia-inside-move-recovery-test");
@@ -1226,6 +1228,7 @@ fn inside_destination_move_plan_rolls_back_a_partial_merge() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[cfg(not(windows))]
 #[test]
 fn persisted_move_plan_preserves_a_target_modified_in_place() {
     let root = temp_root("zinnia-move-recovery-in-place-edit");
@@ -2623,6 +2626,49 @@ fn archive_journal_rollback_restores_identity_verified_backup() {
     rollback_archive_journal(&journal).expect("rollback verified update");
     assert_eq!(std::fs::read(&destination).unwrap(), b"old");
     assert!(!backup.exists());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn archive_journal_rollback_rejects_same_inode_rewritten_backup() {
+    let root = temp_root("zinnia-journal-same-inode-rewrite");
+    let stage = root.join(".zinnia-archive-abc");
+    let destination = root.join("out.7z");
+    std::fs::create_dir_all(&stage).expect("stage");
+    let backup = archive_backup_path(&stage, 0);
+    std::fs::write(&backup, b"old").expect("backup");
+    let backup_identity = super::journal::regular_file_identity_with_fingerprint(&backup).unwrap();
+    // Overwrite the backup path in place so inode/file-id stay the same while
+    // bytes change. Recovery must refuse this without a matching fingerprint.
+    std::fs::write(&backup, b"attacker rewrite").expect("rewrite same path");
+    assert!(
+        super::journal::file_identities_match(
+            &super::journal::regular_file_identity(&backup).unwrap(),
+            &backup_identity
+        ),
+        "in-place rewrite should keep the inode/file-id identity"
+    );
+    std::fs::write(&destination, b"new-partial").expect("partial new");
+    let published_identity =
+        super::journal::regular_file_identity_with_fingerprint(&destination).unwrap();
+    let journal = CleanupJournal {
+        stage: stage.clone(),
+        destination: destination.clone(),
+        archive: true,
+        extract_stage_placement: None,
+        move_plan_sidecar: false,
+        previous_archive_family: vec![destination.clone()],
+        previous_archive_identities: vec![Some(backup_identity)],
+        next_archive_family: vec![destination.clone()],
+        next_archive_identities: vec![Some(published_identity)],
+        extract_stage_identity: None,
+        extract_phase: None,
+        archive_phase: Some(ArchiveJournalPhase::InProgress),
+    };
+
+    assert!(rollback_archive_journal(&journal).is_err());
+    assert_eq!(std::fs::read(&destination).unwrap(), b"new-partial");
+    assert_eq!(std::fs::read(&backup).unwrap(), b"attacker rewrite");
     let _ = std::fs::remove_dir_all(root);
 }
 

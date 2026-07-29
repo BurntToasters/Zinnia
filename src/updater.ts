@@ -42,7 +42,7 @@ export function discardPendingUpdate(): void {
 }
 
 async function archiveOperationIsRunning(
-  mode: "check" | "reserve_update" | "release_update" = "check",
+  mode: "check" | "reserve_update" = "check",
 ): Promise<boolean> {
   try {
     return mode === "check"
@@ -54,6 +54,18 @@ async function archiveOperationIsRunning(
     // operation merely because the status query is unavailable.
     log(`Unable to confirm archive idle state: ${text}`, "error");
     return true;
+  }
+}
+
+/** Drop the update prepare lock. Unlike check/reserve, never treat IPC failure
+ * as "still busy" — that strands archive ops until restart. */
+async function releaseUpdateReservation(): Promise<void> {
+  try {
+    await invoke<boolean>("is_7z_running", { mode: "release_update" });
+  } catch (err) {
+    const text = err instanceof Error ? err.message : String(err);
+    log(`Unable to release update reservation: ${text}`, "error");
+    throw err instanceof Error ? err : new Error(text);
   }
 }
 
@@ -154,7 +166,7 @@ async function promptInstallAndRestart(
       return;
     }
     if (generation !== updateGeneration) {
-      await archiveOperationIsRunning("release_update");
+      await releaseUpdateReservation().catch(() => {});
       return;
     }
     setStatus("Installing update");
@@ -163,7 +175,11 @@ async function promptInstallAndRestart(
       clearPendingUpdate(false);
       await relaunch();
     } catch (error) {
-      await archiveOperationIsRunning("release_update");
+      try {
+        await releaseUpdateReservation();
+      } catch {
+        // Already logged; still surface the install failure.
+      }
       throw error;
     }
   } else {
