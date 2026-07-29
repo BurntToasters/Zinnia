@@ -54,6 +54,7 @@
     "win-compiler:x64": "powershell -NoProfile -ExecutionPolicy Bypass -NoExit -File scripts/launch-vs-devshell.ps1 -Arch x64",
     "win-compiler:arm64": "powershell -NoProfile -ExecutionPolicy Bypass -NoExit -File scripts/launch-vs-devshell.ps1 -Arch arm64",
     "setup:win:artifact-signing": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/setup-windows-artifact-signing.ps1",
+    "setup:win:artifact-signing:repair": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/setup-windows-artifact-signing.ps1 -Force",
     "build:win:context-menu": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-context-menu.ps1",
     "build:win:x64:prepared": "dotenv -e .env -- node scripts/tauri-windows-build.js --target x86_64-pc-windows-msvc --bundles nsis",
     "build:win:arm64:prepared": "dotenv -e .env -- node scripts/tauri-windows-build.js --target aarch64-pc-windows-msvc --bundles nsis",
