@@ -25,6 +25,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
 - **Fix:** Extract-only windows grant `allow-probe-7z` in Tauri capabilities so shell/quick extract can run the pre-extract 7-Zip probe (B1 failed with “Command probe_7z not allowed by ACL”).
 - **Fix:** `release:mirror` copies each release artifact into `AFTER_PACK_LOC`, overwriting same-named files only, instead of replacing the whole share directory (so a later finalize on another OS no longer deletes other VMs' checksums and installers).
+- **UI:** Windows NSIS installer notes that Win11 context menu package registration “may take a moment” (can be slow while integration is already active).
 - **Tooling:** `tauri-capabilities` tests assert every `invoke` in `extract-window.ts` is allowed by `capabilities/extract.json`.
 
 ## Changes in `v0.6.1-beta.1:`

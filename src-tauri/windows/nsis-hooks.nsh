@@ -101,7 +101,7 @@
   StrCpy $R8 "$INSTDIR\register-windows-context-menu.ps1"
   IfFileExists "$R8" 0 zinnia_menu_no_script
   zinnia_menu_run_script:
-  DetailPrint "Registering Win11 context menu package…"
+  DetailPrint "Registering Win11 context menu package... (this may take a moment)"
   nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$R8" -MsixPath "$R9\ZinniaContextMenu.msix" -ExtractMsixPath "$R9\ZinniaExtractContextMenu.msix" -ExternalLocation "$INSTDIR" -ShellPayloadLocation "$R9" -LogPath "$INSTDIR\zinnia-context-menu-register.log"'
   Pop $0
   ; The registration script removed the old sparse identities, so their
