@@ -152,6 +152,18 @@ pub(crate) fn identity_with_fingerprint_from(
     Ok(identity)
 }
 
+/// Attach a regular-file content fingerprint to an inode/file-id identity.
+/// Used for archive destination backups so crash recovery can reject same-inode
+/// rewrites that would otherwise restore attacker/corrupt bytes.
+pub(crate) fn identity_with_file_content(
+    mut identity: FileIdentity,
+    len: u64,
+    sha256: [u8; 32],
+) -> FileIdentity {
+    identity.set_fingerprint(ObjectFingerprint::File { len, sha256 });
+    identity
+}
+
 /// Compare identities using the strongest representation captured in the
 /// journal. New Windows records require the 128-bit ID when it was available;
 /// older records remain compatible through the legacy volume/index pair.
@@ -702,7 +714,13 @@ pub(crate) fn write_cleanup_journal(
         let previous_archive_identities = plan
             .expected_archive_family
             .iter()
-            .map(|snapshot| Some(snapshot.identity.clone()))
+            .map(|snapshot| {
+                Some(identity_with_file_content(
+                    snapshot.identity.clone(),
+                    snapshot.len,
+                    snapshot.sha256,
+                ))
+            })
             .collect();
         Some(CleanupJournal {
             stage: staged_archive
@@ -761,7 +779,13 @@ pub(crate) fn update_archive_journal(
         previous_archive_identities: plan
             .expected_archive_family
             .iter()
-            .map(|snapshot| Some(snapshot.identity.clone()))
+            .map(|snapshot| {
+                Some(identity_with_file_content(
+                    snapshot.identity.clone(),
+                    snapshot.len,
+                    snapshot.sha256,
+                ))
+            })
             .collect(),
         previous_archive_family,
         next_archive_identities: vec![None; next_archive_family.len()],
@@ -826,6 +850,12 @@ pub(crate) fn record_archive_journal_backup(
     }
     if journal.previous_archive_identities.len() != journal.previous_archive_family.len() {
         return Err("Archive recovery journal has invalid backup identity records.".to_string());
+    }
+    if identity.fingerprint().is_none() {
+        return Err(format!(
+            "Refusing to journal archive backup {} without a content fingerprint.",
+            original.display()
+        ));
     }
     let index = journal
         .previous_archive_family

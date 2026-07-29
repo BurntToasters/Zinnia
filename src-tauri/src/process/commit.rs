@@ -3,7 +3,7 @@
 use super::journal::move_identity_log_path;
 use super::journal::{
     ensure_path_entry_identity, ensure_path_identity, ensure_recovery_path_unchanged,
-    ensure_regular_file_identity, file_identities_match, file_identity,
+    file_identities_match, file_identity, identity_with_file_content,
     identity_with_fingerprint_from, mark_archive_journal_committed, mark_extract_journal_committed,
     move_plan_path, path_identity, path_identity_with_fingerprint, record_archive_journal_backup,
     record_archive_journal_published, regular_file_identity,
@@ -602,7 +602,7 @@ fn restore_archive_backups(
 ) -> Vec<String> {
     let mut restore_errors = Vec::new();
     for (backup, target, identity) in backups.into_iter().rev() {
-        let restore = ensure_regular_file_identity(&backup, &identity)
+        let restore = ensure_recovery_path_unchanged(&backup, &identity)
             .and_then(|()| rename_file_no_replace(&backup, &target));
         if let Err(error) = restore {
             restore_errors.push(format!("Could not restore {}: {error}", target.display()));
@@ -646,7 +646,11 @@ where
         let mut original_file = crate::path_safety::open_regular_file_nofollow(&path)?;
         let actual_snapshot =
             archive_destination_snapshot_from_open_file(&path, &mut original_file)?;
-        let original_identity = actual_snapshot.identity.clone();
+        let original_identity = identity_with_file_content(
+            actual_snapshot.identity.clone(),
+            actual_snapshot.len,
+            actual_snapshot.sha256,
+        );
         if actual_snapshot != *expected {
             let restore_errors = restore_archive_backups(backups);
             let error = format!(
@@ -683,7 +687,8 @@ where
         }
         backups.push((backup.clone(), path.clone(), original_identity.clone()));
         let post_rename = (|| {
-            let backup_identity = file_identity(&original_file)?;
+            let backup_identity =
+                identity_with_fingerprint_from(file_identity(&original_file)?, &original_identity)?;
             if let Some((_, _, rollback_identity)) = backups.last_mut() {
                 *rollback_identity = backup_identity.clone();
             }
@@ -693,7 +698,7 @@ where
                 // from the still-open handle before relying on the backup path.
                 record_backup(&path, &backup_identity)?;
             }
-            ensure_regular_file_identity(&backup, &backup_identity)
+            ensure_recovery_path_unchanged(&backup, &backup_identity)
         })();
         if let Err(error) = post_rename {
             let restore_errors = restore_archive_backups(backups);
@@ -1465,30 +1470,27 @@ fn prepare_planned_links(
                 }
             }
         }
+        #[cfg(windows)]
+        if let Some(link) = links.first() {
+            let _ = (staged, destination);
+            return Err(format!(
+                "Archive link cannot be merged safely into an existing Windows destination: {}",
+                link.display()
+            ));
+        }
+        #[cfg(unix)]
         for link in links {
-            #[cfg(windows)]
-            {
-                let _ = (staged, destination);
-                return Err(format!(
-                    "Archive link cannot be merged safely into an existing Windows destination: {}",
-                    link.display()
-                ));
-            }
-            #[cfg(unix)]
-            {
-                let source_target = resolve_staged_symlink_target(staged, &link)?;
-                let final_target =
-                    final_path_for_staged_source(staged, destination, plan, &source_target)?;
-                let final_link = final_path_for_staged_source(staged, destination, plan, &link)?;
-                let final_parent = final_link
-                    .parent()
-                    .ok_or_else(|| "Archive symbolic link target has no parent.".to_string())?;
-                let rewritten_target = relative_path_between(final_parent, &final_target)?;
-                if std::fs::read_link(&link).map_err(|e| e.to_string())? != rewritten_target {
-                    std::fs::remove_file(&link).map_err(|e| e.to_string())?;
-                    std::os::unix::fs::symlink(&rewritten_target, &link)
-                        .map_err(|e| e.to_string())?;
-                }
+            let source_target = resolve_staged_symlink_target(staged, &link)?;
+            let final_target =
+                final_path_for_staged_source(staged, destination, plan, &source_target)?;
+            let final_link = final_path_for_staged_source(staged, destination, plan, &link)?;
+            let final_parent = final_link
+                .parent()
+                .ok_or_else(|| "Archive symbolic link target has no parent.".to_string())?;
+            let rewritten_target = relative_path_between(final_parent, &final_target)?;
+            if std::fs::read_link(&link).map_err(|e| e.to_string())? != rewritten_target {
+                std::fs::remove_file(&link).map_err(|e| e.to_string())?;
+                std::os::unix::fs::symlink(&rewritten_target, &link).map_err(|e| e.to_string())?;
             }
         }
     }

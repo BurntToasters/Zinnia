@@ -208,6 +208,39 @@ describe("checkUpdates", () => {
     expect(relaunchMock).not.toHaveBeenCalled();
   });
 
+  it("still attempts release_update when the release invoke itself fails", async () => {
+    const install = vi.fn().mockRejectedValue(new Error("install failed"));
+    checkMock.mockResolvedValue({
+      version: "0.5.0",
+      download: vi.fn().mockResolvedValue(undefined),
+      install,
+    } as unknown as Awaited<ReturnType<typeof check>>);
+    askMock.mockResolvedValue(true);
+    invokeMock.mockImplementation((command, payload) => {
+      if (
+        command === "is_7z_running" &&
+        payload &&
+        typeof payload === "object" &&
+        "mode" in payload &&
+        (payload as { mode?: string }).mode === "release_update"
+      ) {
+        return Promise.reject(new Error("release ipc failed"));
+      }
+      return Promise.resolve(command === "is_7z_running" ? false : "windows");
+    });
+
+    await checkUpdates();
+
+    expect(invokeMock).toHaveBeenCalledWith("is_7z_running", {
+      mode: "release_update",
+    });
+    expect(logMock).toHaveBeenCalledWith(
+      expect.stringContaining("Unable to release update reservation"),
+      "error",
+    );
+    expect(relaunchMock).not.toHaveBeenCalled();
+  });
+
   it("downloads update and defers install when user chooses later", async () => {
     const download = vi.fn().mockResolvedValue(undefined);
     const install = vi.fn().mockResolvedValue(undefined);

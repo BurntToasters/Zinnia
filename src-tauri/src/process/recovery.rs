@@ -2,10 +2,10 @@
 
 use super::commit::{archive_backup_path, archive_family, rollback_persisted_move_plan};
 use super::journal::{
-    cleanup_journal_path, clear_cleanup_journal, ensure_regular_file_identity,
+    cleanup_journal_path, clear_cleanup_journal, ensure_recovery_path_unchanged,
     is_safe_stage_dir_name, move_plan_path, remove_move_plan_sidecars,
-    remove_recovery_regular_file_if_matches, remove_regular_file_if_matches, sync_directory,
-    ArchiveJournalPhase, CleanupJournal, ExtractJournalPhase, FileIdentity,
+    remove_recovery_regular_file_if_matches, sync_directory, ArchiveJournalPhase, CleanupJournal,
+    ExtractJournalPhase, FileIdentity,
 };
 
 static RECOVERY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -181,7 +181,9 @@ fn validate_archive_backup(
         ));
     }
     let identity = archive_backup_identity(journal, index)?;
-    ensure_regular_file_identity(backup, identity)?;
+    // Content fingerprint is required: inode/file-id alone cannot detect an
+    // in-place rewrite of the stage backup before crash recovery runs.
+    ensure_recovery_path_unchanged(backup, identity)?;
     Ok(true)
 }
 
@@ -192,7 +194,7 @@ pub(crate) fn cleanup_committed_archive_journal(journal: &CleanupJournal) -> Res
             continue;
         }
         let identity = archive_backup_identity(journal, index)?;
-        remove_regular_file_if_matches(&backup, identity)?;
+        remove_recovery_regular_file_if_matches(&backup, identity)?;
     }
     match crate::fs_secure::remove_dir_all_for_cleanup(&journal.stage) {
         Ok(()) => {}
@@ -306,7 +308,7 @@ pub(crate) fn rollback_archive_journal(journal: &CleanupJournal) -> Result<(), S
         }
         super::commit::rename_file_no_replace(&backup, target)?;
         let identity = archive_backup_identity(journal, index)?;
-        ensure_regular_file_identity(target, identity)?;
+        ensure_recovery_path_unchanged(target, identity)?;
     }
     Ok(())
 }
