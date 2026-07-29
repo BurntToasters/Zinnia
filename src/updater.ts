@@ -41,9 +41,13 @@ export function discardPendingUpdate(): void {
   clearPendingUpdate(true);
 }
 
-async function archiveOperationIsRunning(): Promise<boolean> {
+async function archiveOperationIsRunning(
+  mode: "check" | "reserve_update" | "release_update" = "check",
+): Promise<boolean> {
   try {
-    return await invoke<boolean>("is_7z_running");
+    return mode === "check"
+      ? await invoke<boolean>("is_7z_running")
+      : await invoke<boolean>("is_7z_running", { mode });
   } catch (err) {
     const text = err instanceof Error ? err.message : String(err);
     // Failing closed is deliberate: an updater must never terminate an archive
@@ -66,6 +70,26 @@ async function getUpdateCheckTarget(): Promise<string | undefined> {
   const isBeta = /-(beta|alpha|rc)/i.test(version);
   if (!isBeta) return undefined;
   return invoke<string>("get_beta_updater_target");
+}
+
+async function checkUpdateFeed(
+  target: string | undefined,
+): Promise<Update | null> {
+  const options = {
+    ...(target ? { target } : {}),
+    timeout: UPDATE_CHECK_TIMEOUT_MS,
+  };
+  try {
+    const update = await check(options);
+    // Beta manifests are swapped onto the stable release through two adjacent
+    // GitHub asset renames. A second lookup masks that irreducible short window
+    // and also avoids treating the current-version fallback as a definitive miss.
+    if (!update && target) return await check(options);
+    return update;
+  } catch (error) {
+    if (!target) throw error;
+    return await check(options);
+  }
 }
 
 export async function notify(title: string, body: string) {
@@ -120,7 +144,7 @@ async function promptInstallAndRestart(
   if (generation !== updateGeneration) return;
   if (restart) {
     if (generation !== updateGeneration) return;
-    if (await archiveOperationIsRunning()) {
+    if (await archiveOperationIsRunning("reserve_update")) {
       if (generation !== updateGeneration) return;
       await message(
         "An archive operation started before the update could be installed. The update remains ready and can be installed after it finishes.",
@@ -129,11 +153,19 @@ async function promptInstallAndRestart(
       setStatus("Update ready");
       return;
     }
-    if (generation !== updateGeneration) return;
+    if (generation !== updateGeneration) {
+      await archiveOperationIsRunning("release_update");
+      return;
+    }
     setStatus("Installing update");
-    await update.install();
-    clearPendingUpdate(false);
-    await relaunch();
+    try {
+      await update.install();
+      clearPendingUpdate(false);
+      await relaunch();
+    } catch (error) {
+      await archiveOperationIsRunning("release_update");
+      throw error;
+    }
   } else {
     await notify(
       "Zinnia",
@@ -164,10 +196,7 @@ async function runUpdateCheck(interactive: boolean): Promise<void> {
       return;
     }
     if (interactive) setStatus("Checking updates");
-    checkedUpdate = await check({
-      ...(target ? { target } : {}),
-      timeout: UPDATE_CHECK_TIMEOUT_MS,
-    });
+    checkedUpdate = await checkUpdateFeed(target);
     if (generation !== updateGeneration) {
       await checkedUpdate?.close().catch(() => {});
       return;

@@ -13,7 +13,8 @@ import { trapFocus, releaseFocusTrap } from "./utils";
 import { setProgressPercentClass } from "./progress-bar";
 
 const SETUP_WIZARD_VERSION = 3;
-const LAST_STEP = 4;
+const ALL_STEPS = [0, 1, 2, 3, 4] as const;
+const FLATPAK_STEPS = [0, 1, 2, 4] as const;
 
 interface SetupWizardResult {
   workspaceMode: WorkspaceMode;
@@ -34,19 +35,35 @@ function $(id: string): HTMLElement {
   return el;
 }
 
-function setProgress(step: number): void {
+function setProgress(step: number, visibleSteps: readonly number[]): void {
   const bar = $("setup-wizard-progress-bar");
-  const pct = (step / LAST_STEP) * 100;
+  const index = Math.max(visibleSteps.indexOf(step), 0);
+  const lastIndex = visibleSteps.length - 1;
+  const pct = (index / lastIndex) * 100;
   setProgressPercentClass(bar, pct);
+  bar.setAttribute("aria-valuenow", String(Math.round(pct)));
+  bar.setAttribute(
+    "aria-valuetext",
+    `Step ${index + 1} of ${visibleSteps.length}`,
+  );
 }
 
-function showStep(step: number): void {
+function showStep(step: number, visibleSteps: readonly number[]): void {
   const steps = document.querySelectorAll<HTMLElement>(".setup-wizard-step");
+  let activeStep: HTMLElement | null = null;
   for (const s of steps) {
     const idx = Number(s.dataset.step);
     s.hidden = idx !== step;
+    if (idx === step) activeStep = s;
   }
-  setProgress(step);
+  setProgress(step, visibleSteps);
+  const title = activeStep?.querySelector<HTMLElement>(
+    ".setup-wizard-step__title",
+  );
+  if (title?.id) {
+    $("setup-wizard-overlay").setAttribute("aria-labelledby", title.id);
+  }
+  title?.focus();
 }
 
 export function shouldShowSetupWizard(): boolean {
@@ -83,6 +100,11 @@ export function showSetupWizard(
   return new Promise((resolve) => {
     const overlay = $("setup-wizard-overlay");
     const card = overlay.querySelector<HTMLElement>(".setup-wizard-card");
+    const previousFocus =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    const visibleSteps = skipUpdates ? FLATPAK_STEPS : ALL_STEPS;
     overlay.hidden = false;
     if (card) trapFocus(card);
 
@@ -118,7 +140,7 @@ export function showSetupWizard(
     );
 
     function goTo(step: number): void {
-      showStep(step);
+      showStep(step, visibleSteps);
     }
 
     function setWorkspaceSelection(mode: WorkspaceMode): void {
@@ -160,6 +182,13 @@ export function showSetupWizard(
         btn.removeEventListener("click", onWorkspaceSelect),
       );
       themeButtons.forEach((btn) => btn.removeEventListener("click", onTheme));
+      if (
+        previousFocus?.isConnected &&
+        !overlay.contains(previousFocus) &&
+        !previousFocus.closest("[hidden]")
+      ) {
+        previousFocus.focus();
+      }
     }
 
     function onWorkspaceSelect(this: HTMLButtonElement): void {
@@ -271,7 +300,5 @@ export function showSetupWizard(
       btn.addEventListener("click", onWorkspaceSelect),
     );
     themeButtons.forEach((btn) => btn.addEventListener("click", onTheme));
-
-    welcomeNext.focus();
   });
 }

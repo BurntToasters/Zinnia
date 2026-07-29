@@ -11,7 +11,7 @@ import {
   setStatus,
   triggerIconRefresh,
 } from "../ui";
-import { validateArchivePaths } from "../archive-rules";
+import { MAX_ARCHIVE_PATHS, validateArchivePaths } from "../archive-rules";
 import {
   runAction,
   browseArchive,
@@ -40,6 +40,7 @@ import {
   updateBasicPreparingState,
 } from "./progress";
 import { setRecentArchiveHandler } from "./recent";
+import { showToast } from "../toast";
 
 async function waitUntilIncomingPathsApplyingClear(): Promise<void> {
   while (state.incomingPathsApplying) {
@@ -109,13 +110,47 @@ export async function partitionByArchive(
   }
 }
 
-function loadInputs(paths: string[]): void {
-  state.inputs.length = 0;
-  for (const p of paths) {
-    if (state.inputs.includes(p)) continue;
-    if (state.inputs.length >= 4096) break;
-    state.inputs.push(p);
+/**
+ * Deduplicate and cap a Basic selection before archive probing. This keeps an
+ * oversized all-archive drop from being classified as regular files.
+ */
+function limitBasicInputPaths(paths: string[]): {
+  paths: string[];
+  overLimit: number;
+} {
+  const uniquePaths = new Set<string>();
+  const acceptedPaths: string[] = [];
+  let overLimit = 0;
+  for (const path of paths) {
+    if (uniquePaths.has(path)) continue;
+    uniquePaths.add(path);
+    if (acceptedPaths.length >= MAX_ARCHIVE_PATHS) {
+      overLimit += 1;
+      continue;
+    }
+    acceptedPaths.push(path);
   }
+  return { paths: acceptedPaths, overLimit };
+}
+
+function showBasicInputLimitToast(overLimit: number): void {
+  if (overLimit === 0) return;
+  showToast(
+    `Selected the first 4,096 items; ${overLimit} more were not added.`,
+    "error",
+    5000,
+  );
+}
+
+/** Replace Basic inputs and return paths rejected only because of the hard cap. */
+export function replaceBasicInputs(paths: string[]): number {
+  const limited = limitBasicInputPaths(paths);
+  state.inputs.splice(0, state.inputs.length, ...limited.paths);
+  return limited.overLimit;
+}
+
+function loadInputs(paths: string[]): void {
+  replaceBasicInputs(paths);
 }
 
 export interface BasicPreparation {
@@ -175,7 +210,6 @@ async function handleBasicDropOnce(
   if (!isBasicPreparationCurrent(preparation)) return;
   if (!partitioned) {
     finishBasicPreparation(preparation);
-    const { showToast } = await import("../toast");
     showToast(
       "Could not detect archive types for the dropped files. Try again.",
       "error",
@@ -254,14 +288,16 @@ async function handleBasicDropOnce(
 }
 
 export async function handleBasicDrop(paths: string[]): Promise<void> {
-  if (paths.length === 0) return;
+  const limited = limitBasicInputPaths(paths);
+  if (limited.paths.length === 0) return;
   // Wait only for OS handoff / Power apply locks. Do not wait on
   // operationPreparing — that would deadlock behind destination/password dialogs.
   await waitUntilIncomingPathsApplyingClear();
   const preparation = beginBasicPreparation();
   if (!preparation) return;
+  showBasicInputLimitToast(limited.overLimit);
   try {
-    await handleBasicDropOnce(paths, preparation);
+    await handleBasicDropOnce(limited.paths, preparation);
   } finally {
     finishBasicPreparation(preparation);
   }

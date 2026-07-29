@@ -11,6 +11,7 @@ import {
 import { browseArchive } from "./archive";
 import { validateArchivePaths } from "./archive-rules";
 import { setBasicView } from "./basic";
+import { showToast } from "./toast";
 
 // Keep in sync with archive-rules.ts MAX_ARCHIVE_PATHS. This local constant
 // keeps OS handoff handling independent of archive-probe test doubles.
@@ -182,7 +183,6 @@ async function applyIncomingPathsUnlocked(
       `Could not detect whether paths from ${source} are archives; left inputs unchanged.`,
       "error",
     );
-    const { showToast } = await import("./toast");
     showToast(
       "Could not detect archive types for the dropped files. Try again.",
       "error",

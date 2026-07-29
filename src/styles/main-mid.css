@@ -1699,7 +1699,8 @@ body.platform-macos .btn--shortcut::after {
   }
 
   .grid.show-activity {
-    grid-template-columns: minmax(0, 1fr) 280px;
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) minmax(140px, 35vh);
   }
 
   .log {

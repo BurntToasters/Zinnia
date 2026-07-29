@@ -33,6 +33,17 @@ export function cacheBrowseInfo(archive: string, info: ArchiveInfo): void {
   state.browseArchiveInfoByPath.set(archive, info);
 }
 
+export function cacheBrowseIdentity(archive: string, identity: string): void {
+  evictOldest(state.browseArchiveIdentityByPath, MAX_CACHED_ARCHIVES, archive);
+  state.browseArchiveIdentityByPath.set(archive, identity);
+}
+
+export function clearBrowseCache(archive: string): void {
+  state.browseArchiveInfoByPath.delete(archive);
+  state.browseArchiveIdentityByPath.delete(archive);
+  state.browseSelectionsByArchive.delete(archive);
+}
+
 export function cacheSelection(archive: string, set: Set<string>): void {
   evictOldest(state.browseSelectionsByArchive, MAX_CACHED_ARCHIVES, archive);
   state.browseSelectionsByArchive.set(archive, set);
@@ -56,9 +67,11 @@ export const state = {
   lastAutoExtractDestination: null as string | null,
   lastAutoOutputPath: null as string | null,
   browseArchiveInfoByPath: new Map<string, ArchiveInfo>(),
+  browseArchiveIdentityByPath: new Map<string, string>(),
   browseSelectionsByArchive: new Map<string, Set<string>>(),
   selectiveSearchQuery: "",
   selectiveActiveArchive: null as string | null,
+  selectiveOpenRequestId: 0,
   selectiveVisiblePaths: [] as string[],
   selectiveExpandedFolders: new Set<string>(),
   inputValidationByPath: new Map<string, InputValidationInfo>(),

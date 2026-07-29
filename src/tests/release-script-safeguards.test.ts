@@ -9,10 +9,13 @@ import {
   artifactMatchesVersion,
   buildUploadList,
   checksumTargetKeysForArtifactName,
+  expectedPublishedBetaManifestNames,
   isExplicitTruthy,
   listAllGithubPages,
+  requiredPublishedBetaManifestNames,
   rpmArtifactMatchesVersion,
   updaterChannelVariants,
+  validatePublishedBetaManifest,
 } from "../../scripts/gpg-sign.js";
 import { isDirectExecution as isGitPruneDirectExecution } from "../../scripts/git-prune-local-branches.js";
 import {
@@ -325,23 +328,15 @@ describe("release script safeguards", () => {
     },
   );
 
-  it("syncs beta→latest manifests automatically during release:sign:gpg", () => {
+  it("never syncs draft beta manifests during release:sign:gpg", () => {
     const source = fs.readFileSync("scripts/gpg-sign.js", "utf8");
-    expect(source).toContain("if (IS_PRERELEASE)");
-    expect(source).toContain(
-      "await syncBetaManifestsToLatestStable(everything, release.id)",
-    );
-    // Must not gate the automatic path on draft/published; beta.23 briefly
-    // skipped drafts and stranded clients until a manual sync ran.
-    expect(source).not.toContain(
-      "syncBetaManifests: skipped because the current release is still a draft.",
-    );
     const syncBlock = source.slice(
       source.indexOf("for (const f of everything)"),
       source.indexOf("Done: ${TAG} uploaded as"),
     );
-    expect(syncBlock).toContain("syncBetaManifestsToLatestStable");
-    expect(syncBlock).not.toContain("if (!release.draft)");
+    expect(syncBlock).not.toContain("syncBetaManifestsToLatestStable");
+    expect(source).toContain("loadAndVerifyPublishedBetaManifests");
+    expect(source).toContain("Release ${TAG} is still a draft");
   });
 
   it("keeps a recovery beta→latest sync entry point", () => {
@@ -354,11 +349,85 @@ describe("release script safeguards", () => {
     );
   });
 
+  it("stages live feed replacements before swapping asset names", () => {
+    const source = fs.readFileSync("scripts/gpg-sign.js", "utf8");
+    const transaction = source.slice(
+      source.indexOf("async function replaceReleaseAssetsTransactionally"),
+      source.indexOf("async function uploadAssetWithReplace"),
+    );
+    expect(transaction).toContain(".zinnia-pending-");
+    expect(transaction).toContain(".zinnia-previous-");
+    expect(transaction).toContain('"PATCH"');
+    expect(
+      transaction.indexOf("uploadAsset(release.upload_url, stagedPath)"),
+    ).toBeLessThan(transaction.indexOf('"PATCH"'));
+    expect(transaction.indexOf('"PATCH"')).toBeLessThan(
+      transaction.indexOf('"DELETE"'),
+    );
+  });
+
+  it("requires the complete core beta updater target set", () => {
+    expect(requiredPublishedBetaManifestNames()).toEqual(
+      expect.arrayContaining([
+        "latest-windows-beta-x86_64-nsis.json",
+        "latest-windows-beta-aarch64-nsis.json",
+        "latest-darwin-beta-x86_64-app.json",
+        "latest-darwin-beta-aarch64-app.json",
+        "latest-linux-beta-x86_64-appimage.json",
+        "latest-linux-beta-x86_64-deb.json",
+        "latest-linux-beta-x86_64-rpm.json",
+      ]),
+    );
+  });
+
+  it("accepts a complete optional Linux ARM64 updater target group", () => {
+    const arm64 = ["", "-appimage", "-deb", "-rpm"].map(
+      (suffix) => `latest-linux-beta-aarch64${suffix}.json`,
+    );
+    expect(expectedPublishedBetaManifestNames(arm64)).toEqual(
+      expect.arrayContaining(arm64),
+    );
+    expect(() =>
+      expectedPublishedBetaManifestNames(arm64.slice(0, -1)),
+    ).toThrow(/incomplete optional target group/);
+  });
+
+  it("rejects beta manifests that reference another release", () => {
+    expect(() =>
+      validatePublishedBetaManifest({
+        name: "latest-linux-beta-x86_64.json",
+        contents: JSON.stringify({
+          version: "0.6.1-beta.1",
+          platforms: {
+            "linux-x86_64": {
+              url: "https://github.com/BurntToasters/zinnia/releases/download/v0.6.1-beta.0/Zinnia.AppImage",
+              signature: "signed",
+            },
+          },
+        }),
+        releaseAssetNames: new Set(["Zinnia.AppImage"]),
+      }),
+    ).toThrow(/outside the published/);
+  });
+
   it("passes GH_TOKEN or GITHUB_TOKEN into updater-live GitHub authorization", () => {
     const source = fs.readFileSync("scripts/validate-updater-live.js", "utf8");
     expect(source).toContain(
       "process.env.GH_TOKEN || process.env.GITHUB_TOKEN",
     );
+  });
+
+  it("verifies Microsoft Authenticode before using Windows signing tools", () => {
+    const tools = fs.readFileSync("scripts/artifact-signing-tools.ps1", "utf8");
+    const setup = fs.readFileSync(
+      "scripts/setup-windows-artifact-signing.ps1",
+      "utf8",
+    );
+    expect(tools).toContain("Get-AuthenticodeSignature");
+    expect(tools).toContain("O=Microsoft Corporation");
+    expect(tools).toContain("Assert-MicrosoftSignedFile -Path $signToolPath");
+    expect(tools).toContain("Assert-MicrosoftSignedFile -Path $dlibPath");
+    expect(setup).toContain("Assert-MicrosoftSignedFile -Path $msiPath");
   });
 
   it("requires the baked App Group string in the macOS host Mach-O", () => {

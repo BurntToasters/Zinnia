@@ -259,8 +259,11 @@ fn main() {
             #[cfg(target_os = "macos")]
             {
                 macos_services::install_macos_services(app.handle());
-                platform::register_macos_finder_sync();
                 finder_sync_requests::start_request_monitor(app.handle().clone());
+                // pluginkit can take several seconds when Launch Services is
+                // unhealthy. Registration is best-effort, so keep it off the
+                // setup/main thread and show the first window without waiting.
+                std::thread::spawn(platform::register_macos_finder_sync);
             }
 
             // Recovery can traverse and sync directories. Keep it off the setup thread so the

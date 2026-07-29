@@ -2,16 +2,91 @@
 
 use super::journal::move_identity_log_path;
 use super::journal::{
-    ensure_path_identity, ensure_regular_file_identity, file_identities_match, file_identity,
-    mark_archive_journal_committed, mark_extract_journal_committed, move_plan_path, path_identity,
-    record_archive_journal_backup, record_archive_journal_published, regular_file_identity,
-    remove_move_plan_sidecars, remove_regular_file_if_matches, sync_directory,
-    unregister_plan_stages, update_archive_journal, FileIdentity, MoveRecord,
-    LEGACY_MOVE_PLAN_FILE_NAME,
+    ensure_path_entry_identity, ensure_path_identity, ensure_recovery_path_unchanged,
+    ensure_regular_file_identity, file_identities_match, file_identity,
+    identity_with_fingerprint_from, mark_archive_journal_committed, mark_extract_journal_committed,
+    move_plan_path, path_identity, path_identity_with_fingerprint, record_archive_journal_backup,
+    record_archive_journal_published, regular_file_identity,
+    regular_file_identity_with_fingerprint, remove_move_plan_sidecars,
+    remove_regular_file_if_matches, sync_directory, unregister_plan_stages, update_archive_journal,
+    FileIdentity, MoveRecord, LEGACY_MOVE_PLAN_FILE_NAME,
 };
-use super::quota::MAX_EXTRACT_ENTRIES;
+use super::quota::{MAX_EXTRACT_ENTRIES, MAX_EXTRACT_PATH_BYTES};
 use super::staging::{assert_real_directory, path_entry_exists};
-use super::CleanupPlan;
+use super::{ArchiveDestinationSnapshot, CleanupPlan};
+
+pub(crate) fn archive_destination_snapshot(
+    path: &std::path::Path,
+) -> Result<ArchiveDestinationSnapshot, String> {
+    let mut file = crate::path_safety::open_regular_file_nofollow(path)?;
+    archive_destination_snapshot_from_open_file(path, &mut file)
+}
+
+fn archive_destination_snapshot_from_open_file(
+    path: &std::path::Path,
+    file: &mut std::fs::File,
+) -> Result<ArchiveDestinationSnapshot, String> {
+    use sha2::Digest as _;
+    use std::io::Read as _;
+
+    let identity = file_identity(file)?;
+    let metadata = file.metadata().map_err(|error| error.to_string())?;
+    let len = metadata.len();
+    let modified = metadata.modified().ok();
+    let mut hasher = sha2::Sha256::new();
+    let mut buffer = [0u8; 128 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|error| format!("Could not fingerprint {}: {error}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    let after_identity = file_identity(file)?;
+    let after_metadata = file.metadata().map_err(|error| error.to_string())?;
+    if !file_identities_match(&identity, &after_identity)
+        || len != after_metadata.len()
+        || modified != after_metadata.modified().ok()
+    {
+        return Err(format!(
+            "Archive destination changed while it was being fingerprinted: {}",
+            path.display()
+        ));
+    }
+    Ok(ArchiveDestinationSnapshot {
+        path: path.to_path_buf(),
+        identity,
+        len,
+        modified,
+        sha256: hasher.finalize().into(),
+    })
+}
+
+pub(crate) fn archive_destination_family_snapshot(
+    base: &std::path::Path,
+) -> Result<Vec<ArchiveDestinationSnapshot>, String> {
+    archive_family(base)?
+        .iter()
+        .map(|path| archive_destination_snapshot(path))
+        .collect()
+}
+
+pub(crate) fn assert_archive_destination_unchanged(
+    base: &std::path::Path,
+    expected: &[ArchiveDestinationSnapshot],
+) -> Result<(), String> {
+    let current = archive_destination_family_snapshot(base)?;
+    if current == expected {
+        Ok(())
+    } else {
+        Err(
+            "Archive destination changed while the operation was running; the new file was preserved."
+                .to_string(),
+        )
+    }
+}
 
 pub(crate) fn archive_backup_path(stage_dir: &std::path::Path, index: usize) -> std::path::PathBuf {
     let name = stage_dir
@@ -67,7 +142,8 @@ pub(crate) fn archive_family(base: &std::path::Path) -> Result<Vec<std::path::Pa
     // 7-Zip volumes are a contiguous sequence beginning at .001. Do not sweep
     // arbitrary numeric suffixes such as `archive.7z.2024`; those may be
     // unrelated user files.
-    for index in 1..=1_000_000u32 {
+    const MAX_ARCHIVE_VOLUMES: u32 = 10_000;
+    for index in 1..=MAX_ARCHIVE_VOLUMES {
         let candidate = parent.join(format!("{name}.{index:03}"));
         let meta = match std::fs::symlink_metadata(&candidate) {
             Ok(meta) => meta,
@@ -81,6 +157,12 @@ pub(crate) fn archive_family(base: &std::path::Path) -> Result<Vec<std::path::Pa
             ));
         }
         family.push(candidate);
+    }
+    let overflow = parent.join(format!("{name}.{:03}", MAX_ARCHIVE_VOLUMES + 1));
+    if path_entry_exists(&overflow)? {
+        return Err(format!(
+            "Archive output exceeds the {MAX_ARCHIVE_VOLUMES}-volume safety limit."
+        ));
     }
     family.sort();
     Ok(family)
@@ -532,6 +614,7 @@ fn restore_archive_backups(
 fn promote_archive_family_with_commit<F, B, R>(
     staged: &std::path::Path,
     destination: &std::path::Path,
+    expected_existing: &[ArchiveDestinationSnapshot],
     mut record_backup: B,
     mut record_published: R,
     mark_committed: F,
@@ -549,18 +632,36 @@ where
     let stage_dir = staged
         .parent()
         .ok_or_else(|| "Staged archive has no parent directory.".to_string())?;
-    let existing = archive_family(destination)?;
+    assert_archive_destination_unchanged(destination, expected_existing)?;
     let mut backups: Vec<(
         std::path::PathBuf,
         std::path::PathBuf,
         super::journal::FileIdentity,
     )> = Vec::new();
-    for (index, path) in existing.into_iter().enumerate() {
+    for (index, expected) in expected_existing.iter().enumerate() {
+        let path = expected.path.clone();
         // Keep the original object open across the rename. Besides closing the
         // final path-component race, this lets filesystems such as FAT report a
         // changed stable ID after a longer backup name is assigned.
-        let original_file = crate::path_safety::open_regular_file_nofollow(&path)?;
-        let original_identity = file_identity(&original_file)?;
+        let mut original_file = crate::path_safety::open_regular_file_nofollow(&path)?;
+        let actual_snapshot =
+            archive_destination_snapshot_from_open_file(&path, &mut original_file)?;
+        let original_identity = actual_snapshot.identity.clone();
+        if actual_snapshot != *expected {
+            let restore_errors = restore_archive_backups(backups);
+            let error = format!(
+                "Archive destination changed during commit: {}",
+                path.display()
+            );
+            return if restore_errors.is_empty() {
+                Err(error)
+            } else {
+                Err(format!(
+                    "{error}; recovery also failed: {}",
+                    restore_errors.join("; ")
+                ))
+            };
+        }
         // Persist an identity before moving the old volume aside. If the process
         // stops immediately after rename, recovery has a fail-closed record.
         record_backup(&path, &original_identity)?;
@@ -619,7 +720,7 @@ where
             // become visible. Rename and hard-link publication preserve identity.
             // A crash can therefore never leave a published target with a blank
             // identity record that recovery might mistake for safe to delete.
-            let expected_identity = regular_file_identity(&source)?;
+            let expected_identity = regular_file_identity_with_fingerprint(&source)?;
             record_published(&target, &expected_identity)?;
             let mut created_identity = None;
             publish_file_no_replace_with_created(&source, &target, |created, identity| {
@@ -638,15 +739,23 @@ where
             promoted.push((
                 target.clone(),
                 source.clone(),
-                created_identity
-                    .clone()
-                    .unwrap_or_else(|| expected_identity.clone()),
+                match created_identity.clone() {
+                    Some(created) => identity_with_fingerprint_from(created, &expected_identity)?,
+                    None => expected_identity.clone(),
+                },
             ));
             let identity = regular_file_identity(&target)?;
-            if let Some((_, _, rollback_identity)) = promoted.last_mut() {
-                *rollback_identity = identity.clone();
-            }
-            if created_identity.is_none() && !file_identities_match(&identity, &expected_identity) {
+            if !file_identities_match(&identity, &expected_identity) {
+                let identity = regular_file_identity_with_fingerprint(&target)?;
+                if identity.fingerprint() != expected_identity.fingerprint() {
+                    return Err(format!(
+                        "Published archive output changed during commit: {}",
+                        target.display()
+                    ));
+                }
+                if let Some((_, _, rollback_identity)) = promoted.last_mut() {
+                    *rollback_identity = identity.clone();
+                }
                 // A filesystem may report a stronger or otherwise changed stable
                 // identity after rename or hard-link publication. Correct the
                 // pre-recorded value before continuing; live rollback already has
@@ -669,7 +778,7 @@ where
         let mut recovery_errors = Vec::new();
         for (target, source, identity) in promoted.into_iter().rev() {
             let retract = (|| {
-                ensure_regular_file_identity(&target, &identity)?;
+                ensure_recovery_path_unchanged(&target, &identity)?;
                 // Hard-link / exclusive-copy publish can leave the staged source
                 // in place. rename_file_no_replace then fails, so delete the
                 // published identity instead when the stage copy still exists.
@@ -748,7 +857,15 @@ pub(crate) fn promote_archive_family(
     staged: &std::path::Path,
     destination: &std::path::Path,
 ) -> Result<(), String> {
-    promote_archive_family_with_commit(staged, destination, |_, _| Ok(()), |_, _| Ok(()), || Ok(()))
+    let expected = archive_destination_family_snapshot(destination)?;
+    promote_archive_family_with_commit(
+        staged,
+        destination,
+        &expected,
+        |_, _| Ok(()),
+        |_, _| Ok(()),
+        || Ok(()),
+    )
 }
 
 /// True when the archive stage still holds `backup-*` files needed for journal recovery.
@@ -888,6 +1005,7 @@ pub(crate) fn validate_staged_tree(root: &std::path::Path, max_bytes: u64) -> Re
     let mut pending = vec![root.to_path_buf()];
     let mut entries = 0u64;
     let mut bytes = 0u64;
+    let mut path_bytes = 0u64;
     while let Some(directory) = pending.pop() {
         assert_path_under_root(root, &directory)?;
         let meta = std::fs::symlink_metadata(&directory).map_err(|e| e.to_string())?;
@@ -903,6 +1021,19 @@ pub(crate) fn validate_staged_tree(root: &std::path::Path, max_bytes: u64) -> Re
                 ));
             }
             let path = entry.path();
+            path_bytes = path_bytes.saturating_add(
+                path.strip_prefix(root)
+                    .unwrap_or(&path)
+                    .as_os_str()
+                    .as_encoded_bytes()
+                    .len() as u64,
+            );
+            if path_bytes > MAX_EXTRACT_PATH_BYTES {
+                return Err(format!(
+                    "Archive exceeds the {} MiB aggregate path-name safety limit.",
+                    MAX_EXTRACT_PATH_BYTES / (1024 * 1024)
+                ));
+            }
             assert_path_under_root(root, &path)?;
             let meta = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
             if meta.file_type().is_symlink() {
@@ -1184,6 +1315,7 @@ fn publish_target_local_copy(
 ) -> Result<(), String> {
     let source = plan[index].source.clone();
     let target = plan[index].target.clone();
+    let expected_source = path_identity_with_fingerprint(&source)?;
     let publish_temp = plan[index]
         .publish_temp
         .clone()
@@ -1234,6 +1366,14 @@ fn publish_target_local_copy(
         ))
     };
     copy_result?;
+    let published_snapshot = path_identity_with_fingerprint(&publish_temp)?;
+    if published_snapshot.fingerprint() != expected_source.fingerprint() {
+        return Err(format!(
+            "Extraction publish copy changed during commit: {}",
+            publish_temp.display()
+        ));
+    }
+    record_publish_identity(identity_log, plan, index, &published_snapshot)?;
 
     // The temporary object was created directly under the final parent, so it
     // already has the correct NTFS/server ACL. MoveFileW preserves that ACL and
@@ -1356,32 +1496,44 @@ fn prepare_planned_links(
     plan: &[MoveRecord],
 ) -> Result<(), String> {
     for record in plan {
-        let metadata = std::fs::symlink_metadata(&record.source).map_err(|e| e.to_string())?;
-        if !crate::path_safety::is_link_or_reparse(&metadata) {
-            continue;
+        let mut pending = vec![record.source.clone()];
+        let mut links = Vec::new();
+        while let Some(path) = pending.pop() {
+            let metadata = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
+            if crate::path_safety::is_link_or_reparse(&metadata) {
+                links.push(path);
+                continue;
+            }
+            if metadata.is_dir() {
+                for entry in std::fs::read_dir(&path).map_err(|e| e.to_string())? {
+                    pending.push(entry.map_err(|e| e.to_string())?.path());
+                }
+            }
         }
-        #[cfg(windows)]
-        {
-            let _ = (staged, destination);
-            return Err(format!(
-                "Archive link cannot be merged safely into an existing Windows destination: {}",
-                record.source.display()
-            ));
-        }
-        #[cfg(unix)]
-        {
-            let source_target = resolve_staged_symlink_target(staged, &record.source)?;
-            let final_target =
-                final_path_for_staged_source(staged, destination, plan, &source_target)?;
-            let final_parent = record
-                .target
-                .parent()
-                .ok_or_else(|| "Archive symbolic link target has no parent.".to_string())?;
-            let rewritten_target = relative_path_between(final_parent, &final_target)?;
-            if std::fs::read_link(&record.source).map_err(|e| e.to_string())? != rewritten_target {
-                std::fs::remove_file(&record.source).map_err(|e| e.to_string())?;
-                std::os::unix::fs::symlink(&rewritten_target, &record.source)
-                    .map_err(|e| e.to_string())?;
+        for link in links {
+            #[cfg(windows)]
+            {
+                let _ = (staged, destination);
+                return Err(format!(
+                    "Archive link cannot be merged safely into an existing Windows destination: {}",
+                    link.display()
+                ));
+            }
+            #[cfg(unix)]
+            {
+                let source_target = resolve_staged_symlink_target(staged, &link)?;
+                let final_target =
+                    final_path_for_staged_source(staged, destination, plan, &source_target)?;
+                let final_link = final_path_for_staged_source(staged, destination, plan, &link)?;
+                let final_parent = final_link
+                    .parent()
+                    .ok_or_else(|| "Archive symbolic link target has no parent.".to_string())?;
+                let rewritten_target = relative_path_between(final_parent, &final_target)?;
+                if std::fs::read_link(&link).map_err(|e| e.to_string())? != rewritten_target {
+                    std::fs::remove_file(&link).map_err(|e| e.to_string())?;
+                    std::os::unix::fs::symlink(&rewritten_target, &link)
+                        .map_err(|e| e.to_string())?;
+                }
             }
         }
     }
@@ -1499,7 +1651,7 @@ pub(crate) fn validate_move_record(
     Ok(())
 }
 
-fn rollback_target_local_record(record: &MoveRecord) -> Result<(), String> {
+fn rollback_target_local_record(record: &MoveRecord, crash_recovery: bool) -> Result<(), String> {
     let publish_temp = record
         .publish_temp
         .as_ref()
@@ -1529,9 +1681,15 @@ fn rollback_target_local_record(record: &MoveRecord) -> Result<(), String> {
         // whole stage is committed. Remove only the exact object whose identity
         // was recorded when the publish temp was created.
         if target_exists && ensure_path_identity(&record.target, identity).is_ok() {
+            if crash_recovery {
+                ensure_recovery_path_unchanged(&record.target, identity)?;
+            }
             remove_path_if_matches(&record.target, identity)?;
         }
         if temp_exists {
+            if crash_recovery {
+                ensure_recovery_path_unchanged(publish_temp, identity)?;
+            }
             remove_path_if_matches(publish_temp, identity)?;
         }
         return Ok(());
@@ -1541,12 +1699,18 @@ fn rollback_target_local_record(record: &MoveRecord) -> Result<(), String> {
     // it makes recovery safe if a future implementation retires the source
     // before commit or a manual repair moved it.
     if target_exists && ensure_path_identity(&record.target, identity).is_ok() {
+        if crash_recovery {
+            ensure_recovery_path_unchanged(&record.target, identity)?;
+        }
         if let Some(parent) = record.source.parent() {
             std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
         return rename_file_no_replace(&record.target, &record.source);
     }
     if temp_exists && ensure_path_identity(publish_temp, identity).is_ok() {
+        if crash_recovery {
+            ensure_recovery_path_unchanged(publish_temp, identity)?;
+        }
         if let Some(parent) = record.source.parent() {
             std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
@@ -1558,10 +1722,20 @@ fn rollback_target_local_record(record: &MoveRecord) -> Result<(), String> {
     ))
 }
 
+#[cfg(test)]
 pub(crate) fn rollback_move_records(
     staged: &std::path::Path,
     destination: &std::path::Path,
     plan: &[MoveRecord],
+) -> Result<(), String> {
+    rollback_move_records_impl(staged, destination, plan, false)
+}
+
+fn rollback_move_records_impl(
+    staged: &std::path::Path,
+    destination: &std::path::Path,
+    plan: &[MoveRecord],
+    crash_recovery: bool,
 ) -> Result<(), String> {
     let mut failures = Vec::new();
     for record in plan.iter().rev() {
@@ -1574,7 +1748,7 @@ pub(crate) fn rollback_move_records(
             continue;
         }
         if record.publish_temp.is_some() {
-            if let Err(error) = rollback_target_local_record(record) {
+            if let Err(error) = rollback_target_local_record(record, crash_recovery) {
                 failures.push(error);
             }
             continue;
@@ -1611,6 +1785,12 @@ pub(crate) fn rollback_move_records(
                     ));
                     continue;
                 };
+                if crash_recovery {
+                    if let Err(error) = ensure_recovery_path_unchanged(&record.target, identity) {
+                        failures.push(error);
+                        continue;
+                    }
+                }
                 if let Err(error) = remove_path_if_matches(&record.target, identity) {
                     failures.push(format!(
                         "Could not retract published extraction target {}: {error}",
@@ -1622,6 +1802,25 @@ pub(crate) fn rollback_move_records(
         }
         // Rename operates on the link/reparse entry itself and does not follow
         // it. Ancestors were verified above, so links are safe to roll back.
+        let Some(identity) = &record.publish_identity else {
+            failures.push(format!(
+                "Refusing to roll back an extraction target without a recorded identity: {}",
+                record.target.display()
+            ));
+            continue;
+        };
+        let unchanged = if crash_recovery {
+            ensure_recovery_path_unchanged(&record.target, identity)
+        } else {
+            ensure_path_entry_identity(&record.target, identity)
+        };
+        if let Err(error) = unchanged {
+            failures.push(format!(
+                "Extraction target changed after publication and was preserved: {} ({error})",
+                record.target.display()
+            ));
+            continue;
+        }
         if let Some(parent) = record.source.parent() {
             if let Err(error) = std::fs::create_dir_all(parent) {
                 failures.push(error.to_string());
@@ -1662,7 +1861,7 @@ pub(crate) fn rollback_persisted_move_plan(
     #[allow(unused_mut)]
     let mut plan: Vec<MoveRecord> = serde_json::from_str(&json).map_err(|e| e.to_string())?;
     hydrate_move_plan_identities(staged, &mut plan)?;
-    rollback_move_records(staged, destination, &plan)
+    rollback_move_records_impl(staged, destination, &plan, true)
 }
 
 fn read_recovery_text_file(path: &std::path::Path) -> Result<Option<String>, String> {
@@ -1789,31 +1988,43 @@ where
     let mut identity_log = MoveIdentityLogWriter::create(staged)?;
     for index in 0..plan.len() {
         let mut publish_one = || -> Result<(), String> {
-            let record = &plan[index];
-            validate_move_record(staged, destination, record)?;
-            assert_safe_extract_target_ancestors(destination, &record.target)?;
-            if path_entry_exists(&record.target)? {
+            validate_move_record(staged, destination, &plan[index])?;
+            let source = plan[index].source.clone();
+            let target = plan[index].target.clone();
+            assert_safe_extract_target_ancestors(destination, &target)?;
+            if path_entry_exists(&target)? {
                 return Err(format!(
                     "Extraction destination changed during commit: {}",
-                    record.target.display()
+                    target.display()
                 ));
             }
             #[cfg(windows)]
-            if record.publish_temp.is_some() {
+            if plan[index].publish_temp.is_some() {
                 return publish_target_local_copy(&mut identity_log, &mut plan, index);
             }
-            let metadata = std::fs::symlink_metadata(&record.source).map_err(|e| e.to_string())?;
+            let metadata = std::fs::symlink_metadata(&source).map_err(|e| e.to_string())?;
+            if crate::path_safety::is_link_or_reparse(&metadata) {
+                let expected = path_identity_with_fingerprint(&source)?;
+                record_publish_identity(&mut identity_log, &mut plan, index, &expected)?;
+            }
             if metadata.is_file() {
                 // Journal identity before visibility so hard-link retract cannot
                 // fail closed with both source and target present and no id.
                 if !crate::path_safety::is_link_or_reparse(&metadata) {
-                    let expected = path_identity(&record.source)?;
+                    let expected = path_identity_with_fingerprint(&source)?;
                     record_publish_identity(&mut identity_log, &mut plan, index, &expected)?;
                 }
                 publish_file_no_replace(&plan[index].source, &plan[index].target)?;
                 if let Some(expected) = plan[index].publish_identity.clone() {
                     let actual = path_identity(&plan[index].target)?;
                     if !file_identities_match(&actual, &expected) {
+                        let actual = path_identity_with_fingerprint(&plan[index].target)?;
+                        if actual.fingerprint() != expected.fingerprint() {
+                            return Err(format!(
+                                "Extraction target changed during commit: {}",
+                                plan[index].target.display()
+                            ));
+                        }
                         // Rename and hard-link publication preserve the source's
                         // identity on every platform Zinnia ships for, so this
                         // only fires for the rare copy fallback used when a
@@ -1824,7 +2035,11 @@ where
                 }
                 return Ok(());
             }
-            rename_file_no_replace(&record.source, &record.target)?;
+            if !crate::path_safety::is_link_or_reparse(&metadata) {
+                let expected = path_identity_with_fingerprint(&source)?;
+                record_publish_identity(&mut identity_log, &mut plan, index, &expected)?;
+            }
+            rename_file_no_replace(&source, &target)?;
             // Stage roots are 0o700 while private. Renamed directories must
             // inherit the destination parent's mode so merge publishes are
             // not left owner-only under shared/group-readable trees.
@@ -1833,13 +2048,37 @@ where
                     .map_err(|error| error.to_string())?;
             }
             if !crate::path_safety::is_link_or_reparse(&metadata) {
-                let identity = path_identity(&plan[index].target)?;
-                record_publish_identity(&mut identity_log, &mut plan, index, &identity)?;
+                let actual = path_identity(&plan[index].target)?;
+                let expected = plan[index]
+                    .publish_identity
+                    .as_ref()
+                    .ok_or_else(|| "Extraction publish snapshot was not recorded.".to_string())?;
+                if !file_identities_match(&actual, expected) {
+                    let actual = path_identity_with_fingerprint(&plan[index].target)?;
+                    if actual.fingerprint() != expected.fingerprint() {
+                        return Err(format!(
+                            "Extraction target changed during commit: {}",
+                            plan[index].target.display()
+                        ));
+                    }
+                    record_publish_identity(&mut identity_log, &mut plan, index, &actual)?;
+                }
+            } else if let Some(expected) = plan[index].publish_identity.clone() {
+                let actual = path_identity_with_fingerprint(&plan[index].target)?;
+                if actual.fingerprint() != expected.fingerprint() {
+                    return Err(format!(
+                        "Extraction link changed during commit: {}",
+                        plan[index].target.display()
+                    ));
+                }
+                if !file_identities_match(&actual, &expected) {
+                    record_publish_identity(&mut identity_log, &mut plan, index, &actual)?;
+                }
             }
             Ok(())
         };
         if let Err(error) = publish_one() {
-            let rollback = rollback_move_records(staged, destination, &plan);
+            let rollback = rollback_move_records_impl(staged, destination, &plan, true);
             return Err(match rollback {
                 Ok(()) => error,
                 Err(rollback_error) => format!("{error}; rollback also failed: {rollback_error}"),
@@ -1855,13 +2094,14 @@ where
         Ok(())
     });
     if let Err(error) = durability {
-        let rollback = rollback_move_records(staged, destination, &plan).and_then(|()| {
-            sync_directory(destination)?;
-            if let Some(parent) = destination.parent() {
-                sync_directory(parent)?;
-            }
-            Ok(())
-        });
+        let rollback =
+            rollback_move_records_impl(staged, destination, &plan, true).and_then(|()| {
+                sync_directory(destination)?;
+                if let Some(parent) = destination.parent() {
+                    sync_directory(parent)?;
+                }
+                Ok(())
+            });
         return Err(match rollback {
             Ok(()) => error,
             Err(rollback_error) => {
@@ -1870,13 +2110,14 @@ where
         });
     }
     if let Err(error) = mark_committed() {
-        let rollback = rollback_move_records(staged, destination, &plan).and_then(|()| {
-            sync_directory(destination)?;
-            if let Some(parent) = destination.parent() {
-                sync_directory(parent)?;
-            }
-            Ok(())
-        });
+        let rollback =
+            rollback_move_records_impl(staged, destination, &plan, true).and_then(|()| {
+                sync_directory(destination)?;
+                if let Some(parent) = destination.parent() {
+                    sync_directory(parent)?;
+                }
+                Ok(())
+            });
         return Err(match rollback {
             Ok(()) => error,
             Err(rollback_error) => {
@@ -1936,10 +2177,12 @@ pub(crate) fn commit_cleanup(app: &tauri::AppHandle, plan: &CleanupPlan) -> Resu
         crate::launch::remember_openable_directory(app, destination);
     }
     if let Some((staged, destination)) = &plan.staged_archive {
+        assert_archive_destination_unchanged(destination, &plan.expected_archive_family)?;
         update_archive_journal(app, plan)?;
         promote_archive_family_with_commit(
             staged,
             destination,
+            &plan.expected_archive_family,
             |original, identity| record_archive_journal_backup(app, plan, original, identity),
             |published, identity| record_archive_journal_published(app, plan, published, identity),
             || mark_archive_journal_committed(app, plan),

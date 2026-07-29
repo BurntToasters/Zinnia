@@ -71,12 +71,15 @@ export async function runAction() {
     return runBatchExtract();
   }
 
+  state.batchCancelled = false;
+  state.cancelRequested = false;
   setRunning(true);
   try {
     if (!(await ensureRuntimeReady())) return;
-
-    state.batchCancelled = false;
-    state.cancelRequested = false;
+    if (state.cancelRequested) {
+      setStatus("Cancelled", 2000);
+      return;
+    }
 
     let args: string[];
     if (mode === "extract") {
@@ -101,7 +104,7 @@ export async function runAction() {
     const result = await withLiveProgress(() =>
       runWithPasswordRetry(args, mode === "extract"),
     );
-    if (state.cancelRequested) {
+    if (state.cancelRequested && result.code !== 0) {
       hideProgress();
       setStatus("Cancelled", 2000);
       log("Operation cancelled by user");
@@ -151,13 +154,16 @@ export async function runAction() {
 
 export async function runBatchExtract() {
   if (state.running) return;
+  state.batchCancelled = false;
+  state.cancelRequested = false;
   setRunning(true);
   let unlistenProgress: (() => void) | null = null;
   try {
     if (!(await ensureRuntimeReady())) return;
-
-    state.batchCancelled = false;
-    state.cancelRequested = false;
+    if (state.batchCancelled || state.cancelRequested) {
+      setStatus("Cancelled", 2000);
+      return;
+    }
     const archives = [...state.inputs];
     await ensureArchivePaths(archives, "extract");
 
@@ -290,13 +296,7 @@ export async function cancelAction() {
     }
   } catch (err) {
     const messageText = err instanceof Error ? err.message : String(err);
-    state.batchCancelled = false;
-    state.cancelRequested = false;
     log(`Cancel failed: ${messageText}`, "error");
-    setStatus("Cancel failed", 3000, messageText);
-    await message(`Could not cancel the archive operation.\n\n${messageText}`, {
-      title: "Cancel failed",
-      kind: "error",
-    });
+    setStatus("Cancelling...", 3000, messageText);
   }
 }

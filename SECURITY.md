@@ -123,24 +123,18 @@ candidate `assets/` and generated `src-tauri/binaries/` roots; it is used only
 to unpack the official Windows `.7z`, while official `.tar.xz` sources use the
 system `tar`.
 
-#### Temporary Windows RAR restriction
+#### Windows RAR support
 
-The published data for CVE-2026-58052 is currently inconsistent: the NVD/CNA
-affected range was revised to end at 26.01, while the NVD analysis and upstream
-7-Zip ticket still describe 26.02 as affected. Until the exact bundled Windows
-runtime is conclusively verified against the published reproducer, Zinnia
-conservatively rejects RAR **extraction** on Windows at the `run_7z` spawn
-boundary (command `x`) when the attested `probe_7z` version is `26.02` or
-older (or unknown). RAR browse (`l`) and test (`t`) remain available so
-archives can be inspected without writing members to disk. Base
-`tauri.conf.json` omits RAR file associations; macOS/Linux platform configs
-re-add them. Windows packages continue to omit RAR associations and Explorer
-verbs. RAR browsing, testing, conversion, and extraction remain available on
-macOS and Linux.
+Windows currently packages standalone `7za.exe`. That runtime intentionally
+omits external format handlers, including RAR, so Zinnia rejects Windows RAR
+archives for browse, test, conversion, and extraction before any 7-Zip command
+is started. Base `tauri.conf.json` omits RAR file associations; macOS/Linux
+platform configs re-add them. Windows packages continue to omit RAR
+associations and Explorer verbs. RAR remains available on macOS and Linux.
 
-When a fixed 7-Zip ships and `probe_7z` attests a version newer than `26.02`,
-the Windows RAR extract gate lifts automatically. Keep the bundled sidecar and
-checksums updated in the same release.
+Re-enable Windows RAR only when the release packages a full RAR-capable runtime
+(for example `7z.exe` with its matching handler DLL) and native Windows
+browse/test/extract coverage verifies that exact packaged layout.
 
 ### Translucent Basic window (macOS / Windows)
 

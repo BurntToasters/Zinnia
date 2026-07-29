@@ -373,13 +373,11 @@ async function run() {
     try {
       await invoke<boolean>("cancel_7z");
     } catch (err) {
-      cancelRequested = false;
       // All three buttons were disabled above before the cancel request. A
       // failed cancel means extraction is still running, so re-opening the
       // (not-yet-final) destination still doesn't make sense, but leaving
       // `closeBtn` disabled stranded the window with only the titlebar close
       // button as an escape hatch. Re-enable cancel (to retry) and close.
-      cancelBtn.disabled = false;
       closeBtn.disabled = false;
       const detail = err instanceof Error ? err.message : String(err);
       $("extract-error").hidden = false;
@@ -388,7 +386,8 @@ async function run() {
       );
       if (title) title.textContent = "Could not cancel safely";
       $("error-detail").textContent = detail;
-      $("extract-status").textContent = "Extraction still running";
+      $("extract-status").textContent =
+        "Cancel requested; waiting for the current phase to stop";
     }
   });
 
@@ -480,6 +479,10 @@ async function run() {
     showError(`Could not prepare 7-Zip: ${detail}`);
     return;
   }
+  if (cancelRequested) {
+    finish("Cancelled", 100, false, false, true);
+    return;
+  }
 
   let sawStructuredPercent = false;
 
@@ -500,6 +503,7 @@ async function run() {
       const update = event.payload;
       if (update?.currentFile === "Finalizing…") {
         sawStructuredPercent = true;
+        cancelBtn.disabled = true;
         setDeterminateProgress(100);
         $("extract-status").textContent = "Finalizing…";
         return;
@@ -566,7 +570,7 @@ async function run() {
     const result = await runWithPasswordRetry(args, () => cancelRequested);
     await removeProgressListeners();
 
-    if (cancelRequested) {
+    if (cancelRequested && result.code !== 0) {
       finish("Cancelled", 100, false, false, true);
       return;
     }

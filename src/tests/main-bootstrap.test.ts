@@ -866,6 +866,30 @@ describe("main bootstrap", () => {
     expect(mocks.archive.browseArchive).toHaveBeenCalled();
   });
 
+  it("reports Power drag-drop paths omitted by the input cap", async () => {
+    await loadMainModule();
+    mocks.runtime.workspaceMode = "power";
+    mocks.runtime.mode = "add";
+    const { state } = await import("../state");
+    state.inputs = [];
+    const paths = Array.from(
+      { length: 4_097 },
+      (_, index) => `/tmp/drop-${index}.txt`,
+    );
+
+    await dragDropHandler?.({ payload: { type: "drop", paths } });
+
+    expect(state.inputs).toHaveLength(4_096);
+    expect(state.inputs.at(-1)).toBe("/tmp/drop-4095.txt");
+    expect(document.querySelector(".toast")?.textContent).toContain(
+      "1 more were not added",
+    );
+    expect(mocks.ui.log).toHaveBeenCalledWith(
+      expect.stringContaining("1 more were not added"),
+      "error",
+    );
+  });
+
   it("executes diagnostics toolbar actions and reports errors", async () => {
     await loadMainModule();
 

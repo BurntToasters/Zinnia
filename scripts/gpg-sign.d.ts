@@ -32,6 +32,15 @@ export function requiredLinuxTargetKeys(
   channelVariants: UpdaterChannelVariant[],
   byName: Map<string, string>,
 ): Set<string>;
+export function requiredPublishedBetaManifestNames(): string[];
+export function expectedPublishedBetaManifestNames(
+  actualNames?: string[],
+): string[];
+export function validatePublishedBetaManifest(options: {
+  name: string;
+  contents: string;
+  releaseAssetNames: Set<string>;
+}): Array<{ name: string; url: string; signature: string }>;
 export function updaterChannelVariants(
   isPrerelease: boolean,
   releaseBaseUrl?: string,

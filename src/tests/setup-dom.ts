@@ -340,6 +340,12 @@ for (const step of ["0", "1", "2", "3", "4"]) {
   section.className = "setup-wizard-step";
   section.dataset.step = step;
   section.hidden = step !== "0";
+  const title = document.createElement("h2");
+  title.className = "setup-wizard-step__title";
+  title.id = `setup-wizard-title-${step}`;
+  title.tabIndex = -1;
+  title.textContent = `Setup step ${step}`;
+  section.appendChild(title);
   setupCard.appendChild(section);
 }
 

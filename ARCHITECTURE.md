@@ -121,8 +121,8 @@ Three lists must stay intentionally aligned (with platform filters):
 
 | Layer | File | Notes |
 | --- | --- | --- |
-| Frontend UI | `src/utils.ts` `ARCHIVE_EXTENSIONS` | Includes `.rar` on all platforms (Windows extract still blocked in Rust) |
-| Open routing | `src-tauri/src/launch/open_routing.rs` | Omits `.rar` on Windows so file-open does not hit the CVE extract gate |
+| Frontend UI | `src/utils.ts` `ARCHIVE_EXTENSIONS` | Includes `.rar`; Windows pickers filter it and Rust rejects every Windows RAR route |
+| Open routing | `src-tauri/src/launch/open_routing.rs` | Omits `.rar` on Windows because packaged `7za.exe` has no RAR handler |
 | Win11 shell | `src-tauri/windows/shell/dllmain.cpp` `LooksLikeArchive` | Same Windows `.rar` omit; includes `*.7z.001` / split-volume siblings (aligned with open routing) |
 
 When adding a format, update all three (and file associations / NSIS verbs as needed).

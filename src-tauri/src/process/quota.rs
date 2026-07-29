@@ -4,7 +4,8 @@ use tauri::Manager;
 
 use super::{lock_process, RunningProcess};
 
-pub(crate) const MAX_EXTRACT_ENTRIES: u64 = 1_000_000;
+pub(crate) const MAX_EXTRACT_ENTRIES: u64 = 25_000;
+pub(crate) const MAX_EXTRACT_PATH_BYTES: u64 = 32 * 1024 * 1024;
 
 pub(crate) fn available_space_for_path(path: &std::path::Path) -> Result<u64, String> {
     let existing = path
@@ -82,10 +83,24 @@ pub(crate) fn staged_tree_usage(
     let mut pending = vec![root.to_path_buf()];
     let mut files = 0u64;
     let mut bytes = 0u64;
+    let mut path_bytes = 0u64;
     while let Some(directory) = pending.pop() {
         for entry in std::fs::read_dir(&directory).map_err(|e| e.to_string())? {
             let entry = entry.map_err(|e| e.to_string())?;
             let path = entry.path();
+            path_bytes = path_bytes.saturating_add(
+                path.strip_prefix(root)
+                    .unwrap_or(&path)
+                    .as_os_str()
+                    .as_encoded_bytes()
+                    .len() as u64,
+            );
+            if path_bytes > MAX_EXTRACT_PATH_BYTES {
+                return Err(format!(
+                    "Extraction exceeded the {} MiB aggregate path-name safety limit.",
+                    MAX_EXTRACT_PATH_BYTES / (1024 * 1024)
+                ));
+            }
             let metadata = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
             if metadata.file_type().is_symlink() {
                 crate::path_safety::assert_relative_symlink_within_root(root, &path)?;

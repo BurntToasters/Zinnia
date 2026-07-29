@@ -4,8 +4,8 @@ use super::commit::{archive_backup_path, archive_family, rollback_persisted_move
 use super::journal::{
     cleanup_journal_path, clear_cleanup_journal, ensure_regular_file_identity,
     is_safe_stage_dir_name, move_plan_path, remove_move_plan_sidecars,
-    remove_regular_file_if_matches, sync_directory, ArchiveJournalPhase, CleanupJournal,
-    ExtractJournalPhase, FileIdentity,
+    remove_recovery_regular_file_if_matches, remove_regular_file_if_matches, sync_directory,
+    ArchiveJournalPhase, CleanupJournal, ExtractJournalPhase, FileIdentity,
 };
 
 static RECOVERY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -296,7 +296,7 @@ pub(crate) fn rollback_archive_journal(journal: &CleanupJournal) -> Result<(), S
                     current.display()
                 ));
             };
-            remove_regular_file_if_matches(&current, identity)?;
+            remove_recovery_regular_file_if_matches(&current, identity)?;
         }
     }
     for (index, target) in journal.previous_archive_family.iter().enumerate() {
@@ -323,7 +323,11 @@ pub fn set_startup_recovery_error(message: Option<String>) {
 }
 
 #[tauri::command]
-pub fn get_startup_recovery_status() -> Option<String> {
+pub async fn get_startup_recovery_status() -> Option<String> {
+    // A one-shot read during UI initialization used to race the maintenance
+    // thread: a later recovery failure was recorded but never surfaced. Make
+    // the command resolve only once the authoritative pass has finished.
+    wait_for_startup_recovery().await;
     STARTUP_RECOVERY_ERROR
         .lock()
         .ok()

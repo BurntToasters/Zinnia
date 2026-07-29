@@ -25,11 +25,8 @@ const supportedArchiveTypes = [
   ".zip",
   ".tar",
   ".gz",
-  ".tgz",
   ".bz2",
-  ".tbz2",
   ".xz",
-  ".txz",
   ".001",
 ];
 
@@ -176,6 +173,10 @@ describe("Windows 11 context-menu manifest", () => {
     );
     expect(hooks).toContain('RMDir /REBOOTOK "$INSTDIR"');
     expect(hooks).not.toContain("taskkill");
+    expect(hooks).toContain(
+      '"$SYSDIR\\WindowsPowerShell\\v1.0\\powershell.exe"',
+    );
+    expect(hooks).not.toContain("'powershell.exe -NoProfile");
 
     const registration = read("scripts/register-windows-context-menu.ps1");
     expect(registration).toContain("Remove-StaleShellPayloads");

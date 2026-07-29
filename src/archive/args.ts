@@ -76,11 +76,34 @@ export function buildCompressionMethodSwitches(format: string): string[] {
     SETTING_DEFAULTS.threads,
   );
 
-  const switches = [`-t${format}`, `-mx=${level}`];
-  if (method) switches.push(`-m0=${method}`);
-  if (dict) switches.push(`-md=${dict}`);
-  if (wordSize) switches.push(`-mfb=${wordSize}`);
-  if (format === "7z") {
+  const normalizedFormat = format.toLowerCase();
+  const normalizedMethod = method.toLowerCase();
+  const methodSupported =
+    (normalizedFormat === "7z" &&
+      (normalizedMethod === "lzma2" || normalizedMethod === "lzma")) ||
+    (normalizedFormat === "zip" &&
+      (normalizedMethod === "deflate" || normalizedMethod === "lzma"));
+  const effectiveMethod = methodSupported ? normalizedMethod : "";
+  const switches = [`-t${normalizedFormat}`, `-mx=${level}`];
+  if (effectiveMethod) switches.push(`-m0=${effectiveMethod}`);
+  // 7-Zip method switches are not format-agnostic. In particular, Deflate and
+  // GZIP reject -md, TAR/BZIP2 reject both -md/-mfb, and the dictionary/word
+  // controls exposed by this UI do not map to PPMd or BZip2 method syntax.
+  const supportsDictionary =
+    (normalizedFormat === "7z" &&
+      (effectiveMethod === "lzma2" || effectiveMethod === "lzma")) ||
+    normalizedFormat === "xz" ||
+    (normalizedFormat === "zip" && effectiveMethod === "lzma");
+  const supportsWordSize =
+    (normalizedFormat === "7z" &&
+      (effectiveMethod === "lzma2" || effectiveMethod === "lzma")) ||
+    normalizedFormat === "xz" ||
+    normalizedFormat === "gzip" ||
+    (normalizedFormat === "zip" &&
+      (effectiveMethod === "deflate" || effectiveMethod === "lzma"));
+  if (dict && supportsDictionary) switches.push(`-md=${dict}`);
+  if (wordSize && supportsWordSize) switches.push(`-mfb=${wordSize}`);
+  if (normalizedFormat === "7z") {
     if (solid === "solid") switches.push("-ms=on");
     else if (solid === "off") switches.push("-ms=off");
     else switches.push(`-ms=${solid}`);
@@ -111,10 +134,19 @@ const OUTPUT_SUFFIXES: Record<string, string[]> = {
   "7z": [".7z"],
   zip: [".zip"],
   tar: [".tar"],
-  gzip: [".gz", ".tgz"],
-  bzip2: [".bz2", ".tbz2"],
-  xz: [".xz", ".txz"],
+  gzip: [".gz"],
+  bzip2: [".bz2"],
+  xz: [".xz"],
 };
+
+const COMPOUND_TAR_SUFFIXES = [
+  ".tar.gz",
+  ".tar.bz2",
+  ".tar.xz",
+  ".tgz",
+  ".tbz2",
+  ".txz",
+];
 
 export function validateArchiveOutputExtension(
   outputPath: string,
@@ -123,6 +155,9 @@ export function validateArchiveOutputExtension(
   const suffixes = OUTPUT_SUFFIXES[format];
   if (!suffixes) return `Unsupported archive format: ${format}`;
   const lower = outputPath.toLocaleLowerCase("en-US");
+  if (COMPOUND_TAR_SUFFIXES.some((suffix) => lower.endsWith(suffix))) {
+    return "Compound TAR streams (.tar.gz/.tgz, .tar.bz2/.tbz2, and .tar.xz/.txz) are not supported in this release. Create a .tar archive first, then compress that one file.";
+  }
   if (suffixes.some((suffix) => lower.endsWith(suffix))) return null;
   return `Output filename must end in ${suffixes.join(" or ")} for ${format.toUpperCase()} format.`;
 }
@@ -150,6 +185,17 @@ export function buildArgs() {
   }
 
   const format = $<HTMLSelectElement>("format").value;
+  const updateMode = $<HTMLInputElement>("update-mode").checked;
+  if (updateMode && !["7z", "zip", "tar"].includes(format)) {
+    throw new Error(
+      `${format.toUpperCase()} is a single-stream format and cannot update an existing archive. Create a new output instead.`,
+    );
+  }
+  if (updateMode && /\.0*01$/i.test(outputPath)) {
+    throw new Error(
+      "Split-volume archives cannot be updated. Create a new archive family instead.",
+    );
+  }
   const extensionError = validateArchiveOutputExtension(outputPath, format);
   if (extensionError) throw new Error(extensionError);
   const inputShapeError = validateCompressionInputShape(
@@ -159,7 +205,6 @@ export function buildArgs() {
   if (inputShapeError) throw new Error(inputShapeError);
   const rawPassword = $<HTMLInputElement>("password").value;
   const rawEncryptHeaders = $<HTMLInputElement>("encrypt-headers").checked;
-  const updateMode = $<HTMLInputElement>("update-mode").checked;
   const deleteAfter = $<HTMLInputElement>("delete-after").checked;
   const storeTimestamps = $<HTMLInputElement>("store-timestamps").checked;
 
@@ -227,6 +272,18 @@ export function buildArgs() {
 }
 
 const SPLIT_SIZE_PATTERN = /^\d+(?:b|k|m|g)?$/i;
+const MIN_SPLIT_SIZE_BYTES = 1024 * 1024;
+
+function splitSizeBytes(value: string): number {
+  const match = value.match(/^(\d+)(b|k|m|g)?$/i);
+  if (!match) return 0;
+  const amount = Number(match[1]);
+  const factor =
+    { b: 1, k: 1024, m: 1024 ** 2, g: 1024 ** 3 }[
+      (match[2] ?? "b").toLowerCase()
+    ] ?? 1;
+  return amount * factor;
+}
 
 export function readSplitSize(): string {
   const select = $<HTMLSelectElement>("split-size");
@@ -241,6 +298,12 @@ export function readSplitSize(): string {
     throw new Error(
       `Invalid split size "${raw}". Use a number with optional b/k/m/g, e.g. 100m.`,
     );
+  }
+  if (
+    !Number.isSafeInteger(splitSizeBytes(raw)) ||
+    splitSizeBytes(raw) < MIN_SPLIT_SIZE_BYTES
+  ) {
+    throw new Error("Split size must be at least 1 MiB.");
   }
   return raw;
 }

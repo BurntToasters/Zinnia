@@ -212,6 +212,7 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
     let mut output_switches = 0usize;
     let mut password_switches = 0usize;
     let mut overwrite_switches = 0usize;
+    let mut archive_output: Option<&str> = None;
 
     for (idx, arg) in args.iter().enumerate().skip(1) {
         if arg == "--" {
@@ -278,6 +279,9 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
             }
         } else {
             positional_before_separator += 1;
+            if matches!(cmd, "a" | "u") {
+                archive_output = Some(arg);
+            }
             if has_parent_dir_component(arg) {
                 return Err(format!(
                     "7z path '{arg}' must not contain a '..' parent-directory segment."
@@ -399,6 +403,107 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
 
     if (cmd == "a" || cmd == "u" || cmd == "x") && positional_after_separator == 0 {
         return Err("Missing archive path(s) after '--'.".to_string());
+    }
+
+    if matches!(cmd, "a" | "u") {
+        let separator = separator_index.unwrap_or(args.len());
+        let formats: Vec<String> = args[1..separator]
+            .iter()
+            .filter_map(|arg| {
+                let lower = arg.to_ascii_lowercase();
+                if lower == "-stl" || lower.starts_with("-stx") {
+                    return None;
+                }
+                lower
+                    .strip_prefix("-t")
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+            .collect();
+        if formats.len() > 1 {
+            return Err("Compression allows at most one archive type (-t).".to_string());
+        }
+        let format = formats.last().map(String::as_str).unwrap_or("7z");
+        let method = args[1..separator].iter().find_map(|arg| {
+            arg.to_ascii_lowercase()
+                .strip_prefix("-m0=")
+                .map(str::to_string)
+        });
+        let has_dict = args[1..separator]
+            .iter()
+            .any(|arg| arg.to_ascii_lowercase().starts_with("-md"));
+        let has_word = args[1..separator]
+            .iter()
+            .any(|arg| arg.to_ascii_lowercase().starts_with("-mfb"));
+        let supports_dict = matches!(
+            (format, method.as_deref()),
+            ("7z", None | Some("lzma2") | Some("lzma")) | ("xz", _) | ("zip", Some("lzma"))
+        );
+        let supports_word = matches!(
+            (format, method.as_deref()),
+            ("7z", None | Some("lzma2") | Some("lzma"))
+                | ("xz", _)
+                | ("gzip", _)
+                | ("zip", Some("deflate") | Some("lzma") | None)
+        );
+        if has_dict && !supports_dict {
+            return Err(format!(
+                "Dictionary-size switch is not supported for {format}{}.",
+                method
+                    .as_deref()
+                    .map(|value| format!("/{value}"))
+                    .unwrap_or_default()
+            ));
+        }
+        if has_word && !supports_word {
+            return Err(format!(
+                "Word-size switch is not supported for {format}{}.",
+                method
+                    .as_deref()
+                    .map(|value| format!("/{value}"))
+                    .unwrap_or_default()
+            ));
+        }
+        if cmd == "u" && matches!(format, "gzip" | "bzip2" | "xz") {
+            return Err(format!(
+                "Archive format '{format}' is single-stream and cannot be updated."
+            ));
+        }
+        if let Some(output) = archive_output {
+            let lower = output.to_ascii_lowercase();
+            if [".tar.gz", ".tar.bz2", ".tar.xz", ".tgz", ".tbz2", ".txz"]
+                .iter()
+                .any(|suffix| lower.ends_with(suffix))
+            {
+                return Err(
+                    "Compound TAR stream output is not supported in this release.".to_string(),
+                );
+            }
+            if cmd == "u" && lower.ends_with(".001") {
+                return Err("Split-volume archives cannot be updated.".to_string());
+            }
+        }
+        for arg in &args[1..separator] {
+            let lower = arg.to_ascii_lowercase();
+            let Some(value) = lower.strip_prefix("-v") else {
+                continue;
+            };
+            let (digits, factor) = match value.chars().last() {
+                Some('k') => (&value[..value.len() - 1], 1024u64),
+                Some('m') => (&value[..value.len() - 1], 1024u64.pow(2)),
+                Some('g') => (&value[..value.len() - 1], 1024u64.pow(3)),
+                Some('b') => (&value[..value.len() - 1], 1u64),
+                _ => (value, 1u64),
+            };
+            let bytes = digits
+                .parse::<u64>()
+                .ok()
+                .and_then(|amount| amount.checked_mul(factor))
+                .ok_or_else(|| "Split size is invalid or too large.".to_string())?;
+            if bytes < 1024 * 1024 {
+                return Err("Split size must be at least 1 MiB.".to_string());
+            }
+        }
     }
 
     if cmd == "a" && positional_after_separator != 1 {
@@ -635,6 +740,46 @@ mod tests {
             "input.txt".to_string(),
         ];
         assert!(validate_run_7z_args(&args).is_ok());
+    }
+
+    #[test]
+    fn validate_run_7z_args_rejects_invalid_format_method_controls() {
+        for (format, method_switch) in [
+            ("tar", "-md=64m"),
+            ("tar", "-mfb=64"),
+            ("gzip", "-md=64m"),
+            ("bzip2", "-mfb=64"),
+            ("zip", "-md=64m"),
+        ] {
+            let args = vec![
+                "a".to_string(),
+                format!("-t{format}"),
+                method_switch.to_string(),
+                format!("out.{format}"),
+                "--".to_string(),
+                "input.txt".to_string(),
+            ];
+            assert!(
+                validate_run_7z_args(&args).is_err(),
+                "{format} unexpectedly accepted {method_switch}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_run_7z_args_rejects_unsafe_update_and_split_shapes() {
+        for args in [
+            vec!["u", "-tgzip", "out.gz", "--", "input.txt"],
+            vec!["u", "-t7z", "out.7z.001", "--", "input.txt"],
+            vec!["a", "-t7z", "-v1b", "out.7z", "--", "input.txt"],
+            vec!["a", "-tgzip", "out.tgz", "--", "input.txt"],
+        ] {
+            let owned = args.into_iter().map(str::to_string).collect::<Vec<_>>();
+            assert!(
+                validate_run_7z_args(&owned).is_err(),
+                "unsafe command unexpectedly passed: {owned:?}"
+            );
+        }
     }
 
     #[test]

@@ -236,8 +236,7 @@ fn remove_managed_temp_dir_blocking(app: &tauri::AppHandle, path: &str) -> Resul
         return Err("Temp path is not a directory.".to_string());
     }
 
-    crate::fs_secure::remove_dir_all_for_cleanup(&canonical_target)
-        .map_err(|e| e.to_string())
+    crate::fs_secure::remove_dir_all_for_cleanup(&canonical_target).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

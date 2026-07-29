@@ -272,37 +272,61 @@ export function wireEvents() {
       });
       const name = raw?.trim();
       if (!name) return;
+      const previousPresets = state.currentSettings.customPresets.map(
+        (preset) => ({ ...preset }),
+      );
       try {
         saveCustomPreset(name);
         refreshPresetDropdown(`custom:${name}`);
         updateDeletePresetButton();
-        void persistSettingsImmediately(
+        await persistSettingsImmediately(
           state.currentSettings,
           state.settingsExtras,
         );
         setStatus(`Preset "${name}" saved`, 2000);
       } catch (err) {
-        setStatus(
-          "Error",
-          3000,
-          err instanceof Error ? err.message : String(err),
-        );
+        state.currentSettings.customPresets = previousPresets;
+        refreshPresetDropdown("custom");
+        updateDeletePresetButton();
+        const detail = err instanceof Error ? err.message : String(err);
+        setStatus("Error", 3000, detail);
+        await message(`Could not save preset "${name}".\n\n${detail}`, {
+          title: "Preset not saved",
+          kind: "error",
+        });
       }
     })();
   });
 
   $("delete-preset").addEventListener("click", () => {
-    const value = $<HTMLSelectElement>("preset").value;
-    if (!value.startsWith("custom:")) return;
-    const name = value.slice("custom:".length);
-    deleteCustomPreset(name);
-    refreshPresetDropdown("custom");
-    updateDeletePresetButton();
-    void persistSettingsImmediately(
-      state.currentSettings,
-      state.settingsExtras,
-    );
-    setStatus(`Preset "${name}" deleted`, 2000);
+    void (async () => {
+      const value = $<HTMLSelectElement>("preset").value;
+      if (!value.startsWith("custom:")) return;
+      const name = value.slice("custom:".length);
+      const previousPresets = state.currentSettings.customPresets.map(
+        (preset) => ({ ...preset }),
+      );
+      try {
+        deleteCustomPreset(name);
+        refreshPresetDropdown("custom");
+        updateDeletePresetButton();
+        await persistSettingsImmediately(
+          state.currentSettings,
+          state.settingsExtras,
+        );
+        setStatus(`Preset "${name}" deleted`, 2000);
+      } catch (err) {
+        state.currentSettings.customPresets = previousPresets;
+        refreshPresetDropdown(value);
+        updateDeletePresetButton();
+        const detail = err instanceof Error ? err.message : String(err);
+        setStatus("Error", 3000, detail);
+        await message(`Could not delete preset "${name}".\n\n${detail}`, {
+          title: "Preset not deleted",
+          kind: "error",
+        });
+      }
+    })();
   });
 
   $<HTMLSelectElement>("s-format").addEventListener("change", () => {
@@ -339,7 +363,12 @@ export function wireEvents() {
   });
 
   for (const id of ["level", "method", "dict", "word-size", "solid"]) {
-    $(id).addEventListener("change", onCompressionOptionChange);
+    $(id).addEventListener("change", () => {
+      if (id === "method") {
+        updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
+      }
+      onCompressionOptionChange();
+    });
   }
 
   $<HTMLSelectElement>("split-size").addEventListener("change", () => {

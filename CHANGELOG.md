@@ -33,7 +33,8 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Fix:** Windows settings saves use atomic `rename` replace-existing promotion (with stale `.bak` cleanup) instead of a rename-to-backup window that could briefly leave settings missing.
 - **Fix:** Main/batch/selective extract pass `-bsp1` so live percent progress matches the extract-only window; progress IPC keeps CR so 7-Zip line rewrites stay parseable.
 - **Fix:** OS Integration help no longer claims classic Explorer verbs remain under Show more options after a successful Win11 package registration.
-- **Fix:** Extract-only window probes 7-Zip before extract so the Windows RAR gate can lift after a future attested sidecar bump; auto-close delay uses the same allowlist as Settings.
+- **Fix:** Extract-only window probes bundled 7-Zip before extract; auto-close
+  delay uses the same supported archive allowlist as Settings.
 - **Fix:** macOS archive CoW snapshot cleanup removes partial clones when chmod/fsync fails (matches Linux).
 - **Performance:** Archive-input snapshots use APFS `fclonefileat` and Linux `FICLONE` when available before falling back to a byte copy (CoW clones share blocks on APFS/Btrfs; free-space preflight still reserves for full byte-copy worst case).
 - **Performance:** Large merge-into-existing extractions journal publish identities append-only instead of rewriting the full move-plan JSON after every file (avoids O(n²) I/O).
@@ -82,7 +83,9 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Codebase:** Modular frontend (`archive/`, `basic/`, `ui/`) and Rust (`process/`, `platform/`, `launch/`) splits; archive commit finalization on `spawn_blocking`; OS integration commands kill process trees on timeout.
 - **Testing:** Changelog/updater validation in `npm run test:all`; expanded Rust Clippy/format gates; Windows/macOS CI smoke compiles the shell DLL and universal macOS builds.
 - **Docs:** Windows context-menu QA checklist; `SECURITY.md` Flatpak and hard-link TOCTOU notes.
-- **Known:** Windows RAR **extraction** stays disabled while attested 7-Zip remains ≤ `26.02` (CVE-2026-58052); browse/test for RAR remain available.
+- **Known:** Windows RAR browse, test, conversion, and extraction stay disabled
+  because packaged `7za.exe` has no RAR handler. macOS/Linux RAR support remains
+  available.
 - **PKG:** Updated packages.
 
 ### FULL CHANGELOG:

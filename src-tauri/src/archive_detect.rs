@@ -16,6 +16,14 @@ pub struct ArchivePathValidation {
     pub path: String,
     pub valid: bool,
     pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity: Option<String>,
+}
+
+fn is_unsupported_compound_tar_path(lower_path: &str) -> bool {
+    [".tar.gz", ".tar.bz2", ".tar.xz", ".tgz", ".tbz2", ".txz"]
+        .iter()
+        .any(|suffix| lower_path.ends_with(suffix))
 }
 
 fn expected_archive_family(lower_path: &str) -> Option<&'static str> {
@@ -27,11 +35,11 @@ fn expected_archive_family(lower_path: &str) -> Option<&'static str> {
         Some("rar")
     } else if lower_path.ends_with(".tar") {
         Some("tar")
-    } else if lower_path.ends_with(".gz") || lower_path.ends_with(".tgz") {
+    } else if lower_path.ends_with(".gz") {
         Some("gzip")
-    } else if lower_path.ends_with(".bz2") || lower_path.ends_with(".tbz2") {
+    } else if lower_path.ends_with(".bz2") {
         Some("bzip2")
-    } else if lower_path.ends_with(".xz") || lower_path.ends_with(".txz") {
+    } else if lower_path.ends_with(".xz") {
         Some("xz")
     } else {
         None
@@ -189,17 +197,6 @@ fn has_zip_end_record(path: &std::path::Path) -> Result<bool, String> {
     Ok(false)
 }
 
-#[cfg(target_os = "windows")]
-pub fn is_rar_archive_file(path: &std::path::Path) -> Result<bool, String> {
-    let meta = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
-    crate::path_safety::reject_link_or_reparse(path, &meta)?;
-    if !meta.is_file() {
-        return Err("Path is not a file.".to_string());
-    }
-    let bytes = read_probe_bytes(path, 8)?;
-    Ok(detect_archive_signature(&bytes) == Some("rar"))
-}
-
 fn extension_mismatch_reason(expected: &str, detected: Option<&str>, tar: bool) -> String {
     if expected == "tar" && tar {
         return String::new();
@@ -241,13 +238,14 @@ fn resolve_ascii_case_insensitive_sibling(
     Ok(matched)
 }
 
-pub fn validate_archive_path(path: &str) -> ArchivePathValidation {
+fn validate_archive_path_impl(path: &str, include_identity: bool) -> ArchivePathValidation {
     let candidate = path;
 
     let invalid = |reason: &str| ArchivePathValidation {
         path: candidate.to_string(),
         valid: false,
         reason: Some(reason.to_string()),
+        identity: None,
     };
 
     if candidate.is_empty() {
@@ -261,6 +259,11 @@ pub fn validate_archive_path(path: &str) -> ArchivePathValidation {
     }
 
     let lower = candidate.to_lowercase();
+    if is_unsupported_compound_tar_path(&lower) {
+        return invalid(
+            "Compound TAR streams are not supported in this release. Extract the outer stream with another tool or select the inner TAR archive.",
+        );
+    }
     let fs_path = std::path::Path::new(candidate);
 
     let meta = match std::fs::symlink_metadata(fs_path) {
@@ -275,6 +278,7 @@ pub fn validate_archive_path(path: &str) -> ArchivePathValidation {
                 path: candidate.to_string(),
                 valid: false,
                 reason: Some(reason),
+                identity: None,
             };
         }
     };
@@ -294,6 +298,7 @@ pub fn validate_archive_path(path: &str) -> ArchivePathValidation {
                 path: candidate.to_string(),
                 valid: false,
                 reason: Some(format!("Unable to read file contents: {}", err)),
+                identity: None,
             };
         }
     };
@@ -302,8 +307,14 @@ pub fn validate_archive_path(path: &str) -> ArchivePathValidation {
     let tar = has_tar_signature(&bytes);
     let zip_end_record = has_zip_end_record(fs_path).unwrap_or(false);
 
-    // Windows RAR extract is blocked at run_7z (command `x`) for CVE-2026-58052.
-    // Browse/test remain allowed so users can inspect archives without extracting.
+    // Windows ships standalone 7za.exe, which deliberately has no RAR handler.
+    // Reject every RAR route here so browse/test cannot advertise a capability
+    // that the packaged runtime will fail to provide.
+    #[cfg(target_os = "windows")]
+    if signature == Some("rar") {
+        return invalid("RAR archives are not supported by the bundled Windows 7-Zip runtime.");
+    }
+
     let split_zip_header_valid = || {
         let base = fs_path.with_extension("");
         let first = std::path::PathBuf::from(format!("{}.z01", base.to_string_lossy()));
@@ -337,6 +348,11 @@ pub fn validate_archive_path(path: &str) -> ArchivePathValidation {
             path: candidate.to_string(),
             valid: true,
             reason: None,
+            identity: if include_identity {
+                crate::process::archive_identity_token(fs_path).ok()
+            } else {
+                None
+            },
         };
     }
 
@@ -357,11 +373,17 @@ pub fn validate_archive_path(path: &str) -> ArchivePathValidation {
         path: candidate.to_string(),
         valid: false,
         reason: Some(reason),
+        identity: None,
     }
+}
+
+pub fn validate_archive_path(path: &str) -> ArchivePathValidation {
+    validate_archive_path_impl(path, false)
 }
 
 fn validate_archive_paths_blocking(
     paths_json: String,
+    include_identity: bool,
 ) -> Result<Vec<ArchivePathValidation>, String> {
     if paths_json.len() > MAX_ARCHIVE_PATHS_IPC_BYTES {
         return Err(format!(
@@ -379,17 +401,20 @@ fn validate_archive_paths_blocking(
     }
     Ok(paths
         .into_iter()
-        .map(|path| validate_archive_path(&path))
+        .map(|path| validate_archive_path_impl(&path, include_identity))
         .collect())
 }
 
 #[tauri::command]
 pub async fn validate_archive_paths(
     paths_json: String,
+    include_identity: Option<bool>,
 ) -> Result<Vec<ArchivePathValidation>, String> {
-    tokio::task::spawn_blocking(move || validate_archive_paths_blocking(paths_json))
-        .await
-        .map_err(|error| format!("Archive-path validation worker failed: {error}"))?
+    tokio::task::spawn_blocking(move || {
+        validate_archive_paths_blocking(paths_json, include_identity.unwrap_or(false))
+    })
+    .await
+    .map_err(|error| format!("Archive-path validation worker failed: {error}"))?
 }
 
 #[cfg(test)]
@@ -414,18 +439,42 @@ mod tests {
         assert_eq!(detect_archive_signature(b"plain-text"), None);
     }
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_rejects_rar_before_any_7z_command_is_spawned() {
+        let path = std::env::temp_dir().join(format!(
+            "zinnia-rar-validation-{}-{}.rar",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::write(&path, b"Rar!\x1a\x07\x01\0payload").expect("RAR fixture");
+
+        let result = validate_archive_path(&path.to_string_lossy());
+        let _ = std::fs::remove_file(&path);
+
+        assert!(!result.valid);
+        assert!(result
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("not supported")));
+    }
+
     #[test]
     fn validate_archive_paths_rejects_oversized_batches() {
         let paths_json = serde_json::to_string(&vec![String::new(); MAX_ARCHIVE_PATHS + 1])
             .expect("test paths should serialize");
-        let result = validate_archive_paths_blocking(paths_json);
+        let result = validate_archive_paths_blocking(paths_json, false);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("At most 4096 paths"));
     }
 
     #[test]
     fn validation_rejects_oversized_ipc_payload_before_json_deserialization() {
-        let result = validate_archive_paths_blocking("x".repeat(MAX_ARCHIVE_PATHS_IPC_BYTES + 1));
+        let result =
+            validate_archive_paths_blocking("x".repeat(MAX_ARCHIVE_PATHS_IPC_BYTES + 1), false);
         assert!(result.is_err_and(|error| error.contains("safety limit")));
     }
 

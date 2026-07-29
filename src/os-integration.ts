@@ -49,6 +49,7 @@ interface DefaultArchiverResult {
 }
 
 let latestStatus: OsIntegrationStatus | null = null;
+let osIntegrationRefreshInFlight: Promise<void> | null = null;
 
 const FINDER_SYNC_ENABLED_MESSAGE = [
   "Zinnia's Finder extension is enabled.",
@@ -203,15 +204,27 @@ export function renderOsIntegrationStatus(status: OsIntegrationStatus): void {
     "os-file-assoc-status",
     status.fileAssociationsKnown,
     "Ready",
-    status.platform === "linux" && status.packaged
-      ? "Verify manually"
-      : "Action needed",
+    status.platform === "windows" &&
+      status.packaged &&
+      !(status.archiveDefaults ?? []).some(
+        (entry) => entry.currentHandler !== null || entry.isDefault,
+      )
+      ? "Unknown"
+      : status.platform === "linux" && status.packaged
+        ? "Verify manually"
+        : "Action needed",
   );
   {
     let contextReady = "Ready";
     let contextAction = "Action needed";
     if (status.platform === "linux" && status.packaged) {
       contextAction = "Verify manually";
+    } else if (
+      status.platform === "windows" &&
+      status.packaged &&
+      status.win11ModernMenuKnown === false
+    ) {
+      contextAction = "Unknown";
     } else if (
       status.platform === "macos" &&
       status.packaged &&
@@ -391,13 +404,24 @@ export async function refreshDefaultArchiverActionButton(
 }
 
 export async function refreshOsIntegrationStatus(): Promise<void> {
-  try {
-    const status = await getOsIntegrationStatus();
-    renderOsIntegrationStatus(status);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`Failed to refresh OS integration status: ${msg}`);
-  }
+  if (osIntegrationRefreshInFlight) return osIntegrationRefreshInFlight;
+  osIntegrationRefreshInFlight = (async () => {
+    const refresh = document.getElementById(
+      "refresh-os-integration-status",
+    ) as HTMLButtonElement | null;
+    if (refresh) refresh.disabled = true;
+    try {
+      const status = await getOsIntegrationStatus();
+      renderOsIntegrationStatus(status);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`Failed to refresh OS integration status: ${msg}`);
+    } finally {
+      if (refresh) refresh.disabled = false;
+      osIntegrationRefreshInFlight = null;
+    }
+  })();
+  return osIntegrationRefreshInFlight;
 }
 
 export async function openOsIntegrationSettings(): Promise<void> {

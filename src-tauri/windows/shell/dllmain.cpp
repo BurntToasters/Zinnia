@@ -51,15 +51,20 @@ static bool EndsWithIgnoreCase(const std::wstring& value, const wchar_t* suffix)
 }
 
 static bool LooksLikeArchiveExtension(const std::wstring& lower_or_path) {
-  static const wchar_t* kExts[] = {L".7z",  L".zip", L".tar", L".gz",
-                                   L".tgz", L".bz2", L".tbz2", L".xz",
-                                   L".txz"};
+  if (EndsWithIgnoreCase(lower_or_path, L".tar.gz") ||
+      EndsWithIgnoreCase(lower_or_path, L".tar.xz") ||
+      EndsWithIgnoreCase(lower_or_path, L".tar.bz2") ||
+      EndsWithIgnoreCase(lower_or_path, L".tgz") ||
+      EndsWithIgnoreCase(lower_or_path, L".tbz2") ||
+      EndsWithIgnoreCase(lower_or_path, L".txz")) {
+    return false;
+  }
+  static const wchar_t* kExts[] = {L".7z", L".zip", L".tar", L".gz",
+                                   L".bz2", L".xz"};
   for (const wchar_t* candidate : kExts) {
     if (EndsWithIgnoreCase(lower_or_path, candidate)) return true;
   }
-  return EndsWithIgnoreCase(lower_or_path, L".tar.gz") ||
-         EndsWithIgnoreCase(lower_or_path, L".tar.xz") ||
-         EndsWithIgnoreCase(lower_or_path, L".tar.bz2");
+  return false;
 }
 
 // Match launch/open_routing.rs: archive.7z.001 / archive.zip.001, or bare

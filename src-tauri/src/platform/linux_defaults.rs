@@ -195,12 +195,12 @@ mod tests {
 
         let defaults = linux_query_archive_defaults(&backend, true);
         let zip = defaults.iter().find(|entry| entry.key == "zip").unwrap();
-        let txz = defaults.iter().find(|entry| entry.key == "txz").unwrap();
+        let xz = defaults.iter().find(|entry| entry.key == "xz").unwrap();
         let rar = defaults.iter().find(|entry| entry.key == "rar").unwrap();
 
         assert!(zip.is_default);
         assert_eq!(zip.current_handler.as_deref(), Some(ZINNIA_DESKTOP_ID));
-        assert_eq!(txz.mime_type, "application/x-xz-compressed-tar");
+        assert_eq!(xz.mime_type, "application/x-xz");
         assert!(!rar.is_default);
         assert!(rar.can_change);
     }

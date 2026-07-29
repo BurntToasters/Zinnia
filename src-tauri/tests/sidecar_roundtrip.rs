@@ -169,6 +169,62 @@ fn create_list_test_extract_roundtrip() {
     let _ = std::fs::remove_dir_all(work);
 }
 
+#[test]
+fn ui_compression_switch_matrix_runs_on_bundled_sidecar() {
+    let Some(bin) = binary_path() else {
+        eprintln!("skipping: bundled 7z binary not found (run npm run prepare:7z)");
+        return;
+    };
+    let work = temp_dir("format-matrix");
+    std::fs::write(work.join("input.txt"), b"format matrix\n").unwrap();
+    let cases: &[(&str, &str, &[&str])] = &[
+        ("7z", "7z", &["-m0=lzma2", "-md=64m", "-mfb=64"]),
+        ("zip", "zip", &["-m0=deflate", "-mfb=64"]),
+        ("tar", "tar", &[]),
+        ("gzip", "gz", &["-mfb=64"]),
+        ("bzip2", "bz2", &[]),
+        ("xz", "xz", &["-md=64m", "-mfb=64"]),
+    ];
+
+    for (format, extension, method_switches) in cases {
+        let archive = work.join(format!("matrix.{extension}"));
+        let mut command = Command::new(&bin);
+        command
+            .current_dir(&work)
+            .arg("a")
+            .arg(format!("-t{format}"))
+            .arg("-mx=5");
+        command.args(*method_switches);
+        let add = command
+            .arg("-snl")
+            .arg("-snh")
+            .arg(&archive)
+            .arg("--")
+            .arg("input.txt")
+            .output()
+            .expect("7z matrix add should run");
+        assert!(
+            add.status.success(),
+            "{format} add failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&add.stdout),
+            String::from_utf8_lossy(&add.stderr)
+        );
+
+        let test = Command::new(&bin)
+            .args(["t", "--"])
+            .arg(&archive)
+            .output()
+            .expect("7z matrix test should run");
+        assert!(
+            test.status.success(),
+            "{format} integrity test failed: {}",
+            String::from_utf8_lossy(&test.stderr)
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(work);
+}
+
 #[cfg(windows)]
 #[test]
 fn create_extract_roundtrip_supports_extended_and_volume_guid_paths() {

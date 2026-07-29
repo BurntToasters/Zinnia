@@ -6,13 +6,19 @@ export const ARCHIVE_EXTENSIONS = new Set([
   ".zip",
   ".tar",
   ".gz",
-  ".tgz",
   ".bz2",
-  ".tbz2",
   ".xz",
-  ".txz",
   ".rar",
 ]);
+
+const UNSUPPORTED_COMPOUND_ARCHIVE_SUFFIXES = [
+  ".tar.gz",
+  ".tar.bz2",
+  ".tar.xz",
+  ".tgz",
+  ".tbz2",
+  ".txz",
+];
 
 export function escapeHtml(s: string): string {
   return s
@@ -112,13 +118,22 @@ export function trapFocus(container: HTMLElement): void {
       (e.shiftKey ? last : first).focus();
       return;
     }
+    const activeElement = document.activeElement;
+    // A dialog can intentionally focus a programmatic-only element such as a
+    // heading. It is inside the modal but absent from the sequential focus
+    // list, so it must enter the same wrap path as focus outside the modal.
+    if (!focusable.includes(activeElement as HTMLElement)) {
+      e.preventDefault();
+      (e.shiftKey ? last : first).focus();
+      return;
+    }
     if (e.shiftKey) {
-      if (document.activeElement === first) {
+      if (activeElement === first) {
         e.preventDefault();
         last.focus();
       }
     } else {
-      if (document.activeElement === last) {
+      if (activeElement === last) {
         e.preventDefault();
         first.focus();
       }
@@ -216,6 +231,13 @@ export function safeHref(url: string): string {
 
 export function isArchiveFile(path: string): boolean {
   const lower = path.toLowerCase();
+  if (
+    UNSUPPORTED_COMPOUND_ARCHIVE_SUFFIXES.some((suffix) =>
+      lower.endsWith(suffix),
+    )
+  ) {
+    return false;
+  }
   for (const ext of ARCHIVE_EXTENSIONS) {
     if (lower.endsWith(ext)) return true;
   }

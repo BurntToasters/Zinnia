@@ -173,6 +173,9 @@ export async function init() {
   } else if (platform === "linux") {
     document.body.classList.add("platform-linux");
   }
+  // Basic archive pickers need platform capability policy during their setup,
+  // before the later version/package probes complete.
+  state.platformName = platform;
   wireTitlebar();
 
   try {
@@ -249,7 +252,10 @@ export async function init() {
     log(loadedSettings.warning, "error");
   }
 
-  void invoke<string | null>("get_startup_recovery_status")
+  const startupRecoveryStatus = invoke<string | null>(
+    "get_startup_recovery_status",
+  );
+  void startupRecoveryStatus
     .then((message) => {
       if (!message) return;
       const banner = document.getElementById("startup-recovery-banner");
@@ -292,7 +298,6 @@ export async function init() {
       devLog(`Unable to read shell handoff status: ${msg}`);
     });
 
-  state.platformName = platform;
   const [versionResult, packagedResult] = await Promise.allSettled([
     getVersion(),
     invoke<boolean>("is_packaged"),
@@ -329,7 +334,10 @@ export async function init() {
   // Flatpak has no in-app updater; skip auto-check using the flag resolved
   // before the setup wizard so we do not race a second is_flatpak probe.
   if (!isFlatpak && state.currentSettings.autoCheckUpdates) {
-    void autoCheckUpdates();
+    // Recovery can still be repairing a previous archive transaction. Avoid
+    // offering an install/restart until its eventual success or failure is
+    // known; the status promise is deliberately non-blocking for the UI.
+    void startupRecoveryStatus.catch(() => null).then(() => autoCheckUpdates());
   }
 
   let initialMode = "";
@@ -390,10 +398,16 @@ export async function init() {
         try {
           const previousPrimary = state.inputs[0] ?? null;
           const maxIncoming = 4096;
+          const known = new Set(state.inputs);
+          let rejected = 0;
           for (const path of paths) {
-            if (state.inputs.includes(path)) continue;
-            if (state.inputs.length >= maxIncoming) break;
+            if (known.has(path)) continue;
+            if (state.inputs.length >= maxIncoming) {
+              rejected += 1;
+              continue;
+            }
             state.inputs.push(path);
+            known.add(path);
           }
           if (
             getMode() === "browse" &&
@@ -402,6 +416,11 @@ export async function init() {
             setBrowsePasswordFieldVisible(false);
           }
           renderInputs();
+          if (rejected > 0) {
+            const detail = `Added the first ${maxIncoming} unique items; ${rejected} more were not added.`;
+            showToast(detail, "error", 5000);
+            log(detail, "error");
+          }
           if (getMode() === "browse" && state.inputs.length > 0) {
             // Snapshot before the async archive probe so a concurrent mode or
             // input change cannot browse a different primary after await.

@@ -41,11 +41,13 @@ import {
   finishBasicPreparation,
   isBasicInteractionLocked,
   isBasicPreparationCurrent,
+  replaceBasicInputs,
 } from "./actions";
 import { refreshRecentArchives, setRecentArchiveHandler } from "./recent";
 import { wireBasicBrowseEvents } from "./browse-events";
 import { wireBasicKeyboardEvents } from "./keyboard-events";
 import { wireBasicExtractEvents } from "./extract-events";
+import { showToast } from "../toast";
 
 export { wireBasicBrowseEvents } from "./browse-events";
 export { wireBasicKeyboardEvents } from "./keyboard-events";
@@ -62,6 +64,26 @@ async function openBasicDialog(
     setStatus("Could not open the file dialog", 3000);
     return null;
   }
+}
+
+const BASIC_ARCHIVE_EXTENSIONS = [
+  "7z",
+  "zip",
+  "tar",
+  "gz",
+  "bz2",
+  "xz",
+  "rar",
+  "001",
+];
+
+function basicArchiveDialogExtensions(): string[] {
+  // Windows packages standalone 7za.exe, which has no RAR handler. Keep the
+  // picker aligned with backend validation instead of allowing a selection
+  // that Browse/Test cannot fulfill.
+  return state.platformName === "windows"
+    ? BASIC_ARCHIVE_EXTENSIONS.filter((extension) => extension !== "rar")
+    : [...BASIC_ARCHIVE_EXTENSIONS];
 }
 
 export function initBasicWorkspace(): void {
@@ -122,18 +144,7 @@ export function initBasicWorkspace(): void {
           filters: [
             {
               name: "Archives",
-              extensions: [
-                "7z",
-                "zip",
-                "tar",
-                "gz",
-                "tgz",
-                "bz2",
-                "tbz2",
-                "xz",
-                "txz",
-                "rar",
-              ],
+              extensions: basicArchiveDialogExtensions(),
             },
           ],
         });
@@ -143,11 +154,15 @@ export function initBasicWorkspace(): void {
       }
       const paths = Array.isArray(selection) ? selection : [selection];
       if (paths.length > 0) {
-        state.inputs.length = 0;
-        for (const p of paths) {
-          if (!state.inputs.includes(p)) state.inputs.push(p);
+        const overLimit = replaceBasicInputs(paths);
+        if (overLimit > 0) {
+          showToast(
+            `Selected the first 4,096 items; ${overLimit} more were not added.`,
+            "error",
+            5000,
+          );
         }
-        if (paths.length === 1) {
+        if (state.inputs.length === 1) {
           setMode("browse");
           setBasicBrowsePasswordVisible(false);
           renderInputs();
@@ -177,18 +192,7 @@ export function initBasicWorkspace(): void {
           filters: [
             {
               name: "Archives",
-              extensions: [
-                "7z",
-                "zip",
-                "tar",
-                "gz",
-                "tgz",
-                "bz2",
-                "tbz2",
-                "xz",
-                "txz",
-                "rar",
-              ],
+              extensions: basicArchiveDialogExtensions(),
             },
           ],
         });
@@ -219,18 +223,7 @@ export function initBasicWorkspace(): void {
           filters: [
             {
               name: "Archives",
-              extensions: [
-                "7z",
-                "zip",
-                "tar",
-                "gz",
-                "tgz",
-                "bz2",
-                "tbz2",
-                "xz",
-                "txz",
-                "rar",
-              ],
+              extensions: basicArchiveDialogExtensions(),
             },
           ],
         });

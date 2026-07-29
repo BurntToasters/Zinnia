@@ -8,6 +8,7 @@ import {
   log,
   resetPasswordFieldControl,
   setProgress,
+  setCancelAvailable,
   setStatus,
 } from "../ui";
 import { formatCommandOutputForLogs } from "../output-logging";
@@ -167,6 +168,7 @@ export async function withLiveProgress<T>(fn: () => Promise<T>): Promise<T> {
       const update = event.payload;
       if (typeof update?.percent !== "number") return;
       if (update.currentFile === "Finalizing…") {
+        setCancelAvailable(false);
         setProgress("Finalizing…");
         return;
       }
@@ -186,8 +188,12 @@ export async function runWithPasswordRetry(
   args: string[],
   retryForMissingPassword: boolean,
   confirmLabel = "Extract",
+  expectedArchiveIdentity?: string,
 ): Promise<Run7zResult> {
-  let result = await invoke<Run7zResult>("run_7z", { args });
+  let result = await invoke<Run7zResult>("run_7z", {
+    args,
+    ...(expectedArchiveIdentity ? { expectedArchiveIdentity } : {}),
+  });
   if (
     retryForMissingPassword &&
     result.code > 1 &&
@@ -209,6 +215,7 @@ export async function runWithPasswordRetry(
       setStatus("Retrying with password");
       result = await invoke<Run7zResult>("run_7z", {
         args: withPassword(args, password),
+        ...(expectedArchiveIdentity ? { expectedArchiveIdentity } : {}),
       });
     }
   }

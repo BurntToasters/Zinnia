@@ -6,7 +6,7 @@ import {
   trapFocus,
   releaseFocusTrap,
 } from "../utils";
-import { state, cacheSelection } from "../state";
+import { state, cacheSelection, clearBrowseCache } from "../state";
 import {
   log,
   devLog,
@@ -222,6 +222,7 @@ function renderSelectiveFlatRow(
 
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
+  checkbox.setAttribute("aria-label", `Select ${entry.path}`);
   checkbox.checked = selected.has(entry.path);
   checkbox.disabled = state.running;
   checkbox.addEventListener("change", () => {
@@ -267,6 +268,8 @@ function renderSelectiveTreeNode(
   const row = document.createElement("div");
   row.className = "selective-row selective-row--tree";
   row.dataset.depth = String(Math.min(Math.max(node.depth, 0), 20));
+  row.dataset.memberPath = node.path;
+  row.tabIndex = -1;
   row.setAttribute("role", "treeitem");
   row.setAttribute("aria-level", String(node.depth + 1));
 
@@ -277,6 +280,7 @@ function renderSelectiveTreeNode(
 
   const twisty = document.createElement("button");
   twisty.type = "button";
+  twisty.tabIndex = -1;
   twisty.className = "selective-twisty";
   twisty.textContent = expandable ? (expanded ? "\u25be" : "\u25b8") : "";
   twisty.disabled = !expandable;
@@ -291,6 +295,8 @@ function renderSelectiveTreeNode(
 
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
+  checkbox.tabIndex = -1;
+  checkbox.setAttribute("aria-label", `Select ${node.path}`);
   const checkState = computeNodeCheckState(node, selected);
   checkbox.checked = checkState === "checked";
   checkbox.indeterminate = checkState === "indeterminate";
@@ -298,6 +304,10 @@ function renderSelectiveTreeNode(
   row.setAttribute(
     "aria-selected",
     checkState === "checked" ? "true" : "false",
+  );
+  row.setAttribute(
+    "aria-checked",
+    checkState === "indeterminate" ? "mixed" : String(checkState === "checked"),
   );
   checkbox.addEventListener("change", () => {
     const current = getOrCreateSelection(archive);
@@ -316,6 +326,57 @@ function renderSelectiveTreeNode(
     );
     cacheSelection(archive, next);
     renderSelectiveExtractModal();
+  });
+
+  row.addEventListener("keydown", (event) => {
+    const rows = Array.from(
+      list.querySelectorAll<HTMLElement>('[role="treeitem"]'),
+    );
+    const index = rows.indexOf(row);
+    const focusRow = (next: HTMLElement | undefined) => {
+      if (!next) return;
+      for (const candidate of rows) candidate.tabIndex = -1;
+      next.tabIndex = 0;
+      next.focus();
+    };
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      focusRow(rows[index + 1]);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      focusRow(rows[index - 1]);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      focusRow(rows[0]);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      focusRow(rows.at(-1));
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      if (expandable && !expanded) {
+        state.selectiveExpandedFolders.add(node.path);
+        renderSelectiveExtractModal();
+      } else if (expandable && expanded) {
+        focusRow(rows[index + 1]);
+      }
+    } else if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      if (expandable && expanded) {
+        state.selectiveExpandedFolders.delete(node.path);
+        renderSelectiveExtractModal();
+      } else {
+        const level = Number(row.getAttribute("aria-level") ?? "1");
+        for (let parent = index - 1; parent >= 0; parent -= 1) {
+          if (Number(rows[parent].getAttribute("aria-level") ?? "1") < level) {
+            focusRow(rows[parent]);
+            break;
+          }
+        }
+      }
+    } else if (event.key === " " || event.key === "Enter") {
+      event.preventDefault();
+      checkbox.click();
+    }
   });
 
   const name = document.createElement("span");
@@ -358,6 +419,12 @@ function renderSelectiveEntryList(
 ): void {
   const list = document.getElementById("selective-list");
   if (!list) return;
+  const activeRow = (
+    document.activeElement as HTMLElement | null
+  )?.closest<HTMLElement>('[role="treeitem"]');
+  const focusedPath = list.contains(activeRow ?? null)
+    ? activeRow?.dataset.memberPath
+    : undefined;
   list.innerHTML = "";
 
   if (entries.length === 0) {
@@ -368,12 +435,12 @@ function renderSelectiveEntryList(
     return;
   }
 
-  // Folder toggles and Select all recurse only within rendered rows.
-  const scopeEntries = collectRenderedSelectiveScope(
-    searching ? entries : allEntries,
-    searching,
-    windowsPaths,
-  );
+  // Search selection is intentionally limited to visible results. Tree folder
+  // selection must include the folder's complete archive subtree even while
+  // collapsed, otherwise its checkbox appears to work but extracts nothing.
+  const scopeEntries = searching
+    ? collectRenderedSelectiveScope(entries, true, windowsPaths)
+    : allEntries;
 
   // Searching shows a flat result list; otherwise a collapsible tree.
   if (searching) {
@@ -393,6 +460,7 @@ function renderSelectiveEntryList(
   }
 
   list.setAttribute("role", "tree");
+  list.setAttribute("aria-label", "Archive contents");
 
   const budget = { remaining: MAX_RENDERED_SELECTIVE_ROWS };
   for (const node of buildEntryTree(entries, windowsPaths)) {
@@ -411,6 +479,15 @@ function renderSelectiveEntryList(
     notice.className = "selective-empty";
     notice.textContent = `Expand fewer folders or search to keep this view responsive. At most ${MAX_RENDERED_SELECTIVE_ROWS.toLocaleString()} rows are shown at once.`;
     list.appendChild(notice);
+  }
+  const rows = Array.from(
+    list.querySelectorAll<HTMLElement>('[role="treeitem"]'),
+  );
+  const focusTarget =
+    rows.find((row) => row.dataset.memberPath === focusedPath) ?? rows[0];
+  if (focusTarget) {
+    focusTarget.tabIndex = 0;
+    if (focusedPath) queueMicrotask(() => focusTarget.focus());
   }
 }
 
@@ -476,10 +553,19 @@ function syncSelectiveDestinationWithExtractInput(): void {
 async function ensureArchiveInfoForPicker(
   archive: string,
 ): Promise<ArchiveInfo | null> {
+  if (state.inputs[0] !== archive) return null;
+  const [validation] = await ensureArchivePaths(
+    [archive],
+    "browse",
+    undefined,
+    true,
+  );
+  if (state.inputs[0] !== archive || !validation?.identity) return null;
   const cached = getCachedArchiveInfo(archive);
-  if (cached) return cached;
-  if (state.inputs[0] !== archive) {
-    state.inputs[0] = archive;
+  const cachedIdentity = state.browseArchiveIdentityByPath.get(archive);
+  if (cached && cachedIdentity === validation.identity) return cached;
+  if (cached || cachedIdentity) {
+    clearBrowseCache(archive);
   }
   if (!browseArchiveLoader) {
     throw new Error("Archive browsing is not initialized.");
@@ -488,6 +574,7 @@ async function ensureArchiveInfoForPicker(
 }
 
 export function closeSelectiveExtractModal(): void {
+  state.selectiveOpenRequestId += 1;
   const overlay = document.getElementById("selective-overlay");
   if (overlay) {
     (overlay as HTMLElement).hidden = true;
@@ -527,8 +614,16 @@ export function selectAllVisibleInPicker(): void {
     searching,
     windowsPaths,
   );
+  // Rendered rows are the selection targets, but collapsed folders still need
+  // the complete archive as their recursion scope. Search remains visible-only.
+  const recursionScope = searching ? scopeEntries : info.entries;
   const current = getOrCreateSelection(archive);
-  const next = selectEntries(current, scopeEntries, scopeEntries, windowsPaths);
+  const next = selectEntries(
+    current,
+    scopeEntries,
+    recursionScope,
+    windowsPaths,
+  );
   cacheSelection(archive, next);
   renderSelectiveExtractModal();
 }
@@ -548,6 +643,11 @@ async function openSelectiveExtractModalOnce(): Promise<void> {
   selectiveTrigger = document.activeElement as HTMLElement | null;
 
   const archive = state.inputs[0];
+  const requestId = ++state.selectiveOpenRequestId;
+  const requestIsCurrent = () =>
+    requestId === state.selectiveOpenRequestId &&
+    state.inputs[0] === archive &&
+    !state.running;
   if (!archive) {
     await message("Select an archive to browse first.", {
       title: "No archive selected",
@@ -557,6 +657,7 @@ async function openSelectiveExtractModalOnce(): Promise<void> {
 
   try {
     await ensureArchivePaths([archive], "browse");
+    if (!requestIsCurrent()) return;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await message(msg, { title: "Invalid input", kind: "error" });
@@ -564,7 +665,7 @@ async function openSelectiveExtractModalOnce(): Promise<void> {
   }
 
   const info = await ensureArchiveInfoForPicker(archive);
-  if (!info) return;
+  if (!info || !requestIsCurrent()) return;
 
   ensureExtractDestinationDefaultFromArchive(archive);
   syncSelectiveDestinationWithExtractInput();
@@ -616,9 +717,9 @@ export async function openSelectiveExtractModal(): Promise<void> {
 
 export async function runSelectiveExtractFromModal(): Promise<void> {
   if (state.running) return;
-  setRunning(true);
   state.batchCancelled = false;
   state.cancelRequested = false;
+  setRunning(true);
   try {
     const archive = state.selectiveActiveArchive ?? state.inputs[0] ?? null;
     if (!archive) {
@@ -629,12 +730,32 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
     }
 
     if (!(await ensureRuntimeReady())) return;
-    await ensureArchivePaths([archive], "extract");
+    if (state.cancelRequested) {
+      setStatus("Cancelled", 2000);
+      return;
+    }
+    const [validation] = await ensureArchivePaths(
+      [archive],
+      "extract",
+      undefined,
+      true,
+    );
 
     const info = getCachedArchiveInfo(archive);
     if (!info) {
       throw new Error(
         "Browse archive contents first before selective extraction.",
+      );
+    }
+    const browsedIdentity = state.browseArchiveIdentityByPath.get(archive);
+    if (
+      !validation?.identity ||
+      !browsedIdentity ||
+      validation.identity !== browsedIdentity
+    ) {
+      clearBrowseCache(archive);
+      throw new Error(
+        "Archive changed after it was browsed. Browse the current contents before extracting.",
       );
     }
 
@@ -689,9 +810,9 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
     );
 
     const result = await withLiveProgress(() =>
-      runWithPasswordRetry(args, true),
+      runWithPasswordRetry(args, true, "Extract", browsedIdentity),
     );
-    if (state.cancelRequested) {
+    if (state.cancelRequested && result.code !== 0) {
       hideProgress();
       setStatus("Cancelled", 2000);
       log("Operation cancelled by user");

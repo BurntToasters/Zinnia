@@ -146,16 +146,18 @@ pub(crate) fn should_use_extract_window(paths: &[String], mode: &str) -> bool {
 }
 
 pub(crate) fn looks_like_archive_extension(lower: &str) -> bool {
-    // Windows: omit .rar so file-open routing does not land on the temporary
-    // RAR extract block (CVE-2026-58052). macOS/Linux still treat RAR as archives.
+    if [".tar.gz", ".tar.bz2", ".tar.xz", ".tgz", ".tbz2", ".txz"]
+        .iter()
+        .any(|extension| lower.ends_with(extension))
+    {
+        return false;
+    }
+    // Windows packages standalone 7za.exe without a RAR handler. macOS/Linux
+    // bundled runtimes still treat RAR as an archive.
     let extensions: &[&str] = if cfg!(windows) {
-        &[
-            ".7z", ".zip", ".tar", ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz",
-        ]
+        &[".7z", ".zip", ".tar", ".gz", ".bz2", ".xz"]
     } else {
-        &[
-            ".7z", ".zip", ".rar", ".tar", ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz",
-        ]
+        &[".7z", ".zip", ".rar", ".tar", ".gz", ".bz2", ".xz"]
     };
     extensions
         .iter()

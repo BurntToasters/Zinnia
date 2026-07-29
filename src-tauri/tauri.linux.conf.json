@@ -17,17 +17,17 @@
         "description": "TAR Archive"
       },
       {
-        "ext": ["gz", "tgz"],
+        "ext": ["gz"],
         "mimeType": "application/gzip",
         "description": "Gzip Archive"
       },
       {
-        "ext": ["bz2", "tbz2"],
+        "ext": ["bz2"],
         "mimeType": "application/x-bzip2",
         "description": "Bzip2 Archive"
       },
       {
-        "ext": ["xz", "txz"],
+        "ext": ["xz"],
         "mimeType": "application/x-xz",
         "description": "XZ Archive"
       },

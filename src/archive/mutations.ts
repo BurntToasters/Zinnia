@@ -55,6 +55,13 @@ export async function addFilesToArchive(): Promise<void> {
     });
     return;
   }
+  if (!/\.(?:7z|zip|tar)$/i.test(archive)) {
+    await message(
+      "This archive format cannot be updated in place. Convert it to 7z, ZIP, or TAR, or create a new archive.",
+      { title: "Update unavailable", kind: "warning" },
+    );
+    return;
+  }
 
   const selection = await runMutationDialog(() =>
     open({ multiple: true, directory: false }),
@@ -67,10 +74,14 @@ export async function addFilesToArchive(): Promise<void> {
   if (files.length === 0) return;
 
   let refreshAfterRun = false;
-  setRunning(true);
   state.cancelRequested = false;
+  setRunning(true);
   try {
     if (!(await ensureRuntimeReady())) return;
+    if (state.cancelRequested) {
+      setStatus("Cancelled", 2000);
+      return;
+    }
     const threads = parseThreads(
       $<HTMLInputElement>("threads").value,
       SETTING_DEFAULTS.threads,
@@ -90,7 +101,7 @@ export async function addFilesToArchive(): Promise<void> {
     setStatus("Adding files");
     devLog(`7z ${sanitizeCommandArgsForPreview(args).join(" ")}`);
     const result = await runWithPasswordRetry(args, true, "Add files");
-    if (state.cancelRequested) {
+    if (state.cancelRequested && result.code !== 0) {
       setStatus("Cancelled", 2000);
       return;
     }
@@ -162,11 +173,15 @@ export async function convertArchive(): Promise<void> {
     return;
   }
 
-  setRunning(true);
   state.cancelRequested = false;
+  setRunning(true);
   let tempDir: string | null = null;
   try {
     if (!(await ensureRuntimeReady())) return;
+    if (state.cancelRequested) {
+      setStatus("Cancelled", 2000);
+      return;
+    }
     tempDir = await invoke<string>("create_temp_extract_dir");
 
     const browsePassword = $<HTMLInputElement>("browse-password").value;
@@ -224,7 +239,7 @@ export async function convertArchive(): Promise<void> {
     compress.push(dest, "--", ...children);
 
     const result = await invoke<Run7zResult>("run_7z", { args: compress });
-    if (state.cancelRequested) {
+    if (state.cancelRequested && result.code !== 0) {
       setStatus("Cancelled", 2000);
       return;
     }
