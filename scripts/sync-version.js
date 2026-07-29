@@ -6,6 +6,7 @@ import { fileURLToPath } from "url";
 import {
   macBundleVersionFromSemver,
   macMarketingVersionFromSemver,
+  syncChangelogForVersion,
   updateCargoLockPackageVersion,
   updatePlistStringValue,
   updateWindowsResourceVersion,
@@ -172,4 +173,18 @@ for (const rcName of ["zinnia_shell.rc", "zinnia_extract_shell.rc"]) {
     fs.writeFileSync(rcPath, updatedRc);
     console.log(`${rcName} → ${version}`);
   }
+}
+
+const changelogPath = path.join(root, "CHANGELOG.md");
+const changelog = fs.readFileSync(changelogPath, "utf8");
+let syncedChangelog;
+try {
+  syncedChangelog = syncChangelogForVersion(changelog, version);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
+if (syncedChangelog !== changelog) {
+  fs.writeFileSync(changelogPath, syncedChangelog);
+  console.log(`CHANGELOG.md    → ${version} (download URLs + section)`);
 }

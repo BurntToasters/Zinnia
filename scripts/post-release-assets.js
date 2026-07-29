@@ -192,6 +192,12 @@ function copyPathRecursive(sourcePath, destinationPath) {
   copyFileForMirror(sourcePath, destinationPath);
 }
 
+function copyReleaseEntryToMirror(sourcePath, destinationPath) {
+  removePath(destinationPath);
+  copyPathRecursive(sourcePath, destinationPath);
+  verifyCopiedPath(sourcePath, destinationPath);
+}
+
 function copyReleaseAssets(
   releaseDir = RELEASE_DIR,
   destination,
@@ -251,55 +257,17 @@ function copyReleaseAssets(
   }
 
   const entries = getReleaseEntries(resolvedReleaseDir);
-  const parent = path.dirname(resolvedDestination);
-  fs.mkdirSync(parent, { recursive: true });
-  const token = crypto.randomBytes(12).toString("hex");
-  const staging = path.join(
-    parent,
-    `.${path.basename(resolvedDestination)}.zinnia-stage-${token}`,
+  fs.mkdirSync(resolvedDestination, { recursive: true });
+  progress(
+    logger,
+    `copying ${entries.length} entries to shared mirror (overwrite same names only)`,
   );
-  const backup = path.join(
-    parent,
-    `.${path.basename(resolvedDestination)}.zinnia-backup-${token}`,
-  );
-  fs.mkdirSync(staging, { recursive: false });
-  let movedExisting = false;
-  try {
-    progress(logger, `copying ${entries.length} entries to private staging`);
-    for (const entry of entries) {
-      const sourcePath = path.join(resolvedReleaseDir, entry);
-      const destinationPath = path.join(staging, entry);
-      progress(logger, `copy ${entry}`);
-      copyPathRecursive(sourcePath, destinationPath);
-      verifyCopiedPath(sourcePath, destinationPath);
-      progress(logger, `verified ${entry}`);
-    }
-    const stagedEntries = fs.readdirSync(staging).sort();
-    if (JSON.stringify(stagedEntries) !== JSON.stringify([...entries].sort())) {
-      throw new Error("release mirror staging contains an unexpected file set");
-    }
-
-    if (fs.existsSync(resolvedDestination)) {
-      fs.renameSync(resolvedDestination, backup);
-      movedExisting = true;
-    }
-    try {
-      fs.renameSync(staging, resolvedDestination);
-    } catch (error) {
-      if (movedExisting) fs.renameSync(backup, resolvedDestination);
-      throw error;
-    }
-    if (movedExisting) removePath(backup);
-  } catch (error) {
-    removePath(staging);
-    if (
-      movedExisting &&
-      fs.existsSync(backup) &&
-      !fs.existsSync(resolvedDestination)
-    ) {
-      fs.renameSync(backup, resolvedDestination);
-    }
-    throw error;
+  for (const entry of entries) {
+    const sourcePath = path.join(resolvedReleaseDir, entry);
+    const destinationPath = path.join(resolvedDestination, entry);
+    progress(logger, `copy ${entry}`);
+    copyReleaseEntryToMirror(sourcePath, destinationPath);
+    progress(logger, `verified ${entry}`);
   }
 
   return entries.length;

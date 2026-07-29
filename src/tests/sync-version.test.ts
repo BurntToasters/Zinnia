@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   macBundleVersionFromSemver,
   macMarketingVersionFromSemver,
+  syncChangelogForVersion,
   updatePlistStringValue,
   updateCargoLockPackageVersion,
   updateWindowsResourceFlags,
@@ -251,5 +252,34 @@ describe("plist version synchronization", () => {
         "3",
       ),
     ).toThrow(/found 2/);
+  });
+});
+
+describe("CHANGELOG version synchronization", () => {
+  const intro =
+    "Zinnia! A cross platform 7Z gui frontend built on Tauri V2!\n\n";
+  const downloadBlock = `# ⬇️ Downloads
+
+| win |
+| [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.1/app.exe) |
+`;
+  const tail = `\n> macOS note\n\n${intro}## Changes in \`v0.6.1-beta.1:\`\n\n- old\n`;
+
+  it("rewrites download URLs to the current tag", () => {
+    const synced = syncChangelogForVersion(
+      downloadBlock + tail,
+      "0.6.1-beta.2",
+    );
+    expect(synced).toContain("/download/v0.6.1-beta.2/app.exe");
+    expect(synced).not.toContain("/download/v0.6.1-beta.1/app.exe");
+  });
+
+  it("inserts a new changes section when the version is new", () => {
+    const synced = syncChangelogForVersion(
+      downloadBlock + tail,
+      "0.6.1-beta.2",
+    );
+    expect(synced).toContain("## Changes in `v0.6.1-beta.2:`");
+    expect(synced).toContain("## Changes in `v0.6.1-beta.1:`");
   });
 });

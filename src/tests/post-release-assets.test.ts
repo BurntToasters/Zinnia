@@ -203,18 +203,44 @@ describe("post-release assets", () => {
     ).toThrow(/cannot be inside the release directory/);
   });
 
-  it("replaces the mirror as an exact set without stale files", () => {
+  it("merges into a shared mirror without removing other platform artifacts", () => {
     const root = makeTemporaryDirectory();
     const releaseDir = path.join(root, "release");
     const destination = path.join(root, "mirror");
     fs.mkdirSync(releaseDir);
     fs.mkdirSync(destination);
     fs.writeFileSync(path.join(releaseDir, "current.exe"), "current");
+    fs.writeFileSync(
+      path.join(destination, "SHA256SUMS-linux-x86_64.txt"),
+      "linux",
+    );
     fs.writeFileSync(path.join(destination, "stale.exe"), "stale");
 
     copyReleaseAssets(releaseDir, destination);
 
+    expect(fs.readdirSync(destination).sort()).toEqual(
+      ["SHA256SUMS-linux-x86_64.txt", "current.exe", "stale.exe"].sort(),
+    );
+    expect(fs.readFileSync(path.join(destination, "current.exe"), "utf8")).toBe(
+      "current",
+    );
+  });
+
+  it("overwrites same-name artifacts when re-mirroring this platform", () => {
+    const root = makeTemporaryDirectory();
+    const releaseDir = path.join(root, "release");
+    const destination = path.join(root, "mirror");
+    fs.mkdirSync(releaseDir);
+    fs.mkdirSync(destination);
+    fs.writeFileSync(path.join(releaseDir, "current.exe"), "new");
+    fs.writeFileSync(path.join(destination, "current.exe"), "old");
+
+    copyReleaseAssets(releaseDir, destination);
+
     expect(fs.readdirSync(destination)).toEqual(["current.exe"]);
+    expect(fs.readFileSync(path.join(destination, "current.exe"), "utf8")).toBe(
+      "new",
+    );
   });
 
   it.runIf(process.platform !== "win32")(
