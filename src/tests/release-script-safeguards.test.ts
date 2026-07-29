@@ -439,35 +439,28 @@ describe("release script safeguards", () => {
     );
   });
 
-  it("verifies Microsoft Authenticode before using Windows signing tools", () => {
+  it("discovers Windows Artifact Signing tools like 0.6.0 (path presence, no client-tool Authenticode gate)", () => {
     const tools = fs.readFileSync("scripts/artifact-signing-tools.ps1", "utf8");
     const setup = fs.readFileSync(
       "scripts/setup-windows-artifact-signing.ps1",
       "utf8",
     );
-    expect(tools).toContain("Get-AuthenticodeSignature");
-    expect(tools).toContain("O=Microsoft Corporation");
-    expect(tools).toContain("Assert-MicrosoftSignedFile -Path $signToolPath");
-    expect(tools).toContain("Assert-MicrosoftSignedFile -Path $dlibPath");
-    expect(tools).toContain("Select-MicrosoftSignedArtifactTool");
-    expect(tools).toContain(
-      "Program Files (x86)\\Microsoft\\ArtifactSigningClientTools",
-    );
-    expect(setup).toContain("Assert-MicrosoftSignedFile -Path $MsiPath");
-    expect(setup).toContain("Remove-UnsignedLegacyArtifactSigningTrees");
-    expect(setup).toContain("--scope machine");
-    expect(setup).toContain("ALLUSERS=1");
-    expect(setup).toContain("1638");
-    expect(setup).toContain("REINSTALL=ALL");
-    expect(setup).toContain("Uninstall-ArtifactSigningClientToolsProducts");
-    expect(tools).toContain("AllowEmptyCollection");
-    expect(tools).toContain("Find-ArtifactSigningInstalledProducts");
-    expect(tools).toContain("Get-OptionalNoteProperty");
-    expect(tools).toContain("MicrosoftTrustedSigningClientTools");
+    expect(tools).toContain("Get-ArtifactSigningTools");
+    expect(tools).toContain("Azure.CodeSigning.Dlib.dll");
+    expect(tools).toContain("MicrosoftArtifactSigningClientTools");
+    expect(tools).toContain("Select-Object -First 1");
+    expect(tools).not.toContain("Assert-MicrosoftSignedFile");
+    expect(tools).not.toContain("Select-MicrosoftSignedArtifactTool");
+    expect(setup).toContain("Get-ArtifactSigningTools");
+    expect(setup).toContain("Microsoft.Azure.ArtifactSigningClientTools");
+    expect(setup).not.toContain("Remove-UnsignedLegacyArtifactSigningTrees");
+    expect(setup).not.toContain("1638");
+    expect(setup).not.toContain("REINSTALL=ALL");
     const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
-    expect(pkg.scripts["setup:win:artifact-signing:repair"]).toContain(
-      "-Force",
+    expect(pkg.scripts["setup:win:artifact-signing"]).toContain(
+      "setup-windows-artifact-signing.ps1",
     );
+    expect(pkg.scripts["setup:win:artifact-signing:repair"]).toBeUndefined();
     expect(pkg.scripts["validate:no-em-dash"]).toContain(
       "validate-no-em-dash.js",
     );
