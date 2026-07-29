@@ -368,7 +368,7 @@ function main() {
   runCommand("typecheck", npm, ["run", "typecheck"], null, results);
   runCommand("lint", npm, ["run", "lint"], null, results);
   runCommand("format", npm, ["run", "format:check"], null, results);
-  runCommand("no-em-dash", npm, ["run", "validate:no-em-dash"], null, results);
+  runCommand("noEmDash", npm, ["run", "validate:no-em-dash"], null, results);
   runCommand("changelog", npm, ["run", "validate:changelog"], null, results);
   runCommand("updater", npm, ["run", "validate:updater"], null, results);
   runCommand("flatpak", npm, ["run", "validate:flatpak"], null, results);
