@@ -459,8 +459,10 @@ describe("release script safeguards", () => {
     expect(setup).toContain("ALLUSERS=1");
     expect(setup).toContain("1638");
     expect(setup).toContain("REINSTALL=ALL");
+    expect(setup).toContain("Uninstall-ArtifactSigningClientToolsProducts");
     expect(tools).toContain("AllowEmptyCollection");
     expect(tools).toContain("Find-ArtifactSigningInstalledProducts");
+    expect(tools).toContain("Get-OptionalNoteProperty");
     expect(tools).toContain("MicrosoftTrustedSigningClientTools");
     const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
     expect(pkg.scripts["setup:win:artifact-signing:repair"]).toContain(
