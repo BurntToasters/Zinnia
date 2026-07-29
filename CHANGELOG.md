@@ -58,6 +58,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Docs:** README OS-integration wording matches Win11 modern-primary vs classic-fallback behavior.
 - **Tooling:** Windows Artifact Signing client-tool discovery matches 0.6.0 again (use first found dlib/signtool under Program Files or AppData; no Authenticode gate on the client tools themselves). Signed app output is still verified.
 - **Fix:** Beta→`/latest` manifest sync again receives the GitHub upload response `id` (`uploadAssetOnce` was awaiting without `return`) and uses non-dot staging names because GitHub strips leading periods from release assets.
+- **Fix:** `release:mirror` copies each release artifact into `AFTER_PACK_LOC`, overwriting same-named files only, instead of replacing the whole share directory (so a later finalize on another OS no longer deletes other VMs' checksums and installers).
 - **Tooling:** Tracked files must not contain Unicode em dashes (U+2014); `npm run validate:no-em-dash` runs in `test:all`.
 
 ## Changes in `v0.6.0:`
