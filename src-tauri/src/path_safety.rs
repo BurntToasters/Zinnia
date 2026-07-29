@@ -1,7 +1,22 @@
 //! Shared path safety helpers (symlink / Windows reparse-point rejection).
 
 use std::fs::Metadata;
-use std::path::Path;
+use std::path::{Component, Path};
+
+/// True when `candidate` is `root` or a descendant whose relative path uses only
+/// normal components (no `..`, `.`, roots, or prefixes). Uses component-wise
+/// matching, not string prefixing.
+pub fn path_is_under_or_equal(root: &Path, candidate: &Path) -> bool {
+    if candidate == root {
+        return true;
+    }
+    let Ok(relative) = candidate.strip_prefix(root) else {
+        return false;
+    };
+    relative
+        .components()
+        .all(|component| matches!(component, Component::Normal(_)))
+}
 
 /// True when the metadata describes a symbolic link or (on Windows) any reparse point.
 pub fn is_link_or_reparse(meta: &Metadata) -> bool {
@@ -371,6 +386,21 @@ mod tests {
         std::fs::create_dir_all(&root).expect("dir");
         assert_real_directory(&root).expect("plain directory");
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn path_is_under_or_equal_rejects_parent_dir_escape() {
+        let root = std::path::Path::new("/tmp/zinnia-root");
+        assert!(path_is_under_or_equal(root, root));
+        assert!(path_is_under_or_equal(root, &root.join("nested/file.txt")));
+        assert!(!path_is_under_or_equal(
+            root,
+            &root.join("nested").join("..").join("escape.txt")
+        ));
+        assert!(!path_is_under_or_equal(
+            root,
+            std::path::Path::new("/tmp/zinnia-root-extra/file.txt")
+        ));
     }
 
     #[test]

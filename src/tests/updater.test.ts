@@ -208,6 +208,33 @@ describe("checkUpdates", () => {
     expect(relaunchMock).not.toHaveBeenCalled();
   });
 
+  it("releases the archive-operation reservation when install times out", async () => {
+    vi.useFakeTimers();
+    const install = vi.fn().mockImplementation(() => new Promise(() => {}));
+    checkMock.mockResolvedValue({
+      version: "0.5.0",
+      download: vi.fn().mockResolvedValue(undefined),
+      install,
+    } as unknown as Awaited<ReturnType<typeof check>>);
+    askMock.mockResolvedValue(true);
+
+    try {
+      const pending = checkUpdates();
+      await vi.advanceTimersByTimeAsync(180_000);
+      await pending;
+
+      expect(invokeMock).toHaveBeenCalledWith("is_7z_running", {
+        mode: "release_update",
+      });
+      expect(logMock).toHaveBeenCalledWith(
+        expect.stringContaining("Update install timed out after 180 seconds."),
+      );
+      expect(relaunchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("still attempts release_update when the release invoke itself fails", async () => {
     const install = vi.fn().mockRejectedValue(new Error("install failed"));
     checkMock.mockResolvedValue({

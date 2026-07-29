@@ -101,6 +101,12 @@ pub(crate) fn assert_safe_extract_target_ancestors(
     target: &std::path::Path,
 ) -> Result<(), String> {
     assert_real_directory(destination)?;
+    if !crate::path_safety::path_is_under_or_equal(destination, target) {
+        return Err(format!(
+            "Extraction target escaped destination: {}",
+            target.display()
+        ));
+    }
     let Some(parent) = target.parent() else {
         return Ok(());
     };
@@ -115,8 +121,18 @@ pub(crate) fn assert_safe_extract_target_ancestors(
     })?;
     let mut cursor = destination.to_path_buf();
     for component in relative.components() {
-        cursor.push(component);
-        assert_real_directory(&cursor)?;
+        match component {
+            std::path::Component::Normal(_) => {
+                cursor.push(component);
+                assert_real_directory(&cursor)?;
+            }
+            _ => {
+                return Err(format!(
+                    "Extraction target escaped destination: {}",
+                    target.display()
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -1583,7 +1599,9 @@ pub(crate) fn validate_move_record(
     destination: &std::path::Path,
     record: &MoveRecord,
 ) -> Result<(), String> {
-    if !record.source.starts_with(staged) || !record.target.starts_with(destination) {
+    if !crate::path_safety::path_is_under_or_equal(staged, &record.source)
+        || !crate::path_safety::path_is_under_or_equal(destination, &record.target)
+    {
         return Err("Refusing unsafe extraction recovery move plan.".to_string());
     }
     if let Some(publish_temp) = &record.publish_temp {
@@ -1595,7 +1613,7 @@ pub(crate) fn validate_move_record(
         #[cfg(windows)]
         {
             if publish_temp.parent() != record.target.parent()
-                || !publish_temp.starts_with(destination)
+                || !crate::path_safety::path_is_under_or_equal(destination, publish_temp)
                 || !is_publish_temp_name(publish_temp)
             {
                 return Err("Refusing unsafe extraction publish path.".to_string());
