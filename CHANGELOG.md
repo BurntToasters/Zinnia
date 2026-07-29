@@ -56,7 +56,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Fix:** Update install waits are bounded (3 minutes) and still release the archive prepare slot on timeout, matching download-timeout behavior.
 - **Fix:** Settings saves keep backend-owned `_`-prefixed keys (except setup-wizard fields) from being overwritten by incoming JSON.
 - **Docs:** README OS-integration wording matches Win11 modern-primary vs classic-fallback behavior.
-- **Tooling:** Windows Artifact Signing discovery prefers machine-wide Program Files installs and skips unsigned LocalAppData/NuGet dlib copies instead of failing closed on the first unsigned candidate.
+- **Tooling:** Windows Artifact Signing setup removes unsigned NuGet/AppData trees, installs the official MSI/winget package per-machine, and discovers signed tools under Program Files (x86) before legacy paths.
 - **Fix:** Beta→`/latest` manifest sync again receives the GitHub upload response `id` (`uploadAssetOnce` was awaiting without `return`) and uses non-dot staging names because GitHub strips leading periods from release assets.
 
 ## Changes in `v0.6.0:`

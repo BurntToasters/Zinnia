@@ -454,6 +454,13 @@ describe("release script safeguards", () => {
       "Program Files (x86)\\Microsoft\\ArtifactSigningClientTools",
     );
     expect(setup).toContain("Assert-MicrosoftSignedFile -Path $msiPath");
+    expect(setup).toContain("Remove-UnsignedLegacyArtifactSigningTrees");
+    expect(setup).toContain("--scope machine");
+    expect(setup).toContain("ALLUSERS=1");
+    const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+    expect(pkg.scripts["setup:win:artifact-signing:repair"]).toContain(
+      "-Force",
+    );
   });
 
   it("requires the baked App Group string in the macOS host Mach-O", () => {
