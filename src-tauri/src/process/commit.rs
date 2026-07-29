@@ -1465,30 +1465,27 @@ fn prepare_planned_links(
                 }
             }
         }
+        #[cfg(windows)]
+        if let Some(link) = links.first() {
+            let _ = (staged, destination);
+            return Err(format!(
+                "Archive link cannot be merged safely into an existing Windows destination: {}",
+                link.display()
+            ));
+        }
+        #[cfg(unix)]
         for link in links {
-            #[cfg(windows)]
-            {
-                let _ = (staged, destination);
-                return Err(format!(
-                    "Archive link cannot be merged safely into an existing Windows destination: {}",
-                    link.display()
-                ));
-            }
-            #[cfg(unix)]
-            {
-                let source_target = resolve_staged_symlink_target(staged, &link)?;
-                let final_target =
-                    final_path_for_staged_source(staged, destination, plan, &source_target)?;
-                let final_link = final_path_for_staged_source(staged, destination, plan, &link)?;
-                let final_parent = final_link
-                    .parent()
-                    .ok_or_else(|| "Archive symbolic link target has no parent.".to_string())?;
-                let rewritten_target = relative_path_between(final_parent, &final_target)?;
-                if std::fs::read_link(&link).map_err(|e| e.to_string())? != rewritten_target {
-                    std::fs::remove_file(&link).map_err(|e| e.to_string())?;
-                    std::os::unix::fs::symlink(&rewritten_target, &link)
-                        .map_err(|e| e.to_string())?;
-                }
+            let source_target = resolve_staged_symlink_target(staged, &link)?;
+            let final_target =
+                final_path_for_staged_source(staged, destination, plan, &source_target)?;
+            let final_link = final_path_for_staged_source(staged, destination, plan, &link)?;
+            let final_parent = final_link
+                .parent()
+                .ok_or_else(|| "Archive symbolic link target has no parent.".to_string())?;
+            let rewritten_target = relative_path_between(final_parent, &final_target)?;
+            if std::fs::read_link(&link).map_err(|e| e.to_string())? != rewritten_target {
+                std::fs::remove_file(&link).map_err(|e| e.to_string())?;
+                std::os::unix::fs::symlink(&rewritten_target, &link).map_err(|e| e.to_string())?;
             }
         }
     }

@@ -249,7 +249,9 @@ pub(crate) fn stop_extract_for_quota(app: &tauri::AppHandle, reason: String) {
 
 #[cfg(test)]
 mod tests {
-    use super::{available_space_for_path, staged_tree_usage};
+    use super::available_space_for_path;
+    #[cfg(unix)]
+    use super::staged_tree_usage;
 
     fn temp_root() -> std::path::PathBuf {
         static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
