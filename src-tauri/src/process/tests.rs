@@ -1163,6 +1163,7 @@ fn publish_rejects_symlink_swapped_ancestor_before_rename() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[cfg(not(windows))]
 #[test]
 fn persisted_move_plan_rolls_back_a_partial_merge() {
     let root = temp_root("zinnia-move-recovery-test");
@@ -1193,6 +1194,7 @@ fn persisted_move_plan_rolls_back_a_partial_merge() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[cfg(not(windows))]
 #[test]
 fn inside_destination_move_plan_rolls_back_a_partial_merge() {
     let root = temp_root("zinnia-inside-move-recovery-test");
@@ -1226,6 +1228,7 @@ fn inside_destination_move_plan_rolls_back_a_partial_merge() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[cfg(not(windows))]
 #[test]
 fn persisted_move_plan_preserves_a_target_modified_in_place() {
     let root = temp_root("zinnia-move-recovery-in-place-edit");
