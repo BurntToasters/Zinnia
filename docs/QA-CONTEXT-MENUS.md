@@ -131,7 +131,7 @@ Requires a **signed** NSIS install with full `AZURE_ARTIFACT_SIGNING_PUBLISHER_D
 
 **Fallback only** when Win11 sparse-package registration fails (stubs, missing
 script, or `Add-AppxPackage` error). Do not leave these installed alongside a
-successful modern-menu registration — package verbs also appear under “Show
+successful modern-menu registration  -  package verbs also appear under “Show
 more options,” and stacking causes duplicate Extract/Compress entries.
 
 When the fallback path is active (HKCU):

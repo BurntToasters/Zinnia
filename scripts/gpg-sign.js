@@ -1008,7 +1008,7 @@ async function uploadAssetOnce(uploadUrl, filePath) {
 
   const isText = /\.(asc|txt|json)$/i.test(fileName);
 
-  // Must return the parsed GitHub asset body — beta feed sync needs `id`.
+  // Must return the parsed GitHub asset body  -  beta feed sync needs `id`.
   return await new Promise((resolve, reject) => {
     const req = https.request(
       {

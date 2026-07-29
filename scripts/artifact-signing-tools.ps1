@@ -50,7 +50,7 @@ function Get-ArtifactSigningClientRoots {
     $(if ($env:ProgramData) { Join-Path $env:ProgramData 'Microsoft\ArtifactSigningClientTools' }),
     # Per-user installs (only used when Microsoft-signed).
     $(if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Microsoft\ArtifactSigningClientTools' }),
-    # Legacy / NuGet manual unpack — usually unsigned; removed by setup repair.
+    # Legacy / NuGet manual unpack (usually unsigned); removed by setup repair.
     $(if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'Microsoft\MicrosoftArtifactSigningClientTools' })
   ) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Container) } | Select-Object -Unique
 }
@@ -177,10 +177,10 @@ function Select-MicrosoftSignedArtifactTool {
 
   throw (
     "$Label candidates were found but none have a valid Microsoft Authenticode signature. " +
-    "This usually means a manual/NuGet copy under AppData — not the official MSI. " +
-    "In an elevated PowerShell: npm run setup:win:artifact-signing:repair " +
-    "(or delete `$env:LOCALAPPDATA\Microsoft\MicrosoftArtifactSigningClientTools, then npm run setup:win:artifact-signing). " +
-    "Or set AZURE_ARTIFACT_SIGNING_DLIB_PATH to the signed Program Files (x86)\Microsoft\ArtifactSigningClientTools\bin\x64\Azure.CodeSigning.Dlib.dll. " +
+    'This usually means a manual or NuGet copy under AppData, not the official MSI. ' +
+    'In an elevated PowerShell: npm run setup:win:artifact-signing:repair ' +
+    '(or delete $env:LOCALAPPDATA\Microsoft\MicrosoftArtifactSigningClientTools, then npm run setup:win:artifact-signing). ' +
+    'Or set AZURE_ARTIFACT_SIGNING_DLIB_PATH to the signed Program Files (x86)\Microsoft\ArtifactSigningClientTools\bin\x64\Azure.CodeSigning.Dlib.dll. ' +
     "Rejected: $($rejected -join '; ')"
   )
 }

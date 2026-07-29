@@ -168,7 +168,7 @@ fn macos_finder_services_info() -> FinderServicesInfo {
                 .to_string()
         }
         (_, Some(true)) => {
-            "Services are registered but not enabled yet. Click Enable… — Keyboard Shortcuts checkboxes alone may not update this status on current macOS."
+            "Services are registered but not enabled yet. Click Enable…  -  Keyboard Shortcuts checkboxes alone may not update this status on current macOS."
                 .to_string()
         }
         (_, Some(false)) => {
@@ -403,7 +403,7 @@ pub(crate) fn macos_finder_sync_enabled() -> Option<bool> {
         return None;
     }
     if !text.contains(MACOS_FINDER_SYNC_BUNDLE_ID) {
-        // Not discovered yet — still treat as known+disabled when the appex exists.
+        // Not discovered yet  -  still treat as known+disabled when the appex exists.
         return Some(false);
     }
     Some(text.lines().any(|line| {

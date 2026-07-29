@@ -291,7 +291,7 @@ export async function handleBasicDrop(paths: string[]): Promise<void> {
   const limited = limitBasicInputPaths(paths);
   if (limited.paths.length === 0) return;
   // Wait only for OS handoff / Power apply locks. Do not wait on
-  // operationPreparing — that would deadlock behind destination/password dialogs.
+  // operationPreparing  -  that would deadlock behind destination/password dialogs.
   await waitUntilIncomingPathsApplyingClear();
   const preparation = beginBasicPreparation();
   if (!preparation) return;

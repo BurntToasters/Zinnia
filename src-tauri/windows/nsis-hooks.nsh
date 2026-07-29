@@ -1,6 +1,6 @@
 !macro ZINNIA_REGISTER_PROGID_OPEN EXT
   ; Enhance Tauri's default ProgId open verb. Do not write a parallel
-  ; SystemFileAssociations\ZinniaOpen — that doubles "Open with Zinnia" under
+  ; SystemFileAssociations\ZinniaOpen  -  that doubles "Open with Zinnia" under
   ; Show more options when the ProgId is already the default association.
   WriteRegStr HKCU "Software\Classes\run.rosie.zinnia${EXT}\shell\open" "MUIVerb" "Open with Zinnia"
   WriteRegStr HKCU "Software\Classes\run.rosie.zinnia${EXT}\shell\open" "Icon" "$INSTDIR\zinnia.exe"
