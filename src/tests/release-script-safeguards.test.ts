@@ -415,11 +415,14 @@ describe("release script safeguards", () => {
   });
 
   it("rejects beta manifests that reference another release", () => {
+    const { version } = JSON.parse(
+      fs.readFileSync(path.resolve(process.cwd(), "package.json"), "utf8"),
+    );
     expect(() =>
       validatePublishedBetaManifest({
         name: "latest-linux-beta-x86_64.json",
         contents: JSON.stringify({
-          version: "0.6.1-beta.1",
+          version,
           platforms: {
             "linux-x86_64": {
               url: "https://github.com/BurntToasters/zinnia/releases/download/v0.6.1-beta.0/Zinnia.AppImage",

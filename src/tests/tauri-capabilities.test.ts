@@ -114,6 +114,24 @@ describe("Tauri capability policy", () => {
     expect(generated.default?.permissions).toContain("shell:default");
   });
 
+  it("grants every invoke used by extract-window.ts", () => {
+    const source = fs.readFileSync(
+      path.resolve(process.cwd(), "src", "extract-window.ts"),
+      "utf8",
+    );
+    const commands = [
+      ...source.matchAll(/invoke(?:<[^>]+>)?\(\s*["'](\w+)["']/g),
+    ].map((match) => match[1]);
+    expect(commands.length).toBeGreaterThan(0);
+
+    const { permissions } = readCapability("extract");
+    const granted = new Set(permissions);
+    for (const command of new Set(commands)) {
+      const allow = `allow-${command.replaceAll("_", "-")}`;
+      expect(granted, `extract window invokes ${command}`).toContain(allow);
+    }
+  });
+
   it("keeps extract windows to their explicit core APIs", () => {
     const { permissions } = readCapability("extract");
 
@@ -124,6 +142,7 @@ describe("Tauri capability policy", () => {
         "core:window:allow-close",
         "core:window:allow-minimize",
         "core:window:allow-start-dragging",
+        "allow-probe-7z",
         "allow-load-settings",
         "allow-set-workspace-window-fx",
         "allow-supports-workspace-window-fx",
