@@ -50,6 +50,8 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Fix:** Keyboard dismissal now closes the Licenses sheet above Basic Settings first, and Settings shortcuts no longer act on the obscured lower layer.
 - **Fix:** Closing an extract window treats an already-exited 7-Zip kill as success and restores the child handle on real kill failure so close/cancel can retry instead of soft-locking.
 - **Fix:** Extract-window Cancel re-enables after a failed `cancel_7z` so the user can retry the kill.
+- **Security:** Archive create/update crash-recovery backups now journal content fingerprints (sha256) with the inode/file-id identity, so same-inode rewrites cannot be restored as the user’s archive.
+- **Fix:** Failed update installs always attempt `release_update` through a dedicated path that does not treat IPC errors as “still busy”, avoiding a stuck archive prepare slot until restart.
 
 ## Changes in `v0.6.0:`
 
