@@ -53,14 +53,12 @@ pub(crate) use staging::{create_private_stage_dir, resolve_existing_target};
 pub(crate) use commands::{
     prepare_password_transport, rewrite_args_for_managed_listfile, terminate_child,
 };
-#[cfg(all(test, unix))]
-pub(crate) use commit::assert_safe_extract_target_ancestors;
 #[cfg(test)]
 pub(crate) use commit::{
-    archive_backup_path, archive_stage_has_recovery_backups, commit_failure_should_scrub_staging,
-    merge_staged_extract, merge_staged_extract_with_commit, promote_archive_family,
-    publish_file_no_replace, rollback_cleanup, rollback_persisted_move_plan, write_move_plan,
-    MAX_EXTRACTED_BYTES,
+    archive_backup_path, archive_stage_has_recovery_backups, assert_safe_extract_target_ancestors,
+    commit_failure_should_scrub_staging, merge_staged_extract, merge_staged_extract_with_commit,
+    promote_archive_family, publish_file_no_replace, rollback_cleanup,
+    rollback_persisted_move_plan, validate_move_record, write_move_plan, MAX_EXTRACTED_BYTES,
 };
 #[cfg(test)]
 pub(crate) use journal::{

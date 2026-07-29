@@ -95,9 +95,19 @@ pub fn merge_reserved_settings(
     incoming: &mut serde_json::Map<String, serde_json::Value>,
 ) {
     for (key, value) in existing {
-        if key.starts_with('_') && !incoming.contains_key(key) {
-            incoming.insert(key.clone(), value.clone());
+        if !key.starts_with('_') {
+            continue;
         }
+        // Setup wizard keys are intentionally frontend-writable. Other `_`
+        // reserved keys stay owned by the on-disk copy so a buggy save cannot
+        // clobber backend-managed integration state.
+        if key == "_setupComplete" || key == "_setupWizardVersion" {
+            if !incoming.contains_key(key) {
+                incoming.insert(key.clone(), value.clone());
+            }
+            continue;
+        }
+        incoming.insert(key.clone(), value.clone());
     }
 }
 
@@ -392,6 +402,33 @@ mod tests {
         assert_eq!(
             incoming.get("_integrationUserDisabled"),
             Some(&serde_json::Value::Bool(true))
+        );
+    }
+
+    #[test]
+    fn merge_reserved_settings_keeps_backend_keys_over_incoming() {
+        let existing = parse_json_object(
+            r#"{"_integrationAutoEnabled":true,"_setupComplete":false,"_setupWizardVersion":1}"#,
+        )
+        .expect("existing object should parse");
+        let mut incoming = parse_json_object(
+            r#"{"_integrationAutoEnabled":false,"_setupComplete":true,"_setupWizardVersion":3}"#,
+        )
+        .expect("incoming object should parse");
+
+        merge_reserved_settings(&existing, &mut incoming);
+
+        assert_eq!(
+            incoming.get("_integrationAutoEnabled"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        assert_eq!(
+            incoming.get("_setupComplete"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        assert_eq!(
+            incoming.get("_setupWizardVersion"),
+            Some(&serde_json::Value::Number(3.into()))
         );
     }
 }
