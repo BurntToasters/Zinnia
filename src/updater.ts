@@ -19,6 +19,30 @@ let inFlightCheckIsInteractive = false;
 let updateGeneration = 0;
 const UPDATE_CHECK_TIMEOUT_MS = 30_000;
 const UPDATE_DOWNLOAD_TIMEOUT_MS = 120_000;
+const UPDATE_INSTALL_TIMEOUT_MS = 180_000;
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutMessage: string,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(timeoutMessage)),
+      timeoutMs,
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
 
 function clearPendingUpdate(closeResource: boolean): void {
   const update = pendingUpdate;
@@ -171,7 +195,11 @@ async function promptInstallAndRestart(
     }
     setStatus("Installing update");
     try {
-      await update.install();
+      await withTimeout(
+        update.install(),
+        UPDATE_INSTALL_TIMEOUT_MS,
+        `Update install timed out after ${UPDATE_INSTALL_TIMEOUT_MS / 1000} seconds.`,
+      );
       clearPendingUpdate(false);
       await relaunch();
     } catch (error) {

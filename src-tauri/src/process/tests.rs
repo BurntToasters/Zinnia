@@ -1163,6 +1163,45 @@ fn publish_rejects_symlink_swapped_ancestor_before_rename() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[test]
+fn assert_safe_extract_target_ancestors_rejects_parent_dir_escape() {
+    let root = temp_root("zinnia-parent-dir-escape");
+    let destination = root.join("destination");
+    let sibling = root.join("sibling");
+    std::fs::create_dir_all(destination.join("nested")).expect("destination");
+    std::fs::create_dir_all(&sibling).expect("sibling");
+    let escaped = destination.join("..").join("sibling").join("evil.txt");
+    let error = assert_safe_extract_target_ancestors(&destination, &escaped)
+        .expect_err("parent-dir escape must fail");
+    assert!(
+        error.contains("escaped destination"),
+        "unexpected error: {error}"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn validate_move_record_rejects_parent_dir_escape() {
+    let root = temp_root("zinnia-move-plan-escape");
+    let staged = root.join("staged");
+    let destination = root.join("destination");
+    std::fs::create_dir_all(&staged).expect("staged");
+    std::fs::create_dir_all(&destination).expect("destination");
+    let record = MoveRecord {
+        source: staged.join("file.txt"),
+        target: destination.join("..").join("evil.txt"),
+        publish_temp: None,
+        publish_identity: None,
+    };
+    let error = validate_move_record(&staged, &destination, &record)
+        .expect_err("parent-dir escape must fail");
+    assert!(
+        error.contains("unsafe extraction recovery move plan"),
+        "unexpected error: {error}"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
 #[cfg(not(windows))]
 #[test]
 fn persisted_move_plan_rolls_back_a_partial_merge() {

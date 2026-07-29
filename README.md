@@ -47,13 +47,17 @@ native build runs.
 
 - Zinnia registers common archive file types in packaged builds.
 - Windows NSIS builds add per-user Explorer verbs for `Open with Zinnia`,
-  `Extract with Zinnia`, and `Compress with Zinnia` (classic / “Show more options”).
+  `Extract with Zinnia`, and `Compress with Zinnia` as the classic fallback
+  (including Explorer’s “Show more options” path when the modern package is
+  unavailable).
 - Signed Windows NSIS builds also register a Win11 modern context menu via a
   **sparse identity MSIX** + `zinnia_shell.dll` (`Zinnia` submenu, plus top-level
-  Extract on archives). Zinnia itself stays a normal per-user NSIS Win32 install;
-  the MSIX is not a Store/AppX app package; it only grants package identity so
-  Explorer can load the shell DLL. See `src-tauri/windows/shell/README.md` and
-  `docs/QA-CONTEXT-MENUS.md`.
+  Extract on archives). After a successful modern registration, classic verbs
+  are removed so they do not stack under Show more options; they remain the
+  fallback when package registration fails. Zinnia itself stays a normal
+  per-user NSIS Win32 install; the MSIX is not a Store/AppX app package; it only
+  grants package identity so Explorer can load the shell DLL. See
+  `src-tauri/windows/shell/README.md` and `docs/QA-CONTEXT-MENUS.md`.
 - Linux `deb`, `rpm`, and Flatpak bundles include desktop `Open`, `Extract`, and
   `Compress` actions.
 - macOS users can choose Zinnia from Finder's Open With/Get Info default-app
