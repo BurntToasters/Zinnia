@@ -90,7 +90,7 @@ async function setupAndRun(
     }
     if (cmd === "close_extract_window") return undefined;
     if (cmd === "open_path") return undefined;
-    if (cmd === "cancel_7z") return undefined;
+    if (cmd === "cancel_7z") return true;
     return undefined;
   };
 
@@ -328,7 +328,7 @@ describe("extract-window", () => {
       }
       if (cmd === "cancel_7z") {
         resolveRun?.({ stdout: "", stderr: "", code: -1 });
-        return undefined;
+        return true;
       }
       return undefined;
     });
@@ -412,7 +412,7 @@ describe("extract-window", () => {
       invokeMock.mock.calls.filter(([name]) => name === "run_7z"),
     ).toHaveLength(1);
     expect(invokeMock.mock.calls.some(([name]) => name === "probe_7z")).toBe(
-      false,
+      true,
     );
   });
 

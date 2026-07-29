@@ -1112,7 +1112,10 @@ pub async fn run_7z(
         // progress than extracting. Structured state is still emitted as
         // soon as it is available.
         if last_raw_progress_emit.elapsed() >= std::time::Duration::from_millis(75) {
-            let _ = emit_window.emit("7z-progress", chunk.to_string());
+            let _ = emit_window.emit(
+                "7z-progress",
+                crate::output::sanitize_output(chunk),
+            );
             last_raw_progress_emit = std::time::Instant::now();
         }
         if let Some(update) = parse_progress_line(chunk) {
@@ -1314,12 +1317,18 @@ pub async fn probe_7z(
     result
 }
 
+/// Cancel the in-flight 7z job owned by this window.
+///
+/// Returns `Ok(true)` when a child was killed or a prepare slot was marked
+/// cancelling. Returns `Ok(false)` when idle (nothing to cancel) so callers do
+/// not stick a "Cancelled" UI flag across a password-prompt gap and then treat
+/// a later successful retry as cancelled.
 #[tauri::command]
 pub fn cancel_7z(
     window: tauri::Window,
     state: tauri::State<'_, RunningProcess>,
-) -> Result<(), String> {
-    let child = {
+) -> Result<bool, String> {
+    let (child, armed) = {
         let mut process = lock_process(&state)?;
         if let Some(owner) = &process.owner_label {
             if owner != window.label() {
@@ -1331,23 +1340,23 @@ pub fn cancel_7z(
         match process.child.take() {
             Some(child) => {
                 process.cancelling = true;
-                Some(child)
+                (Some(child), true)
             }
             None if process.preparing => {
                 process.cancelling = true;
-                None
+                (None, true)
             }
-            None => None,
+            None => (None, false),
         }
     };
 
     if let Some(child) = child {
         match child.kill() {
-            Ok(()) => Ok(()),
+            Ok(()) => Ok(true),
             Err(e) => {
                 let msg = e.to_string();
                 if is_non_running_kill_error(&msg) {
-                    Ok(())
+                    Ok(true)
                 } else {
                     // Put the handle back so a later cancel can retry the kill.
                     if let Ok(mut process) = lock_process(&state) {
@@ -1361,7 +1370,7 @@ pub fn cancel_7z(
             }
         }
     } else {
-        Ok(())
+        Ok(armed)
     }
 }
 

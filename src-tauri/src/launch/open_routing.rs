@@ -58,8 +58,16 @@ pub(crate) fn take_shell_handoff_error() -> Option<String> {
 /// A later, already-running-window open request (secondary instance argv
 /// forwarding, Reopen) can emit live because a listener exists. Consume error
 /// once so a later valid Explorer request cannot replay a stale warning.
+///
+/// When no webview is listening (extract warm-idle / pre-main), leave the
+/// error in place for `get_shell_handoff_error` after main opens.
 #[cfg(windows)]
 pub(crate) fn emit_pending_shell_handoff_error(app: &tauri::AppHandle) {
+    let has_listener =
+        app.get_webview_window("main").is_some() || has_extract_windows(app);
+    if !has_listener {
+        return;
+    }
     let message = take_shell_handoff_error();
     if let Some(message) = message {
         let _ = app.emit(

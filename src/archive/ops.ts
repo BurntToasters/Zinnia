@@ -205,6 +205,7 @@ export async function runBatchExtract() {
           `-o${dest}`,
           SAFE_EXTRACT_OVERWRITE_MODE,
           "-bb1",
+          "-bsp1",
           "-spd",
         ];
         if (password) args.push(`-p${password}`);
@@ -275,10 +276,17 @@ export async function runBatchExtract() {
 export async function cancelAction() {
   if (!state.running) return;
   state.batchCancelled = true;
-  state.cancelRequested = true;
   setStatus("Cancelling...");
   try {
-    await invoke("cancel_7z");
+    const armed = await invoke<boolean>("cancel_7z");
+    // Idle Ok (password-prompt gap / between batch items) must not stick
+    // cancelRequested across a later successful run_7z.
+    state.cancelRequested = armed;
+    if (!armed) {
+      state.batchCancelled = false;
+      setStatus("Running");
+      return;
+    }
     devLog("Cancel signal sent to running process.");
   } catch (err) {
     const messageText = err instanceof Error ? err.message : String(err);

@@ -193,12 +193,18 @@ export async function runWithPasswordRetry(
     result.code > 1 &&
     looksLikePasswordRequiredError(result.stdout, result.stderr)
   ) {
+    if (state.cancelRequested) {
+      return result;
+    }
     const password = await promptInput({
       title: "Password required",
       label: "This archive is encrypted. Enter password:",
       password: true,
       confirmLabel,
     });
+    if (state.cancelRequested) {
+      return result;
+    }
     if (password) {
       setStatus("Retrying with password");
       result = await invoke<Run7zResult>("run_7z", {

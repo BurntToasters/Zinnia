@@ -404,7 +404,7 @@ export async function init() {
             // input change cannot browse a different primary after await.
             const primary = state.inputs[0];
             if (
-              (await allPathsAreArchives([primary])) &&
+              (await allPathsAreArchives([primary])) === true &&
               getMode() === "browse" &&
               state.inputs[0] === primary
             ) {

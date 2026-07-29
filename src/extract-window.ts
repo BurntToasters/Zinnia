@@ -350,13 +350,20 @@ async function run() {
 
   cancelBtn.addEventListener("click", async () => {
     if (operationFinished) return;
-    cancelRequested = true;
     cancelBtn.disabled = true;
     openDestinationBtn.disabled = true;
     closeBtn.disabled = true;
     $("extract-status").textContent = "Cancelling...";
     try {
-      await invoke("cancel_7z");
+      const armed = await invoke<boolean>("cancel_7z");
+      cancelRequested = armed;
+      if (!armed) {
+        // Idle cancel (e.g. password-prompt gap): do not stick Cancelled across
+        // a later successful retry. Re-enable controls for the still-running UI.
+        cancelBtn.disabled = false;
+        closeBtn.disabled = false;
+        $("extract-status").textContent = "Extracting...";
+      }
     } catch (err) {
       cancelRequested = false;
       // All three buttons were disabled above before the cancel request. A
@@ -455,6 +462,14 @@ async function run() {
     stopProgressAt(0, false);
     setButtons(false, false, true);
     operationFinished = true;
+    return;
+  }
+
+  try {
+    await invoke<string>("probe_7z");
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    showError(`Could not prepare 7-Zip: ${detail}`);
     return;
   }
 

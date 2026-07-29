@@ -16,7 +16,9 @@ import { setBasicView } from "./basic";
 // keeps OS handoff handling independent of archive-probe test doubles.
 const MAX_INCOMING_PATHS = 4096;
 
-export async function allPathsAreArchives(paths: string[]): Promise<boolean> {
+export async function allPathsAreArchives(
+  paths: string[],
+): Promise<boolean | null> {
   if (paths.length === 0) return false;
   try {
     const results = await validateArchivePaths(paths);
@@ -26,7 +28,8 @@ export async function allPathsAreArchives(paths: string[]): Promise<boolean> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     devLog(`Archive probe failed for auto-detect: ${msg}`);
-    return false;
+    // Fail closed: unknown must not route archives into Compress.
+    return null;
   }
 }
 
@@ -164,7 +167,7 @@ async function applyIncomingPathsUnlocked(
     return;
   }
 
-  let allArchives: boolean;
+  let allArchives: boolean | null;
   // Archive detection crosses the IPC boundary. An operation or Basic
   // preparation may start while that await is pending, so re-check and retry
   // before touching shared input. Wait only on job/prep — we already hold
@@ -173,6 +176,19 @@ async function applyIncomingPathsUnlocked(
     allArchives = await allPathsAreArchives(paths);
     if (!isIncomingPathMutationBlocked()) break;
     await waitUntilJobOrPrepAllowsMutation();
+  }
+  if (allArchives === null) {
+    log(
+      `Could not detect whether paths from ${source} are archives; left inputs unchanged.`,
+      "error",
+    );
+    const { showToast } = await import("./toast");
+    showToast(
+      "Could not detect archive types for the dropped files. Try again.",
+      "error",
+      5000,
+    );
+    return;
   }
   const shouldAutoBrowse =
     mode !== "extract" && paths.length === 1 && allArchives;

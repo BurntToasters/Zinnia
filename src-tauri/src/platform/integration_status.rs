@@ -312,7 +312,7 @@ fn win11_modern_menu_status_for(platform: &str, packaged: bool) -> Win11ModernMe
             available: true,
             known: true,
             registered: true,
-            help: "Win11 modern menu package is registered (sparse identity only; Zinnia remains a normal NSIS install). Confirm Extract/Compress actually launch from the primary menu; classic verbs remain under Show more options.".to_string(),
+            help: "Win11 modern menu package is registered (sparse identity only; Zinnia remains a normal NSIS install). Confirm Extract/Compress launch from the primary menu. Classic HKCU Extract/Compress verbs are removed on success so they do not stack under Show more options; they return only if package registration fails.".to_string(),
         },
         Some(false) => Win11ModernMenuInfo {
             available: true,
@@ -445,7 +445,7 @@ fn finder_sync_status_for(platform: &str, packaged: bool) -> FinderSyncInfo {
                 available: true,
                 known: true,
                 enabled: true,
-                help: "Finder Sync is enabled. Extract / Compress with Zinnia appear in Finder's primary right-click menu.".to_string(),
+                help: "Finder Sync is enabled. Extract / Compress with Zinnia appear in Finder's primary right-click menu on Desktop, Documents, Downloads, Movies, Music, Pictures, and mounted volumes. Use Finder Services elsewhere.".to_string(),
             },
             Some(false) => FinderSyncInfo {
                 available: true,

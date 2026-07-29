@@ -91,7 +91,7 @@ export async function runBasicBrowseArchive(): Promise<void> {
 
 export async function partitionByArchive(
   paths: string[],
-): Promise<{ archives: string[]; others: string[] }> {
+): Promise<{ archives: string[]; others: string[] } | null> {
   try {
     const results = await validateArchivePaths(paths);
     const validByPath = new Map(results.map((r) => [r.path, r.valid]));
@@ -102,8 +102,10 @@ export async function partitionByArchive(
       else others.push(p);
     }
     return { archives, others };
-  } catch {
-    return { archives: [], others: paths };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Archive probe failed while sorting drop: ${msg}`, "error");
+    return null;
   }
 }
 
@@ -169,8 +171,19 @@ async function handleBasicDropOnce(
 ): Promise<void> {
   if (paths.length === 0) return;
 
-  const { archives, others } = await partitionByArchive(paths);
+  const partitioned = await partitionByArchive(paths);
   if (!isBasicPreparationCurrent(preparation)) return;
+  if (!partitioned) {
+    finishBasicPreparation(preparation);
+    const { showToast } = await import("../toast");
+    showToast(
+      "Could not detect archive types for the dropped files. Try again.",
+      "error",
+      5000,
+    );
+    return;
+  }
+  const { archives, others } = partitioned;
   const allArchives = others.length === 0 && archives.length > 0;
   const mixed = archives.length > 0 && others.length > 0;
 

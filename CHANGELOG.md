@@ -24,14 +24,21 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 ## Changes in `v0.6.1-beta.1:`
 
 - **Fix:** Windows Explorer shell handoffs that fail during cold start (oversized selection, wrong owner, malformed list) now surface a toast via `get_shell_handoff_error` instead of silently opening with no paths.
+- **Fix:** Warm-idle Explorer handoff failures keep the error for the main-window poll instead of emitting into a void (no webview) and clearing it.
+- **Fix:** Cancel during an idle password-prompt gap no longer sticks a Cancelled result across a later successful extract (`cancel_7z` returns whether a job was armed).
+- **Fix:** Archive-probe IPC failures fail closed (toast) instead of auto-routing drops into Compress.
 - **Fix:** Basic extract password prompts distinguish wrong passwords from backend/IPC failures so unrelated errors no longer loop as “Incorrect password”.
 - **Fix:** Basic encryption probing treats probe failures as “assume encrypted” so password-protected archives are never skipped silently.
 - **Fix:** Windows settings saves use atomic `rename` replace-existing promotion (with stale `.bak` cleanup) instead of a rename-to-backup window that could briefly leave settings missing.
+- **Fix:** Main/batch/selective extract pass `-bsp1` so live percent progress matches the extract-only window.
+- **Fix:** OS Integration help no longer claims classic Explorer verbs remain under Show more options after a successful Win11 package registration.
+- **Fix:** Extract-only window probes 7-Zip before extract so the Windows RAR gate can lift after a future attested sidecar bump.
 - **Performance:** Archive-input snapshots use APFS `fclonefileat` and Linux `FICLONE` when available before falling back to a byte copy (CoW clones share blocks on APFS/Btrfs; free-space preflight still reserves for full byte-copy worst case).
 - **Performance:** Large merge-into-existing extractions journal publish identities append-only instead of rewriting the full move-plan JSON after every file (avoids O(n²) I/O).
 - **Fix:** Startup sweeps orphaned `%TEMP%` shell-handoff files (owner-checked) and stale `zinnia-7z-list-*` directories (nofollow + age gate) after crashes; stale Zinnia temp dirs use hardened cleanup.
 - **Fix:** File/folder pickers and incoming-path apply respect Basic preparation locks without self-deadlock; dialog failures log clearly instead of failing silently.
 - **Tooling:** Node.js engine requirement is `>=22.12` (Node 25+ no longer capped out).
+- **Tooling:** Live updater smoke fails closed on same-channel stale `/latest` feeds while still soft-passing when nothing is published yet.
 
 ## Changes in `v0.6.0:`
 
@@ -46,7 +53,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **NEW - Recents:** Compact titlebar dropdown in Basic mode; missing paths drop automatically.
 - **UI:** Basic locks main window size when active (non-resizable/non-maximizable); titlebar Maximize is disabled in Basic; roomier Settings sheet; `Ctrl`/`⌘` + `,` opens Settings; stacked modal focus traps; Basic progress clears `aria-busy` when finished.
 - **UI:** Selective extract picker uses archive-native path separators; folder toggles and Select all respect rendered rows, search visibility, and the 1,000-row budget; browse tree construction is iterative with depth/member limits.
-- **UI:** Completion notes for Unix execute-bit restore, macOS `.app` quarantine clearing, and clearer errors for symlink/reparse inputs.
+- **UI:** Clearer errors for symlink/reparse inputs.
 - **UI:** Timestamp option label matches behavior (created + accessed; modification always stored); Basic glass no longer paints a solid dock behind Compress; extract-only window matches Basic glass/opaque theming.
 - **Windows:** NSIS migrates legacy `v0.5.3` context-menu registration to the `v0.6.0` shell layout; versioned side-by-side shell DLL/MSIX payloads prevent loaded DLLs from blocking updates; uninstall retries sparse AppX removal.
 - **Windows:** OS Integration reads live default-app ProgId per format; Ready detection accepts Win11 sparse packages when classic verbs were removed; legacy duplicate Open/Extract/Compress stacking under Show more options is removed on upgrade.

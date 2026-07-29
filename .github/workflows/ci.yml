@@ -78,7 +78,8 @@ jobs:
         with:
           node-version: 22.12
       - run: npm run validate:updater
-      # Feed-shape smoke only. Candidate-bound validation runs after publish.
+      # Soft when unpublished (all 404). When same-channel /latest exists, must
+      # match package.json (stale beta/stable feeds fail closed).
       - name: Published updater feed sanity
         run: npm run validate:updater:live
 

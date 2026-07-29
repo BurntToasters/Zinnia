@@ -190,7 +190,10 @@ export function buildEntryTree(
       if (!node) {
         node = {
           name,
-          path: nodePath,
+          // Keep the archive-native path on leaves so selection Sets match
+          // `entry.path` even when majority-separator rewriting would diverge
+          // for mixed `/`+`\` listings. Intermediate folders stay synthesized.
+          path: isLeaf ? entry.path : nodePath,
           isFolder: isLeaf ? entry.isFolder : true,
           size: isLeaf && !entry.isFolder ? entry.size : 0,
           depth: index,
@@ -198,6 +201,9 @@ export function buildEntryTree(
         };
         parent.children.push(node);
         byPath.set(nodePath, node);
+        if (isLeaf && entry.path !== nodePath) {
+          byPath.set(entry.path, node);
+        }
       } else if (isLeaf) {
         if (entry.isFolder) node.isFolder = true;
         else node.size = entry.size;
@@ -306,7 +312,13 @@ export function buildSelectiveExtractArgs(
   extraArgs: string[],
   selectedPaths: string[],
 ): string[] {
-  const args = ["x", `-o${destination}`, SAFE_EXTRACT_OVERWRITE_MODE, "-spd"];
+  const args = [
+    "x",
+    `-o${destination}`,
+    SAFE_EXTRACT_OVERWRITE_MODE,
+    "-spd",
+    "-bsp1",
+  ];
   if (password) args.push(`-p${password}`);
   args.push(...extraArgs);
   if (selectedPaths.length > 0) {

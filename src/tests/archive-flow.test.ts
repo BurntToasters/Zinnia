@@ -969,6 +969,22 @@ describe("archive test/browse/selective flows", () => {
     );
   });
 
+  it("does not stick cancelRequested when cancel_7z reports idle", async () => {
+    state.running = true;
+    state.batchCancelled = false;
+    state.cancelRequested = false;
+    setInvokeRouter((command) => {
+      if (command === "cancel_7z") return false;
+      return undefined;
+    });
+
+    await cancelAction();
+
+    expect(state.cancelRequested).toBe(false);
+    expect(state.batchCancelled).toBe(false);
+    expect(invokeMock).toHaveBeenCalledWith("cancel_7z");
+  });
+
   it("shows missing-info preview dialog when command args cannot be built", async () => {
     const app = document.getElementById("app") as HTMLElement;
     app.dataset.mode = "add";

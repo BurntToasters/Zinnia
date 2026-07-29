@@ -62,18 +62,9 @@ operations:
   that contain symlinks or `.app` bundles—prefer `7z` or `tar`.
 - `-sns` (NTFS alternate streams) and `-sni` (NT security descriptors) remain
   blocked: packing ADS / ACLs is a known hiding and privilege footgun.
-- On macOS, after a successful extract promote, Zinnia clears
-  `com.apple.quarantine` on `.app` bundles under the destination (so Gatekeeper
-  does not treat a user-initiated app extract like an untrusted download) and
-  reports how many bundles were cleared. Quarantine is **not** stripped from the
-  whole tree—broad clearing is a known Gatekeeper-bypass pattern. Clearing
-  quarantine does not make untrusted software safe to run.
 - On Windows extract, Zinnia injects 7-Zip `-snz` so Mark-of-the-Web
   (`Zone.Identifier`) propagates from a downloaded archive onto extracted files
   (SmartScreen / Office Protected View). Zinnia does **not** strip MOTW.
-- On Unix, after extract, Zinnia may restore the execute bit on files that look
-  like binaries or scripts (ELF / Mach-O / shebang / common extensions) when the
-  archive format omitted Unix modes (common with ZIP).
 - Promotion resolves file/directory conflicts without overwriting unrelated
   destination content. A durable move plan and transaction journal allow an
   interrupted merge or split-archive promotion to be rolled back on restart.
@@ -193,10 +184,12 @@ validation checks remain mandatory defense in depth.
 
 On Unix, promote opens use `O_NOFOLLOW` for the final path component. On
 Windows, `open_regular_file_nofollow` opens with `FILE_FLAG_OPEN_REPARSE_POINT`
-and rejects reparse tags on the opened handle. Archive publish prefers
-`hard_link` while that handle is held and falls back to copying from the same
-handle (no path re-open). Residual same-user TOCTOU remains for the hard_link
-path name lookup itself.
+and rejects reparse tags on the opened handle. Archive publish syncs the
+source through that nofollow handle, then uses exclusive path `rename` /
+`hard_link` (same residual TOCTOU as above). When neither is available, the
+fallback exclusive-create copy re-opens the source with nofollow and copies
+from that held handle. Residual same-user TOCTOU remains for the rename /
+hard_link path-name lookup itself.
 
 ### Open-folder allowlist
 
