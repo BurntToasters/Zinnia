@@ -11,6 +11,7 @@
     "core:window:allow-minimize",
     "allow-run-7z",
     "allow-cancel-7z",
+    "allow-probe-7z",
     "allow-get-extract-paths",
     "allow-close-extract-window",
     "allow-open-path",
