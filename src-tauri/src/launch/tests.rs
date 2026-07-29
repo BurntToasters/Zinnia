@@ -7,13 +7,21 @@ use super::extract_window::{
 use super::open_path::{derive_extract_destination_path, normalize_destination_path};
 use super::open_routing::{
     enqueue_pending_batch, looks_like_archive_path, parse_open_request_args,
-    parse_open_request_args_ex, parse_shell_handoff_contents, should_use_extract_window,
+    parse_open_request_args_ex, parse_shell_handoff_contents, record_shell_handoff_error,
+    should_use_extract_window, take_shell_handoff_error,
 };
 use super::OpenPathsPayload;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tauri::Url;
 
 static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+#[test]
+fn shell_handoff_error_is_consumed_once() {
+    record_shell_handoff_error("bad handoff".to_string());
+    assert_eq!(take_shell_handoff_error().as_deref(), Some("bad handoff"));
+    assert_eq!(take_shell_handoff_error(), None);
+}
 
 #[test]
 fn extract_session_init_script_escapes_js_line_separators() {

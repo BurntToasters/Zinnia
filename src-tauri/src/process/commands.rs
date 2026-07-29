@@ -2,7 +2,7 @@
 
 use shared_child::SharedChild;
 use std::{
-    io::{BufReader, Write},
+    io::Write,
     process::Stdio,
     sync::{Arc, Mutex, RwLock},
 };
@@ -36,14 +36,25 @@ where
     R: std::io::Read,
     F: Fn(Vec<u8>) -> CommandEvent + Copy,
 {
-    let mut reader = BufReader::new(reader);
+    let mut reader = reader;
+    const MAX_STREAM_RECORD_BYTES: usize = 16 * 1024;
+    let mut buffer = [0u8; 8 * 1024];
+    let mut pending = Vec::with_capacity(MAX_STREAM_RECORD_BYTES);
     loop {
-        let mut bytes = Vec::new();
-        match tauri::utils::io::read_line(&mut reader, &mut bytes) {
+        match reader.read(&mut buffer) {
             Ok(0) => break,
-            Ok(_) => {
-                let tx = tx.clone();
-                let _ = block_on(async move { tx.send(wrap(bytes)).await });
+            Ok(read) => {
+                for byte in &buffer[..read] {
+                    pending.push(*byte);
+                    if *byte == b'\n' || pending.len() == MAX_STREAM_RECORD_BYTES {
+                        let bytes = std::mem::replace(
+                            &mut pending,
+                            Vec::with_capacity(MAX_STREAM_RECORD_BYTES),
+                        );
+                        let tx = tx.clone();
+                        let _ = block_on(async move { tx.send(wrap(bytes)).await });
+                    }
+                }
             }
             Err(error) => {
                 let tx = tx.clone();
@@ -52,6 +63,10 @@ where
                 break;
             }
         }
+    }
+    if !pending.is_empty() {
+        let tx = tx.clone();
+        let _ = block_on(async move { tx.send(wrap(pending)).await });
     }
 }
 
@@ -447,6 +462,18 @@ fn assert_compress_inputs_are_real_paths(
             "GZIP, BZIP2, and XZ compression require exactly one regular input file.".to_string(),
         );
     }
+    let output = operation_output_path(args)
+        .ok_or_else(|| "Compression command is missing its output archive path.".to_string())?;
+    let output_parent = output
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .canonicalize()
+        .map_err(|error| format!("Could not resolve archive output parent: {error}"))?;
+    let output_name = output
+        .file_name()
+        .ok_or_else(|| "Archive output has no file name.".to_string())?;
+    let resolved_output = output_parent.join(output_name);
+    let mut top_level_names = std::collections::HashMap::<String, String>::new();
     for path in &inputs {
         let fs_path = std::path::Path::new(path);
         let meta = match std::fs::symlink_metadata(fs_path) {
@@ -471,20 +498,63 @@ fn assert_compress_inputs_are_real_paths(
                 "GZIP, BZIP2, and XZ compression require one regular file, not a directory or special entry: {path}"
             ));
         }
+        let canonical = fs_path
+            .canonicalize()
+            .map_err(|error| format!("Could not resolve input path '{path}': {error}"))?;
+        if (meta.is_dir() && resolved_output.starts_with(&canonical))
+            || (meta.is_file() && canonical == resolved_output)
+        {
+            return Err(format!(
+                "The output archive cannot be placed inside a selected input directory or used as its own input: {}",
+                resolved_output.display()
+            ));
+        }
+        let name = canonical
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| format!("Input path has an invalid file name: {path}"))?;
+        // Archive roots become one top-level namespace. Reject collisions
+        // case-insensitively so archives behave consistently after moving
+        // between Windows, macOS, and Linux filesystems.
+        let portable_name = name.to_lowercase();
+        if let Some(previous) = top_level_names.insert(portable_name, path.clone()) {
+            if previous != *path {
+                return Err(format!(
+                    "Selected inputs have the same top-level archive name: '{previous}' and '{path}'. Rename one item or add their common parent folder."
+                ));
+            }
+        }
     }
     super::compress_preflight::assert_no_nested_reparse_for_compress(&inputs)
 }
 
-#[tauri::command]
-pub fn probe_compress_inputs(
-    paths: Vec<String>,
-) -> Result<super::compress_preflight::CompressInputProbe, String> {
-    super::compress_preflight::probe_compress_input_paths(&paths)
+/// Check whether the owning window cancelled while an operation is in its
+/// pre-spawn phase. Callers that have already created staging must roll it
+/// back before releasing the slot.
+fn preparation_was_cancelled(state: &RunningProcess) -> Result<bool, String> {
+    Ok(lock_process(state)?.cancelling)
 }
 
-/// Windows RAR extract stays blocked for CVE-2026-58052 through this version inclusive.
-#[cfg(target_os = "windows")]
-const WINDOWS_RAR_EXTRACT_BLOCKED_THROUGH: &str = "26.02";
+/// Release a pre-spawn operation that has no staging resources to clean up.
+fn abort_cancelled_preparation(state: &RunningProcess) -> Result<(), String> {
+    let mut process = lock_process(state)?;
+    if !process.cancelling {
+        return Ok(());
+    }
+    process.release_prepare_slot();
+    Err("Archive operation was cancelled during preparation.".to_string())
+}
+
+#[tauri::command]
+pub async fn probe_compress_inputs(
+    paths: Vec<String>,
+) -> Result<super::compress_preflight::CompressInputProbe, String> {
+    tokio::task::spawn_blocking(move || {
+        super::compress_preflight::probe_compress_input_paths(&paths)
+    })
+    .await
+    .map_err(|error| format!("Compress-input probe worker failed: {error}"))?
+}
 
 pub(crate) fn store_probed_7z_version(version: Option<String>) {
     if let Ok(mut guard) = PROBED_7Z_VERSION.lock() {
@@ -492,7 +562,7 @@ pub(crate) fn store_probed_7z_version(version: Option<String>) {
     }
 }
 
-#[allow(dead_code)] // Attested version for Windows RAR gate and future callers.
+#[allow(dead_code)] // Retained for diagnostics and future sidecar capability checks.
 pub fn probed_7z_version() -> Option<String> {
     PROBED_7Z_VERSION
         .lock()
@@ -518,29 +588,6 @@ pub fn parse_7z_version(output: &str) -> Option<String> {
         }
     }
     None
-}
-
-#[cfg_attr(not(any(test, target_os = "windows")), allow(dead_code))]
-pub(crate) fn version_cmp(a: &str, b: &str) -> Option<std::cmp::Ordering> {
-    let parse = |value: &str| -> Option<Vec<u32>> {
-        value
-            .split('.')
-            .map(|part| part.parse::<u32>().ok())
-            .collect()
-    };
-    Some(parse(a)?.cmp(&parse(b)?))
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn windows_rar_extract_blocked() -> bool {
-    match probed_7z_version() {
-        Some(version) => !matches!(
-            version_cmp(&version, WINDOWS_RAR_EXTRACT_BLOCKED_THROUGH),
-            Some(std::cmp::Ordering::Greater)
-        ),
-        // Fail closed until probe attests a safe runtime.
-        None => true,
-    }
 }
 
 pub fn is_non_running_kill_error(message: &str) -> bool {
@@ -630,10 +677,40 @@ pub async fn run_7z(
     app: tauri::AppHandle,
     window: tauri::Window,
     args: Vec<String>,
+    expected_archive_identity: Option<String>,
     state: tauri::State<'_, RunningProcess>,
 ) -> Result<RunResult, String> {
     validate_run_7z_args(&args)?;
-    assert_compress_inputs_are_real_paths(&app, &args)?;
+
+    // Claim the slot before every potentially slow pre-spawn phase. Without
+    // this, Cancel could report "idle" while a recursive input scan or startup
+    // recovery wait continued toward a real archive publish.
+    {
+        let mut process = lock_process(&state)?;
+        ensure_idle(&process)?;
+        process.preparing = true;
+        process.owner_label = Some(window.label().to_string());
+        process.abort_reason = None;
+    }
+
+    let preflight_app = app.clone();
+    let preflight_args = args.clone();
+    let preflight_result = tokio::task::spawn_blocking(move || {
+        assert_compress_inputs_are_real_paths(&preflight_app, &preflight_args)
+    })
+    .await;
+    abort_cancelled_preparation(&state)?;
+    match preflight_result {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            release_prepare_slot_best_effort(&state);
+            return Err(error);
+        }
+        Err(error) => {
+            release_prepare_slot_best_effort(&state);
+            return Err(format!("Compress-input preflight worker failed: {error}"));
+        }
+    }
 
     let mut args = args;
     harden_7z_args(&mut args);
@@ -658,47 +735,53 @@ pub async fn run_7z(
     }
 
     if let Some("x" | "l" | "t") = args.first().map(String::as_str) {
-        let separator = args
-            .iter()
-            .position(|arg| arg == "--")
-            .ok_or_else(|| "Archive command is missing '--'.".to_string())?;
-        let archive = args
-            .get(separator + 1)
-            .ok_or_else(|| "Archive command is missing an archive path.".to_string())?;
+        let separator = match args.iter().position(|arg| arg == "--") {
+            Some(separator) => separator,
+            None => {
+                release_prepare_slot_best_effort(&state);
+                return Err("Archive command is missing '--'.".to_string());
+            }
+        };
+        let archive = match args.get(separator + 1) {
+            Some(archive) => archive,
+            None => {
+                release_prepare_slot_best_effort(&state);
+                return Err("Archive command is missing an archive path.".to_string());
+            }
+        };
         let validation = crate::archive_detect::validate_archive_path(archive);
         if !validation.valid {
+            release_prepare_slot_best_effort(&state);
             return Err(validation
                 .reason
                 .unwrap_or_else(|| "Archive path failed validation.".to_string()));
         }
-        #[cfg(target_os = "windows")]
-        if args.first().map(String::as_str) == Some("x")
-            && crate::archive_detect::is_rar_archive_file(std::path::Path::new(archive))?
-            && windows_rar_extract_blocked()
-        {
-            return Err("RAR extraction is temporarily disabled on Windows while conflicting CVE-2026-58052 affected-version data is resolved. Install a future Zinnia release after the bundled runtime has been conclusively verified.".to_string());
-        }
     }
     if window.label().starts_with("extract-") {
         if args.first().map(String::as_str) != Some("x") {
+            release_prepare_slot_best_effort(&state);
             return Err("Quick-extract windows may only start extraction commands.".to_string());
         }
-        let Some(requested) = operation_output_path(&args) else {
-            return Err("Extraction command is missing an output directory.".to_string());
+        let requested = match operation_output_path(&args) {
+            Some(requested) => requested,
+            None => {
+                release_prepare_slot_best_effort(&state);
+                return Err("Extraction command is missing an output directory.".to_string());
+            }
         };
-        crate::launch::assert_extract_bound_destination(&app, window.label(), &requested)?;
+        if let Err(error) =
+            crate::launch::assert_extract_bound_destination(&app, window.label(), &requested)
+        {
+            release_prepare_slot_best_effort(&state);
+            return Err(error);
+        }
     }
+    abort_cancelled_preparation(&state)?;
 
-    // Serialize past the one-shot startup recovery before claiming the operation slot.
+    // Startup recovery may take time on a large interrupted transaction. The
+    // operation already owns its prepare slot, so Cancel is meaningful here.
     wait_for_startup_recovery().await;
-
-    {
-        let mut process = lock_process(&state)?;
-        ensure_idle(&process)?;
-        process.preparing = true;
-        process.owner_label = Some(window.label().to_string());
-        process.abort_reason = None;
-    }
+    abort_cancelled_preparation(&state)?;
 
     if let Err(error) = recover_interrupted_transaction(&app) {
         if let Ok(mut process) = lock_process(&state) {
@@ -708,8 +791,10 @@ pub async fn run_7z(
             "A previous archive transaction still requires recovery: {error}"
         ));
     }
+    abort_cancelled_preparation(&state)?;
 
     let plan_args = args.clone();
+    let plan_expected_identity = expected_archive_identity.clone();
     let cache_dir = match app.path().app_cache_dir() {
         Ok(dir) => Some(dir),
         Err(error) => {
@@ -720,7 +805,7 @@ pub async fn run_7z(
         }
     };
     let cleanup_plan = match tokio::task::spawn_blocking(move || {
-        prepare_cleanup_plan(&plan_args, cache_dir)
+        prepare_cleanup_plan(&plan_args, cache_dir, plan_expected_identity.as_deref())
     })
     .await
     {
@@ -738,6 +823,19 @@ pub async fn run_7z(
             return Err(format!("Archive preparation task failed: {error}"));
         }
     };
+
+    // This worker may have created a private stage. Roll it back before
+    // releasing ownership so another operation cannot race the cleanup.
+    if preparation_was_cancelled(&state)? {
+        let rollback_error = rollback_cleanup(&cleanup_plan).err();
+        release_prepare_slot_best_effort(&state);
+        return Err(match rollback_error {
+            Some(rollback_error) => format!(
+                "Archive operation was cancelled during preparation.; staging cleanup also failed: {rollback_error}"
+            ),
+            None => "Archive operation was cancelled during preparation.".to_string(),
+        });
+    }
 
     // Persist the journal as soon as staging exists so a crash during rewrite
     // or member preflight can still recover the stage path.
@@ -892,6 +990,30 @@ pub async fn run_7z(
                 },
             });
         }
+    }
+
+    // Do not spawn a child after a Cancel that arrived during synchronous
+    // rewrite/identity work. This keeps Cancel from becoming a false UI-only
+    // acknowledgement immediately before a create/update publish.
+    if preparation_was_cancelled(&state)? {
+        let rollback_error = rollback_cleanup(&cleanup_plan).err();
+        let journal_error = if rollback_error.is_none() {
+            journal_guard.clear().err()
+        } else {
+            None
+        };
+        release_prepare_slot_best_effort(&state);
+        return Err(match rollback_error {
+            Some(rollback_error) => format!(
+                "Archive operation was cancelled during preparation.; staging cleanup also failed: {rollback_error}"
+            ),
+            None => match journal_error {
+                Some(journal_error) => format!(
+                    "Archive operation was cancelled during preparation.; recovery journal cleanup also failed: {journal_error}"
+                ),
+                None => "Archive operation was cancelled during preparation.".to_string(),
+            },
+        });
     }
 
     let mut rx = {
@@ -1112,7 +1234,7 @@ pub async fn run_7z(
         // progress than extracting. Structured state is still emitted as
         // soon as it is available.
         if last_raw_progress_emit.elapsed() >= std::time::Duration::from_millis(75) {
-            let _ = emit_window.emit("7z-progress", chunk.to_string());
+            let _ = emit_window.emit("7z-progress", crate::output::sanitize_output(chunk));
             last_raw_progress_emit = std::time::Instant::now();
         }
         if let Some(update) = parse_progress_line(chunk) {
@@ -1249,6 +1371,7 @@ pub async fn run_7z(
 #[tauri::command]
 pub async fn probe_7z(
     app: tauri::AppHandle,
+    window: tauri::Window,
     state: tauri::State<'_, RunningProcess>,
 ) -> Result<String, String> {
     const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
@@ -1258,12 +1381,21 @@ pub async fn probe_7z(
         let mut process = lock_process(&state)?;
         ensure_idle(&process)?;
         process.preparing = true;
-        process.owner_label = Some("__probe__".to_string());
+        process.owner_label = Some(window.label().to_string());
     }
 
     let result = async {
         let (mut rx, child, _pending_password) =
             spawn_7z_noninteractive(&app, vec!["i".to_string()])?;
+        {
+            let mut process = lock_process(&state)?;
+            if process.cancelling {
+                drop(process);
+                terminate_child(&child);
+                return Err("7z runtime probe was cancelled.".to_string());
+            }
+            process.child = Some(child.clone());
+        }
 
         let probe = async {
             let collected = collect_command_output(&mut rx, PROBE_OUTPUT_LIMIT, |_| {}).await;
@@ -1295,7 +1427,7 @@ pub async fn probe_7z(
         match tokio::time::timeout(PROBE_TIMEOUT, probe).await {
             Ok(result) => result,
             Err(_) => {
-                let _ = child.kill();
+                terminate_child(&child);
                 store_probed_7z_version(None);
                 Err("7z runtime probe timed out.".to_string())
             }
@@ -1304,22 +1436,27 @@ pub async fn probe_7z(
     .await;
 
     if let Ok(mut process) = lock_process(&state) {
-        if process.owner_label.as_deref() == Some("__probe__") {
-            process.preparing = false;
-            process.owner_label = None;
-            process.cancelling = false;
+        if process.owner_label.as_deref() == Some(window.label()) {
+            process.child = None;
+            process.release_prepare_slot();
         }
     }
 
     result
 }
 
+/// Cancel the in-flight 7z job owned by this window.
+///
+/// Returns `Ok(true)` when a child was killed or a prepare slot was marked
+/// cancelling. Returns `Ok(false)` when idle (nothing to kill). Callers should
+/// still treat a user Cancel click as abort intent (skip password retry / break
+/// batch loops) even when this returns false.
 #[tauri::command]
 pub fn cancel_7z(
     window: tauri::Window,
     state: tauri::State<'_, RunningProcess>,
-) -> Result<(), String> {
-    let child = {
+) -> Result<bool, String> {
+    let (child, armed) = {
         let mut process = lock_process(&state)?;
         if let Some(owner) = &process.owner_label {
             if owner != window.label() {
@@ -1331,23 +1468,23 @@ pub fn cancel_7z(
         match process.child.take() {
             Some(child) => {
                 process.cancelling = true;
-                Some(child)
+                (Some(child), true)
             }
             None if process.preparing => {
                 process.cancelling = true;
-                None
+                (None, true)
             }
-            None => None,
+            None => (None, false),
         }
     };
 
     if let Some(child) = child {
         match child.kill() {
-            Ok(()) => Ok(()),
+            Ok(()) => Ok(true),
             Err(e) => {
                 let msg = e.to_string();
                 if is_non_running_kill_error(&msg) {
-                    Ok(())
+                    Ok(true)
                 } else {
                     // Put the handle back so a later cancel can retry the kill.
                     if let Ok(mut process) = lock_process(&state) {
@@ -1361,12 +1498,45 @@ pub fn cancel_7z(
             }
         }
     } else {
-        Ok(())
+        Ok(armed)
     }
 }
 
 #[tauri::command]
-pub fn is_7z_running(state: tauri::State<'_, RunningProcess>) -> Result<bool, String> {
-    let process = lock_process(&state)?;
-    Ok(process.child.is_some() || process.preparing || process.cancelling)
+pub fn is_7z_running(
+    window: tauri::Window,
+    mode: Option<String>,
+    state: tauri::State<'_, RunningProcess>,
+) -> Result<bool, String> {
+    let mut process = lock_process(&state)?;
+    match mode.as_deref() {
+        None | Some("check") => {
+            Ok(process.child.is_some() || process.preparing || process.cancelling)
+        }
+        Some("reserve_update") => {
+            if process.child.is_some() || process.preparing || process.cancelling {
+                return Ok(true);
+            }
+            process.preparing = true;
+            process.owner_label = Some(window.label().to_string());
+            process.abort_reason = Some("Installing application update".to_string());
+            Ok(false)
+        }
+        Some("release_update") => {
+            if process.child.is_some() {
+                return Err("Cannot release update reservation while 7-Zip is running.".to_string());
+            }
+            if process.preparing {
+                if process.owner_label.as_deref() != Some(window.label()) {
+                    return Err(
+                        "Only the window that reserved update installation may release it."
+                            .to_string(),
+                    );
+                }
+                process.release_prepare_slot();
+            }
+            Ok(false)
+        }
+        Some(_) => Err("Unknown archive-operation status mode.".to_string()),
+    }
 }

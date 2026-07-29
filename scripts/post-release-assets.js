@@ -201,8 +201,35 @@ function copyReleaseAssets(
     throw new Error("AFTER_PACK_LOC is empty");
   }
 
-  const resolvedReleaseDir = path.resolve(releaseDir);
-  const resolvedDestination = path.resolve(destination);
+  const requestedReleaseDir = path.resolve(releaseDir);
+  if (
+    !fs.existsSync(requestedReleaseDir) ||
+    !fs.statSync(requestedReleaseDir).isDirectory()
+  ) {
+    throw new Error(`release directory does not exist: ${requestedReleaseDir}`);
+  }
+  const resolvedReleaseDir = fs.realpathSync.native(requestedReleaseDir);
+  const requestedDestination = path.resolve(destination);
+  if (
+    fs.existsSync(requestedDestination) &&
+    fs.lstatSync(requestedDestination).isSymbolicLink()
+  ) {
+    throw new Error(
+      `AFTER_PACK_LOC must not be a symbolic link: ${requestedDestination}`,
+    );
+  }
+  const missingSegments = [];
+  let existingAncestor = requestedDestination;
+  while (!fs.existsSync(existingAncestor)) {
+    missingSegments.unshift(path.basename(existingAncestor));
+    const parent = path.dirname(existingAncestor);
+    if (parent === existingAncestor) break;
+    existingAncestor = parent;
+  }
+  const resolvedDestination = path.join(
+    fs.realpathSync.native(existingAncestor),
+    ...missingSegments,
+  );
   progress(
     logger,
     `copy resolve: src=${resolvedReleaseDir} dest=${resolvedDestination}`,
@@ -223,27 +250,56 @@ function copyReleaseAssets(
     throw new Error("AFTER_PACK_LOC cannot be inside the release directory");
   }
 
-  progress(logger, `mkdir ${resolvedDestination}`);
-  fs.mkdirSync(resolvedDestination, { recursive: true });
-  // Prove the destination is actually writable before copying big artifacts.
-  const probePath = path.join(
-    resolvedDestination,
-    `.zinnia-mirror-probe-${process.pid}`,
-  );
-  fs.writeFileSync(probePath, "ok");
-  fs.rmSync(probePath, { force: true });
-  progress(logger, "destination writable");
-
   const entries = getReleaseEntries(resolvedReleaseDir);
-  progress(logger, `copying ${entries.length} entries`);
+  const parent = path.dirname(resolvedDestination);
+  fs.mkdirSync(parent, { recursive: true });
+  const token = crypto.randomBytes(12).toString("hex");
+  const staging = path.join(
+    parent,
+    `.${path.basename(resolvedDestination)}.zinnia-stage-${token}`,
+  );
+  const backup = path.join(
+    parent,
+    `.${path.basename(resolvedDestination)}.zinnia-backup-${token}`,
+  );
+  fs.mkdirSync(staging, { recursive: false });
+  let movedExisting = false;
+  try {
+    progress(logger, `copying ${entries.length} entries to private staging`);
+    for (const entry of entries) {
+      const sourcePath = path.join(resolvedReleaseDir, entry);
+      const destinationPath = path.join(staging, entry);
+      progress(logger, `copy ${entry}`);
+      copyPathRecursive(sourcePath, destinationPath);
+      verifyCopiedPath(sourcePath, destinationPath);
+      progress(logger, `verified ${entry}`);
+    }
+    const stagedEntries = fs.readdirSync(staging).sort();
+    if (JSON.stringify(stagedEntries) !== JSON.stringify([...entries].sort())) {
+      throw new Error("release mirror staging contains an unexpected file set");
+    }
 
-  for (const entry of entries) {
-    const sourcePath = path.join(resolvedReleaseDir, entry);
-    const destinationPath = path.join(resolvedDestination, entry);
-    progress(logger, `copy ${entry}`);
-    copyPathRecursive(sourcePath, destinationPath);
-    verifyCopiedPath(sourcePath, destinationPath);
-    progress(logger, `verified ${entry}`);
+    if (fs.existsSync(resolvedDestination)) {
+      fs.renameSync(resolvedDestination, backup);
+      movedExisting = true;
+    }
+    try {
+      fs.renameSync(staging, resolvedDestination);
+    } catch (error) {
+      if (movedExisting) fs.renameSync(backup, resolvedDestination);
+      throw error;
+    }
+    if (movedExisting) removePath(backup);
+  } catch (error) {
+    removePath(staging);
+    if (
+      movedExisting &&
+      fs.existsSync(backup) &&
+      !fs.existsSync(resolvedDestination)
+    ) {
+      fs.renameSync(backup, resolvedDestination);
+    }
+    throw error;
   }
 
   return entries.length;

@@ -78,7 +78,7 @@ describe("redactSensitiveText", () => {
 describe("isArchiveFile", () => {
   it("recognises known archive extensions", () => {
     expect(isArchiveFile("C:/tmp/file.7z")).toBe(true);
-    expect(isArchiveFile("C:/tmp/file.tar.gz")).toBe(true);
+    expect(isArchiveFile("C:/tmp/file.tar.gz")).toBe(false);
     expect(isArchiveFile("/home/user/file.zip")).toBe(true);
     expect(isArchiveFile("file.rar")).toBe(true);
     expect(isArchiveFile("file.xz")).toBe(true);
@@ -241,6 +241,33 @@ describe("focus trap helpers", () => {
       new KeyboardEvent("keydown", { key: "Tab", shiftKey: true }),
     );
     expect(document.activeElement).toBe(second);
+
+    releaseFocusTrap(container);
+    container.remove();
+  });
+
+  it("contains Tab from a programmatically focused modal heading", () => {
+    const container = document.createElement("div");
+    const title = document.createElement("h2");
+    title.tabIndex = -1;
+    const first = document.createElement("button");
+    const last = document.createElement("button");
+    container.append(title, first, last);
+    document.body.appendChild(container);
+
+    setVisibleForFocus(first, container);
+    setVisibleForFocus(last, container);
+    trapFocus(container);
+
+    title.focus();
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Tab", shiftKey: true }),
+    );
+    expect(document.activeElement).toBe(last);
+
+    title.focus();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab" }));
+    expect(document.activeElement).toBe(first);
 
     releaseFocusTrap(container);
     container.remove();

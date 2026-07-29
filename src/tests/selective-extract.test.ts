@@ -284,6 +284,35 @@ describe("resolveSelectiveExtractMemberPaths", () => {
   });
 });
 
+describe("buildEntryTree", () => {
+  it("keeps archive-native leaf paths when separators are mixed", () => {
+    const entries = [
+      {
+        path: "docs\\a.txt",
+        isFolder: false,
+        size: 1,
+        packedSize: 1,
+        modified: "",
+      },
+      {
+        path: "docs/b.txt",
+        isFolder: false,
+        size: 1,
+        packedSize: 1,
+        modified: "",
+      },
+    ];
+    const tree = buildEntryTree(entries, true);
+    const docs = tree.find(
+      (node) => node.path === "docs" || node.name === "docs",
+    );
+    expect(docs?.children.map((child) => child.path).sort()).toEqual([
+      "docs/b.txt",
+      "docs\\a.txt",
+    ]);
+  });
+});
+
 describe("buildSelectiveExtractArgs", () => {
   it("builds correct args with selected paths", () => {
     expect(
@@ -299,6 +328,7 @@ describe("buildSelectiveExtractArgs", () => {
       "-o/tmp/output",
       "-aou",
       "-spd",
+      "-bsp1",
       "-psecret",
       "-aos",
       "--",
@@ -322,6 +352,7 @@ describe("buildSelectiveExtractArgs", () => {
       "-o/tmp/output",
       "-aou",
       "-spd",
+      "-bsp1",
       "--",
       "/tmp/archive.7z",
       "-leading-switch-name.txt",
@@ -331,7 +362,15 @@ describe("buildSelectiveExtractArgs", () => {
   it("extracts everything when no paths selected", () => {
     expect(
       buildSelectiveExtractArgs("/tmp/archive.7z", "/tmp/output", "", [], []),
-    ).toEqual(["x", "-o/tmp/output", "-aou", "-spd", "--", "/tmp/archive.7z"]);
+    ).toEqual([
+      "x",
+      "-o/tmp/output",
+      "-aou",
+      "-spd",
+      "-bsp1",
+      "--",
+      "/tmp/archive.7z",
+    ]);
   });
 });
 

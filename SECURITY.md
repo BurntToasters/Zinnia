@@ -62,18 +62,9 @@ operations:
   that contain symlinks or `.app` bundles—prefer `7z` or `tar`.
 - `-sns` (NTFS alternate streams) and `-sni` (NT security descriptors) remain
   blocked: packing ADS / ACLs is a known hiding and privilege footgun.
-- On macOS, after a successful extract promote, Zinnia clears
-  `com.apple.quarantine` on `.app` bundles under the destination (so Gatekeeper
-  does not treat a user-initiated app extract like an untrusted download) and
-  reports how many bundles were cleared. Quarantine is **not** stripped from the
-  whole tree—broad clearing is a known Gatekeeper-bypass pattern. Clearing
-  quarantine does not make untrusted software safe to run.
 - On Windows extract, Zinnia injects 7-Zip `-snz` so Mark-of-the-Web
   (`Zone.Identifier`) propagates from a downloaded archive onto extracted files
   (SmartScreen / Office Protected View). Zinnia does **not** strip MOTW.
-- On Unix, after extract, Zinnia may restore the execute bit on files that look
-  like binaries or scripts (ELF / Mach-O / shebang / common extensions) when the
-  archive format omitted Unix modes (common with ZIP).
 - Promotion resolves file/directory conflicts without overwriting unrelated
   destination content. A durable move plan and transaction journal allow an
   interrupted merge or split-archive promotion to be rolled back on restart.
@@ -132,24 +123,18 @@ candidate `assets/` and generated `src-tauri/binaries/` roots; it is used only
 to unpack the official Windows `.7z`, while official `.tar.xz` sources use the
 system `tar`.
 
-#### Temporary Windows RAR restriction
+#### Windows RAR support
 
-The published data for CVE-2026-58052 is currently inconsistent: the NVD/CNA
-affected range was revised to end at 26.01, while the NVD analysis and upstream
-7-Zip ticket still describe 26.02 as affected. Until the exact bundled Windows
-runtime is conclusively verified against the published reproducer, Zinnia
-conservatively rejects RAR **extraction** on Windows at the `run_7z` spawn
-boundary (command `x`) when the attested `probe_7z` version is `26.02` or
-older (or unknown). RAR browse (`l`) and test (`t`) remain available so
-archives can be inspected without writing members to disk. Base
-`tauri.conf.json` omits RAR file associations; macOS/Linux platform configs
-re-add them. Windows packages continue to omit RAR associations and Explorer
-verbs. RAR browsing, testing, conversion, and extraction remain available on
-macOS and Linux.
+Windows currently packages standalone `7za.exe`. That runtime intentionally
+omits external format handlers, including RAR, so Zinnia rejects Windows RAR
+archives for browse, test, conversion, and extraction before any 7-Zip command
+is started. Base `tauri.conf.json` omits RAR file associations; macOS/Linux
+platform configs re-add them. Windows packages continue to omit RAR
+associations and Explorer verbs. RAR remains available on macOS and Linux.
 
-When a fixed 7-Zip ships and `probe_7z` attests a version newer than `26.02`,
-the Windows RAR extract gate lifts automatically. Keep the bundled sidecar and
-checksums updated in the same release.
+Re-enable Windows RAR only when the release packages a full RAR-capable runtime
+(for example `7z.exe` with its matching handler DLL) and native Windows
+browse/test/extract coverage verifies that exact packaged layout.
 
 ### Translucent Basic window (macOS / Windows)
 
@@ -193,10 +178,12 @@ validation checks remain mandatory defense in depth.
 
 On Unix, promote opens use `O_NOFOLLOW` for the final path component. On
 Windows, `open_regular_file_nofollow` opens with `FILE_FLAG_OPEN_REPARSE_POINT`
-and rejects reparse tags on the opened handle. Archive publish prefers
-`hard_link` while that handle is held and falls back to copying from the same
-handle (no path re-open). Residual same-user TOCTOU remains for the hard_link
-path name lookup itself.
+and rejects reparse tags on the opened handle. Archive publish syncs the
+source through that nofollow handle, then uses exclusive path `rename` /
+`hard_link` (same residual TOCTOU as above). When neither is available, the
+fallback exclusive-create copy re-opens the source with nofollow and copies
+from that held handle. Residual same-user TOCTOU remains for the rename /
+hard_link path-name lookup itself.
 
 ### Open-folder allowlist
 

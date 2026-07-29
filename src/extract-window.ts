@@ -8,6 +8,7 @@ import {
   setProgressIndeterminateClass,
   setProgressPercentClass,
 } from "./progress-bar";
+import { normalizeAutoCloseDelay } from "./settings-model";
 
 interface Run7zResult {
   stdout: string;
@@ -83,12 +84,21 @@ function readInjectedExtractSession(): InjectedExtractSession | null {
   return injected;
 }
 
-async function runWithPasswordRetry(args: string[]): Promise<Run7zResult> {
+async function runWithPasswordRetry(
+  args: string[],
+  shouldAbort: () => boolean,
+): Promise<Run7zResult> {
   let result = await invoke<Run7zResult>("run_7z", { args });
+  if (shouldAbort()) {
+    return result;
+  }
   if (
     result.code > 1 &&
     looksLikePasswordRequiredError(result.stdout ?? "", result.stderr ?? "")
   ) {
+    if (shouldAbort()) {
+      return result;
+    }
     const { promptInput } = await import("./prompt-modal");
     const password = await promptInput({
       title: "Password required",
@@ -96,6 +106,9 @@ async function runWithPasswordRetry(args: string[]): Promise<Run7zResult> {
       password: true,
       confirmLabel: "Extract",
     });
+    if (shouldAbort()) {
+      return result;
+    }
     if (password) {
       result = await invoke<Run7zResult>("run_7z", {
         args: withPassword(args, password),
@@ -268,9 +281,10 @@ async function run() {
   try {
     const raw = await invoke<string>("load_settings");
     const parsed = JSON.parse(raw) as { extractAutoCloseSeconds?: unknown };
-    if (typeof parsed.extractAutoCloseSeconds === "number") {
-      autoCloseDelay = parsed.extractAutoCloseSeconds;
-    }
+    autoCloseDelay = normalizeAutoCloseDelay(
+      parsed.extractAutoCloseSeconds,
+      1.5,
+    );
   } catch {}
 
   let autoCloseInterval: ReturnType<typeof setInterval> | null = null;
@@ -350,20 +364,20 @@ async function run() {
 
   cancelBtn.addEventListener("click", async () => {
     if (operationFinished) return;
+    // Record abort intent even when 7z is idle (password-prompt gap).
     cancelRequested = true;
     cancelBtn.disabled = true;
     openDestinationBtn.disabled = true;
     closeBtn.disabled = true;
     $("extract-status").textContent = "Cancelling...";
     try {
-      await invoke("cancel_7z");
+      await invoke<boolean>("cancel_7z");
     } catch (err) {
-      cancelRequested = false;
       // All three buttons were disabled above before the cancel request. A
       // failed cancel means extraction is still running, so re-opening the
       // (not-yet-final) destination still doesn't make sense, but leaving
-      // `closeBtn` disabled stranded the window with only the titlebar close
-      // button as an escape hatch. Re-enable cancel (to retry) and close.
+      // Cancel/`closeBtn` disabled stranded the window with only the titlebar
+      // close as an escape hatch. Re-enable cancel (to retry) and close.
       cancelBtn.disabled = false;
       closeBtn.disabled = false;
       const detail = err instanceof Error ? err.message : String(err);
@@ -373,7 +387,8 @@ async function run() {
       );
       if (title) title.textContent = "Could not cancel safely";
       $("error-detail").textContent = detail;
-      $("extract-status").textContent = "Extraction still running";
+      $("extract-status").textContent =
+        "Cancel requested; waiting for the current phase to stop";
     }
   });
 
@@ -458,6 +473,18 @@ async function run() {
     return;
   }
 
+  try {
+    await invoke<string>("probe_7z");
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    showError(`Could not prepare 7-Zip: ${detail}`);
+    return;
+  }
+  if (cancelRequested) {
+    finish("Cancelled", 100, false, false, true);
+    return;
+  }
+
   let sawStructuredPercent = false;
 
   const startedAt = Date.now();
@@ -477,6 +504,7 @@ async function run() {
       const update = event.payload;
       if (update?.currentFile === "Finalizing…") {
         sawStructuredPercent = true;
+        cancelBtn.disabled = true;
         setDeterminateProgress(100);
         $("extract-status").textContent = "Finalizing…";
         return;
@@ -540,10 +568,10 @@ async function run() {
   ];
 
   try {
-    const result = await runWithPasswordRetry(args);
+    const result = await runWithPasswordRetry(args, () => cancelRequested);
     await removeProgressListeners();
 
-    if (cancelRequested) {
+    if (cancelRequested && result.code !== 0) {
       finish("Cancelled", 100, false, false, true);
       return;
     }

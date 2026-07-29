@@ -121,9 +121,23 @@ function sltListing(entries: ArchiveInfo["entries"]): string {
 function setInvokeRouter(
   handler: (command: string, payload?: unknown) => unknown,
 ): void {
-  invokeMock.mockImplementation((command, payload) =>
-    Promise.resolve(handler(command, payload)),
-  );
+  invokeMock.mockImplementation((command, payload) => {
+    const result = handler(command, payload);
+    if (
+      command === "validate_archive_paths" &&
+      (payload as { includeIdentity?: boolean } | undefined)?.includeIdentity &&
+      Array.isArray(result)
+    ) {
+      return Promise.resolve(
+        result.map((entry: { path?: string; valid?: boolean }) =>
+          entry.valid
+            ? { ...entry, identity: `identity:${entry.path ?? "archive"}` }
+            : entry,
+        ),
+      );
+    }
+    return Promise.resolve(result);
+  });
 }
 
 beforeEach(() => {
@@ -138,7 +152,9 @@ beforeEach(() => {
   state.selectiveSearchQuery = "";
   state.selectiveVisiblePaths = [];
   state.browseArchiveInfoByPath.clear();
+  state.browseArchiveIdentityByPath.clear();
   state.browseSelectionsByArchive.clear();
+  state.selectiveExpandedFolders.clear();
 
   const app = document.getElementById("app") as HTMLElement;
   app.dataset.mode = "extract";
@@ -226,6 +242,20 @@ describe("addFilesToArchive", () => {
     expect(runArgs.some(([operation]) => operation === "l")).toBe(true);
     expect(document.getElementById("browse-summary")?.textContent).toContain(
       "1 file",
+    );
+  });
+
+  it("handles a rejected mutation file dialog", async () => {
+    state.inputs = [uniqueArchivePath("add-files-dialog-error")];
+    openMock.mockRejectedValueOnce(new Error("portal unavailable"));
+
+    await expect(addFilesToArchive()).resolves.toBeUndefined();
+
+    expect(invokeMock.mock.calls.some(([name]) => name === "run_7z")).toBe(
+      false,
+    );
+    expect(document.getElementById("status")?.textContent).toContain(
+      "Could not open the file dialog",
     );
   });
 });
@@ -365,6 +395,7 @@ describe("archive test/browse/selective flows", () => {
         },
       ]),
     );
+    state.browseArchiveIdentityByPath.set(archive, `identity:${archive}`);
 
     setInvokeRouter((command, payload) => {
       if (command === "validate_archive_paths") {
@@ -401,6 +432,7 @@ describe("archive test/browse/selective flows", () => {
         },
       ]),
     );
+    state.browseArchiveIdentityByPath.set(archive, `identity:${archive}`);
 
     setInvokeRouter((command, payload) => {
       if (command === "validate_archive_paths") {
@@ -648,6 +680,10 @@ describe("archive test/browse/selective flows", () => {
     setSelectiveExtractSearch("readme");
 
     expect(state.selectiveVisiblePaths).toEqual(["docs/readme.md"]);
+    const searchResults = document.getElementById("selective-list")!;
+    expect(searchResults.hasAttribute("role")).toBe(false);
+    expect(searchResults.hasAttribute("aria-label")).toBe(false);
+    expect(searchResults.hasAttribute("aria-multiselectable")).toBe(false);
 
     selectAllVisibleInPicker();
     expect(
@@ -656,6 +692,164 @@ describe("archive test/browse/selective flows", () => {
 
     clearPickerSelection();
     expect(state.browseSelectionsByArchive.get(archive)?.size).toBe(0);
+  });
+
+  it("selects a collapsed folder's complete subtree and exposes keyboard tree semantics", async () => {
+    const archive = uniqueArchivePath("collapsed-picker");
+    state.inputs = [archive];
+    state.browseArchiveInfoByPath.set(
+      archive,
+      archiveInfo([
+        {
+          path: "docs",
+          size: 0,
+          packedSize: 0,
+          modified: "",
+          isFolder: true,
+        },
+        {
+          path: "docs/readme.md",
+          size: 11,
+          packedSize: 8,
+          modified: "",
+          isFolder: false,
+        },
+      ]),
+    );
+    state.browseArchiveIdentityByPath.set(archive, `identity:${archive}`);
+    setInvokeRouter((command, payload) => {
+      if (command === "validate_archive_paths") {
+        const paths = pathsFromValidationPayload(payload);
+        return paths.map((path) => ({ path, valid: true }));
+      }
+      return undefined;
+    });
+
+    await openSelectiveExtractModal();
+
+    const tree = document.getElementById("selective-list")!;
+    const folder = tree.querySelector<HTMLElement>(
+      '[role="treeitem"][data-member-path="docs"]',
+    )!;
+    expect(tree.getAttribute("role")).toBe("tree");
+    expect(tree.getAttribute("aria-label")).toBe("Archive contents");
+    expect(tree.getAttribute("aria-multiselectable")).toBe("true");
+    expect(folder.getAttribute("aria-expanded")).toBe("false");
+    expect(
+      tree.querySelector('[data-member-path="docs/readme.md"]'),
+    ).toBeNull();
+
+    selectAllVisibleInPicker();
+    expect(state.browseSelectionsByArchive.get(archive)).toEqual(
+      new Set(["docs", "docs/readme.md"]),
+    );
+
+    clearPickerSelection();
+    tree
+      .querySelector<HTMLElement>('[role="treeitem"][data-member-path="docs"]')!
+      .querySelector<HTMLInputElement>('input[type="checkbox"]')!
+      .click();
+
+    expect(state.browseSelectionsByArchive.get(archive)).toEqual(
+      new Set(["docs", "docs/readme.md"]),
+    );
+    const rerenderedFolder = tree.querySelector<HTMLElement>(
+      '[role="treeitem"][data-member-path="docs"]',
+    )!;
+    rerenderedFolder.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }),
+    );
+    const expandedFolder = tree.querySelector<HTMLElement>(
+      '[role="treeitem"][data-member-path="docs"]',
+    )!;
+    const child = tree.querySelector<HTMLElement>(
+      '[role="treeitem"][data-member-path="docs/readme.md"]',
+    )!;
+    expect(child).not.toBeNull();
+    expandedFolder.focus();
+    expandedFolder.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
+    );
+    expect(document.activeElement).toBe(child);
+    child.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Home", bubbles: true }),
+    );
+    expect(document.activeElement).toBe(expandedFolder);
+    expandedFolder.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "End", bubbles: true }),
+    );
+    expect(document.activeElement).toBe(child);
+    child.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }),
+    );
+    expect(document.activeElement).toBe(expandedFolder);
+  });
+
+  it("does not report tree truncation when exactly the row limit is rendered", () => {
+    const archive = uniqueArchivePath("exact-tree-limit");
+    state.selectiveActiveArchive = archive;
+    state.browseArchiveInfoByPath.set(
+      archive,
+      archiveInfo(
+        Array.from({ length: 1_000 }, (_, index) => ({
+          path: `file-${index.toString().padStart(4, "0")}.txt`,
+          size: index,
+          packedSize: index,
+          modified: "",
+          isFolder: false,
+        })),
+      ),
+    );
+
+    setSelectiveExtractSearch("");
+
+    const list = document.getElementById("selective-list")!;
+    expect(list.querySelectorAll('[role="treeitem"]')).toHaveLength(1_000);
+    expect(list.textContent).not.toContain("Expand fewer folders");
+  });
+
+  it("selects a rendered synthetic folder when the listing omits directory entries", async () => {
+    const archive = uniqueArchivePath("synthetic-folder-picker");
+    state.inputs = [archive];
+    state.browseArchiveInfoByPath.set(
+      archive,
+      archiveInfo([
+        {
+          path: "docs/readme.md",
+          size: 11,
+          packedSize: 8,
+          modified: "",
+          isFolder: false,
+        },
+      ]),
+    );
+    state.browseArchiveIdentityByPath.set(archive, `identity:${archive}`);
+    setInvokeRouter((command, payload) => {
+      if (command === "validate_archive_paths") {
+        const paths = pathsFromValidationPayload(payload);
+        return paths.map((path) => ({
+          path,
+          valid: true,
+          identity: `identity:${path}`,
+        }));
+      }
+      return undefined;
+    });
+
+    await openSelectiveExtractModal();
+
+    expect(
+      document.querySelector(
+        '[role="treeitem"][data-member-path="docs"][aria-expanded="false"]',
+      ),
+    ).not.toBeNull();
+    expect(document.getElementById("selective-summary")?.textContent).toBe(
+      "0 selected · 1 row shown · 1 archive entry",
+    );
+    selectAllVisibleInPicker();
+    expect(state.browseSelectionsByArchive.get(archive)).toEqual(
+      new Set(["docs/readme.md"]),
+    );
   });
 
   it("syncs selective destination with extract destination fields", () => {
@@ -933,7 +1127,7 @@ describe("archive test/browse/selective flows", () => {
     expect(messageMock).not.toHaveBeenCalled();
   });
 
-  it("resets cancellation state and reports backend errors", async () => {
+  it("keeps cancellation intent when backend cancellation errors", async () => {
     await cancelAction();
     expect(invokeMock.mock.calls.some(([name]) => name === "cancel_7z")).toBe(
       false,
@@ -947,12 +1141,26 @@ describe("archive test/browse/selective flows", () => {
 
     await cancelAction();
 
-    expect(state.cancelRequested).toBe(false);
+    expect(state.cancelRequested).toBe(true);
     expect(invokeMock).toHaveBeenCalledWith("cancel_7z");
-    expect(messageMock).toHaveBeenCalledWith(
-      expect.stringContaining("busy"),
-      expect.objectContaining({ title: "Cancel failed" }),
-    );
+    expect(messageMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps cancel intent when cancel_7z reports idle", async () => {
+    state.running = true;
+    state.batchCancelled = false;
+    state.cancelRequested = false;
+    setInvokeRouter((command) => {
+      if (command === "cancel_7z") return false;
+      return undefined;
+    });
+
+    await cancelAction();
+
+    // Idle Ok still records user abort intent so password retry / batch loops stop.
+    expect(state.cancelRequested).toBe(true);
+    expect(state.batchCancelled).toBe(true);
+    expect(invokeMock).toHaveBeenCalledWith("cancel_7z");
   });
 
   it("shows missing-info preview dialog when command args cannot be built", async () => {

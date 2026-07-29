@@ -199,6 +199,12 @@ export function updateBasicRunningState(active: boolean): void {
       (event) => {
         if (event.payload?.currentFile === "Finalizing…") {
           setBasicBarDeterminate(section, 100);
+          for (const id of ["basic-compress-cancel", "basic-extract-cancel"]) {
+            const button = document.getElementById(
+              id,
+            ) as HTMLButtonElement | null;
+            if (button) button.disabled = true;
+          }
           const status = document.getElementById(`basic-${section}-status`);
           if (status) status.textContent = "Finalizing…";
           return;
@@ -283,9 +289,16 @@ export function updateBasicStatus(text: string, errorDetail?: string): void {
       section === "compress"
         ? [outputPath, state.lastAutoOutputPath]
         : [extractPath, state.lastAutoExtractDestination];
-    const pathLabel =
+    let pathLabel =
       pathCandidates.find((candidate) => (candidate?.length ?? 0) > 0) ??
       undefined;
+    if (
+      section === "compress" &&
+      pathLabel &&
+      (document.getElementById("split-size") as HTMLSelectElement | null)?.value
+    ) {
+      pathLabel = `${pathLabel}.001`;
+    }
     showBasicCompletion(
       section,
       true,

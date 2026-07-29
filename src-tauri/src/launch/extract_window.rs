@@ -3,7 +3,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::Manager;
 
-use crate::process::RunningProcess;
+use crate::process::{is_non_running_kill_error, RunningProcess};
 
 use super::open_path::derive_extract_destination_path;
 use super::{
@@ -324,9 +324,19 @@ pub async fn cancel_owner_and_wait(
     };
     if let Some(child) = child {
         if let Err(e) = child.kill() {
-            return Err(format!(
-                "Could not stop the archive operation before closing this window: {e}"
-            ));
+            let msg = e.to_string();
+            // Mirror cancel_7z: already-exited is success; real kill failure must
+            // restore the handle so a later close/cancel can retry.
+            if !is_non_running_kill_error(&msg) {
+                if let Ok(mut process) = state.0.lock() {
+                    if process.child.is_none() {
+                        process.child = Some(child);
+                    }
+                }
+                return Err(format!(
+                    "Could not stop the archive operation before closing this window: {msg}"
+                ));
+            }
         }
     }
 

@@ -8,6 +8,25 @@ function Import-BundledPowerShellSecurityModule {
   Import-Module -Name $moduleManifest -Force -ErrorAction Stop
 }
 
+function Assert-MicrosoftSignedFile {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Path,
+    [Parameter(Mandatory = $true)]
+    [string]$Label
+  )
+
+  Import-BundledPowerShellSecurityModule
+  $signature = Get-AuthenticodeSignature -LiteralPath $Path
+  if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
+    throw "$Label does not have a valid Authenticode signature: $Path ($($signature.Status))"
+  }
+  $subject = $signature.SignerCertificate.Subject
+  if ($subject -notmatch '(?i)(^|,\s*)O=Microsoft Corporation(,|$)') {
+    throw "$Label is not signed by Microsoft Corporation: $Path ($subject)"
+  }
+}
+
 function Get-ArtifactSigningTools {
   $signToolOverride = $env:AZURE_ARTIFACT_SIGNING_SIGNTOOL_PATH
   $dlibOverride = $env:AZURE_ARTIFACT_SIGNING_DLIB_PATH
@@ -82,6 +101,8 @@ function Get-ArtifactSigningTools {
   if ($signToolPath -match '[\\/]x64[\\/]' -and $dlibPath -match '[\\/]x86[\\/]') {
     throw "SignTool and Artifact Signing dlib architectures do not match: $signToolPath ; $dlibPath"
   }
+  Assert-MicrosoftSignedFile -Path $signToolPath -Label 'SignTool'
+  Assert-MicrosoftSignedFile -Path $dlibPath -Label 'Artifact Signing dlib'
   return [PSCustomObject]@{
     SignToolPath = $signToolPath
     DlibPath = $dlibPath

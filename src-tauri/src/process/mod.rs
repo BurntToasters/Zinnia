@@ -44,16 +44,15 @@ pub use recovery::{
 };
 
 // Bridge helpers that `archive_snapshot` still calls via `super::`.
+pub(crate) use archive_snapshot::archive_identity_token;
 pub(crate) use journal::unregister_pending_stage;
 pub(crate) use quota::available_space_for_path;
 pub(crate) use staging::{create_private_stage_dir, resolve_existing_target};
 
 #[cfg(test)]
 pub(crate) use commands::{
-    prepare_password_transport, rewrite_args_for_managed_listfile, terminate_child, version_cmp,
+    prepare_password_transport, rewrite_args_for_managed_listfile, terminate_child,
 };
-#[cfg(all(test, target_os = "windows"))]
-pub(crate) use commands::{store_probed_7z_version, windows_rar_extract_blocked};
 #[cfg(all(test, unix))]
 pub(crate) use commit::assert_safe_extract_target_ancestors;
 #[cfg(test)]
@@ -112,6 +111,10 @@ pub(crate) struct CleanupPlan {
     // Create/update output is written to a sibling staging basename. This also
     // covers split-volume families (`.001`, `.002`, ...).
     pub(crate) staged_archive: Option<(std::path::PathBuf, std::path::PathBuf)>,
+    /// Exact destination family observed before 7-Zip starts. Publication must
+    /// match it byte-for-byte so a sync client/editor cannot be overwritten by
+    /// a stale long-running create or update.
+    pub(crate) expected_archive_family: Vec<ArchiveDestinationSnapshot>,
     /// Private snapshot used by both member preflight and extraction. This
     /// avoids reopening a user-controlled source path between the two steps.
     pub(crate) staged_input_archive: Option<std::path::PathBuf>,
@@ -119,6 +122,15 @@ pub(crate) struct CleanupPlan {
     pub(crate) cache_dir: Option<std::path::PathBuf>,
     pub(crate) max_extract_bytes: Option<u64>,
     pub(crate) min_free_bytes: Option<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ArchiveDestinationSnapshot {
+    pub(crate) path: std::path::PathBuf,
+    pub(crate) identity: journal::FileIdentity,
+    pub(crate) len: u64,
+    pub(crate) modified: Option<std::time::SystemTime>,
+    pub(crate) sha256: [u8; 32],
 }
 
 impl ProcessState {

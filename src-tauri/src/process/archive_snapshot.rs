@@ -113,6 +113,20 @@ pub(super) fn archive_file_identity(path: &std::path::Path) -> Result<ArchiveFil
     archive_file_identity_from_open_file(path, &file)
 }
 
+pub(crate) fn archive_identity_token(path: &std::path::Path) -> Result<String, String> {
+    use sha2::Digest as _;
+
+    let resolved = super::resolve_existing_target(path, false)?;
+    let family = archive_input_family(&resolved)?;
+    let mut hasher = sha2::Sha256::new();
+    for member in family {
+        let identity = archive_file_identity(&member)?;
+        hasher.update(member.to_string_lossy().as_bytes());
+        hasher.update(format!("{identity:?}").as_bytes());
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
 /// Attempt a copy-on-write clone of `source` into the already-created,
 /// still-empty `destination` file. Returns `Ok(true)` on a successful clone,
 /// `Ok(false)` when the filesystem/platform does not support cloning here
@@ -195,15 +209,34 @@ fn copy_archive_snapshot_file(
                 // never weakens the private-snapshot guarantee the byte-copy
                 // path provides via `create_new` + `mode(0o600)`.
                 use std::os::unix::fs::PermissionsExt as _;
-                std::fs::set_permissions(destination, std::fs::Permissions::from_mode(0o600))
-                    .map_err(|error| error.to_string())?;
-                // APFS clone creation is atomic, but fsync the snapshot inode
-                // before 7-Zip reads it so this path matches Linux CoW + copy.
-                let synced = std::fs::OpenOptions::new()
-                    .read(true)
-                    .open(destination)
-                    .map_err(|error| error.to_string())?;
-                synced.sync_all().map_err(|error| error.to_string())?;
+                let finalize = (|| {
+                    std::fs::set_permissions(destination, std::fs::Permissions::from_mode(0o600))
+                        .map_err(|error| error.to_string())?;
+                    // APFS clone creation is atomic, but fsync the snapshot inode
+                    // before 7-Zip reads it so this path matches Linux CoW + copy.
+                    let synced = std::fs::OpenOptions::new()
+                        .read(true)
+                        .open(destination)
+                        .map_err(|error| error.to_string())?;
+                    synced.sync_all().map_err(|error| error.to_string())?;
+                    Ok(())
+                })();
+                if let Err(error) = finalize {
+                    let cleanup = crate::fs_secure::remove_file_for_cleanup(destination);
+                    return Err(match cleanup {
+                        Ok(()) => error,
+                        Err(cleanup_error)
+                            if cleanup_error.kind() == std::io::ErrorKind::NotFound =>
+                        {
+                            error
+                        }
+                        Err(cleanup_error) => {
+                            format!(
+                                "{error}; partial snapshot cleanup also failed: {cleanup_error}"
+                            )
+                        }
+                    });
+                }
                 return Ok(());
             }
             Ok(false) => {}
@@ -447,9 +480,7 @@ pub(super) fn archive_input_family(
     let split_base = numeric_suffix
         .then(|| &name[..name.len() - 4])
         .filter(|base| {
-            const KNOWN_ARCHIVE_SUFFIXES: &[&str] = &[
-                ".7z", ".zip", ".tar", ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz",
-            ];
+            const KNOWN_ARCHIVE_SUFFIXES: &[&str] = &[".7z", ".zip", ".tar", ".gz", ".bz2", ".xz"];
             let base_lower = base.to_ascii_lowercase();
             if KNOWN_ARCHIVE_SUFFIXES
                 .iter()
@@ -565,8 +596,16 @@ pub(super) struct StagedArchiveInput {
 pub(super) fn stage_extract_input(
     archive: &std::path::Path,
     cache_dir: Option<&std::path::Path>,
+    expected_identity: Option<&str>,
 ) -> Result<StagedArchiveInput, String> {
     let archive = super::resolve_existing_target(archive, false)?;
+    let initial_token = archive_identity_token(&archive)?;
+    if expected_identity.is_some_and(|expected| expected != initial_token) {
+        return Err(
+            "Archive changed after it was browsed; review the new contents before extracting."
+                .to_string(),
+        );
+    }
     let anchor = cache_dir
         .map(|cache| cache.join(archive.file_name().unwrap_or_default()))
         .unwrap_or_else(|| archive.clone());
@@ -629,6 +668,12 @@ pub(super) fn stage_extract_input(
                 );
             }
             assert_archive_identity_unchanged(&source, &expected)?;
+        }
+        if archive_identity_token(&archive)? != initial_token {
+            return Err(
+                "Archive changed while its private snapshot was being created; extraction was cancelled."
+                    .to_string(),
+            );
         }
         Ok(StagedArchiveInput {
             path: stage.join(

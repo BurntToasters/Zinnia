@@ -1,7 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { message } from "@tauri-apps/plugin-dialog";
 import { $ } from "../utils";
-import { state, cacheBrowseInfo } from "../state";
+import {
+  state,
+  cacheBrowseInfo,
+  cacheBrowseIdentity,
+  clearBrowseCache,
+} from "../state";
 import {
   getMode,
   hideProgress,
@@ -123,7 +128,17 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
       return null;
     }
     try {
-      await ensureArchivePaths([archive], "browse");
+      const [validation] = await ensureArchivePaths(
+        [archive],
+        "browse",
+        undefined,
+        true,
+      );
+      if (!validation?.identity) {
+        throw new Error("Could not capture a stable archive identity.");
+      }
+      clearBrowseCache(archive);
+      state.browseArchiveIdentityByPath.set(archive, validation.identity);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       await message(msg, { title: "Invalid input", kind: "error" });
@@ -182,8 +197,26 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
       return null;
     }
 
+    const [afterListing] = await ensureArchivePaths(
+      [archive],
+      "browse",
+      undefined,
+      true,
+    );
+    const beforeIdentity = state.browseArchiveIdentityByPath.get(archive);
+    if (
+      !afterListing?.identity ||
+      !beforeIdentity ||
+      afterListing.identity !== beforeIdentity
+    ) {
+      clearBrowseCache(archive);
+      throw new Error(
+        "Archive changed while its contents were being listed. Browse it again.",
+      );
+    }
     const info = parseArchiveListing(result.stdout);
     cacheBrowseInfo(archive, info);
+    cacheBrowseIdentity(archive, afterListing.identity);
     setBrowsePasswordFieldVisible(info.encrypted);
     renderBrowseTable(info);
     setStatus(`${info.entries.length} entries listed`, 3000);

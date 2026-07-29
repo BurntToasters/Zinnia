@@ -5,6 +5,7 @@ use crate::validation::archive_member_path_is_unsafe;
 
 use super::archive_snapshot::{archive_file_identity, stage_extract_input, ArchiveFileIdentity};
 use super::commands::{collect_command_output, terminate_child};
+use super::commit::archive_destination_family_snapshot;
 use super::journal::{register_pending_stage, unregister_pending_stage};
 use super::quota::available_space_for_path;
 use super::{lock_process, CleanupPlan, RunningProcess};
@@ -326,7 +327,8 @@ pub(crate) async fn assert_extract_archive_members_safe(
         if process.cancelling {
             process.child = None;
             // Keep preparing/cancelling until run_7z finishes rollback/journal clear.
-            let _ = child.kill();
+            drop(process);
+            terminate_child(&child);
             return Err("Operation cancelled.".to_string());
         }
         // Register before password stdin so cancel can kill a blocked write.
@@ -366,10 +368,11 @@ pub(crate) async fn assert_extract_archive_members_safe(
     {
         Ok(collected) => collected,
         Err(_) => {
-            if let Ok(mut process) = lock_process(state) {
-                if let Some(child) = process.child.take() {
-                    let _ = child.kill();
-                }
+            let child = lock_process(state)
+                .ok()
+                .and_then(|mut process| process.child.take());
+            if let Some(child) = child {
+                terminate_child(&child);
             }
             return Err("Archive member-safety preflight timed out after 120 seconds.".to_string());
         }
@@ -413,12 +416,14 @@ pub(crate) async fn assert_extract_archive_members_safe(
 pub(crate) fn prepare_cleanup_plan(
     args: &[String],
     cache_dir: Option<std::path::PathBuf>,
+    expected_archive_identity: Option<&str>,
 ) -> Result<CleanupPlan, String> {
     let cache_ref = cache_dir.as_deref();
     let Some(target) = operation_output_path(args) else {
         return Ok(CleanupPlan {
             staged_extract: None,
             staged_archive: None,
+            expected_archive_family: Vec::new(),
             staged_input_archive: None,
             cache_dir,
             max_extract_bytes: None,
@@ -444,7 +449,11 @@ pub(crate) fn prepare_cleanup_plan(
             let archive = args
                 .get(separator + 1)
                 .ok_or_else(|| "Extraction command is missing an archive path.".to_string())?;
-            let staged_input = match stage_extract_input(std::path::Path::new(archive), cache_ref) {
+            let staged_input = match stage_extract_input(
+                std::path::Path::new(archive),
+                cache_ref,
+                expected_archive_identity,
+            ) {
                 Ok(snapshot) => snapshot,
                 Err(error) => {
                     let _ = crate::fs_secure::remove_dir_all_for_cleanup(&stage);
@@ -491,6 +500,7 @@ pub(crate) fn prepare_cleanup_plan(
             Ok(CleanupPlan {
                 staged_extract: Some((stage, destination)),
                 staged_archive: None,
+                expected_archive_family: Vec::new(),
                 staged_input_archive: Some(staged_input.path),
                 // Member preflight plus a fixed, wildcard-free stage
                 // contains 7-Zip output. Unrelated siblings may legitimately
@@ -506,6 +516,7 @@ pub(crate) fn prepare_cleanup_plan(
             } else {
                 resolve_new_target(&target)?
             };
+            let expected_archive_family = archive_destination_family_snapshot(&target)?;
             let stage_dir = create_publish_stage_dir(&target, "archive", cache_ref)?;
             let staged = stage_dir.join(
                 target
@@ -515,6 +526,7 @@ pub(crate) fn prepare_cleanup_plan(
             Ok(CleanupPlan {
                 staged_extract: None,
                 staged_archive: Some((staged, target)),
+                expected_archive_family,
                 staged_input_archive: None,
                 cache_dir,
                 max_extract_bytes: None,
@@ -526,6 +538,7 @@ pub(crate) fn prepare_cleanup_plan(
                 return Err("Update requires an existing output archive file.".to_string());
             }
             let target = resolve_existing_target(&target, false)?;
+            let expected_archive_family = archive_destination_family_snapshot(&target)?;
             let stage_dir = create_publish_stage_dir(&target, "archive", cache_ref)?;
             let staged = stage_dir.join(
                 target
@@ -542,6 +555,7 @@ pub(crate) fn prepare_cleanup_plan(
             Ok(CleanupPlan {
                 staged_extract: None,
                 staged_archive: Some((staged, target)),
+                expected_archive_family,
                 staged_input_archive: None,
                 cache_dir,
                 max_extract_bytes: None,
@@ -551,6 +565,7 @@ pub(crate) fn prepare_cleanup_plan(
         _ => Ok(CleanupPlan {
             staged_extract: None,
             staged_archive: None,
+            expected_archive_family: Vec::new(),
             staged_input_archive: None,
             cache_dir,
             max_extract_bytes: None,

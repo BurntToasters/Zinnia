@@ -202,4 +202,36 @@ describe("post-release assets", () => {
       copyReleaseAssets(releaseDir, path.join(releaseDir, "mirror")),
     ).toThrow(/cannot be inside the release directory/);
   });
+
+  it("replaces the mirror as an exact set without stale files", () => {
+    const root = makeTemporaryDirectory();
+    const releaseDir = path.join(root, "release");
+    const destination = path.join(root, "mirror");
+    fs.mkdirSync(releaseDir);
+    fs.mkdirSync(destination);
+    fs.writeFileSync(path.join(releaseDir, "current.exe"), "current");
+    fs.writeFileSync(path.join(destination, "stale.exe"), "stale");
+
+    copyReleaseAssets(releaseDir, destination);
+
+    expect(fs.readdirSync(destination)).toEqual(["current.exe"]);
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "rejects a symlink mirror destination",
+    () => {
+      const root = makeTemporaryDirectory();
+      const releaseDir = path.join(root, "release");
+      const actualDestination = path.join(root, "actual");
+      const destination = path.join(root, "mirror");
+      fs.mkdirSync(releaseDir);
+      fs.mkdirSync(actualDestination);
+      fs.writeFileSync(path.join(releaseDir, "current.exe"), "current");
+      fs.symlinkSync(actualDestination, destination);
+
+      expect(() => copyReleaseAssets(releaseDir, destination)).toThrow(
+        /must not be a symbolic link/,
+      );
+    },
+  );
 });

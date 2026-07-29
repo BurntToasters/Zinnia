@@ -102,7 +102,7 @@
   IfFileExists "$R8" 0 zinnia_menu_no_script
   zinnia_menu_run_script:
   DetailPrint "Registering Win11 context menu package…"
-  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$R8" -MsixPath "$R9\ZinniaContextMenu.msix" -ExtractMsixPath "$R9\ZinniaExtractContextMenu.msix" -ExternalLocation "$INSTDIR" -ShellPayloadLocation "$R9" -LogPath "$INSTDIR\zinnia-context-menu-register.log"'
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$R8" -MsixPath "$R9\ZinniaContextMenu.msix" -ExtractMsixPath "$R9\ZinniaExtractContextMenu.msix" -ExternalLocation "$INSTDIR" -ShellPayloadLocation "$R9" -LogPath "$INSTDIR\zinnia-context-menu-register.log"'
   Pop $0
   ; The registration script removed the old sparse identities, so their
   ; unversioned beta payload is no longer live registration state.
@@ -127,7 +127,7 @@
   ; Leaving packages registered against a deleted ExternalLocation breaks modern
   ; menus after uninstall; surface that instead of claiming cleanup succeeded.
   DetailPrint "Unregistering Win11 sparse context-menu packages…"
-  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference=\"Stop\"; $names=@(\"run.rosie.zinnia.contextmenu\",\"run.rosie.zinnia.extractmenu\"); for($attempt=0;$attempt -lt 2;$attempt++){ foreach($name in $names){ Get-AppxPackage -Name $name -ErrorAction SilentlyContinue | Remove-AppxPackage -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 400 }; $left=@(); foreach($name in $names){ $left += @(Get-AppxPackage -Name $name -ErrorAction SilentlyContinue) }; if($left.Count -gt 0){ $joined=(($left | ForEach-Object Name) -join \", \"); Write-Error \"Zinnia AppX packages still registered after uninstall: $joined\"; exit 1 }"'
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference=\"Stop\"; $names=@(\"run.rosie.zinnia.contextmenu\",\"run.rosie.zinnia.extractmenu\"); for($attempt=0;$attempt -lt 2;$attempt++){ foreach($name in $names){ Get-AppxPackage -Name $name -ErrorAction SilentlyContinue | Remove-AppxPackage -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 400 }; $left=@(); foreach($name in $names){ $left += @(Get-AppxPackage -Name $name -ErrorAction SilentlyContinue) }; if($left.Count -gt 0){ $joined=(($left | ForEach-Object Name) -join \", \"); Write-Error \"Zinnia AppX packages still registered after uninstall: $joined\"; exit 1 }"'
   Pop $0
   IntCmp $0 0 zinnia_win11_unregister_ok 0 0
   DetailPrint "WARNING: Could not fully unregister Win11 sparse context-menu packages (exit $0). Remove run.rosie.zinnia.contextmenu / extractmenu manually if menus misbehave."
@@ -169,11 +169,8 @@
   !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".zip"
   !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".tar"
   !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".gz"
-  !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".tgz"
   !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".bz2"
-  !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".tbz2"
   !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".xz"
-  !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".txz"
 !macroend
 
 !macro NSIS_HOOK_PREINSTALL
@@ -205,20 +202,14 @@
   !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".zip"
   !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".tar"
   !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".gz"
-  !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".tgz"
   !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".bz2"
-  !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".tbz2"
   !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".xz"
-  !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".txz"
   !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".7z"
   !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".zip"
   !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".tar"
   !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".gz"
-  !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".tgz"
   !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".bz2"
-  !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".tbz2"
   !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".xz"
-  !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".txz"
   !insertmacro ZINNIA_REGISTER_COMPRESS_VERBS
   !insertmacro ZINNIA_REGISTER_WIN11_CONTEXT_MENU
   IntCmp $R6 1 zinnia_postinstall_win11_ok 0 0
@@ -246,11 +237,8 @@
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".zip"
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".tar"
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".gz"
-  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".tgz"
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".bz2"
-  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".tbz2"
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".xz"
-  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".txz"
   DeleteRegKey HKCU "Software\Classes\Zinnia.Archive"
   RMDir /REBOOTOK "$INSTDIR"
 !macroend

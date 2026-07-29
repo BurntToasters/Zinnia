@@ -186,6 +186,35 @@ try {
     process.exit(1);
   }
 
+  // Soft CI smoke still shape-checks whatever /latest has. When no explicit
+  // --expected-version was set, also fail if a same-channel feed is stale
+  // relative to package.json (avoids all-404 soft-pass hiding a wrong beta).
+  if (!requestedExpectedVersion) {
+    const pkg = currentPackageVersion();
+    const pkgIsBeta = /-beta\.\d+$/.test(pkg);
+    for (const filePath of files) {
+      const base = path.basename(filePath, ".json"); // latest-<target>
+      const target = base.replace(/^latest-/, "");
+      if (target.includes("-beta-") !== pkgIsBeta) continue;
+      const body = fs.readFileSync(filePath, "utf8");
+      let manifest;
+      try {
+        manifest = JSON.parse(body);
+      } catch (error) {
+        console.error(
+          `updater-live: ${base}.json is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        process.exit(1);
+      }
+      if (manifest.version !== pkg) {
+        console.error(
+          `updater-live: ${base}.json reports version ${JSON.stringify(manifest.version)}, expected package.json ${pkg} (same-channel stale feed). Pass --expected-version=… to override.`,
+        );
+        process.exit(1);
+      }
+    }
+  }
+
   const check = spawnSync(process.execPath, [validator, ...files], {
     encoding: "utf8",
   });

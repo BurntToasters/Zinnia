@@ -37,28 +37,39 @@ const SHELL_HANDOFF_SUFFIX: &str = ".tmp";
 /// event listener exists, so `app.emit(...)` at that point would be silently
 /// dropped. Expose it as a pollable command instead, read once at frontend
 /// boot the same way `get_startup_recovery_status` already is.
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 static LAST_SHELL_HANDOFF_ERROR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
-#[cfg(windows)]
-fn record_shell_handoff_error(message: String) {
+#[cfg(any(windows, test))]
+pub(crate) fn record_shell_handoff_error(message: String) {
     if let Ok(mut guard) = LAST_SHELL_HANDOFF_ERROR.lock() {
         *guard = Some(message);
     }
 }
 
+#[cfg(any(windows, test))]
+pub(crate) fn take_shell_handoff_error() -> Option<String> {
+    LAST_SHELL_HANDOFF_ERROR
+        .lock()
+        .ok()
+        .and_then(|mut guard| guard.take())
+}
+
 /// A later, already-running-window open request (secondary instance argv
-/// forwarding, Reopen) can still emit live, since a window/listener exists by
-/// then; use the same channel already used for queue-capacity drops.
+/// forwarding, Reopen) can emit live because a listener exists. Consume error
+/// once so a later valid Explorer request cannot replay a stale warning.
+///
+/// When no webview is listening (extract warm-idle / pre-main), leave the
+/// error in place for `get_shell_handoff_error` after main opens.
 #[cfg(windows)]
 pub(crate) fn emit_pending_shell_handoff_error(app: &tauri::AppHandle) {
-    // Peek, do not take: cold launch surfaces the same error through
-    // `get_shell_handoff_error` after the frontend mounts. Taking here would
-    // drop the message if the event listener is not ready yet.
-    let message = match LAST_SHELL_HANDOFF_ERROR.lock() {
-        Ok(guard) => guard.clone(),
-        Err(_) => None,
-    };
+    // Only the main window listens for `open-paths-dropped`. Extract windows
+    // do not — taking the error while only an extract window exists emits into
+    // the void and clears the cold-poll buffer.
+    if app.get_webview_window("main").is_none() {
+        return;
+    }
+    let message = take_shell_handoff_error();
     if let Some(message) = message {
         let _ = app.emit(
             "open-paths-dropped",
@@ -76,10 +87,7 @@ pub(crate) fn emit_pending_shell_handoff_error(_app: &tauri::AppHandle) {}
 pub fn get_shell_handoff_error() -> Option<String> {
     #[cfg(windows)]
     {
-        LAST_SHELL_HANDOFF_ERROR
-            .lock()
-            .ok()
-            .and_then(|mut guard| guard.take())
+        take_shell_handoff_error()
     }
     #[cfg(not(windows))]
     {
@@ -138,16 +146,18 @@ pub(crate) fn should_use_extract_window(paths: &[String], mode: &str) -> bool {
 }
 
 pub(crate) fn looks_like_archive_extension(lower: &str) -> bool {
-    // Windows: omit .rar so file-open routing does not land on the temporary
-    // RAR extract block (CVE-2026-58052). macOS/Linux still treat RAR as archives.
+    if [".tar.gz", ".tar.bz2", ".tar.xz", ".tgz", ".tbz2", ".txz"]
+        .iter()
+        .any(|extension| lower.ends_with(extension))
+    {
+        return false;
+    }
+    // Windows packages standalone 7za.exe without a RAR handler. macOS/Linux
+    // bundled runtimes still treat RAR as an archive.
     let extensions: &[&str] = if cfg!(windows) {
-        &[
-            ".7z", ".zip", ".tar", ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz",
-        ]
+        &[".7z", ".zip", ".tar", ".gz", ".bz2", ".xz"]
     } else {
-        &[
-            ".7z", ".zip", ".rar", ".tar", ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz",
-        ]
+        &[".7z", ".zip", ".rar", ".tar", ".gz", ".bz2", ".xz"]
     };
     extensions
         .iter()

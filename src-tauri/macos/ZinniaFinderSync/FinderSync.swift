@@ -23,7 +23,7 @@ final class FinderSync: FIFinderSync {
   }()
 
   private let archiveExtensions: Set<String> = [
-    "7z", "zip", "tar", "gz", "tgz", "bz2", "tbz2", "xz", "txz", "rar", "001",
+    "7z", "zip", "tar", "gz", "bz2", "xz", "rar", "001",
   ]
   private let maximumPathsPerRequest = 1_000
 
@@ -111,8 +111,11 @@ final class FinderSync: FIFinderSync {
 
   private func isArchiveURL(_ url: URL) -> Bool {
     let name = url.lastPathComponent.lowercased()
-    if name.hasSuffix(".tar.gz") || name.hasSuffix(".tar.bz2") || name.hasSuffix(".tar.xz") {
-      return true
+    if name.hasSuffix(".tar.gz") || name.hasSuffix(".tar.bz2") ||
+      name.hasSuffix(".tar.xz") || name.hasSuffix(".tgz") ||
+      name.hasSuffix(".tbz2") || name.hasSuffix(".txz")
+    {
+      return false
     }
     let ext = url.pathExtension.lowercased()
     if ext == "001" {

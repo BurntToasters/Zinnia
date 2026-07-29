@@ -149,6 +149,23 @@ describe("checkUpdates", () => {
       target: "windows-beta-x86_64-nsis",
       timeout: 30_000,
     });
+    expect(checkMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries a transient beta feed lookup failure once", async () => {
+    mockState.currentSettings.updateChannel = "beta";
+    invokeMock.mockResolvedValue("windows-beta-x86_64-nsis");
+    checkMock
+      .mockRejectedValueOnce(new Error("feed swap"))
+      .mockResolvedValueOnce(null);
+
+    await checkUpdates();
+
+    expect(checkMock).toHaveBeenCalledTimes(2);
+    expect(messageMock).toHaveBeenCalledWith(
+      "You are running the latest version.",
+      { title: "No updates" },
+    );
   });
 
   it("downloads and installs update when user accepts restart", async () => {
@@ -166,9 +183,29 @@ describe("checkUpdates", () => {
     expect(download).toHaveBeenCalledWith(undefined, { timeout: 120_000 });
     expect(install).toHaveBeenCalledOnce();
     expect(relaunchMock).toHaveBeenCalledOnce();
+    expect(invokeMock).toHaveBeenCalledWith("is_7z_running", {
+      mode: "reserve_update",
+    });
     expect(setStatusMock).toHaveBeenCalledWith("Downloading update");
     expect(setStatusMock).toHaveBeenCalledWith("Update ready");
     expect(setStatusMock).toHaveBeenCalledWith("Installing update");
+  });
+
+  it("releases the archive-operation reservation when install fails", async () => {
+    const install = vi.fn().mockRejectedValue(new Error("install failed"));
+    checkMock.mockResolvedValue({
+      version: "0.5.0",
+      download: vi.fn().mockResolvedValue(undefined),
+      install,
+    } as unknown as Awaited<ReturnType<typeof check>>);
+    askMock.mockResolvedValue(true);
+
+    await checkUpdates();
+
+    expect(invokeMock).toHaveBeenCalledWith("is_7z_running", {
+      mode: "release_update",
+    });
+    expect(relaunchMock).not.toHaveBeenCalled();
   });
 
   it("downloads update and defers install when user chooses later", async () => {

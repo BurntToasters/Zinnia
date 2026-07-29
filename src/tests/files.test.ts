@@ -140,6 +140,22 @@ describe("addFiles", () => {
     expect(renderInputsMock).toHaveBeenCalled();
   });
 
+  it("reports files omitted by the input cap", async () => {
+    const paths = Array.from(
+      { length: 4_097 },
+      (_, index) => `/tmp/input-${index}.txt`,
+    );
+    openMock.mockResolvedValue(paths);
+
+    await addFiles();
+
+    expect(state.inputs).toHaveLength(4_096);
+    expect(state.inputs.at(-1)).toBe("/tmp/input-4095.txt");
+    expect(document.querySelector(".toast")?.textContent).toContain(
+      "1 more were not added",
+    );
+  });
+
   it("hides browse password when primary input changes in browse mode", async () => {
     mode = "browse";
     openMock.mockResolvedValue(["/tmp/new-primary.7z"]);

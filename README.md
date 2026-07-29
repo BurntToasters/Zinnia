@@ -65,7 +65,8 @@ native build runs.
 
 - Windows: `npm run build:win`
 - macOS: `npm run build:mac:universal` then `npm run build:mac:zip`
-- Linux: `npm run build:linux`
+- Linux x64: `npm run build:linux` (or `npm run build:linux:x64`)
+- Linux ARM64 (on native ARM64 hardware/emulation): `npm run build:linux:arm64`
 - Flatpak: `npm run flatpak:bundle`
 
 ## Release signing
@@ -79,6 +80,8 @@ native build runs.
   binaries, publishes releases, or consumes release signing secrets.
 - Signed releases are intentionally explicit: run the platform-specific
   `release:win`, `release:mac`, and `release:linux` scripts for the same version.
+  `release:linux` is x64; run `release:linux:arm64` only from a suitable ARM64
+  build environment.
   They stage updater manifests, artifacts, checksum files, and detached `.asc`
   signatures in the matching draft GitHub release.
 - After publishing a release, run `npm run release:verify:published`. It
@@ -88,7 +91,7 @@ native build runs.
 - Beta `release:sign:gpg` automatically copies `latest-*-beta-*.json` onto the
   latest stable `/releases/latest` so beta clients can discover the new beta
   (same as beta.22). If that sync was skipped or needs a re-run after publish,
-  use `npm run release:sync-beta-manifests`.
+  use `npm run release:sync-beta-manifests`. (It being automatic is purposeful)
 - Each full release command prepares and tests once. If `release:prepare` was
   already run separately on the same VM, use the matching `release:*:resume`
   command; its build session is bound to the exact commit, lockfiles, platform,

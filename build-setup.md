@@ -72,7 +72,9 @@ versions, licenses, and sidecars instead of preparing them again.
 
 If `npm run release:prepare` was run separately and completed successfully, use
 the matching `release:win:resume`, `release:mac:resume`, or
-`release:linux:x64:resume` command. Resume still runs branch/upstream preflight
+`release:linux:x64:resume` command. `release:linux` is the x64 release alias;
+run `release:linux:arm64` only on native ARM64 hardware or an explicitly
+configured emulator. Resume still runs branch/upstream preflight
 and refuses sessions from a different commit, version, lockfile, platform,
 architecture, Node/Rust toolchain, or sessions older than 24 hours. Do not run
 `release:prepare` manually and then use the non-resume entry point, because the

@@ -92,9 +92,11 @@ pub fn append_limited_output(
 }
 
 pub fn sanitize_output(s: &str) -> String {
+    // Keep `\r`: 7-Zip `-bsp1` rewrites progress on the same line with CR.
+    // Stripping it merges updates and breaks raw `7z-progress` listeners.
     let cleaned: String = s
         .chars()
-        .filter(|c| !c.is_control() || matches!(*c, '\n' | '\t'))
+        .filter(|c| !c.is_control() || matches!(*c, '\n' | '\t' | '\r'))
         .collect();
     redact_sensitive_text(&cleaned)
 }
@@ -209,6 +211,14 @@ mod tests {
         assert_eq!(decoder.push(&bytes[..4]), "caf");
         assert_eq!(decoder.push(&bytes[4..]), "é");
         assert_eq!(decoder.finish(), "");
+    }
+
+    #[test]
+    fn sanitize_output_preserves_carriage_return_progress() {
+        assert_eq!(
+            sanitize_output(" 10% a.txt\r 80% + b.txt"),
+            " 10% a.txt\r 80% + b.txt"
+        );
     }
 
     #[test]

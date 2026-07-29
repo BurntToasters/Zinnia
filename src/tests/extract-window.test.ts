@@ -90,7 +90,7 @@ async function setupAndRun(
     }
     if (cmd === "close_extract_window") return undefined;
     if (cmd === "open_path") return undefined;
-    if (cmd === "cancel_7z") return undefined;
+    if (cmd === "cancel_7z") return true;
     return undefined;
   };
 
@@ -328,7 +328,7 @@ describe("extract-window", () => {
       }
       if (cmd === "cancel_7z") {
         resolveRun?.({ stdout: "", stderr: "", code: -1 });
-        return undefined;
+        return true;
       }
       return undefined;
     });
@@ -342,6 +342,35 @@ describe("extract-window", () => {
     await flushAsync();
 
     expect(invokeMock).toHaveBeenCalledWith("cancel_7z");
+  });
+
+  it("re-enables Cancel after a failed cancel_7z so the user can retry", async () => {
+    await setupAndRun(async (cmd) => {
+      if (cmd === "get_extract_paths") return ["/tmp/archive.7z"];
+      if (cmd === "run_7z") {
+        return await new Promise(() => {
+          /* keep extraction running */
+        });
+      }
+      if (cmd === "cancel_7z") {
+        throw new Error("Could not stop 7z safely: permission denied");
+      }
+      return undefined;
+    });
+
+    const cancelBtn = document.getElementById(
+      "cancel-btn",
+    ) as HTMLButtonElement;
+    const closeBtn = document.getElementById("close-btn") as HTMLButtonElement;
+    cancelBtn.click();
+    await flushAsync();
+    await flushAsync();
+
+    expect(cancelBtn.disabled).toBe(false);
+    expect(closeBtn.disabled).toBe(false);
+    expect(
+      (document.getElementById("error-detail") as HTMLElement).textContent,
+    ).toContain("Could not stop 7z safely");
   });
 
   it("removes a registered progress listener when its sibling registration fails", async () => {
@@ -412,7 +441,7 @@ describe("extract-window", () => {
       invokeMock.mock.calls.filter(([name]) => name === "run_7z"),
     ).toHaveLength(1);
     expect(invokeMock.mock.calls.some(([name]) => name === "probe_7z")).toBe(
-      false,
+      true,
     );
   });
 

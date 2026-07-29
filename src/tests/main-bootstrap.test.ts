@@ -819,6 +819,20 @@ describe("main bootstrap", () => {
     licensesOverlay.hidden = false;
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect(mocks.licenses.closeLicensesModal).toHaveBeenCalled();
+
+    settingsOverlay.hidden = false;
+    licensesOverlay.hidden = false;
+    mocks.licenses.closeLicensesModal.mockClear();
+    mocks.settings.closeSettingsModal.mockClear();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(mocks.licenses.closeLicensesModal).toHaveBeenCalled();
+    expect(mocks.settings.closeSettingsModal).not.toHaveBeenCalled();
+
+    mocks.settings.toggleSettingsModal.mockClear();
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: ",", ctrlKey: true }),
+    );
+    expect(mocks.settings.toggleSettingsModal).not.toHaveBeenCalled();
   });
 
   it("routes drag-drop events in both basic and power workspace modes", async () => {
@@ -864,6 +878,30 @@ describe("main bootstrap", () => {
     expect(mocks.ui.setBrowsePasswordFieldVisible).toHaveBeenCalledWith(false);
     expect(mocks.ui.renderInputs).toHaveBeenCalled();
     expect(mocks.archive.browseArchive).toHaveBeenCalled();
+  });
+
+  it("reports Power drag-drop paths omitted by the input cap", async () => {
+    await loadMainModule();
+    mocks.runtime.workspaceMode = "power";
+    mocks.runtime.mode = "add";
+    const { state } = await import("../state");
+    state.inputs = [];
+    const paths = Array.from(
+      { length: 4_097 },
+      (_, index) => `/tmp/drop-${index}.txt`,
+    );
+
+    await dragDropHandler?.({ payload: { type: "drop", paths } });
+
+    expect(state.inputs).toHaveLength(4_096);
+    expect(state.inputs.at(-1)).toBe("/tmp/drop-4095.txt");
+    expect(document.querySelector(".toast")?.textContent).toContain(
+      "1 more were not added",
+    );
+    expect(mocks.ui.log).toHaveBeenCalledWith(
+      expect.stringContaining("1 more were not added"),
+      "error",
+    );
   });
 
   it("executes diagnostics toolbar actions and reports errors", async () => {

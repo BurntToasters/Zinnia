@@ -1079,7 +1079,7 @@
                 aria-live="polite"
                 aria-atomic="true"
               >
-                0 selected · 0 shown · 0 total
+                0 selected · 0 rows shown · 0 archive entries
               </div>
               <div class="selective-toolbar__actions">
                 <button class="btn btn--sm" id="selective-select-all">
@@ -1241,7 +1241,7 @@
         class="setup-wizard-overlay"
         role="dialog"
         aria-modal="true"
-        aria-labelledby="setup-wizard-title"
+        aria-labelledby="setup-wizard-title-0"
         hidden
       >
         <div class="setup-wizard-card">
@@ -1249,11 +1249,20 @@
             <div
               class="setup-wizard-progress__bar"
               id="setup-wizard-progress-bar"
+              role="progressbar"
+              aria-label="Setup progress"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow="0"
             ></div>
           </div>
 
           <div class="setup-wizard-step" data-step="0" id="setup-step-welcome">
-            <h2 class="setup-wizard-step__title" id="setup-wizard-title">
+            <h2
+              class="setup-wizard-step__title"
+              id="setup-wizard-title-0"
+              tabindex="-1"
+            >
               Welcome to Zinnia
             </h2>
             <p class="setup-wizard-step__desc">
@@ -1271,7 +1280,13 @@
           </div>
 
           <div class="setup-wizard-step" data-step="1" hidden>
-            <h2 class="setup-wizard-step__title">Workspace mode</h2>
+            <h2
+              class="setup-wizard-step__title"
+              id="setup-wizard-title-1"
+              tabindex="-1"
+            >
+              Workspace mode
+            </h2>
             <p class="setup-wizard-step__desc">
               Basic keeps the UI simple. Power exposes advanced controls and
               quick actions.
@@ -1305,7 +1320,13 @@
           </div>
 
           <div class="setup-wizard-step" data-step="2" hidden>
-            <h2 class="setup-wizard-step__title">Theme</h2>
+            <h2
+              class="setup-wizard-step__title"
+              id="setup-wizard-title-2"
+              tabindex="-1"
+            >
+              Theme
+            </h2>
             <p class="setup-wizard-step__desc">Pick how Zinnia should look.</p>
             <div
               class="setup-wizard-choice-grid setup-wizard-choice-grid--theme"
@@ -1341,7 +1362,13 @@
           </div>
 
           <div class="setup-wizard-step" data-step="3" hidden>
-            <h2 class="setup-wizard-step__title">Updates</h2>
+            <h2
+              class="setup-wizard-step__title"
+              id="setup-wizard-title-3"
+              tabindex="-1"
+            >
+              Updates
+            </h2>
             <p class="setup-wizard-step__desc">
               Control automatic update checks and channel. Auto follows this
               build&apos;s channel.
@@ -1371,7 +1398,13 @@
           </div>
 
           <div class="setup-wizard-step" data-step="4" hidden>
-            <h2 class="setup-wizard-step__title">OS integration</h2>
+            <h2
+              class="setup-wizard-step__title"
+              id="setup-wizard-title-4"
+              tabindex="-1"
+            >
+              OS integration
+            </h2>
             <p class="setup-wizard-step__desc">
               Make Zinnia your archive app when your platform supports it.
               Zinnia can open archives directly and expose quick open/extract

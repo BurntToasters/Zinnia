@@ -77,7 +77,7 @@ Requires a **signed** NSIS install with full `AZURE_ARTIFACT_SIGNING_PUBLISHER_D
 1. Confirm package + signature:
    ```powershell
    Get-AppxPackage -Name run.rosie.zinnia.contextmenu
-   Get-AuthenticodeSignature "…\Zinnia\shell-0.6.0-beta.14\zinnia_shell.dll"   # Status = Valid
+   Get-AuthenticodeSignature "…\Zinnia\shell-<current-version>\zinnia_shell.dll"   # Status = Valid
    ```
 2. If registration failed, check `$INSTDIR\zinnia-context-menu-register.log`.
 3. Right-click a `.zip` / `.7z` (primary menu, not “Show more options”). Also

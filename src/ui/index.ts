@@ -24,6 +24,7 @@ export {
   setProgress,
   hideProgress,
   setRunning,
+  setCancelAvailable,
 } from "./status";
 
 export {

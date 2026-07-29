@@ -39,10 +39,12 @@ export interface ArchivePathValidation {
   path: string;
   valid: boolean;
   reason?: string;
+  identity?: string;
 }
 
 export type ProbeArchivePaths = (
   paths: string[],
+  includeIdentity?: boolean,
 ) => Promise<ArchivePathValidation[]>;
 
 const SWITCH_PATH_PREFIXES = ["-i", "-x", "-w", "-o"];
@@ -95,6 +97,7 @@ function isAllowedMethodSwitch(lower: string): boolean {
 
 export async function validateArchivePaths(
   paths: string[],
+  includeIdentity = false,
 ): Promise<ArchivePathValidation[]> {
   const normalized = paths.map(normalizePath);
   if (normalized.length > MAX_ARCHIVE_PATHS) {
@@ -130,7 +133,7 @@ export async function validateArchivePaths(
     }
     const probed = await invoke<ArchivePathValidation[]>(
       "validate_archive_paths",
-      { pathsJson },
+      { pathsJson, ...(includeIdentity ? { includeIdentity: true } : {}) },
     );
     for (const result of probed) {
       const normalizedPath = normalizePath(result.path);
@@ -138,6 +141,7 @@ export async function validateArchivePaths(
         path: normalizedPath,
         valid: result.valid,
         reason: result.reason,
+        identity: result.identity,
       };
       byPath.set(normalizedPath, normalizedResult);
     }
@@ -204,20 +208,22 @@ export async function ensureArchivePaths(
   paths: string[],
   context: "browse" | "extract" | "test",
   probe: ProbeArchivePaths = validateArchivePaths,
-): Promise<void> {
+  includeIdentity = false,
+): Promise<ArchivePathValidation[]> {
   const normalized = paths.map(normalizePath).filter((path) => path.length > 0);
-  if (normalized.length === 0) return;
+  if (normalized.length === 0) return [];
 
-  let invalid: ArchivePathValidation[];
+  let results: ArchivePathValidation[];
   try {
-    invalid = (await probe(normalized)).filter((result) => !result.valid);
+    results = await probe(normalized, includeIdentity);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(
       `Unable to validate selected inputs for ${context}: ${msg}`,
     );
   }
-  if (invalid.length === 0) return;
+  const invalid = results.filter((result) => !result.valid);
+  if (invalid.length === 0) return results;
 
   const sample = invalid
     .slice(0, 3)

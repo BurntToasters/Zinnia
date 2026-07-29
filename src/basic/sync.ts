@@ -377,6 +377,7 @@ export function renderBasicInputs(): void {
     removeBtn.className = "basic-file-item__remove";
     removeBtn.textContent = "\u00d7";
     removeBtn.title = "Remove";
+    removeBtn.setAttribute("aria-label", `Remove ${basename(path)}`);
     removeBtn.disabled =
       state.running || state.operationPreparing || state.incomingPathsApplying;
     const index = i;

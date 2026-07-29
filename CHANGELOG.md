@@ -3,12 +3,12 @@
 
 # ⬇️ Downloads
 
-| <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                                            | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux         |
-| :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------- |
-| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.1/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.1/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.1/Zinnia-macOS.dmg)**  | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.1/Zinnia-Linux-x64.AppImage) |
-| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>-->                       | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.1/Zinnia-macOS.zip)**  | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.1/Zinnia-Linux-x64.deb)           |
-| <!--*See MSI note below*-->                                                                                                                                                                                                  |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.1/Zinnia-Linux-x64.rpm)           |
-|                                                                                                                                                                                                                              |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.1/Zinnia-Linux-x64.flatpak)   |
+| <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                                          | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux        |
+| :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------- |
+| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.1/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.1/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.1/Zinnia-macOS.dmg)**   | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.1/Zinnia-Linux-x64.AppImage) |
+| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>-->                     | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.1/Zinnia-macOS.zip)**   | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.1/Zinnia-Linux-x64.deb)           |
+| <!--*See MSI note below*-->                                                                                                                                                                                                |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.1/Zinnia-Linux-x64.rpm)           |
+|                                                                                                                                                                                                                            |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.1/Zinnia-Linux-x64.flatpak)   |
 
 > macOS downloads require macOS 26 or later.
 
@@ -24,14 +24,32 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 ## Changes in `v0.6.1-beta.1:`
 
 - **Fix:** Windows Explorer shell handoffs that fail during cold start (oversized selection, wrong owner, malformed list) now surface a toast via `get_shell_handoff_error` instead of silently opening with no paths.
+- **Fix:** Warm-idle / extract-only Explorer handoff failures keep the error until a main window can toast it (do not emit+clear into a non-listening extract webview).
+- **Fix:** Cancel during an idle password-prompt or between-batch gap keeps abort intent so retry/batch loops stop (`cancel_7z` still reports whether a child was armed).
+- **Fix:** macOS empty-launch fallback clears `MAC_FALLBACK_MAIN_PENDING` if main fails to open or is destroyed, so a later Extract cannot treat a real workspace as disposable.
+- **Fix:** Archive-probe IPC failures fail closed (toast) instead of auto-routing drops into Compress.
 - **Fix:** Basic extract password prompts distinguish wrong passwords from backend/IPC failures so unrelated errors no longer loop as “Incorrect password”.
 - **Fix:** Basic encryption probing treats probe failures as “assume encrypted” so password-protected archives are never skipped silently.
 - **Fix:** Windows settings saves use atomic `rename` replace-existing promotion (with stale `.bak` cleanup) instead of a rename-to-backup window that could briefly leave settings missing.
+- **Fix:** Main/batch/selective extract pass `-bsp1` so live percent progress matches the extract-only window; progress IPC keeps CR so 7-Zip line rewrites stay parseable.
+- **Fix:** OS Integration help no longer claims classic Explorer verbs remain under Show more options after a successful Win11 package registration.
+- **Fix:** Extract-only window probes bundled 7-Zip before extract; auto-close
+  delay uses the same supported archive allowlist as Settings.
+- **Fix:** macOS archive CoW snapshot cleanup removes partial clones when chmod/fsync fails (matches Linux).
 - **Performance:** Archive-input snapshots use APFS `fclonefileat` and Linux `FICLONE` when available before falling back to a byte copy (CoW clones share blocks on APFS/Btrfs; free-space preflight still reserves for full byte-copy worst case).
 - **Performance:** Large merge-into-existing extractions journal publish identities append-only instead of rewriting the full move-plan JSON after every file (avoids O(n²) I/O).
 - **Fix:** Startup sweeps orphaned `%TEMP%` shell-handoff files (owner-checked) and stale `zinnia-7z-list-*` directories (nofollow + age gate) after crashes; stale Zinnia temp dirs use hardened cleanup.
 - **Fix:** File/folder pickers and incoming-path apply respect Basic preparation locks without self-deadlock; dialog failures log clearly instead of failing silently.
 - **Tooling:** Node.js engine requirement is `>=22.12` (Node 25+ no longer capped out).
+- **Tooling:** Live updater smoke fails closed on same-channel stale `/latest` feeds while still soft-passing when nothing is published yet.
+- **Security:** Extracted symbolic links now use OS-resolved containment checks, blocking ancestor-symlink plus `..` escape shapes and dangling links before publish.
+- **Fix:** Live extraction quota scans tolerate a safe relative symlink appearing before its target while final publish validation remains strict.
+- **Fix:** Select-all in the selective extraction tree now includes rendered folders synthesized from archives that omit explicit directory entries.
+- **Fix:** Selective extraction tree counts, row-limit messaging, and accessibility labels now match the controls and rows actually rendered.
+- **Tooling:** Version synchronization now keeps the tracked Finder Sync extension metadata aligned with the containing macOS app.
+- **Fix:** Keyboard dismissal now closes the Licenses sheet above Basic Settings first, and Settings shortcuts no longer act on the obscured lower layer.
+- **Fix:** Closing an extract window treats an already-exited 7-Zip kill as success and restores the child handle on real kill failure so close/cancel can retry instead of soft-locking.
+- **Fix:** Extract-window Cancel re-enables after a failed `cancel_7z` so the user can retry the kill.
 
 ## Changes in `v0.6.0:`
 
@@ -46,7 +64,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **NEW - Recents:** Compact titlebar dropdown in Basic mode; missing paths drop automatically.
 - **UI:** Basic locks main window size when active (non-resizable/non-maximizable); titlebar Maximize is disabled in Basic; roomier Settings sheet; `Ctrl`/`⌘` + `,` opens Settings; stacked modal focus traps; Basic progress clears `aria-busy` when finished.
 - **UI:** Selective extract picker uses archive-native path separators; folder toggles and Select all respect rendered rows, search visibility, and the 1,000-row budget; browse tree construction is iterative with depth/member limits.
-- **UI:** Completion notes for Unix execute-bit restore, macOS `.app` quarantine clearing, and clearer errors for symlink/reparse inputs.
+- **UI:** Clearer errors for symlink/reparse inputs.
 - **UI:** Timestamp option label matches behavior (created + accessed; modification always stored); Basic glass no longer paints a solid dock behind Compress; extract-only window matches Basic glass/opaque theming.
 - **Windows:** NSIS migrates legacy `v0.5.3` context-menu registration to the `v0.6.0` shell layout; versioned side-by-side shell DLL/MSIX payloads prevent loaded DLLs from blocking updates; uninstall retries sparse AppX removal.
 - **Windows:** OS Integration reads live default-app ProgId per format; Ready detection accepts Win11 sparse packages when classic verbs were removed; legacy duplicate Open/Extract/Compress stacking under Show more options is removed on upgrade.
@@ -73,7 +91,9 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Codebase:** Modular frontend (`archive/`, `basic/`, `ui/`) and Rust (`process/`, `platform/`, `launch/`) splits; archive commit finalization on `spawn_blocking`; OS integration commands kill process trees on timeout.
 - **Testing:** Changelog/updater validation in `npm run test:all`; expanded Rust Clippy/format gates; Windows/macOS CI smoke compiles the shell DLL and universal macOS builds.
 - **Docs:** Windows context-menu QA checklist; `SECURITY.md` Flatpak and hard-link TOCTOU notes.
-- **Known:** Windows RAR **extraction** stays disabled while attested 7-Zip remains ≤ `26.02` (CVE-2026-58052); browse/test for RAR remain available.
+- **Known:** Windows RAR browse, test, conversion, and extraction stay disabled
+  because packaged `7za.exe` has no RAR handler. macOS/Linux RAR support remains
+  available.
 - **PKG:** Updated packages.
 
 ### FULL CHANGELOG:

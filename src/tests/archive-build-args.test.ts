@@ -287,6 +287,69 @@ describe("buildArgs (add mode)", () => {
     const args = buildArgs();
     expect(args).toContain("-tzip");
     expect(args).toContain("-m0=deflate");
+    expect(args).not.toContain("-md=64m");
+    expect(args).toContain("-mfb=64");
+  });
+
+  it.each([
+    ["tar", "out.tar", []],
+    ["gzip", "out.gz", ["-mfb=64"]],
+    ["bzip2", "out.bz2", []],
+    ["xz", "out.xz", ["-md=64m", "-mfb=64"]],
+  ])(
+    "emits only supported method controls for %s",
+    (format, output, expectedControls) => {
+      state.inputs = ["a.txt"];
+      setInputValue("output-path", output);
+      setSelectValue("format", format);
+      // Simulate a stale method value during a rapid format change.
+      setSelectValue("method", "lzma2");
+
+      const args = buildArgs();
+      expect(args.some((arg) => arg.startsWith("-m0="))).toBe(false);
+      expect(args.filter((arg) => /^-m(?:d|fb)=/.test(arg))).toEqual(
+        expectedControls,
+      );
+    },
+  );
+
+  it.each([
+    ["gzip", "out.gz"],
+    ["bzip2", "out.bz2"],
+    ["xz", "out.xz"],
+  ])("rejects update mode for %s", (format, output) => {
+    state.inputs = ["a.txt"];
+    setInputValue("output-path", output);
+    setSelectValue("format", format);
+    setChecked("update-mode", true);
+
+    expect(() => buildArgs()).toThrow(/cannot update/i);
+  });
+
+  it("rejects compound TAR aliases instead of creating one-layer streams", () => {
+    state.inputs = ["a.txt"];
+    setInputValue("output-path", "out.tgz");
+    setSelectValue("format", "gzip");
+
+    expect(() => buildArgs()).toThrow(/Compound TAR streams/i);
+  });
+
+  it("rejects split output paths in update mode", () => {
+    state.inputs = ["a.txt"];
+    setInputValue("output-path", "existing.7z.001");
+    setSelectValue("format", "7z");
+    setChecked("update-mode", true);
+
+    expect(() => buildArgs()).toThrow(/split-volume archives/i);
+  });
+
+  it("rejects split volumes smaller than 1 MiB", () => {
+    state.inputs = ["a.txt"];
+    setInputValue("output-path", "out.7z");
+    setSelectValue("split-size", "custom");
+    setInputValue("split-custom", "1b");
+
+    expect(() => buildArgs()).toThrow(/at least 1 MiB/i);
   });
 
   it("includes extra args", () => {

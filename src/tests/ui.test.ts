@@ -321,7 +321,7 @@ describe("workspace and density", () => {
     expect(appWindow.setSize).toHaveBeenCalledOnce();
   });
 
-  it("clamps restored power window size before resizing", () => {
+  it("clamps restored power window size before resizing", async () => {
     const appWindow = {
       onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
       setSize: vi.fn().mockResolvedValue(undefined),
@@ -335,6 +335,7 @@ describe("workspace and density", () => {
     state.currentSettings.powerWindowHeight = 99999;
 
     setWorkspaceMode("power", { persist: false });
+    await resizeWorkspaceWindow("power");
 
     expect(appWindow.setResizable).toHaveBeenCalledWith(true);
     expect(appWindow.setMaximizable).toHaveBeenCalledWith(true);

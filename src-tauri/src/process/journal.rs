@@ -92,6 +92,10 @@ pub(crate) enum FileIdentity {
     Unix {
         device: u64,
         inode: u64,
+        /// Strong snapshot of published contents. Missing identifies a legacy
+        /// journal and is never sufficient for destructive crash recovery.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fingerprint: Option<ObjectFingerprint>,
     },
     Windows {
         /// Legacy 32-bit volume serial retained for journals written by older betas
@@ -105,7 +109,47 @@ pub(crate) enum FileIdentity {
         volume_serial_number_64: Option<u64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         file_id_128: Option<[u8; 16]>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fingerprint: Option<ObjectFingerprint>,
     },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum ObjectFingerprint {
+    File { len: u64, sha256: [u8; 32] },
+    Directory { sha256: [u8; 32] },
+    Symlink { sha256: [u8; 32] },
+}
+
+impl FileIdentity {
+    pub(crate) fn fingerprint(&self) -> Option<&ObjectFingerprint> {
+        match self {
+            Self::Unix { fingerprint, .. } | Self::Windows { fingerprint, .. } => {
+                fingerprint.as_ref()
+            }
+        }
+    }
+
+    fn set_fingerprint(&mut self, value: ObjectFingerprint) {
+        match self {
+            Self::Unix { fingerprint, .. } | Self::Windows { fingerprint, .. } => {
+                *fingerprint = Some(value);
+            }
+        }
+    }
+}
+
+pub(crate) fn identity_with_fingerprint_from(
+    mut identity: FileIdentity,
+    expected: &FileIdentity,
+) -> Result<FileIdentity, String> {
+    let fingerprint = expected
+        .fingerprint()
+        .cloned()
+        .ok_or_else(|| "Expected content fingerprint is missing.".to_string())?;
+    identity.set_fingerprint(fingerprint);
+    Ok(identity)
 }
 
 /// Compare identities using the strongest representation captured in the
@@ -117,10 +161,12 @@ pub(crate) fn file_identities_match(actual: &FileIdentity, expected: &FileIdenti
             FileIdentity::Unix {
                 device: actual_device,
                 inode: actual_inode,
+                ..
             },
             FileIdentity::Unix {
                 device: expected_device,
                 inode: expected_inode,
+                ..
             },
         ) => actual_device == expected_device && actual_inode == expected_inode,
         (
@@ -129,12 +175,14 @@ pub(crate) fn file_identities_match(actual: &FileIdentity, expected: &FileIdenti
                 file_index: actual_index,
                 volume_serial_number_64: actual_volume_64,
                 file_id_128: actual_id_128,
+                ..
             },
             FileIdentity::Windows {
                 volume_serial_number: expected_volume,
                 file_index: expected_index,
                 volume_serial_number_64: expected_volume_64,
                 file_id_128: expected_id_128,
+                ..
             },
         ) => match (expected_volume_64, expected_id_128) {
             (Some(expected_volume_64), Some(expected_id_128)) => {
@@ -164,6 +212,7 @@ pub(crate) fn path_identity(path: &std::path::Path) -> Result<FileIdentity, Stri
         Ok(FileIdentity::Unix {
             device: metadata.dev(),
             inode: metadata.ino(),
+            fingerprint: None,
         })
     }
     #[cfg(windows)]
@@ -186,6 +235,32 @@ pub(crate) fn path_identity(path: &std::path::Path) -> Result<FileIdentity, Stri
     }
 }
 
+/// Identity of one directory entry without following its final symlink.
+/// Unix extraction may publish symlinks, so recovery must distinguish the
+/// exact link inode from a replacement link before moving it back.
+pub(crate) fn path_entry_identity(path: &std::path::Path) -> Result<FileIdentity, String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        let metadata = std::fs::symlink_metadata(path).map_err(|error| error.to_string())?;
+        if !metadata.is_file() && !metadata.is_dir() && !metadata.file_type().is_symlink() {
+            return Err(format!(
+                "Expected a regular file, directory, or symbolic link: {}",
+                path.display()
+            ));
+        }
+        Ok(FileIdentity::Unix {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            fingerprint: None,
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        path_identity(path)
+    }
+}
+
 pub(crate) fn file_identity(file: &std::fs::File) -> Result<FileIdentity, String> {
     #[cfg(unix)]
     {
@@ -194,6 +269,7 @@ pub(crate) fn file_identity(file: &std::fs::File) -> Result<FileIdentity, String
         Ok(FileIdentity::Unix {
             device: metadata.dev(),
             inode: metadata.ino(),
+            fingerprint: None,
         })
     }
     #[cfg(windows)]
@@ -227,6 +303,7 @@ pub(crate) fn file_identity(file: &std::fs::File) -> Result<FileIdentity, String
             file_index: (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
             volume_serial_number_64: has_extended_id.then_some(extended.VolumeSerialNumber),
             file_id_128: has_extended_id.then_some(extended.FileId.Identifier),
+            fingerprint: None,
         })
     }
     #[cfg(not(any(unix, windows)))]
@@ -234,6 +311,215 @@ pub(crate) fn file_identity(file: &std::fs::File) -> Result<FileIdentity, String
         let _ = file;
         Err("Stable file identities are unavailable on this platform.".to_string())
     }
+}
+
+fn os_value_bytes(value: &std::ffi::OsStr) -> Vec<u8> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+        value.as_bytes().to_vec()
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt as _;
+        value
+            .encode_wide()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<_>>()
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        value.to_string_lossy().as_bytes().to_vec()
+    }
+}
+
+fn hash_regular_file(path: &std::path::Path) -> Result<ObjectFingerprint, String> {
+    use sha2::Digest as _;
+    use std::io::Read as _;
+
+    let mut file = crate::path_safety::open_regular_file_nofollow(path)?;
+    let identity = file_identity(&file)?;
+    let metadata = file.metadata().map_err(|error| error.to_string())?;
+    let len = metadata.len();
+    let modified = metadata.modified().ok();
+    let mut hasher = sha2::Sha256::new();
+    let mut buffer = [0u8; 128 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|error| format!("Could not fingerprint {}: {error}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    let after_identity = file_identity(&file)?;
+    let after_metadata = file.metadata().map_err(|error| error.to_string())?;
+    if !file_identities_match(&identity, &after_identity)
+        || len != after_metadata.len()
+        || modified != after_metadata.modified().ok()
+    {
+        return Err(format!(
+            "Path changed while it was being fingerprinted: {}",
+            path.display()
+        ));
+    }
+    Ok(ObjectFingerprint::File {
+        len,
+        sha256: hasher.finalize().into(),
+    })
+}
+
+fn path_fingerprint(path: &std::path::Path) -> Result<ObjectFingerprint, String> {
+    use sha2::Digest as _;
+
+    let root_metadata = std::fs::symlink_metadata(path).map_err(|error| error.to_string())?;
+    if root_metadata.is_file() && !crate::path_safety::is_link_or_reparse(&root_metadata) {
+        return hash_regular_file(path);
+    }
+    if root_metadata.file_type().is_symlink() {
+        let target = std::fs::read_link(path).map_err(|error| error.to_string())?;
+        return Ok(ObjectFingerprint::Symlink {
+            sha256: sha2::Sha256::digest(os_value_bytes(target.as_os_str())).into(),
+        });
+    }
+    if !root_metadata.is_dir() || crate::path_safety::is_link_or_reparse(&root_metadata) {
+        return Err(format!(
+            "Expected a regular file, directory, or symbolic link: {}",
+            path.display()
+        ));
+    }
+
+    let mut pending = vec![path.to_path_buf()];
+    let mut records = Vec::<(Vec<u8>, ObjectFingerprint)>::new();
+    let mut observed = Vec::<(
+        std::path::PathBuf,
+        FileIdentity,
+        u64,
+        Option<std::time::SystemTime>,
+    )>::new();
+    while let Some(directory) = pending.pop() {
+        let mut entries = std::fs::read_dir(&directory)
+            .map_err(|error| format!("Could not fingerprint {}: {error}", directory.display()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        entries.sort_by_key(|entry| os_value_bytes(entry.file_name().as_os_str()));
+        for entry in entries {
+            let entry_path = entry.path();
+            let relative = entry_path
+                .strip_prefix(path)
+                .map_err(|error| error.to_string())?;
+            let relative_bytes = os_value_bytes(relative.as_os_str());
+            let metadata =
+                std::fs::symlink_metadata(&entry_path).map_err(|error| error.to_string())?;
+            let identity = path_entry_identity(&entry_path)?;
+            let len = metadata.len();
+            let modified = metadata.modified().ok();
+            let fingerprint = if metadata.file_type().is_symlink() {
+                let target = std::fs::read_link(&entry_path).map_err(|error| error.to_string())?;
+                ObjectFingerprint::Symlink {
+                    sha256: sha2::Sha256::digest(os_value_bytes(target.as_os_str())).into(),
+                }
+            } else if metadata.is_file() && !crate::path_safety::is_link_or_reparse(&metadata) {
+                hash_regular_file(&entry_path)?
+            } else if metadata.is_dir() && !crate::path_safety::is_link_or_reparse(&metadata) {
+                pending.push(entry_path.clone());
+                ObjectFingerprint::Directory { sha256: [0; 32] }
+            } else {
+                return Err(format!(
+                    "Unsupported entry while fingerprinting {}.",
+                    entry_path.display()
+                ));
+            };
+            observed.push((entry_path, identity, len, modified));
+            records.push((relative_bytes, fingerprint));
+        }
+    }
+
+    // Catch ordinary concurrent edits that happened after an entry was hashed.
+    for (entry_path, identity, len, modified) in observed {
+        let metadata = std::fs::symlink_metadata(&entry_path).map_err(|error| error.to_string())?;
+        let actual_identity = path_entry_identity(&entry_path)?;
+        if !file_identities_match(&actual_identity, &identity)
+            || metadata.len() != len
+            || metadata.modified().ok() != modified
+        {
+            return Err(format!(
+                "Path changed while it was being fingerprinted: {}",
+                entry_path.display()
+            ));
+        }
+    }
+
+    records.sort_by(|left, right| left.0.cmp(&right.0));
+    let mut hasher = sha2::Sha256::new();
+    for (relative, fingerprint) in records {
+        hasher.update((relative.len() as u64).to_le_bytes());
+        hasher.update(relative);
+        match fingerprint {
+            ObjectFingerprint::File { len, sha256 } => {
+                hasher.update(*b"f");
+                hasher.update(len.to_le_bytes());
+                hasher.update(sha256);
+            }
+            ObjectFingerprint::Directory { .. } => hasher.update(*b"d"),
+            ObjectFingerprint::Symlink { sha256 } => {
+                hasher.update(*b"l");
+                hasher.update(sha256);
+            }
+        }
+    }
+    Ok(ObjectFingerprint::Directory {
+        sha256: hasher.finalize().into(),
+    })
+}
+
+pub(crate) fn path_identity_with_fingerprint(
+    path: &std::path::Path,
+) -> Result<FileIdentity, String> {
+    let mut identity = path_entry_identity(path)?;
+    let fingerprint = path_fingerprint(path)?;
+    let after_identity = path_entry_identity(path)?;
+    if !file_identities_match(&after_identity, &identity) {
+        return Err(format!(
+            "Path changed while it was being fingerprinted: {}",
+            path.display()
+        ));
+    }
+    identity.set_fingerprint(fingerprint);
+    Ok(identity)
+}
+
+pub(crate) fn regular_file_identity_with_fingerprint(
+    path: &std::path::Path,
+) -> Result<FileIdentity, String> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|error| error.to_string())?;
+    if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_file() {
+        return Err(format!("Expected a regular file: {}", path.display()));
+    }
+    path_identity_with_fingerprint(path)
+}
+
+pub(crate) fn ensure_recovery_path_unchanged(
+    path: &std::path::Path,
+    expected: &FileIdentity,
+) -> Result<(), String> {
+    let Some(expected_fingerprint) = expected.fingerprint() else {
+        return Err(format!(
+            "Refusing destructive recovery of {} because its content fingerprint was not recorded.",
+            path.display()
+        ));
+    };
+    let actual = path_identity_with_fingerprint(path)?;
+    if !file_identities_match(&actual, expected)
+        || actual.fingerprint() != Some(expected_fingerprint)
+    {
+        return Err(format!(
+            "Recovery target changed after publication and was preserved: {}",
+            path.display()
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn regular_file_identity(path: &std::path::Path) -> Result<FileIdentity, String> {
@@ -259,6 +545,21 @@ pub(crate) fn ensure_path_identity(
     }
 }
 
+pub(crate) fn ensure_path_entry_identity(
+    path: &std::path::Path,
+    expected: &FileIdentity,
+) -> Result<(), String> {
+    let actual = path_entry_identity(path)?;
+    if file_identities_match(&actual, expected) {
+        Ok(())
+    } else {
+        Err(format!(
+            "Refusing to move {} because its entry identity changed.",
+            path.display()
+        ))
+    }
+}
+
 pub(crate) fn ensure_regular_file_identity(
     path: &std::path::Path,
     expected: &FileIdentity,
@@ -279,6 +580,14 @@ pub(crate) fn remove_regular_file_if_matches(
     expected: &FileIdentity,
 ) -> Result<(), String> {
     ensure_regular_file_identity(path, expected)?;
+    crate::fs_secure::remove_file_for_cleanup(path).map_err(|error| error.to_string())
+}
+
+pub(crate) fn remove_recovery_regular_file_if_matches(
+    path: &std::path::Path,
+    expected: &FileIdentity,
+) -> Result<(), String> {
+    ensure_recovery_path_unchanged(path, expected)?;
     crate::fs_secure::remove_file_for_cleanup(path).map_err(|error| error.to_string())
 }
 
@@ -385,8 +694,16 @@ pub(crate) fn write_cleanup_journal(
             archive_phase: None,
         })
     } else if let Some((staged_archive, destination)) = &plan.staged_archive {
-        let previous_archive_family = archive_family(destination)?;
-        let previous_archive_identities = vec![None; previous_archive_family.len()];
+        let previous_archive_family = plan
+            .expected_archive_family
+            .iter()
+            .map(|snapshot| snapshot.path.clone())
+            .collect();
+        let previous_archive_identities = plan
+            .expected_archive_family
+            .iter()
+            .map(|snapshot| Some(snapshot.identity.clone()))
+            .collect();
         Some(CleanupJournal {
             stage: staged_archive
                 .parent()
@@ -430,14 +747,22 @@ pub(crate) fn update_archive_journal(
         .iter()
         .map(|source| archive_destination_for(staged, destination, source))
         .collect::<Result<Vec<_>, _>>()?;
-    let previous_archive_family = archive_family(destination)?;
+    let previous_archive_family = plan
+        .expected_archive_family
+        .iter()
+        .map(|snapshot| snapshot.path.clone())
+        .collect::<Vec<_>>();
     let journal = CleanupJournal {
         stage,
         destination: destination.clone(),
         archive: true,
         extract_stage_placement: None,
         move_plan_sidecar: false,
-        previous_archive_identities: vec![None; previous_archive_family.len()],
+        previous_archive_identities: plan
+            .expected_archive_family
+            .iter()
+            .map(|snapshot| Some(snapshot.identity.clone()))
+            .collect(),
         previous_archive_family,
         next_archive_identities: vec![None; next_archive_family.len()],
         next_archive_family,
@@ -549,7 +874,7 @@ pub(crate) fn record_archive_journal_published(
         .position(|path| path == published)
         .ok_or_else(|| "Published archive is missing from its recovery journal.".to_string())?;
     if let Some(existing) = &journal.next_archive_identities[index] {
-        if !file_identities_match(existing, identity) {
+        if existing != identity {
             journal.next_archive_identities[index] = Some(identity.clone());
         }
     } else {

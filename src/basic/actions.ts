@@ -8,9 +8,10 @@ import {
   getMode,
   setMode,
   renderInputs,
+  setStatus,
   triggerIconRefresh,
 } from "../ui";
-import { validateArchivePaths } from "../archive-rules";
+import { MAX_ARCHIVE_PATHS, validateArchivePaths } from "../archive-rules";
 import {
   runAction,
   browseArchive,
@@ -18,7 +19,7 @@ import {
   looksLikePasswordRequiredError,
   parseArchiveListing,
 } from "../archive";
-import { ensureRuntimeReady } from "../archive/runtime";
+import { clearPasswordFields, ensureRuntimeReady } from "../archive/runtime";
 import {
   archiveExtensionForFormat,
   isPreferredCompressParent,
@@ -39,6 +40,27 @@ import {
   updateBasicPreparingState,
 } from "./progress";
 import { setRecentArchiveHandler } from "./recent";
+import { showToast } from "../toast";
+
+async function waitUntilIncomingPathsApplyingClear(): Promise<void> {
+  while (state.incomingPathsApplying) {
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
+  }
+}
+
+async function confirmBasicDrop(
+  text: string,
+  options: Parameters<typeof confirm>[1],
+): Promise<boolean | null> {
+  try {
+    return await confirm(text, options);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Could not open Basic confirmation dialog: ${msg}`, "error");
+    setStatus("Could not open confirmation dialog", 3000);
+    return null;
+  }
+}
 
 function parentDirForPath(path: string): string {
   const sep = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
@@ -70,7 +92,7 @@ export async function runBasicBrowseArchive(): Promise<void> {
 
 export async function partitionByArchive(
   paths: string[],
-): Promise<{ archives: string[]; others: string[] }> {
+): Promise<{ archives: string[]; others: string[] } | null> {
   try {
     const results = await validateArchivePaths(paths);
     const validByPath = new Map(results.map((r) => [r.path, r.valid]));
@@ -81,18 +103,54 @@ export async function partitionByArchive(
       else others.push(p);
     }
     return { archives, others };
-  } catch {
-    return { archives: [], others: paths };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Archive probe failed while sorting drop: ${msg}`, "error");
+    return null;
   }
 }
 
-function loadInputs(paths: string[]): void {
-  state.inputs.length = 0;
-  for (const p of paths) {
-    if (state.inputs.includes(p)) continue;
-    if (state.inputs.length >= 4096) break;
-    state.inputs.push(p);
+/**
+ * Deduplicate and cap a Basic selection before archive probing. This keeps an
+ * oversized all-archive drop from being classified as regular files.
+ */
+function limitBasicInputPaths(paths: string[]): {
+  paths: string[];
+  overLimit: number;
+} {
+  const uniquePaths = new Set<string>();
+  const acceptedPaths: string[] = [];
+  let overLimit = 0;
+  for (const path of paths) {
+    if (uniquePaths.has(path)) continue;
+    uniquePaths.add(path);
+    if (acceptedPaths.length >= MAX_ARCHIVE_PATHS) {
+      overLimit += 1;
+      continue;
+    }
+    acceptedPaths.push(path);
   }
+  return { paths: acceptedPaths, overLimit };
+}
+
+function showBasicInputLimitToast(overLimit: number): void {
+  if (overLimit === 0) return;
+  showToast(
+    `Selected the first 4,096 items; ${overLimit} more were not added.`,
+    "error",
+    5000,
+  );
+}
+
+/** Replace Basic inputs and return paths rejected only because of the hard cap. */
+export function replaceBasicInputs(paths: string[]): number {
+  const limited = limitBasicInputPaths(paths);
+  state.inputs.splice(0, state.inputs.length, ...limited.paths);
+  return limited.overLimit;
+}
+
+function loadInputs(paths: string[]): void {
+  replaceBasicInputs(paths);
 }
 
 export interface BasicPreparation {
@@ -148,14 +206,24 @@ async function handleBasicDropOnce(
 ): Promise<void> {
   if (paths.length === 0) return;
 
-  const { archives, others } = await partitionByArchive(paths);
+  const partitioned = await partitionByArchive(paths);
   if (!isBasicPreparationCurrent(preparation)) return;
+  if (!partitioned) {
+    finishBasicPreparation(preparation);
+    showToast(
+      "Could not detect archive types for the dropped files. Try again.",
+      "error",
+      5000,
+    );
+    return;
+  }
+  const { archives, others } = partitioned;
   const allArchives = others.length === 0 && archives.length > 0;
   const mixed = archives.length > 0 && others.length > 0;
 
   // Mixed drop: let the user choose extract-the-archives vs compress-everything.
   if (mixed) {
-    const extractThem = await confirm(
+    const extractThem = await confirmBasicDrop(
       `You dropped ${archives.length} archive(s) and ${others.length} other file(s). Extract the archives?`,
       {
         title: "Mixed selection",
@@ -163,7 +231,7 @@ async function handleBasicDropOnce(
         cancelLabel: "More options",
       },
     );
-    if (!isBasicPreparationCurrent(preparation)) return;
+    if (!isBasicPreparationCurrent(preparation) || extractThem === null) return;
     if (extractThem) {
       finishBasicPreparation(preparation);
       loadInputs(archives);
@@ -176,7 +244,7 @@ async function handleBasicDropOnce(
     // A dismissed native confirmation is indistinguishable from its cancel
     // button. Require a second affirmative choice before compressing so
     // dismissal can never start an unintended operation.
-    const compressAll = await confirm(
+    const compressAll = await confirmBasicDrop(
       "Compress all dropped files into a new archive?",
       {
         title: "Mixed selection",
@@ -184,7 +252,12 @@ async function handleBasicDropOnce(
         cancelLabel: "Cancel",
       },
     );
-    if (!isBasicPreparationCurrent(preparation) || !compressAll) return;
+    if (
+      !isBasicPreparationCurrent(preparation) ||
+      compressAll === null ||
+      !compressAll
+    )
+      return;
     finishBasicPreparation(preparation);
     loadInputs(paths);
     setMode("add");
@@ -215,16 +288,16 @@ async function handleBasicDropOnce(
 }
 
 export async function handleBasicDrop(paths: string[]): Promise<void> {
-  if (paths.length === 0) return;
+  const limited = limitBasicInputPaths(paths);
+  if (limited.paths.length === 0) return;
   // Wait only for OS handoff / Power apply locks. Do not wait on
   // operationPreparing — that would deadlock behind destination/password dialogs.
-  const { waitUntilIncomingPathsApplyingClear } =
-    await import("../incoming-paths");
   await waitUntilIncomingPathsApplyingClear();
   const preparation = beginBasicPreparation();
   if (!preparation) return;
+  showBasicInputLimitToast(limited.overLimit);
   try {
-    await handleBasicDropOnce(paths, preparation);
+    await handleBasicDropOnce(limited.paths, preparation);
   } finally {
     finishBasicPreparation(preparation);
   }
@@ -284,10 +357,23 @@ async function handleBasicCompressActionOnce(
     }
   }
 
-  const output = await save({
-    title: "Choose output archive",
-    defaultPath,
-  });
+  let output: string | null;
+  try {
+    output = await save({
+      title: "Choose output archive",
+      defaultPath,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Could not open the save-archive dialog: ${msg}`, "error");
+    showBasicCompletion(
+      "compress",
+      false,
+      "Operation failed",
+      "Could not open the save dialog. Check the log and try again.",
+    );
+    return;
+  }
 
   if (
     !output ||
@@ -397,13 +483,6 @@ export async function isArchiveEncrypted(
   }
 }
 
-function clearBasicExtractionPasswords(): void {
-  for (const id of ["basic-extract-password", "extract-password"]) {
-    const input = document.getElementById(id) as HTMLInputElement | null;
-    if (input) input.value = "";
-  }
-}
-
 async function handleBasicExtractActionOnce(
   preparation: BasicPreparation,
 ): Promise<void> {
@@ -475,10 +554,23 @@ async function handleBasicExtractActionOnce(
 
   // 2. Open the folder picker before copying a password into the DOM. A
   // cancelled picker must not leave a verified password resident in fields.
-  const output = await open({
-    title: "Choose destination folder",
-    directory: true,
-  });
+  let output: string | string[] | null;
+  try {
+    output = await open({
+      title: "Choose destination folder",
+      directory: true,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Could not open the destination-folder dialog: ${msg}`, "error");
+    showBasicCompletion(
+      "extract",
+      false,
+      "Operation failed",
+      "Could not open the folder dialog. Check the log and try again.",
+    );
+    return;
+  }
 
   if (
     !output ||
@@ -529,7 +621,7 @@ export async function handleBasicExtractAction(): Promise<void> {
   try {
     await handleBasicExtractActionOnce(preparation);
   } finally {
-    clearBasicExtractionPasswords();
+    clearPasswordFields();
     finishBasicPreparation(preparation);
   }
 }

@@ -65,16 +65,18 @@ export function setRunning(active: boolean) {
     if (active) dom.runBtn.setAttribute("aria-busy", "true");
     else dom.runBtn.removeAttribute("aria-busy");
     dom.cancelBtn.hidden = !active;
+    dom.cancelBtn.disabled = !active;
   } else if (mode === "extract") {
     dom.extractRunBtn.disabled = active;
     if (active) dom.extractRunBtn.setAttribute("aria-busy", "true");
     else dom.extractRunBtn.removeAttribute("aria-busy");
     dom.extractCancelBtn.hidden = !active;
+    dom.extractCancelBtn.disabled = !active;
   } else {
     $<HTMLButtonElement>("browse-list").disabled = active;
     const browseCancel = $<HTMLButtonElement>("browse-cancel");
     browseCancel.hidden = !active;
-    browseCancel.disabled = false;
+    browseCancel.disabled = !active;
     $<HTMLButtonElement>("browse-test").disabled = active;
     $<HTMLButtonElement>("browse-extract").disabled = active;
     $<HTMLButtonElement>("browse-selective").disabled = active;
@@ -124,4 +126,19 @@ export function setRunning(active: boolean) {
 
   getBasicHooks()?.onSetRunning(active);
   renderInputs();
+}
+
+export function setCancelAvailable(available: boolean): void {
+  for (const id of [
+    "cancel-action",
+    "extract-cancel",
+    "browse-cancel",
+    "selective-cancel",
+    "basic-compress-cancel",
+    "basic-extract-cancel",
+    "basic-browse-cancel",
+  ]) {
+    const button = document.getElementById(id) as HTMLButtonElement | null;
+    if (button && !button.hidden) button.disabled = !available;
+  }
 }

@@ -7,6 +7,7 @@ import {
   macBundleVersionFromSemver,
   macMarketingVersionFromSemver,
   updateCargoLockPackageVersion,
+  updatePlistStringValue,
   updateWindowsResourceVersion,
   updateWindowsShellResourceDestinations,
   windowsPackageVersionFromSemver,
@@ -65,19 +66,50 @@ if (JSON.stringify(updatedWindowsConf) !== JSON.stringify(windowsConf)) {
 
 const macInfoPath = path.join(root, "src-tauri", "Info.plist");
 const macInfo = fs.readFileSync(macInfoPath, "utf8");
-const marketingVersionPattern =
-  /(<key>CFBundleShortVersionString<\/key>\s*<string>)[^<]*(<\/string>)/;
-if (!marketingVersionPattern.test(macInfo)) {
-  console.error("src-tauri/Info.plist is missing CFBundleShortVersionString");
+let updatedMacInfo;
+try {
+  updatedMacInfo = updatePlistStringValue(
+    macInfo,
+    "CFBundleShortVersionString",
+    macMarketingVersion,
+  );
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
 }
-const updatedMacInfo = macInfo.replace(
-  marketingVersionPattern,
-  `$1${macMarketingVersion}$2`,
-);
 if (updatedMacInfo !== macInfo) {
   fs.writeFileSync(macInfoPath, updatedMacInfo);
   console.log(`Info.plist       → ${macMarketingVersion}`);
+}
+
+const finderInfoPath = path.join(
+  root,
+  "src-tauri",
+  "macos",
+  "ZinniaFinderSync",
+  "Info.plist",
+);
+const finderInfo = fs.readFileSync(finderInfoPath, "utf8");
+let updatedFinderInfo;
+try {
+  updatedFinderInfo = updatePlistStringValue(
+    updatePlistStringValue(
+      finderInfo,
+      "CFBundleShortVersionString",
+      macMarketingVersion,
+    ),
+    "CFBundleVersion",
+    macBundleVersion,
+  );
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
+if (updatedFinderInfo !== finderInfo) {
+  fs.writeFileSync(finderInfoPath, updatedFinderInfo);
+  console.log(
+    `Finder Info.plist → ${macMarketingVersion} (${macBundleVersion})`,
+  );
 }
 
 const cargoPath = path.join(root, "src-tauri", "Cargo.toml");

@@ -31,8 +31,12 @@ describe("cross-platform release policy", () => {
     const packageJson = JSON.parse(read("package.json")) as {
       scripts: Record<string, string>;
     };
-    expect(packageJson.scripts["release:linux:continue"]).toContain(
-      "build:linux:prepared",
+    expect(packageJson.scripts["release:linux:continue"]).toBe(
+      "npm run release:linux:x64:continue",
+    );
+    expect(packageJson.scripts["build:linux"]).toBe("npm run build:linux:x64");
+    expect(packageJson.scripts["build:linux:prepared"]).toBe(
+      "npm run build:linux:x64:prepared",
     );
     const signer = read("scripts/gpg-sign.js");
     expect(signer).toContain('REQUIRED_LINUX_TARGETS || ""');

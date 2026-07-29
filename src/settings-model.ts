@@ -283,6 +283,14 @@ function asAutoCloseDelay(
     : fallback;
 }
 
+/** Clamp raw settings / IPC values to the supported auto-close delays. */
+export function normalizeAutoCloseDelay(
+  value: unknown,
+  fallback: AutoCloseDelay = 1.5,
+): AutoCloseDelay {
+  return asAutoCloseDelay(value, fallback);
+}
+
 const MAX_CUSTOM_PRESETS = 50;
 
 function asCustomPresets(

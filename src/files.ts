@@ -17,6 +17,7 @@ import {
   isIncomingPathBusy,
   releaseIncomingPathLock,
 } from "./incoming-paths";
+import { showToast } from "./toast";
 
 const MAX_INPUT_PATHS = 4096;
 
@@ -85,21 +86,29 @@ export async function chooseExtractIfCurrent(isCurrent: () => boolean) {
 function mergeAddedPaths(paths: string[]): {
   changed: boolean;
   previousPrimary: string | null;
+  rejected: number;
 } {
   const previousPrimary = state.inputs[0] ?? null;
+  const known = new Set(state.inputs);
   let changed = false;
+  let rejected = 0;
   for (const path of paths) {
-    if (state.inputs.includes(path)) continue;
-    if (state.inputs.length >= MAX_INPUT_PATHS) break;
+    if (known.has(path)) continue;
+    if (state.inputs.length >= MAX_INPUT_PATHS) {
+      rejected += 1;
+      continue;
+    }
     state.inputs.push(path);
+    known.add(path);
     changed = true;
   }
-  return { changed, previousPrimary };
+  return { changed, previousPrimary, rejected };
 }
 
 function afterInputsMerged(
   changed: boolean,
   previousPrimary: string | null,
+  rejected = 0,
 ): void {
   if (
     changed &&
@@ -109,6 +118,13 @@ function afterInputsMerged(
     setBrowsePasswordFieldVisible(false);
   }
   renderInputs();
+  if (rejected > 0) {
+    showToast(
+      `Added the first ${MAX_INPUT_PATHS} unique items; ${rejected} more were not added.`,
+      "error",
+      5000,
+    );
+  }
 }
 
 export async function addFiles() {
@@ -144,16 +160,16 @@ export async function addFilesIfCurrent(
 
   if (underPrep) {
     if (!isCurrent() || state.running) return;
-    const { changed, previousPrimary } = mergeAddedPaths(newPaths);
-    afterInputsMerged(changed, previousPrimary);
+    const { changed, previousPrimary, rejected } = mergeAddedPaths(newPaths);
+    afterInputsMerged(changed, previousPrimary, rejected);
     return;
   }
 
   await acquireIncomingPathLock();
   try {
     if (!isCurrent() || state.running || state.operationPreparing) return;
-    const { changed, previousPrimary } = mergeAddedPaths(newPaths);
-    afterInputsMerged(changed, previousPrimary);
+    const { changed, previousPrimary, rejected } = mergeAddedPaths(newPaths);
+    afterInputsMerged(changed, previousPrimary, rejected);
   } finally {
     releaseIncomingPathLock();
   }
@@ -190,16 +206,16 @@ export async function addFolderIfCurrent(
 
   if (underPrep) {
     if (!isCurrent() || state.running) return;
-    const { changed, previousPrimary } = mergeAddedPaths([selection]);
-    afterInputsMerged(changed, previousPrimary);
+    const { changed, previousPrimary, rejected } = mergeAddedPaths([selection]);
+    afterInputsMerged(changed, previousPrimary, rejected);
     return;
   }
 
   await acquireIncomingPathLock();
   try {
     if (!isCurrent() || state.running || state.operationPreparing) return;
-    const { changed, previousPrimary } = mergeAddedPaths([selection]);
-    afterInputsMerged(changed, previousPrimary);
+    const { changed, previousPrimary, rejected } = mergeAddedPaths([selection]);
+    afterInputsMerged(changed, previousPrimary, rejected);
   } finally {
     releaseIncomingPathLock();
   }
