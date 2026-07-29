@@ -359,12 +359,26 @@ describe("release script safeguards", () => {
 
   it("stages live feed replacements before swapping asset names", () => {
     const source = fs.readFileSync("scripts/gpg-sign.js", "utf8");
+    const uploadOnce = source.slice(
+      source.indexOf("async function uploadAssetOnce"),
+      source.indexOf("async function uploadAsset("),
+    );
+    // Regression: awaiting without return made beta→latest sync always fail
+    // with "GitHub did not identify staged asset".
+    expect(uploadOnce).toMatch(
+      /return await new Promise\(\(resolve, reject\) => \{/,
+    );
+    expect(uploadOnce).toContain('typeof parsed.id !== "number"');
+
     const transaction = source.slice(
       source.indexOf("async function replaceReleaseAssetsTransactionally"),
       source.indexOf("async function uploadAssetWithReplace"),
     );
-    expect(transaction).toContain(".zinnia-pending-");
-    expect(transaction).toContain(".zinnia-previous-");
+    // GitHub strips leading periods from asset names — do not use dotfiles.
+    expect(transaction).toContain("zinnia-pending-");
+    expect(transaction).toContain("zinnia-previous-");
+    expect(transaction).not.toContain(".zinnia-pending-");
+    expect(transaction).not.toContain(".zinnia-previous-");
     expect(transaction).toContain('"PATCH"');
     expect(
       transaction.indexOf("uploadAsset(release.upload_url, stagedPath)"),

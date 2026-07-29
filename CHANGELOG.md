@@ -57,6 +57,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Fix:** Settings saves keep backend-owned `_`-prefixed keys (except setup-wizard fields) from being overwritten by incoming JSON.
 - **Docs:** README OS-integration wording matches Win11 modern-primary vs classic-fallback behavior.
 - **Tooling:** Windows Artifact Signing discovery prefers machine-wide Program Files installs and skips unsigned LocalAppData/NuGet dlib copies instead of failing closed on the first unsigned candidate.
+- **Fix:** Beta→`/latest` manifest sync again receives the GitHub upload response `id` (`uploadAssetOnce` was awaiting without `return`) and uses non-dot staging names because GitHub strips leading periods from release assets.
 
 ## Changes in `v0.6.0:`
 

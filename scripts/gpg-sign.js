@@ -1008,7 +1008,8 @@ async function uploadAssetOnce(uploadUrl, filePath) {
 
   const isText = /\.(asc|txt|json)$/i.test(fileName);
 
-  await new Promise((resolve, reject) => {
+  // Must return the parsed GitHub asset body — beta feed sync needs `id`.
+  return await new Promise((resolve, reject) => {
     const req = https.request(
       {
         hostname: url.hostname,
@@ -1028,7 +1029,16 @@ async function uploadAssetOnce(uploadUrl, filePath) {
         res.on("end", () => {
           if (res.statusCode < 300) {
             try {
-              resolve(data ? JSON.parse(data) : true);
+              const parsed = data ? JSON.parse(data) : null;
+              if (!parsed || typeof parsed.id !== "number") {
+                reject(
+                  new Error(
+                    `Upload ${fileName} succeeded but GitHub returned no asset id.`,
+                  ),
+                );
+                return;
+              }
+              resolve(parsed);
             } catch {
               reject(
                 new Error(
@@ -1116,7 +1126,9 @@ async function replaceReleaseAssetsTransactionally(release, files) {
     for (const filePath of files) {
       const name = path.basename(filePath);
       const existing = assets.find((asset) => asset?.name === name);
-      const stagedName = `.zinnia-pending-${token}-${name}`;
+      // GitHub strips leading/trailing periods from asset names, so keep
+      // staging/backup names alphanumeric (see upload-a-release-asset docs).
+      const stagedName = `zinnia-pending-${token}-${name}`;
       const stagedPath = path.join(temporaryDirectory, stagedName);
       fs.copyFileSync(filePath, stagedPath);
       const uploaded = await uploadAsset(release.upload_url, stagedPath);
@@ -1127,7 +1139,7 @@ async function replaceReleaseAssetsTransactionally(release, files) {
         name,
         existing: existing && typeof existing.id === "number" ? existing : null,
         uploaded,
-        backupName: `.zinnia-previous-${token}-${name}`,
+        backupName: `zinnia-previous-${token}-${name}`,
         previousRenamed: false,
       });
     }
@@ -1188,7 +1200,7 @@ async function replaceReleaseAssetsTransactionally(release, files) {
           await ghRequest(
             "PATCH",
             `/repos/${REPO_OWNER}/${REPO_NAME}/releases/assets/${item.uploaded.id}`,
-            { name: `.zinnia-rollback-${token}-${item.name}` },
+            { name: `zinnia-rollback-${token}-${item.name}` },
           );
           try {
             await ghRequest(
