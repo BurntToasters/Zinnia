@@ -103,7 +103,7 @@ pub(crate) fn staged_tree_usage(
             }
             let metadata = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
             if metadata.file_type().is_symlink() {
-                crate::path_safety::assert_relative_symlink_within_root(root, &path)?;
+                crate::path_safety::assert_relative_symlink_during_write(root, &path)?;
                 files = files.saturating_add(1);
                 if files > max_files {
                     return Err(format!(
@@ -249,16 +249,18 @@ pub(crate) fn stop_extract_for_quota(app: &tauri::AppHandle, reason: String) {
 
 #[cfg(test)]
 mod tests {
-    use super::available_space_for_path;
+    use super::{available_space_for_path, staged_tree_usage};
 
     fn temp_root() -> std::path::PathBuf {
+        static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         std::env::temp_dir().join(format!(
-            "zinnia-free-space-test-{}-{}",
+            "zinnia-free-space-test-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("time")
-                .as_nanos()
+                .as_nanos(),
+            NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ))
     }
 
@@ -271,6 +273,31 @@ mod tests {
 
         assert!(available_space_for_path(&file).is_ok());
         assert!(available_space_for_path(&root.join("missing/output")).is_ok());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn in_progress_quota_scan_allows_a_relative_link_before_its_target() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_root();
+        std::fs::create_dir_all(&root).expect("root");
+        symlink("target-created-later", root.join("pending-link")).expect("symlink");
+
+        assert_eq!(
+            staged_tree_usage(&root, 10, 1024).expect("in-progress scan"),
+            (1, 0)
+        );
+        assert!(
+            crate::path_safety::assert_relative_symlink_within_root(
+                &root,
+                &root.join("pending-link")
+            )
+            .is_err(),
+            "final validation must still reject a dangling link"
+        );
 
         let _ = std::fs::remove_dir_all(root);
     }

@@ -680,6 +680,10 @@ describe("archive test/browse/selective flows", () => {
     setSelectiveExtractSearch("readme");
 
     expect(state.selectiveVisiblePaths).toEqual(["docs/readme.md"]);
+    const searchResults = document.getElementById("selective-list")!;
+    expect(searchResults.hasAttribute("role")).toBe(false);
+    expect(searchResults.hasAttribute("aria-label")).toBe(false);
+    expect(searchResults.hasAttribute("aria-multiselectable")).toBe(false);
 
     selectAllVisibleInPicker();
     expect(
@@ -729,6 +733,7 @@ describe("archive test/browse/selective flows", () => {
     )!;
     expect(tree.getAttribute("role")).toBe("tree");
     expect(tree.getAttribute("aria-label")).toBe("Archive contents");
+    expect(tree.getAttribute("aria-multiselectable")).toBe("true");
     expect(folder.getAttribute("aria-expanded")).toBe("false");
     expect(
       tree.querySelector('[data-member-path="docs/readme.md"]'),
@@ -778,6 +783,73 @@ describe("archive test/browse/selective flows", () => {
       new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }),
     );
     expect(document.activeElement).toBe(expandedFolder);
+  });
+
+  it("does not report tree truncation when exactly the row limit is rendered", () => {
+    const archive = uniqueArchivePath("exact-tree-limit");
+    state.selectiveActiveArchive = archive;
+    state.browseArchiveInfoByPath.set(
+      archive,
+      archiveInfo(
+        Array.from({ length: 1_000 }, (_, index) => ({
+          path: `file-${index.toString().padStart(4, "0")}.txt`,
+          size: index,
+          packedSize: index,
+          modified: "",
+          isFolder: false,
+        })),
+      ),
+    );
+
+    setSelectiveExtractSearch("");
+
+    const list = document.getElementById("selective-list")!;
+    expect(list.querySelectorAll('[role="treeitem"]')).toHaveLength(1_000);
+    expect(list.textContent).not.toContain("Expand fewer folders");
+  });
+
+  it("selects a rendered synthetic folder when the listing omits directory entries", async () => {
+    const archive = uniqueArchivePath("synthetic-folder-picker");
+    state.inputs = [archive];
+    state.browseArchiveInfoByPath.set(
+      archive,
+      archiveInfo([
+        {
+          path: "docs/readme.md",
+          size: 11,
+          packedSize: 8,
+          modified: "",
+          isFolder: false,
+        },
+      ]),
+    );
+    state.browseArchiveIdentityByPath.set(archive, `identity:${archive}`);
+    setInvokeRouter((command, payload) => {
+      if (command === "validate_archive_paths") {
+        const paths = pathsFromValidationPayload(payload);
+        return paths.map((path) => ({
+          path,
+          valid: true,
+          identity: `identity:${path}`,
+        }));
+      }
+      return undefined;
+    });
+
+    await openSelectiveExtractModal();
+
+    expect(
+      document.querySelector(
+        '[role="treeitem"][data-member-path="docs"][aria-expanded="false"]',
+      ),
+    ).not.toBeNull();
+    expect(document.getElementById("selective-summary")?.textContent).toBe(
+      "0 selected · 1 row shown · 1 archive entry",
+    );
+    selectAllVisibleInPicker();
+    expect(state.browseSelectionsByArchive.get(archive)).toEqual(
+      new Set(["docs/readme.md"]),
+    );
   });
 
   it("syncs selective destination with extract destination fields", () => {

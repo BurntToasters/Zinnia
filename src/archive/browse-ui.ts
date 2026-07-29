@@ -193,8 +193,19 @@ function collectRenderedSelectiveScope(
   const visit = (node: TreeNode) => {
     if (budget.remaining <= 0) return;
     budget.remaining -= 1;
-    const entry = byPath.get(node.path);
-    if (entry) scoped.set(entry.path, entry);
+    // ZIP/TAR listings commonly omit explicit directory records. Those
+    // folders are still rendered by buildEntryTree, so include an equivalent
+    // synthetic entry in the bulk-selection target set. Otherwise "Select
+    // all visible" silently skips a collapsed rendered folder and all of its
+    // children even though clicking that folder's own checkbox works.
+    const entry = byPath.get(node.path) ?? {
+      path: node.path,
+      isFolder: node.isFolder,
+      size: node.size,
+      packedSize: 0,
+      modified: "",
+    };
+    scoped.set(entry.path, entry);
     if (
       node.isFolder &&
       node.children.length > 0 &&
@@ -260,9 +271,12 @@ function renderSelectiveTreeNode(
   scopeEntries: BrowseEntry[],
   windowsPaths: boolean,
   list: HTMLElement,
-  budget: { remaining: number },
+  budget: { remaining: number; truncated: boolean },
 ): void {
-  if (budget.remaining <= 0) return;
+  if (budget.remaining <= 0) {
+    budget.truncated = true;
+    return;
+  }
   budget.remaining -= 1;
   const selected = getOrCreateSelection(archive);
   const row = document.createElement("div");
@@ -284,13 +298,15 @@ function renderSelectiveTreeNode(
   twisty.className = "selective-twisty";
   twisty.textContent = expandable ? (expanded ? "\u25be" : "\u25b8") : "";
   twisty.disabled = !expandable;
-  twisty.setAttribute("aria-label", expanded ? "Collapse" : "Expand");
   if (expandable) {
+    twisty.setAttribute("aria-label", expanded ? "Collapse" : "Expand");
     twisty.addEventListener("click", () => {
       if (expanded) state.selectiveExpandedFolders.delete(node.path);
       else state.selectiveExpandedFolders.add(node.path);
       renderSelectiveExtractModal();
     });
+  } else {
+    twisty.setAttribute("aria-hidden", "true");
   }
 
   const checkbox = document.createElement("input");
@@ -398,6 +414,10 @@ function renderSelectiveTreeNode(
 
   if (expandable && expanded) {
     for (const child of node.children) {
+      if (budget.remaining <= 0) {
+        budget.truncated = true;
+        break;
+      }
       renderSelectiveTreeNode(
         archive,
         child,
@@ -426,6 +446,9 @@ function renderSelectiveEntryList(
     ? activeRow?.dataset.memberPath
     : undefined;
   list.innerHTML = "";
+  list.removeAttribute("role");
+  list.removeAttribute("aria-label");
+  list.removeAttribute("aria-multiselectable");
 
   if (entries.length === 0) {
     const empty = document.createElement("div");
@@ -444,7 +467,6 @@ function renderSelectiveEntryList(
 
   // Searching shows a flat result list; otherwise a collapsible tree.
   if (searching) {
-    list.removeAttribute("role");
     for (const entry of entries.slice(0, MAX_RENDERED_SELECTIVE_ROWS)) {
       list.appendChild(
         renderSelectiveFlatRow(archive, entry, scopeEntries, windowsPaths),
@@ -461,9 +483,17 @@ function renderSelectiveEntryList(
 
   list.setAttribute("role", "tree");
   list.setAttribute("aria-label", "Archive contents");
+  list.setAttribute("aria-multiselectable", "true");
 
-  const budget = { remaining: MAX_RENDERED_SELECTIVE_ROWS };
+  const budget = {
+    remaining: MAX_RENDERED_SELECTIVE_ROWS,
+    truncated: false,
+  };
   for (const node of buildEntryTree(entries, windowsPaths)) {
+    if (budget.remaining <= 0) {
+      budget.truncated = true;
+      break;
+    }
     renderSelectiveTreeNode(
       archive,
       node,
@@ -472,9 +502,8 @@ function renderSelectiveEntryList(
       list,
       budget,
     );
-    if (budget.remaining <= 0) break;
   }
-  if (budget.remaining <= 0) {
+  if (budget.truncated) {
     const notice = document.createElement("div");
     notice.className = "selective-empty";
     notice.textContent = `Expand fewer folders or search to keep this view responsive. At most ${MAX_RENDERED_SELECTIVE_ROWS.toLocaleString()} rows are shown at once.`;
@@ -517,13 +546,21 @@ export function renderSelectiveExtractModal(): void {
   if (summary) {
     const selectedCount = getOrCreateSelection(archive).size;
     const matchCount = filteredEntries.length;
-    const shownCount = searching
-      ? Math.min(matchCount, MAX_RENDERED_SELECTIVE_ROWS)
-      : Math.min(matchCount, MAX_RENDERED_SELECTIVE_ROWS);
-    summary.textContent =
-      matchCount > shownCount
-        ? `${selectedCount} selected \u00b7 ${shownCount} shown of ${matchCount} matches \u00b7 ${info.entries.length} total`
-        : `${selectedCount} selected \u00b7 ${shownCount} shown \u00b7 ${info.entries.length} total`;
+    const shownCount =
+      document
+        .getElementById("selective-list")
+        ?.querySelectorAll(".selective-row").length ?? 0;
+    if (searching) {
+      summary.textContent =
+        matchCount > shownCount
+          ? `${selectedCount} selected \u00b7 ${shownCount} shown of ${matchCount} matches \u00b7 ${info.entries.length} total`
+          : `${selectedCount} selected \u00b7 ${shownCount} shown \u00b7 ${info.entries.length} total`;
+    } else {
+      const rowLabel = shownCount === 1 ? "row shown" : "rows shown";
+      const entryLabel =
+        info.entries.length === 1 ? "archive entry" : "archive entries";
+      summary.textContent = `${selectedCount} selected \u00b7 ${shownCount} ${rowLabel} \u00b7 ${info.entries.length} ${entryLabel}`;
+    }
   }
 }
 

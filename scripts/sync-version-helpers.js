@@ -184,3 +184,19 @@ export function macMarketingVersionFromSemver(version) {
   }
   return `${match[1]}.${match[2]}.${match[3]}`;
 }
+
+/** Replace exactly one string-valued plist key, failing closed on drift. */
+export function updatePlistStringValue(plist, key, value) {
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(
+    `(<key>${escapedKey}</key>\\s*<string>)[^<]*(</string>)`,
+    "g",
+  );
+  const matches = plist.match(pattern);
+  if (matches?.length !== 1) {
+    throw new Error(
+      `plist key ${key} must have exactly one string value; found ${matches?.length ?? 0}`,
+    );
+  }
+  return plist.replace(pattern, `$1${value}$2`);
+}

@@ -31,11 +31,10 @@ pub fn reject_link_or_reparse(path: &Path, meta: &Metadata) -> Result<(), String
     Ok(())
 }
 
-/// Allow a symlink only when its target is relative and stays under `root`.
-///
-/// macOS `.app` / `.framework` bundles commonly use relative symlinks
-/// (`Versions/Current` → `A`). Absolute links and `../` escapes stay rejected.
-pub fn assert_relative_symlink_within_root(root: &Path, link_path: &Path) -> Result<(), String> {
+fn read_lexically_contained_relative_symlink(
+    root: &Path,
+    link_path: &Path,
+) -> Result<std::path::PathBuf, String> {
     let target = std::fs::read_link(link_path).map_err(|e| e.to_string())?;
     if target.is_absolute() {
         return Err(format!(
@@ -43,40 +42,29 @@ pub fn assert_relative_symlink_within_root(root: &Path, link_path: &Path) -> Res
             link_path.display()
         ));
     }
-
-    let mut resolved = link_path.parent().unwrap_or(link_path).to_path_buf();
-    for component in target.components() {
+    // Preserve the specific escape diagnostic for obvious lexical `..`
+    // traversal. This is only an early classification check; canonicalization
+    // below remains authoritative because ancestor symlinks can change how the
+    // operating system resolves later `..` components.
+    let link_parent = link_path.parent().unwrap_or(link_path);
+    let relative_parent = link_parent.strip_prefix(root).map_err(|_| {
+        format!(
+            "Archive symbolic link escapes the extract root: {}",
+            link_path.display()
+        )
+    })?;
+    let mut lexical_depth = 0usize;
+    for component in relative_parent.components().chain(target.components()) {
         match component {
-            std::path::Component::Normal(part) => resolved.push(part),
+            std::path::Component::Normal(_) => lexical_depth += 1,
             std::path::Component::CurDir => {}
             std::path::Component::ParentDir => {
-                // Real kernel `..` resolution is relative to a symlink's
-                // target, not its apparent name, if the component just being
-                // popped is itself a symlink on disk. This lexical walk pops
-                // it as an ordinary path segment instead, which only matches
-                // real resolution when that segment is a real directory. A
-                // target string like `linkdir/../evil` where `linkdir` is
-                // itself an existing symlink can otherwise compute a
-                // seemingly in-root `resolved` here while the kernel would
-                // actually open somewhere else, including outside the root.
-                // (A *chain of separate* symlinks validated independently,
-                // e.g. macOS's `Versions/Current` -> `A`, is unaffected: that
-                // never pops back through an already-pushed component within
-                // this same target string.)
-                if let Ok(metadata) = std::fs::symlink_metadata(&resolved) {
-                    if metadata.file_type().is_symlink() {
-                        return Err(format!(
-                            "Archive symbolic link target traverses another symbolic link and cannot be resolved safely: {}",
-                            link_path.display()
-                        ));
-                    }
-                }
-                if !resolved.pop() {
-                    return Err(format!(
+                lexical_depth = lexical_depth.checked_sub(1).ok_or_else(|| {
+                    format!(
                         "Archive symbolic link escapes the extract root: {}",
                         link_path.display()
-                    ));
-                }
+                    )
+                })?;
             }
             std::path::Component::RootDir | std::path::Component::Prefix(_) => {
                 return Err(format!(
@@ -86,27 +74,118 @@ pub fn assert_relative_symlink_within_root(root: &Path, link_path: &Path) -> Res
             }
         }
     }
+    Ok(target)
+}
 
-    let relative = resolved.strip_prefix(root).map_err(|_| {
+fn canonical_root(root: &Path) -> Result<std::path::PathBuf, String> {
+    root.canonicalize().map_err(|error| {
+        format!(
+            "Could not resolve the extraction root {}: {error}",
+            root.display()
+        )
+    })
+}
+
+fn assert_resolved_target_within_root(
+    canonical_root: &Path,
+    link_path: &Path,
+    resolved: &Path,
+) -> Result<std::path::PathBuf, String> {
+    let relative = resolved.strip_prefix(canonical_root).map_err(|_| {
         format!(
             "Archive symbolic link escapes the extract root: {}",
             link_path.display()
         )
     })?;
-    if relative.components().any(|component| {
-        matches!(
-            component,
-            std::path::Component::ParentDir
-                | std::path::Component::RootDir
-                | std::path::Component::Prefix(_)
-        )
-    }) {
-        return Err(format!(
-            "Archive symbolic link escapes the extract root: {}",
-            link_path.display()
-        ));
+    Ok(relative.to_path_buf())
+}
+
+fn deepest_resolvable_ancestor(path: &Path) -> Result<std::path::PathBuf, String> {
+    let mut candidate = path.to_path_buf();
+    loop {
+        match candidate.canonicalize() {
+            Ok(resolved) => return Ok(resolved),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if !candidate.pop() {
+                    return Err(format!(
+                        "Could not resolve any existing ancestor of {}",
+                        path.display()
+                    ));
+                }
+            }
+            Err(error) => {
+                return Err(format!(
+                    "Could not resolve an existing ancestor of {}: {error}",
+                    path.display()
+                ));
+            }
+        }
     }
-    Ok(())
+}
+
+/// Resolve a symlink only when its target is relative, exists, and stays under
+/// `root` after the operating system resolves every intermediate symlink and
+/// `..` component.
+///
+/// macOS `.app` / `.framework` bundles commonly use relative symlinks
+/// (`Versions/Current` → `A`). Absolute, dangling, and escaping links stay
+/// rejected.
+pub(crate) fn resolve_relative_symlink_within_root(
+    root: &Path,
+    link_path: &Path,
+) -> Result<std::path::PathBuf, String> {
+    let target = read_lexically_contained_relative_symlink(root, link_path)?;
+    let canonical_root = root.canonicalize().map_err(|error| {
+        format!(
+            "Could not resolve the extraction root {}: {error}",
+            root.display()
+        )
+    })?;
+    let resolved = link_path
+        .parent()
+        .unwrap_or(link_path)
+        .join(target)
+        .canonicalize()
+        .map_err(|error| {
+            format!(
+                "Archive symbolic link target is missing or cannot be resolved safely: {} ({error})",
+                link_path.display()
+            )
+        })?;
+    let relative = assert_resolved_target_within_root(&canonical_root, link_path, &resolved)?;
+    // Preserve caller's spelling of `root` (notably `/var` versus
+    // `/private/var` on macOS) while returning the OS-resolved in-root target.
+    Ok(root.join(relative))
+}
+
+/// During extraction, a valid symlink may appear before its target. The quota
+/// walker never follows links, so allow only that temporary missing-target
+/// state. Resolvable targets still receive the same OS-resolved containment
+/// check, and final staged-tree validation remains strict.
+pub(crate) fn assert_relative_symlink_during_write(
+    root: &Path,
+    link_path: &Path,
+) -> Result<(), String> {
+    let target = read_lexically_contained_relative_symlink(root, link_path)?;
+    let canonical_root = canonical_root(root)?;
+    let unresolved = link_path.parent().unwrap_or(link_path).join(target);
+    match unresolved.canonicalize() {
+        Ok(resolved) => {
+            assert_resolved_target_within_root(&canonical_root, link_path, &resolved).map(|_| ())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let ancestor = deepest_resolvable_ancestor(&unresolved)?;
+            assert_resolved_target_within_root(&canonical_root, link_path, &ancestor).map(|_| ())
+        }
+        Err(error) => Err(format!(
+            "Archive symbolic link target cannot be resolved safely: {} ({error})",
+            link_path.display()
+        )),
+    }
+}
+
+pub fn assert_relative_symlink_within_root(root: &Path, link_path: &Path) -> Result<(), String> {
+    resolve_relative_symlink_within_root(root, link_path).map(|_| ())
 }
 
 pub fn assert_real_directory(path: &Path) -> Result<(), String> {
@@ -424,20 +503,56 @@ mod tests {
     fn symlink_target_traversing_through_another_symlink_is_rejected() {
         use std::os::unix::fs::symlink;
         let root = temp_root("rel-link-chain-escape");
-        // `escape_via` is itself a symlink. A second symlink's target string
-        // names `escape_via/..`; naive lexical `..` handling pops it as an
-        // ordinary path segment, even though real kernel `..` resolution
-        // would follow `escape_via` to wherever it points first. Rejecting
-        // this is conservative (it can also reject some safe chains), which
-        // is the correct default for archive-derived symlinks.
+        let outside = root.with_file_name(format!(
+            "{}-outside",
+            root.file_name().unwrap_or_default().to_string_lossy()
+        ));
         std::fs::create_dir_all(&root).expect("dir");
-        std::fs::create_dir_all(root.join("real")).expect("real dir");
-        symlink("real", root.join("escape_via")).expect("chain symlink");
+        std::fs::create_dir_all(outside.join("child")).expect("outside child");
+        std::fs::write(outside.join("secret"), b"outside").expect("outside file");
+        symlink(&outside, root.join("escape_via")).expect("chain symlink");
         let link = root.join("chained");
-        symlink("escape_via/../secret", &link).expect("chained target symlink");
+        symlink("escape_via/child/../secret", &link).expect("chained target symlink");
         let error = assert_relative_symlink_within_root(&root, &link).expect_err("chained escape");
-        assert!(error.contains("traverses another symbolic link"), "{error}");
+        assert!(error.contains("escapes the extract root"), "{error}");
         let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_relative_symlink_is_rejected() {
+        use std::os::unix::fs::symlink;
+        let root = temp_root("rel-link-dangling");
+        std::fs::create_dir_all(&root).expect("dir");
+        let link = root.join("dangling");
+        symlink("missing", &link).expect("dangling symlink");
+        let error = assert_relative_symlink_within_root(&root, &link).expect_err("dangling");
+        assert!(error.contains("missing or cannot be resolved"), "{error}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn in_progress_dangling_link_behind_escaping_ancestor_is_rejected() {
+        use std::os::unix::fs::symlink;
+        let root = temp_root("rel-link-in-progress-escape");
+        let outside = root.with_file_name(format!(
+            "{}-outside",
+            root.file_name().unwrap_or_default().to_string_lossy()
+        ));
+        std::fs::create_dir_all(&root).expect("root");
+        std::fs::create_dir_all(&outside).expect("outside");
+        symlink(&outside, root.join("escape_via")).expect("ancestor symlink");
+        let link = root.join("pending");
+        symlink("escape_via/missing-tail", &link).expect("pending symlink");
+
+        let error =
+            assert_relative_symlink_during_write(&root, &link).expect_err("escaping ancestor");
+        assert!(error.contains("escapes the extract root"), "{error}");
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
     }
 
     #[cfg(unix)]

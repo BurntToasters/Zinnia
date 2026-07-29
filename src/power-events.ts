@@ -617,10 +617,19 @@ export function wireEvents() {
     }
     if (e.key === "," && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
+      // Licenses can be stacked above Settings. Do not toggle the lower sheet
+      // while the topmost modal owns focus.
+      if (!$("licenses-overlay").hidden) return;
       toggleSettingsModal();
       return;
     }
     if (e.key === "Escape") {
+      // Licenses may be nested over Settings in Basic mode; always dismiss the
+      // visually topmost sheet first.
+      if (!$("licenses-overlay").hidden) {
+        closeLicensesModal();
+        return;
+      }
       if (!$("settings-overlay").hidden) {
         closeSettingsModal();
         return;
@@ -631,10 +640,6 @@ export function wireEvents() {
       }
       if (!$("command-preview-overlay").hidden) {
         closeCommandPreviewModal();
-        return;
-      }
-      if (!$("licenses-overlay").hidden) {
-        closeLicensesModal();
         return;
       }
       if (!$("shortcuts-overlay").hidden) {

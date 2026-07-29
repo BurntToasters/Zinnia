@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   macBundleVersionFromSemver,
   macMarketingVersionFromSemver,
+  updatePlistStringValue,
   updateCargoLockPackageVersion,
   updateWindowsResourceFlags,
   updateWindowsResourceVersion,
@@ -228,5 +229,27 @@ describe("macOS marketing version", () => {
     expect(() => macMarketingVersionFromSemver("1.2.3-preview.1")).toThrow(
       /cannot be represented/,
     );
+  });
+});
+
+describe("plist version synchronization", () => {
+  it("updates exactly one string-valued key", () => {
+    const plist = "<dict><key>CFBundleVersion</key><string>1</string></dict>";
+    expect(updatePlistStringValue(plist, "CFBundleVersion", "0.6.131")).toBe(
+      "<dict><key>CFBundleVersion</key><string>0.6.131</string></dict>",
+    );
+  });
+
+  it("fails closed when a key is missing or duplicated", () => {
+    expect(() =>
+      updatePlistStringValue("<dict/>", "CFBundleVersion", "1"),
+    ).toThrow(/found 0/);
+    expect(() =>
+      updatePlistStringValue(
+        "<key>Build</key><string>1</string><key>Build</key><string>2</string>",
+        "Build",
+        "3",
+      ),
+    ).toThrow(/found 2/);
   });
 });

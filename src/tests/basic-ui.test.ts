@@ -541,6 +541,7 @@ describe("basic-ui views and rendering", () => {
     const removeButtons = document.querySelectorAll(
       ".basic-file-item__remove",
     ) as NodeListOf<HTMLButtonElement>;
+    expect(removeButtons[0].getAttribute("aria-label")).toBe("Remove a.txt");
     removeButtons[0].click();
 
     expect(state.inputs).toEqual(["/tmp/b.txt"]);

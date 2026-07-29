@@ -1390,52 +1390,7 @@ fn resolve_staged_symlink_target(
     staged: &std::path::Path,
     link: &std::path::Path,
 ) -> Result<std::path::PathBuf, String> {
-    let target = std::fs::read_link(link).map_err(|error| error.to_string())?;
-    if target.is_absolute() {
-        return Err(format!(
-            "Archive contains an absolute symbolic link: {}",
-            link.display()
-        ));
-    }
-    let mut resolved = link
-        .parent()
-        .ok_or_else(|| "Archive symbolic link has no parent.".to_string())?
-        .to_path_buf();
-    for component in target.components() {
-        match component {
-            std::path::Component::Normal(part) => resolved.push(part),
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                if resolved == staged || !resolved.pop() {
-                    return Err(format!(
-                        "Archive symbolic link escapes the extract root: {}",
-                        link.display()
-                    ));
-                }
-            }
-            std::path::Component::RootDir | std::path::Component::Prefix(_) => {
-                return Err(format!(
-                    "Archive contains an absolute symbolic link: {}",
-                    link.display()
-                ));
-            }
-        }
-    }
-    if !resolved.starts_with(staged) {
-        return Err(format!(
-            "Archive symbolic link escapes the extract root: {}",
-            link.display()
-        ));
-    }
-    // A dangling link can bind to unrelated preexisting destination content
-    // after merge. Require every merged link target to come from this stage.
-    std::fs::symlink_metadata(&resolved).map_err(|_| {
-        format!(
-            "Archive contains a dangling symbolic link that cannot be merged safely: {}",
-            link.display()
-        )
-    })?;
-    Ok(resolved)
+    crate::path_safety::resolve_relative_symlink_within_root(staged, link)
 }
 
 #[cfg(unix)]

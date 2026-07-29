@@ -819,6 +819,20 @@ describe("main bootstrap", () => {
     licensesOverlay.hidden = false;
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect(mocks.licenses.closeLicensesModal).toHaveBeenCalled();
+
+    settingsOverlay.hidden = false;
+    licensesOverlay.hidden = false;
+    mocks.licenses.closeLicensesModal.mockClear();
+    mocks.settings.closeSettingsModal.mockClear();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(mocks.licenses.closeLicensesModal).toHaveBeenCalled();
+    expect(mocks.settings.closeSettingsModal).not.toHaveBeenCalled();
+
+    mocks.settings.toggleSettingsModal.mockClear();
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: ",", ctrlKey: true }),
+    );
+    expect(mocks.settings.toggleSettingsModal).not.toHaveBeenCalled();
   });
 
   it("routes drag-drop events in both basic and power workspace modes", async () => {
