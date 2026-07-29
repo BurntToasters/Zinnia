@@ -1395,7 +1395,7 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
   z-index: 10;
 }
 
-/* Glass Basic: no solid dock behind Compress — let vibrancy show through. */
+/* Glass Basic: no solid dock behind Compress  -  let vibrancy show through. */
 html[data-window-fx="basic"]
   #app[data-workspace-mode="basic"]
   .basic-view-sticky-bottom {

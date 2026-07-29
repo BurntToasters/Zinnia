@@ -59,7 +59,7 @@ operations:
   can round-trip top-level links). Nested Windows junctions / cloud placeholders
   inside a compress tree are rejected (fail closed); ZIP still cannot faithfully
   round-trip many symlink trees, so the UI warns when ZIP is chosen for inputs
-  that contain symlinks or `.app` bundles—prefer `7z` or `tar`.
+  that contain symlinks or `.app` bundles - prefer `7z` or `tar`.
 - `-sns` (NTFS alternate streams) and `-sni` (NT security descriptors) remain
   blocked: packing ADS / ACLs is a known hiding and privilege footgun.
 - On Windows extract, Zinnia injects 7-Zip `-snz` so Mark-of-the-Web

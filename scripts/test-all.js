@@ -47,6 +47,7 @@ function createInitialResults() {
     typecheck: { status: "pending" },
     lint: { status: "pending" },
     format: { status: "pending" },
+    noEmDash: { status: "pending" },
     changelog: { status: "pending" },
     updater: { status: "pending" },
     flatpak: { status: "pending" },
@@ -269,6 +270,13 @@ ${colors.reset}`);
     }${colors.reset}`,
   );
   console.log(
+    `${colors.bold}No em dash:${colors.reset} ${
+      results.noEmDash.status === "passed"
+        ? `${colors.green}✓ PASS`
+        : `${colors.red}✗ FAIL`
+    }${colors.reset}`,
+  );
+  console.log(
     `${colors.bold}Changelog:${colors.reset}  ${
       results.changelog.status === "passed"
         ? `${colors.green}✓ PASS`
@@ -360,6 +368,7 @@ function main() {
   runCommand("typecheck", npm, ["run", "typecheck"], null, results);
   runCommand("lint", npm, ["run", "lint"], null, results);
   runCommand("format", npm, ["run", "format:check"], null, results);
+  runCommand("no-em-dash", npm, ["run", "validate:no-em-dash"], null, results);
   runCommand("changelog", npm, ["run", "validate:changelog"], null, results);
   runCommand("updater", npm, ["run", "validate:updater"], null, results);
   runCommand("flatpak", npm, ["run", "validate:flatpak"], null, results);

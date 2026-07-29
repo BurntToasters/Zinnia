@@ -1304,7 +1304,7 @@ pub async fn run_7z(
                     if commit_failure_should_scrub_staging(&finalize_plan, &error) {
                         // Safe orphan scrub (add-mode / no recovery backups).
                         // Retract any partial publishes from the journal BEFORE
-                        // clearing it — clearing alone left destinations orphaned
+                        // clearing it  -  clearing alone left destinations orphaned
                         // when live retract during commit also failed.
                         match rollback_cleanup(&finalize_plan) {
                             Ok(()) => {

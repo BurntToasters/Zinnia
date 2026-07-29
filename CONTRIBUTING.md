@@ -16,6 +16,7 @@ Prerequisites per platform are in [build-setup.md](build-setup.md).
 | `npm run typecheck`    | `tsc --noEmit` (strict)                      |
 | `npm run lint`         | ESLint over `src/` and `scripts/`            |
 | `npm run format:check` | Prettier check (use `npm run format` to fix) |
+| `npm run validate:no-em-dash` | Rejects Unicode em dash (U+2014) in tracked text |
 | `npm test`             | Vitest (frontend)                            |
 | `npm run test:rust`    | `cargo test` (backend)                       |
 | `npm run test:all`     | All of the above, the way CI runs them       |
@@ -49,6 +50,7 @@ branch:
 ## Conventions
 
 - Match the surrounding code's style; no framework: vanilla TS + DOM.
+- Use ASCII punctuation only in repo text: no Unicode em dash (U+2014). Use `-`, `,`, or `:` instead (see `.cursor/rules/no-em-dash.mdc`).
 - Add tests with each change. Pure logic is unit-tested directly; DOM-dependent
   code uses the jsdom fixture in [`src/tests/setup-dom.ts`](src/tests/setup-dom.ts).
 - New 7z switches/commands need both a Vitest arg-builder test and a Rust

@@ -31,7 +31,7 @@ function expectedReleaseBranch(version) {
 }
 
 function git(args) {
-  // trimEnd only — see release-session.js command() for porcelain reasons.
+  // trimEnd only  -  see release-session.js command() for porcelain reasons.
   return execFileSync("git", args, {
     cwd: root,
     encoding: "utf8",

@@ -87,7 +87,7 @@ function refreshIncomingPathMutationControls(): void {
 
 /**
  * Wait for jobs/prep and any other mutator to finish, then take the applying
- * lock. No await between the free check and the set — JS is single-threaded, so
+ * lock. No await between the free check and the set  -  JS is single-threaded, so
  * Power drops and OS handoffs cannot both hold the lock.
  */
 export async function acquireIncomingPathLock(): Promise<void> {
@@ -171,7 +171,7 @@ async function applyIncomingPathsUnlocked(
   let allArchives: boolean | null;
   // Archive detection crosses the IPC boundary. An operation or Basic
   // preparation may start while that await is pending, so re-check and retry
-  // before touching shared input. Wait only on job/prep — we already hold
+  // before touching shared input. Wait only on job/prep  -  we already hold
   // incomingPathsApplying and must not deadlock on ourselves.
   for (;;) {
     allArchives = await allPathsAreArchives(paths);
