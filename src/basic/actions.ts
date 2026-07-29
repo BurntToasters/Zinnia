@@ -8,6 +8,7 @@ import {
   getMode,
   setMode,
   renderInputs,
+  setStatus,
   triggerIconRefresh,
 } from "../ui";
 import { validateArchivePaths } from "../archive-rules";
@@ -18,7 +19,7 @@ import {
   looksLikePasswordRequiredError,
   parseArchiveListing,
 } from "../archive";
-import { ensureRuntimeReady } from "../archive/runtime";
+import { clearPasswordFields, ensureRuntimeReady } from "../archive/runtime";
 import {
   archiveExtensionForFormat,
   isPreferredCompressParent,
@@ -39,6 +40,26 @@ import {
   updateBasicPreparingState,
 } from "./progress";
 import { setRecentArchiveHandler } from "./recent";
+
+async function waitUntilIncomingPathsApplyingClear(): Promise<void> {
+  while (state.incomingPathsApplying) {
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
+  }
+}
+
+async function confirmBasicDrop(
+  text: string,
+  options: Parameters<typeof confirm>[1],
+): Promise<boolean | null> {
+  try {
+    return await confirm(text, options);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Could not open Basic confirmation dialog: ${msg}`, "error");
+    setStatus("Could not open confirmation dialog", 3000);
+    return null;
+  }
+}
 
 function parentDirForPath(path: string): string {
   const sep = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
@@ -155,7 +176,7 @@ async function handleBasicDropOnce(
 
   // Mixed drop: let the user choose extract-the-archives vs compress-everything.
   if (mixed) {
-    const extractThem = await confirm(
+    const extractThem = await confirmBasicDrop(
       `You dropped ${archives.length} archive(s) and ${others.length} other file(s). Extract the archives?`,
       {
         title: "Mixed selection",
@@ -163,7 +184,7 @@ async function handleBasicDropOnce(
         cancelLabel: "More options",
       },
     );
-    if (!isBasicPreparationCurrent(preparation)) return;
+    if (!isBasicPreparationCurrent(preparation) || extractThem === null) return;
     if (extractThem) {
       finishBasicPreparation(preparation);
       loadInputs(archives);
@@ -176,7 +197,7 @@ async function handleBasicDropOnce(
     // A dismissed native confirmation is indistinguishable from its cancel
     // button. Require a second affirmative choice before compressing so
     // dismissal can never start an unintended operation.
-    const compressAll = await confirm(
+    const compressAll = await confirmBasicDrop(
       "Compress all dropped files into a new archive?",
       {
         title: "Mixed selection",
@@ -184,7 +205,12 @@ async function handleBasicDropOnce(
         cancelLabel: "Cancel",
       },
     );
-    if (!isBasicPreparationCurrent(preparation) || !compressAll) return;
+    if (
+      !isBasicPreparationCurrent(preparation) ||
+      compressAll === null ||
+      !compressAll
+    )
+      return;
     finishBasicPreparation(preparation);
     loadInputs(paths);
     setMode("add");
@@ -218,8 +244,6 @@ export async function handleBasicDrop(paths: string[]): Promise<void> {
   if (paths.length === 0) return;
   // Wait only for OS handoff / Power apply locks. Do not wait on
   // operationPreparing — that would deadlock behind destination/password dialogs.
-  const { waitUntilIncomingPathsApplyingClear } =
-    await import("../incoming-paths");
   await waitUntilIncomingPathsApplyingClear();
   const preparation = beginBasicPreparation();
   if (!preparation) return;
@@ -284,10 +308,23 @@ async function handleBasicCompressActionOnce(
     }
   }
 
-  const output = await save({
-    title: "Choose output archive",
-    defaultPath,
-  });
+  let output: string | null;
+  try {
+    output = await save({
+      title: "Choose output archive",
+      defaultPath,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Could not open the save-archive dialog: ${msg}`, "error");
+    showBasicCompletion(
+      "compress",
+      false,
+      "Operation failed",
+      "Could not open the save dialog. Check the log and try again.",
+    );
+    return;
+  }
 
   if (
     !output ||
@@ -397,13 +434,6 @@ export async function isArchiveEncrypted(
   }
 }
 
-function clearBasicExtractionPasswords(): void {
-  for (const id of ["basic-extract-password", "extract-password"]) {
-    const input = document.getElementById(id) as HTMLInputElement | null;
-    if (input) input.value = "";
-  }
-}
-
 async function handleBasicExtractActionOnce(
   preparation: BasicPreparation,
 ): Promise<void> {
@@ -475,10 +505,23 @@ async function handleBasicExtractActionOnce(
 
   // 2. Open the folder picker before copying a password into the DOM. A
   // cancelled picker must not leave a verified password resident in fields.
-  const output = await open({
-    title: "Choose destination folder",
-    directory: true,
-  });
+  let output: string | string[] | null;
+  try {
+    output = await open({
+      title: "Choose destination folder",
+      directory: true,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Could not open the destination-folder dialog: ${msg}`, "error");
+    showBasicCompletion(
+      "extract",
+      false,
+      "Operation failed",
+      "Could not open the folder dialog. Check the log and try again.",
+    );
+    return;
+  }
 
   if (
     !output ||
@@ -529,7 +572,7 @@ export async function handleBasicExtractAction(): Promise<void> {
   try {
     await handleBasicExtractActionOnce(preparation);
   } finally {
-    clearBasicExtractionPasswords();
+    clearPasswordFields();
     finishBasicPreparation(preparation);
   }
 }

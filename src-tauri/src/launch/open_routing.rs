@@ -37,28 +37,30 @@ const SHELL_HANDOFF_SUFFIX: &str = ".tmp";
 /// event listener exists, so `app.emit(...)` at that point would be silently
 /// dropped. Expose it as a pollable command instead, read once at frontend
 /// boot the same way `get_startup_recovery_status` already is.
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 static LAST_SHELL_HANDOFF_ERROR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
-#[cfg(windows)]
-fn record_shell_handoff_error(message: String) {
+#[cfg(any(windows, test))]
+pub(crate) fn record_shell_handoff_error(message: String) {
     if let Ok(mut guard) = LAST_SHELL_HANDOFF_ERROR.lock() {
         *guard = Some(message);
     }
 }
 
+#[cfg(any(windows, test))]
+pub(crate) fn take_shell_handoff_error() -> Option<String> {
+    LAST_SHELL_HANDOFF_ERROR
+        .lock()
+        .ok()
+        .and_then(|mut guard| guard.take())
+}
+
 /// A later, already-running-window open request (secondary instance argv
-/// forwarding, Reopen) can still emit live, since a window/listener exists by
-/// then; use the same channel already used for queue-capacity drops.
+/// forwarding, Reopen) can emit live because a listener exists. Consume error
+/// once so a later valid Explorer request cannot replay a stale warning.
 #[cfg(windows)]
 pub(crate) fn emit_pending_shell_handoff_error(app: &tauri::AppHandle) {
-    // Peek, do not take: cold launch surfaces the same error through
-    // `get_shell_handoff_error` after the frontend mounts. Taking here would
-    // drop the message if the event listener is not ready yet.
-    let message = match LAST_SHELL_HANDOFF_ERROR.lock() {
-        Ok(guard) => guard.clone(),
-        Err(_) => None,
-    };
+    let message = take_shell_handoff_error();
     if let Some(message) = message {
         let _ = app.emit(
             "open-paths-dropped",
@@ -76,10 +78,7 @@ pub(crate) fn emit_pending_shell_handoff_error(_app: &tauri::AppHandle) {}
 pub fn get_shell_handoff_error() -> Option<String> {
     #[cfg(windows)]
     {
-        LAST_SHELL_HANDOFF_ERROR
-            .lock()
-            .ok()
-            .and_then(|mut guard| guard.take())
+        take_shell_handoff_error()
     }
     #[cfg(not(windows))]
     {

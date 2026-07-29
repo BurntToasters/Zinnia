@@ -52,6 +52,25 @@ function isExplicitTruthy(value) {
   return /^(1|true|yes|on)$/i.test(String(value || "").trim());
 }
 
+function currentReleaseCommit() {
+  const commit = execSync("git rev-parse HEAD", {
+    cwd: root,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+  if (!/^[0-9a-f]{40}$/i.test(commit)) {
+    throw new Error("Could not resolve an exact release commit from git HEAD.");
+  }
+  return commit;
+}
+
+function assertReleaseTargetsCommit(release, commit) {
+  if (release?.target_commitish === commit) return release;
+  throw new Error(
+    `Draft release ${TAG} targets ${release?.target_commitish || "an unknown commit"}, not checked-out commit ${commit}. Delete or retarget stale draft before uploading assets.`,
+  );
+}
+
 const ALLOW_ASSET_REPLACE = isExplicitTruthy(process.env.ALLOW_ASSET_REPLACE);
 const REQUIRED_LINUX_TARGETS = (
   process.env.REQUIRED_LINUX_TARGETS || ""
@@ -943,11 +962,13 @@ async function listAllGithubPages(fetchPage, { perPage = 100 } = {}) {
 }
 
 async function getOrCreateRelease() {
+  const commit = currentReleaseCommit();
   try {
-    return await ghRequest(
+    const release = await ghRequest(
       "GET",
       `/repos/${REPO_OWNER}/${REPO_NAME}/releases/tags/${TAG}`,
     );
+    return assertReleaseTargetsCommit(release, commit);
   } catch (error) {
     if (error?.statusCode !== 404) throw error;
   }
@@ -959,14 +980,20 @@ async function getOrCreateRelease() {
     ),
   );
   const draft = releases.find((r) => r.draft && r.tag_name === TAG);
-  if (draft) return draft;
+  if (draft) return assertReleaseTargetsCommit(draft, commit);
 
-  return await ghRequest("POST", `/repos/${REPO_OWNER}/${REPO_NAME}/releases`, {
-    tag_name: TAG,
-    name: `Zinnia ${VERSION}`,
-    draft: true,
-    prerelease: IS_PRERELEASE,
-  });
+  const release = await ghRequest(
+    "POST",
+    `/repos/${REPO_OWNER}/${REPO_NAME}/releases`,
+    {
+      tag_name: TAG,
+      target_commitish: commit,
+      name: `Zinnia ${VERSION}`,
+      draft: true,
+      prerelease: IS_PRERELEASE,
+    },
+  );
+  return assertReleaseTargetsCommit(release, commit);
 }
 
 async function uploadAssetOnce(uploadUrl, filePath) {

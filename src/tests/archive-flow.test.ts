@@ -228,6 +228,20 @@ describe("addFilesToArchive", () => {
       "1 file",
     );
   });
+
+  it("handles a rejected mutation file dialog", async () => {
+    state.inputs = [uniqueArchivePath("add-files-dialog-error")];
+    openMock.mockRejectedValueOnce(new Error("portal unavailable"));
+
+    await expect(addFilesToArchive()).resolves.toBeUndefined();
+
+    expect(invokeMock.mock.calls.some(([name]) => name === "run_7z")).toBe(
+      false,
+    );
+    expect(document.getElementById("status")?.textContent).toContain(
+      "Could not open the file dialog",
+    );
+  });
 });
 
 describe("archive test/browse/selective flows", () => {

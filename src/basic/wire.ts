@@ -3,9 +3,11 @@ import { $ } from "../utils";
 import { state } from "../state";
 import {
   setMode,
+  log,
   renderInputs,
   registerBasicHooks,
   clearBrowsePasswordFields,
+  setStatus,
 } from "../ui";
 import { cancelAction } from "../archive";
 import {
@@ -49,6 +51,19 @@ export { wireBasicBrowseEvents } from "./browse-events";
 export { wireBasicKeyboardEvents } from "./keyboard-events";
 export { wireBasicExtractEvents } from "./extract-events";
 
+async function openBasicDialog(
+  options: Parameters<typeof open>[0],
+): Promise<string | string[] | null> {
+  try {
+    return await open(options);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Could not open Basic file dialog: ${msg}`, "error");
+    setStatus("Could not open the file dialog", 3000);
+    return null;
+  }
+}
+
 export function initBasicWorkspace(): void {
   setRecentArchiveHandler((path) => {
     void handleBasicDrop([path]);
@@ -64,7 +79,7 @@ export function initBasicWorkspace(): void {
       if (!preparation) return;
       let paths: string[] = [];
       try {
-        const selection = await open({
+        const selection = await openBasicDialog({
           title: "Select files or archives",
           multiple: true,
         });
@@ -101,7 +116,7 @@ export function initBasicWorkspace(): void {
       if (!preparation) return;
       let selection: string | string[] | null = null;
       try {
-        selection = await open({
+        selection = await openBasicDialog({
           title: "Open archive",
           multiple: true,
           filters: [
@@ -156,7 +171,7 @@ export function initBasicWorkspace(): void {
       if (!preparation) return;
       let selection: string | string[] | null = null;
       try {
-        selection = await open({
+        selection = await openBasicDialog({
           title: "Open archive",
           multiple: false,
           filters: [
@@ -198,7 +213,7 @@ export function initBasicWorkspace(): void {
       if (!preparation) return;
       let selection: string | string[] | null = null;
       try {
-        selection = await open({
+        selection = await openBasicDialog({
           title: "Open archive",
           multiple: false,
           filters: [

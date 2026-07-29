@@ -2186,7 +2186,7 @@ fn explicit_extract_phase_controls_cleanup_only_recovery() {
 }
 
 #[test]
-fn missing_new_destination_stage_rolls_back_the_matching_renamed_stage() {
+fn missing_new_destination_stage_preserves_ambiguous_destination() {
     let root = temp_root("zinnia-missing-new-destination-stage");
     std::fs::create_dir_all(&root).expect("test root");
     let destination = root.join("destination");
@@ -2211,9 +2211,12 @@ fn missing_new_destination_stage_rolls_back_the_matching_renamed_stage() {
         archive_phase: None,
     };
 
-    recover_missing_extract_stage(&journal).expect("roll back missing sibling stage");
+    recover_missing_extract_stage(&journal).expect("preserve ambiguous sibling destination");
     assert!(!stage.exists());
-    assert!(!destination.exists());
+    assert_eq!(
+        std::fs::read(destination.join("new.txt")).expect("preserved destination"),
+        b"new"
+    );
     assert!(!move_plan_path(&stage).exists());
     assert!(!move_identity_log_path(&stage).exists());
     let _ = std::fs::remove_dir_all(root);
@@ -2246,7 +2249,7 @@ fn missing_new_destination_stage_preserves_an_identity_mismatch() {
         archive_phase: None,
     };
 
-    assert!(recover_missing_extract_stage(&journal).is_err());
+    recover_missing_extract_stage(&journal).expect("preserve replacement destination");
     assert_eq!(
         std::fs::read(destination.join("user.txt")).expect("preserved replacement"),
         b"user"

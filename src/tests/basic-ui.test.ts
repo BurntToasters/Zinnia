@@ -40,11 +40,25 @@ const uiMocks = vi.hoisted(() => {
   return {
     runtime,
     log: vi.fn(),
+    setStatus: vi.fn(),
     setMode: vi.fn((next: "add" | "extract" | "browse") => {
       runtime.mode = next;
     }),
     renderInputs: vi.fn(),
     clearBrowsePasswordFields,
+    resetPasswordFieldControl: (inputId: string, toggleId: string) => {
+      const input = document.getElementById(inputId) as HTMLInputElement | null;
+      const toggle = document.getElementById(
+        toggleId,
+      ) as HTMLButtonElement | null;
+      if (input) {
+        input.value = "";
+        input.type = "password";
+      }
+      if (!toggle) return;
+      toggle.textContent = "Show";
+      toggle.setAttribute("aria-pressed", "false");
+    },
     setBrowsePasswordFieldVisible: vi.fn((visible: boolean) => {
       const field = document.getElementById("browse-password-field");
       if (field) field.hidden = !visible;
@@ -85,11 +99,13 @@ const depMocks = vi.hoisted(() => ({
 
 vi.mock("../ui", () => ({
   log: uiMocks.log,
+  setStatus: uiMocks.setStatus,
   getWorkspaceMode: () => uiMocks.runtime.workspaceMode,
   getMode: () => uiMocks.runtime.mode,
   setMode: uiMocks.setMode,
   renderInputs: uiMocks.renderInputs,
   clearBrowsePasswordFields: uiMocks.clearBrowsePasswordFields,
+  resetPasswordFieldControl: uiMocks.resetPasswordFieldControl,
   setBrowsePasswordFieldVisible: uiMocks.setBrowsePasswordFieldVisible,
   registerBasicHooks: uiMocks.registerBasicHooks,
   triggerIconRefresh: vi.fn(),
@@ -370,6 +386,7 @@ beforeEach(() => {
   (document.getElementById("extract-password") as HTMLInputElement).value = "";
 
   uiMocks.log.mockReset();
+  uiMocks.setStatus.mockReset();
   uiMocks.setMode.mockClear();
   uiMocks.renderInputs.mockClear();
   uiMocks.clearBrowsePasswordFields.mockClear();
@@ -1149,6 +1166,38 @@ describe("basic-ui drag and init wiring", () => {
   });
 
   it.each([
+    ["first", [new Error("portal unavailable")]],
+    ["second", [false, new Error("portal unavailable")]],
+  ])(
+    "contains a rejected %s mixed-drop confirmation",
+    async (_which, replies) => {
+      state.inputs = ["/tmp/original.txt"];
+      depMocks.validateArchivePaths.mockResolvedValueOnce([
+        { path: "/tmp/archive.7z", valid: true },
+        { path: "/tmp/file.txt", valid: false },
+      ]);
+      for (const reply of replies) {
+        if (reply instanceof Error) confirmMock.mockRejectedValueOnce(reply);
+        else confirmMock.mockResolvedValueOnce(reply);
+      }
+
+      await expect(
+        handleBasicDrop(["/tmp/archive.7z", "/tmp/file.txt"]),
+      ).resolves.toBeUndefined();
+
+      expect(uiMocks.log).toHaveBeenCalledWith(
+        expect.stringContaining("Could not open Basic confirmation dialog"),
+        "error",
+      );
+      expect(uiMocks.setStatus).toHaveBeenCalledWith(
+        "Could not open confirmation dialog",
+        3000,
+      );
+      expect(state.inputs).toEqual(["/tmp/original.txt"]);
+    },
+  );
+
+  it.each([
     ["gzip", ".gz"],
     ["bzip2", ".bz2"],
   ])(
@@ -1240,6 +1289,14 @@ describe("basic-ui drag and init wiring", () => {
     (
       document.getElementById("basic-extract-password") as HTMLInputElement
     ).value = "basic-secret";
+    (
+      document.getElementById("basic-extract-password") as HTMLInputElement
+    ).type = "text";
+    (
+      document.getElementById(
+        "basic-toggle-extract-password",
+      ) as HTMLButtonElement
+    ).textContent = "Hide";
     (document.getElementById("extract-password") as HTMLInputElement).value =
       "power-secret";
 
@@ -1253,6 +1310,56 @@ describe("basic-ui drag and init wiring", () => {
     expect(
       (document.getElementById("extract-password") as HTMLInputElement).value,
     ).toBe("");
+    expect(
+      (document.getElementById("basic-extract-password") as HTMLInputElement)
+        .type,
+    ).toBe("password");
+    expect(
+      document.getElementById("basic-toggle-extract-password")?.textContent,
+    ).toBe("Show");
+  });
+
+  it("shows Basic extraction failure when folder dialog rejects", async () => {
+    const archive = "/tmp/archive.7z";
+    state.inputs = [archive];
+    state.browseArchiveInfoByPath.set(archive, {
+      type: "7z",
+      physicalSize: 10,
+      method: "LZMA2",
+      solid: false,
+      encrypted: false,
+      entries: [],
+    });
+    uiMocks.runtime.mode = "extract";
+    setBasicView("extract");
+    openMock.mockRejectedValueOnce(new Error("portal unavailable"));
+
+    await expect(handleBasicExtractAction()).resolves.toBeUndefined();
+
+    expect(uiMocks.log).toHaveBeenCalledWith(
+      expect.stringContaining("Could not open the destination-folder dialog"),
+      "error",
+    );
+    expect(
+      document
+        .getElementById("basic-extract-completion")
+        ?.classList.contains("is-active"),
+    ).toBe(true);
+    expect(state.operationPreparing).toBe(false);
+  });
+
+  it("handles rejected Basic archive dialogs without an unhandled event error", async () => {
+    initBasicWorkspace();
+    openMock.mockRejectedValueOnce(new Error("portal unavailable"));
+
+    (document.getElementById("basic-action-open") as HTMLButtonElement).click();
+    await flushAsync();
+
+    expect(uiMocks.log).toHaveBeenCalledWith(
+      expect.stringContaining("Could not open Basic file dialog"),
+      "error",
+    );
+    expect(state.operationPreparing).toBe(false);
   });
 
   it("clears copied extraction passwords when runAction rejects", async () => {

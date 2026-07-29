@@ -35,6 +35,11 @@ async function runMutationDialog<T>(
   mutationDialogOpen = true;
   try {
     return await dialog();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Could not open archive mutation dialog: ${msg}`, "error");
+    setStatus("Could not open the file dialog", 3000);
+    return null;
   } finally {
     mutationDialogOpen = false;
   }

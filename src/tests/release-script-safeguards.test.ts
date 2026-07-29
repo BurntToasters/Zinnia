@@ -28,11 +28,20 @@ import {
 } from "../../scripts/zip-macos-helpers.js";
 
 const require = createRequire(import.meta.url);
-const { listAllGithubPages: listAllGithubPagesCjs, resolveGithubToken } =
-  require("../../scripts/ensure-draft-release.cjs") as {
-    listAllGithubPages: typeof listAllGithubPages;
-    resolveGithubToken: (env?: NodeJS.ProcessEnv) => string | undefined;
-  };
+const {
+  assertReleaseTargetsCommit: assertReleaseTargetsCommitCjs,
+  listAllGithubPages: listAllGithubPagesCjs,
+  resolveGithubToken,
+  verifyReleaseSession,
+} = require("../../scripts/ensure-draft-release.cjs") as {
+  assertReleaseTargetsCommit: (
+    release: { target_commitish?: string },
+    commit: string,
+  ) => unknown;
+  listAllGithubPages: typeof listAllGithubPages;
+  resolveGithubToken: (env?: NodeJS.ProcessEnv) => string | undefined;
+  verifyReleaseSession: (run?: typeof spawnSync) => void;
+};
 
 const unsupportedHardLinkErrors = new Set([
   "EACCES",
@@ -73,6 +82,26 @@ function supportsHardLinksInTemporaryDirectory(): boolean {
 const hardLinksSupported = supportsHardLinksInTemporaryDirectory();
 
 describe("release script safeguards", () => {
+  it("binds release drafts to exact checked-out commit", () => {
+    const commit = "a".repeat(40);
+    expect(() =>
+      assertReleaseTargetsCommitCjs({ target_commitish: "main" }, commit),
+    ).toThrow("not checked-out commit");
+    expect(
+      assertReleaseTargetsCommitCjs({ target_commitish: commit }, commit),
+    ).toEqual({ target_commitish: commit });
+
+    const gpgSource = fs.readFileSync("scripts/gpg-sign.js", "utf8");
+    const draftSource = fs.readFileSync(
+      "scripts/ensure-draft-release.cjs",
+      "utf8",
+    );
+    expect(gpgSource).toContain("target_commitish: commit");
+    expect(gpgSource).toContain("assertReleaseTargetsCommit");
+    expect(draftSource).toMatch(
+      /if \(afterRetry\) \{\s*assertReleaseTargetsCommit\(afterRetry, commit\);/,
+    );
+  });
   it("publishes beta-target updater manifests for stable and beta releases", () => {
     const expected = [
       { targetSuffix: "", baseUrl: "release" },
@@ -246,6 +275,18 @@ describe("release script safeguards", () => {
         /GH_TOKEN or GITHUB_TOKEN is required/,
       );
     }
+  });
+
+  it("requires a release session before the draft script can contact GitHub", () => {
+    const rejectedSessionCheck = () => {
+      const error = Object.assign(new Error("release session missing"), {
+        stderr: "release-session: FAILED: Release build session is missing.",
+      });
+      throw error;
+    };
+    expect(() =>
+      verifyReleaseSession(rejectedSessionCheck as typeof spawnSync),
+    ).toThrow("Release session verification failed");
   });
 
   it.each([

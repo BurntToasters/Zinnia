@@ -4,50 +4,106 @@
 //   --wait     poll until that draft exists; NEVER create. Run by mac/linux so
 //              they only ever reuse the draft Windows created (no duplicates).
 
-const https = require('https');
+const https = require("https");
+const path = require("path");
+const { execFileSync } = require("child_process");
 
-require('dotenv').config();
+require("dotenv").config();
 
 function resolveGithubToken(env = process.env) {
   return env.GH_TOKEN || env.GITHUB_TOKEN;
 }
 
 const GH_TOKEN = resolveGithubToken();
-const REPO_OWNER = process.env.GH_REPO_OWNER || 'BurntToasters';
+const REPO_OWNER = process.env.GH_REPO_OWNER || "BurntToasters";
 // Keep default casing aligned with scripts/gpg-sign.js and updater URLs.
-const REPO_NAME = process.env.GH_REPO_NAME || 'zinnia';
-const GH_REQUEST_TIMEOUT_MS = Number.parseInt(process.env.GH_REQUEST_TIMEOUT_MS || '30000', 10);
-const GH_REQUEST_RETRIES = Number.parseInt(process.env.GH_REQUEST_RETRIES || '3', 10);
+const REPO_NAME = process.env.GH_REPO_NAME || "zinnia";
+const GH_REQUEST_TIMEOUT_MS = Number.parseInt(
+  process.env.GH_REQUEST_TIMEOUT_MS || "30000",
+  10,
+);
+const GH_REQUEST_RETRIES = Number.parseInt(
+  process.env.GH_REQUEST_RETRIES || "3",
+  10,
+);
 const GH_REQUEST_RETRY_DELAY_MS = Number.parseInt(
-  process.env.GH_REQUEST_RETRY_DELAY_MS || '1500',
-  10
+  process.env.GH_REQUEST_RETRY_DELAY_MS || "1500",
+  10,
 );
 
 // --wait mode: how long mac/linux will wait for the Windows machine to create
 // the draft before giving up (defaults to 30 minutes, polling every 15s).
-const WAIT_MODE = process.argv.slice(2).includes('--wait');
-const WAIT_TIMEOUT_MS = Number.parseInt(process.env.RELEASE_DRAFT_WAIT_TIMEOUT_MS || '1800000', 10);
+const WAIT_MODE = process.argv.slice(2).includes("--wait");
+const WAIT_TIMEOUT_MS = Number.parseInt(
+  process.env.RELEASE_DRAFT_WAIT_TIMEOUT_MS || "1800000",
+  10,
+);
 const WAIT_POLL_INTERVAL_MS = Number.parseInt(
-  process.env.RELEASE_DRAFT_WAIT_POLL_MS || '15000',
-  10
+  process.env.RELEASE_DRAFT_WAIT_POLL_MS || "15000",
+  10,
 );
 
-const packageJson = require('../package.json');
+const packageJson = require("../package.json");
 const VERSION = packageJson.version;
-const TAG_NAME = 'v' + VERSION;
+const TAG_NAME = "v" + VERSION;
 // Keep this in sync with scripts/gpg-sign.js so every release path classifies
 // release versions consistently and rejects unsupported channels.
-const NUMERIC_VERSION = '(?:0|[1-9]\\d*)';
+const NUMERIC_VERSION = "(?:0|[1-9]\\d*)";
 const BETA_VERSION = new RegExp(
-  `^${NUMERIC_VERSION}\\.${NUMERIC_VERSION}\\.${NUMERIC_VERSION}-beta\\.${NUMERIC_VERSION}$`
+  `^${NUMERIC_VERSION}\\.${NUMERIC_VERSION}\\.${NUMERIC_VERSION}-beta\\.${NUMERIC_VERSION}$`,
 );
-const STABLE_VERSION = new RegExp(`^${NUMERIC_VERSION}\\.${NUMERIC_VERSION}\\.${NUMERIC_VERSION}$`);
+const STABLE_VERSION = new RegExp(
+  `^${NUMERIC_VERSION}\\.${NUMERIC_VERSION}\\.${NUMERIC_VERSION}$`,
+);
 if (!BETA_VERSION.test(VERSION) && !STABLE_VERSION.test(VERSION)) {
   throw new Error(
-    `Unsupported release version '${VERSION}'; Zinnia releases use beta or stable only.`
+    `Unsupported release version '${VERSION}'; Zinnia releases use beta or stable only.`,
   );
 }
 const IS_PRERELEASE = BETA_VERSION.test(VERSION);
+
+function currentReleaseCommit() {
+  const commit = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: path.resolve(__dirname, ".."),
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+  if (!/^[0-9a-f]{40}$/i.test(commit)) {
+    throw new Error("Could not resolve an exact release commit from git HEAD.");
+  }
+  return commit;
+}
+
+function verifyReleaseSession(run = execFileSync) {
+  const root = path.resolve(__dirname, "..");
+  try {
+    run(process.execPath, [path.join(__dirname, "release-session.js")], {
+      cwd: root,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (error) {
+    const detail = String(error.stderr || error.stdout || error.message || "")
+      .trim()
+      .replace(/^release-session: FAILED:\s*/m, "");
+    throw new Error(
+      "Release session verification failed. Run npm run release:prepare first." +
+        (detail ? " " + detail : ""),
+    );
+  }
+}
+
+function assertReleaseTargetsCommit(release, commit) {
+  if (release?.target_commitish === commit) return release;
+  throw new Error(
+    "Draft release " +
+      TAG_NAME +
+      " targets " +
+      (release?.target_commitish || "an unknown commit") +
+      ", not checked-out commit " +
+      commit +
+      ". Delete or retarget stale draft before uploading assets.",
+  );
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -56,55 +112,66 @@ function sleep(ms) {
 function isRetryableGithubError(error) {
   if (!error) return false;
 
-  const retryableStatusCodes = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+  const retryableStatusCodes = new Set([
+    408, 409, 425, 429, 500, 502, 503, 504,
+  ]);
   const retryableCodes = new Set([
-    'ETIMEDOUT',
-    'ECONNRESET',
-    'ENOTFOUND',
-    'EAI_AGAIN',
-    'ECONNREFUSED',
-    'EPIPE',
+    "ETIMEDOUT",
+    "ECONNRESET",
+    "ENOTFOUND",
+    "EAI_AGAIN",
+    "ECONNREFUSED",
+    "EPIPE",
   ]);
 
-  if (typeof error.statusCode === 'number' && retryableStatusCodes.has(error.statusCode)) {
+  if (
+    typeof error.statusCode === "number" &&
+    retryableStatusCodes.has(error.statusCode)
+  ) {
     return true;
   }
-  if (typeof error.code === 'string' && retryableCodes.has(error.code)) {
+  if (typeof error.code === "string" && retryableCodes.has(error.code)) {
     return true;
   }
 
-  const msg = String(error.message || '').toLowerCase();
-  return msg.includes('timeout') || msg.includes('socket hang up') || msg.includes('aborted');
+  const msg = String(error.message || "").toLowerCase();
+  return (
+    msg.includes("timeout") ||
+    msg.includes("socket hang up") ||
+    msg.includes("aborted")
+  );
 }
 
 function githubRequest(method, endpoint, body) {
   return new Promise((resolve, reject) => {
     const options = {
-      hostname: 'api.github.com',
+      hostname: "api.github.com",
       path: endpoint,
       method: method,
       headers: {
-        Authorization: 'Bearer ' + GH_TOKEN,
-        'User-Agent': 'Zinnia-Release-Script',
-        Accept: 'application/vnd.github.v3+json',
-        'X-GitHub-Api-Version': '2022-11-28',
+        Authorization: "Bearer " + GH_TOKEN,
+        "User-Agent": "Zinnia-Release-Script",
+        Accept: "application/vnd.github.v3+json",
+        "X-GitHub-Api-Version": "2022-11-28",
       },
     };
 
     if (body) {
-      options.headers['Content-Type'] = 'application/json';
+      options.headers["Content-Type"] = "application/json";
     }
 
     const req = https.request(options, (res) => {
-      let data = '';
-      res.setEncoding('utf8');
-      res.on('data', (chunk) => (data += chunk));
-      res.on('aborted', () => {
-        const err = new Error('GitHub API response aborted for ' + method + ' ' + endpoint);
-        err.code = 'ECONNRESET';
+      let data = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk) => (data += chunk));
+      res.on("aborted", () => {
+        const err = new Error(
+          "GitHub API response aborted for " + method + " " + endpoint,
+        );
+        err.code = "ECONNRESET";
         reject(err);
       });
-      res.on('end', () => {
+      res.on("end", () => {
         const statusCode = res.statusCode || 0;
         try {
           if (statusCode >= 200 && statusCode < 300) {
@@ -112,21 +179,26 @@ function githubRequest(method, endpoint, body) {
           } else {
             const json = data ? JSON.parse(data) : {};
             const err = new Error(
-              'GitHub API error ' +
+              "GitHub API error " +
                 statusCode +
-                ' for ' +
+                " for " +
                 method +
-                ' ' +
+                " " +
                 endpoint +
-                ': ' +
-                (json.message || data || 'unknown error')
+                ": " +
+                (json.message || data || "unknown error"),
             );
             err.statusCode = statusCode;
             reject(err);
           }
         } catch (e) {
           const err = new Error(
-            'GitHub API invalid JSON for ' + method + ' ' + endpoint + ': ' + e.message
+            "GitHub API invalid JSON for " +
+              method +
+              " " +
+              endpoint +
+              ": " +
+              e.message,
           );
           err.statusCode = statusCode;
           reject(err);
@@ -136,13 +208,18 @@ function githubRequest(method, endpoint, body) {
 
     req.setTimeout(GH_REQUEST_TIMEOUT_MS, () => {
       const err = new Error(
-        'GitHub API timeout after ' + GH_REQUEST_TIMEOUT_MS + 'ms for ' + method + ' ' + endpoint
+        "GitHub API timeout after " +
+          GH_REQUEST_TIMEOUT_MS +
+          "ms for " +
+          method +
+          " " +
+          endpoint,
       );
-      err.code = 'ETIMEDOUT';
+      err.code = "ETIMEDOUT";
       req.destroy(err);
     });
 
-    req.on('error', reject);
+    req.on("error", reject);
 
     if (body) {
       req.write(JSON.stringify(body));
@@ -165,15 +242,15 @@ async function githubRequestWithRetry(method, endpoint, body) {
 
       const backoffMs = GH_REQUEST_RETRY_DELAY_MS * attempt;
       console.log(
-        '   Retry ' +
+        "   Retry " +
           attempt +
-          '/' +
+          "/" +
           (attempts - 1) +
-          ' in ' +
+          " in " +
           backoffMs +
-          'ms (' +
+          "ms (" +
           error.message +
-          ')'
+          ")",
       );
       await sleep(backoffMs);
     }
@@ -201,16 +278,16 @@ async function findMatchingReleases() {
   // (no git tag exists yet), so we list and match on tag_name.
   const releases = await listAllGithubPages((page, perPage) =>
     githubRequestWithRetry(
-      'GET',
-      '/repos/' +
+      "GET",
+      "/repos/" +
         REPO_OWNER +
-        '/' +
+        "/" +
         REPO_NAME +
-        '/releases?per_page=' +
+        "/releases?per_page=" +
         perPage +
-        '&page=' +
-        page
-    )
+        "&page=" +
+        page,
+    ),
   );
   return releases.filter((r) => r.tag_name === TAG_NAME);
 }
@@ -222,54 +299,64 @@ async function findExistingRelease() {
 }
 
 async function ensureDraftRelease() {
-  console.log('Ensuring draft release exists for ' + TAG_NAME + '...');
+  console.log("Ensuring draft release exists for " + TAG_NAME + "...");
+  const commit = currentReleaseCommit();
 
   const matching = await findMatchingReleases();
   const existing = matching.find((r) => r.draft) || null;
   if (existing) {
+    assertReleaseTargetsCommit(existing, commit);
     console.log(
-      '   Draft already exists: ' +
+      "   Draft already exists: " +
         (existing.name || TAG_NAME) +
-        ' (id ' +
+        " (id " +
         existing.id +
-        ', ' +
+        ", " +
         (existing.assets ? existing.assets.length : 0) +
-        ' assets) - skipping create.'
+        " assets) - skipping create.",
     );
     return existing;
   }
   if (matching.some((r) => !r.draft)) {
     throw new Error(
-      'Release ' +
+      "Release " +
         TAG_NAME +
-        ' already exists as published. Refusing to create another draft for the same tag.'
+        " already exists as published. Refusing to create another draft for the same tag.",
     );
   }
 
-  console.log('   No release found. Creating draft...');
+  console.log("   No release found. Creating draft...");
   try {
     const release = await githubRequestWithRetry(
-      'POST',
-      '/repos/' + REPO_OWNER + '/' + REPO_NAME + '/releases',
+      "POST",
+      "/repos/" + REPO_OWNER + "/" + REPO_NAME + "/releases",
       {
         // Match electron-builder's createRelease() so it reuses this draft:
         // tag = "v" + version, name defaults to the version, draft:true.
         tag_name: TAG_NAME,
+        target_commitish: commit,
         name: VERSION,
         draft: true,
         prerelease: IS_PRERELEASE,
-      }
+      },
     );
-    console.log('   Created draft release: ' + (release.name || TAG_NAME) + ' (id ' + release.id + ')');
-    return release;
+    console.log(
+      "   Created draft release: " +
+        (release.name || TAG_NAME) +
+        " (id " +
+        release.id +
+        ")",
+    );
+    return assertReleaseTargetsCommit(release, commit);
   } catch (error) {
     // Another concurrent run may have created it (422 already_exists) - re-fetch.
     if (error.statusCode === 422) {
-      console.log('   Create returned 422; re-checking for existing draft...');
+      console.log("   Create returned 422; re-checking for existing draft...");
       await sleep(2000);
       const afterRetry = await findExistingRelease();
       if (afterRetry) {
-        console.log('   Found existing draft after retry: id ' + afterRetry.id);
+        assertReleaseTargetsCommit(afterRetry, commit);
+        console.log("   Found existing draft after retry: id " + afterRetry.id);
         return afterRetry;
       }
     }
@@ -280,52 +367,54 @@ async function ensureDraftRelease() {
 async function waitForDraftRelease() {
   const deadline = Date.now() + WAIT_TIMEOUT_MS;
   console.log(
-    'Waiting for draft release ' +
+    "Waiting for draft release " +
       TAG_NAME +
-      ' (created by the Windows machine); will NOT create it here...'
+      " (created by the Windows machine); will NOT create it here...",
   );
 
   let attempt = 0;
+  const commit = currentReleaseCommit();
   for (;;) {
     attempt += 1;
     const matching = await findMatchingReleases();
     const existing = matching.find((r) => r.draft) || null;
     if (existing) {
+      assertReleaseTargetsCommit(existing, commit);
       console.log(
-        '   Found draft: ' +
+        "   Found draft: " +
           (existing.name || TAG_NAME) +
-          ' (id ' +
+          " (id " +
           existing.id +
-          ', ' +
+          ", " +
           (existing.assets ? existing.assets.length : 0) +
-          ' assets). Proceeding.'
+          " assets). Proceeding.",
       );
       return existing;
     }
     if (matching.some((r) => !r.draft)) {
       throw new Error(
-        'Release ' +
+        "Release " +
           TAG_NAME +
-          ' already exists as published. Refusing to wait for a draft for the same tag.'
+          " already exists as published. Refusing to wait for a draft for the same tag.",
       );
     }
 
     if (Date.now() >= deadline) {
       throw new Error(
-        'Timed out after ' +
+        "Timed out after " +
           Math.round(WAIT_TIMEOUT_MS / 1000) +
-          's waiting for draft ' +
+          "s waiting for draft " +
           TAG_NAME +
-          '. Run "npm run release:draft" on the Windows machine first (or run it here once), then retry.'
+          '. Run "npm run release:draft" on the Windows machine first (or run it here once), then retry.',
       );
     }
 
     console.log(
-      '   Draft not found yet (attempt ' +
+      "   Draft not found yet (attempt " +
         attempt +
-        '); re-checking in ' +
+        "); re-checking in " +
         Math.round(WAIT_POLL_INTERVAL_MS / 1000) +
-        's...'
+        "s...",
     );
     await sleep(WAIT_POLL_INTERVAL_MS);
   }
@@ -334,14 +423,16 @@ async function waitForDraftRelease() {
 async function main() {
   if (!GH_TOKEN) {
     const action = WAIT_MODE
-      ? 'wait for the Windows-created draft release'
-      : 'create or reuse the draft release';
+      ? "wait for the Windows-created draft release"
+      : "create or reuse the draft release";
     throw new Error(
-      'GH_TOKEN or GITHUB_TOKEN is required to ' +
+      "GH_TOKEN or GITHUB_TOKEN is required to " +
         action +
-        '. Set one of those environment variables and retry.'
+        ". Set one of those environment variables and retry.",
     );
   }
+
+  verifyReleaseSession();
 
   if (WAIT_MODE) {
     await waitForDraftRelease();
@@ -351,14 +442,17 @@ async function main() {
 }
 
 module.exports = {
+  assertReleaseTargetsCommit,
+  currentReleaseCommit,
   listAllGithubPages,
   resolveGithubToken,
+  verifyReleaseSession,
 };
 
 if (require.main === module) {
   main().catch((error) => {
     const message = error && error.message ? error.message : String(error);
-    console.error('✗ ERROR: Failed to ensure draft release: ' + message);
+    console.error("✗ ERROR: Failed to ensure draft release: " + message);
     process.exit(1);
   });
 }

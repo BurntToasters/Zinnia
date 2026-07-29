@@ -1,8 +1,6 @@
 //! Startup recovery for interrupted archive transactions.
 
-use super::commit::{
-    archive_backup_path, archive_family, rename_file_no_replace, rollback_persisted_move_plan,
-};
+use super::commit::{archive_backup_path, archive_family, rollback_persisted_move_plan};
 use super::journal::{
     cleanup_journal_path, clear_cleanup_journal, ensure_regular_file_identity,
     is_safe_stage_dir_name, move_plan_path, remove_move_plan_sidecars,
@@ -137,22 +135,14 @@ pub(crate) fn recover_missing_extract_stage(journal: &CleanupJournal) -> Result<
             remove_move_plan_sidecars(&journal.stage)
         }
         Some(super::journal::ExtractStagePlacement::Sibling) => {
-            // A brand-new destination is published by renaming the whole sibling
-            // stage. A crash can therefore make the stage disappear before the
-            // committed phase reaches disk. Roll it back only when the object is
-            // still the exact stage identity captured before extraction.
-            let expected = journal.extract_stage_identity.as_ref().ok_or_else(|| {
-                format!(
-                    "Extraction stage disappeared before commit and {} cannot be identified safely. Preserve the destination and retry recovery manually.",
-                    journal.destination.display()
-                )
-            })?;
-            super::journal::ensure_path_identity(&journal.destination, expected)?;
-            rename_file_no_replace(&journal.destination, &journal.stage)?;
-            if let Some(parent) = journal.destination.parent() {
-                sync_directory(parent)?;
-            }
-            cleanup_extract_journal_artifacts(journal)
+            // A whole-stage publish can make the stage disappear before its
+            // committed phase reaches disk. Do not infer that the destination
+            // still belongs to this transaction from a filesystem identity:
+            // Unix inodes (and filesystem file IDs generally) can be reused
+            // after deletion. Preserve a destination in this ambiguous state;
+            // retaining a possibly completed extraction is safe, while moving
+            // and deleting a replacement directory can destroy user data.
+            remove_move_plan_sidecars(&journal.stage)
         }
         None => remove_move_plan_sidecars(&journal.stage),
     }
