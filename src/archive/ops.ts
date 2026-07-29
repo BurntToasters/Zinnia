@@ -282,7 +282,7 @@ export async function runBatchExtract() {
 export async function cancelAction() {
   if (!state.running) return;
   // Always record user intent. Idle cancel_7z (password gap / between batch
-  // items) returns false — clearing flags here made Cancel a no-op and left
+  // items) returns false  -  clearing flags here made Cancel a no-op and left
   // password-retry / batch loops running.
   state.batchCancelled = true;
   state.cancelRequested = true;

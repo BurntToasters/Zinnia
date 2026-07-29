@@ -82,7 +82,7 @@ async function archiveOperationIsRunning(
 }
 
 /** Drop the update prepare lock. Unlike check/reserve, never treat IPC failure
- * as "still busy" — that strands archive ops until restart. */
+ * as "still busy"  -  that strands archive ops until restart. */
 async function releaseUpdateReservation(): Promise<void> {
   try {
     await invoke<boolean>("is_7z_running", { mode: "release_update" });

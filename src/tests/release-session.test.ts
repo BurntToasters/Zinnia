@@ -126,7 +126,7 @@ describe("release build session", () => {
   });
 
   it("rejects sessions where the quality gate did not run before session start", () => {
-    // qualityGateCompletedAt equal to startedAt — gate and session created
+    // qualityGateCompletedAt equal to startedAt  -  gate and session created
     // in the same millisecond, which cannot happen via createReleaseSession.
     expect(() =>
       validateReleaseSession(
@@ -136,7 +136,7 @@ describe("release build session", () => {
       ),
     ).toThrow(/quality-gate proof/);
 
-    // qualityGateCompletedAt strictly after startedAt — clearly invalid.
+    // qualityGateCompletedAt strictly after startedAt  -  clearly invalid.
     expect(() =>
       validateReleaseSession(
         { ...identity, qualityGateCompletedAt: 9_001, startedAt: 9_000 },
@@ -202,7 +202,7 @@ describe("release build session", () => {
       expect(recordSuccessfulQualityGate(root).recorded).toBe(true);
 
       // Generated ACL schemas rewritten by tauri build must not block the quality
-      // gate — including when they are tracked and show porcelain " M path".
+      // gate  -  including when they are tracked and show porcelain " M path".
       const schemaDir = path.join(root, "src-tauri", "gen", "schemas");
       fs.mkdirSync(schemaDir, { recursive: true });
       fs.writeFileSync(path.join(schemaDir, "linux-schema.json"), "clean\n");

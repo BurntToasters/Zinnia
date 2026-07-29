@@ -5,7 +5,7 @@ import { log } from "./ui";
 /**
  * Open an http(s) URL in the system browser.
  *
- * Prefer `<a href="…" target="_blank">` for in-UI links — with `shell:default`,
+ * Prefer `<a href="…" target="_blank">` for in-UI links  -  with `shell:default`,
  * the shell plugin already intercepts those. Use this helper only for
  * programmatic opens (app menu, etc.) so clicks are not opened twice.
  */

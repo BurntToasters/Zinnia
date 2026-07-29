@@ -58,6 +58,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Docs:** README OS-integration wording matches Win11 modern-primary vs classic-fallback behavior.
 - **Tooling:** Windows Artifact Signing setup removes unsigned NuGet/AppData trees, installs the official MSI/winget package per-machine, and discovers signed tools under Program Files (x86) before legacy paths.
 - **Fix:** Beta→`/latest` manifest sync again receives the GitHub upload response `id` (`uploadAssetOnce` was awaiting without `return`) and uses non-dot staging names because GitHub strips leading periods from release assets.
+- **Tooling:** Tracked files must not contain Unicode em dashes (U+2014); `npm run validate:no-em-dash` runs in `test:all`.
 
 ## Changes in `v0.6.0:`
 
@@ -152,7 +153,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 ### IMPORTANT: THIS IS A SECURITY UPDATE. UPDATE NOW!
 
 - **Security:** Updated Tauri V2 updater signer key.
-  - I accidentally leaked the (still encrypted) private key via a `package.json` entry on another project. Zinnia sadly shared the same signer key (bad practice; lessons learned). Rookie mistake — I am very sorry, I know how annoying this is. You will have to manually download and install from this release to update the pubkey.
+  - I accidentally leaked the (still encrypted) private key via a `package.json` entry on another project. Zinnia sadly shared the same signer key (bad practice; lessons learned). Rookie mistake  -  I am very sorry, I know how annoying this is. You will have to manually download and install from this release to update the pubkey.
   - Since the private key that was leaked was still encrypted with a password, it is a better state than if it was the full unencrypted privkey.
   - All previous releases and accompanying binaries have been removed from github and my mirror. The tags still remain.
 - **UNZIP:** Added the new Unarchive UI feature set to all OS's! If you open an archive via your OS's context menu with Zinnia, the quick unarchive UI will open instead.
