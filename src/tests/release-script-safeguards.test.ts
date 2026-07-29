@@ -435,6 +435,10 @@ describe("release script safeguards", () => {
     expect(tools).toContain("O=Microsoft Corporation");
     expect(tools).toContain("Assert-MicrosoftSignedFile -Path $signToolPath");
     expect(tools).toContain("Assert-MicrosoftSignedFile -Path $dlibPath");
+    expect(tools).toContain("Select-MicrosoftSignedArtifactTool");
+    expect(tools).toContain(
+      "Program Files (x86)\\Microsoft\\ArtifactSigningClientTools",
+    );
     expect(setup).toContain("Assert-MicrosoftSignedFile -Path $msiPath");
   });
 
