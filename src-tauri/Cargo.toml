@@ -21,7 +21,7 @@ shared_child = "1.1"
 getrandom = "0.3"
 # Tauri 2 already uses 0.6. Keeping one version avoids duplicate Objective-C
 # class symbols in the final macOS bundle.
-window-vibrancy = "0.6"
+window-vibrancy = "0.8"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = "2"
