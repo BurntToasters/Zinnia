@@ -122,7 +122,7 @@
     "@tauri-apps/plugin-process": "^2.0.0",
     "@tauri-apps/plugin-shell": "^2.3.5",
     "@tauri-apps/plugin-updater": "^2.10.0",
-    "lucide": "^1.17.0"
+    "lucide": "^1.27.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",
