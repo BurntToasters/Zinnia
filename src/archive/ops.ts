@@ -19,6 +19,8 @@ import { SAFE_EXTRACT_OVERWRITE_MODE } from "../extract-policy";
 import { buildArgs, buildExtractArgsFor } from "./args";
 import { sanitizeCommandArgsForPreview } from "./preview";
 import { confirmZipSymlinkRisk } from "./compress-fidelity";
+import { basename } from "../path-display";
+import type { ProgressUpdate } from "../progress-update";
 import {
   ensureRuntimeReady,
   formatBatchEta,
@@ -42,17 +44,6 @@ export {
   clearPasswordFields,
   showOperationError,
 } from "./runtime";
-
-interface ProgressUpdate {
-  percent?: number;
-  filesDone?: number;
-  currentFile?: string;
-}
-
-function basename(filePath: string): string {
-  const sep = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
-  return sep >= 0 ? filePath.slice(sep + 1) : filePath;
-}
 
 export {
   browseArchive,
@@ -223,6 +214,8 @@ export async function runBatchExtract() {
 
         logCommandResult(result.stdout, result.stderr);
         logTruncationNotice(result);
+
+        if (state.batchCancelled || state.cancelRequested) break;
 
         if (result.code === 0) {
           succeeded++;

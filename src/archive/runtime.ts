@@ -18,6 +18,10 @@ import {
 } from "../error-hints";
 import { promptInput } from "../prompt-modal";
 import { withPassword } from "./args";
+import { basename } from "../path-display";
+import { formatEta, type ProgressUpdate } from "../progress-update";
+
+export const formatBatchEta = formatEta;
 
 export interface Run7zResult {
   stdout: string;
@@ -27,20 +31,9 @@ export interface Run7zResult {
   stderr_truncated?: boolean;
 }
 
-interface ProgressUpdate {
-  percent?: number;
-  filesDone?: number;
-  currentFile?: string;
-}
-
 const OUTPUT_TRUNCATION_LIMIT_MIB = 10;
 const RUNTIME_PROBE_TIMEOUT_MS = 7000;
 let runtimeProbePromise: Promise<string> | null = null;
-
-function basename(filePath: string): string {
-  const sep = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
-  return sep >= 0 ? filePath.slice(sep + 1) : filePath;
-}
 
 export function truncateForDialog(text: string, maxChars = 4000): string {
   if (text.length <= maxChars) return text;
@@ -83,17 +76,6 @@ export function clearPasswordFields(): void {
   for (const [inputId, toggleId] of PASSWORD_FIELD_TOGGLES) {
     resetPasswordFieldControl(inputId, toggleId);
   }
-}
-
-export function formatBatchEta(elapsedMs: number, percent: number): string {
-  if (percent <= 0 || percent >= 100 || elapsedMs <= 0) return "";
-  const totalMs = elapsedMs / (percent / 100);
-  const remainingSec = Math.max(0, Math.round((totalMs - elapsedMs) / 1000));
-  if (remainingSec < 1) return "";
-  if (remainingSec < 60) return `~${remainingSec}s left`;
-  const min = Math.floor(remainingSec / 60);
-  const sec = remainingSec % 60;
-  return `~${min}m ${sec.toString().padStart(2, "0")}s left`;
 }
 
 export function logCommandResult(stdout: string, stderr: string): void {
@@ -166,6 +148,10 @@ export async function withLiveProgress<T>(fn: () => Promise<T>): Promise<T> {
     "7z-progress-structured",
     (event) => {
       const update = event.payload;
+      if (update?.currentFile === "Working…") {
+        setProgress("Still working…");
+        return;
+      }
       if (typeof update?.percent !== "number") return;
       if (update.currentFile === "Finalizing…") {
         setCancelAvailable(false);

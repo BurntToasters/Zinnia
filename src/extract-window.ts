@@ -9,6 +9,14 @@ import {
   setProgressPercentClass,
 } from "./progress-bar";
 import { normalizeAutoCloseDelay } from "./settings-model";
+import { withPassword } from "./password-args";
+import { basename } from "./path-display";
+import {
+  formatEta as formatSharedEta,
+  type ProgressUpdate,
+} from "./progress-update";
+
+export { formatEta } from "./progress-update";
 
 interface Run7zResult {
   stdout: string;
@@ -16,12 +24,6 @@ interface Run7zResult {
   code: number;
   stdout_truncated?: boolean;
   stderr_truncated?: boolean;
-}
-
-interface ProgressUpdate {
-  percent?: number;
-  filesDone?: number;
-  currentFile?: string;
 }
 
 interface InjectedExtractSession {
@@ -41,11 +43,6 @@ function $(id: string): HTMLElement {
   return el;
 }
 
-function basename(filePath: string): string {
-  const sep = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
-  return sep >= 0 ? filePath.slice(sep + 1) : filePath;
-}
-
 /** Strip noisy progress junk so status never flashes missing-glyph boxes. */
 export function sanitizeStatusFileName(name: string): string {
   const cleaned = name
@@ -53,21 +50,12 @@ export function sanitizeStatusFileName(name: string): string {
     .replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2064]/g, "")
     .trim();
   if (!cleaned) return "";
-  const match = cleaned.match(/[\p{L}\p{N}._~]/u);
+  const withoutProgressJunk = cleaned
+    .replace(/^[\s\u2500-\u259F]+(?:-\s*)?/u, "")
+    .trim();
+  const match = withoutProgressJunk.match(/[\p{L}\p{N}._~]/u);
   if (match?.index === undefined) return "";
-  const meaningful = cleaned.slice(match.index).trim();
-  return [...meaningful].slice(0, 200).join("");
-}
-
-function withPassword(args: string[], password: string): string[] {
-  const separator = args.indexOf("--");
-  const head = separator === -1 ? args : args.slice(0, separator);
-  const tail = separator === -1 ? [] : args.slice(separator);
-  return [
-    ...head.filter((arg) => !arg.startsWith("-p")),
-    `-p${password}`,
-    ...tail,
-  ];
+  return [...withoutProgressJunk].slice(0, 200).join("");
 }
 
 function readInjectedExtractSession(): InjectedExtractSession | null {
@@ -116,19 +104,6 @@ async function runWithPasswordRetry(
     }
   }
   return result;
-}
-
-// Estimate remaining time from elapsed time and percent complete.
-// Returns "" when there isn't enough signal yet.
-export function formatEta(elapsedMs: number, percent: number): string {
-  if (percent <= 0 || percent >= 100 || elapsedMs <= 0) return "";
-  const totalMs = elapsedMs / (percent / 100);
-  const remainingSec = Math.max(0, Math.round((totalMs - elapsedMs) / 1000));
-  if (remainingSec < 1) return "";
-  if (remainingSec < 60) return `~${remainingSec}s left`;
-  const min = Math.floor(remainingSec / 60);
-  const sec = remainingSec % 60;
-  return `~${min}m ${sec.toString().padStart(2, "0")}s left`;
 }
 
 function parentDir(filePath: string): string {
@@ -288,8 +263,19 @@ async function run() {
   } catch {}
 
   let autoCloseInterval: ReturnType<typeof setInterval> | null = null;
+  const autoCloseAbortEvents = ["mousemove", "keydown", "click"] as const;
+  let autoCloseAbortListener: (() => void) | null = null;
+
+  const removeAutoCloseAbortListeners = () => {
+    if (!autoCloseAbortListener) return;
+    for (const eventName of autoCloseAbortEvents) {
+      window.removeEventListener(eventName, autoCloseAbortListener);
+    }
+    autoCloseAbortListener = null;
+  };
 
   const abortAutoClose = () => {
+    removeAutoCloseAbortListeners();
     if (autoCloseInterval !== null) {
       clearInterval(autoCloseInterval);
       autoCloseInterval = null;
@@ -339,10 +325,12 @@ async function run() {
       let remaining = autoCloseDelay;
       closeBtn.textContent = `Close (${Math.ceil(remaining)}s)`;
 
-      const abortListener = () => abortAutoClose();
-      window.addEventListener("mousemove", abortListener, { once: true });
-      window.addEventListener("keydown", abortListener, { once: true });
-      window.addEventListener("click", abortListener, { once: true });
+      autoCloseAbortListener = () => abortAutoClose();
+      for (const eventName of autoCloseAbortEvents) {
+        window.addEventListener(eventName, autoCloseAbortListener, {
+          once: true,
+        });
+      }
 
       autoCloseInterval = setInterval(() => {
         remaining -= 0.1;
@@ -444,7 +432,11 @@ async function run() {
     $("extract-status").textContent = "Starting extraction...";
     $("extract-error").hidden = true;
     // Claim is only needed to drain queue ownership; do not block extract start.
-    void claimPaths.catch(() => {});
+    void claimPaths.catch((err) => {
+      console.warn(
+        `Could not drain quick-extract launch queue: ${String(err)}`,
+      );
+    });
   } else {
     const paths = await claimPaths;
     archivePath = paths[0] ?? "";
@@ -502,6 +494,10 @@ async function run() {
   const structuredListen = registerProgressListener(
     listen<ProgressUpdate>("7z-progress-structured", (event) => {
       const update = event.payload;
+      if (update?.currentFile === "Working…") {
+        $("extract-status").textContent = "Still working…";
+        return;
+      }
       if (update?.currentFile === "Finalizing…") {
         sawStructuredPercent = true;
         cancelBtn.disabled = true;
@@ -513,7 +509,7 @@ async function run() {
       if (typeof update?.percent === "number") {
         sawStructuredPercent = true;
         setDeterminateProgress(Math.min(99, update.percent));
-        eta = formatEta(Date.now() - startedAt, update.percent);
+        eta = formatSharedEta(Date.now() - startedAt, update.percent);
       }
       if (update?.currentFile) {
         const clean = sanitizeStatusFileName(basename(update.currentFile));

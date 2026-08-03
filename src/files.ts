@@ -17,9 +17,8 @@ import {
   isIncomingPathBusy,
   releaseIncomingPathLock,
 } from "./incoming-paths";
+import { MAX_ARCHIVE_PATHS } from "./archive-rules";
 import { showToast } from "./toast";
-
-const MAX_INPUT_PATHS = 4096;
 
 export type AddPathsOptions = {
   /**
@@ -94,7 +93,7 @@ function mergeAddedPaths(paths: string[]): {
   let rejected = 0;
   for (const path of paths) {
     if (known.has(path)) continue;
-    if (state.inputs.length >= MAX_INPUT_PATHS) {
+    if (state.inputs.length >= MAX_ARCHIVE_PATHS) {
       rejected += 1;
       continue;
     }
@@ -120,7 +119,7 @@ function afterInputsMerged(
   renderInputs();
   if (rejected > 0) {
     showToast(
-      `Added the first ${MAX_INPUT_PATHS} unique items; ${rejected} more were not added.`,
+      `Added the first ${MAX_ARCHIVE_PATHS} unique items; ${rejected} more were not added.`,
       "error",
       5000,
     );

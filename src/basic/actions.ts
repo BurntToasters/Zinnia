@@ -1,7 +1,7 @@
 import { open, confirm, save, message } from "@tauri-apps/plugin-dialog";
 import { promptInput } from "../prompt-modal";
 import { invoke } from "@tauri-apps/api/core";
-import { state } from "../state";
+import { clearBrowseCache, state } from "../state";
 import {
   log,
   getWorkspaceMode,
@@ -41,12 +41,7 @@ import {
 } from "./progress";
 import { setRecentArchiveHandler } from "./recent";
 import { showToast } from "../toast";
-
-async function waitUntilIncomingPathsApplyingClear(): Promise<void> {
-  while (state.incomingPathsApplying) {
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
-  }
-}
+import { waitUntilIncomingPathsApplyingClear } from "../incoming-paths";
 
 async function confirmBasicDrop(
   text: string,
@@ -463,8 +458,22 @@ export async function isArchiveEncrypted(
   archivePath: string,
 ): Promise<boolean | null> {
   const cached = state.browseArchiveInfoByPath.get(archivePath);
-  if (cached) {
-    return cached.encrypted;
+  const cachedIdentity = state.browseArchiveIdentityByPath.get(archivePath);
+  if (cached && cachedIdentity) {
+    try {
+      const [current] = await validateArchivePaths([archivePath], true);
+      if (current?.valid && current.identity === cachedIdentity) {
+        return cached.encrypted;
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`Could not validate cached archive identity: ${msg}`, "error");
+    }
+    clearBrowseCache(archivePath);
+  } else if (cached || cachedIdentity) {
+    // A partial cache entry can never establish that the file at this path is
+    // still the file whose listing supplied the encryption state.
+    clearBrowseCache(archivePath);
   }
 
   if (!(await ensureRuntimeReady())) return null;

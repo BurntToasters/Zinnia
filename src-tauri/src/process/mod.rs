@@ -180,6 +180,23 @@ pub(crate) fn release_prepare_slot_best_effort(state: &RunningProcess) {
     }
 }
 
+/// Release a failed pre-spawn operation after its child, if any, was stopped.
+/// This is separate from `release_prepare_slot` so ordinary reservation cleanup
+/// cannot accidentally discard a live child handle.
+pub(crate) fn release_preparation_failure_best_effort(state: &RunningProcess) {
+    match state.0.lock() {
+        Ok(mut process) => {
+            process.child = None;
+            process.release_prepare_slot();
+        }
+        Err(poisoned) => {
+            let mut process = poisoned.into_inner();
+            process.child = None;
+            process.release_prepare_slot();
+        }
+    }
+}
+
 // By design, only one 7z process runs at a time across all windows.
 // A second invocation (e.g. a concurrent extract window) gets a clear error;
 // the frontend prevents this in normal flow. This keeps resource use

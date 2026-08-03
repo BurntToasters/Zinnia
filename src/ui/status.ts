@@ -1,7 +1,7 @@
 import { $ } from "../utils";
 import { state, dom } from "../state";
 import { getBasicHooks } from "./hooks";
-import { getMode, renderInputs } from "./inputs";
+import { getMode } from "./inputs";
 import {
   type ContextPersistOptions,
   queuePersistWorkingContext,
@@ -124,8 +124,13 @@ export function setRunning(active: boolean) {
       btn.disabled = active;
     });
 
+  dom.inputList
+    .querySelectorAll<HTMLButtonElement>("[data-input-remove]")
+    .forEach((button) => {
+      button.disabled = mutationLocked;
+    });
+
   getBasicHooks()?.onSetRunning(active);
-  renderInputs();
 }
 
 export function setCancelAvailable(available: boolean): void {

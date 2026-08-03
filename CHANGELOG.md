@@ -5,10 +5,10 @@
 
 | <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                                          | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux        |
 | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------- |
-| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.2/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.2/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.2/Zinnia-macOS.dmg)**   | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.2/Zinnia-Linux-x64.AppImage) |
-| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>-->                     | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.2/Zinnia-macOS.zip)**   | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.2/Zinnia-Linux-x64.deb)           |
-| <!--*See MSI note below*-->                                                                                                                                                                                                |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.2/Zinnia-Linux-x64.rpm)           |
-|                                                                                                                                                                                                                            |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.2/Zinnia-Linux-x64.flatpak)   |
+| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.3/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.3/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.3/Zinnia-macOS.dmg)**   | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.3/Zinnia-Linux-x64.AppImage) |
+| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>-->                     | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.3/Zinnia-macOS.zip)**   | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.3/Zinnia-Linux-x64.deb)           |
+| <!--*See MSI note below*-->                                                                                                                                                                                                |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.3/Zinnia-Linux-x64.rpm)           |
+|                                                                                                                                                                                                                            |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.3/Zinnia-Linux-x64.flatpak)   |
 
 > macOS downloads require macOS 26 or later.
 
@@ -20,6 +20,25 @@
 ### ℹ️ Enjoying Zinnia? Consider [❤️ Supporting Me! ❤️](https://rosie.run/support)
 
 Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
+
+## Changes in `v0.6.1-beta.3:`
+
+- **Fix:** Selective-extract search is debounced so the tree re-renders after a short pause instead of on every keystroke (also smoother on large archives).
+- **UI:** Selective-extract results expose proper list semantics for screen readers, the Basic mode `Choose archive` cards are now keyboard accessible (Enter/Space), and browse summaries announce changes via live regions.
+- **Fix:** Cached archive encryption state is revalidated against the archive's identity before reuse, so a replaced archive at the same path can no longer show stale listing data.
+- **Fix:** Live progress that reports `Working…` mid-file now shows `Still working…` instead of a blank status, and box-drawing progress junk is stripped from status file names.
+- **Fix:** Batch extract stops launching further archives as soon as Cancel is pressed instead of finishing the remaining queue.
+- **Fix:** Extract-window auto-close listeners are removed when the window closes, so they can't abort a later window's countdown.
+- **Fix:** Custom compression presets are validated against the valid format/level/method/dictionary/word-size sets when loading settings, so corrupted presets fall back to defaults instead of producing invalid 7-Zip arguments.
+- **Codebase:** Rust preparation failures now share one rollback path that always removes staging, clears the recovery journal, and releases the single-operation slot and child handle.
+- **Security:** Archive identity tokens are hashed canonically, keeping crash-recovery journal identity checks stable and tamper-evident across platform versions.
+- **Windows:** MSIX context-menu package identity versions now follow the app version (previously stuck at `0.6.0.0`).
+- **macOS:** Finder Sync bundle build numbers use a wider scheme so beta → stable → next-patch sequences stay strictly increasing.
+- **Tooling:** Release signing reuses an existing draft release for the tag (race-safe), beta manifest sync is serialized with a lock asset, and orphaned transactional feed assets are cleaned up.
+- **Tooling:** `AFTER_PACK_LOC` mirroring is now optional; when unset the finalize step just cleans build-only artifacts, and when set the destination must be an absolute path outside the repository (validated before anything is removed).
+- **Tooling:** Live updater CI validation is a read-only shape smoke; exact version matching moved to post-publish verification so version bumps no longer block the build.
+- **Testing:** Added tests for debounced selective search, cache identity invalidation, preparation-failure cleanup, and mirror path guards.
+- **PKG:** Updated packages.
 
 ## Changes in `v0.6.1-beta.2:`
 

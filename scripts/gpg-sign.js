@@ -967,37 +967,49 @@ async function listAllGithubPages(fetchPage, { perPage = 100 } = {}) {
 
 async function getOrCreateRelease() {
   const commit = currentReleaseCommit();
+  const findExisting = async () => {
+    try {
+      return await ghRequest(
+        "GET",
+        `/repos/${REPO_OWNER}/${REPO_NAME}/releases/tags/${TAG}`,
+      );
+    } catch (error) {
+      if (error?.statusCode !== 404) throw error;
+    }
+
+    const releases = await listAllGithubPages((page, perPage) =>
+      ghRequest(
+        "GET",
+        `/repos/${REPO_OWNER}/${REPO_NAME}/releases?per_page=${perPage}&page=${page}`,
+      ),
+    );
+    return releases.find(
+      (release) => release.draft && release.tag_name === TAG,
+    );
+  };
+
+  const existing = await findExisting();
+  if (existing) return assertReleaseTargetsCommit(existing, commit);
+
   try {
     const release = await ghRequest(
-      "GET",
-      `/repos/${REPO_OWNER}/${REPO_NAME}/releases/tags/${TAG}`,
+      "POST",
+      `/repos/${REPO_OWNER}/${REPO_NAME}/releases`,
+      {
+        tag_name: TAG,
+        target_commitish: commit,
+        name: VERSION,
+        draft: true,
+        prerelease: IS_PRERELEASE,
+      },
     );
     return assertReleaseTargetsCommit(release, commit);
   } catch (error) {
-    if (error?.statusCode !== 404) throw error;
+    if (error?.statusCode !== 422) throw error;
+    const raced = await findExisting();
+    if (!raced) throw error;
+    return assertReleaseTargetsCommit(raced, commit);
   }
-
-  const releases = await listAllGithubPages((page, perPage) =>
-    ghRequest(
-      "GET",
-      `/repos/${REPO_OWNER}/${REPO_NAME}/releases?per_page=${perPage}&page=${page}`,
-    ),
-  );
-  const draft = releases.find((r) => r.draft && r.tag_name === TAG);
-  if (draft) return assertReleaseTargetsCommit(draft, commit);
-
-  const release = await ghRequest(
-    "POST",
-    `/repos/${REPO_OWNER}/${REPO_NAME}/releases`,
-    {
-      tag_name: TAG,
-      target_commitish: commit,
-      name: `Zinnia ${VERSION}`,
-      draft: true,
-      prerelease: IS_PRERELEASE,
-    },
-  );
-  return assertReleaseTargetsCommit(release, commit);
 }
 
 async function uploadAssetOnce(uploadUrl, filePath) {
@@ -1262,6 +1274,90 @@ async function replaceReleaseAssetsTransactionally(release, files) {
   }
 }
 
+const BETA_SYNC_LOCK_NAME = "zinnia-beta-manifest-sync-lock";
+const BETA_SYNC_LOCK_STALE_MS = 10 * 60 * 1000;
+const BETA_SYNC_LOCK_RETRIES = 30;
+
+function isTransactionalStagingAssetName(name) {
+  return /^(?:default\.)?zinnia-(?:pending|previous|rollback)-/i.test(name);
+}
+
+async function removeAssetBestEffort(asset, label) {
+  if (!asset || typeof asset.id !== "number") return;
+  try {
+    await ghRequest(
+      "DELETE",
+      `/repos/${REPO_OWNER}/${REPO_NAME}/releases/assets/${asset.id}`,
+    );
+  } catch (error) {
+    console.warn(
+      `  ! could not remove ${label}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+async function withBetaManifestSyncLock(release, operation) {
+  const temporaryDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "zinnia-beta-sync-lock-"),
+  );
+  const lockPath = path.join(temporaryDirectory, BETA_SYNC_LOCK_NAME);
+  fs.writeFileSync(
+    lockPath,
+    JSON.stringify({ tag: TAG, pid: process.pid, createdAt: new Date() }) +
+      "\n",
+  );
+
+  let acquired = null;
+  try {
+    for (let attempt = 1; attempt <= BETA_SYNC_LOCK_RETRIES; attempt += 1) {
+      try {
+        acquired = await uploadAsset(release.upload_url, lockPath);
+        break;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!message.includes("(422)")) throw error;
+        const assets = await listReleaseAssets(release.id);
+        const lock = assets.find(
+          (asset) => asset?.name === BETA_SYNC_LOCK_NAME,
+        );
+        const createdAt = Date.parse(lock?.created_at ?? "");
+        if (
+          lock &&
+          Number.isFinite(createdAt) &&
+          Date.now() - createdAt > BETA_SYNC_LOCK_STALE_MS
+        ) {
+          await removeAssetBestEffort(lock, "stale beta-manifest sync lock");
+          continue;
+        }
+        if (attempt === BETA_SYNC_LOCK_RETRIES) {
+          throw new Error(
+            "Timed out waiting for another release VM to finish beta-manifest synchronization.",
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    }
+    if (!acquired) {
+      throw new Error(
+        "Could not acquire the beta-manifest synchronization lock.",
+      );
+    }
+    return await operation();
+  } finally {
+    await removeAssetBestEffort(acquired, "beta-manifest sync lock");
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
+async function cleanupTransactionalStagingAssets(release) {
+  const assets = await listReleaseAssets(release.id);
+  for (const asset of assets.filter((item) =>
+    isTransactionalStagingAssetName(item?.name ?? ""),
+  )) {
+    await removeAssetBestEffort(asset, `orphan feed asset ${asset.name}`);
+  }
+}
+
 async function uploadAssetWithReplace(
   release,
   filePath,
@@ -1322,7 +1418,10 @@ async function syncBetaManifestsToLatestStable(
     return;
   }
 
-  await replaceReleaseAssetsTransactionally(latestStable, betaManifests);
+  await withBetaManifestSyncLock(latestStable, async () => {
+    await replaceReleaseAssetsTransactionally(latestStable, betaManifests);
+    await cleanupTransactionalStagingAssets(latestStable);
+  });
   for (const filePath of betaManifests) {
     console.log(
       `  ~ synced ${path.basename(filePath)} to latest stable release`,
@@ -1708,6 +1807,7 @@ export {
   isChecksumTextName,
   isDirectExecution,
   isExplicitTruthy,
+  isTransactionalStagingAssetName,
   listAllGithubPages,
   rpmArtifactMatchesVersion,
   expectedPublishedBetaManifestNames,

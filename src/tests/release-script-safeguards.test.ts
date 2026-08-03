@@ -11,6 +11,7 @@ import {
   checksumTargetKeysForArtifactName,
   expectedPublishedBetaManifestNames,
   isExplicitTruthy,
+  isTransactionalStagingAssetName,
   listAllGithubPages,
   requiredPublishedBetaManifestNames,
   rpmArtifactMatchesVersion,
@@ -101,6 +102,8 @@ describe("release script safeguards", () => {
     );
     expect(gpgSource).toContain("target_commitish: commit");
     expect(gpgSource).toContain("assertReleaseTargetsCommit");
+    expect(gpgSource).toContain("if (error?.statusCode !== 422) throw error");
+    expect(gpgSource).toContain("name: VERSION");
     expect(draftSource).toMatch(
       /if \(afterRetry\) \{\s*assertReleaseTargetsCommit\(afterRetry, commit\);/,
     );
@@ -385,6 +388,22 @@ describe("release script safeguards", () => {
     ).toBeLessThan(transaction.indexOf('"PATCH"'));
     expect(transaction.indexOf('"PATCH"')).toBeLessThan(
       transaction.indexOf('"DELETE"'),
+    );
+  });
+
+  it("serializes beta feed swaps and recognizes orphan transaction assets", () => {
+    const source = fs.readFileSync("scripts/gpg-sign.js", "utf8");
+    expect(source).toContain("withBetaManifestSyncLock(latestStable");
+    expect(source).toContain("BETA_SYNC_LOCK_STALE_MS");
+    expect(source).toContain("cleanupTransactionalStagingAssets(latestStable)");
+    expect(isTransactionalStagingAssetName("zinnia-pending-a-feed.json")).toBe(
+      true,
+    );
+    expect(
+      isTransactionalStagingAssetName("default.zinnia-rollback-a-feed.json"),
+    ).toBe(true);
+    expect(isTransactionalStagingAssetName("latest-windows-beta.json")).toBe(
+      false,
     );
   });
 

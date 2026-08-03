@@ -43,6 +43,8 @@ import {
 let browseArchiveLoader: (() => Promise<ArchiveInfo | null>) | null = null;
 const MAX_RENDERED_BROWSE_ROWS = 1_000;
 const MAX_RENDERED_SELECTIVE_ROWS = 1_000;
+const SELECTIVE_SEARCH_DEBOUNCE_MS = 120;
+let selectiveSearchTimer: number | undefined;
 
 export function registerBrowseArchiveLoader(
   loader: () => Promise<ArchiveInfo | null>,
@@ -230,6 +232,7 @@ function renderSelectiveFlatRow(
   const selected = getOrCreateSelection(archive);
   const row = document.createElement("label");
   row.className = "selective-row";
+  row.setAttribute("role", "listitem");
 
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
@@ -467,6 +470,8 @@ function renderSelectiveEntryList(
 
   // Searching shows a flat result list; otherwise a collapsible tree.
   if (searching) {
+    list.setAttribute("role", "list");
+    list.setAttribute("aria-label", "Archive search results");
     for (const entry of entries.slice(0, MAX_RENDERED_SELECTIVE_ROWS)) {
       list.appendChild(
         renderSelectiveFlatRow(archive, entry, scopeEntries, windowsPaths),
@@ -612,6 +617,10 @@ async function ensureArchiveInfoForPicker(
 
 export function closeSelectiveExtractModal(): void {
   state.selectiveOpenRequestId += 1;
+  if (selectiveSearchTimer !== undefined) {
+    window.clearTimeout(selectiveSearchTimer);
+    selectiveSearchTimer = undefined;
+  }
   const overlay = document.getElementById("selective-overlay");
   if (overlay) {
     (overlay as HTMLElement).hidden = true;
@@ -628,9 +637,23 @@ export function closeSelectiveExtractModal(): void {
   }
 }
 
-export function setSelectiveExtractSearch(query: string): void {
+export function setSelectiveExtractSearch(
+  query: string,
+  debounceRender = false,
+): void {
   state.selectiveSearchQuery = query;
-  renderSelectiveExtractModal();
+  if (selectiveSearchTimer !== undefined) {
+    window.clearTimeout(selectiveSearchTimer);
+    selectiveSearchTimer = undefined;
+  }
+  if (!debounceRender) {
+    renderSelectiveExtractModal();
+    return;
+  }
+  selectiveSearchTimer = window.setTimeout(() => {
+    selectiveSearchTimer = undefined;
+    renderSelectiveExtractModal();
+  }, SELECTIVE_SEARCH_DEBOUNCE_MS);
 }
 
 export function selectAllVisibleInPicker(): void {

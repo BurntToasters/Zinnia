@@ -180,6 +180,7 @@ vi.mock("../archive", () => ({
 }));
 
 vi.mock("../archive-rules", () => ({
+  MAX_ARCHIVE_PATHS: 4096,
   validateArchivePaths: mocks.archiveRules.validateArchivePaths,
 }));
 
@@ -976,6 +977,7 @@ describe("main bootstrap", () => {
     selectiveSearch.dispatchEvent(new Event("input", { bubbles: true }));
     expect(mocks.archive.setSelectiveExtractSearch).toHaveBeenCalledWith(
       "docs",
+      true,
     );
 
     (document.getElementById("selective-confirm") as HTMLButtonElement).click();

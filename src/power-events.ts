@@ -229,7 +229,10 @@ export function wireEvents() {
   $("close-selective").addEventListener("click", closeSelectiveExtractModal);
   $("selective-cancel").addEventListener("click", closeSelectiveExtractModal);
   $("selective-search").addEventListener("input", () => {
-    setSelectiveExtractSearch($<HTMLInputElement>("selective-search").value);
+    setSelectiveExtractSearch(
+      $<HTMLInputElement>("selective-search").value,
+      true,
+    );
   });
   $("selective-select-all").addEventListener("click", selectAllVisibleInPicker);
   $("selective-clear").addEventListener("click", clearPickerSelection);

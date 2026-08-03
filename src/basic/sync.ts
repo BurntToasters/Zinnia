@@ -19,15 +19,13 @@ import {
 } from "../extract-path";
 import { getCompressionSecuritySupport } from "../compression-security";
 import { hideBasicCompletion, hideBasicProgress } from "./progress";
+import { basename } from "../path-display";
+
+export { basename } from "../path-display";
 
 export type BasicView = "home" | "compress" | "extract" | "browse";
 
 let currentBasicView: BasicView = "home";
-
-export function basename(path: string): string {
-  const sep = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  return sep >= 0 ? path.slice(sep + 1) : path;
-}
 
 export function extension(path: string): string {
   const name = basename(path);

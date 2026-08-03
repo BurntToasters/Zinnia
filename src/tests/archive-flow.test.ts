@@ -681,9 +681,12 @@ describe("archive test/browse/selective flows", () => {
 
     expect(state.selectiveVisiblePaths).toEqual(["docs/readme.md"]);
     const searchResults = document.getElementById("selective-list")!;
-    expect(searchResults.hasAttribute("role")).toBe(false);
-    expect(searchResults.hasAttribute("aria-label")).toBe(false);
+    expect(searchResults.getAttribute("role")).toBe("list");
+    expect(searchResults.getAttribute("aria-label")).toBe(
+      "Archive search results",
+    );
     expect(searchResults.hasAttribute("aria-multiselectable")).toBe(false);
+    expect(searchResults.querySelector('[role="listitem"]')).not.toBeNull();
 
     selectAllVisibleInPicker();
     expect(
@@ -692,6 +695,42 @@ describe("archive test/browse/selective flows", () => {
 
     clearPickerSelection();
     expect(state.browseSelectionsByArchive.get(archive)?.size).toBe(0);
+  });
+
+  it("debounces selective search rendering while keeping the latest query", () => {
+    vi.useFakeTimers();
+    try {
+      const archive = uniqueArchivePath("debounced-picker");
+      state.selectiveActiveArchive = archive;
+      state.browseArchiveInfoByPath.set(
+        archive,
+        archiveInfo([
+          {
+            path: "alpha.txt",
+            size: 1,
+            packedSize: 1,
+            modified: "",
+            isFolder: false,
+          },
+          {
+            path: "beta.txt",
+            size: 1,
+            packedSize: 1,
+            modified: "",
+            isFolder: false,
+          },
+        ]),
+      );
+
+      setSelectiveExtractSearch("alpha", true);
+      setSelectiveExtractSearch("beta", true);
+      expect(state.selectiveVisiblePaths).toEqual([]);
+
+      vi.advanceTimersByTime(120);
+      expect(state.selectiveVisiblePaths).toEqual(["beta.txt"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("selects a collapsed folder's complete subtree and exposes keyboard tree semantics", async () => {

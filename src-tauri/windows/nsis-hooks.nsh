@@ -1,3 +1,7 @@
+; Keep aligned with $ZinniaMinRealShellArtifactBytes in
+; scripts/verify-windows-authenticode.ps1. Generated CI stubs are empty.
+!define ZINNIA_MIN_REAL_SHELL_ARTIFACT_BYTES 1024
+
 !macro ZINNIA_REGISTER_PROGID_OPEN EXT
   ; Enhance Tauri's default ProgId open verb. Do not write a parallel
   ; SystemFileAssociations\ZinniaOpen  -  that doubles "Open with Zinnia" under
@@ -85,11 +89,11 @@
   FileOpen $R8 "$R9\ZinniaContextMenu.msix" r
   FileSeek $R8 0 END $R7
   FileClose $R8
-  IntCmp $R7 1024 zinnia_skip_win11_menu zinnia_skip_win11_menu 0
+  IntCmp $R7 ${ZINNIA_MIN_REAL_SHELL_ARTIFACT_BYTES} zinnia_skip_win11_menu zinnia_skip_win11_menu 0
   FileOpen $R8 "$R9\ZinniaExtractContextMenu.msix" r
   FileSeek $R8 0 END $R7
   FileClose $R8
-  IntCmp $R7 1024 zinnia_skip_win11_menu zinnia_skip_win11_menu 0
+  IntCmp $R7 ${ZINNIA_MIN_REAL_SHELL_ARTIFACT_BYTES} zinnia_skip_win11_menu zinnia_skip_win11_menu 0
 
   ; The script and sparse packages ship beside the DLLs. ExternalLocation stays
   ; at $INSTDIR because AppxManifest references both root zinnia.exe and the
