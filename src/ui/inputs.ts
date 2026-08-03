@@ -344,6 +344,7 @@ export function renderInputs() {
 
     const remove = document.createElement("button");
     remove.className = "btn btn--ghost btn--sm";
+    remove.dataset.inputRemove = "";
     remove.setAttribute("aria-label", `Remove ${path}`);
     remove.innerHTML = '<i data-lucide="trash-2" class="lucide-icon"></i>';
     remove.disabled =

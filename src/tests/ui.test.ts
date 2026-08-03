@@ -744,4 +744,21 @@ describe("setRunning", () => {
     setRunning(false);
     expect(state.running).toBe(false);
   });
+
+  it("toggles existing remove controls without rebuilding the input DOM", () => {
+    state.inputs = ["large-input.7z"];
+    renderInputs();
+    const item = dom.inputList.querySelector(".list__item");
+    const remove = dom.inputList.querySelector(
+      "[data-input-remove]",
+    ) as HTMLButtonElement;
+
+    setRunning(true);
+    expect(remove.disabled).toBe(true);
+    expect(dom.inputList.querySelector(".list__item")).toBe(item);
+
+    setRunning(false);
+    expect(remove.disabled).toBe(false);
+    expect(dom.inputList.querySelector(".list__item")).toBe(item);
+  });
 });

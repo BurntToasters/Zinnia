@@ -28,7 +28,8 @@ use super::staging::{
     rewrite_archive_output, rewrite_extract_archive, rewrite_extract_output,
 };
 use super::{
-    ensure_idle, lock_process, release_prepare_slot_best_effort, RunResult, RunningProcess,
+    ensure_idle, lock_process, release_preparation_failure_best_effort,
+    release_prepare_slot_best_effort, CleanupPlan, RunResult, RunningProcess,
 };
 
 fn read_command_stream<R, F>(reader: R, tx: Sender<CommandEvent>, wrap: F)
@@ -545,6 +546,36 @@ fn abort_cancelled_preparation(state: &RunningProcess) -> Result<(), String> {
     Err("Archive operation was cancelled during preparation.".to_string())
 }
 
+/// Roll back every pre-spawn resource before releasing the single-operation
+/// slot. Keeping this sequence in one function prevents new error paths from
+/// forgetting the journal or leaving `preparing`/`cancelling` set.
+fn finalize_preparation_error(
+    state: &RunningProcess,
+    cleanup_plan: &CleanupPlan,
+    journal_guard: Option<&mut CleanupJournalGuard>,
+    error: impl Into<String>,
+) -> String {
+    let error = error.into();
+    let rollback_error = rollback_cleanup(cleanup_plan).err();
+    let journal_error = if rollback_error.is_none() {
+        journal_guard.and_then(|guard| guard.clear().err())
+    } else {
+        None
+    };
+    release_preparation_failure_best_effort(state);
+    match rollback_error {
+        Some(rollback_error) => {
+            format!("{error}; staging cleanup also failed: {rollback_error}")
+        }
+        None => match journal_error {
+            Some(journal_error) => {
+                format!("{error}; recovery journal cleanup also failed: {journal_error}")
+            }
+            None => error,
+        },
+    }
+}
+
 #[tauri::command]
 pub async fn probe_compress_inputs(
     paths: Vec<String>,
@@ -784,9 +815,7 @@ pub async fn run_7z(
     abort_cancelled_preparation(&state)?;
 
     if let Err(error) = recover_interrupted_transaction(&app) {
-        if let Ok(mut process) = lock_process(&state) {
-            process.release_prepare_slot();
-        }
+        release_prepare_slot_best_effort(&state);
         return Err(format!(
             "A previous archive transaction still requires recovery: {error}"
         ));
@@ -798,9 +827,7 @@ pub async fn run_7z(
     let cache_dir = match app.path().app_cache_dir() {
         Ok(dir) => Some(dir),
         Err(error) => {
-            if let Ok(mut process) = lock_process(&state) {
-                process.release_prepare_slot();
-            }
+            release_prepare_slot_best_effort(&state);
             return Err(format!("Could not resolve app cache directory: {error}"));
         }
     };
@@ -811,15 +838,11 @@ pub async fn run_7z(
     {
         Ok(Ok(plan)) => plan,
         Ok(Err(error)) => {
-            if let Ok(mut process) = lock_process(&state) {
-                process.release_prepare_slot();
-            }
+            release_prepare_slot_best_effort(&state);
             return Err(error);
         }
         Err(error) => {
-            if let Ok(mut process) = lock_process(&state) {
-                process.release_prepare_slot();
-            }
+            release_prepare_slot_best_effort(&state);
             return Err(format!("Archive preparation task failed: {error}"));
         }
     };
@@ -827,14 +850,12 @@ pub async fn run_7z(
     // This worker may have created a private stage. Roll it back before
     // releasing ownership so another operation cannot race the cleanup.
     if preparation_was_cancelled(&state)? {
-        let rollback_error = rollback_cleanup(&cleanup_plan).err();
-        release_prepare_slot_best_effort(&state);
-        return Err(match rollback_error {
-            Some(rollback_error) => format!(
-                "Archive operation was cancelled during preparation.; staging cleanup also failed: {rollback_error}"
-            ),
-            None => "Archive operation was cancelled during preparation.".to_string(),
-        });
+        return Err(finalize_preparation_error(
+            &state,
+            &cleanup_plan,
+            None,
+            "Archive operation was cancelled during preparation.",
+        ));
     }
 
     // Persist the journal as soon as staging exists so a crash during rewrite
@@ -842,16 +863,12 @@ pub async fn run_7z(
     let journal_active = match write_cleanup_journal(&app, &cleanup_plan) {
         Ok(active) => active,
         Err(error) => {
-            let rollback_error = rollback_cleanup(&cleanup_plan).err();
-            if let Ok(mut process) = lock_process(&state) {
-                process.release_prepare_slot();
-            }
-            return Err(match rollback_error {
-                Some(rollback_error) => {
-                    format!("Could not create recovery journal: {error}; rollback also failed: {rollback_error}")
-                }
-                None => format!("Could not create recovery journal: {error}"),
-            });
+            return Err(finalize_preparation_error(
+                &state,
+                &cleanup_plan,
+                None,
+                format!("Could not create recovery journal: {error}"),
+            ));
         }
     };
     let mut journal_guard = CleanupJournalGuard::new(app.clone(), journal_active);
@@ -859,55 +876,24 @@ pub async fn run_7z(
     let mut snapshot_args = args.clone();
     if let Some(staged_archive) = &cleanup_plan.staged_input_archive {
         if let Err(error) = rewrite_extract_archive(&mut snapshot_args, staged_archive) {
-            let rollback_error = rollback_cleanup(&cleanup_plan).err();
-            let journal_error = if rollback_error.is_none() {
-                journal_guard.clear().err()
-            } else {
-                None
-            };
-            if let Ok(mut process) = lock_process(&state) {
-                process.release_prepare_slot();
-            }
-            return Err(match rollback_error {
-                Some(rollback_error) => {
-                    format!("{error}; staging cleanup also failed: {rollback_error}")
-                }
-                None => match journal_error {
-                    Some(journal_error) => {
-                        format!("{error}; recovery journal cleanup also failed: {journal_error}")
-                    }
-                    None => error,
-                },
-            });
+            return Err(finalize_preparation_error(
+                &state,
+                &cleanup_plan,
+                Some(&mut journal_guard),
+                error,
+            ));
         }
     }
     let extract_archive_identity = if cleanup_plan.staged_extract.is_some() {
         match assert_extract_archive_members_safe(&app, &state, &snapshot_args).await {
             Ok(identity) => Some(identity),
             Err(error) => {
-                let rollback_error = rollback_cleanup(&cleanup_plan).err();
-                let journal_error = if rollback_error.is_none() {
-                    journal_guard.clear().err()
-                } else {
-                    None
-                };
-                if let Ok(mut process) = lock_process(&state) {
-                    process.child = None;
-                    process.release_prepare_slot();
-                }
-                return Err(match rollback_error {
-                    Some(rollback_error) => {
-                        format!("{error}; staging cleanup also failed: {rollback_error}")
-                    }
-                    None => {
-                        match journal_error {
-                            Some(journal_error) => {
-                                format!("{error}; recovery journal cleanup also failed: {journal_error}")
-                            }
-                            None => error,
-                        }
-                    }
-                });
+                return Err(finalize_preparation_error(
+                    &state,
+                    &cleanup_plan,
+                    Some(&mut journal_guard),
+                    error,
+                ));
             }
         }
     } else {
@@ -917,26 +903,12 @@ pub async fn run_7z(
     let mut execution_args = args.clone();
     if let Some(staged_archive) = &cleanup_plan.staged_input_archive {
         if let Err(error) = rewrite_extract_archive(&mut execution_args, staged_archive) {
-            let rollback_error = rollback_cleanup(&cleanup_plan).err();
-            let journal_error = if rollback_error.is_none() {
-                journal_guard.clear().err()
-            } else {
-                None
-            };
-            if let Ok(mut process) = lock_process(&state) {
-                process.release_prepare_slot();
-            }
-            return Err(match rollback_error {
-                Some(rollback_error) => {
-                    format!("{error}; staging cleanup also failed: {rollback_error}")
-                }
-                None => match journal_error {
-                    Some(journal_error) => {
-                        format!("{error}; recovery journal cleanup also failed: {journal_error}")
-                    }
-                    None => error,
-                },
-            });
+            return Err(finalize_preparation_error(
+                &state,
+                &cleanup_plan,
+                Some(&mut journal_guard),
+                error,
+            ));
         }
     }
     let rewrite_result = if let Some((staged, _)) = &cleanup_plan.staged_extract {
@@ -947,48 +919,22 @@ pub async fn run_7z(
         Ok(())
     };
     if let Err(error) = rewrite_result {
-        let rollback_error = rollback_cleanup(&cleanup_plan).err();
-        let journal_error = if rollback_error.is_none() {
-            journal_guard.clear().err()
-        } else {
-            None
-        };
-        if let Ok(mut process) = lock_process(&state) {
-            process.release_prepare_slot();
-        }
-        return Err(match rollback_error {
-            Some(rollback_error) => format!("{error}; rollback also failed: {rollback_error}"),
-            None => match journal_error {
-                Some(journal_error) => {
-                    format!("{error}; recovery journal cleanup also failed: {journal_error}")
-                }
-                None => error,
-            },
-        });
+        return Err(finalize_preparation_error(
+            &state,
+            &cleanup_plan,
+            Some(&mut journal_guard),
+            error,
+        ));
     }
 
     if let Some((archive, expected_identity)) = &extract_archive_identity {
         if let Err(error) = assert_archive_identity_unchanged(archive, expected_identity) {
-            let rollback_error = rollback_cleanup(&cleanup_plan).err();
-            let journal_error = if rollback_error.is_none() {
-                journal_guard.clear().err()
-            } else {
-                None
-            };
-            if let Ok(mut process) = lock_process(&state) {
-                process.release_prepare_slot();
-            }
-            return Err(match rollback_error {
-                Some(rollback_error) => {
-                    format!("{error}; staging cleanup also failed: {rollback_error}")
-                }
-                None => match journal_error {
-                    Some(journal_error) => {
-                        format!("{error}; recovery journal cleanup also failed: {journal_error}")
-                    }
-                    None => error,
-                },
-            });
+            return Err(finalize_preparation_error(
+                &state,
+                &cleanup_plan,
+                Some(&mut journal_guard),
+                error,
+            ));
         }
     }
 
@@ -996,55 +942,27 @@ pub async fn run_7z(
     // rewrite/identity work. This keeps Cancel from becoming a false UI-only
     // acknowledgement immediately before a create/update publish.
     if preparation_was_cancelled(&state)? {
-        let rollback_error = rollback_cleanup(&cleanup_plan).err();
-        let journal_error = if rollback_error.is_none() {
-            journal_guard.clear().err()
-        } else {
-            None
-        };
-        release_prepare_slot_best_effort(&state);
-        return Err(match rollback_error {
-            Some(rollback_error) => format!(
-                "Archive operation was cancelled during preparation.; staging cleanup also failed: {rollback_error}"
-            ),
-            None => match journal_error {
-                Some(journal_error) => format!(
-                    "Archive operation was cancelled during preparation.; recovery journal cleanup also failed: {journal_error}"
-                ),
-                None => "Archive operation was cancelled during preparation.".to_string(),
-            },
-        });
+        return Err(finalize_preparation_error(
+            &state,
+            &cleanup_plan,
+            Some(&mut journal_guard),
+            "Archive operation was cancelled during preparation.",
+        ));
     }
 
     let mut rx = {
-        let (rx, child, pending_password) = match spawn_7z_noninteractive(
-            &app,
-            execution_args.clone(),
-        ) {
-            Ok(result) => result,
-            Err(e) => {
-                let rollback_error = rollback_cleanup(&cleanup_plan).err();
-                let journal_error = if rollback_error.is_none() {
-                    journal_guard.clear().err()
-                } else {
-                    None
-                };
-                if let Ok(mut process) = lock_process(&state) {
-                    process.release_prepare_slot();
+        let (rx, child, pending_password) =
+            match spawn_7z_noninteractive(&app, execution_args.clone()) {
+                Ok(result) => result,
+                Err(e) => {
+                    return Err(finalize_preparation_error(
+                        &state,
+                        &cleanup_plan,
+                        Some(&mut journal_guard),
+                        e.to_string(),
+                    ));
                 }
-                return Err(match rollback_error {
-                    Some(rollback_error) => {
-                        format!("{e}; staging cleanup also failed: {rollback_error}")
-                    }
-                    None => match journal_error {
-                        Some(journal_error) => {
-                            format!("{e}; recovery journal cleanup also failed: {journal_error}")
-                        }
-                        None => e.to_string(),
-                    },
-                });
-            }
-        };
+            };
 
         // Scoped so the `MutexGuard` this binds is provably dropped (not just
         // logically unreachable after a `return`) before the `.await` below:
@@ -1056,26 +974,12 @@ pub async fn run_7z(
                 Ok(process) => process,
                 Err(error) => {
                     terminate_child(&child);
-                    let rollback_error = rollback_cleanup(&cleanup_plan).err();
-                    let journal_error = if rollback_error.is_none() {
-                        journal_guard.clear().err()
-                    } else {
-                        None
-                    };
-                    release_prepare_slot_best_effort(&state);
-                    return Err(match rollback_error {
-                        Some(rollback_error) => {
-                            format!("{error}; staging cleanup also failed: {rollback_error}")
-                        }
-                        None => match journal_error {
-                            Some(journal_error) => {
-                                format!(
-                                    "{error}; recovery journal cleanup also failed: {journal_error}"
-                                )
-                            }
-                            None => error,
-                        },
-                    });
+                    return Err(finalize_preparation_error(
+                        &state,
+                        &cleanup_plan,
+                        Some(&mut journal_guard),
+                        error,
+                    ));
                 }
             };
             if process.cancelling {
@@ -1083,24 +987,12 @@ pub async fn run_7z(
                 // Keep preparing/cancelling until rollback and journal clear finish.
                 drop(process);
                 terminate_child(&child);
-                let rollback_error = rollback_cleanup(&cleanup_plan).err();
-                let journal_error = if rollback_error.is_none() {
-                    journal_guard.clear().err()
-                } else {
-                    None
-                };
-                release_prepare_slot_best_effort(&state);
-                return Err(match rollback_error {
-                    Some(rollback_error) => format!(
-                        "Archive operation was cancelled during preparation.; staging cleanup also failed: {rollback_error}"
-                    ),
-                    None => match journal_error {
-                        Some(journal_error) => format!(
-                            "Archive operation was cancelled during preparation.; recovery journal cleanup also failed: {journal_error}"
-                        ),
-                        None => "Archive operation was cancelled during preparation.".to_string(),
-                    },
-                });
+                return Err(finalize_preparation_error(
+                    &state,
+                    &cleanup_plan,
+                    Some(&mut journal_guard),
+                    "Archive operation was cancelled during preparation.",
+                ));
             }
 
             // Register the child before password stdin so cancel can kill a blocked write.
@@ -1117,31 +1009,17 @@ pub async fn run_7z(
                 if let Ok(mut process) = lock_process(&state) {
                     process.child = None;
                 }
-                let rollback_error = rollback_cleanup(&cleanup_plan).err();
-                let journal_error = if rollback_error.is_none() {
-                    journal_guard.clear().err()
-                } else {
-                    None
-                };
-                release_prepare_slot_best_effort(&state);
                 let error = if cancelled {
                     "Archive operation was cancelled during preparation.".to_string()
                 } else {
                     error
                 };
-                return Err(match rollback_error {
-                    Some(rollback_error) => {
-                        format!("{error}; staging cleanup also failed: {rollback_error}")
-                    }
-                    None => match journal_error {
-                        Some(journal_error) => {
-                            format!(
-                                "{error}; recovery journal cleanup also failed: {journal_error}"
-                            )
-                        }
-                        None => error,
-                    },
-                });
+                return Err(finalize_preparation_error(
+                    &state,
+                    &cleanup_plan,
+                    Some(&mut journal_guard),
+                    error,
+                ));
             }
         }
 
@@ -1149,50 +1027,24 @@ pub async fn run_7z(
             Ok(process) => process,
             Err(error) => {
                 terminate_child(&child);
-                let rollback_error = rollback_cleanup(&cleanup_plan).err();
-                let journal_error = if rollback_error.is_none() {
-                    journal_guard.clear().err()
-                } else {
-                    None
-                };
-                release_prepare_slot_best_effort(&state);
-                return Err(match rollback_error {
-                    Some(rollback_error) => {
-                        format!("{error}; staging cleanup also failed: {rollback_error}")
-                    }
-                    None => match journal_error {
-                        Some(journal_error) => {
-                            format!(
-                                "{error}; recovery journal cleanup also failed: {journal_error}"
-                            )
-                        }
-                        None => error,
-                    },
-                });
+                return Err(finalize_preparation_error(
+                    &state,
+                    &cleanup_plan,
+                    Some(&mut journal_guard),
+                    error,
+                ));
             }
         };
         if process.cancelling {
             process.child = None;
             drop(process);
             terminate_child(&child);
-            let rollback_error = rollback_cleanup(&cleanup_plan).err();
-            let journal_error = if rollback_error.is_none() {
-                journal_guard.clear().err()
-            } else {
-                None
-            };
-            release_prepare_slot_best_effort(&state);
-            return Err(match rollback_error {
-                Some(rollback_error) => format!(
-                    "Archive operation was cancelled during preparation.; staging cleanup also failed: {rollback_error}"
-                ),
-                None => match journal_error {
-                    Some(journal_error) => format!(
-                        "Archive operation was cancelled during preparation.; recovery journal cleanup also failed: {journal_error}"
-                    ),
-                    None => "Archive operation was cancelled during preparation.".to_string(),
-                },
-            });
+            return Err(finalize_preparation_error(
+                &state,
+                &cleanup_plan,
+                Some(&mut journal_guard),
+                "Archive operation was cancelled during preparation.",
+            ));
         }
 
         process.preparing = false;
@@ -1201,6 +1053,24 @@ pub async fn run_7z(
     };
 
     let emit_window = window.clone();
+    let heartbeat_window = window.clone();
+    let heartbeat_task = tauri::async_runtime::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        // Tokio's first interval tick is immediate. Consume it so the first
+        // heartbeat means the child has actually been quiet/running for 30s.
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            let _ = heartbeat_window.emit(
+                "7z-progress-structured",
+                crate::progress::ProgressUpdate {
+                    percent: None,
+                    files_done: None,
+                    current_file: Some("Working…".to_string()),
+                },
+            );
+        }
+    });
     let quota_finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let quota_task = cleanup_plan
         .staged_extract
@@ -1245,6 +1115,8 @@ pub async fn run_7z(
         }
     })
     .await;
+    heartbeat_task.abort();
+    let _ = heartbeat_task.await;
     quota_finished.store(true, std::sync::atomic::Ordering::Relaxed);
     if let Some(task) = quota_task {
         let _ = task.await;
@@ -1277,16 +1149,12 @@ pub async fn run_7z(
     // off the async runtime so other Tauri tasks are not blocked.
     let finalize_app = app.clone();
     let finalize_plan = cleanup_plan.clone();
-    let finalize_window = window.clone();
     let finalize_emit = emit_window.clone();
     let finalize_join = tokio::task::spawn_blocking(move || {
         if was_cancelled || exit_code != 0 {
             if let Err(error) = rollback_cleanup(&finalize_plan) {
                 Err(format!("7z operation ended, but rollback failed: {error}"))
             } else {
-                if was_cancelled {
-                    let _ = finalize_window.emit("7z-cancelled", ());
-                }
                 Ok(())
             }
         } else {

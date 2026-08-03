@@ -83,6 +83,15 @@ const depMocks = vi.hoisted(() => ({
   cancelAction: vi.fn(),
   browseArchive: vi.fn().mockResolvedValue(null),
   testArchive: vi.fn().mockResolvedValue("passed"),
+  looksLikePasswordRequiredError: vi.fn().mockReturnValue(false),
+  parseArchiveListing: vi.fn().mockReturnValue({
+    type: "7z",
+    physicalSize: 10,
+    method: "LZMA2",
+    solid: false,
+    encrypted: false,
+    entries: [],
+  }),
   chooseOutput: vi.fn().mockResolvedValue(undefined),
   chooseOutputIfCurrent: vi.fn().mockResolvedValue(undefined),
   chooseExtract: vi.fn().mockResolvedValue(undefined),
@@ -128,6 +137,8 @@ vi.mock("../archive", () => ({
   cancelAction: depMocks.cancelAction,
   browseArchive: depMocks.browseArchive,
   testArchive: depMocks.testArchive,
+  looksLikePasswordRequiredError: depMocks.looksLikePasswordRequiredError,
+  parseArchiveListing: depMocks.parseArchiveListing,
 }));
 
 vi.mock("../prompt-modal", () => ({
@@ -169,6 +180,7 @@ import {
   updateBasicRunningState,
   updateBasicStatus,
 } from "../basic";
+import { isArchiveEncrypted } from "../basic/actions";
 
 const openMock = vi.mocked(open);
 const confirmMock = vi.mocked(confirm);
@@ -242,6 +254,9 @@ function mountBasicDom(): void {
   addEl(root, "div", "basic-input-list");
   addEl(root, "div", "basic-extract-archive-name");
   addEl(root, "div", "basic-extract-archive-meta");
+  const extractArchiveInfo = addEl(root, "div", "basic-extract-archive-info");
+  extractArchiveInfo.setAttribute("role", "button");
+  extractArchiveInfo.tabIndex = 0;
   addEl(root, "div", "basic-browse-archive-name");
   addEl(root, "div", "basic-browse-archive-meta");
   addEl(root, "div", "basic-browse-summary");
@@ -295,7 +310,9 @@ function mountBasicDom(): void {
   addEl(root, "label", "basic-encrypt-headers-row");
   addEl(root, "input", "basic-extract-path");
   addEl(root, "input", "basic-extract-password");
-  addEl(root, "button", "basic-browse-archive-info");
+  const browseArchiveInfo = addEl(root, "div", "basic-browse-archive-info");
+  browseArchiveInfo.setAttribute("role", "button");
+  browseArchiveInfo.tabIndex = 0;
   const browsePasswordField = addEl<HTMLDivElement>(
     root,
     "div",
@@ -376,6 +393,7 @@ beforeEach(() => {
   state.lastAutoOutputPath = null;
   state.lastAutoExtractDestination = null;
   state.browseArchiveInfoByPath.clear();
+  state.browseArchiveIdentityByPath.clear();
 
   (document.getElementById("app") as HTMLElement).dataset.mode = "add";
 
@@ -407,6 +425,17 @@ beforeEach(() => {
   depMocks.browseArchive.mockResolvedValue(null);
   depMocks.testArchive.mockReset();
   depMocks.testArchive.mockResolvedValue("passed");
+  depMocks.looksLikePasswordRequiredError.mockReset();
+  depMocks.looksLikePasswordRequiredError.mockReturnValue(false);
+  depMocks.parseArchiveListing.mockReset();
+  depMocks.parseArchiveListing.mockReturnValue({
+    type: "7z",
+    physicalSize: 10,
+    method: "LZMA2",
+    solid: false,
+    encrypted: false,
+    entries: [],
+  });
   depMocks.chooseOutput.mockReset();
   depMocks.chooseOutputIfCurrent.mockReset();
   depMocks.chooseOutputIfCurrent.mockResolvedValue(undefined);
@@ -441,6 +470,38 @@ beforeEach(() => {
 });
 
 describe("basic-ui views and rendering", () => {
+  it("invalidates cached encryption state when the archive identity changes", async () => {
+    const archive = "/tmp/replaced.7z";
+    state.browseArchiveInfoByPath.set(archive, {
+      type: "7z",
+      physicalSize: 10,
+      method: "LZMA2",
+      solid: false,
+      encrypted: true,
+      entries: [],
+    });
+    state.browseArchiveIdentityByPath.set(archive, "old-identity");
+    depMocks.validateArchivePaths.mockResolvedValueOnce([
+      { path: archive, valid: true, identity: "new-identity" },
+    ]);
+    invokeMock.mockImplementation((command) => {
+      if (command === "probe_7z") return Promise.resolve("26.02");
+      if (command === "run_7z") {
+        return Promise.resolve({ code: 0, stdout: "listing", stderr: "" });
+      }
+      return Promise.resolve(undefined);
+    });
+
+    await expect(isArchiveEncrypted(archive)).resolves.toBe(false);
+
+    expect(depMocks.validateArchivePaths).toHaveBeenCalledWith([archive], true);
+    expect(state.browseArchiveInfoByPath.has(archive)).toBe(false);
+    expect(state.browseArchiveIdentityByPath.has(archive)).toBe(false);
+    expect(invokeMock).toHaveBeenCalledWith("run_7z", {
+      args: ["l", "-slt", "-spd", "--", archive],
+    });
+  });
+
   it("switches to compress view and enforces format encryption support", () => {
     (document.getElementById("format") as HTMLSelectElement).value = "tar";
     (document.getElementById("archive-name") as HTMLInputElement).value =
@@ -546,6 +607,21 @@ describe("basic-ui views and rendering", () => {
 
     expect(state.inputs).toEqual(["/tmp/b.txt"]);
     expect(uiMocks.renderInputs).toHaveBeenCalled();
+  });
+
+  it("opens archive pickers from keyboard-accessible archive cards", async () => {
+    initBasicWorkspace();
+    openMock.mockResolvedValueOnce("/tmp/keyboard.7z");
+
+    document
+      .getElementById("basic-browse-archive-info")
+      ?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+      );
+    await flushAsync();
+
+    expect(state.inputs).toEqual(["/tmp/keyboard.7z"]);
+    expect(depMocks.browseArchive).toHaveBeenCalled();
   });
 
   it("disables remove buttons while preparing and ignores clicks", () => {
@@ -1355,6 +1431,10 @@ describe("basic-ui drag and init wiring", () => {
       encrypted: false,
       entries: [],
     });
+    state.browseArchiveIdentityByPath.set(archive, "identity:archive");
+    depMocks.validateArchivePaths.mockResolvedValueOnce([
+      { path: archive, valid: true, identity: "identity:archive" },
+    ]);
     uiMocks.runtime.mode = "extract";
     setBasicView("extract");
     openMock.mockRejectedValueOnce(new Error("portal unavailable"));
@@ -1398,6 +1478,10 @@ describe("basic-ui drag and init wiring", () => {
       encrypted: true,
       entries: [],
     });
+    state.browseArchiveIdentityByPath.set(archive, "identity:encrypted");
+    depMocks.validateArchivePaths.mockResolvedValueOnce([
+      { path: archive, valid: true, identity: "identity:encrypted" },
+    ]);
     uiMocks.runtime.mode = "extract";
     setBasicView("extract");
     invokeMock.mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" });

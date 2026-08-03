@@ -3,7 +3,7 @@
   <assemblyIdentity
     type="win32"
     name="run.rosie.zinnia.shell"
-    version="0.6.0.0"/>
+    version="0.6.1.3"/>
   <!-- publisher MUST exactly match AppxManifest Identity Publisher AND the signing cert Subject -->
   <msix xmlns="urn:schemas-microsoft-com:msix.v1"
     publisher="__PUBLISHER_DN__"

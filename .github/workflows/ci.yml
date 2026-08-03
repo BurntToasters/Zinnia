@@ -78,8 +78,9 @@ jobs:
         with:
           node-version: 22.12
       - run: npm run validate:updater
-      # Soft when unpublished (all 404). When same-channel /latest exists, must
-      # match package.json (stale beta/stable feeds fail closed).
+      # Read-only shape smoke. Exact candidate version is checked after publish
+      # by release:verify:published; requiring it here makes version bumps
+      # circular because build VMs cannot publish until this CI passes.
       - name: Published updater feed sanity
         run: npm run validate:updater:live
 
@@ -131,6 +132,8 @@ jobs:
             patchelf
       - run: npm ci
       - run: npm run sync-version
+      - name: Verify synchronized version files are committed
+        run: git diff --exit-code
       - run: npm run prepare:7z
       - run: npm run licenses
       - name: Compile Finder Sync extension smoke

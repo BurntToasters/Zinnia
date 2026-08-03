@@ -285,6 +285,23 @@ describe("extract-window", () => {
     ).toBe(false);
   });
 
+  it("removes auto-close abort listeners when the countdown expires", async () => {
+    vi.useFakeTimers();
+    const removeListener = vi.spyOn(window, "removeEventListener");
+
+    await setupAndRun();
+    vi.advanceTimersByTime(1600);
+    await flushAsync();
+
+    for (const eventName of ["mousemove", "keydown", "click"]) {
+      expect(removeListener).toHaveBeenCalledWith(
+        eventName,
+        expect.any(Function),
+      );
+    }
+    removeListener.mockRestore();
+  });
+
   it("wires the native minimize titlebar action", async () => {
     const { appWindow } = await setupAndRun();
 
@@ -508,6 +525,27 @@ describe("sanitizeStatusFileName", () => {
     const { sanitizeStatusFileName } = await import("../extract-window");
     expect(sanitizeStatusFileName("报告.pdf")).toBe("报告.pdf");
     expect(sanitizeStatusFileName(".hidden.txt")).toBe(".hidden.txt");
+    expect(sanitizeStatusFileName("(report).txt")).toBe("(report).txt");
+  });
+
+  it("logs an injected-session queue drain failure without blocking extraction", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await setupAndRun(
+      async (cmd) => {
+        if (cmd === "get_extract_paths") throw new Error("queue unavailable");
+        if (cmd === "run_7z") return { stdout: "", stderr: "", code: 0 };
+        return undefined;
+      },
+      {
+        injected: { archive: "/tmp/injected.7z", destination: "/tmp/out" },
+      },
+    );
+
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringContaining("Could not drain quick-extract launch queue"),
+    );
+    expect(document.getElementById("extract-status")?.textContent).toBe("Done");
+    warning.mockRestore();
   });
 
   it("returns empty for replacement-only junk", async () => {

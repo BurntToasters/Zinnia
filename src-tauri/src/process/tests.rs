@@ -88,6 +88,28 @@ fn ensure_idle_detects_busy_state() {
 }
 
 #[test]
+fn preparation_failure_release_clears_every_soft_lock_field() {
+    let state = RunningProcess::new();
+    {
+        let mut process = lock_process(&state).expect("process lock");
+        process.preparing = true;
+        process.cancelling = true;
+        process.owner_label = Some("main".to_string());
+        process.abort_reason = Some("test".to_string());
+    }
+
+    release_preparation_failure_best_effort(&state);
+
+    let process = lock_process(&state).expect("released process lock");
+    assert!(process.child.is_none());
+    assert!(!process.preparing);
+    assert!(!process.cancelling);
+    assert!(process.owner_label.is_none());
+    assert!(process.abort_reason.is_none());
+    assert!(process.cleanup_plan.is_none());
+}
+
+#[test]
 fn cancellation_helper_kills_and_reaps_spawned_child() {
     #[cfg(unix)]
     let mut command = {
@@ -1888,6 +1910,26 @@ fn archive_identity_detects_replacement() {
     let identity = archive_file_identity(&archive).expect("identity");
     std::fs::write(&archive, b"replacement-content").expect("replacement archive");
     assert!(assert_archive_identity_unchanged(&archive, &identity).is_err());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn archive_identity_token_is_stable_and_changes_for_same_path_replacement() {
+    let root = temp_root("zinnia-archive-identity-token");
+    std::fs::create_dir_all(&root).expect("root");
+    let archive = root.join("archive.7z");
+    let old_archive = root.join("old-archive.7z");
+    std::fs::write(&archive, b"same bytes").expect("first archive");
+    let first = archive_identity_token(&archive).expect("first token");
+    assert_eq!(
+        archive_identity_token(&archive).expect("repeat token"),
+        first
+    );
+
+    std::fs::rename(&archive, &old_archive).expect("retain old identity");
+    std::fs::write(&archive, b"same bytes").expect("replacement archive");
+    let replacement = archive_identity_token(&archive).expect("replacement token");
+    assert_ne!(replacement, first);
     let _ = std::fs::remove_dir_all(root);
 }
 

@@ -113,6 +113,71 @@ pub(super) fn archive_file_identity(path: &std::path::Path) -> Result<ArchiveFil
     archive_file_identity_from_open_file(path, &file)
 }
 
+fn hash_identity_bytes(hasher: &mut sha2::Sha256, bytes: &[u8]) {
+    use sha2::Digest as _;
+
+    hasher.update((bytes.len() as u64).to_le_bytes());
+    hasher.update(bytes);
+}
+
+fn hash_identity_time(hasher: &mut sha2::Sha256, value: Option<std::time::SystemTime>) {
+    use sha2::Digest as _;
+
+    let Some(value) = value else {
+        hasher.update([0]);
+        return;
+    };
+    match value.duration_since(std::time::UNIX_EPOCH) {
+        Ok(duration) => {
+            hasher.update([1]);
+            hasher.update(duration.as_secs().to_le_bytes());
+            hasher.update(duration.subsec_nanos().to_le_bytes());
+        }
+        Err(error) => {
+            let duration = error.duration();
+            hasher.update([2]);
+            hasher.update(duration.as_secs().to_le_bytes());
+            hasher.update(duration.subsec_nanos().to_le_bytes());
+        }
+    }
+}
+
+fn hash_archive_file_identity(hasher: &mut sha2::Sha256, identity: &ArchiveFileIdentity) {
+    use sha2::Digest as _;
+
+    hash_identity_bytes(
+        hasher,
+        identity.canonical_path.as_os_str().as_encoded_bytes(),
+    );
+    hasher.update(identity.len.to_le_bytes());
+    hash_identity_time(hasher, identity.modified);
+    hash_identity_time(hasher, identity.created);
+    #[cfg(unix)]
+    {
+        hasher.update(identity.device.to_le_bytes());
+        hasher.update(identity.inode.to_le_bytes());
+    }
+    #[cfg(windows)]
+    {
+        hasher.update(identity.volume_serial.to_le_bytes());
+        hasher.update(identity.file_index.to_le_bytes());
+        match identity.volume_serial_64 {
+            Some(value) => {
+                hasher.update([1]);
+                hasher.update(value.to_le_bytes());
+            }
+            None => hasher.update([0]),
+        }
+        match identity.file_id_128 {
+            Some(value) => {
+                hasher.update([1]);
+                hasher.update(value);
+            }
+            None => hasher.update([0]),
+        }
+    }
+}
+
 pub(crate) fn archive_identity_token(path: &std::path::Path) -> Result<String, String> {
     use sha2::Digest as _;
 
@@ -121,8 +186,8 @@ pub(crate) fn archive_identity_token(path: &std::path::Path) -> Result<String, S
     let mut hasher = sha2::Sha256::new();
     for member in family {
         let identity = archive_file_identity(&member)?;
-        hasher.update(member.to_string_lossy().as_bytes());
-        hasher.update(format!("{identity:?}").as_bytes());
+        hash_identity_bytes(&mut hasher, member.as_os_str().as_encoded_bytes());
+        hash_archive_file_identity(&mut hasher, &identity);
     }
     Ok(format!("{:x}", hasher.finalize()))
 }

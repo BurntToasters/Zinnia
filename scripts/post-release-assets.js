@@ -6,6 +6,7 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const REPOSITORY_ROOT = path.join(__dirname, "..");
 const RELEASE_DIR = path.join(__dirname, "..", "release");
 
 const BUILD_ONLY_DIRECTORIES = [
@@ -76,6 +77,19 @@ function pathsEqual(left, right, platform = process.platform) {
     return resolvedLeft.toLowerCase() === resolvedRight.toLowerCase();
   }
   return resolvedLeft === resolvedRight;
+}
+
+function pathIsSameOrInside(candidate, parent, platform = process.platform) {
+  const resolvedCandidate = path.resolve(candidate);
+  const resolvedParent = path.resolve(parent);
+  const normalize = (value) =>
+    platform === "win32" ? value.toLowerCase() : value;
+  const candidateForComparison = normalize(resolvedCandidate);
+  const parentForComparison = normalize(resolvedParent);
+  return (
+    candidateForComparison === parentForComparison ||
+    candidateForComparison.startsWith(`${parentForComparison}${path.sep}`)
+  );
 }
 
 function isDirectExecution(argv = process.argv, platform = process.platform) {
@@ -198,13 +212,14 @@ function copyReleaseEntryToMirror(sourcePath, destinationPath) {
   verifyCopiedPath(sourcePath, destinationPath);
 }
 
-function copyReleaseAssets(
-  releaseDir = RELEASE_DIR,
-  destination,
-  { logger = console } = {},
-) {
+function resolveMirrorPaths(releaseDir = RELEASE_DIR, destination) {
   if (!destination) {
     throw new Error("AFTER_PACK_LOC is empty");
+  }
+  if (!path.isAbsolute(destination)) {
+    throw new Error(
+      `AFTER_PACK_LOC must be an absolute path on this platform: ${destination}`,
+    );
   }
 
   const requestedReleaseDir = path.resolve(releaseDir);
@@ -236,13 +251,15 @@ function copyReleaseAssets(
     fs.realpathSync.native(existingAncestor),
     ...missingSegments,
   );
-  progress(
-    logger,
-    `copy resolve: src=${resolvedReleaseDir} dest=${resolvedDestination}`,
-  );
-
   if (pathsEqual(resolvedDestination, resolvedReleaseDir)) {
     throw new Error("AFTER_PACK_LOC cannot be the release directory");
+  }
+
+  const resolvedRepositoryRoot = fs.realpathSync.native(REPOSITORY_ROOT);
+  if (pathIsSameOrInside(resolvedDestination, resolvedRepositoryRoot)) {
+    throw new Error(
+      `AFTER_PACK_LOC must be outside the repository: ${resolvedRepositoryRoot}`,
+    );
   }
 
   const releasePrefix = `${resolvedReleaseDir}${path.sep}`;
@@ -255,6 +272,23 @@ function copyReleaseAssets(
   if (destinationForComparison.startsWith(releasePrefixForComparison)) {
     throw new Error("AFTER_PACK_LOC cannot be inside the release directory");
   }
+
+  return { resolvedReleaseDir, resolvedDestination };
+}
+
+function copyReleaseAssets(
+  releaseDir = RELEASE_DIR,
+  destination,
+  { logger = console } = {},
+) {
+  const { resolvedReleaseDir, resolvedDestination } = resolveMirrorPaths(
+    releaseDir,
+    destination,
+  );
+  progress(
+    logger,
+    `copy resolve: src=${resolvedReleaseDir} dest=${resolvedDestination}`,
+  );
 
   const entries = getReleaseEntries(resolvedReleaseDir);
   fs.mkdirSync(resolvedDestination, { recursive: true });
@@ -280,14 +314,23 @@ function run({
 } = {}) {
   const destination = getAfterPackLocation(env);
   if (!destination) {
-    throw new Error(
-      "AFTER_PACK_LOC is empty; refusing to clean release assets before a verified mirror.",
+    progress(
+      logger,
+      "AFTER_PACK_LOC is not set; skipping the verified mirror (clean only).",
     );
+  } else {
+    // Resolve every boundary before removing build-only files. A malformed,
+    // repository-local, or symlinked destination must leave `release/` intact.
+    resolveMirrorPaths(releaseDir, destination);
   }
 
   progress(logger, "cleaning build-only release artifacts");
   cleanReleaseArtifacts(releaseDir);
   progress(logger, "clean complete");
+
+  if (!destination) {
+    return { mirrored: false, destination: "", copiedEntries: 0 };
+  }
 
   const copiedEntries = copyReleaseAssets(releaseDir, destination, { logger });
   return {
@@ -303,6 +346,12 @@ function finalizeReleaseAssets({
   logger = console,
 } = {}) {
   const result = run({ releaseDir, env, logger });
+  if (!result.mirrored) {
+    logger.log(
+      "Cleaned release assets without mirroring (AFTER_PACK_LOC unset).",
+    );
+    return result;
+  }
   logger.log(
     `Mirrored and verified ${result.copiedEntries} cleaned release entries to: ${result.destination}`,
   );
@@ -336,6 +385,7 @@ function main() {
 if (isDirectExecution()) main();
 
 export {
+  REPOSITORY_ROOT,
   RELEASE_DIR,
   BUILD_ONLY_DIRECTORIES,
   BUILD_ONLY_FILES,
@@ -343,9 +393,11 @@ export {
   cleanReleaseArtifacts,
   getAfterPackLocation,
   pathsEqual,
+  pathIsSameOrInside,
   isDirectExecution,
   isMirrorableReleaseEntry,
   getReleaseEntries,
+  resolveMirrorPaths,
   verifyCopiedPath,
   copyReleaseAssets,
   run,

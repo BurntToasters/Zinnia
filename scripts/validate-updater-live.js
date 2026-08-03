@@ -4,7 +4,7 @@
  * Does not build or release packages; CI smoke only.
  *
  * Usage:
- *   node scripts/validate-updater-live.js
+ *   node scripts/validate-updater-live.js --shape-only
  *   node scripts/validate-updater-live.js --expected-version=current
  *   EXPECTED_UPDATER_VERSION=0.6.0-beta.16 REQUIRED_UPDATER_TARGETS=windows-beta-x86_64 node scripts/validate-updater-live.js
  *
@@ -27,6 +27,7 @@ const root = path.join(__dirname, "..");
 const validator = path.join(root, "scripts", "validate-updater-manifest.js");
 const requireLive = process.env.REQUIRE_UPDATER_LIVE === "1";
 const args = process.argv.slice(2);
+const shapeOnly = args.includes("--shape-only");
 
 function optionValue(name) {
   const inline = args.find((arg) => arg.startsWith(`${name}=`));
@@ -189,7 +190,7 @@ try {
   // Soft CI smoke still shape-checks whatever /latest has. When no explicit
   // --expected-version was set, also fail if a same-channel feed is stale
   // relative to package.json (avoids all-404 soft-pass hiding a wrong beta).
-  if (!requestedExpectedVersion) {
+  if (!requestedExpectedVersion && !shapeOnly) {
     const pkg = currentPackageVersion();
     const pkgIsBeta = /-beta\.\d+$/.test(pkg);
     for (const filePath of files) {
