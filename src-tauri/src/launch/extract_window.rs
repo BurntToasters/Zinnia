@@ -277,8 +277,10 @@ pub fn show_main_window(app: &tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn mark_main_window_ready() {
+pub fn mark_main_window_ready(app: tauri::AppHandle) {
     MAC_FALLBACK_MAIN_PENDING.store(false, Ordering::SeqCst);
+    super::MAIN_WINDOW_READY.store(true, Ordering::SeqCst);
+    crate::app_menu::flush_pending_menu_actions(&app);
 }
 
 #[tauri::command]

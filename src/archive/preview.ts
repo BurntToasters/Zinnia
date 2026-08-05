@@ -23,9 +23,16 @@ function resetCommandPreviewCopyStateSoon(): void {
   }, 1300);
 }
 
+function isPasswordSwitchArg(arg: string): boolean {
+  const lower = arg.toLowerCase();
+  // `-spd` is DisableWildcardMatching, not a password switch.
+  if (lower === "-spd" || lower.startsWith("-spd")) return false;
+  return lower === "-p" || lower.startsWith("-p");
+}
+
 export function sanitizeCommandArgsForPreview(args: string[]): string[] {
   return args.map((arg) => {
-    if (arg.startsWith("-p")) return "-p***";
+    if (isPasswordSwitchArg(arg)) return "-p***";
     return arg;
   });
 }

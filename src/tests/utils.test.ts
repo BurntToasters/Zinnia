@@ -41,7 +41,14 @@ describe("splitArgs", () => {
 
 describe("redactSensitiveText", () => {
   it("redacts -p password args", () => {
-    expect(redactSensitiveText("run -pmySecret")).toContain("-p***");
+    expect(redactSensitiveText("run -pmySecret archive.7z")).toBe("run -p***");
+    expect(redactSensitiveText("run -PMySecret archive.7z")).toBe("run -p***");
+    expect(redactSensitiveText("run -pd archive.7z")).toBe("run -p***");
+    expect(redactSensitiveText("run -pd=secret archive.7z")).toBe("run -p***");
+    expect(redactSensitiveText('run -p"space secret" archive.7z')).toBe(
+      "run -p***",
+    );
+    expect(redactSensitiveText("7z x -spd archive.7z")).toContain("-spd");
   });
 
   it("redacts key=value passwords", () => {
@@ -78,7 +85,10 @@ describe("redactSensitiveText", () => {
 describe("isArchiveFile", () => {
   it("recognises known archive extensions", () => {
     expect(isArchiveFile("C:/tmp/file.7z")).toBe(true);
-    expect(isArchiveFile("C:/tmp/file.tar.gz")).toBe(false);
+    expect(isArchiveFile("C:/tmp/file.tar.gz")).toBe(true);
+    expect(isArchiveFile("C:/tmp/file.tgz")).toBe(true);
+    expect(isArchiveFile("C:/tmp/file.tbz2")).toBe(true);
+    expect(isArchiveFile("C:/tmp/file.txz")).toBe(true);
     expect(isArchiveFile("/home/user/file.zip")).toBe(true);
     expect(isArchiveFile("file.rar")).toBe(true);
     expect(isArchiveFile("file.xz")).toBe(true);

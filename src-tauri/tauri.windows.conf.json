@@ -5,9 +5,17 @@
       "windows/shell/out/zinnia_extract_shell.dll": "shell-0.6.1-beta.3/zinnia_extract_shell.dll",
       "windows/shell/out/ZinniaContextMenu.msix": "shell-0.6.1-beta.3/ZinniaContextMenu.msix",
       "windows/shell/out/ZinniaExtractContextMenu.msix": "shell-0.6.1-beta.3/ZinniaExtractContextMenu.msix",
-      "../scripts/register-windows-context-menu.ps1": "shell-0.6.1-beta.3/register-windows-context-menu.ps1"
+      "../scripts/register-windows-context-menu.ps1": "shell-0.6.1-beta.3/register-windows-context-menu.ps1",
+      "binaries/7z.dll": "7z.dll"
     },
     "fileAssociations": [
+      {
+        "ext": [
+          "rar"
+        ],
+        "mimeType": "application/vnd.rar",
+        "description": "RAR Archive"
+      },
       {
         "ext": [
           "7z"
@@ -31,21 +39,24 @@
       },
       {
         "ext": [
-          "gz"
+          "gz",
+          "tgz"
         ],
         "mimeType": "application/gzip",
         "description": "Gzip Archive"
       },
       {
         "ext": [
-          "bz2"
+          "bz2",
+          "tbz2"
         ],
         "mimeType": "application/x-bzip2",
         "description": "Bzip2 Archive"
       },
       {
         "ext": [
-          "xz"
+          "xz",
+          "txz"
         ],
         "mimeType": "application/x-xz",
         "description": "XZ Archive"

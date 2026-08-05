@@ -139,7 +139,7 @@ export function officialArchiveExtractionCommand({
       args: ["-xJf", archivePath, "-C", destination],
     };
   }
-  if (archivePath.endsWith(".7z")) {
+  if (archivePath.endsWith(".7z") || archivePath.endsWith(".exe")) {
     if (!trusted7zPath) {
       throw new Error(
         "A trusted 7-Zip extractor is required for .7z archives.",

@@ -147,7 +147,7 @@ export function validateArchiveOutputExtension(
   if (!suffixes) return `Unsupported archive format: ${format}`;
   const lower = outputPath.toLocaleLowerCase("en-US");
   if (COMPOUND_TAR_SUFFIXES.some((suffix) => lower.endsWith(suffix))) {
-    return "Compound TAR streams (.tar.gz/.tgz, .tar.bz2/.tbz2, and .tar.xz/.txz) are not supported in this release. Create a .tar archive first, then compress that one file.";
+    return "Creating compound TAR output (.tar.gz/.tgz, .tar.bz2/.tbz2, or .tar.xz/.txz) is not supported yet. Create a .tar archive first, then compress that one file.";
   }
   if (suffixes.some((suffix) => lower.endsWith(suffix))) return null;
   return `Output filename must end in ${suffixes.join(" or ")} for ${format.toUpperCase()} format.`;

@@ -72,12 +72,20 @@ pub fn apply_basic_window_fx(window: &WebviewWindow, dark: bool) -> Result<(), S
     {
         let _ = dark;
         paint_transparent_background(window);
-        apply_macos(window)
+        let result = apply_macos(window);
+        if result.is_err() {
+            paint_opaque_background(window, dark);
+        }
+        result
     }
     #[cfg(target_os = "windows")]
     {
         paint_transparent_background(window);
-        apply_windows(window, dark)
+        let result = apply_windows(window, dark);
+        if result.is_err() {
+            paint_opaque_background(window, dark);
+        }
+        result
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {

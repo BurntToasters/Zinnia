@@ -18,17 +18,17 @@ use crate::validation::validate_run_7z_args;
 use super::archive_snapshot::assert_archive_identity_unchanged;
 use super::commit::{commit_cleanup, commit_failure_should_scrub_staging, rollback_cleanup};
 use super::journal::{clear_cleanup_journal, write_cleanup_journal, CleanupJournalGuard};
-use super::quota::monitor_extract_quota;
+use super::quota::{monitor_extract_quota, staged_tree_usage, MAX_EXTRACT_ENTRIES};
 use super::recovery::{
     recover_interrupted_transaction, retract_scrub_archive_journal_or_fail,
     wait_for_startup_recovery,
 };
 use super::staging::{
-    assert_extract_archive_members_safe, operation_output_path, prepare_cleanup_plan,
+    assert_extract_archive_members_safe, operation_output_path, prepare_cleanup_plan_with_cancel,
     rewrite_archive_output, rewrite_extract_archive, rewrite_extract_output,
 };
 use super::{
-    ensure_idle, lock_process, release_preparation_failure_best_effort,
+    ensure_idle_mut, lock_process, release_preparation_failure_best_effort,
     release_prepare_slot_best_effort, CleanupPlan, RunResult, RunningProcess,
 };
 
@@ -114,12 +114,20 @@ pub(crate) fn rewrite_args_for_managed_listfile(
     }
     let selected = args[selected_start..].to_vec();
     args.truncate(separator);
-    if !args.iter().any(|arg| arg.eq_ignore_ascii_case("-scsUTF-8")) {
-        args.insert(1, "-scsUTF-8".to_string());
-    }
+    // Managed listfiles are UTF-8. Drop any caller `-scs*` so a mismatched
+    // charset cannot desync path decoding from the bytes we write.
+    args.retain(|arg| !arg.to_ascii_lowercase().starts_with("-scs"));
+    args.insert(1, "-scsUTF-8".to_string());
     if let Some(archive) = archive {
         // `@listfile` must occur before `--` to be expanded, but extraction's
-        // archive must remain the first positional argument.
+        // archive must remain the first positional argument. Neutralize `@`/`-`
+        // leading archive names so they are not re-parsed as switches/listfiles
+        // once the original `--` separator is removed.
+        let archive = if archive.starts_with('@') || archive.starts_with('-') {
+            format!("./{archive}")
+        } else {
+            archive
+        };
         args.push(archive);
     }
     args.push(listfile_reference);
@@ -157,7 +165,15 @@ fn prepare_managed_listfile(args: &mut Vec<String>) -> Result<Option<ManagedList
         .open(&listfile.0)
         .map_err(|error| format!("Could not create a private 7-Zip list file: {error}"))?;
     for path in &selected {
-        file.write_all(path.as_bytes())
+        // A leading dash still has switch shape. A leading `@` inside a
+        // listfile is a literal member name (only command-line `@file` opens a
+        // second listfile), so preserve it.
+        let line = if path.starts_with('-') {
+            format!("./{path}")
+        } else {
+            path.clone()
+        };
+        file.write_all(line.as_bytes())
             .and_then(|_| file.write_all(b"\r\n"))
             .map_err(|error| format!("Could not write the 7-Zip list file: {error}"))?;
     }
@@ -204,7 +220,7 @@ pub(crate) fn prepare_password_transport(args: &mut Vec<String>) -> Result<Optio
     }
     if password
         .as_deref()
-        .is_some_and(|value| value.contains(['\r', '\n']))
+        .is_some_and(password_contains_line_break)
     {
         return Err("Archive passwords cannot contain line breaks.".to_string());
     }
@@ -234,8 +250,17 @@ pub(crate) fn prepare_password_transport(args: &mut Vec<String>) -> Result<Optio
     Ok(password)
 }
 
+fn password_contains_line_break(value: &str) -> bool {
+    value.contains(['\r', '\n', '\0', '\u{2028}', '\u{2029}'])
+}
+
 /// Secret still owed to 7-Zip stdin after the child is registered for cancel.
-pub(crate) struct PendingPassword(String);
+pub(crate) struct PendingPassword {
+    password: String,
+    /// Create/update need password + confirmation. Extract/list/test need one
+    /// prompt answer. Avoid pre-writing three large copies into a small pipe.
+    prompt_writes: u8,
+}
 
 type Spawned7z = (
     Receiver<CommandEvent>,
@@ -251,7 +276,10 @@ fn complete_password_transport_blocking(
     child: &Arc<SharedChild>,
     pending: PendingPassword,
 ) -> Result<(), String> {
-    let password = pending.0;
+    let PendingPassword {
+        password,
+        prompt_writes,
+    } = pending;
     let child_for_password = child.clone();
     let (password_tx, password_rx) = std::sync::mpsc::sync_channel(1);
     std::thread::spawn(move || {
@@ -259,7 +287,7 @@ fn complete_password_transport_blocking(
             let mut stdin = child_for_password
                 .take_stdin()
                 .ok_or_else(|| "Could not open 7-Zip password input.".to_string())?;
-            for _ in 0..3 {
+            for _ in 0..prompt_writes.max(1) {
                 stdin
                     .write_all(password.as_bytes())
                     .and_then(|_| stdin.write_all(b"\n"))
@@ -316,10 +344,21 @@ pub(crate) fn spawn_7z_noninteractive(
 ) -> Result<Spawned7z, String> {
     // A command-line password is visible to same-user process inspection on
     // several desktop platforms. Remove it before spawn and answer 7-Zip's
-    // password prompt through a short-lived pipe. Multiple copies cover
-    // create-time confirmation and a single retry; EOF then guarantees that
-    // no unexpected prompt can leave the process waiting forever.
+    // password prompt through a short-lived pipe. Create/update write the
+    // password twice (value + confirmation); other commands write once. EOF
+    // then guarantees that no unexpected prompt can leave the process waiting.
+    let seven_zip_command = args.first().cloned();
     let password = prepare_password_transport(&mut args)?;
+    let has_password = password.is_some();
+    let prompt_writes = if matches!(seven_zip_command.as_deref(), Some("a" | "u")) {
+        2
+    } else {
+        1
+    };
+    let pending_password = password.map(|password| PendingPassword {
+        password,
+        prompt_writes,
+    });
     // Always use a private response list for caller-selected paths. Besides
     // avoiding platform-specific execve/command-line ceilings, this keeps the
     // path transport identical across Windows, macOS, and Linux.
@@ -331,7 +370,7 @@ pub(crate) fn spawn_7z_noninteractive(
         .args(args);
     let mut command: std::process::Command = plugin_command.into();
     command
-        .stdin(if password.is_some() {
+        .stdin(if has_password {
             Stdio::piped()
         } else {
             Stdio::null()
@@ -408,7 +447,7 @@ pub(crate) fn spawn_7z_noninteractive(
         drop(listfile);
         let _ = block_on(async move { tx.send(event).await });
     });
-    Ok((rx, child, password.map(PendingPassword)))
+    Ok((rx, child, pending_password))
 }
 
 pub(crate) fn harden_7z_args(args: &mut Vec<String>) {
@@ -428,6 +467,45 @@ pub(crate) fn harden_7z_args(args: &mut Vec<String>) {
     #[cfg(not(target_os = "windows"))]
     if command == Some("x") && !args.iter().any(|arg| arg.eq_ignore_ascii_case("-spod")) {
         args.insert(1, "-spod".to_string());
+    }
+}
+
+/// Inject backend-owned symlink / hard-link policy switches.
+///
+/// Call after `validate_run_7z_args` so the webview cannot omit or raise these
+/// levels. Extract uses `-snld10`: 7-Zip 25.01+ defaults to level 5 and rejects
+/// macOS `.framework` chains (`Libraries -> Versions/Current/Libraries`) as
+/// "Dangerous link via another link". Level 10 also lets 7-Zip materialize some
+/// escaping relative symlink targets that default level would ignore, so
+/// Zinnia's staged-tree validation (absolute / escape / hardlink alias checks)
+/// is the required containment gate before publish. Never raise to `-snld20`.
+pub(crate) fn apply_backend_link_switches(args: &mut Vec<String>) {
+    if matches!(args.first().map(String::as_str), Some("a" | "u")) {
+        if !args.iter().any(|arg| arg.eq_ignore_ascii_case("-snl")) {
+            args.insert(1, "-snl".to_string());
+        }
+        if !args.iter().any(|arg| arg.eq_ignore_ascii_case("-snh")) {
+            args.insert(1, "-snh".to_string());
+        }
+    }
+    // Windows: propagate Mark-of-the-Web (Zone.Identifier) from the archive onto
+    // extracted files. macOS/Linux 7-Zip builds reject -snz.
+    #[cfg(target_os = "windows")]
+    if args.first().map(String::as_str) == Some("x")
+        && !args.iter().any(|arg| arg.eq_ignore_ascii_case("-snz"))
+    {
+        args.insert(1, "-snz".to_string());
+    }
+    // Disable archive-supplied NTFS streams. This blocks RAR5 stream-name
+    // collisions from replacing the Mark-of-the-Web propagated by `-snz`.
+    #[cfg(target_os = "windows")]
+    if args.first().map(String::as_str) == Some("x") {
+        args.retain(|arg| !arg.to_ascii_lowercase().starts_with("-sns"));
+        args.insert(1, "-sns-".to_string());
+    }
+    if args.first().map(String::as_str) == Some("x") {
+        args.retain(|arg| !arg.to_ascii_lowercase().starts_with("-snld"));
+        args.insert(1, "-snld10".to_string());
     }
 }
 
@@ -576,6 +654,225 @@ fn finalize_preparation_error(
     }
 }
 
+pub(crate) fn is_compound_tar_operation(args: &[String]) -> bool {
+    if !matches!(args.first().map(String::as_str), Some("x" | "l" | "t")) {
+        return false;
+    }
+    let Some(separator) = args.iter().position(|arg| arg == "--") else {
+        return false;
+    };
+    let Some(path) = args.get(separator + 1) else {
+        return false;
+    };
+    let lower = path.to_ascii_lowercase();
+    [".tar.gz", ".tar.bz2", ".tar.xz", ".tgz", ".tbz2", ".txz"]
+        .iter()
+        .any(|suffix| lower.ends_with(suffix))
+}
+
+/// 7-Zip exit 1 is publishable only for known metadata-only warnings. Data,
+/// path, password, and unknown warnings remain fail-closed and roll back.
+pub(crate) fn extract_warning_is_metadata_only(stdout: &str, stderr: &str) -> bool {
+    let output = format!("{stdout}\n{stderr}").to_ascii_lowercase();
+    let unsafe_markers = [
+        "dangerous link",
+        "cannot open",
+        "cannot create",
+        "cannot set length",
+        "crc failed",
+        "data error",
+        "unexpected end",
+        "wrong password",
+        "unsupported method",
+        "no files to process",
+    ];
+    if unsafe_markers.iter().any(|marker| output.contains(marker)) {
+        return false;
+    }
+    let allowed_markers = [
+        "cannot set owner",
+        "cannot set file attribute",
+        "cannot set file time",
+        "data after the end of archive",
+        "data after the end of the payload data",
+        "archive is open with offset",
+    ];
+    if !allowed_markers.iter().any(|marker| output.contains(marker)) {
+        return false;
+    }
+
+    // 7-Zip writes diagnostic detail to stderr. Reject an unfamiliar stderr
+    // line even when a known metadata warning also occurred.
+    if stderr
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .any(|line| {
+            let line = line.to_ascii_lowercase();
+            !allowed_markers.iter().any(|marker| line.contains(marker))
+        })
+    {
+        return false;
+    }
+    // Some builds put warnings on stdout. Normal progress is allowed, but any
+    // unknown warning/error-labelled line makes exit 1 fail closed.
+    !stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .any(|line| {
+            let line = line.to_ascii_lowercase();
+            (line.contains("warning") || line.starts_with("error:"))
+                && !line.starts_with("warnings:")
+                && !allowed_markers.iter().any(|marker| line.contains(marker))
+        })
+}
+
+fn find_single_compound_tar(root: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    let mut pending = vec![root.to_path_buf()];
+    let mut files = Vec::new();
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(&directory).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let path = entry.path();
+            let metadata = std::fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
+            if crate::path_safety::is_link_or_reparse(&metadata) {
+                return Err(
+                    "The outer compressed stream produced a link instead of a TAR file."
+                        .to_string(),
+                );
+            }
+            if metadata.is_dir() {
+                pending.push(path);
+            } else if metadata.is_file() {
+                files.push(path);
+            } else {
+                return Err("The outer compressed stream produced a special file.".to_string());
+            }
+        }
+    }
+    if files.len() != 1 {
+        return Err(format!(
+            "A compound TAR stream must expand to exactly one TAR file; found {} files.",
+            files.len()
+        ));
+    }
+    let file = files.pop().expect("length checked");
+    if !crate::archive_detect::path_has_tar_signature(&file)? {
+        return Err("The outer compressed stream did not contain a valid TAR archive.".to_string());
+    }
+    Ok(file)
+}
+
+async fn prepare_compound_tar_snapshot(
+    app: &tauri::AppHandle,
+    state: &tauri::State<'_, RunningProcess>,
+    cleanup_plan: &mut CleanupPlan,
+) -> Result<(), String> {
+    let snapshot = cleanup_plan.staged_input_archive.clone().ok_or_else(|| {
+        "Compound TAR extraction is missing its private input snapshot.".to_string()
+    })?;
+    let snapshot_parent = snapshot
+        .parent()
+        .ok_or_else(|| "Compound TAR snapshot has no private parent directory.".to_string())?;
+    let token = super::staging::random_token()?;
+    let outer_stage = snapshot_parent.join(format!(".zinnia-compound-{token}"));
+    crate::fs_secure::create_private_dir(&outer_stage)
+        .map_err(|error| format!("Could not create compound TAR staging: {error}"))?;
+
+    let result = async {
+        let outer_args = vec![
+            "x".to_string(),
+            "-spd".to_string(),
+            "-snld10".to_string(),
+            "-aou".to_string(),
+            format!("-o{}", outer_stage.to_string_lossy()),
+            "--".to_string(),
+            snapshot.to_string_lossy().into_owned(),
+        ];
+        let (mut rx, child, pending_password) = spawn_7z_noninteractive(app, outer_args)?;
+        {
+            let mut process = lock_process(state)?;
+            if process.cancelling {
+                drop(process);
+                terminate_child(&child);
+                return Err("Archive operation was cancelled during preparation.".to_string());
+            }
+            process.child = Some(child.clone());
+            process.cleanup_plan = Some(cleanup_plan.clone());
+        }
+        if let Some(password) = pending_password {
+            complete_password_transport(&child, password).await?;
+        }
+
+        let finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let quota_task = cleanup_plan
+            .max_extract_bytes
+            .zip(cleanup_plan.min_free_bytes)
+            .map(|(max_bytes, min_free_bytes)| {
+                tauri::async_runtime::spawn(monitor_extract_quota(
+                    app.clone(),
+                    outer_stage.clone(),
+                    max_bytes,
+                    min_free_bytes,
+                    finished.clone(),
+                ))
+            });
+        let collected = collect_command_output(&mut rx, MAX_OUTPUT_BYTES, |_| {}).await;
+        finished.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(task) = quota_task {
+            let _ = task.await;
+        }
+        let (cancelled, abort_reason) = {
+            let mut process = lock_process(state)?;
+            process.child = None;
+            (process.cancelling, process.abort_reason.clone())
+        };
+        if cancelled {
+            return Err(abort_reason.unwrap_or_else(|| {
+                "Archive operation was cancelled during compound TAR preparation.".to_string()
+            }));
+        }
+        let code = collected
+            .exit
+            .as_ref()
+            .and_then(|payload| payload.code)
+            .unwrap_or(-1);
+        if code != 0 {
+            let detail = sanitize_output(if collected.stderr.trim().is_empty() {
+                collected.stdout.trim()
+            } else {
+                collected.stderr.trim()
+            });
+            return Err(if detail.is_empty() {
+                format!("Could not unpack the outer compressed stream (exit {code}).")
+            } else {
+                format!("Could not unpack the outer compressed stream: {detail}")
+            });
+        }
+
+        let max_bytes = cleanup_plan.max_extract_bytes.unwrap_or(u64::MAX);
+        staged_tree_usage(&outer_stage, MAX_EXTRACT_ENTRIES, max_bytes)?;
+        let inner = find_single_compound_tar(&outer_stage)?;
+        let promoted = snapshot_parent.join(format!(".zinnia-compound-{token}.tar"));
+        std::fs::rename(&inner, &promoted)
+            .map_err(|error| format!("Could not stage the inner TAR archive: {error}"))?;
+        crate::fs_secure::remove_dir_all_for_cleanup(&outer_stage)
+            .map_err(|error| format!("Could not finish compound TAR staging cleanup: {error}"))?;
+        cleanup_plan.staged_input_archive = Some(promoted);
+        if let Ok(mut process) = lock_process(state) {
+            process.cleanup_plan = Some(cleanup_plan.clone());
+        }
+        Ok(())
+    }
+    .await;
+
+    if result.is_err() {
+        let _ = crate::fs_secure::remove_dir_all_for_cleanup(&outer_stage);
+    }
+    result
+}
+
 #[tauri::command]
 pub async fn probe_compress_inputs(
     paths: Vec<String>,
@@ -696,6 +993,20 @@ where
                 out.exit = Some(payload);
                 break;
             }
+            CommandEvent::Error(error) => {
+                let detail = format!("7-Zip process error: {error}");
+                append_limited_output(
+                    &mut out.stderr,
+                    &detail,
+                    max_bytes,
+                    &mut out.stderr_truncated,
+                );
+                out.exit = Some(TerminatedPayload {
+                    code: Some(-1),
+                    signal: None,
+                });
+                break;
+            }
             _ => {}
         }
     }
@@ -718,7 +1029,7 @@ pub async fn run_7z(
     // recovery wait continued toward a real archive publish.
     {
         let mut process = lock_process(&state)?;
-        ensure_idle(&process)?;
+        ensure_idle_mut(&mut process)?;
         process.preparing = true;
         process.owner_label = Some(window.label().to_string());
         process.abort_reason = None;
@@ -745,25 +1056,8 @@ pub async fn run_7z(
 
     let mut args = args;
     harden_7z_args(&mut args);
-    // Always store symlinks/hardlinks as links on create/update (macOS .app /
-    // .framework trees). Frontend also passes these; inject here so a malformed
-    // webview cannot omit them and cause 7-Zip to follow nested links.
-    if matches!(args.first().map(String::as_str), Some("a" | "u")) {
-        if !args.iter().any(|arg| arg.eq_ignore_ascii_case("-snl")) {
-            args.insert(1, "-snl".to_string());
-        }
-        if !args.iter().any(|arg| arg.eq_ignore_ascii_case("-snh")) {
-            args.insert(1, "-snh".to_string());
-        }
-    }
-    // Windows: propagate Mark-of-the-Web (Zone.Identifier) from the archive onto
-    // extracted files. macOS/Linux 7-Zip builds reject -snz.
-    #[cfg(target_os = "windows")]
-    if args.first().map(String::as_str) == Some("x")
-        && !args.iter().any(|arg| arg.eq_ignore_ascii_case("-snz"))
-    {
-        args.insert(1, "-snz".to_string());
-    }
+    apply_backend_link_switches(&mut args);
+    let compound_tar_operation = is_compound_tar_operation(&args);
 
     if let Some("x" | "l" | "t") = args.first().map(String::as_str) {
         let separator = match args.iter().position(|arg| arg == "--") {
@@ -824,6 +1118,7 @@ pub async fn run_7z(
 
     let plan_args = args.clone();
     let plan_expected_identity = expected_archive_identity.clone();
+    let plan_app = app.clone();
     let cache_dir = match app.path().app_cache_dir() {
         Ok(dir) => Some(dir),
         Err(error) => {
@@ -831,8 +1126,20 @@ pub async fn run_7z(
             return Err(format!("Could not resolve app cache directory: {error}"));
         }
     };
-    let cleanup_plan = match tokio::task::spawn_blocking(move || {
-        prepare_cleanup_plan(&plan_args, cache_dir, plan_expected_identity.as_deref())
+    let mut cleanup_plan = match tokio::task::spawn_blocking(move || {
+        prepare_cleanup_plan_with_cancel(
+            &plan_args,
+            cache_dir,
+            plan_expected_identity.as_deref(),
+            || {
+                let state = plan_app.state::<RunningProcess>();
+                state
+                    .0
+                    .lock()
+                    .map(|process| process.cancelling)
+                    .unwrap_or(true)
+            },
+        )
     })
     .await
     {
@@ -856,6 +1163,17 @@ pub async fn run_7z(
             None,
             "Archive operation was cancelled during preparation.",
         ));
+    }
+
+    if compound_tar_operation {
+        if let Err(error) = prepare_compound_tar_snapshot(&app, &state, &mut cleanup_plan).await {
+            return Err(finalize_preparation_error(
+                &state,
+                &cleanup_plan,
+                None,
+                error,
+            ));
+        }
     }
 
     // Persist the journal as soon as staging exists so a crash during rewrite
@@ -1054,13 +1372,24 @@ pub async fn run_7z(
 
     let emit_window = window.clone();
     let heartbeat_window = window.clone();
+    let last_progress_activity =
+        std::sync::Arc::new(std::sync::Mutex::new(std::time::Instant::now()));
+    let heartbeat_activity = last_progress_activity.clone();
     let heartbeat_task = tauri::async_runtime::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        let quiet_for = std::time::Duration::from_secs(30);
+        let mut interval = tokio::time::interval(quiet_for);
         // Tokio's first interval tick is immediate. Consume it so the first
-        // heartbeat means the child has actually been quiet/running for 30s.
+        // check means the child has actually been running for 30s.
         interval.tick().await;
         loop {
             interval.tick().await;
+            let is_quiet = heartbeat_activity
+                .lock()
+                .map(|instant| instant.elapsed() >= quiet_for)
+                .unwrap_or(true);
+            if !is_quiet {
+                continue;
+            }
             let _ = heartbeat_window.emit(
                 "7z-progress-structured",
                 crate::progress::ProgressUpdate {
@@ -1106,11 +1435,17 @@ pub async fn run_7z(
         if last_raw_progress_emit.elapsed() >= std::time::Duration::from_millis(75) {
             let _ = emit_window.emit("7z-progress", crate::output::sanitize_output(chunk));
             last_raw_progress_emit = std::time::Instant::now();
+            if let Ok(mut activity) = last_progress_activity.lock() {
+                *activity = last_raw_progress_emit;
+            }
         }
         if let Some(update) = parse_progress_line(chunk) {
             if last_structured_progress_emit.elapsed() >= std::time::Duration::from_millis(75) {
                 let _ = emit_window.emit("7z-progress-structured", update);
                 last_structured_progress_emit = std::time::Instant::now();
+                if let Ok(mut activity) = last_progress_activity.lock() {
+                    *activity = last_structured_progress_emit;
+                }
             }
         }
     })
@@ -1127,6 +1462,10 @@ pub async fn run_7z(
         .as_ref()
         .and_then(|payload| payload.code)
         .unwrap_or(-1);
+    let warning_code = (exit_code == 1
+        && cleanup_plan.staged_extract.is_some()
+        && extract_warning_is_metadata_only(&collected.stdout, &collected.stderr))
+    .then_some(exit_code);
 
     // Keep `cancelling` true as a general finalizing/busy marker until all
     // staged output has been committed or rolled back.
@@ -1151,7 +1490,10 @@ pub async fn run_7z(
     let finalize_plan = cleanup_plan.clone();
     let finalize_emit = emit_window.clone();
     let finalize_join = tokio::task::spawn_blocking(move || {
-        if was_cancelled || exit_code != 0 {
+        // Exit 1 is usually partial data. Publish only the narrow metadata-only
+        // warning class identified above; every other warning rolls back.
+        let commit_ok = !was_cancelled && (exit_code == 0 || warning_code.is_some());
+        if !commit_ok {
             if let Err(error) = rollback_cleanup(&finalize_plan) {
                 Err(format!("7z operation ended, but rollback failed: {error}"))
             } else {
@@ -1206,9 +1548,14 @@ pub async fn run_7z(
     })
     .await;
 
-    // Always clear the operation slot, including when the blocking task panics.
-    // Leaving `cancelling` set would soft-lock every later run_7z until restart.
-    if let Ok(mut process) = lock_process(&state) {
+    // Always clear the operation slot, including when the blocking task panics
+    // or the process mutex is poisoned. Leaving `cancelling` set would soft-lock
+    // every later run_7z until restart.
+    {
+        let mut process = state
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         process.child = None;
         process.preparing = false;
         process.cancelling = false;
@@ -1230,7 +1577,8 @@ pub async fn run_7z(
     Ok(RunResult {
         stdout: sanitize_output(&collected.stdout),
         stderr: sanitize_output(&collected.stderr),
-        code: exit_code,
+        code: if warning_code.is_some() { 0 } else { exit_code },
+        warning_code,
         stdout_truncated: collected.stdout_truncated,
         stderr_truncated: collected.stderr_truncated,
     })
@@ -1247,7 +1595,7 @@ pub async fn probe_7z(
 
     {
         let mut process = lock_process(&state)?;
-        ensure_idle(&process)?;
+        ensure_idle_mut(&mut process)?;
         process.preparing = true;
         process.owner_label = Some(window.label().to_string());
     }
@@ -1379,18 +1727,22 @@ pub fn is_7z_running(
     let mut process = lock_process(&state)?;
     match mode.as_deref() {
         None | Some("check") => {
+            process.expire_stale_update_reservation();
             Ok(process.child.is_some() || process.preparing || process.cancelling)
         }
         Some("reserve_update") => {
+            process.expire_stale_update_reservation();
             if process.child.is_some() || process.preparing || process.cancelling {
                 return Ok(true);
             }
             process.preparing = true;
             process.owner_label = Some(window.label().to_string());
             process.abort_reason = Some("Installing application update".to_string());
+            process.update_reserved_at = Some(std::time::Instant::now());
             Ok(false)
         }
         Some("release_update") => {
+            process.expire_stale_update_reservation();
             if process.child.is_some() {
                 return Err("Cannot release update reservation while 7-Zip is running.".to_string());
             }

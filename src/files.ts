@@ -29,33 +29,59 @@ export type AddPathsOptions = {
   underBasicPreparation?: boolean;
 };
 
+type InputDialogSession = {
+  mode: "add" | "extract" | "browse";
+  inputs: string;
+};
+
+function captureInputDialogSession(): InputDialogSession {
+  return { mode: getMode(), inputs: JSON.stringify(state.inputs) };
+}
+
+function inputDialogSessionIsCurrent(session: InputDialogSession): boolean {
+  return (
+    !state.running &&
+    getMode() === session.mode &&
+    JSON.stringify(state.inputs) === session.inputs
+  );
+}
+
 export async function chooseOutput() {
   await chooseOutputIfCurrent(() => true);
 }
 
 export async function chooseOutputIfCurrent(isCurrent: () => boolean) {
+  const underPrep = state.operationPreparing;
+  if (underPrep) {
+    if (state.running || state.incomingPathsApplying) return;
+  } else {
+    if (isIncomingPathBusy()) return;
+    await acquireIncomingPathLock();
+  }
+  const session = captureInputDialogSession();
   const format = $<HTMLSelectElement>("format").value;
-  const derived = deriveOutputArchivePath(state.inputs, format);
-  let output: string | null;
   try {
-    output = await save({
+    const derived = deriveOutputArchivePath(state.inputs, format);
+    const output = await save({
       title: "Choose output archive",
       defaultPath:
         derived ?? `zinnia.${archiveExtensionForFormat(format.toLowerCase())}`,
     });
+    if (
+      output &&
+      isCurrent() &&
+      inputDialogSessionIsCurrent(session) &&
+      $<HTMLSelectElement>("format").value === format
+    ) {
+      $<HTMLInputElement>("output-path").value = output;
+      state.lastAutoOutputPath = null;
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Could not open the save-archive dialog: ${msg}`, "error");
     setStatus("Could not open the save dialog", 3000);
-    return;
-  }
-  if (
-    output &&
-    isCurrent() &&
-    $<HTMLSelectElement>("format").value === format
-  ) {
-    $<HTMLInputElement>("output-path").value = output;
-    state.lastAutoOutputPath = null;
+  } finally {
+    if (!underPrep) releaseIncomingPathLock();
   }
 }
 
@@ -64,21 +90,34 @@ export async function chooseExtract() {
 }
 
 export async function chooseExtractIfCurrent(isCurrent: () => boolean) {
-  let output: string | string[] | null;
+  const underPrep = state.operationPreparing;
+  if (underPrep) {
+    if (state.running || state.incomingPathsApplying) return;
+  } else {
+    if (isIncomingPathBusy()) return;
+    await acquireIncomingPathLock();
+  }
+  const session = captureInputDialogSession();
   try {
-    output = await open({
+    const output = await open({
       title: "Choose destination folder",
       directory: true,
     });
+    if (
+      output &&
+      typeof output === "string" &&
+      isCurrent() &&
+      inputDialogSessionIsCurrent(session)
+    ) {
+      $<HTMLInputElement>("extract-path").value = output;
+      state.lastAutoExtractDestination = null;
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Could not open the destination-folder dialog: ${msg}`, "error");
     setStatus("Could not open the folder dialog", 3000);
-    return;
-  }
-  if (output && typeof output === "string" && isCurrent()) {
-    $<HTMLInputElement>("extract-path").value = output;
-    state.lastAutoExtractDestination = null;
+  } finally {
+    if (!underPrep) releaseIncomingPathLock();
   }
 }
 
@@ -141,36 +180,27 @@ export async function addFilesIfCurrent(
     return;
   }
 
-  let selection: string | string[] | null;
+  if (!underPrep) await acquireIncomingPathLock();
+  const session = captureInputDialogSession();
+
   try {
-    selection = await open({
+    const selection = await open({
       title: "Add files",
       multiple: true,
     });
+    if (!selection || !isCurrent() || !inputDialogSessionIsCurrent(session)) {
+      return;
+    }
+
+    const newPaths = Array.isArray(selection) ? selection : [selection];
+    const { changed, previousPrimary, rejected } = mergeAddedPaths(newPaths);
+    afterInputsMerged(changed, previousPrimary, rejected);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Could not open the add-files dialog: ${msg}`, "error");
     setStatus("Could not open the file dialog", 3000);
-    return;
-  }
-  if (!selection || !isCurrent()) return;
-
-  const newPaths = Array.isArray(selection) ? selection : [selection];
-
-  if (underPrep) {
-    if (!isCurrent() || state.running) return;
-    const { changed, previousPrimary, rejected } = mergeAddedPaths(newPaths);
-    afterInputsMerged(changed, previousPrimary, rejected);
-    return;
-  }
-
-  await acquireIncomingPathLock();
-  try {
-    if (!isCurrent() || state.running || state.operationPreparing) return;
-    const { changed, previousPrimary, rejected } = mergeAddedPaths(newPaths);
-    afterInputsMerged(changed, previousPrimary, rejected);
   } finally {
-    releaseIncomingPathLock();
+    if (!underPrep) releaseIncomingPathLock();
   }
 }
 
@@ -189,33 +219,30 @@ export async function addFolderIfCurrent(
     return;
   }
 
-  let selection: string | string[] | null;
+  if (!underPrep) await acquireIncomingPathLock();
+  const session = captureInputDialogSession();
+
   try {
-    selection = await open({
+    const selection = await open({
       title: "Add folder",
       directory: true,
     });
+    if (
+      !selection ||
+      typeof selection !== "string" ||
+      !isCurrent() ||
+      !inputDialogSessionIsCurrent(session)
+    ) {
+      return;
+    }
+
+    const { changed, previousPrimary, rejected } = mergeAddedPaths([selection]);
+    afterInputsMerged(changed, previousPrimary, rejected);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Could not open the add-folder dialog: ${msg}`, "error");
     setStatus("Could not open the folder dialog", 3000);
-    return;
-  }
-  if (!selection || typeof selection !== "string" || !isCurrent()) return;
-
-  if (underPrep) {
-    if (!isCurrent() || state.running) return;
-    const { changed, previousPrimary, rejected } = mergeAddedPaths([selection]);
-    afterInputsMerged(changed, previousPrimary, rejected);
-    return;
-  }
-
-  await acquireIncomingPathLock();
-  try {
-    if (!isCurrent() || state.running || state.operationPreparing) return;
-    const { changed, previousPrimary, rejected } = mergeAddedPaths([selection]);
-    afterInputsMerged(changed, previousPrimary, rejected);
   } finally {
-    releaseIncomingPathLock();
+    if (!underPrep) releaseIncomingPathLock();
   }
 }

@@ -1458,6 +1458,26 @@ describe("main bootstrap", () => {
     expect(state.inputs).toEqual(["/tmp/file.txt", "/tmp/other.txt"]);
   });
 
+  it("routes implicit non-archives to a fresh compression session", async () => {
+    const { applyIncomingPaths } = await import("../incoming-paths");
+    const { state } = await import("../state");
+    mocks.archiveRules.validateArchivePaths.mockImplementation(async (paths) =>
+      (paths as string[]).map((path) => ({
+        path,
+        valid: false,
+        reason: "Not an archive",
+      })),
+    );
+
+    mocks.runtime.mode = "extract";
+    state.inputs = ["/tmp/stale-extract.7z"];
+    await applyIncomingPaths(["/tmp/document.txt"], "", "drop");
+
+    expect(state.inputs).toEqual(["/tmp/document.txt"]);
+    expect(mocks.ui.setMode).toHaveBeenCalledWith("add");
+    expect(mocks.basicUi.setBasicView).toHaveBeenCalledWith("compress");
+  });
+
   it("adds platform-flatpak early and skips setup updates on Flatpak", async () => {
     document.body.className = "";
     mocks.setupWizard.shouldShowSetupWizard.mockReturnValue(true);

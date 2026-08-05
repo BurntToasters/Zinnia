@@ -40,6 +40,9 @@ function setChecked(id: string, checked: boolean) {
 beforeEach(() => {
   state.currentSettings = { ...SETTING_DEFAULTS };
   state.logDirectory = "";
+  state.running = false;
+  state.operationPreparing = false;
+  state.incomingPathsApplying = false;
 });
 
 describe("applyTheme", () => {
@@ -337,6 +340,19 @@ describe("openSettingsModal / closeSettingsModal", () => {
     expect(overlay.hidden).toBe(false);
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
   });
+
+  it.each(["running", "operationPreparing", "incomingPathsApplying"] as const)(
+    "does not open settings while %s",
+    (flag) => {
+      const overlay = document.getElementById("settings-overlay")!;
+      overlay.hidden = true;
+      state[flag] = true;
+
+      openSettingsModal();
+
+      expect(overlay.hidden).toBe(true);
+    },
+  );
 
   it("is a no-op when settings are already open", () => {
     const overlay = document.getElementById("settings-overlay")!;

@@ -129,7 +129,6 @@ fn status_for_target(target: super::ArchiveDefaultTarget) -> ArchiveDefaultStatu
 pub(crate) fn windows_query_archive_defaults() -> Vec<ArchiveDefaultStatus> {
     ARCHIVE_DEFAULT_TARGETS
         .iter()
-        .filter(|target| target.key != "rar")
         .map(|target| status_for_target(*target))
         .collect()
 }

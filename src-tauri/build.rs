@@ -1,14 +1,22 @@
 use std::path::Path;
 
 const BINARIES: &[(&str, &str)] = &[
-    ("win/x64/7za.exe", "7z-x86_64-pc-windows-msvc.exe"),
-    ("win/arm64/7za.exe", "7z-aarch64-pc-windows-msvc.exe"),
+    ("win/x64/7z.exe", "7z-x86_64-pc-windows-msvc.exe"),
+    ("win/arm64/7z.exe", "7z-aarch64-pc-windows-msvc.exe"),
     ("mac/7zz", "7z-x86_64-apple-darwin"),
     ("mac/7zz", "7z-aarch64-apple-darwin"),
     ("mac/7zz", "7z-universal-apple-darwin"),
     ("linux/x64/7zzs", "7z-x86_64-unknown-linux-gnu"),
     ("linux/arm64/7zzs", "7z-aarch64-unknown-linux-gnu"),
 ];
+
+fn windows_dll_for_target(target_triple: &str) -> Option<&'static str> {
+    match target_triple {
+        "x86_64-pc-windows-msvc" => Some("win/x64/7z.dll"),
+        "aarch64-pc-windows-msvc" => Some("win/arm64/7z.dll"),
+        _ => None,
+    }
+}
 
 fn sha256_file(path: &Path) -> String {
     use std::io::Read;
@@ -320,6 +328,33 @@ fn prepare_7z_binaries() {
         if is_required {
             prepared_required = true;
         }
+    }
+
+    if let Some(source) = windows_dll_for_target(&target_triple) {
+        let source_path = assets_dir.join(source);
+        let target_path = out_dir.join("7z.dll");
+        println!("cargo:rerun-if-changed={}", source_path.display());
+        if !source_path.exists() {
+            panic!(
+                "Missing required full 7-Zip DLL for target {target_triple}: {}",
+                source_path.display()
+            );
+        }
+        let actual_hash = sha256_file(&source_path);
+        let expected = checksums
+            .get(source)
+            .unwrap_or_else(|| panic!("No checksum entry for {source} in 7z-checksums.json."));
+        assert_eq!(
+            &actual_hash, expected,
+            "Checksum mismatch for required full 7-Zip DLL {source}"
+        );
+        std::fs::copy(&source_path, &target_path).unwrap_or_else(|error| {
+            panic!(
+                "failed to prepare bundled 7z DLL {} from {}: {error}",
+                target_path.display(),
+                source_path.display()
+            )
+        });
     }
 
     if let Some(sidecar) = required_sidecar {

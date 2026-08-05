@@ -1,1 +1,10 @@
 * text=auto eol=lf
+
+# Official Windows 7-Zip License.txt is CRLF; keep exact bytes for provenance hashes.
+assets/7ZIP_LICENSE_WINDOWS.txt binary
+
+# Bundled sidecars must never be newline-normalized.
+assets/**/7z.exe binary
+assets/**/7z.dll binary
+assets/**/7zz binary
+assets/**/7zzs binary

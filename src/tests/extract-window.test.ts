@@ -26,12 +26,24 @@ function mountExtractDom(): void {
         <button id="close-btn" hidden>Close</button>
       </div>
     </div>
+    <div id="input-modal-overlay" hidden>
+      <div class="modal">
+        <h2 id="input-modal-title"></h2>
+        <label id="input-modal-label" for="input-modal-field"></label>
+        <input id="input-modal-field" />
+        <button id="input-modal-confirm">OK</button>
+        <button id="input-modal-cancel">Cancel</button>
+        <button id="input-modal-cancel-x">Close</button>
+      </div>
+    </div>
   `;
 }
 
 async function flushAsync(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
+  // Extract startup now includes probe + archive validation + run_7z.
+  for (let i = 0; i < 12; i++) {
+    await Promise.resolve();
+  }
 }
 
 async function setupAndRun(
@@ -39,6 +51,8 @@ async function setupAndRun(
   options?: {
     injected?: { archive: string; destination: string };
     listenerRegistrations?: Array<Promise<() => void>>;
+    /** Leave false when run_7z is intentionally left pending (cancel tests). */
+    waitForSettle?: boolean;
   },
 ): Promise<{
   invokeMock: ReturnType<
@@ -83,8 +97,30 @@ async function setupAndRun(
     appWindow as never,
   );
 
-  const defaultInvoke: AnyInvoke = async (cmd, _payload) => {
+  const defaultInvoke: AnyInvoke = async (cmd, payload) => {
     if (cmd === "get_extract_paths") return ["/tmp/archive.zip"];
+    if (cmd === "probe_7z") return "25.01";
+    if (cmd === "validate_archive_paths") {
+      const pathsJson =
+        typeof payload === "object" &&
+        payload &&
+        "pathsJson" in payload &&
+        typeof (payload as { pathsJson?: unknown }).pathsJson === "string"
+          ? (payload as { pathsJson: string }).pathsJson
+          : "[]";
+      let paths: string[] = [];
+      try {
+        paths = JSON.parse(pathsJson) as string[];
+      } catch {
+        paths = [];
+      }
+      return paths.map((path) => ({
+        path,
+        valid: true,
+        reason: null,
+        identity: `identity:${path}`,
+      }));
+    }
     if (cmd === "run_7z") {
       return { stdout: "", stderr: "", code: 0 };
     }
@@ -94,12 +130,32 @@ async function setupAndRun(
     return undefined;
   };
 
-  invokeMock.mockImplementation((cmd, payload) =>
-    Promise.resolve((invokeImpl ?? defaultInvoke)(cmd, payload)),
-  );
+  invokeMock.mockImplementation(async (cmd, payload) => {
+    if (invokeImpl) {
+      const custom = await invokeImpl(cmd, payload);
+      if (custom !== undefined) return custom;
+    }
+    return defaultInvoke(cmd, payload);
+  });
 
   await import("../extract-window");
   await flushAsync();
+  if (options?.waitForSettle !== false) {
+    await vi.waitFor(
+      () => {
+        const status =
+          document.getElementById("extract-status")?.textContent ?? "";
+        if (
+          status === "Extracting..." ||
+          status === "Starting extraction..." ||
+          status === "Still working…"
+        ) {
+          throw new Error(`extract still in progress: ${status}`);
+        }
+      },
+      { timeout: 1000, interval: 5 },
+    );
+  }
 
   return { invokeMock, appWindow, progressUnlisten };
 }
@@ -202,6 +258,7 @@ describe("extract-window", () => {
         "--",
         "/Downloads/packed.7z",
       ],
+      expectedArchiveIdentity: "identity:/Downloads/packed.7z",
     });
 
     claim.resolve?.([]);
@@ -226,10 +283,25 @@ describe("extract-window", () => {
     ).toContain("missing sidecar");
   });
 
-  it("treats warning exits as failed transactional extraction", async () => {
-    await setupAndRun(async (cmd, _payload) => {
+  it("treats warning exits as failed extraction with warning detail", async () => {
+    await setupAndRun(async (cmd, payload) => {
       if (cmd === "get_extract_paths") return ["/tmp/archive.7z"];
+      if (cmd === "probe_7z") return "25.01";
+      if (cmd === "validate_archive_paths") {
+        return [
+          {
+            path: "/tmp/archive.7z",
+            valid: true,
+            reason: null,
+            identity: "identity:/tmp/archive.7z",
+          },
+        ];
+      }
       if (cmd === "run_7z") {
+        expect(
+          (payload as { expectedArchiveIdentity?: string } | undefined)
+            ?.expectedArchiveIdentity,
+        ).toBe("identity:/tmp/archive.7z");
         return { stdout: "", stderr: "minor warning", code: 1 };
       }
       return undefined;
@@ -242,13 +314,49 @@ describe("extract-window", () => {
       (document.getElementById("extract-error") as HTMLElement).hidden,
     ).toBe(false);
     expect(
-      (document.querySelector(".extract-error-title") as HTMLElement)
-        .textContent,
-    ).toBe("Extraction failed");
-    expect(
-      (document.getElementById("open-destination-btn") as HTMLButtonElement)
-        .hidden,
-    ).toBe(true);
+      (document.getElementById("error-detail") as HTMLElement).textContent,
+    ).toContain("minor warning");
+  });
+
+  it("retries when header-encrypted member preflight requests a password", async () => {
+    let runCount = 0;
+    const { invokeMock } = await setupAndRun(
+      async (cmd, payload) => {
+        if (cmd === "get_extract_paths") return ["/tmp/headers.7z"];
+        if (cmd === "run_7z") {
+          runCount += 1;
+          if (runCount === 1) {
+            throw new Error(
+              "Could not list archive members for path safety: Enter password:",
+            );
+          }
+          expect((payload as { args: string[] }).args).toContain("-psecret");
+          return { stdout: "", stderr: "", code: 0 };
+        }
+        return undefined;
+      },
+      { waitForSettle: false },
+    );
+
+    await vi.waitFor(() => {
+      expect(
+        (document.getElementById("input-modal-overlay") as HTMLElement).hidden,
+      ).toBe(false);
+    });
+    (document.getElementById("input-modal-field") as HTMLInputElement).value =
+      "secret";
+    (
+      document.getElementById("input-modal-confirm") as HTMLButtonElement
+    ).click();
+
+    await vi.waitFor(() => {
+      expect(
+        invokeMock.mock.calls.filter(([name]) => name === "run_7z"),
+      ).toHaveLength(2);
+      expect(document.getElementById("extract-status")?.textContent).toBe(
+        "Done",
+      );
+    });
   });
 
   it("shows failure details for non-warning extraction failures", async () => {
@@ -336,19 +444,22 @@ describe("extract-window", () => {
 
   it("cancels a running extraction via cancel_7z", async () => {
     let resolveRun: ((value: unknown) => void) | null = null;
-    const { invokeMock } = await setupAndRun(async (cmd) => {
-      if (cmd === "get_extract_paths") return ["/tmp/archive.7z"];
-      if (cmd === "run_7z") {
-        return await new Promise((resolve) => {
-          resolveRun = resolve;
-        });
-      }
-      if (cmd === "cancel_7z") {
-        resolveRun?.({ stdout: "", stderr: "", code: -1 });
-        return true;
-      }
-      return undefined;
-    });
+    const { invokeMock } = await setupAndRun(
+      async (cmd) => {
+        if (cmd === "get_extract_paths") return ["/tmp/archive.7z"];
+        if (cmd === "run_7z") {
+          return await new Promise((resolve) => {
+            resolveRun = resolve;
+          });
+        }
+        if (cmd === "cancel_7z") {
+          resolveRun?.({ stdout: "", stderr: "", code: -1 });
+          return true;
+        }
+        return undefined;
+      },
+      { waitForSettle: false },
+    );
 
     expect(
       (document.getElementById("cancel-btn") as HTMLButtonElement).disabled,
@@ -362,18 +473,21 @@ describe("extract-window", () => {
   });
 
   it("re-enables Cancel after a failed cancel_7z so the user can retry", async () => {
-    await setupAndRun(async (cmd) => {
-      if (cmd === "get_extract_paths") return ["/tmp/archive.7z"];
-      if (cmd === "run_7z") {
-        return await new Promise(() => {
-          /* keep extraction running */
-        });
-      }
-      if (cmd === "cancel_7z") {
-        throw new Error("Could not stop 7z safely: permission denied");
-      }
-      return undefined;
-    });
+    await setupAndRun(
+      async (cmd) => {
+        if (cmd === "get_extract_paths") return ["/tmp/archive.7z"];
+        if (cmd === "run_7z") {
+          return await new Promise(() => {
+            /* keep extraction running */
+          });
+        }
+        if (cmd === "cancel_7z") {
+          throw new Error("Could not stop 7z safely: permission denied");
+        }
+        return undefined;
+      },
+      { waitForSettle: false },
+    );
 
     const cancelBtn = document.getElementById(
       "cancel-btn",
@@ -453,6 +567,7 @@ describe("extract-window", () => {
         "--",
         "/Downloads/test.zip",
       ],
+      expectedArchiveIdentity: "identity:/Downloads/test.zip",
     });
     expect(
       invokeMock.mock.calls.filter(([name]) => name === "run_7z"),
@@ -518,6 +633,8 @@ describe("sanitizeStatusFileName", () => {
     expect(sanitizeStatusFileName("░░░░ ░░░░- insurance 2026.pdf")).toBe(
       "insurance 2026.pdf",
     );
+    expect(sanitizeStatusFileName("*** file.txt")).toBe("file.txt");
+    expect(sanitizeStatusFileName("■■■ report.pdf")).toBe("report.pdf");
   });
 
   it("keeps unicode letters and hidden-style names", async () => {
@@ -526,6 +643,9 @@ describe("sanitizeStatusFileName", () => {
     expect(sanitizeStatusFileName("报告.pdf")).toBe("报告.pdf");
     expect(sanitizeStatusFileName(".hidden.txt")).toBe(".hidden.txt");
     expect(sanitizeStatusFileName("(report).txt")).toBe("(report).txt");
+    expect(sanitizeStatusFileName("[draft] notes.txt")).toBe(
+      "[draft] notes.txt",
+    );
   });
 
   it("logs an injected-session queue drain failure without blocking extraction", async () => {

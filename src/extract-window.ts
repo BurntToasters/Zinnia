@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { validateArchivePaths } from "./archive-rules";
 import { deriveExtractDestinationPath } from "./extract-path";
 import { describe7zError, looksLikePasswordRequiredError } from "./error-hints";
 import { SAFE_EXTRACT_OVERWRITE_MODE } from "./extract-policy";
@@ -22,6 +23,7 @@ interface Run7zResult {
   stdout: string;
   stderr: string;
   code: number;
+  warning_code?: number;
   stdout_truncated?: boolean;
   stderr_truncated?: boolean;
 }
@@ -53,9 +55,14 @@ export function sanitizeStatusFileName(name: string): string {
   const withoutProgressJunk = cleaned
     .replace(/^[\s\u2500-\u259F]+(?:-\s*)?/u, "")
     .trim();
-  const match = withoutProgressJunk.match(/[\p{L}\p{N}._~]/u);
+  // Start at the first filename-like character. Include `(` / `[` / `{` so
+  // names like `(report).txt` keep their parentheses, while still dropping
+  // leading `***` / similar symbol runs from 7-Zip progress lines.
+  const match = withoutProgressJunk.match(/[\p{L}\p{N}._~(\[{]/u);
   if (match?.index === undefined) return "";
-  return [...withoutProgressJunk].slice(0, 200).join("");
+  return [...withoutProgressJunk]
+    .slice(match.index, match.index + 200)
+    .join("");
 }
 
 function readInjectedExtractSession(): InjectedExtractSession | null {
@@ -75,8 +82,22 @@ function readInjectedExtractSession(): InjectedExtractSession | null {
 async function runWithPasswordRetry(
   args: string[],
   shouldAbort: () => boolean,
+  expectedArchiveIdentity?: string,
 ): Promise<Run7zResult> {
-  let result = await invoke<Run7zResult>("run_7z", { args });
+  const invokeArgs = {
+    args,
+    ...(expectedArchiveIdentity ? { expectedArchiveIdentity } : {}),
+  };
+  let result: Run7zResult;
+  try {
+    result = await invoke<Run7zResult>("run_7z", invokeArgs);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    // Header encryption can make backend safety listing request a password
+    // before extraction returns a normal Run7zResult.
+    if (!looksLikePasswordRequiredError("", detail)) throw error;
+    result = { stdout: "", stderr: detail, code: 255 };
+  }
   if (shouldAbort()) {
     return result;
   }
@@ -100,6 +121,7 @@ async function runWithPasswordRetry(
     if (password) {
       result = await invoke<Run7zResult>("run_7z", {
         args: withPassword(args, password),
+        ...(expectedArchiveIdentity ? { expectedArchiveIdentity } : {}),
       });
     }
   }
@@ -239,16 +261,19 @@ async function run() {
       void appWindow.minimize();
     });
   }
-  if (closeTitlebarBtn) {
-    closeTitlebarBtn.addEventListener("click", () => {
-      void closeWindowSafely();
-    });
-  }
-
   const cancelBtn = $("cancel-btn") as HTMLButtonElement;
   const openDestinationBtn = $("open-destination-btn") as HTMLButtonElement;
   const closeBtn = $("close-btn") as HTMLButtonElement;
   let cancelRequested = false;
+
+  if (closeTitlebarBtn) {
+    closeTitlebarBtn.addEventListener("click", () => {
+      // Arm local abort before teardown so an in-flight password prompt cannot
+      // start another run_7z after the window is dismissed.
+      cancelRequested = true;
+      void closeWindowSafely();
+    });
+  }
   let operationFinished = false;
   let destination = "";
 
@@ -477,6 +502,29 @@ async function run() {
     return;
   }
 
+  let expectedArchiveIdentity: string | undefined;
+  try {
+    const [validation] = await validateArchivePaths([archivePath], true);
+    if (!validation?.valid) {
+      const reason = validation?.reason?.trim() ?? "";
+      if (reason) {
+        showError(reason);
+      } else {
+        showError("This archive path is not supported for extraction.");
+      }
+      return;
+    }
+    expectedArchiveIdentity = validation.identity;
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    showError(`Could not validate the archive: ${detail}`);
+    return;
+  }
+  if (cancelRequested) {
+    finish("Cancelled", 100, false, false, true);
+    return;
+  }
+
   let sawStructuredPercent = false;
 
   const startedAt = Date.now();
@@ -495,7 +543,10 @@ async function run() {
     listen<ProgressUpdate>("7z-progress-structured", (event) => {
       const update = event.payload;
       if (update?.currentFile === "Working…") {
-        $("extract-status").textContent = "Still working…";
+        // Heartbeats fill blank status only; keep file name / ETA lines.
+        if (!sawStructuredPercent && !lastFile) {
+          $("extract-status").textContent = "Still working…";
+        }
         return;
       }
       if (update?.currentFile === "Finalizing…") {
@@ -564,7 +615,11 @@ async function run() {
   ];
 
   try {
-    const result = await runWithPasswordRetry(args, () => cancelRequested);
+    const result = await runWithPasswordRetry(
+      args,
+      () => cancelRequested,
+      expectedArchiveIdentity,
+    );
     await removeProgressListeners();
 
     if (cancelRequested && result.code !== 0) {
@@ -574,12 +629,15 @@ async function run() {
 
     if (result.code !== 0) {
       const hint = describe7zError(result.stdout ?? "", result.stderr ?? "");
-      const base = result.stderr?.trim() || `Exit code ${result.code}`;
+      const base =
+        result.code === 1
+          ? `7-Zip stopped with warnings (exit code 1). Extraction was not completed.\n\n${result.stderr?.trim() || "Check the application log for warning details."}`
+          : result.stderr?.trim() || `Exit code ${result.code}`;
       showError(hint ? `${hint}\n\n${base}` : base);
       return;
     }
 
-    finish("Done", 100);
+    finish(result.warning_code ? "Done (warnings)" : "Done", 100);
   } catch (err) {
     await removeProgressListeners();
     if (cancelRequested) {

@@ -103,6 +103,9 @@ describe("release script safeguards", () => {
     expect(gpgSource).toContain("target_commitish: commit");
     expect(gpgSource).toContain("assertReleaseTargetsCommit");
     expect(gpgSource).toContain("if (error?.statusCode !== 422) throw error");
+    expect(gpgSource).toContain(
+      "await new Promise((resolve) => setTimeout(resolve, 2000));",
+    );
     expect(gpgSource).toContain("name: VERSION");
     expect(draftSource).toMatch(
       /if \(afterRetry\) \{\s*assertReleaseTargetsCommit\(afterRetry, commit\);/,
@@ -331,23 +334,16 @@ describe("release script safeguards", () => {
     },
   );
 
-  it("syncs beta→latest manifests automatically during release:sign:gpg", () => {
+  it("keeps draft beta manifests off the public live feed", () => {
     const source = fs.readFileSync("scripts/gpg-sign.js", "utf8");
     expect(source).toContain("if (IS_PRERELEASE)");
-    expect(source).toContain(
-      "await syncBetaManifestsToLatestStable(everything, release.id)",
-    );
-    // Must not gate the automatic path on draft/published; beta.23 briefly
-    // skipped drafts and stranded clients until a manual sync ran.
-    expect(source).not.toContain(
-      "syncBetaManifests: skipped because the current release is still a draft.",
-    );
     const syncBlock = source.slice(
       source.indexOf("for (const f of everything)"),
       source.indexOf("Done: ${TAG} uploaded as"),
     );
-    expect(syncBlock).toContain("syncBetaManifestsToLatestStable");
-    expect(syncBlock).not.toContain("if (!release.draft)");
+    expect(syncBlock).not.toContain("syncBetaManifestsToLatestStable");
+    expect(syncBlock).toContain("beta manifests remain staged only");
+    expect(syncBlock).toContain("release:sync-beta-manifests");
   });
 
   it("keeps a recovery beta→latest sync entry point", () => {
@@ -394,7 +390,13 @@ describe("release script safeguards", () => {
   it("serializes beta feed swaps and recognizes orphan transaction assets", () => {
     const source = fs.readFileSync("scripts/gpg-sign.js", "utf8");
     expect(source).toContain("withBetaManifestSyncLock(latestStable");
-    expect(source).toContain("BETA_SYNC_LOCK_STALE_MS");
+    expect(source).not.toContain("BETA_SYNC_LOCK_STALE_MS");
+    expect(source).toContain(
+      "Never remove the lock while another signer is active.",
+    );
+    expect(source).toContain("assertOwnsBetaManifestSyncLock");
+    expect(source).toContain("assertStillHeld");
+    expect(source).toContain("Lost the beta-manifest synchronization lock");
     expect(source).toContain("cleanupTransactionalStagingAssets(latestStable)");
     expect(isTransactionalStagingAssetName("zinnia-pending-a-feed.json")).toBe(
       true,
@@ -616,12 +618,46 @@ describe("release script safeguards", () => {
       command: "/trusted/7zz",
       args: ["x", "-y", "-o/tmp/extracted", "/downloads/7z-extra.7z"],
     });
+    expect(
+      officialArchiveExtractionCommand({
+        archivePath: "/downloads/7z2602-x64.exe",
+        destination: "/tmp/extracted",
+        trusted7zPath: "/trusted/7zz",
+      }),
+    ).toEqual({
+      command: "/trusted/7zz",
+      args: ["x", "-y", "-o/tmp/extracted", "/downloads/7z2602-x64.exe"],
+    });
     expect(() =>
       officialArchiveExtractionCommand({
         archivePath: "/downloads/7z-extra.7z",
         destination: "/tmp/extracted",
       }),
     ).toThrow(/trusted 7-Zip extractor is required/);
+  });
+
+  it("packages full Windows 7-Zip runtime and RAR integration", () => {
+    const prepare = fs.readFileSync("scripts/prepare-7z.js", "utf8");
+    const build = fs.readFileSync("src-tauri/build.rs", "utf8");
+    const windows = JSON.parse(
+      fs.readFileSync("src-tauri/tauri.windows.conf.json", "utf8"),
+    );
+    const provenance = JSON.parse(
+      fs.readFileSync("assets/7z-provenance.json", "utf8"),
+    );
+    expect(prepare).toContain('source: "win/x64/7z.exe"');
+    expect(prepare).toContain('source: "win/arm64/7z.exe"');
+    expect(build).toContain('"win/x64/7z.dll"');
+    expect(build).toContain('"win/arm64/7z.dll"');
+    expect(windows.bundle.resources["binaries/7z.dll"]).toBe("7z.dll");
+    expect(
+      windows.bundle.fileAssociations.some((entry: { ext: string[] }) =>
+        entry.ext.includes("rar"),
+      ),
+    ).toBe(true);
+    expect(provenance.artifacts["win/x64/7z.exe"].source).toBe(
+      "windows-x64-installer",
+    );
   });
 
   it("accepts only trusted extractor files outside candidate roots", () => {

@@ -213,7 +213,6 @@ pub(crate) fn fallback_archive_defaults(
 
     ARCHIVE_DEFAULT_TARGETS
         .iter()
-        .filter(|target| !(platform == "windows" && target.key == "rar"))
         .map(|target| archive_status(*target, None, can_change, status))
         .collect()
 }
