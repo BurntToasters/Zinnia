@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "product": "7-Zip",
   "version": "26.02",
-  "recordedOn": "2026-07-20",
+  "recordedOn": "2026-08-05",
   "officialDownloadPage": "https://www.7-zip.org/download.html",
   "sourceArchives": {
     "linux-arm64": {
@@ -17,23 +17,57 @@
       "url": "https://www.7-zip.org/a/7z2602-mac.tar.xz",
       "sha256": "1cf6760579502f87e591ff5c73a005ec50b3e4d6f507e8b038382d563c3175b9"
     },
-    "windows-extra": {
-      "url": "https://www.7-zip.org/a/7z2602-extra.7z",
-      "sha256": "081df9e9311dfd9c9e0e98c1c80180b99bb51e4cb24156b5f3057fe3c259d70a"
+    "windows-arm64-installer": {
+      "url": "https://github.com/ip7z/7zip/releases/download/26.02/7z2602-arm64.exe",
+      "sha256": "7c6fde79ed5e11b81c7bb6573b7962d3b6322aa5fce69c33ed19f672b55173ab"
+    },
+    "windows-x64-installer": {
+      "url": "https://github.com/ip7z/7zip/releases/download/26.02/7z2602-x64.exe",
+      "sha256": "6745fa76dc2ea031596d8678f6f6b99c3c1b435b4164a63485adbbc7b8d82ef0"
+    }
+  },
+  "licenseNotices": {
+    "7ZIP_LICENSE_LINUX_MACOS.txt": {
+      "source": "linux-x64",
+      "member": "License.txt",
+      "normalization": "LF",
+      "sha256": "d0c33d358dacc286e24ae69902cd86f084a81416155364b0d54eae6cd853e854"
+    },
+    "7ZIP_LICENSE_WINDOWS.txt": {
+      "source": "windows-x64-installer",
+      "member": "License.txt",
+      "normalization": "none",
+      "sha256": "519ac0a4bded9c18ea02e0afb71f663d8c47373bd9facd3ac96a79f51d77765d"
     }
   },
   "artifacts": {
-    "linux/arm64/7zz": { "source": "linux-arm64", "member": "7zz" },
-    "linux/arm64/7zzs": { "source": "linux-arm64", "member": "7zzs" },
-    "linux/x64/7zz": { "source": "linux-x64", "member": "7zz" },
-    "linux/x64/7zzs": { "source": "linux-x64", "member": "7zzs" },
-    "mac/7zz": { "source": "mac", "member": "7zz" },
-    "win/arm64/7-ZipFar.dll": { "source": "windows-extra", "member": "arm64/7-ZipFar.dll" },
-    "win/arm64/7za.dll": { "source": "windows-extra", "member": "arm64/7za.dll" },
-    "win/arm64/7za.exe": { "source": "windows-extra", "member": "arm64/7za.exe" },
-    "win/arm64/7zxa.dll": { "source": "windows-extra", "member": "arm64/7zxa.dll" },
-    "win/x64/7za.dll": { "source": "windows-extra", "member": "x64/7za.dll" },
-    "win/x64/7za.exe": { "source": "windows-extra", "member": "x64/7za.exe" },
-    "win/x64/7zxa.dll": { "source": "windows-extra", "member": "x64/7zxa.dll" }
+    "linux/arm64/7zzs": {
+      "source": "linux-arm64",
+      "member": "7zzs"
+    },
+    "linux/x64/7zzs": {
+      "source": "linux-x64",
+      "member": "7zzs"
+    },
+    "mac/7zz": {
+      "source": "mac",
+      "member": "7zz"
+    },
+    "win/arm64/7z.dll": {
+      "source": "windows-arm64-installer",
+      "member": "7z.dll"
+    },
+    "win/arm64/7z.exe": {
+      "source": "windows-arm64-installer",
+      "member": "7z.exe"
+    },
+    "win/x64/7z.dll": {
+      "source": "windows-x64-installer",
+      "member": "7z.dll"
+    },
+    "win/x64/7z.exe": {
+      "source": "windows-x64-installer",
+      "member": "7z.exe"
+    }
   }
 }

@@ -3,7 +3,10 @@
 use crate::output::sanitize_output;
 use crate::validation::archive_member_path_is_unsafe;
 
-use super::archive_snapshot::{archive_file_identity, stage_extract_input, ArchiveFileIdentity};
+use super::archive_snapshot::{
+    archive_file_identity, archive_identity_token, stage_extract_input_with_cancel,
+    ArchiveFileIdentity,
+};
 use super::commands::{collect_command_output, terminate_child};
 use super::commit::archive_destination_family_snapshot;
 use super::journal::{register_pending_stage, unregister_pending_stage};
@@ -27,7 +30,7 @@ pub(crate) fn operation_output_path(args: &[String]) -> Option<std::path::PathBu
             let separator = args.iter().position(|a| a == "--").unwrap_or(args.len());
             args[1..separator]
                 .iter()
-                .find(|a| a.to_lowercase().starts_with("-o"))
+                .find(|a| a.to_ascii_lowercase().starts_with("-o"))
                 .map(|a| std::path::PathBuf::from(&a[2..]))
         }
         _ => None,
@@ -182,20 +185,15 @@ pub(crate) fn next_extract_stage_path(
         if !meta.is_dir() {
             return Err("Extraction destination is not a directory.".to_string());
         }
-
-        // Existing destinations can have a different ACL from their parent.
-        // Stage inside the destination so Windows/SMB-created children inherit
-        // the exact policy that should govern the published files.
-        return create_stage_dir_under(
-            target,
-            "extract",
-            cache_dir,
-            crate::fs_secure::create_inheriting_stage_dir,
-        );
     }
 
-    // A new destination has no ACL of its own yet. A sibling stage inherits from
-    // the same parent and can be renamed atomically into the final location.
+    // Always stage as a sibling of the destination (never inside it). Extract
+    // uses `-snld10` for macOS `.framework` chains; an inside-destination stage
+    // would let a crafted relative escape symlink write into the live user
+    // folder during 7-Zip extract, before staged-tree validation. Existing
+    // destinations still get correct ACLs via target-local publish on Windows
+    // and parent-mode apply on Unix. Keep InsideDestination journal recovery
+    // for older in-flight transactions.
     create_publish_stage_dir(target, "extract", cache_dir)
 }
 
@@ -271,6 +269,50 @@ pub(crate) fn extract_member_list_args(args: &[String]) -> Result<Vec<String>, S
 }
 
 /// Inspect `7z l -slt` output and reject members that could escape `-o`.
+///
+/// Checks `Path =` member names and real 7-Zip `Symbolic Link =` / `Hard Link =`
+/// target fields. Link targets are resolved lexically so safe contained links
+/// such as `bin/tool -> ../lib/tool` remain supported.
+fn link_target_is_absolute(target: &str) -> bool {
+    let bytes = target.as_bytes();
+    bytes
+        .first()
+        .is_some_and(|byte| matches!(byte, b'/' | b'\\'))
+        || (bytes.len() >= 2 && bytes[1] == b':')
+}
+
+fn symbolic_link_target_is_unsafe(member_path: &str, target: &str) -> bool {
+    if target.is_empty() {
+        return false;
+    }
+    if link_target_is_absolute(target) {
+        return true;
+    }
+
+    let mut resolved: Vec<&str> = member_path
+        .split(['/', '\\'])
+        .filter(|component| !component.is_empty() && *component != ".")
+        .collect();
+    // Symlink targets are relative to the directory containing the link.
+    resolved.pop();
+    for component in target.split(['/', '\\']) {
+        match component {
+            "" | "." => {}
+            ".." => {
+                if resolved.pop().is_none() {
+                    return true;
+                }
+            }
+            other => resolved.push(other),
+        }
+    }
+    false
+}
+
+fn hard_link_target_is_unsafe(target: &str) -> bool {
+    link_target_is_absolute(target) || archive_member_path_is_unsafe(target)
+}
+
 pub(crate) fn assert_slt_archive_members_safe(
     slt_output: &str,
     archive_path: &str,
@@ -279,24 +321,66 @@ pub(crate) fn assert_slt_archive_members_safe(
         .file_name()
         .and_then(|name| name.to_str());
     let mut seen_member = false;
+    let mut member_count = 0u64;
+    let mut current_member: Option<&str> = None;
     for line in slt_output.lines() {
-        let Some(path) = line.strip_prefix("Path = ") else {
-            continue;
-        };
-        if path.is_empty() {
+        if let Some(path) = line.strip_prefix("Path = ") {
+            if path.is_empty() {
+                continue;
+            }
+            // `-ba` suppresses the archive-container record, so every Path entry is
+            // normally a member. Keep exact-container tolerance for older/future
+            // sidecars without ever skipping an arbitrary first member.
+            if path == archive_path || archive_name == Some(path) {
+                current_member = None;
+                continue;
+            }
+            seen_member = true;
+            member_count = member_count.saturating_add(1);
+            if member_count > super::quota::MAX_EXTRACT_ENTRIES {
+                return Err(format!(
+                    "Archive exceeds the safety limit of {} entries.",
+                    super::quota::MAX_EXTRACT_ENTRIES
+                ));
+            }
+            current_member = Some(path);
+            if archive_member_path_is_unsafe(path) {
+                return Err(format!(
+                    "Archive contains an unsafe member path that could escape the extract folder: {path}"
+                ));
+            }
             continue;
         }
-        // `-ba` suppresses the archive-container record, so every Path entry is
-        // normally a member. Keep exact-container tolerance for older/future
-        // sidecars without ever skipping an arbitrary first member.
-        if path == archive_path || archive_name == Some(path) {
+        if let Some(target) = line.strip_prefix("Symbolic Link = ") {
+            if target.is_empty() {
+                continue;
+            }
+            let member = current_member.ok_or_else(|| {
+                "Could not associate an archive symbolic-link target with a member path."
+                    .to_string()
+            })?;
+            if symbolic_link_target_is_unsafe(member, target) {
+                return Err(format!(
+                    "Archive contains an unsafe link target that could escape the extract folder: {target}"
+                ));
+            }
             continue;
         }
-        seen_member = true;
-        if archive_member_path_is_unsafe(path) {
-            return Err(format!(
-                "Archive contains an unsafe member path that could escape the extract folder: {path}"
-            ));
+        if let Some(target) = line.strip_prefix("Hard Link = ") {
+            if target.is_empty() {
+                continue;
+            }
+            if current_member.is_none() {
+                return Err(
+                    "Could not associate an archive hard-link target with a member path."
+                        .to_string(),
+                );
+            }
+            if hard_link_target_is_unsafe(target) {
+                return Err(format!(
+                    "Archive contains an unsafe link target that could escape the extract folder: {target}"
+                ));
+            }
         }
     }
     // Empty archives legitimately produce no records. Non-empty output with no
@@ -413,13 +497,85 @@ pub(crate) async fn assert_extract_archive_members_safe(
     Ok((archive_path, identity))
 }
 
+#[cfg(test)]
 pub(crate) fn prepare_cleanup_plan(
     args: &[String],
     cache_dir: Option<std::path::PathBuf>,
     expected_archive_identity: Option<&str>,
 ) -> Result<CleanupPlan, String> {
+    prepare_cleanup_plan_with_cancel(args, cache_dir, expected_archive_identity, || false)
+}
+
+pub(crate) fn prepare_cleanup_plan_with_cancel<C>(
+    args: &[String],
+    cache_dir: Option<std::path::PathBuf>,
+    expected_archive_identity: Option<&str>,
+    should_cancel: C,
+) -> Result<CleanupPlan, String>
+where
+    C: Fn() -> bool,
+{
     let cache_ref = cache_dir.as_deref();
+    let command = args.first().map(String::as_str);
+    let separator = args
+        .iter()
+        .position(|arg| arg == "--")
+        .unwrap_or(args.len());
+    let compound_stream = args.get(separator + 1).is_some_and(|archive| {
+        let lower = archive.to_ascii_lowercase();
+        [".tar.gz", ".tar.bz2", ".tar.xz", ".tgz", ".tbz2", ".txz"]
+            .iter()
+            .any(|suffix| lower.ends_with(suffix))
+    });
     let Some(target) = operation_output_path(args) else {
+        if matches!(command, Some("l" | "t")) && compound_stream {
+            const MAX_EXTRACT_BYTES: u64 = 1024 * 1024 * 1024 * 1024;
+            const MIN_DISK_RESERVE_BYTES: u64 = 512 * 1024 * 1024;
+            let archive = args
+                .get(separator + 1)
+                .ok_or_else(|| "Archive command is missing an archive path.".to_string())?;
+            let staged_input = stage_extract_input_with_cancel(
+                std::path::Path::new(archive),
+                cache_ref,
+                expected_archive_identity,
+                &should_cancel,
+            )?;
+            let preparation = (|| {
+                let ratio_limit = staged_input
+                    .total_len
+                    .saturating_mul(1000)
+                    .min(MAX_EXTRACT_BYTES);
+                let free_space = available_space_for_path(&staged_input.path)?;
+                let reserve = (free_space / 10).max(MIN_DISK_RESERVE_BYTES);
+                let max_bytes = ratio_limit.min(free_space.saturating_sub(reserve));
+                if max_bytes == 0 {
+                    return Err(
+                        "Not enough free space to inspect the compound TAR stream.".to_string()
+                    );
+                }
+                Ok((max_bytes, reserve))
+            })();
+            return match preparation {
+                Ok((max_extract_bytes, min_free_bytes)) => Ok(CleanupPlan {
+                    staged_extract: None,
+                    staged_archive: None,
+                    expected_archive_family: Vec::new(),
+                    staged_input_archive: Some(staged_input.path),
+                    cache_dir,
+                    max_extract_bytes: Some(max_extract_bytes),
+                    min_free_bytes: Some(min_free_bytes),
+                }),
+                Err(error) => {
+                    if let Some(parent) = staged_input.path.parent() {
+                        let _ = crate::fs_secure::remove_dir_all_for_cleanup(parent);
+                        if let Some(cache) = cache_ref {
+                            let _ = unregister_pending_stage(cache, parent);
+                        }
+                    }
+                    Err(error)
+                }
+            };
+        }
         return Ok(CleanupPlan {
             staged_extract: None,
             staged_archive: None,
@@ -449,10 +605,11 @@ pub(crate) fn prepare_cleanup_plan(
             let archive = args
                 .get(separator + 1)
                 .ok_or_else(|| "Extraction command is missing an archive path.".to_string())?;
-            let staged_input = match stage_extract_input(
+            let staged_input = match stage_extract_input_with_cancel(
                 std::path::Path::new(archive),
                 cache_ref,
                 expected_archive_identity,
+                &should_cancel,
             ) {
                 Ok(snapshot) => snapshot,
                 Err(error) => {
@@ -538,7 +695,21 @@ pub(crate) fn prepare_cleanup_plan(
                 return Err("Update requires an existing output archive file.".to_string());
             }
             let target = resolve_existing_target(&target, false)?;
+            if let Some(expected) = expected_archive_identity {
+                if archive_identity_token(&target)? != expected {
+                    return Err(
+                        "Archive changed after it was selected; review the current archive before updating it."
+                            .to_string(),
+                    );
+                }
+            }
             let expected_archive_family = archive_destination_family_snapshot(&target)?;
+            if expected_archive_family.len() != 1 {
+                return Err(
+                    "Updating split or multi-volume archives is not supported by bundled 7-Zip. Create a new archive instead."
+                        .to_string(),
+                );
+            }
             let stage_dir = create_publish_stage_dir(&target, "archive", cache_ref)?;
             let staged = stage_dir.join(
                 target

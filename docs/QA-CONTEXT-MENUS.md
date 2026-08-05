@@ -80,8 +80,10 @@ Requires a **signed** NSIS install with full `AZURE_ARTIFACT_SIGNING_PUBLISHER_D
    Get-AuthenticodeSignature "…\Zinnia\shell-<current-version>\zinnia_shell.dll"   # Status = Valid
    ```
 2. If registration failed, check `$INSTDIR\zinnia-context-menu-register.log`.
-3. Right-click a `.zip` / `.7z` (primary menu, not “Show more options”). Also
-   test the first `.001` file from a split-volume archive.
+3. Right-click a `.zip`, `.7z`, `.rar`, and `.tgz` (primary menu, not “Show
+   more options”). Also test the first `.001` file from a split-volume archive.
+   Confirm `.rar` opens with the packaged full runtime (`7z.exe` beside
+   `7z.dll`) and `.tgz` publishes the inner TAR contents in one operation.
 4. Expect top-level **Extract with Zinnia** and **Zinnia** ▸ Extract / Compress
    (not “Zinnia Context Menu”, and not nested duplicate Zinnia arrows). Both
    entries should show the Zinnia logo (not an empty icon slot).
@@ -112,10 +114,11 @@ Requires a **signed** NSIS install with full `AZURE_ARTIFACT_SIGNING_PUBLISHER_D
 > **Release gate:** Steps 5-13 are required before publishing a signed Windows
 > build. CI unsigned shell compile smoke does **not** satisfy this gate.
 >
-> Optional (not a release): after publishing updater artifacts, run
+> Optional (not a release): run
 > `REQUIRE_UPDATER_LIVE=1 npm run validate:updater:live` on a networked machine
-> so missing `latest-*.json` (including `*-beta-*`) fails the gate. Default CI
-> fixture validation remains the pre-publish check.
+> to require both complete standard live channel matrices. Linux ARM64 remains
+> optional unless added with `REQUIRED_UPDATER_TARGETS`. Default CI fixture
+> validation remains the pre-publish check.
 
 ### Failure modes
 
@@ -153,9 +156,10 @@ Wayland and X11 where the desktop environment supports them.
    the locally produced bundle (Zinnia is intentionally sideload-only).
 2. Confirm the launcher entry, icon, archive MIME association, and desktop
    actions **Open**, **Extract**, and **Compress** appear in the file manager.
-3. Exercise each action with a ZIP and 7z archive, a normal file, a folder, and
-   an encrypted archive. Confirm the destination is correct and no action
-   prompts for network access.
+3. Exercise each action with ZIP, 7z, RAR, and TGZ archives, a normal file, a
+   folder, and an encrypted archive. Confirm TGZ publishes the inner TAR
+   contents in one operation, the destination is correct, and no action prompts
+   for network access.
 4. On Flatpak, confirm the selected archive and destination work through the
    intentional home-filesystem permission, then inspect
    `flatpak info --show-permissions run.rosie.zinnia` for only the documented filesystem, display,

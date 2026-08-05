@@ -81,12 +81,28 @@ pub fn quick_extract_warm_prefs(app: &tauri::AppHandle) -> QuickExtractWarmPrefs
     let Ok(path) = settings_path(app) else {
         return QuickExtractWarmPrefs::default();
     };
-    match std::fs::read_to_string(&path) {
-        Ok(raw) => parse_quick_extract_warm_prefs(&raw),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            QuickExtractWarmPrefs::default()
-        }
-        Err(_) => QuickExtractWarmPrefs::default(),
+    match read_bounded_settings_file(&path) {
+        Ok(Some(raw)) => parse_quick_extract_warm_prefs(&raw),
+        Ok(None) | Err(_) => QuickExtractWarmPrefs::default(),
+    }
+}
+
+fn is_frontend_writable_reserved_key(key: &str) -> bool {
+    key == "_setupComplete" || key == "_setupWizardVersion"
+}
+
+/// Drop backend-owned `_` keys from an incoming save so a first-run or hostile
+/// payload cannot plant integration state.
+pub fn strip_untrusted_reserved_settings(
+    incoming: &mut serde_json::Map<String, serde_json::Value>,
+) {
+    let hostile: Vec<String> = incoming
+        .keys()
+        .filter(|key| key.starts_with('_') && !is_frontend_writable_reserved_key(key))
+        .cloned()
+        .collect();
+    for key in hostile {
+        incoming.remove(&key);
     }
 }
 
@@ -94,6 +110,7 @@ pub fn merge_reserved_settings(
     existing: &serde_json::Map<String, serde_json::Value>,
     incoming: &mut serde_json::Map<String, serde_json::Value>,
 ) {
+    strip_untrusted_reserved_settings(incoming);
     for (key, value) in existing {
         if !key.starts_with('_') {
             continue;
@@ -101,7 +118,7 @@ pub fn merge_reserved_settings(
         // Setup wizard keys are intentionally frontend-writable. Other `_`
         // reserved keys stay owned by the on-disk copy so a buggy save cannot
         // clobber backend-managed integration state.
-        if key == "_setupComplete" || key == "_setupWizardVersion" {
+        if is_frontend_writable_reserved_key(key) {
             if !incoming.contains_key(key) {
                 incoming.insert(key.clone(), value.clone());
             }
@@ -218,16 +235,40 @@ fn reset_settings_files(path: &std::path::Path) -> Result<(), String> {
     sync_parent_directory(path)
 }
 
+fn read_bounded_settings_file(path: &std::path::Path) -> Result<Option<String>, String> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_file() {
+        return Err("Settings path is not a regular file.".to_string());
+    }
+    if metadata.len() > MAX_SETTINGS_BYTES as u64 {
+        return Err("Settings file exceeds maximum allowed size.".to_string());
+    }
+    let file = crate::path_safety::open_regular_file_nofollow(path)?;
+    let mut raw = String::new();
+    use std::io::Read as _;
+    file.take((MAX_SETTINGS_BYTES + 1) as u64)
+        .read_to_string(&mut raw)
+        .map_err(|error| error.to_string())?;
+    if raw.len() > MAX_SETTINGS_BYTES {
+        return Err("Settings file exceeds maximum allowed size.".to_string());
+    }
+    Ok(Some(raw))
+}
+
 #[tauri::command]
 pub fn load_settings(app: tauri::AppHandle) -> Result<String, String> {
     let _guard = lock_settings()?;
     let path = settings_path(&app)?;
-    match std::fs::read_to_string(&path) {
-        Ok(contents) => Ok(contents),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+    match read_bounded_settings_file(&path)? {
+        Some(contents) => Ok(contents),
+        None => {
             let backup = backup_path(&path);
-            match std::fs::read_to_string(&backup) {
-                Ok(contents) => {
+            match read_bounded_settings_file(&backup)? {
+                Some(contents) => {
                     // Recover the visible settings path when a Windows
                     // two-step replace was interrupted between renames.
                     std::fs::rename(&backup, &path).map_err(|e| {
@@ -235,13 +276,9 @@ pub fn load_settings(app: tauri::AppHandle) -> Result<String, String> {
                     })?;
                     Ok(contents)
                 }
-                Err(backup_err) if backup_err.kind() == std::io::ErrorKind::NotFound => {
-                    Ok("{}".to_string())
-                }
-                Err(backup_err) => Err(backup_err.to_string()),
+                None => Ok("{}".to_string()),
             }
         }
-        Err(err) => Err(err.to_string()),
     }
 }
 
@@ -254,21 +291,37 @@ pub fn save_settings(app: tauri::AppHandle, json: String) -> Result<(), String> 
     let path = settings_path(&app)?;
 
     let mut incoming = parse_json_object(&json)?;
-    if path.exists() {
-        let existing_raw = std::fs::read_to_string(&path).map_err(|e| {
-            format!(
-                "Failed to read existing settings for reserved-key preservation: {e}. \
-                 Refusing to overwrite to avoid data loss."
-            )
-        })?;
-        let existing = parse_json_object(&existing_raw).map_err(|e| {
-            format!(
-                "Existing settings file is corrupt ({e}). \
-                 Refusing to overwrite to avoid losing reserved keys. \
-                 Delete the file manually to reset."
-            )
-        })?;
-        merge_reserved_settings(&existing, &mut incoming);
+    if let Some(existing_raw) = read_bounded_settings_file(&path).map_err(|e| {
+        format!(
+            "Failed to read existing settings for reserved-key preservation: {e}. \
+             Refusing to overwrite to avoid data loss."
+        )
+    })? {
+        match parse_json_object(&existing_raw) {
+            Ok(existing) => merge_reserved_settings(&existing, &mut incoming),
+            Err(parse_error) => {
+                // Prefer a readable backup over bricking every future save on a
+                // one-time corrupt primary file.
+                let backup = backup_path(&path);
+                match read_bounded_settings_file(&backup)
+                    .ok()
+                    .flatten()
+                    .and_then(|raw| parse_json_object(&raw).ok())
+                {
+                    Some(existing) => merge_reserved_settings(&existing, &mut incoming),
+                    None => {
+                        return Err(format!(
+                            "Existing settings file is corrupt ({parse_error}). \
+                             Refusing to overwrite to avoid losing reserved keys. \
+                             Delete the file manually to reset."
+                        ));
+                    }
+                }
+            }
+        }
+    } else {
+        // First save: still reject planted backend-owned `_` keys.
+        strip_untrusted_reserved_settings(&mut incoming);
     }
 
     let merged = serde_json::Value::Object(incoming);
@@ -381,13 +434,28 @@ mod tests {
     }
 
     #[test]
+    fn strip_untrusted_reserved_settings_drops_planted_backend_keys() {
+        let mut incoming = parse_json_object(
+            r#"{"theme":"light","_integrationAutoEnabled":true,"_setupComplete":true}"#,
+        )
+        .expect("incoming object should parse");
+        strip_untrusted_reserved_settings(&mut incoming);
+        assert!(incoming.get("_integrationAutoEnabled").is_none());
+        assert_eq!(
+            incoming.get("_setupComplete"),
+            Some(&serde_json::Value::Bool(true))
+        );
+    }
+
+    #[test]
     fn merge_reserved_settings_preserves_internal_keys() {
         let existing = parse_json_object(
             r#"{"theme":"dark","_integrationAutoEnabled":true,"_integrationUserDisabled":true}"#,
         )
         .expect("existing object should parse");
         let mut incoming =
-            parse_json_object(r#"{"theme":"light"}"#).expect("incoming object should parse");
+            parse_json_object(r#"{"theme":"light","_integrationAutoEnabled":false}"#)
+                .expect("incoming object should parse");
 
         merge_reserved_settings(&existing, &mut incoming);
 

@@ -331,7 +331,7 @@ describe("buildArgs (add mode)", () => {
     setInputValue("output-path", "out.tgz");
     setSelectValue("format", "gzip");
 
-    expect(() => buildArgs()).toThrow(/Compound TAR streams/i);
+    expect(() => buildArgs()).toThrow(/Creating compound TAR output/i);
   });
 
   it("rejects split output paths in update mode", () => {

@@ -74,21 +74,24 @@
       },
       {
         "ext": [
-          "gz"
+          "gz",
+          "tgz"
         ],
         "mimeType": "application/gzip",
         "description": "Gzip Archive"
       },
       {
         "ext": [
-          "bz2"
+          "bz2",
+          "tbz2"
         ],
         "mimeType": "application/x-bzip2",
         "description": "Bzip2 Archive"
       },
       {
         "ext": [
-          "xz"
+          "xz",
+          "txz"
         ],
         "mimeType": "application/x-xz",
         "description": "XZ Archive"

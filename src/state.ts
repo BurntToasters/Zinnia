@@ -18,23 +18,31 @@ export interface InputValidationInfo {
 export type QuickActionMode = "add" | "extract" | "browse";
 export type LastQuickActionByMode = Partial<Record<QuickActionMode, string>>;
 
-function evictOldest<K, V>(map: Map<K, V>, max: number, newKey: K): void {
-  // If we're re-caching an existing key, no eviction needed.
-  if (map.has(newKey)) return;
-  while (map.size >= max) {
-    const oldest = map.keys().next().value;
-    if (oldest === undefined) break;
-    map.delete(oldest);
+/** Evict one coordinated browse entry so identity/info/selection stay aligned. */
+function evictOldestBrowseCache(newKey: string): void {
+  const maps = [
+    state.browseArchiveInfoByPath,
+    state.browseArchiveIdentityByPath,
+    state.browseSelectionsByArchive,
+  ] as const;
+  if (maps.some((map) => map.has(newKey))) return;
+  while (maps.some((map) => map.size >= MAX_CACHED_ARCHIVES)) {
+    const oldest =
+      state.browseArchiveInfoByPath.keys().next().value ??
+      state.browseArchiveIdentityByPath.keys().next().value ??
+      state.browseSelectionsByArchive.keys().next().value;
+    if (oldest === undefined || oldest === newKey) break;
+    clearBrowseCache(oldest);
   }
 }
 
 export function cacheBrowseInfo(archive: string, info: ArchiveInfo): void {
-  evictOldest(state.browseArchiveInfoByPath, MAX_CACHED_ARCHIVES, archive);
+  evictOldestBrowseCache(archive);
   state.browseArchiveInfoByPath.set(archive, info);
 }
 
 export function cacheBrowseIdentity(archive: string, identity: string): void {
-  evictOldest(state.browseArchiveIdentityByPath, MAX_CACHED_ARCHIVES, archive);
+  evictOldestBrowseCache(archive);
   state.browseArchiveIdentityByPath.set(archive, identity);
 }
 
@@ -45,7 +53,7 @@ export function clearBrowseCache(archive: string): void {
 }
 
 export function cacheSelection(archive: string, set: Set<string>): void {
-  evictOldest(state.browseSelectionsByArchive, MAX_CACHED_ARCHIVES, archive);
+  evictOldestBrowseCache(archive);
   state.browseSelectionsByArchive.set(archive, set);
 }
 
@@ -77,7 +85,7 @@ export const state = {
   inputValidationByPath: new Map<string, InputValidationInfo>(),
   inputValidationRequestId: 0,
   lastInputValidationMode: "add" as "add" | "extract" | "browse",
-  lastInputsSignature: "",
+  lastInputsSignature: "[]",
   lastQuickActionByMode: {} as LastQuickActionByMode,
 };
 

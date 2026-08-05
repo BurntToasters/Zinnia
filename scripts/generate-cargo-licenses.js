@@ -15,6 +15,12 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = dirname(scriptDir);
 const cargoManifestPath = join(repoRoot, "src-tauri", "Cargo.toml");
 const outputPath = join(repoRoot, "public", "licenses-cargo.json");
+const unresolvedOutputPath = join(
+  repoRoot,
+  "public",
+  "licenses-cargo-unresolved.json",
+);
+const requireComplete = process.argv.includes("--require-complete");
 
 function runCargoMetadata() {
   const args = [
@@ -120,6 +126,25 @@ function spdxReferences(licenses) {
     }));
 }
 
+function readPackagedVcsInfo(pkg) {
+  const infoPath = join(dirname(pkg.manifest_path), ".cargo_vcs_info.json");
+  if (!existsSync(infoPath)) return null;
+  try {
+    const info = JSON.parse(readFileSync(infoPath, "utf8"));
+    const revision = info?.git?.sha1;
+    if (typeof revision !== "string" || !/^[a-f0-9]{40}$/i.test(revision)) {
+      return null;
+    }
+    return {
+      revision,
+      pathInRepository:
+        typeof info.path_in_vcs === "string" ? info.path_in_vcs : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function toLicenseEntry(pkg) {
   const licenses =
     typeof pkg.license === "string" && pkg.license.trim()
@@ -160,6 +185,14 @@ function toLicenseEntry(pkg) {
   if (typeof pkg.source === "string" && pkg.source.trim()) {
     entry.source = pkg.source.trim();
   }
+  const vcs = bundledText ? null : readPackagedVcsInfo(pkg);
+  if (vcs) {
+    // crates.io records the exact source commit even when a workspace-root
+    // LICENSE was omitted from the package. Keep it in the unresolved report
+    // so a future override can be reviewed against immutable upstream text.
+    entry.sourceRevision = vcs.revision;
+    entry.sourcePath = vcs.pathInRepository;
+  }
 
   return entry;
 }
@@ -191,15 +224,37 @@ function buildCargoLicenses(metadata) {
 function main() {
   const metadata = runCargoMetadata();
   const licenses = buildCargoLicenses(metadata);
-  const missingText = Object.values(licenses).filter(
-    (entry) => entry.licenseTextStatus === "not-packaged",
-  ).length;
+  const unresolved = Object.fromEntries(
+    Object.entries(licenses).filter(
+      ([, entry]) => entry.licenseTextStatus === "not-packaged",
+    ),
+  );
+  const missingText = Object.keys(unresolved).length;
 
   mkdirSync(dirname(outputPath), { recursive: true });
   writeFileSync(outputPath, `${JSON.stringify(licenses, null, 2)}\n`, "utf8");
-  console.log(
-    `[licenses:cargo] Wrote ${Object.keys(licenses).length} cargo entries to ${outputPath} (${missingText} package license texts unavailable; SPDX references included)`,
+  writeFileSync(
+    unresolvedOutputPath,
+    `${JSON.stringify(unresolved, null, 2)}\n`,
+    "utf8",
   );
+  console.log(
+    `[licenses:cargo] Wrote ${Object.keys(licenses).length} cargo entries to ${outputPath}`,
+  );
+  if (missingText > 0) {
+    const message =
+      `${missingText} package license text(s) are unavailable in their crates.io packages. ` +
+      `Exact unresolved report: ${unresolvedOutputPath}. Generic SPDX references are informational, not a substitute for required binary notices.`;
+    if (requireComplete) {
+      console.error(`[licenses:cargo] FAILED: ${message}`);
+      process.exitCode = 1;
+      return;
+    }
+    console.warn(`[licenses:cargo] WARNING: ${message}`);
+    console.warn(
+      "[licenses:cargo] Re-run with --require-complete for a fail-closed release compliance gate.",
+    );
+  }
 }
 
 main();

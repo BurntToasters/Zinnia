@@ -201,6 +201,10 @@ async function promptInstallAndRestart(
         `Update install timed out after ${UPDATE_INSTALL_TIMEOUT_MS / 1000} seconds.`,
       );
       clearPendingUpdate(false);
+      // Drop archive-operation reservation before requesting process restart.
+      // Native exit handling deliberately blocks Quit while the reservation is
+      // held, so successful release is required before requesting relaunch.
+      await releaseUpdateReservation();
       await relaunch();
     } catch (error) {
       try {

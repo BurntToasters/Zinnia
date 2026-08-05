@@ -74,8 +74,8 @@ communicate via direct calls and a few custom DOM events.
 | `ui/`                  | Shared Power/Basic chrome: hooks, logging, workspace mode, status/progress, inputs       |
 | `main.ts`              | Thin entry; boot orchestration lives in `app-init.ts` / `power-events.ts`                |
 | `power-helpers.ts`     | Shared Power helpers (password toggles, editable-target, reset-for-first-run)            |
-| `power-shortcuts.ts`   | Keyboard shortcuts modal                                                                |
-| `power-logs.ts`        | Diagnostics log export / open / clear                                                   |
+| `power-shortcuts.ts`   | Keyboard shortcuts modal                                                                 |
+| `power-logs.ts`        | Diagnostics log export / open / clear                                                    |
 | `selective-extract.ts` | Pure tree/selection model for the picker                                                 |
 | `extract-window.ts`    | Dedicated extract progress window                                                        |
 | `os-integration.ts`    | Settings → OS Integration tab                                                            |
@@ -119,11 +119,11 @@ re-exports from each crate module root.
 
 Three lists must stay intentionally aligned (with platform filters):
 
-| Layer | File | Notes |
-| --- | --- | --- |
-| Frontend UI | `src/utils.ts` `ARCHIVE_EXTENSIONS` | Includes `.rar`; Windows pickers filter it and Rust rejects every Windows RAR route |
-| Open routing | `src-tauri/src/launch/open_routing.rs` | Omits `.rar` on Windows because packaged `7za.exe` has no RAR handler |
-| Win11 shell | `src-tauri/windows/shell/dllmain.cpp` `LooksLikeArchive` | Same Windows `.rar` omit; includes `*.7z.001` / split-volume siblings (aligned with open routing) |
+| Layer        | File                                                     | Notes                                                                                        |
+| ------------ | -------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Frontend UI  | `src/utils.ts` `ARCHIVE_EXTENSIONS`                      | Includes `.rar`; Windows pickers filter it and Rust routes it through the full 7-Zip sidecar |
+| Open routing | `src-tauri/src/launch/open_routing.rs`                   | Includes `.rar` on Windows because packaged `7z.exe` ships with matching `7z.dll`            |
+| Win11 shell  | `src-tauri/windows/shell/dllmain.cpp` `LooksLikeArchive` | Includes Windows `.rar` plus `*.7z.001` / split-volume siblings (aligned with open routing)  |
 
 When adding a format, update all three (and file associations / NSIS verbs as needed).
 

@@ -2,6 +2,30 @@
 
 use tauri::AppHandle;
 
+static PENDING_MENU_ACTIONS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+pub fn flush_pending_menu_actions(app: &AppHandle) {
+    use tauri::{Emitter as _, Manager as _};
+
+    let Some(main) = app.get_webview_window("main") else {
+        return;
+    };
+    let pending = PENDING_MENU_ACTIONS
+        .lock()
+        .map(|mut actions| std::mem::take(&mut *actions))
+        .unwrap_or_default();
+    let mut pending = pending.into_iter();
+    while let Some(action) = pending.next() {
+        if main.emit("app-menu", &action).is_err() {
+            if let Ok(mut actions) = PENDING_MENU_ACTIONS.lock() {
+                actions.push(action);
+                actions.extend(pending);
+            }
+            break;
+        }
+    }
+}
+
 /// Install the macOS application menu and route custom items to the frontend.
 #[cfg(target_os = "macos")]
 pub fn install_macos_app_menu(app: &AppHandle) -> Result<(), String> {
@@ -112,10 +136,15 @@ pub fn install_macos_app_menu(app: &AppHandle) -> Result<(), String> {
                 if let Err(error) = crate::launch::show_main_window(app) {
                     eprintln!("Failed to show main window for menu action: {error}");
                 }
-                if let Some(main) = app.get_webview_window("main") {
-                    let _ = main.emit("app-menu", id);
-                } else {
-                    let _ = app.emit("app-menu", id);
+                let delivered = crate::launch::MAIN_WINDOW_READY
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                    && app
+                        .get_webview_window("main")
+                        .is_some_and(|main| main.emit("app-menu", id).is_ok());
+                if !delivered {
+                    if let Ok(mut pending) = PENDING_MENU_ACTIONS.lock() {
+                        pending.push(id.to_string());
+                    }
                 }
             }
             _ => {}

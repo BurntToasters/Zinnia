@@ -47,10 +47,11 @@ pub use recovery::{
 pub(crate) use archive_snapshot::archive_identity_token;
 pub(crate) use journal::unregister_pending_stage;
 pub(crate) use quota::available_space_for_path;
-pub(crate) use staging::{create_private_stage_dir, resolve_existing_target};
+pub(crate) use staging::create_private_stage_dir;
 
 #[cfg(test)]
 pub(crate) use commands::{
+    apply_backend_link_switches, extract_warning_is_metadata_only, is_compound_tar_operation,
     prepare_password_transport, rewrite_args_for_managed_listfile, terminate_child,
 };
 #[cfg(test)]
@@ -85,6 +86,8 @@ pub struct RunResult {
     pub stdout: String,
     pub stderr: String,
     pub code: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning_code: Option<i32>,
     pub stdout_truncated: bool,
     pub stderr_truncated: bool,
 }
@@ -97,14 +100,17 @@ pub struct ProcessState {
     pub cancelling: bool,
     pub owner_label: Option<String>,
     pub(crate) abort_reason: Option<String>,
+    /// When set, `preparing` was reserved for an app update install. Auto-clear
+    /// if the webview dies without `release_update` (soft-lock watchdog).
+    pub(crate) update_reserved_at: Option<std::time::Instant>,
     pub(crate) cleanup_plan: Option<CleanupPlan>,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct CleanupPlan {
-    // Every extraction is directed to a contained staging directory first.
-    // New destinations use a sibling stage; existing destinations use a hidden
-    // child stage so published files inherit that destination's actual policy.
+    // Every extraction is directed to a contained sibling staging directory
+    // first (never inside the user destination). Existing destinations still
+    // receive destination ACL/mode via target-local publish / parent-mode apply.
     pub(crate) staged_extract: Option<(std::path::PathBuf, std::path::PathBuf)>,
     // Create/update output is written to a sibling staging basename. This also
     // covers split-volume families (`.001`, `.002`, ...).
@@ -131,6 +137,10 @@ pub(crate) struct ArchiveDestinationSnapshot {
     pub(crate) sha256: [u8; 32],
 }
 
+/// Slightly longer than the frontend install timeout (180s) so a hung install
+/// can still finish, but a dead webview cannot soft-lock archive ops forever.
+pub(crate) const UPDATE_RESERVATION_TTL: std::time::Duration = std::time::Duration::from_secs(210);
+
 impl ProcessState {
     pub fn idle() -> Self {
         ProcessState {
@@ -139,6 +149,7 @@ impl ProcessState {
             cancelling: false,
             owner_label: None,
             abort_reason: None,
+            update_reserved_at: None,
             cleanup_plan: None,
         }
     }
@@ -151,7 +162,26 @@ impl ProcessState {
         self.cancelling = false;
         self.owner_label = None;
         self.abort_reason = None;
+        self.update_reserved_at = None;
         self.cleanup_plan = None;
+    }
+
+    /// Drop a stale update reservation left behind when the webview crashes or
+    /// never reaches `release_update` after `reserve_update`.
+    pub(crate) fn expire_stale_update_reservation(&mut self) {
+        let Some(reserved_at) = self.update_reserved_at else {
+            return;
+        };
+        if reserved_at.elapsed() < UPDATE_RESERVATION_TTL {
+            return;
+        }
+        if self.child.is_some() {
+            return;
+        }
+        if self.abort_reason.as_deref() != Some("Installing application update") {
+            return;
+        }
+        self.release_prepare_slot();
     }
 }
 
@@ -207,4 +237,9 @@ pub fn ensure_idle(state: &ProcessState) -> Result<(), String> {
     } else {
         Ok(())
     }
+}
+
+pub(crate) fn ensure_idle_mut(state: &mut ProcessState) -> Result<(), String> {
+    state.expire_stale_update_reservation();
+    ensure_idle(state)
 }

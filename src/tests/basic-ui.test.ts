@@ -1553,7 +1553,7 @@ describe("basic-ui drag and init wiring", () => {
     expect(getBasicView()).toBe("extract");
   });
 
-  it("omits unsupported RAR files from Windows Basic archive pickers", async () => {
+  it("includes RAR files in Windows Basic archive pickers", async () => {
     state.platformName = "windows";
     initBasicWorkspace();
     openMock.mockResolvedValueOnce(null);
@@ -1563,7 +1563,7 @@ describe("basic-ui drag and init wiring", () => {
 
     const options = openMock.mock.calls[0]?.[0];
     const extensions = options?.filters?.[0]?.extensions ?? [];
-    expect(extensions).not.toContain("rar");
+    expect(extensions).toContain("rar");
     expect(extensions).toContain("zip");
   });
 

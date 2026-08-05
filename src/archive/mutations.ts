@@ -2,7 +2,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { message, open, save } from "@tauri-apps/plugin-dialog";
 import { $, parseThreads } from "../utils";
 import { SETTING_DEFAULTS, state } from "../state";
-import { devLog, log, setRunning, setStatus } from "../ui";
+import { devLog, getMode, log, setRunning, setStatus } from "../ui";
+import {
+  acquireIncomingPathLock,
+  isIncomingPathBusy,
+  releaseIncomingPathLock,
+} from "../incoming-paths";
+import { ensureArchivePaths } from "../archive-rules";
 import {
   normalizeCompressionSecurityOptions,
   validateCompressionSecurityOptions,
@@ -28,20 +34,48 @@ import { confirmZipSymlinkRisk } from "./compress-fidelity";
 
 let mutationDialogOpen = false;
 
+type MutationDialogLease<T> = {
+  value: T;
+  release: () => void;
+};
+
 async function runMutationDialog<T>(
   dialog: () => Promise<T>,
-): Promise<T | null> {
-  if (mutationDialogOpen || state.running) return null;
+): Promise<MutationDialogLease<T> | null> {
+  if (mutationDialogOpen || isIncomingPathBusy()) return null;
   mutationDialogOpen = true;
+  let locked = false;
+  let leased = false;
+  const release = () => {
+    if (locked) {
+      locked = false;
+      releaseIncomingPathLock();
+    }
+    mutationDialogOpen = false;
+  };
   try {
-    return await dialog();
+    await acquireIncomingPathLock();
+    locked = true;
+    const mode = getMode();
+    const inputs = JSON.stringify(state.inputs);
+    const value = await dialog();
+    if (
+      state.running ||
+      state.operationPreparing ||
+      getMode() !== mode ||
+      JSON.stringify(state.inputs) !== inputs
+    ) {
+      return null;
+    }
+    leased = true;
+    return { value, release };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Could not open archive mutation dialog: ${msg}`, "error");
     setStatus("Could not open the file dialog", 3000);
     return null;
   } finally {
-    mutationDialogOpen = false;
+    if (!leased) release();
   }
 }
 
@@ -63,24 +97,39 @@ export async function addFilesToArchive(): Promise<void> {
     return;
   }
 
-  const selection = await runMutationDialog(() =>
+  const picked = await runMutationDialog(() =>
     open({ multiple: true, directory: false }),
   );
+  if (!picked) return;
+  const selection = picked.value;
   const files = Array.isArray(selection)
     ? selection
     : selection
       ? [selection]
       : [];
-  if (files.length === 0) return;
+  if (files.length === 0) {
+    picked.release();
+    return;
+  }
 
   let refreshAfterRun = false;
   state.cancelRequested = false;
   setRunning(true);
+  picked.release();
   try {
     if (!(await ensureRuntimeReady())) return;
     if (state.cancelRequested) {
       setStatus("Cancelled", 2000);
       return;
+    }
+    const [validation] = await ensureArchivePaths(
+      [archive],
+      "extract",
+      undefined,
+      true,
+    );
+    if (!validation?.identity) {
+      throw new Error("Could not capture a stable archive identity.");
     }
     const threads = parseThreads(
       $<HTMLInputElement>("threads").value,
@@ -100,7 +149,12 @@ export async function addFilesToArchive(): Promise<void> {
 
     setStatus("Adding files");
     devLog(`7z ${sanitizeCommandArgsForPreview(args).join(" ")}`);
-    const result = await runWithPasswordRetry(args, true, "Add files");
+    const result = await runWithPasswordRetry(
+      args,
+      true,
+      "Add files",
+      validation.identity,
+    );
     if (state.cancelRequested && result.code !== 0) {
       setStatus("Cancelled", 2000);
       return;
@@ -157,15 +211,25 @@ export async function convertArchive(): Promise<void> {
   }
   const { password: compressPassword, encryptHeaders } =
     normalizeCompressionSecurityOptions(format, rawPassword, rawEncryptHeaders);
-  const dest = await runMutationDialog(() =>
+  const picked = await runMutationDialog(() =>
     save({
       title: "Convert archive to",
       defaultPath: `converted.${format === "gzip" ? "gz" : format === "bzip2" ? "bz2" : format}`,
     }),
   );
-  if (!dest) return;
+  if (!picked) return;
+  const dest = picked.value;
+  if (!dest) {
+    picked.release();
+    return;
+  }
+  if ($<HTMLSelectElement>("format").value !== format) {
+    picked.release();
+    return;
+  }
   const extensionError = validateArchiveOutputExtension(dest, format);
   if (extensionError) {
+    picked.release();
     await message(extensionError, {
       title: "Invalid output filename",
       kind: "warning",
@@ -175,12 +239,22 @@ export async function convertArchive(): Promise<void> {
 
   state.cancelRequested = false;
   setRunning(true);
+  picked.release();
   let tempDir: string | null = null;
   try {
     if (!(await ensureRuntimeReady())) return;
     if (state.cancelRequested) {
       setStatus("Cancelled", 2000);
       return;
+    }
+    const [validation] = await ensureArchivePaths(
+      [archive],
+      "extract",
+      undefined,
+      true,
+    );
+    if (!validation?.identity) {
+      throw new Error("Could not capture a stable archive identity.");
     }
     tempDir = await invoke<string>("create_temp_extract_dir");
 
@@ -189,10 +263,22 @@ export async function convertArchive(): Promise<void> {
     const password = extractPassword || browsePassword;
 
     setStatus("Extracting for conversion");
-    const extractArgs = ["x", `-o${tempDir}`, SAFE_EXTRACT_OVERWRITE_MODE];
+    const extractArgs = [
+      "x",
+      `-o${tempDir}`,
+      SAFE_EXTRACT_OVERWRITE_MODE,
+      "-bb1",
+      "-bsp1",
+      "-spd",
+    ];
     if (password) extractArgs.push(`-p${password}`);
     extractArgs.push("--", archive);
-    const extract = await runWithPasswordRetry(extractArgs, true);
+    const extract = await runWithPasswordRetry(
+      extractArgs,
+      true,
+      "Extract",
+      validation.identity,
+    );
     if (state.cancelRequested) {
       setStatus("Cancelled", 2000);
       return;

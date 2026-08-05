@@ -186,6 +186,9 @@ describe("checkUpdates", () => {
     expect(invokeMock).toHaveBeenCalledWith("is_7z_running", {
       mode: "reserve_update",
     });
+    expect(invokeMock).toHaveBeenCalledWith("is_7z_running", {
+      mode: "release_update",
+    });
     expect(setStatusMock).toHaveBeenCalledWith("Downloading update");
     expect(setStatusMock).toHaveBeenCalledWith("Update ready");
     expect(setStatusMock).toHaveBeenCalledWith("Installing update");
@@ -206,6 +209,35 @@ describe("checkUpdates", () => {
       mode: "release_update",
     });
     expect(relaunchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not relaunch after install when reservation release IPC fails", async () => {
+    const install = vi.fn().mockResolvedValue(undefined);
+    checkMock.mockResolvedValue({
+      version: "0.5.0",
+      download: vi.fn().mockResolvedValue(undefined),
+      install,
+      close: vi.fn().mockResolvedValue(undefined),
+    } as unknown as Awaited<ReturnType<typeof check>>);
+    askMock.mockResolvedValue(true);
+    invokeMock.mockImplementation((command, payload) => {
+      if (
+        command === "is_7z_running" &&
+        (payload as { mode?: string } | undefined)?.mode === "release_update"
+      ) {
+        return Promise.reject(new Error("release IPC unavailable"));
+      }
+      return Promise.resolve(false);
+    });
+
+    await checkUpdates();
+
+    expect(install).toHaveBeenCalledOnce();
+    expect(relaunchMock).not.toHaveBeenCalled();
+    expect(logMock).toHaveBeenCalledWith(
+      "Unable to release update reservation: release IPC unavailable",
+      "error",
+    );
   });
 
   it("releases the archive-operation reservation when install times out", async () => {

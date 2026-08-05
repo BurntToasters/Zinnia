@@ -55,7 +55,7 @@ export function resetRuntimeStateForFirstRun(): void {
   state.selectiveExpandedFolders.clear();
   state.inputValidationByPath.clear();
   state.inputValidationRequestId += 1;
-  state.lastInputsSignature = "";
+  state.lastInputsSignature = "[]";
   state.lastQuickActionByMode = {};
   dom.logEl.textContent = "";
 }

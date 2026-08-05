@@ -40,6 +40,28 @@ fn is_include_or_exclude(arg: &str) -> bool {
         && arg.contains('!')
 }
 
+fn is_include_switch(arg: &str) -> bool {
+    arg.to_ascii_lowercase().starts_with("-i") && arg.contains('!')
+}
+
+fn include_exclude_payload(arg: &str) -> Option<&str> {
+    let index = arg.find('!')?;
+    Some(&arg[index + 1..])
+}
+
+/// Compress `-i!` / `-x!` payloads that name absolute host paths bypass the
+/// after-`--` real-path / reparse checks. Reject those shapes here.
+fn compress_include_exclude_payload_is_unsafe(payload: &str) -> bool {
+    if payload.is_empty() {
+        return false;
+    }
+    if archive_member_path_is_unsafe(payload) {
+        return true;
+    }
+    let bytes = payload.as_bytes();
+    bytes[0] == b'/' || bytes[0] == b'\\' || (bytes.len() >= 2 && bytes[1] == b':')
+}
+
 fn is_common_diagnostic_switch(lower: &str) -> bool {
     lower == "-ba"
         || lower == "-bt"
@@ -50,10 +72,14 @@ fn is_common_diagnostic_switch(lower: &str) -> bool {
         || (lower.starts_with("-scc") && lower.len() > 4)
 }
 
+fn method_switch_value_is_safe(value: &str) -> bool {
+    !value.is_empty() && !value.contains('/') && !value.contains('\\') && !value.contains("..")
+}
+
 fn is_allowed_method_switch(lower: &str) -> bool {
     // Intentionally narrow: reject open-ended -m* (and -ssw is blocked separately).
     // Prefixes ending in '=' require a non-empty value. Others require end / '=' / digit
-    // so `-mxyz` does not match `-mx`.
+    // so `-mxyz` does not match `-mx`. Values must not smuggle path separators.
     const PREFIXES: &[&str] = &[
         "-m0=", "-mem=", "-mhe=", "-mtc=", "-mta=", "-mhc=", "-mcu=", "-mcl=", "-mx", "-md",
         "-mfb", "-ms", "-mmt",
@@ -63,14 +89,18 @@ fn is_allowed_method_switch(lower: &str) -> bool {
             continue;
         };
         if prefix.ends_with('=') {
-            return !rest.is_empty()
-                && !rest.contains('/')
-                && !rest.contains('\\')
-                && !rest.contains("..");
+            return method_switch_value_is_safe(rest);
         }
-        return rest.is_empty()
-            || rest.starts_with('=')
-            || rest.chars().next().is_some_and(|ch| ch.is_ascii_digit());
+        if rest.is_empty() {
+            return true;
+        }
+        if let Some(value) = rest.strip_prefix('=') {
+            return method_switch_value_is_safe(value);
+        }
+        if rest.chars().next().is_some_and(|ch| ch.is_ascii_digit()) {
+            return method_switch_value_is_safe(rest);
+        }
+        return false;
     }
     false
 }
@@ -144,10 +174,9 @@ pub(crate) fn archive_member_path_is_unsafe(path: &str) -> bool {
     if path.is_empty() {
         return false;
     }
-    #[cfg(target_os = "windows")]
+    // Normalize both separators on every platform so ZIP members that use
+    // Windows-style `\` cannot smuggle `..` past a POSIX-only splitter.
     let has_parent = path.split(['/', '\\']).any(|component| component == "..");
-    #[cfg(not(target_os = "windows"))]
-    let has_parent = path.split('/').any(|component| component == "..");
     if has_parent {
         return true;
     }
@@ -247,7 +276,7 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
         }
         if separator_index.is_none() && lower.starts_with("-p") {
             password_switches += 1;
-            if arg.len() > 2 && arg[2..].contains(['\r', '\n']) {
+            if arg.len() > 2 && arg[2..].contains(['\r', '\n', '\0', '\u{2028}', '\u{2029}']) {
                 return Err("Archive passwords cannot contain line breaks.".to_string());
             }
         }
@@ -276,6 +305,23 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
                 return Err(format!(
                     "7z switch '{arg}' must not contain a '..' parent-directory segment."
                 ));
+            }
+            if matches!(cmd, "a" | "u") && is_include_or_exclude(arg) {
+                // Compression inputs must come only from the validated paths
+                // after `--`. Even a relative `-i!name` makes 7-Zip read an
+                // additional file from its working directory.
+                if is_include_switch(arg) {
+                    return Err(format!(
+                        "7z include switch '{arg}' is not permitted for compression. Select inputs in the UI instead."
+                    ));
+                }
+                if include_exclude_payload(arg)
+                    .is_some_and(compress_include_exclude_payload_is_unsafe)
+                {
+                    return Err(format!(
+                        "7z switch '{arg}' must not name an absolute or escaping host path. Select inputs in the UI instead."
+                    ));
+                }
             }
         } else {
             positional_before_separator += 1;
@@ -424,11 +470,18 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
             return Err("Compression allows at most one archive type (-t).".to_string());
         }
         let format = formats.last().map(String::as_str).unwrap_or("7z");
-        let method = args[1..separator].iter().find_map(|arg| {
-            arg.to_ascii_lowercase()
-                .strip_prefix("-m0=")
-                .map(str::to_string)
-        });
+        let methods: Vec<String> = args[1..separator]
+            .iter()
+            .filter_map(|arg| {
+                arg.to_ascii_lowercase()
+                    .strip_prefix("-m0=")
+                    .map(str::to_string)
+            })
+            .collect();
+        if methods.len() > 1 {
+            return Err("Compression allows at most one method switch (-m0=).".to_string());
+        }
+        let method = methods.into_iter().next();
         let has_dict = args[1..separator]
             .iter()
             .any(|arg| arg.to_ascii_lowercase().starts_with("-md"));
@@ -475,9 +528,7 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
                 .iter()
                 .any(|suffix| lower.ends_with(suffix))
             {
-                return Err(
-                    "Compound TAR stream output is not supported in this release.".to_string(),
-                );
+                return Err("Creating compound TAR output is not supported yet.".to_string());
             }
             if cmd == "u" && lower.ends_with(".001") {
                 return Err("Split-volume archives cannot be updated.".to_string());
@@ -937,6 +988,39 @@ mod tests {
     }
 
     #[test]
+    fn validate_run_7z_args_rejects_all_compress_includes() {
+        for bad in [
+            "-i!unselected.txt",
+            "-ir!*.rs",
+            "-i!/etc/passwd",
+            r"-i!C:\Windows\secret",
+            r"-ir!\abs\*",
+        ] {
+            let args = vec![
+                "a".to_string(),
+                "-t7z".to_string(),
+                bad.to_string(),
+                "out.7z".to_string(),
+                "--".to_string(),
+                "input.txt".to_string(),
+            ];
+            assert!(
+                validate_run_7z_args(&args).is_err(),
+                "expected {bad} to be rejected"
+            );
+        }
+        let ok = vec![
+            "a".to_string(),
+            "-t7z".to_string(),
+            "-x!*.tmp".to_string(),
+            "out.7z".to_string(),
+            "--".to_string(),
+            "input.txt".to_string(),
+        ];
+        assert!(validate_run_7z_args(&ok).is_ok());
+    }
+
+    #[test]
     fn validate_run_7z_args_rejects_overwrite_all_extract_modes() {
         for bad in ["-aoa", "-aot"] {
             let args = vec![
@@ -1003,8 +1087,14 @@ mod tests {
         {
             assert!(!archive_member_path_is_unsafe(r"a:b"));
             assert!(!archive_member_path_is_unsafe(r"\literal-name"));
-            assert!(!archive_member_path_is_unsafe(r"folder\..\literal"));
+            // Backslash separators still carry `..` components on every OS.
+            assert!(archive_member_path_is_unsafe(r"folder\..\literal"));
         }
+        assert!(!is_allowed_method_switch("-mx=../evil"));
+        assert!(!is_allowed_method_switch("-md=/tmp"));
+        assert!(!is_allowed_method_switch(r"-mmt=4\x"));
+        assert!(is_allowed_method_switch("-mx=9"));
+        assert!(is_allowed_method_switch("-mmt=4"));
     }
 
     #[test]

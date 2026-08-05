@@ -193,6 +193,7 @@ async function applyIncomingPathsUnlocked(
   const shouldAutoExtract =
     mode === "extract" ||
     (mode !== "extract" && paths.length > 1 && allArchives);
+  const shouldAutoCompress = !shouldAutoExtract && !shouldAutoBrowse;
   if (shouldAutoExtract) {
     // Explicit extract handoffs may arrive as multiple Explorer/Finder batches.
     // Append only when the UI is already in extract; otherwise clear leftovers
@@ -207,6 +208,13 @@ async function applyIncomingPathsUnlocked(
   } else if (shouldAutoBrowse) {
     setMode("browse");
     state.inputs.length = 0;
+  } else if (shouldAutoCompress) {
+    // An implicit non-archive handoff starts/continues a compression session.
+    // Never append it to stale extract/browse inputs.
+    if (getMode() !== "add") {
+      state.inputs.length = 0;
+    }
+    setMode("add");
   }
 
   const { rejected } = mergeIncomingPaths(paths);

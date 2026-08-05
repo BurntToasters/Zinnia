@@ -116,7 +116,13 @@ fn macos_read_pbs_plist_json() -> Option<serde_json::Value> {
     }
 
     let output = command_output_with_timeout(
-        Command::new("plutil").args(["-convert", "json", "-o", "-", &path.to_string_lossy()]),
+        Command::new("/usr/bin/plutil").args([
+            "-convert",
+            "json",
+            "-o",
+            "-",
+            &path.to_string_lossy(),
+        ]),
         std::time::Duration::from_secs(5),
     )
     .ok()?;
@@ -638,9 +644,9 @@ mod tests {
         assert!(packaged.win11_modern_menu_available);
         assert_eq!(
             packaged.archive_defaults.len(),
-            ARCHIVE_DEFAULT_TARGETS.len() - 1
+            ARCHIVE_DEFAULT_TARGETS.len()
         );
-        assert!(!packaged
+        assert!(packaged
             .archive_defaults
             .iter()
             .any(|entry| entry.key == "rar"));

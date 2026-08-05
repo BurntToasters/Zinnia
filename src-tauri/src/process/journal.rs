@@ -248,8 +248,10 @@ pub(crate) fn path_identity(path: &std::path::Path) -> Result<FileIdentity, Stri
 }
 
 /// Identity of one directory entry without following its final symlink.
-/// Unix extraction may publish symlinks, so recovery must distinguish the
-/// exact link inode from a replacement link before moving it back.
+/// Unix and Windows extraction may publish symbolic links, so recovery must
+/// distinguish the exact link entry from a replacement before moving it back.
+/// Non-symlink Windows reparse points (junctions, cloud placeholders) stay
+/// rejected.
 pub(crate) fn path_entry_identity(path: &std::path::Path) -> Result<FileIdentity, String> {
     #[cfg(unix)]
     {
@@ -267,7 +269,38 @@ pub(crate) fn path_entry_identity(path: &std::path::Path) -> Result<FileIdentity
             fingerprint: None,
         })
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
+            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        };
+        let metadata = std::fs::symlink_metadata(path).map_err(|error| error.to_string())?;
+        let is_symlink = metadata.file_type().is_symlink();
+        if !metadata.is_file() && !metadata.is_dir() && !is_symlink {
+            return Err(format!(
+                "Expected a regular file, directory, or symbolic link: {}",
+                path.display()
+            ));
+        }
+        if crate::path_safety::is_link_or_reparse(&metadata) && !is_symlink {
+            return Err(format!(
+                "Refusing a file identity for a non-symlink reparse point: {}",
+                path.display()
+            ));
+        }
+        let mut options = std::fs::OpenOptions::new();
+        options
+            .access_mode(FILE_READ_ATTRIBUTES)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            // OPEN_REPARSE_POINT keeps the symlink entry itself addressable so
+            // merge publish / rollback can fingerprint and rename it.
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
+        let file = options.open(path).map_err(|error| error.to_string())?;
+        file_identity_for_entry(&file, is_symlink)
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         path_identity(path)
     }
@@ -286,43 +319,51 @@ pub(crate) fn file_identity(file: &std::fs::File) -> Result<FileIdentity, String
     }
     #[cfg(windows)]
     {
-        use std::os::windows::io::AsRawHandle as _;
-        use windows_sys::Win32::Foundation::HANDLE;
-        use windows_sys::Win32::Storage::FileSystem::{
-            FileIdInfo, GetFileInformationByHandle, GetFileInformationByHandleEx,
-            BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ID_INFO,
-        };
-        let handle = file.as_raw_handle() as HANDLE;
-        let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
-        let success = unsafe { GetFileInformationByHandle(handle, &mut info) };
-        if success == 0 {
-            return Err(std::io::Error::last_os_error().to_string());
-        }
-        if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-            return Err("Refusing a file identity for a link or reparse point.".to_string());
-        }
-        let mut extended: FILE_ID_INFO = unsafe { std::mem::zeroed() };
-        let has_extended_id = unsafe {
-            GetFileInformationByHandleEx(
-                handle,
-                FileIdInfo,
-                (&mut extended as *mut FILE_ID_INFO).cast(),
-                std::mem::size_of::<FILE_ID_INFO>() as u32,
-            )
-        } != 0;
-        Ok(FileIdentity::Windows {
-            volume_serial_number: info.dwVolumeSerialNumber,
-            file_index: (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
-            volume_serial_number_64: has_extended_id.then_some(extended.VolumeSerialNumber),
-            file_id_128: has_extended_id.then_some(extended.FileId.Identifier),
-            fingerprint: None,
-        })
+        file_identity_for_entry(file, false)
     }
     #[cfg(not(any(unix, windows)))]
     {
         let _ = file;
         Err("Stable file identities are unavailable on this platform.".to_string())
     }
+}
+
+#[cfg(windows)]
+fn file_identity_for_entry(
+    file: &std::fs::File,
+    allow_symlink_reparse: bool,
+) -> Result<FileIdentity, String> {
+    use std::os::windows::io::AsRawHandle as _;
+    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FileIdInfo, GetFileInformationByHandle, GetFileInformationByHandleEx,
+        BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ID_INFO,
+    };
+    let handle = file.as_raw_handle() as HANDLE;
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    let success = unsafe { GetFileInformationByHandle(handle, &mut info) };
+    if success == 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 && !allow_symlink_reparse {
+        return Err("Refusing a file identity for a link or reparse point.".to_string());
+    }
+    let mut extended: FILE_ID_INFO = unsafe { std::mem::zeroed() };
+    let has_extended_id = unsafe {
+        GetFileInformationByHandleEx(
+            handle,
+            FileIdInfo,
+            (&mut extended as *mut FILE_ID_INFO).cast(),
+            std::mem::size_of::<FILE_ID_INFO>() as u32,
+        )
+    } != 0;
+    Ok(FileIdentity::Windows {
+        volume_serial_number: info.dwVolumeSerialNumber,
+        file_index: (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+        volume_serial_number_64: has_extended_id.then_some(extended.VolumeSerialNumber),
+        file_id_128: has_extended_id.then_some(extended.FileId.Identifier),
+        fingerprint: None,
+    })
 }
 
 fn os_value_bytes(value: &std::ffi::OsStr) -> Vec<u8> {

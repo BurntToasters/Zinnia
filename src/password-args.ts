@@ -4,7 +4,7 @@ export function withPassword(args: string[], password: string): string[] {
   const head = separator === -1 ? args.slice() : args.slice(0, separator);
   const tail = separator === -1 ? [] : args.slice(separator);
   return [
-    ...head.filter((argument) => !argument.startsWith("-p")),
+    ...head.filter((argument) => argument.slice(0, 2).toLowerCase() !== "-p"),
     `-p${password}`,
     ...tail,
   ];

@@ -12,6 +12,7 @@ import {
   devLog,
   setStatus,
   hideProgress,
+  getMode,
   setRunning,
   triggerIconRefresh,
 } from "../ui";
@@ -703,10 +704,12 @@ async function openSelectiveExtractModalOnce(): Promise<void> {
   selectiveTrigger = document.activeElement as HTMLElement | null;
 
   const archive = state.inputs[0];
+  const mode = getMode();
   const requestId = ++state.selectiveOpenRequestId;
   const requestIsCurrent = () =>
     requestId === state.selectiveOpenRequestId &&
     state.inputs[0] === archive &&
+    getMode() === mode &&
     !state.running;
   if (!archive) {
     await message("Select an archive to browse first.", {
@@ -852,6 +855,10 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
         },
       );
       if (!extractAll) return;
+    }
+    if (state.cancelRequested) {
+      setStatus("Cancelled", 2000);
+      return;
     }
     const args = buildExtractArgsFor(
       archive,

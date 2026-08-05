@@ -8,11 +8,14 @@
  *   node scripts/validate-updater-live.js --expected-version=current
  *   EXPECTED_UPDATER_VERSION=0.6.0-beta.16 REQUIRED_UPDATER_TARGETS=windows-beta-x86_64 node scripts/validate-updater-live.js
  *
- * Missing manifests (HTTP 404) are skipped with a warning. Present manifests
- * must pass the same shape checks as validate-updater-manifest.js.
- * `--expected-version` makes this a candidate-bound post-publish check. Pass
- * `REQUIRED_UPDATER_TARGETS` only for targets the release actually produced;
- * it turns missing selected manifests into errors.
+ * Missing manifests (HTTP 404) are skipped with a warning during the soft CI
+ * smoke. Present manifests must pass the same shape checks as
+ * validate-updater-manifest.js. `--expected-version=current` requires Zinnia's
+ * standard release matrix for that channel; stable candidates also require
+ * beta-target transition endpoints. REQUIRE_UPDATER_LIVE=1 requires both
+ * standard live channel matrices when no expected version is supplied.
+ * REQUIRED_UPDATER_TARGETS adds intentional optional targets (for example,
+ * Linux ARM64) to the required set.
  */
 
 import fs from "fs";
@@ -79,6 +82,29 @@ const TARGETS = [
   "linux-beta-aarch64-rpm",
 ];
 
+const STANDARD_STABLE_TARGETS = [
+  "windows-x86_64",
+  "windows-aarch64",
+  "darwin-aarch64",
+  "darwin-x86_64",
+  "linux-x86_64",
+];
+
+const STANDARD_BETA_TARGETS = [
+  "windows-beta-x86_64",
+  "windows-beta-x86_64-nsis",
+  "windows-beta-aarch64",
+  "windows-beta-aarch64-nsis",
+  "darwin-beta-aarch64",
+  "darwin-beta-aarch64-app",
+  "darwin-beta-x86_64",
+  "darwin-beta-x86_64-app",
+  "linux-beta-x86_64",
+  "linux-beta-x86_64-appimage",
+  "linux-beta-x86_64-deb",
+  "linux-beta-x86_64-rpm",
+];
+
 const requestedExpectedVersion =
   optionValue("--expected-version") ||
   process.env.EXPECTED_UPDATER_VERSION ||
@@ -87,8 +113,25 @@ const expectedVersion =
   requestedExpectedVersion === "current"
     ? currentPackageVersion()
     : requestedExpectedVersion.trim();
-const requiredTargets = parseTargets(process.env.REQUIRED_UPDATER_TARGETS);
+const explicitlyRequiredTargets = parseTargets(
+  process.env.REQUIRED_UPDATER_TARGETS,
+);
 const expectedIsBeta = /-beta\.\d+$/.test(expectedVersion);
+const standardRequiredTargets =
+  requestedExpectedVersion === "current"
+    ? expectedIsBeta
+      ? STANDARD_BETA_TARGETS
+      : [...STANDARD_STABLE_TARGETS, ...STANDARD_BETA_TARGETS]
+    : requireLive
+      ? expectedVersion
+        ? expectedIsBeta
+          ? STANDARD_BETA_TARGETS
+          : [...STANDARD_STABLE_TARGETS, ...STANDARD_BETA_TARGETS]
+        : [...STANDARD_STABLE_TARGETS, ...STANDARD_BETA_TARGETS]
+      : [];
+const requiredTargets = Array.from(
+  new Set([...standardRequiredTargets, ...explicitlyRequiredTargets]),
+);
 const selectedTargets =
   requiredTargets.length > 0
     ? requiredTargets

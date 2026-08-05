@@ -71,19 +71,17 @@ const BASIC_ARCHIVE_EXTENSIONS = [
   "zip",
   "tar",
   "gz",
+  "tgz",
   "bz2",
+  "tbz2",
   "xz",
+  "txz",
   "rar",
   "001",
 ];
 
 function basicArchiveDialogExtensions(): string[] {
-  // Windows packages standalone 7za.exe, which has no RAR handler. Keep the
-  // picker aligned with backend validation instead of allowing a selection
-  // that Browse/Test cannot fulfill.
-  return state.platformName === "windows"
-    ? BASIC_ARCHIVE_EXTENSIONS.filter((extension) => extension !== "rar")
-    : [...BASIC_ARCHIVE_EXTENSIONS];
+  return [...BASIC_ARCHIVE_EXTENSIONS];
 }
 
 export function initBasicWorkspace(): void {

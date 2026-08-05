@@ -142,7 +142,7 @@ async function runQuickAction(
       const passwordField = $<HTMLInputElement>("extract-password");
       const password = passwordField.value;
       const result = await testArchive();
-      if (result !== "passed" && result !== "passed_with_warnings") {
+      if (result !== "passed") {
         setQuickActionFeedback(
           "Extraction skipped because integrity test did not pass.",
         );
