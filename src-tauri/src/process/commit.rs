@@ -467,6 +467,24 @@ fn copy_tree_with_inherited_acl(
         let target_child = target.join(entry.file_name());
         let metadata =
             std::fs::symlink_metadata(&source_child).map_err(|error| error.to_string())?;
+        if metadata.file_type().is_symlink() {
+            // Defense in depth: symlink-bearing trees normally rename instead of
+            // ACL-copying, but recreate contained links if this path is used.
+            let link_target =
+                std::fs::read_link(&source_child).map_err(|error| error.to_string())?;
+            let is_directory_link = {
+                use std::os::windows::fs::FileTypeExt as _;
+                metadata.file_type().is_symlink_dir()
+            };
+            if is_directory_link {
+                std::os::windows::fs::symlink_dir(&link_target, &target_child)
+                    .map_err(|error| error.to_string())?;
+            } else {
+                std::os::windows::fs::symlink_file(&link_target, &target_child)
+                    .map_err(|error| error.to_string())?;
+            }
+            continue;
+        }
         if crate::path_safety::is_link_or_reparse(&metadata) {
             return Err(format!(
                 "Archive contains a symbolic link or reparse point: {}",
@@ -1027,6 +1045,13 @@ pub(crate) fn validate_staged_tree(root: &std::path::Path, max_bytes: u64) -> Re
     let mut entries = 0u64;
     let mut bytes = 0u64;
     let mut path_bytes = 0u64;
+    // Defense in depth for hard links: 7-Zip may create them by default. If any
+    // staged file's link count exceeds the number of names we observed for that
+    // inode under the stage root, it aliases a path outside the extract tree.
+    #[cfg(unix)]
+    let mut hardlink_files: Vec<(std::path::PathBuf, u64, u64, u64)> = Vec::new();
+    #[cfg(windows)]
+    let mut hardlink_files: Vec<(std::path::PathBuf, u64, u64)> = Vec::new();
     while let Some(directory) = pending.pop() {
         assert_path_under_root(root, &directory)?;
         let meta = std::fs::symlink_metadata(&directory).map_err(|e| e.to_string())?;
@@ -1077,12 +1102,80 @@ pub(crate) fn validate_staged_tree(root: &std::path::Path, max_bytes: u64) -> Re
                         max_bytes as f64 / 1_073_741_824.0
                     ));
                 }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt as _;
+                    hardlink_files.push((path, meta.dev(), meta.ino(), meta.nlink()));
+                }
+                #[cfg(windows)]
+                {
+                    use std::os::windows::fs::MetadataExt as _;
+                    let nlink = meta.number_of_links();
+                    match meta.file_index() {
+                        Some(file_index) => hardlink_files.push((path, file_index, nlink)),
+                        None if nlink > 1 => {
+                            return Err(format!(
+                                "Archive contains a hard link whose identity could not be verified: {}",
+                                path.display()
+                            ));
+                        }
+                        None => {}
+                    }
+                }
             } else {
                 return Err(format!(
                     "Archive contains an unsupported entry: {}",
                     path.display()
                 ));
             }
+        }
+    }
+    #[cfg(unix)]
+    assert_staged_hardlinks_self_contained(&hardlink_files)?;
+    #[cfg(windows)]
+    assert_staged_hardlinks_self_contained(&hardlink_files)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn assert_staged_hardlinks_self_contained(
+    files: &[(std::path::PathBuf, u64, u64, u64)],
+) -> Result<(), String> {
+    use std::collections::HashMap;
+
+    let mut staged_names: HashMap<(u64, u64), u64> = HashMap::new();
+    for (_, dev, ino, _) in files {
+        *staged_names.entry((*dev, *ino)).or_insert(0) += 1;
+    }
+    for (path, dev, ino, nlink) in files {
+        let staged = staged_names.get(&(*dev, *ino)).copied().unwrap_or(0);
+        if *nlink > staged {
+            return Err(format!(
+                "Archive contains a hard link that aliases a file outside the extract root: {}",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn assert_staged_hardlinks_self_contained(
+    files: &[(std::path::PathBuf, u64, u64)],
+) -> Result<(), String> {
+    use std::collections::HashMap;
+
+    let mut staged_names: HashMap<u64, u64> = HashMap::new();
+    for (_, file_index, _) in files {
+        *staged_names.entry(*file_index).or_insert(0) += 1;
+    }
+    for (path, file_index, nlink) in files {
+        let staged = staged_names.get(file_index).copied().unwrap_or(0);
+        if *nlink > staged {
+            return Err(format!(
+                "Archive contains a hard link that aliases a file outside the extract root: {}",
+                path.display()
+            ));
         }
     }
     Ok(())
@@ -1139,12 +1232,50 @@ fn is_publish_temp_name(path: &std::path::Path) -> bool {
     token.len() == 32 && token.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
+/// True when `root` contains any symbolic-link entry. Non-symlink reparse points
+/// are rejected  -  staged trees should already have failed closed on those.
+#[cfg(windows)]
+pub(crate) fn staged_tree_contains_symlink(root: &std::path::Path) -> Result<bool, String> {
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(&directory).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let path = entry.path();
+            let metadata = std::fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
+            if metadata.file_type().is_symlink() {
+                return Ok(true);
+            }
+            if crate::path_safety::is_link_or_reparse(&metadata) {
+                return Err(format!(
+                    "Archive contains a symbolic link or reparse point: {}",
+                    path.display()
+                ));
+            }
+            if metadata.is_dir() {
+                pending.push(path);
+            }
+        }
+    }
+    Ok(false)
+}
+
 #[cfg(windows)]
 fn prepare_target_local_publish_paths(
     plan: &mut [MoveRecord],
     reserved: &mut std::collections::HashSet<std::path::PathBuf>,
 ) -> Result<(), String> {
     for record in plan {
+        let metadata =
+            std::fs::symlink_metadata(&record.source).map_err(|error| error.to_string())?;
+        // Publish links (and directories that contain them) by renaming the
+        // staged entry. Target-local ACL copy cannot move reparse points and
+        // would otherwise reject nested `.framework`-style link trees.
+        if crate::path_safety::is_link_or_reparse(&metadata) {
+            continue;
+        }
+        if metadata.is_dir() && staged_tree_contains_symlink(&record.source)? {
+            continue;
+        }
         let parent = record
             .target
             .parent()
@@ -1406,7 +1537,6 @@ fn publish_target_local_copy(
     Ok(())
 }
 
-#[cfg(unix)]
 fn resolve_staged_symlink_target(
     staged: &std::path::Path,
     link: &std::path::Path,
@@ -1414,7 +1544,6 @@ fn resolve_staged_symlink_target(
     crate::path_safety::resolve_relative_symlink_within_root(staged, link)
 }
 
-#[cfg(unix)]
 fn final_path_for_staged_source(
     staged: &std::path::Path,
     destination: &std::path::Path,
@@ -1438,7 +1567,6 @@ fn final_path_for_staged_source(
     ))
 }
 
-#[cfg(unix)]
 fn relative_path_between(
     from_directory: &std::path::Path,
     target: &std::path::Path,
@@ -1486,27 +1614,46 @@ fn prepare_planned_links(
                 }
             }
         }
-        #[cfg(windows)]
-        if let Some(link) = links.first() {
-            let _ = (staged, destination);
-            return Err(format!(
-                "Archive link cannot be merged safely into an existing Windows destination: {}",
-                link.display()
-            ));
-        }
-        #[cfg(unix)]
         for link in links {
             let source_target = resolve_staged_symlink_target(staged, &link)?;
             let final_target =
                 final_path_for_staged_source(staged, destination, plan, &source_target)?;
+            crate::path_safety::assert_path_resolves_within_root_or_missing(
+                destination,
+                &final_target,
+            )?;
             let final_link = final_path_for_staged_source(staged, destination, plan, &link)?;
             let final_parent = final_link
                 .parent()
                 .ok_or_else(|| "Archive symbolic link target has no parent.".to_string())?;
             let rewritten_target = relative_path_between(final_parent, &final_target)?;
             if std::fs::read_link(&link).map_err(|e| e.to_string())? != rewritten_target {
+                #[cfg(windows)]
+                let was_directory_link = {
+                    use std::os::windows::fs::FileTypeExt as _;
+                    std::fs::symlink_metadata(&link)
+                        .map_err(|error| error.to_string())?
+                        .file_type()
+                        .is_symlink_dir()
+                };
+                #[cfg(unix)]
                 std::fs::remove_file(&link).map_err(|e| e.to_string())?;
+                #[cfg(windows)]
+                if was_directory_link {
+                    std::fs::remove_dir(&link).map_err(|e| e.to_string())?;
+                } else {
+                    std::fs::remove_file(&link).map_err(|e| e.to_string())?;
+                }
+                #[cfg(unix)]
                 std::os::unix::fs::symlink(&rewritten_target, &link).map_err(|e| e.to_string())?;
+                #[cfg(windows)]
+                if was_directory_link {
+                    std::os::windows::fs::symlink_dir(&rewritten_target, &link)
+                        .map_err(|e| e.to_string())?;
+                } else {
+                    std::os::windows::fs::symlink_file(&rewritten_target, &link)
+                        .map_err(|e| e.to_string())?;
+                }
             }
         }
     }
@@ -1621,7 +1768,23 @@ pub(crate) fn validate_move_record(
         }
     } else if record.publish_identity.is_some() {
         #[cfg(windows)]
-        return Err("Refusing extraction publish identity without a publish path.".to_string());
+        {
+            // Rename-published symbolic links and symlink-bearing directory
+            // trees journal an identity without a target-local publish_temp.
+            // Plain files still require the ACL-copy publish path.
+            let allows_rename_publish = |path: &std::path::Path| -> bool {
+                std::fs::symlink_metadata(path)
+                    .map(|metadata| {
+                        crate::path_safety::is_link_or_reparse(&metadata) || metadata.is_dir()
+                    })
+                    .unwrap_or(false)
+            };
+            if !allows_rename_publish(&record.source) && !allows_rename_publish(&record.target) {
+                return Err(
+                    "Refusing extraction publish identity without a publish path.".to_string(),
+                );
+            }
+        }
     }
     Ok(())
 }
@@ -2137,9 +2300,15 @@ pub(crate) fn merge_staged_extract(
 }
 
 pub(crate) fn commit_cleanup(app: &tauri::AppHandle, plan: &CleanupPlan) -> Result<(), String> {
+    let input_only = plan.staged_input_archive.is_some()
+        && plan.staged_extract.is_none()
+        && plan.staged_archive.is_none();
     if let Some(staged) = &plan.staged_input_archive {
         crate::fs_secure::remove_dir_all_for_cleanup(staged.parent().unwrap_or(staged))
             .map_err(|e| format!("Could not remove archive input snapshot: {e}"))?;
+        if input_only {
+            super::journal::unregister_plan_stages(plan);
+        }
     }
     if let Some((staged, destination)) = &plan.staged_extract {
         merge_staged_extract_with_commit(

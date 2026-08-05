@@ -9,6 +9,7 @@ import {
   syncChangelogForVersion,
   updateCargoLockPackageVersion,
   updatePlistStringValue,
+  updateWindowsAssemblyIdentityVersion,
   updateWindowsResourceVersion,
   updateWindowsShellResourceDestinations,
   windowsPackageVersionFromSemver,
@@ -172,6 +173,35 @@ for (const rcName of ["zinnia_shell.rc", "zinnia_extract_shell.rc"]) {
   if (updatedRc !== rc) {
     fs.writeFileSync(rcPath, updatedRc);
     console.log(`${rcName} → ${version}`);
+  }
+}
+
+for (const manifestName of [
+  "msix_identity.manifest.in",
+  "msix_extract_identity.manifest.in",
+]) {
+  const manifestPath = path.join(
+    root,
+    "src-tauri",
+    "windows",
+    "shell",
+    manifestName,
+  );
+  const manifest = fs.readFileSync(manifestPath, "utf8");
+  let updatedManifest;
+  try {
+    updatedManifest = updateWindowsAssemblyIdentityVersion(manifest, version);
+  } catch (error) {
+    console.error(
+      `${manifestName}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    process.exit(1);
+  }
+  if (updatedManifest !== manifest) {
+    fs.writeFileSync(manifestPath, updatedManifest);
+    console.log(
+      `${manifestName} → ${windowsPackageVersionFromSemver(version)}`,
+    );
   }
 }
 

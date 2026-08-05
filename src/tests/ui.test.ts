@@ -34,7 +34,8 @@ beforeEach(() => {
   state.inputs = [];
   state.running = false;
   state.lastAutoExtractDestination = null;
-  state.lastInputsSignature = "";
+  state.lastInputsSignature = "[]";
+  state.browseArchiveIdentityByPath.clear();
   state.browseArchiveInfoByPath.clear();
   state.browseSelectionsByArchive.clear();
   state.selectiveSearchQuery = "";
@@ -207,11 +208,15 @@ describe("setMode", () => {
   });
 
   it("clears browse session state when changing modes", () => {
+    const requestId = state.selectiveOpenRequestId;
     state.selectiveSearchQuery = "test";
     state.selectiveActiveArchive = "archive.7z";
+    state.browseArchiveIdentityByPath.set("archive.7z", "identity");
     setMode("extract");
     expect(state.selectiveSearchQuery).toBe("");
     expect(state.selectiveActiveArchive).toBeNull();
+    expect(state.browseArchiveIdentityByPath.size).toBe(0);
+    expect(state.selectiveOpenRequestId).toBeGreaterThan(requestId);
   });
 
   it("does not clear browse state when staying in same mode", () => {
@@ -662,11 +667,21 @@ describe("renderInputs", () => {
 
   it("clears browse session state when input signature changes", () => {
     state.inputs = ["old.7z"];
-    state.lastInputsSignature = "old.7z";
+    state.lastInputsSignature = JSON.stringify(state.inputs);
     state.selectiveSearchQuery = "something";
     renderInputs();
     state.inputs = ["new.7z"];
     renderInputs();
+    expect(state.selectiveSearchQuery).toBe("");
+  });
+
+  it("does not alias distinct input arrays containing newline paths", () => {
+    state.inputs = ["a\nb"];
+    state.lastInputsSignature = JSON.stringify(["a", "b"]);
+    state.selectiveSearchQuery = "must-clear";
+
+    renderInputs();
+
     expect(state.selectiveSearchQuery).toBe("");
   });
 });
@@ -743,5 +758,22 @@ describe("setRunning", () => {
     expect(state.running).toBe(true);
     setRunning(false);
     expect(state.running).toBe(false);
+  });
+
+  it("toggles existing remove controls without rebuilding the input DOM", () => {
+    state.inputs = ["large-input.7z"];
+    renderInputs();
+    const item = dom.inputList.querySelector(".list__item");
+    const remove = dom.inputList.querySelector(
+      "[data-input-remove]",
+    ) as HTMLButtonElement;
+
+    setRunning(true);
+    expect(remove.disabled).toBe(true);
+    expect(dom.inputList.querySelector(".list__item")).toBe(item);
+
+    setRunning(false);
+    expect(remove.disabled).toBe(false);
+    expect(dom.inputList.querySelector(".list__item")).toBe(item);
   });
 });

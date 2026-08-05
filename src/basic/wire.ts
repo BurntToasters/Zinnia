@@ -71,19 +71,17 @@ const BASIC_ARCHIVE_EXTENSIONS = [
   "zip",
   "tar",
   "gz",
+  "tgz",
   "bz2",
+  "tbz2",
   "xz",
+  "txz",
   "rar",
   "001",
 ];
 
 function basicArchiveDialogExtensions(): string[] {
-  // Windows packages standalone 7za.exe, which has no RAR handler. Keep the
-  // picker aligned with backend validation instead of allowing a selection
-  // that Browse/Test cannot fulfill.
-  return state.platformName === "windows"
-    ? BASIC_ARCHIVE_EXTENSIONS.filter((extension) => extension !== "rar")
-    : [...BASIC_ARCHIVE_EXTENSIONS];
+  return [...BASIC_ARCHIVE_EXTENSIONS];
 }
 
 export function initBasicWorkspace(): void {
@@ -181,7 +179,7 @@ export function initBasicWorkspace(): void {
     "basic-extract-archive-info",
   );
   if (extractArchiveInfo) {
-    extractArchiveInfo.addEventListener("click", async () => {
+    const chooseExtractArchive = async () => {
       const preparation = beginBasicPreparation();
       if (!preparation) return;
       let selection: string | string[] | null = null;
@@ -205,6 +203,12 @@ export function initBasicWorkspace(): void {
         state.inputs = [path];
         renderInputs();
       }
+    };
+    extractArchiveInfo.addEventListener("click", chooseExtractArchive);
+    extractArchiveInfo.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      void chooseExtractArchive();
     });
   }
 
@@ -212,7 +216,7 @@ export function initBasicWorkspace(): void {
     "basic-browse-archive-info",
   );
   if (browseArchiveInfo) {
-    browseArchiveInfo.addEventListener("click", async () => {
+    const chooseBrowseArchive = async () => {
       const preparation = beginBasicPreparation();
       if (!preparation) return;
       let selection: string | string[] | null = null;
@@ -239,6 +243,12 @@ export function initBasicWorkspace(): void {
         renderInputs();
         void runBasicBrowseArchive();
       }
+    };
+    browseArchiveInfo.addEventListener("click", chooseBrowseArchive);
+    browseArchiveInfo.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      void chooseBrowseArchive();
     });
   }
 

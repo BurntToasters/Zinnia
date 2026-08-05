@@ -914,9 +914,8 @@
                   <div class="settings-note">
                     Zinnia only changes default archive apps when you choose it
                     here. Supported formats: ZIP, 7z, TAR, Gzip/TGZ, Bzip2/TBZ2,
-                    XZ/TXZ, and RAR. On Windows, RAR extraction stays disabled
-                    while the bundled 7-Zip runtime awaits an upstream security
-                    fix; browse and test remain available.
+                    XZ/TXZ, and RAR. Compound TAR streams open and extract in
+                    one operation on every supported platform.
                   </div>
                 </section>
               </div>
@@ -1001,7 +1000,7 @@
                         >
                         binaries by Igor Pavlov. 7-Zip is licensed under the GNU
                         LGPL, with portions under the BSD 3-clause, BSD
-                        2-clause, and unRAR licenses. Copyright &copy; 1999-2025
+                        2-clause, and unRAR licenses. Copyright &copy; 1999-2026
                         Igor Pavlov.
                       </p>
                     </div>
@@ -1413,7 +1412,7 @@
             <div class="setup-wizard-os-box">
               <span
                 >Supported types: ZIP, 7z, TAR, Gzip/TGZ, Bzip2/TBZ2, XZ/TXZ,
-                RAR (temporarily unavailable on Windows)</span
+                and RAR</span
               >
             </div>
             <div class="setup-wizard-step__actions">
@@ -1823,7 +1822,13 @@
                 </div>
               </div>
               <div class="basic-section">
-                <div class="basic-archive-info" id="basic-extract-archive-info">
+                <div
+                  class="basic-archive-info"
+                  id="basic-extract-archive-info"
+                  role="button"
+                  tabindex="0"
+                  aria-label="Choose archive to extract"
+                >
                   <span class="basic-archive-info__icon">
                     <i data-lucide="package" class="lucide-icon"></i>
                   </span>
@@ -2008,7 +2013,13 @@
               </div>
             </div>
             <div class="basic-card">
-              <div class="basic-archive-info" id="basic-browse-archive-info">
+              <div
+                class="basic-archive-info"
+                id="basic-browse-archive-info"
+                role="button"
+                tabindex="0"
+                aria-label="Choose archive to browse"
+              >
                 <span class="basic-archive-info__icon">
                   <i data-lucide="package" class="lucide-icon"></i>
                 </span>
@@ -2024,7 +2035,13 @@
                   ></span>
                 </div>
               </div>
-              <div class="basic-browse-summary" id="basic-browse-summary"></div>
+              <div
+                class="basic-browse-summary"
+                id="basic-browse-summary"
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+              ></div>
               <div class="basic-browse-table-wrap">
                 <table>
                   <thead>
@@ -2500,7 +2517,13 @@
                 </div>
 
                 <div id="browse-contents" class="browse-contents" hidden>
-                  <div class="browse-summary" id="browse-summary"></div>
+                  <div
+                    class="browse-summary"
+                    id="browse-summary"
+                    role="status"
+                    aria-live="polite"
+                    aria-atomic="true"
+                  ></div>
                   <div class="browse-table-wrap">
                     <table class="browse-table">
                       <thead>

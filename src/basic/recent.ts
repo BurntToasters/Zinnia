@@ -1,12 +1,8 @@
 import { validateArchivePaths } from "../archive-rules";
+import { basename } from "../path-display";
 
 const RECENT_ARCHIVES_KEY = "zinnia.basic.recentArchives";
 const MAX_RECENT_ARCHIVES = 5;
-
-function basename(path: string): string {
-  const sep = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  return sep >= 0 ? path.slice(sep + 1) : path;
-}
 
 let recentArchiveHandler: ((path: string) => void) | null = null;
 let menuWired = false;

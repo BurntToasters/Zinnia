@@ -10,6 +10,7 @@ mod open_routing;
 
 pub static EXTRACT_ONLY_LAUNCH: AtomicBool = AtomicBool::new(false);
 pub static MAC_FALLBACK_MAIN_PENDING: AtomicBool = AtomicBool::new(false);
+pub static MAIN_WINDOW_READY: AtomicBool = AtomicBool::new(false);
 pub static FILE_OPEN_SIGNAL: Mutex<Option<std::sync::mpsc::Sender<()>>> = Mutex::new(None);
 
 pub(crate) const MAX_OPENABLE_DIRECTORIES: usize = 64;

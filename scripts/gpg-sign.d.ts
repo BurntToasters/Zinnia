@@ -24,6 +24,7 @@ export function buildUploadList(options: {
 export function isChecksumTextName(name: string): boolean;
 export function isDirectExecution(): boolean;
 export function isExplicitTruthy(value: unknown): boolean;
+export function isTransactionalStagingAssetName(name: string): boolean;
 export function listAllGithubPages<T>(
   fetchPage: (page: number, perPage: number) => Promise<T[] | unknown>,
   options?: { perPage?: number },

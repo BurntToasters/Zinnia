@@ -94,6 +94,13 @@ fn should_use_extract_window_honors_explicit_extract_mode() {
 }
 
 #[test]
+fn should_use_extract_window_accepts_compound_tar() {
+    let paths = vec!["/downloads/bundle.tar.gz".to_string()];
+    assert!(should_use_extract_window(&paths, "extract-explicit"));
+    assert!(should_use_extract_window(&paths, ""));
+}
+
+#[test]
 fn should_use_extract_window_accepts_single_archive_path() {
     let base = temp_base("extract-mode");
     let file_path = base.join("archive.zip");
@@ -417,6 +424,9 @@ fn looks_like_archive_path_rejects_bare_numeric_suffix() {
     assert!(!looks_like_archive_path("/downloads/notes.001"));
     assert!(looks_like_archive_path("/downloads/archive.7z.001"));
     assert!(looks_like_archive_path("/downloads/archive.zip"));
+    assert!(looks_like_archive_path("/downloads/archive.tgz"));
+    assert!(looks_like_archive_path("/downloads/archive.tbz2"));
+    assert!(looks_like_archive_path("/downloads/archive.txz"));
 }
 
 #[test]

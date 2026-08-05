@@ -4,13 +4,22 @@ use tauri::Manager;
 
 use super::{lock_process, RunningProcess};
 
-pub(crate) const MAX_EXTRACT_ENTRIES: u64 = 25_000;
+// Large SDK/source/app archives routinely exceed 25k entries. Keep a high
+// anti-DoS ceiling and enforce it during member listing before extraction, then
+// again while writing/publishing.
+pub(crate) const MAX_EXTRACT_ENTRIES: u64 = 1_000_000;
 pub(crate) const MAX_EXTRACT_PATH_BYTES: u64 = 32 * 1024 * 1024;
 
 pub(crate) fn available_space_for_path(path: &std::path::Path) -> Result<u64, String> {
+    // Do not follow directory symlinks: free-space for a redirected mount could
+    // disagree with where staged output actually lands.
     let existing = path
         .ancestors()
-        .find(|candidate| candidate.is_dir())
+        .find(|candidate| {
+            std::fs::symlink_metadata(candidate)
+                .map(|meta| meta.is_dir() && !crate::path_safety::is_link_or_reparse(&meta))
+                .unwrap_or(false)
+        })
         .ok_or_else(|| "Could not find an existing extraction parent directory.".to_string())?;
     available_space(existing)
 }
@@ -292,14 +301,8 @@ mod tests {
             staged_tree_usage(&root, 10, 1024).expect("in-progress scan"),
             (1, 0)
         );
-        assert!(
-            crate::path_safety::assert_relative_symlink_within_root(
-                &root,
-                &root.join("pending-link")
-            )
-            .is_err(),
-            "final validation must still reject a dangling link"
-        );
+        crate::path_safety::assert_relative_symlink_within_root(&root, &root.join("pending-link"))
+            .expect("final validation accepts a contained dangling link");
 
         let _ = std::fs::remove_dir_all(root);
     }

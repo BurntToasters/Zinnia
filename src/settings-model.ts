@@ -307,12 +307,16 @@ function asCustomPresets(
     seen.add(name);
     presets.push({
       name,
-      format: asString(r.format, SETTING_DEFAULTS.format),
-      level: asString(r.level, SETTING_DEFAULTS.level),
-      method: asString(r.method, SETTING_DEFAULTS.method),
-      dict: asString(r.dict, SETTING_DEFAULTS.dict),
-      wordSize: asString(r.wordSize, SETTING_DEFAULTS.wordSize),
-      solid: asString(r.solid, SETTING_DEFAULTS.solid),
+      format: asSetValue(r.format, FORMATS, SETTING_DEFAULTS.format),
+      level: asSetValue(r.level, VALID_LEVELS, SETTING_DEFAULTS.level),
+      method: asSetValue(r.method, VALID_METHODS, SETTING_DEFAULTS.method),
+      dict: asSetValue(r.dict, VALID_DICTS, SETTING_DEFAULTS.dict),
+      wordSize: asSetValue(
+        r.wordSize,
+        VALID_WORD_SIZES,
+        SETTING_DEFAULTS.wordSize,
+      ),
+      solid: asSetValue(r.solid, VALID_SOLIDS, SETTING_DEFAULTS.solid),
     });
     if (presets.length >= MAX_CUSTOM_PRESETS) break;
   }

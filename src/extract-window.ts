@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { validateArchivePaths } from "./archive-rules";
 import { deriveExtractDestinationPath } from "./extract-path";
 import { describe7zError, looksLikePasswordRequiredError } from "./error-hints";
 import { SAFE_EXTRACT_OVERWRITE_MODE } from "./extract-policy";
@@ -9,19 +10,22 @@ import {
   setProgressPercentClass,
 } from "./progress-bar";
 import { normalizeAutoCloseDelay } from "./settings-model";
+import { withPassword } from "./password-args";
+import { basename } from "./path-display";
+import {
+  formatEta as formatSharedEta,
+  type ProgressUpdate,
+} from "./progress-update";
+
+export { formatEta } from "./progress-update";
 
 interface Run7zResult {
   stdout: string;
   stderr: string;
   code: number;
+  warning_code?: number;
   stdout_truncated?: boolean;
   stderr_truncated?: boolean;
-}
-
-interface ProgressUpdate {
-  percent?: number;
-  filesDone?: number;
-  currentFile?: string;
 }
 
 interface InjectedExtractSession {
@@ -41,11 +45,6 @@ function $(id: string): HTMLElement {
   return el;
 }
 
-function basename(filePath: string): string {
-  const sep = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
-  return sep >= 0 ? filePath.slice(sep + 1) : filePath;
-}
-
 /** Strip noisy progress junk so status never flashes missing-glyph boxes. */
 export function sanitizeStatusFileName(name: string): string {
   const cleaned = name
@@ -53,21 +52,17 @@ export function sanitizeStatusFileName(name: string): string {
     .replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2064]/g, "")
     .trim();
   if (!cleaned) return "";
-  const match = cleaned.match(/[\p{L}\p{N}._~]/u);
+  const withoutProgressJunk = cleaned
+    .replace(/^[\s\u2500-\u259F]+(?:-\s*)?/u, "")
+    .trim();
+  // Start at the first filename-like character. Include `(` / `[` / `{` so
+  // names like `(report).txt` keep their parentheses, while still dropping
+  // leading `***` / similar symbol runs from 7-Zip progress lines.
+  const match = withoutProgressJunk.match(/[\p{L}\p{N}._~(\[{]/u);
   if (match?.index === undefined) return "";
-  const meaningful = cleaned.slice(match.index).trim();
-  return [...meaningful].slice(0, 200).join("");
-}
-
-function withPassword(args: string[], password: string): string[] {
-  const separator = args.indexOf("--");
-  const head = separator === -1 ? args : args.slice(0, separator);
-  const tail = separator === -1 ? [] : args.slice(separator);
-  return [
-    ...head.filter((arg) => !arg.startsWith("-p")),
-    `-p${password}`,
-    ...tail,
-  ];
+  return [...withoutProgressJunk]
+    .slice(match.index, match.index + 200)
+    .join("");
 }
 
 function readInjectedExtractSession(): InjectedExtractSession | null {
@@ -87,8 +82,22 @@ function readInjectedExtractSession(): InjectedExtractSession | null {
 async function runWithPasswordRetry(
   args: string[],
   shouldAbort: () => boolean,
+  expectedArchiveIdentity?: string,
 ): Promise<Run7zResult> {
-  let result = await invoke<Run7zResult>("run_7z", { args });
+  const invokeArgs = {
+    args,
+    ...(expectedArchiveIdentity ? { expectedArchiveIdentity } : {}),
+  };
+  let result: Run7zResult;
+  try {
+    result = await invoke<Run7zResult>("run_7z", invokeArgs);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    // Header encryption can make backend safety listing request a password
+    // before extraction returns a normal Run7zResult.
+    if (!looksLikePasswordRequiredError("", detail)) throw error;
+    result = { stdout: "", stderr: detail, code: 255 };
+  }
   if (shouldAbort()) {
     return result;
   }
@@ -112,23 +121,11 @@ async function runWithPasswordRetry(
     if (password) {
       result = await invoke<Run7zResult>("run_7z", {
         args: withPassword(args, password),
+        ...(expectedArchiveIdentity ? { expectedArchiveIdentity } : {}),
       });
     }
   }
   return result;
-}
-
-// Estimate remaining time from elapsed time and percent complete.
-// Returns "" when there isn't enough signal yet.
-export function formatEta(elapsedMs: number, percent: number): string {
-  if (percent <= 0 || percent >= 100 || elapsedMs <= 0) return "";
-  const totalMs = elapsedMs / (percent / 100);
-  const remainingSec = Math.max(0, Math.round((totalMs - elapsedMs) / 1000));
-  if (remainingSec < 1) return "";
-  if (remainingSec < 60) return `~${remainingSec}s left`;
-  const min = Math.floor(remainingSec / 60);
-  const sec = remainingSec % 60;
-  return `~${min}m ${sec.toString().padStart(2, "0")}s left`;
 }
 
 function parentDir(filePath: string): string {
@@ -264,16 +261,19 @@ async function run() {
       void appWindow.minimize();
     });
   }
-  if (closeTitlebarBtn) {
-    closeTitlebarBtn.addEventListener("click", () => {
-      void closeWindowSafely();
-    });
-  }
-
   const cancelBtn = $("cancel-btn") as HTMLButtonElement;
   const openDestinationBtn = $("open-destination-btn") as HTMLButtonElement;
   const closeBtn = $("close-btn") as HTMLButtonElement;
   let cancelRequested = false;
+
+  if (closeTitlebarBtn) {
+    closeTitlebarBtn.addEventListener("click", () => {
+      // Arm local abort before teardown so an in-flight password prompt cannot
+      // start another run_7z after the window is dismissed.
+      cancelRequested = true;
+      void closeWindowSafely();
+    });
+  }
   let operationFinished = false;
   let destination = "";
 
@@ -288,8 +288,19 @@ async function run() {
   } catch {}
 
   let autoCloseInterval: ReturnType<typeof setInterval> | null = null;
+  const autoCloseAbortEvents = ["mousemove", "keydown", "click"] as const;
+  let autoCloseAbortListener: (() => void) | null = null;
+
+  const removeAutoCloseAbortListeners = () => {
+    if (!autoCloseAbortListener) return;
+    for (const eventName of autoCloseAbortEvents) {
+      window.removeEventListener(eventName, autoCloseAbortListener);
+    }
+    autoCloseAbortListener = null;
+  };
 
   const abortAutoClose = () => {
+    removeAutoCloseAbortListeners();
     if (autoCloseInterval !== null) {
       clearInterval(autoCloseInterval);
       autoCloseInterval = null;
@@ -339,10 +350,12 @@ async function run() {
       let remaining = autoCloseDelay;
       closeBtn.textContent = `Close (${Math.ceil(remaining)}s)`;
 
-      const abortListener = () => abortAutoClose();
-      window.addEventListener("mousemove", abortListener, { once: true });
-      window.addEventListener("keydown", abortListener, { once: true });
-      window.addEventListener("click", abortListener, { once: true });
+      autoCloseAbortListener = () => abortAutoClose();
+      for (const eventName of autoCloseAbortEvents) {
+        window.addEventListener(eventName, autoCloseAbortListener, {
+          once: true,
+        });
+      }
 
       autoCloseInterval = setInterval(() => {
         remaining -= 0.1;
@@ -444,7 +457,11 @@ async function run() {
     $("extract-status").textContent = "Starting extraction...";
     $("extract-error").hidden = true;
     // Claim is only needed to drain queue ownership; do not block extract start.
-    void claimPaths.catch(() => {});
+    void claimPaths.catch((err) => {
+      console.warn(
+        `Could not drain quick-extract launch queue: ${String(err)}`,
+      );
+    });
   } else {
     const paths = await claimPaths;
     archivePath = paths[0] ?? "";
@@ -485,6 +502,29 @@ async function run() {
     return;
   }
 
+  let expectedArchiveIdentity: string | undefined;
+  try {
+    const [validation] = await validateArchivePaths([archivePath], true);
+    if (!validation?.valid) {
+      const reason = validation?.reason?.trim() ?? "";
+      if (reason) {
+        showError(reason);
+      } else {
+        showError("This archive path is not supported for extraction.");
+      }
+      return;
+    }
+    expectedArchiveIdentity = validation.identity;
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    showError(`Could not validate the archive: ${detail}`);
+    return;
+  }
+  if (cancelRequested) {
+    finish("Cancelled", 100, false, false, true);
+    return;
+  }
+
   let sawStructuredPercent = false;
 
   const startedAt = Date.now();
@@ -502,6 +542,13 @@ async function run() {
   const structuredListen = registerProgressListener(
     listen<ProgressUpdate>("7z-progress-structured", (event) => {
       const update = event.payload;
+      if (update?.currentFile === "Working…") {
+        // Heartbeats fill blank status only; keep file name / ETA lines.
+        if (!sawStructuredPercent && !lastFile) {
+          $("extract-status").textContent = "Still working…";
+        }
+        return;
+      }
       if (update?.currentFile === "Finalizing…") {
         sawStructuredPercent = true;
         cancelBtn.disabled = true;
@@ -513,7 +560,7 @@ async function run() {
       if (typeof update?.percent === "number") {
         sawStructuredPercent = true;
         setDeterminateProgress(Math.min(99, update.percent));
-        eta = formatEta(Date.now() - startedAt, update.percent);
+        eta = formatSharedEta(Date.now() - startedAt, update.percent);
       }
       if (update?.currentFile) {
         const clean = sanitizeStatusFileName(basename(update.currentFile));
@@ -568,7 +615,11 @@ async function run() {
   ];
 
   try {
-    const result = await runWithPasswordRetry(args, () => cancelRequested);
+    const result = await runWithPasswordRetry(
+      args,
+      () => cancelRequested,
+      expectedArchiveIdentity,
+    );
     await removeProgressListeners();
 
     if (cancelRequested && result.code !== 0) {
@@ -578,12 +629,15 @@ async function run() {
 
     if (result.code !== 0) {
       const hint = describe7zError(result.stdout ?? "", result.stderr ?? "");
-      const base = result.stderr?.trim() || `Exit code ${result.code}`;
+      const base =
+        result.code === 1
+          ? `7-Zip stopped with warnings (exit code 1). Extraction was not completed.\n\n${result.stderr?.trim() || "Check the application log for warning details."}`
+          : result.stderr?.trim() || `Exit code ${result.code}`;
       showError(hint ? `${hint}\n\n${base}` : base);
       return;
     }
 
-    finish("Done", 100);
+    finish(result.warning_code ? "Done (warnings)" : "Done", 100);
   } catch (err) {
     await removeProgressListeners();
     if (cancelRequested) {

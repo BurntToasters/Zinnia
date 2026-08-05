@@ -56,6 +56,9 @@ describe("cross-platform release policy", () => {
     expect(packageJson.scripts["release:verify:published"]).toContain(
       "--expected-version=current",
     );
+    expect(packageJson.scripts["validate:updater:live"]).toContain(
+      "--shape-only",
+    );
   });
 
   it("scopes automatic Linux updater requirements to the current signing session", () => {

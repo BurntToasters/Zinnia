@@ -76,6 +76,19 @@ export function updateWindowsResourceVersion(resource, version) {
   return updated;
 }
 
+/** Synchronize an isolated COM assembly identity with the package version. */
+export function updateWindowsAssemblyIdentityVersion(manifest, version) {
+  const packageVersion = windowsPackageVersionFromSemver(version);
+  const pattern = /(<assemblyIdentity\b[^>]*\bversion=")[^"]+("\s*\/?>)/s;
+  const matches = manifest.match(new RegExp(pattern.source, "gs"));
+  if (matches?.length !== 1) {
+    throw new Error(
+      `Windows assembly identity version must appear exactly once; found ${matches?.length ?? 0}`,
+    );
+  }
+  return manifest.replace(pattern, `$1${packageVersion}$2`);
+}
+
 const WINDOWS_SHELL_RESOURCES = Object.freeze({
   "windows/shell/out/zinnia_shell.dll": "zinnia_shell.dll",
   "windows/shell/out/zinnia_extract_shell.dll": "zinnia_extract_shell.dll",
@@ -157,16 +170,19 @@ export function windowsPackageVersionFromSemver(version) {
  */
 export function macBundleVersionFromSemver(version) {
   const parsed = parseReleaseSemver(version, "macOS bundle");
-  if (parsed.prereleaseNumber !== null && parsed.prereleaseNumber > 29) {
+  if (parsed.prereleaseNumber !== null && parsed.prereleaseNumber > 6998) {
     throw new Error(
-      `macOS bundle prerelease sequence must be 0-29: ${version}`,
+      `macOS bundle prerelease sequence must be 0-6998: ${version}`,
     );
   }
-  let build = parsed.patch * 100;
+  // 0-2999 stay reserved for future prerelease stages. Beta occupies
+  // 3000-9998 and stable occupies 9999. The 10,000-wide patch block keeps
+  // beta -> stable -> next-patch-beta strictly monotonic.
+  let build = parsed.patch * 10_000;
   if (!parsed.stage) {
-    build += 99;
+    build += 9999;
   } else {
-    build += 30 + parsed.prereleaseNumber;
+    build += 3000 + parsed.prereleaseNumber;
   }
 
   return `${parsed.major}.${parsed.minor}.${build}`;

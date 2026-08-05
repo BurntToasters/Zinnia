@@ -5,10 +5,10 @@
 
 | <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                                          | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux        |
 | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------- |
-| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.2/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.2/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.2/Zinnia-macOS.dmg)**   | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.2/Zinnia-Linux-x64.AppImage) |
-| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>-->                     | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.2/Zinnia-macOS.zip)**   | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.2/Zinnia-Linux-x64.deb)           |
-| <!--*See MSI note below*-->                                                                                                                                                                                                |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.2/Zinnia-Linux-x64.rpm)           |
-|                                                                                                                                                                                                                            |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.2/Zinnia-Linux-x64.flatpak)   |
+| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.3/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.3/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.3/Zinnia-macOS.dmg)**   | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.3/Zinnia-Linux-x64.AppImage) |
+| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>-->                     | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.3/Zinnia-macOS.zip)**   | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.3/Zinnia-Linux-x64.deb)           |
+| <!--*See MSI note below*-->                                                                                                                                                                                                |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.3/Zinnia-Linux-x64.rpm)           |
+|                                                                                                                                                                                                                            |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.3/Zinnia-Linux-x64.flatpak)   |
 
 > macOS downloads require macOS 26 or later.
 
@@ -21,10 +21,46 @@
 
 Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
+## Changes in `v0.6.1-beta.3:`
+
+- **Fix:** Selective-extract search is debounced so the tree re-renders after a short pause instead of on every keystroke (also smoother on large archives).
+- **UI:** Selective-extract results expose proper list semantics for screen readers, the Basic mode `Choose archive` cards are now keyboard accessible (Enter/Space), and browse summaries announce changes via live regions.
+- **Fix:** Cached archive encryption state is revalidated against the archive's identity before reuse, so a replaced archive at the same path can no longer show stale listing data.
+- **Fix:** Extract injects 7-Zip `-snld10` so ZIP / archive macOS `.app` bundles with nested `.framework` symlinks (`Libraries -> Versions/Current/Libraries`) no longer fail with "Dangerous link via another link".
+- **Fix:** Windows merge publish fingerprints and renames symbolic-link reparse entries and whole directories that contain them (still rejects junctions and other non-symlink reparse points), so nested `.framework`-style link trees can publish into an existing destination instead of failing ACL-copy.
+- **Security:** Extract stages beside the destination (never inside it), preflights real 7-Zip `Symbolic Link =` / `Hard Link =` fields, and validates the complete staged tree before publish.
+- **Security:** Staged extract trees reject hard links that alias inodes outside the extract root (defense in depth alongside symlink containment).
+- **Security:** SLT member preflight resolves parent-relative symbolic links lexically, allowing contained Unix layouts while rejecting targets that escape the extract root.
+- **Security:** Compression rejects every `-i!` input-expansion switch; managed listfiles force UTF-8 and preserve literal `@` member names; password redaction covers `-P` without mangling `-spd`.
+- **Fix:** 7-Zip exit code 1 publishes only for a narrow allowlist of metadata-only warnings; skipped, corrupt, unsafe-link, password, and unknown warnings still roll staging back.
+- **Fix:** Split/multi-volume update is rejected with an actionable error because bundled 7-Zip does not implement it.
+- **Fix:** Update `reserve_update` soft-locks auto-expire if the webview never reaches `release_update`.
+- **Fix:** Compound TAR streams (`.tar.gz`, `.tgz`, `.tar.bz2`, `.tbz2`, `.tar.xz`, `.txz`) browse, test, and extract through a quota-monitored private two-pass stage.
+- **Fix:** Encryption probes fail closed on unknown/`truncated` listing errors; Cancel sticks across idle confirm gaps; extract-window titlebar close aborts password retries; process-slot cleanup survives a poisoned mutex.
+- **Fix:** Batch extract reuses a prompted password across archives, mirrors heartbeat/Finalizing progress, and reports exit code 1 without counting or publishing it as success.
+- **Fix:** Large archive snapshots prefer a private source-filesystem sibling (using fast CoW on supported macOS/Linux filesystems), fall back to app cache when needed, and make byte-copy preparation cancellable.
+- **Fix:** Extract entry ceiling is restored to 1,000,000 and enforced during member preflight instead of failing common SDK/source trees at 25,001 after extraction.
+- **Fix:** Live progress that reports `Working…` after a quiet stretch shows `Still working…` when no percent is available yet (without replacing a live percent/ETA line), and leading progress junk (box-drawing and similar) is stripped from status file names.
+- **Fix:** Batch extract re-checks Cancel after each archive finishes so a cancelled run is not counted as success or failure.
+- **Fix:** Extract-window auto-close listeners are removed when the window closes, so they can't abort a later window's countdown.
+- **Fix:** Custom compression presets are validated against the valid format/level/method/dictionary/word-size sets when loading settings, so corrupted presets fall back to defaults instead of producing invalid 7-Zip arguments.
+- **Codebase:** Rust preparation failures now share one rollback path that removes staging, clears the recovery journal when rollback succeeds, and releases the single-operation slot and child handle.
+- **Security:** Archive identity tokens are hashed canonically, keeping archive-session and recovery identity comparisons opaque and stable across platform versions.
+- **Windows:** MSIX context-menu package identity versions now follow the app version (previously stuck at `0.6.0.0`).
+- **macOS:** Finder Sync bundle build numbers use a wider scheme so beta → stable → next-patch sequences stay strictly increasing.
+- **Tooling:** Release signing reuses an existing draft release for the tag (create races re-fetch after backoff); beta manifests reach the live feed only through the explicit post-publish sync, which uses a non-reclaimed lock asset and cleans orphaned transactional assets after success.
+- **Tooling:** `AFTER_PACK_LOC` mirroring is now optional; when unset the finalize step just cleans build-only artifacts, and when set the destination must be an absolute path outside the repository (validated before anything is removed).
+- **Tooling:** Live updater CI validation is a read-only shape smoke; post-publish verification requires the supported target matrix and exact version so version bumps no longer block the pre-publish build.
+- **Licenses:** Packaged 7-Zip notices now reproduce the exact 26.02 Linux/macOS and Windows full-runtime texts with pinned hashes; obsolete Windows Extra notice assets are removed. Cargo license generation emits an exact unresolved-notice report and offers a fail-closed stable-release check (`npm run licenses:cargo:strict`).
+- **Tooling:** `npm run 7z:update:check` / `npm run 7z:update` refresh official 7-Zip 26.02 sidecars from `ip7z/7zip` (Linux/macOS `7zzs`/`7zz`, Windows `7z.exe`+`7z.dll`), rewrite provenance/checksums/licenses, and drop obsolete `7za` / Extra assets.
+- **Testing:** Added tests for debounced selective search, cache identity invalidation, preparation-failure cleanup, mirror path guards, and Windows symlink merge publish.
+- **PKG:** Updated packages.
+
 ## Changes in `v0.6.1-beta.2:`
 
 - **Fix:** Extract-only windows grant `allow-probe-7z` in Tauri capabilities so shell/quick extract can run the pre-extract 7-Zip probe (B1 failed with “Command probe_7z not allowed by ACL”).
 - **Fix:** `release:mirror` copies each release artifact into `AFTER_PACK_LOC`, overwriting same-named files only, instead of replacing the whole share directory (so a later finalize on another OS no longer deletes other VMs' checksums and installers).
+- **UI:** Windows NSIS installer notes that Win11 context menu package registration “may take a moment” (can be slow while integration is already active).
 - **Tooling:** `tauri-capabilities` tests assert every `invoke` in `extract-window.ts` is allowed by `capabilities/extract.json`.
 
 ## Changes in `v0.6.1-beta.1:`
@@ -42,7 +78,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Fix:** Extract-only window probes bundled 7-Zip before extract; auto-close
   delay uses the same supported archive allowlist as Settings.
 - **Fix:** macOS archive CoW snapshot cleanup removes partial clones when chmod/fsync fails (matches Linux).
-- **Performance:** Archive-input snapshots use APFS `fclonefileat` and Linux `FICLONE` when available before falling back to a byte copy (CoW clones share blocks on APFS/Btrfs; free-space preflight still reserves for full byte-copy worst case).
+- **Performance:** Archive-input snapshots use APFS `fclonefileat` and Linux `FICLONE` when available before falling back to a byte copy (CoW clones share blocks on APFS/Btrfs; full-copy free-space checks run only when clone fallback is needed).
 - **Performance:** Large merge-into-existing extractions journal publish identities append-only instead of rewriting the full move-plan JSON after every file (avoids O(n²) I/O).
 - **Fix:** Startup sweeps orphaned `%TEMP%` shell-handoff files (owner-checked) and stale `zinnia-7z-list-*` directories (nofollow + age gate) after crashes; stale Zinnia temp dirs use hardened cleanup.
 - **Fix:** File/folder pickers and incoming-path apply respect Basic preparation locks without self-deadlock; dialog failures log clearly instead of failing silently.
@@ -93,7 +129,8 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Security:** Extract staging uses private snapshots, reparse/symlink gates, member preflight (`7z l -slt`), relative in-tree symlinks allowed where safe, and publish paths that never overwrite existing destinations without recorded identity.
 - **Security:** Unix publish stages are `0o700` while in progress; merged directories restore destination parent mode; hard-link/copy rollback retracts targets only with matching publish identity.
 - **Security:** Updater publication verifies every artifact/Minisign pair with the embedded public key; 7-Zip provenance is pinned in `7z-checksums.json`.
-- **Security:** Archive create/update stores symlinks and hard links (`-snl`/`-snh`) for `.app`/`.framework` round-trips; ZIP compress warns on symlinks and bundles.
+- **Security:** Archive create/update stores symlinks and hard links (`-snl`/`-snh`) for `.app`/`.framework` round-trips; safe contained and dangling relative links publish normally while absolute and escaping links remain blocked.
+- **Fix:** Compound TAR streams browse, test, and extract in one operation; Windows now packages full `7z.exe` plus `7z.dll` for RAR support with NTFS stream suppression and Mark-of-the-Web propagation.
 - **Fix:** Basic prep locks OS handoffs and file-remove controls until a job runs; Power/Basic drops serialize on incoming-path apply locks; Add Files/Folder/Remove/Clear honor busy state; selective extract never passes bare folder paths to 7z.
 - **Fix:** Cancel/prepare/quota-stop keep the global 7z soft-lock until staging rollback and journal clear finish; failed commits fail-closed on journal parse errors and retract partial publishes before clearing journals.
 - **Fix:** Split-archive recovery, in-process promote recovery, and durable commit phases prevent mixed volumes after interruption; cancel during prepare kills spawned 7z before rollback.
@@ -106,9 +143,6 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Codebase:** Modular frontend (`archive/`, `basic/`, `ui/`) and Rust (`process/`, `platform/`, `launch/`) splits; archive commit finalization on `spawn_blocking`; OS integration commands kill process trees on timeout.
 - **Testing:** Changelog/updater validation in `npm run test:all`; expanded Rust Clippy/format gates; Windows/macOS CI smoke compiles the shell DLL and universal macOS builds.
 - **Docs:** Windows context-menu QA checklist; `SECURITY.md` Flatpak and hard-link TOCTOU notes.
-- **Known:** Windows RAR browse, test, conversion, and extraction stay disabled
-  because packaged `7za.exe` has no RAR handler. macOS/Linux RAR support remains
-  available.
 - **PKG:** Updated packages.
 
 ### FULL CHANGELOG:

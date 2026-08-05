@@ -7,6 +7,7 @@ import {
   validateCompressionSecurityOptions,
 } from "../compression-security";
 import { buildSelectiveExtractArgs } from "../selective-extract";
+export { withPassword } from "../password-args";
 
 export function isEncryptedFlag(value: string): boolean {
   const normalized = value.trim().toLowerCase();
@@ -26,16 +27,6 @@ export function methodLooksEncrypted(value: string): boolean {
     normalized.includes("aes") ||
     normalized.includes("zipcrypto")
   );
-}
-
-// Inject or replace the -p password switch in a 7z arg list (before "--").
-export function withPassword(args: string[], password: string): string[] {
-  const sepIndex = args.indexOf("--");
-  const head = sepIndex === -1 ? args.slice() : args.slice(0, sepIndex);
-  const tail = sepIndex === -1 ? [] : args.slice(sepIndex);
-  const filtered = head.filter((a) => !a.startsWith("-p"));
-  filtered.push(`-p${password}`);
-  return [...filtered, ...tail];
 }
 
 export function buildExtractArgsFor(
@@ -156,7 +147,7 @@ export function validateArchiveOutputExtension(
   if (!suffixes) return `Unsupported archive format: ${format}`;
   const lower = outputPath.toLocaleLowerCase("en-US");
   if (COMPOUND_TAR_SUFFIXES.some((suffix) => lower.endsWith(suffix))) {
-    return "Compound TAR streams (.tar.gz/.tgz, .tar.bz2/.tbz2, and .tar.xz/.txz) are not supported in this release. Create a .tar archive first, then compress that one file.";
+    return "Creating compound TAR output (.tar.gz/.tgz, .tar.bz2/.tbz2, or .tar.xz/.txz) is not supported yet. Create a .tar archive first, then compress that one file.";
   }
   if (suffixes.some((suffix) => lower.endsWith(suffix))) return null;
   return `Output filename must end in ${suffixes.join(" or ")} for ${format.toUpperCase()} format.`;

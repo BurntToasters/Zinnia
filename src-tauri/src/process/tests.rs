@@ -88,6 +88,128 @@ fn ensure_idle_detects_busy_state() {
 }
 
 #[test]
+fn preparation_failure_release_clears_every_soft_lock_field() {
+    let state = RunningProcess::new();
+    {
+        let mut process = lock_process(&state).expect("process lock");
+        process.preparing = true;
+        process.cancelling = true;
+        process.owner_label = Some("main".to_string());
+        process.abort_reason = Some("test".to_string());
+    }
+
+    release_preparation_failure_best_effort(&state);
+
+    let process = lock_process(&state).expect("released process lock");
+    assert!(process.child.is_none());
+    assert!(!process.preparing);
+    assert!(!process.cancelling);
+    assert!(process.owner_label.is_none());
+    assert!(process.abort_reason.is_none());
+    assert!(process.cleanup_plan.is_none());
+}
+
+#[test]
+fn extract_injects_snld10_for_nested_framework_symlinks() {
+    let mut args = vec![
+        "x".to_string(),
+        "-aou".to_string(),
+        "-o/tmp/out".to_string(),
+        "--".to_string(),
+        "archive.zip".to_string(),
+    ];
+    apply_backend_link_switches(&mut args);
+    assert!(
+        args.iter().any(|arg| arg == "-snld10"),
+        "extract must inject -snld10: {args:?}"
+    );
+    assert_eq!(
+        args.iter()
+            .filter(|arg| arg.to_ascii_lowercase().starts_with("-snld"))
+            .count(),
+        1,
+        "exactly one -snld* switch: {args:?}"
+    );
+}
+
+#[test]
+fn extract_forces_backend_snld10_over_caller_level() {
+    let mut args = vec![
+        "x".to_string(),
+        "-snld20".to_string(),
+        "-aou".to_string(),
+        "-o/tmp/out".to_string(),
+        "--".to_string(),
+        "archive.zip".to_string(),
+    ];
+    apply_backend_link_switches(&mut args);
+    assert!(args.iter().any(|arg| arg == "-snld10"));
+    assert!(!args.iter().any(|arg| arg == "-snld20"));
+}
+
+#[test]
+fn create_still_injects_snl_and_snh() {
+    let mut args = vec![
+        "a".to_string(),
+        "-t7z".to_string(),
+        "out.7z".to_string(),
+        "--".to_string(),
+        "input.txt".to_string(),
+    ];
+    apply_backend_link_switches(&mut args);
+    assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-snl")));
+    assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-snh")));
+    assert!(!args
+        .iter()
+        .any(|arg| arg.to_ascii_lowercase().starts_with("-snld")));
+}
+
+#[test]
+fn compound_tar_operations_are_detected_for_extract_list_and_test() {
+    for command in ["x", "l", "t"] {
+        let args = vec![
+            command.to_string(),
+            "--".to_string(),
+            "/tmp/source.TAR.GZ".to_string(),
+        ];
+        assert!(is_compound_tar_operation(&args), "{command}");
+    }
+    assert!(!is_compound_tar_operation(&[
+        "x".to_string(),
+        "--".to_string(),
+        "/tmp/source.gz".to_string(),
+    ]));
+}
+
+#[test]
+fn exit_one_publish_allows_only_known_metadata_warnings() {
+    assert!(extract_warning_is_metadata_only(
+        "Warnings: 1",
+        "WARNING: Cannot set file time"
+    ));
+    assert!(extract_warning_is_metadata_only(
+        "WARNING: There are data after the end of archive",
+        ""
+    ));
+    assert!(!extract_warning_is_metadata_only(
+        "Warnings: 1",
+        "WARNING: CRC Failed"
+    ));
+    assert!(!extract_warning_is_metadata_only(
+        "Warnings: 1",
+        "WARNING: something new and unknown"
+    ));
+    assert!(!extract_warning_is_metadata_only(
+        "WARNING: Cannot set file time",
+        "ERROR: Dangerous link path was ignored"
+    ));
+    assert!(!extract_warning_is_metadata_only(
+        "WARNING: Cannot set file time",
+        "WARNING: unknown second problem"
+    ));
+}
+
+#[test]
 fn cancellation_helper_kills_and_reaps_spawned_child() {
     #[cfg(unix)]
     let mut command = {
@@ -163,6 +285,34 @@ fn operation_output_path_finds_output_dir_for_extract() {
 fn operation_output_path_none_for_list() {
     let args = vec!["l".to_string(), "--".to_string(), "archive.7z".to_string()];
     assert_eq!(operation_output_path(&args), None);
+}
+
+#[test]
+fn archive_update_rejects_a_changed_selected_archive() {
+    let root = temp_root("zinnia-update-identity");
+    std::fs::create_dir_all(&root).expect("root");
+    let archive = root.join("archive.7z");
+    let input = root.join("input.txt");
+    std::fs::write(&archive, b"old archive bytes").expect("archive");
+    std::fs::write(&input, b"input").expect("input");
+    let identity = archive_identity_token(&archive).expect("identity");
+    std::fs::write(&archive, b"replacement archive bytes").expect("replacement");
+    let args = vec![
+        "u".to_string(),
+        archive.to_string_lossy().to_string(),
+        "--".to_string(),
+        input.to_string_lossy().to_string(),
+    ];
+
+    let error = prepare_cleanup_plan(&args, None, Some(&identity))
+        .expect_err("changed archive must not be updated");
+    assert!(error.contains("changed after it was selected"));
+    assert_eq!(
+        std::fs::read(&archive).expect("archive remains"),
+        b"replacement archive bytes"
+    );
+
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]
@@ -347,23 +497,26 @@ fn windows_listfile_rewrite_places_reference_before_any_separator() {
 }
 
 #[test]
-fn existing_extraction_destination_stages_inside_destination() {
+fn existing_extraction_destination_stages_beside_destination() {
     let root = temp_root("zinnia-extract-existing-plan-test");
     std::fs::create_dir_all(&root).expect("test directory");
     let archive = root.join("archive.7z");
     std::fs::write(&archive, b"archive").expect("test archive");
+    let destination = root.join("existing-dest");
+    std::fs::create_dir_all(&destination).expect("existing destination");
     let args = vec![
         "x".to_string(),
-        format!("-o{}", root.display()),
+        format!("-o{}", destination.display()),
         "--".to_string(),
         archive.to_string_lossy().to_string(),
     ];
     let plan = prepare_cleanup_plan(&args, None, None).expect("cleanup plan");
     let (staged, target) = plan.staged_extract.clone().expect("staging plan");
-    assert_eq!(staged.parent(), Some(target.as_path()));
+    assert_eq!(staged.parent(), target.parent());
+    assert_ne!(staged.parent(), Some(target.as_path()));
     assert_eq!(
         ExtractStagePlacement::from_paths(&staged, &target),
-        Ok(ExtractStagePlacement::InsideDestination)
+        Ok(ExtractStagePlacement::Sibling)
     );
     rollback_cleanup(&plan).expect("rollback");
     let _ = std::fs::remove_dir_all(root);
@@ -420,7 +573,7 @@ fn extraction_staging_supports_volume_guid_destinations() {
         .staged_extract
         .as_ref()
         .expect("existing stage");
-    assert_eq!(existing_stage.parent(), Some(existing_target.as_path()));
+    assert_eq!(existing_stage.parent(), existing_target.parent());
     assert!(existing_target.is_absolute());
     rollback_cleanup(&existing_plan).expect("existing rollback");
 
@@ -517,6 +670,7 @@ fn real_7z_extract_uses_snapshot_publish_stage_and_safe_commit() {
         ];
         crate::validation::validate_run_7z_args(&args).expect("valid extract arguments");
         super::commands::harden_7z_args(&mut args);
+        super::commands::apply_backend_link_switches(&mut args);
 
         let plan = prepare_cleanup_plan(&args, Some(cache.clone()), None)
             .expect("prepare production plan");
@@ -526,11 +680,8 @@ fn real_7z_extract_uses_snapshot_publish_stage_and_safe_commit() {
             .expect("private archive snapshot");
         let (staged_output, resolved_destination) =
             plan.staged_extract.as_ref().expect("publish stage");
-        if existing {
-            assert_eq!(staged_output.parent(), Some(resolved_destination.as_path()));
-        } else {
-            assert_eq!(staged_output.parent(), resolved_destination.parent());
-        }
+        assert_eq!(staged_output.parent(), resolved_destination.parent());
+        assert_ne!(staged_output.parent(), Some(resolved_destination.as_path()));
 
         let mut execution_args = args.clone();
         super::staging::rewrite_extract_archive(&mut execution_args, staged_snapshot)
@@ -1095,6 +1246,134 @@ fn staged_relative_in_tree_symlink_is_allowed() {
 
 #[cfg(unix)]
 #[test]
+fn contained_dangling_symlink_publishes_into_existing_destination() {
+    use std::os::unix::fs::symlink;
+
+    let root = temp_root("zinnia-dangling-symlink-publish");
+    let staged = root.join(".zinnia-extract-test");
+    let destination = root.join("out");
+    std::fs::create_dir_all(&staged).expect("stage");
+    std::fs::create_dir_all(&destination).expect("destination");
+    symlink("generated-later.txt", staged.join("current")).expect("dangling link");
+
+    merge_staged_extract(&staged, &destination, MAX_EXTRACTED_BYTES)
+        .expect("contained dangling link should publish");
+    assert_eq!(
+        std::fs::read_link(destination.join("current")).expect("published link"),
+        std::path::PathBuf::from("generated-later.txt")
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(windows)]
+fn try_windows_symlink_file(target: &str, link: &std::path::Path) -> Result<(), String> {
+    match std::os::windows::fs::symlink_file(target, link) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            if std::env::var_os("ZINNIA_REQUIRE_WINDOWS_SYMLINK_TESTS").is_some() {
+                panic!(
+                    "Windows symlink creation failed while ZINNIA_REQUIRE_WINDOWS_SYMLINK_TESTS is set: {error}"
+                );
+            }
+            Err(error.to_string())
+        }
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn contained_dangling_symlink_publishes_into_existing_destination_windows() {
+    let root = temp_root("zinnia-dangling-symlink-publish-win");
+    let staged = root.join(".zinnia-extract-test");
+    let destination = root.join("out");
+    std::fs::create_dir_all(&staged).expect("stage");
+    std::fs::create_dir_all(&destination).expect("destination");
+    let link = staged.join("current");
+    if let Err(error) = try_windows_symlink_file("generated-later.txt", &link) {
+        eprintln!(
+            "skipping contained_dangling_symlink_publishes_into_existing_destination_windows: {error} (enable Developer Mode or set ZINNIA_REQUIRE_WINDOWS_SYMLINK_TESTS=1)"
+        );
+        let _ = std::fs::remove_dir_all(root);
+        return;
+    }
+
+    let entry = super::journal::path_entry_identity(&link)
+        .expect("Windows symlink entry identity must succeed");
+    let fingerprinted = super::journal::path_identity_with_fingerprint(&link)
+        .expect("Windows symlink fingerprint must succeed");
+    assert!(
+        super::journal::file_identities_match(&entry, &fingerprinted),
+        "entry identity and fingerprinted identity must match"
+    );
+    assert!(
+        super::journal::path_identity(&link).is_err(),
+        "regular path_identity must keep rejecting symlink reparse points"
+    );
+
+    merge_staged_extract(&staged, &destination, MAX_EXTRACTED_BYTES)
+        .expect("contained dangling link should publish on Windows");
+    assert_eq!(
+        std::fs::read_link(destination.join("current")).expect("published link"),
+        std::path::PathBuf::from("generated-later.txt")
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(windows)]
+#[test]
+fn nested_symlink_directory_merges_into_existing_destination_windows() {
+    let root = temp_root("zinnia-nested-symlink-merge-win");
+    let staged = root.join("staged");
+    let destination = root.join("destination");
+    std::fs::create_dir_all(staged.join("tree")).expect("staged tree");
+    std::fs::create_dir_all(&destination).expect("destination");
+    std::fs::write(staged.join("tree/payload.txt"), b"nested").expect("payload");
+    let link = staged.join("tree/current");
+    if let Err(error) = try_windows_symlink_file("payload.txt", &link) {
+        eprintln!(
+            "skipping nested_symlink_directory_merges_into_existing_destination_windows: {error} (enable Developer Mode or set ZINNIA_REQUIRE_WINDOWS_SYMLINK_TESTS=1)"
+        );
+        let _ = std::fs::remove_dir_all(root);
+        return;
+    }
+
+    assert!(
+        staged_tree_contains_symlink(&staged.join("tree")).expect("scan tree"),
+        "helper must detect nested symlink before publish planning"
+    );
+    assert!(
+        !staged_tree_contains_symlink(&destination).expect("empty destination"),
+        "destination without links must scan clean"
+    );
+
+    merge_staged_extract(&staged, &destination, MAX_EXTRACTED_BYTES)
+        .expect("directory containing a symlink must merge-publish on Windows");
+    assert_eq!(
+        std::fs::read(destination.join("tree/payload.txt")).expect("payload"),
+        b"nested"
+    );
+    assert_eq!(
+        std::fs::read_link(destination.join("tree/current")).expect("published nested link"),
+        std::path::PathBuf::from("payload.txt")
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(windows)]
+#[test]
+fn staged_tree_without_symlinks_is_reported_clean_windows() {
+    let root = temp_root("zinnia-tree-scan-clean-win");
+    std::fs::create_dir_all(root.join("nested")).expect("tree");
+    std::fs::write(root.join("nested/file.txt"), b"ok").expect("file");
+    assert!(!staged_tree_contains_symlink(&root).expect("scan"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+#[test]
 fn staged_relative_escape_symlink_is_rejected() {
     use std::os::unix::fs::symlink;
     let root = temp_root("zinnia-rel-symlink-escape");
@@ -1110,6 +1389,147 @@ fn staged_relative_escape_symlink_is_rejected() {
         "unexpected error: {error}"
     );
     assert!(!destination.exists());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+#[test]
+fn staged_absolute_symlink_remapped_under_extract_root_is_still_rejected() {
+    // 7-Zip -snld10 can rewrite absolute archive links so they point at an
+    // absolute path under `-o` and still exit 0. Publish must keep rejecting
+    // absolute symlink targets.
+    use std::os::unix::fs::symlink;
+    let root = temp_root("zinnia-abs-symlink-remap");
+    let staged = root.join("staged");
+    let destination = root.join("destination");
+    std::fs::create_dir_all(staged.join("safe")).expect("staged tree");
+    std::fs::write(staged.join("safe/a.txt"), b"ok").expect("payload");
+    symlink(staged.join("etc/passwd"), staged.join("safe/abs-link"))
+        .expect("absolute remapped link");
+
+    let error = merge_staged_extract(&staged, &destination, MAX_EXTRACTED_BYTES)
+        .expect_err("absolute remapped link must fail closed");
+    assert!(
+        error.contains("absolute symbolic link"),
+        "unexpected error: {error}"
+    );
+    assert!(!destination.exists());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+#[test]
+fn staged_in_tree_hardlinks_are_allowed() {
+    let root = temp_root("zinnia-hardlink-ok");
+    let staged = root.join("staged");
+    let destination = root.join("destination");
+    std::fs::create_dir_all(&staged).expect("staged tree");
+    std::fs::write(staged.join("a.txt"), b"shared").expect("payload");
+    std::fs::hard_link(staged.join("a.txt"), staged.join("a-hard.txt")).expect("hard link");
+
+    merge_staged_extract(&staged, &destination, MAX_EXTRACTED_BYTES).expect("in-tree hardlinks ok");
+    assert_eq!(
+        std::fs::read(destination.join("a-hard.txt")).expect("hardlink payload"),
+        b"shared"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+#[test]
+fn staged_external_hardlink_alias_is_rejected() {
+    let root = temp_root("zinnia-hardlink-escape");
+    let staged = root.join("staged");
+    let destination = root.join("destination");
+    let outside = root.join("outside.txt");
+    std::fs::create_dir_all(&staged).expect("staged tree");
+    std::fs::write(&outside, b"secret").expect("outside payload");
+    std::fs::hard_link(&outside, staged.join("alias.txt")).expect("external hard link");
+
+    let error = merge_staged_extract(&staged, &destination, MAX_EXTRACTED_BYTES)
+        .expect_err("external hardlink alias must fail closed");
+    assert!(
+        error.contains("hard link that aliases a file outside"),
+        "unexpected error: {error}"
+    );
+    assert!(!destination.exists());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// `-snld10` can materialize a dangling link that leaves one archive subtree
+/// but remains inside the extraction root. Zinnia should publish it.
+#[cfg(unix)]
+#[test]
+fn snld10_extract_contained_dangling_symlink_is_published() {
+    let Some(binary) = bundled_7z_test_binary() else {
+        eprintln!("skipping: bundled 7z binary not found (run npm run prepare:7z)");
+        return;
+    };
+
+    let root = temp_root("zinnia-snld10-escape");
+    std::fs::create_dir_all(root.join("safe/nested")).expect("source tree");
+    std::fs::write(root.join("safe/a.txt"), b"ok").expect("payload");
+    std::os::unix::fs::symlink("../../outside", root.join("safe/nested/escape"))
+        .expect("escape link");
+    let archive = root.join("escape.tar");
+    let tar = std::process::Command::new("tar")
+        .current_dir(&root)
+        .args(["-cf", archive.to_str().expect("archive utf8"), "safe"])
+        .output()
+        .expect("tar create");
+    assert!(
+        tar.status.success(),
+        "tar failed: {}",
+        String::from_utf8_lossy(&tar.stderr)
+    );
+
+    let blocked = root.join("blocked");
+    let without_snld = std::process::Command::new(&binary)
+        .args([
+            "x",
+            &format!("-o{}", blocked.display()),
+            "-aou",
+            "--",
+            archive.to_str().expect("archive utf8"),
+        ])
+        .output()
+        .expect("default extract");
+    assert!(
+        !without_snld.status.success(),
+        "default 7-Zip must reject escaping relative symlink"
+    );
+
+    let staged = root.join("staged");
+    let with_snld = std::process::Command::new(&binary)
+        .args([
+            "x",
+            &format!("-o{}", staged.display()),
+            "-aou",
+            "-snld10",
+            "--",
+            archive.to_str().expect("archive utf8"),
+        ])
+        .output()
+        .expect("snld10 extract");
+    assert!(
+        with_snld.status.success(),
+        "fixture expects -snld10 to materialize the escape link: {}",
+        String::from_utf8_lossy(&with_snld.stderr)
+    );
+    assert!(staged
+        .join("safe/nested/escape")
+        .symlink_metadata()
+        .expect("escape entry")
+        .file_type()
+        .is_symlink());
+
+    let destination = root.join("destination");
+    merge_staged_extract(&staged, &destination, MAX_EXTRACTED_BYTES)
+        .expect("contained dangling symlink should publish");
+    assert_eq!(
+        std::fs::read_link(destination.join("safe/nested/escape")).expect("published link"),
+        std::path::PathBuf::from("../../outside")
+    );
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -1845,6 +2265,40 @@ Size = 1
 ";
     assert_slt_archive_members_safe(safe, "/tmp/archive.7z").expect("safe members");
 
+    let unsafe_symlink = "\
+Path = Libraries
+Symbolic Link = ../../escape.txt
+Size = 0
+";
+    let err = assert_slt_archive_members_safe(unsafe_symlink, "/tmp/archive.7z")
+        .expect_err("symlink escape target");
+    assert!(err.contains("../../escape.txt"));
+
+    let unsafe_hardlink = "\
+Path = twin.txt
+Hard Link = /tmp/outside.txt
+Size = 0
+";
+    let err = assert_slt_archive_members_safe(unsafe_hardlink, "/tmp/archive.7z")
+        .expect_err("hardlink absolute target");
+    assert!(err.contains("/tmp/outside.txt"));
+
+    let safe_symlink = "\
+Path = Libraries
+Symbolic Link = Versions/Current/Libraries
+Size = 0
+";
+    assert_slt_archive_members_safe(safe_symlink, "/tmp/archive.7z")
+        .expect("relative in-tree link");
+
+    let common_unix_symlink = "\
+Path = bin/tool
+Symbolic Link = ../lib/tool
+Size = 0
+";
+    assert_slt_archive_members_safe(common_unix_symlink, "/tmp/archive.7z")
+        .expect("contained parent-relative link");
+
     assert_slt_archive_members_safe("", "/tmp/empty.7z").expect("empty archive");
     assert!(assert_slt_archive_members_safe("unexpected schema", "/tmp/archive.7z").is_err());
 }
@@ -1888,6 +2342,26 @@ fn archive_identity_detects_replacement() {
     let identity = archive_file_identity(&archive).expect("identity");
     std::fs::write(&archive, b"replacement-content").expect("replacement archive");
     assert!(assert_archive_identity_unchanged(&archive, &identity).is_err());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn archive_identity_token_is_stable_and_changes_for_same_path_replacement() {
+    let root = temp_root("zinnia-archive-identity-token");
+    std::fs::create_dir_all(&root).expect("root");
+    let archive = root.join("archive.7z");
+    let old_archive = root.join("old-archive.7z");
+    std::fs::write(&archive, b"same bytes").expect("first archive");
+    let first = archive_identity_token(&archive).expect("first token");
+    assert_eq!(
+        archive_identity_token(&archive).expect("repeat token"),
+        first
+    );
+
+    std::fs::rename(&archive, &old_archive).expect("retain old identity");
+    std::fs::write(&archive, b"same bytes").expect("replacement archive");
+    let replacement = archive_identity_token(&archive).expect("replacement token");
+    assert_ne!(replacement, first);
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -1946,7 +2420,7 @@ fn extraction_uses_a_private_archive_snapshot() {
 }
 
 #[test]
-fn extraction_snapshot_uses_app_cache_when_available() {
+fn extraction_snapshot_prefers_source_filesystem_when_cache_is_available() {
     let root = temp_root("zinnia-archive-snapshot-cache");
     let source = root.join("source");
     let cache = root.join("cache");
@@ -1956,7 +2430,35 @@ fn extraction_snapshot_uses_app_cache_when_available() {
 
     let snapshot = stage_extract_input(&archive, Some(&cache), None).expect("snapshot");
     let stage = snapshot.path.parent().expect("stage");
-    assert_eq!(stage.parent(), Some(cache.as_path()));
+    let canonical_source = source.canonicalize().expect("canonical source");
+    assert_eq!(stage.parent(), Some(canonical_source.as_path()));
+
+    let registered = read_pending_stages(&cache).expect("pending-stage registry");
+    let stage_text = stage.to_string_lossy().to_string();
+    assert!(registered.iter().any(|path| path == &stage_text));
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn extraction_snapshot_honors_preparation_cancel() {
+    let root = temp_root("zinnia-archive-snapshot-cancel");
+    std::fs::create_dir_all(&root).expect("root");
+    let archive = root.join("archive.7z");
+    std::fs::write(&archive, vec![0u8; 2 * 1024 * 1024]).expect("archive");
+
+    let error =
+        super::archive_snapshot::stage_extract_input_with_cancel(&archive, None, None, || true)
+            .expect_err("cancelled snapshot");
+    assert!(error.contains("cancelled"));
+    assert_eq!(
+        std::fs::read_dir(&root)
+            .expect("root listing")
+            .filter_map(Result::ok)
+            .count(),
+        1,
+        "cancelled snapshot must remove its stage"
+    );
 
     let _ = std::fs::remove_dir_all(root);
 }

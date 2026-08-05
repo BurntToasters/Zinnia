@@ -12,6 +12,10 @@ export function updateWindowsResourceVersion(
   resource: string,
   version: string,
 ): string;
+export function updateWindowsAssemblyIdentityVersion(
+  manifest: string,
+  version: string,
+): string;
 
 export function updateWindowsShellResourceDestinations<
   T extends { bundle?: { resources?: Record<string, string> } },

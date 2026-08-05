@@ -106,12 +106,35 @@ fn defer_exit_while_operation_finishes(
 ) -> bool {
     let state = app.state::<RunningProcess>();
     let owner = match state.0.lock() {
-        Ok(process) if process.child.is_some() || process.preparing || process.cancelling => {
-            process.owner_label.clone()
+        Ok(process) => {
+            // An update reservation has no child to cancel. Do not mistake a
+            // user/system Quit during installation for the later updater
+            // relaunch. The frontend releases this reservation immediately
+            // before calling relaunch; until then, keep the process alive.
+            if process.child.is_none()
+                && process.preparing
+                && process.update_reserved_at.is_some()
+                && process.abort_reason.as_deref() == Some("Installing application update")
+            {
+                api.prevent_exit();
+                return true;
+            }
+            if process.child.is_some() || process.preparing || process.cancelling {
+                process.owner_label.clone()
+            } else {
+                return false;
+            }
         }
-        Ok(_) => return false,
         Err(poisoned) => {
             let process = poisoned.into_inner();
+            if process.child.is_none()
+                && process.preparing
+                && process.update_reserved_at.is_some()
+                && process.abort_reason.as_deref() == Some("Installing application update")
+            {
+                api.prevent_exit();
+                return true;
+            }
             if process.child.is_some() || process.preparing || process.cancelling {
                 process.owner_label.clone()
             } else {
@@ -393,6 +416,7 @@ fn main() {
         } => {
             if label == "main" {
                 MAC_FALLBACK_MAIN_PENDING.store(false, Ordering::SeqCst);
+                launch::MAIN_WINDOW_READY.store(false, Ordering::SeqCst);
             }
             if launch::is_extract_window_label(&label) {
                 launch::clear_extract_window_bindings(app_handle, &label);
@@ -436,6 +460,7 @@ fn main() {
         {
             if label == "main" {
                 MAC_FALLBACK_MAIN_PENDING.store(false, Ordering::SeqCst);
+                launch::MAIN_WINDOW_READY.store(false, Ordering::SeqCst);
             }
             if launch::is_extract_window_label(label) {
                 launch::clear_extract_window_bindings(app_handle, label);

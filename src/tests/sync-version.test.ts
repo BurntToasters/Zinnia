@@ -8,6 +8,7 @@ import {
   updateCargoLockPackageVersion,
   updateWindowsResourceFlags,
   updateWindowsResourceVersion,
+  updateWindowsAssemblyIdentityVersion,
   updateWindowsShellResourceDestinations,
   windowsPackageVersionFromSemver,
 } from "../../scripts/sync-version-helpers.js";
@@ -104,6 +105,25 @@ ${resource}
   });
 });
 
+describe("Windows assembly identity version", () => {
+  const manifest = `<assembly><assemblyIdentity name="zinnia" version="0.6.0.0"/></assembly>`;
+
+  it("uses the ordered Windows package version", () => {
+    expect(updateWindowsAssemblyIdentityVersion(manifest, "0.6.1-beta.2")).toBe(
+      `<assembly><assemblyIdentity name="zinnia" version="0.6.1.2"/></assembly>`,
+    );
+  });
+
+  it("fails closed when the identity version is missing or duplicated", () => {
+    expect(() =>
+      updateWindowsAssemblyIdentityVersion("<assembly/>", "0.6.1"),
+    ).toThrow(/found 0/);
+    expect(() =>
+      updateWindowsAssemblyIdentityVersion(`${manifest}${manifest}`, "0.6.1"),
+    ).toThrow(/found 2/);
+  });
+});
+
 describe("Windows package version", () => {
   it("keeps beta, stable, and the next patch monotonically ordered", () => {
     const versions = [
@@ -195,9 +215,10 @@ describe("Windows shell resource destinations", () => {
 
 describe("macOS bundle version", () => {
   it("converts prerelease and stable SemVer versions into ordered numeric builds", () => {
-    expect(macBundleVersionFromSemver("0.6.0-beta.4")).toBe("0.6.34");
-    expect(macBundleVersionFromSemver("0.6.0")).toBe("0.6.99");
-    expect(macBundleVersionFromSemver("0.6.1-beta.1")).toBe("0.6.131");
+    expect(macBundleVersionFromSemver("0.6.0-beta.4")).toBe("0.6.3004");
+    expect(macBundleVersionFromSemver("0.6.0-beta.30")).toBe("0.6.3030");
+    expect(macBundleVersionFromSemver("0.6.0")).toBe("0.6.9999");
+    expect(macBundleVersionFromSemver("0.6.1-beta.1")).toBe("0.6.13001");
   });
 
   it("rejects unsupported prerelease version forms", () => {
@@ -213,7 +234,9 @@ describe("macOS bundle version", () => {
     expect(() => macBundleVersionFromSemver("0.6.0-beta.04")).toThrow(
       /cannot be represented/,
     );
-    expect(() => macBundleVersionFromSemver("0.6.0-beta.30")).toThrow(/0-29/);
+    expect(() => macBundleVersionFromSemver("0.6.0-beta.6999")).toThrow(
+      /0-6998/,
+    );
   });
 });
 

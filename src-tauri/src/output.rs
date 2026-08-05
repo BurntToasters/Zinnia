@@ -107,13 +107,22 @@ pub fn redact_sensitive_text(input: &str) -> String {
     redact_key_value_secrets(&with_args)
 }
 
+fn is_password_switch_token(token: &str) -> bool {
+    let lower = token.to_ascii_lowercase();
+    // `-spd` is DisableWildcardMatching, not a password switch.
+    if lower == "-spd" || lower.starts_with("-spd") {
+        return false;
+    }
+    lower == "-p" || lower.starts_with("-p")
+}
+
 fn redact_password_args(input: &str) -> String {
-    // Token-aware: only redact whitespace-delimited args that start with `-p`.
+    // Token-aware: redact whitespace-delimited `-p` / `-P` password args.
     let mut out = String::with_capacity(input.len());
     for token in input.split_inclusive(char::is_whitespace) {
         let trimmed = token.trim_start_matches(char::is_whitespace);
         let leading = token.len() - trimmed.len();
-        if trimmed.starts_with("-p") {
+        if is_password_switch_token(trimmed) {
             out.push_str(&token[..leading]);
             out.push_str("-p***");
             let non_ws_len = trimmed
@@ -227,7 +236,15 @@ mod tests {
             redact_sensitive_text("7z a -pmySecret out.7z"),
             "7z a -p*** out.7z"
         );
+        assert_eq!(
+            redact_sensitive_text("7z a -PMySecret out.7z"),
+            "7z a -p*** out.7z"
+        );
         assert!(!sanitize_output("err -phunter2").contains("hunter2"));
+        assert!(
+            redact_sensitive_text("7z x -spd -aou archive.7z").contains("-spd"),
+            "-spd must not be treated as a password switch"
+        );
     }
 
     #[test]

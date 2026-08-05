@@ -183,6 +183,32 @@ describe("normalizeUserSettings", () => {
     expect(result.customPresets[1].format).toBe(SETTING_DEFAULTS.format);
   });
 
+  it("sanitizes every custom preset compression field", () => {
+    const result = normalizeUserSettings({
+      customPresets: [
+        {
+          name: "Hostile",
+          format: "rar",
+          level: "99",
+          method: "@listfile",
+          dict: "999g",
+          wordSize: "999",
+          solid: "../../escape",
+        },
+      ],
+    });
+
+    expect(result.customPresets[0]).toEqual({
+      name: "Hostile",
+      format: SETTING_DEFAULTS.format,
+      level: SETTING_DEFAULTS.level,
+      method: SETTING_DEFAULTS.method,
+      dict: SETTING_DEFAULTS.dict,
+      wordSize: SETTING_DEFAULTS.wordSize,
+      solid: SETTING_DEFAULTS.solid,
+    });
+  });
+
   it("falls back when customPresets is not an array", () => {
     const result = normalizeUserSettings({
       customPresets: { nope: true },
