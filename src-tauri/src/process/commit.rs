@@ -467,6 +467,24 @@ fn copy_tree_with_inherited_acl(
         let target_child = target.join(entry.file_name());
         let metadata =
             std::fs::symlink_metadata(&source_child).map_err(|error| error.to_string())?;
+        if metadata.file_type().is_symlink() {
+            // Defense in depth: symlink-bearing trees normally rename instead of
+            // ACL-copying, but recreate contained links if this path is used.
+            let link_target =
+                std::fs::read_link(&source_child).map_err(|error| error.to_string())?;
+            let is_directory_link = {
+                use std::os::windows::fs::FileTypeExt as _;
+                metadata.file_type().is_symlink_dir()
+            };
+            if is_directory_link {
+                std::os::windows::fs::symlink_dir(&link_target, &target_child)
+                    .map_err(|error| error.to_string())?;
+            } else {
+                std::os::windows::fs::symlink_file(&link_target, &target_child)
+                    .map_err(|error| error.to_string())?;
+            }
+            continue;
+        }
         if crate::path_safety::is_link_or_reparse(&metadata) {
             return Err(format!(
                 "Archive contains a symbolic link or reparse point: {}",
@@ -1214,6 +1232,33 @@ fn is_publish_temp_name(path: &std::path::Path) -> bool {
     token.len() == 32 && token.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
+/// True when `root` contains any symbolic-link entry. Non-symlink reparse points
+/// are rejected  -  staged trees should already have failed closed on those.
+#[cfg(windows)]
+pub(crate) fn staged_tree_contains_symlink(root: &std::path::Path) -> Result<bool, String> {
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(&directory).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let path = entry.path();
+            let metadata = std::fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
+            if metadata.file_type().is_symlink() {
+                return Ok(true);
+            }
+            if crate::path_safety::is_link_or_reparse(&metadata) {
+                return Err(format!(
+                    "Archive contains a symbolic link or reparse point: {}",
+                    path.display()
+                ));
+            }
+            if metadata.is_dir() {
+                pending.push(path);
+            }
+        }
+    }
+    Ok(false)
+}
+
 #[cfg(windows)]
 fn prepare_target_local_publish_paths(
     plan: &mut [MoveRecord],
@@ -1222,9 +1267,13 @@ fn prepare_target_local_publish_paths(
     for record in plan {
         let metadata =
             std::fs::symlink_metadata(&record.source).map_err(|error| error.to_string())?;
-        // Publish links by renaming the link entry itself. A target-local copy
-        // would follow it or require unsafe target reconstruction.
+        // Publish links (and directories that contain them) by renaming the
+        // staged entry. Target-local ACL copy cannot move reparse points and
+        // would otherwise reject nested `.framework`-style link trees.
         if crate::path_safety::is_link_or_reparse(&metadata) {
+            continue;
+        }
+        if metadata.is_dir() && staged_tree_contains_symlink(&record.source)? {
             continue;
         }
         let parent = record
@@ -1720,13 +1769,17 @@ pub(crate) fn validate_move_record(
     } else if record.publish_identity.is_some() {
         #[cfg(windows)]
         {
-            let source_is_link = std::fs::symlink_metadata(&record.source)
-                .map(|metadata| crate::path_safety::is_link_or_reparse(&metadata))
-                .unwrap_or(false);
-            let target_is_link = std::fs::symlink_metadata(&record.target)
-                .map(|metadata| crate::path_safety::is_link_or_reparse(&metadata))
-                .unwrap_or(false);
-            if !source_is_link && !target_is_link {
+            // Rename-published symbolic links and symlink-bearing directory
+            // trees journal an identity without a target-local publish_temp.
+            // Plain files still require the ACL-copy publish path.
+            let allows_rename_publish = |path: &std::path::Path| -> bool {
+                std::fs::symlink_metadata(path)
+                    .map(|metadata| {
+                        crate::path_safety::is_link_or_reparse(&metadata) || metadata.is_dir()
+                    })
+                    .unwrap_or(false)
+            };
+            if !allows_rename_publish(&record.source) && !allows_rename_publish(&record.target) {
                 return Err(
                     "Refusing extraction publish identity without a publish path.".to_string(),
                 );
