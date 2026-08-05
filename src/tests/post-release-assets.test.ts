@@ -6,6 +6,7 @@ import path from "node:path";
 
 import {
   CLI_FLAG,
+  REPOSITORY_ROOT,
   copyReleaseAssets,
   isDirectExecution,
   pathsEqual,
@@ -109,16 +110,61 @@ describe("post-release assets", () => {
     ).toBe("hash");
   });
 
-  it("fails before cleanup when the mirror destination is missing", () => {
+  it("cleans build-only files but skips the mirror when AFTER_PACK_LOC is unset", () => {
+    const root = makeTemporaryDirectory();
+    const releaseDir = path.join(root, "release");
+    fs.mkdirSync(path.join(releaseDir, "nsis"), { recursive: true });
+    const buildOnly = path.join(releaseDir, "nsis", "build-only.exe");
+    fs.writeFileSync(buildOnly, "build");
+    fs.writeFileSync(
+      path.join(releaseDir, "Zinnia-Windows-x64.exe"),
+      "installer",
+    );
+
+    const result = run({ releaseDir, env: {} });
+
+    expect(result).toEqual({
+      mirrored: false,
+      destination: "",
+      copiedEntries: 0,
+    });
+    expect(fs.existsSync(buildOnly)).toBe(false);
+    expect(fs.existsSync(path.join(releaseDir, "Zinnia-Windows-x64.exe"))).toBe(
+      true,
+    );
+  });
+
+  it("rejects a platform-relative mirror before cleaning release files", () => {
     const root = makeTemporaryDirectory();
     const releaseDir = path.join(root, "release");
     fs.mkdirSync(path.join(releaseDir, "nsis"), { recursive: true });
     const buildOnly = path.join(releaseDir, "nsis", "build-only.exe");
     fs.writeFileSync(buildOnly, "build");
 
-    expect(() => run({ releaseDir, env: {} })).toThrow(
-      /AFTER_PACK_LOC is empty/,
-    );
+    const relativeDestination =
+      process.platform === "win32" ? "relative\\mirror" : "Z:/ZINNIA";
+    expect(() =>
+      run({
+        releaseDir,
+        env: { AFTER_PACK_LOC: relativeDestination },
+      }),
+    ).toThrow(/must be an absolute path/);
+    expect(fs.existsSync(buildOnly)).toBe(true);
+  });
+
+  it("rejects a repository-local mirror before cleaning release files", () => {
+    const root = makeTemporaryDirectory();
+    const releaseDir = path.join(root, "release");
+    fs.mkdirSync(path.join(releaseDir, "nsis"), { recursive: true });
+    const buildOnly = path.join(releaseDir, "nsis", "build-only.exe");
+    fs.writeFileSync(buildOnly, "build");
+
+    expect(() =>
+      run({
+        releaseDir,
+        env: { AFTER_PACK_LOC: path.join(REPOSITORY_ROOT, "mirror") },
+      }),
+    ).toThrow(/must be outside the repository/);
     expect(fs.existsSync(buildOnly)).toBe(true);
   });
 
@@ -136,7 +182,7 @@ describe("post-release assets", () => {
     const root = makeTemporaryDirectory();
     const scriptsDir = path.join(root, "scripts");
     const releaseDir = path.join(root, "release");
-    const destination = path.join(root, "mirror");
+    const destination = path.join(makeTemporaryDirectory(), "mirror");
     fs.mkdirSync(scriptsDir, { recursive: true });
     fs.mkdirSync(releaseDir);
     fs.copyFileSync(

@@ -51,16 +51,9 @@ static bool EndsWithIgnoreCase(const std::wstring& value, const wchar_t* suffix)
 }
 
 static bool LooksLikeArchiveExtension(const std::wstring& lower_or_path) {
-  if (EndsWithIgnoreCase(lower_or_path, L".tar.gz") ||
-      EndsWithIgnoreCase(lower_or_path, L".tar.xz") ||
-      EndsWithIgnoreCase(lower_or_path, L".tar.bz2") ||
-      EndsWithIgnoreCase(lower_or_path, L".tgz") ||
-      EndsWithIgnoreCase(lower_or_path, L".tbz2") ||
-      EndsWithIgnoreCase(lower_or_path, L".txz")) {
-    return false;
-  }
-  static const wchar_t* kExts[] = {L".7z", L".zip", L".tar", L".gz",
-                                   L".bz2", L".xz"};
+  static const wchar_t* kExts[] = {
+      L".7z", L".zip", L".rar",  L".tar",  L".gz",
+      L".tgz", L".bz2", L".tbz2", L".xz", L".txz"};
   for (const wchar_t* candidate : kExts) {
     if (EndsWithIgnoreCase(lower_or_path, candidate)) return true;
   }
@@ -95,7 +88,6 @@ static bool LooksLikeSplitVolume(const std::wstring& path) {
 }
 
 static bool LooksLikeArchive(const std::wstring& path) {
-  // Keep .rar omitted on Windows (CVE-2026-58052 extract gate in the app).
   std::wstring lower = path;
   for (auto& ch : lower) ch = static_cast<wchar_t>(towlower(ch));
   return LooksLikeArchiveExtension(lower) || LooksLikeSplitVolume(path);

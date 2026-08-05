@@ -6,19 +6,13 @@ export const ARCHIVE_EXTENSIONS = new Set([
   ".zip",
   ".tar",
   ".gz",
+  ".tgz",
   ".bz2",
+  ".tbz2",
   ".xz",
+  ".txz",
   ".rar",
 ]);
-
-const UNSUPPORTED_COMPOUND_ARCHIVE_SUFFIXES = [
-  ".tar.gz",
-  ".tar.bz2",
-  ".tar.xz",
-  ".tgz",
-  ".tbz2",
-  ".txz",
-];
 
 export function escapeHtml(s: string): string {
   return s
@@ -194,14 +188,18 @@ const JWT_LIKE_PATTERN =
 const OPENAI_KEY_PATTERN = /\bsk-[A-Za-z0-9]{20,}\b/g;
 const KEY_VALUE_SECRET_PATTERN =
   /\b(password|passphrase|token|private[_-]?key)\s*([:=])\s*\S+/gi;
-const ARG_PASSWORD_PATTERN = /-p\S*/gi;
+// 7-Zip accepts the password directly after `-p` / `-P`. A rendered command
+// cannot distinguish a password containing spaces from following arguments,
+// so fail closed and redact the rest of that log line. `-spd` is preserved
+// because the password switch must start at a token boundary.
+const ARG_PASSWORD_PATTERN = /(^|[^\S\r\n])-p[^\r\n]*/gim;
 
 export function redactSensitiveText(input: string): string {
   return input
     .replace(BEARER_TOKEN_PATTERN, "Bearer ***")
     .replace(JWT_LIKE_PATTERN, "***")
     .replace(OPENAI_KEY_PATTERN, "***")
-    .replace(ARG_PASSWORD_PATTERN, "-p***")
+    .replace(ARG_PASSWORD_PATTERN, "$1-p***")
     .replace(
       KEY_VALUE_SECRET_PATTERN,
       (_match, key: string, sep: string) => `${key}${sep}***`,
@@ -231,13 +229,6 @@ export function safeHref(url: string): string {
 
 export function isArchiveFile(path: string): boolean {
   const lower = path.toLowerCase();
-  if (
-    UNSUPPORTED_COMPOUND_ARCHIVE_SUFFIXES.some((suffix) =>
-      lower.endsWith(suffix),
-    )
-  ) {
-    return false;
-  }
   for (const ext of ARCHIVE_EXTENSIONS) {
     if (lower.endsWith(ext)) return true;
   }
@@ -252,6 +243,7 @@ export function assertRunResult(value: unknown): asserts value is {
   stdout: string;
   stderr: string;
   code: number;
+  warning_code?: number;
   stdout_truncated?: boolean;
   stderr_truncated?: boolean;
 } {

@@ -170,7 +170,12 @@ export function setBrowsePasswordFieldVisible(visible: boolean) {
 
 function clearBrowsePickerSessionState() {
   state.browseArchiveInfoByPath.clear();
+  state.browseArchiveIdentityByPath.clear();
   state.browseSelectionsByArchive.clear();
+  // Invalidate an asynchronous selective-open request before clearing the
+  // cache or hiding its modal. Otherwise its late continuation can reopen a
+  // picker for a previous mode/input session.
+  state.selectiveOpenRequestId += 1;
   state.selectiveSearchQuery = "";
   state.selectiveActiveArchive = null;
   state.selectiveVisiblePaths = [];
@@ -220,7 +225,9 @@ export function setMode(
 
 export function renderInputs() {
   const mode = getMode();
-  const signature = state.inputs.join("\n");
+  // JSON preserves item boundaries; joining with a newline aliases distinct
+  // (legal on Unix) path arrays such as ["a\nb"] and ["a", "b"].
+  const signature = JSON.stringify(state.inputs);
   const signatureChanged = signature !== state.lastInputsSignature;
   if (signatureChanged) {
     clearBrowsePickerSessionState();
@@ -344,6 +351,7 @@ export function renderInputs() {
 
     const remove = document.createElement("button");
     remove.className = "btn btn--ghost btn--sm";
+    remove.dataset.inputRemove = "";
     remove.setAttribute("aria-label", `Remove ${path}`);
     remove.innerHTML = '<i data-lucide="trash-2" class="lucide-icon"></i>';
     remove.disabled =

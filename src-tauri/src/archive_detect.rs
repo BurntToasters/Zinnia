@@ -20,12 +20,6 @@ pub struct ArchivePathValidation {
     pub identity: Option<String>,
 }
 
-fn is_unsupported_compound_tar_path(lower_path: &str) -> bool {
-    [".tar.gz", ".tar.bz2", ".tar.xz", ".tgz", ".tbz2", ".txz"]
-        .iter()
-        .any(|suffix| lower_path.ends_with(suffix))
-}
-
 fn expected_archive_family(lower_path: &str) -> Option<&'static str> {
     if lower_path.ends_with(".7z") {
         Some("7z")
@@ -161,8 +155,12 @@ pub fn has_tar_signature(bytes: &[u8]) -> bool {
     bytes.get(257..262) == Some(b"ustar") || has_tar_checksum(bytes)
 }
 
+pub fn path_has_tar_signature(path: &std::path::Path) -> Result<bool, String> {
+    read_probe_bytes(path, ARCHIVE_SIGNATURE_SCAN_BYTES).map(|bytes| has_tar_signature(&bytes))
+}
+
 fn read_probe_bytes(path: &std::path::Path, max_bytes: usize) -> Result<Vec<u8>, String> {
-    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut file = crate::path_safety::open_regular_file_nofollow(path)?;
     let mut buf = vec![0u8; max_bytes];
     let read = file.read(&mut buf).map_err(|e| e.to_string())?;
     buf.truncate(read);
@@ -174,7 +172,7 @@ fn read_probe_bytes(path: &std::path::Path, max_bytes: usize) -> Result<Vec<u8>,
 /// the mandatory end-of-central-directory record from the tail instead.
 fn has_zip_end_record(path: &std::path::Path) -> Result<bool, String> {
     const MAX_EOCD_SEARCH: u64 = 65_535 + 22;
-    let mut file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+    let mut file = crate::path_safety::open_regular_file_nofollow(path)?;
     let len = file.metadata().map_err(|error| error.to_string())?.len();
     let start = len.saturating_sub(MAX_EOCD_SEARCH);
     file.seek(SeekFrom::Start(start))
@@ -259,14 +257,9 @@ fn validate_archive_path_impl(path: &str, include_identity: bool) -> ArchivePath
     }
 
     let lower = candidate.to_lowercase();
-    if is_unsupported_compound_tar_path(&lower) {
-        return invalid(
-            "Compound TAR streams are not supported in this release. Extract the outer stream with another tool or select the inner TAR archive.",
-        );
-    }
-    let fs_path = std::path::Path::new(candidate);
+    let selected_path = std::path::Path::new(candidate);
 
-    let meta = match std::fs::symlink_metadata(fs_path) {
+    let meta = match std::fs::symlink_metadata(selected_path) {
         Ok(meta) => meta,
         Err(err) => {
             let reason = if err.kind() == std::io::ErrorKind::NotFound {
@@ -282,14 +275,15 @@ fn validate_archive_path_impl(path: &str, include_identity: bool) -> ArchivePath
             };
         }
     };
-    if crate::path_safety::is_link_or_reparse(&meta) {
-        return invalid(
-            "Choose the real file, not a symbolic link or reparse point. Zinnia does not follow links as archive inputs.",
-        );
-    }
-    if !meta.is_file() {
+    if !meta.is_file() && !crate::path_safety::is_link_or_reparse(&meta) {
         return invalid("Path is not a file.");
     }
+
+    let resolved_path = match crate::path_safety::resolve_regular_file_input(selected_path) {
+        Ok(path) => path,
+        Err(error) => return invalid(&error),
+    };
+    let fs_path = resolved_path.as_path();
 
     let bytes = match read_probe_bytes(fs_path, ARCHIVE_SIGNATURE_SCAN_BYTES) {
         Ok(bytes) => bytes,
@@ -306,14 +300,6 @@ fn validate_archive_path_impl(path: &str, include_identity: bool) -> ArchivePath
     let signature = detect_archive_signature(&bytes);
     let tar = has_tar_signature(&bytes);
     let zip_end_record = has_zip_end_record(fs_path).unwrap_or(false);
-
-    // Windows ships standalone 7za.exe, which deliberately has no RAR handler.
-    // Reject every RAR route here so browse/test cannot advertise a capability
-    // that the packaged runtime will fail to provide.
-    #[cfg(target_os = "windows")]
-    if signature == Some("rar") {
-        return invalid("RAR archives are not supported by the bundled Windows 7-Zip runtime.");
-    }
 
     let split_zip_header_valid = || {
         let base = fs_path.with_extension("");
@@ -439,9 +425,8 @@ mod tests {
         assert_eq!(detect_archive_signature(b"plain-text"), None);
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
-    fn windows_rejects_rar_before_any_7z_command_is_spawned() {
+    fn accepts_rar_signature_on_every_platform() {
         let path = std::env::temp_dir().join(format!(
             "zinnia-rar-validation-{}-{}.rar",
             std::process::id(),
@@ -455,11 +440,7 @@ mod tests {
         let result = validate_archive_path(&path.to_string_lossy());
         let _ = std::fs::remove_file(&path);
 
-        assert!(!result.valid);
-        assert!(result
-            .reason
-            .as_deref()
-            .is_some_and(|reason| reason.contains("not supported")));
+        assert!(result.valid, "{:?}", result.reason);
     }
 
     #[test]
@@ -534,6 +515,29 @@ mod tests {
         let path = file_path.to_string_lossy().to_string();
         assert!(validate_archive_path(&path).valid);
 
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validate_archive_path_accepts_filesystem_symlink_input() {
+        use std::os::unix::fs::symlink;
+
+        let base = std::env::temp_dir().join(format!(
+            "zinnia-archive-symlink-probe-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).expect("temp directory");
+        let real = base.join("real.zip");
+        std::fs::write(&real, [0x50, 0x4B, 0x03, 0x04, 0x14, 0x00]).expect("zip probe");
+        let linked = base.join("linked.zip");
+        symlink("real.zip", &linked).expect("archive symlink");
+
+        let result = validate_archive_path(&linked.to_string_lossy());
+        assert!(result.valid, "{:?}", result.reason);
         let _ = std::fs::remove_dir_all(base);
     }
 

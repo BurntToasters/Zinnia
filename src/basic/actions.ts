@@ -1,7 +1,7 @@
 import { open, confirm, save, message } from "@tauri-apps/plugin-dialog";
 import { promptInput } from "../prompt-modal";
 import { invoke } from "@tauri-apps/api/core";
-import { state } from "../state";
+import { clearBrowseCache, state } from "../state";
 import {
   log,
   getWorkspaceMode,
@@ -41,12 +41,7 @@ import {
 } from "./progress";
 import { setRecentArchiveHandler } from "./recent";
 import { showToast } from "../toast";
-
-async function waitUntilIncomingPathsApplyingClear(): Promise<void> {
-  while (state.incomingPathsApplying) {
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
-  }
-}
+import { waitUntilIncomingPathsApplyingClear } from "../incoming-paths";
 
 async function confirmBasicDrop(
   text: string,
@@ -294,7 +289,14 @@ export async function handleBasicDrop(paths: string[]): Promise<void> {
   // operationPreparing  -  that would deadlock behind destination/password dialogs.
   await waitUntilIncomingPathsApplyingClear();
   const preparation = beginBasicPreparation();
-  if (!preparation) return;
+  if (!preparation) {
+    showToast(
+      "Zinnia is busy preparing another action. Drop the files again in a moment.",
+      "error",
+      4000,
+    );
+    return;
+  }
   showBasicInputLimitToast(limited.overLimit);
   try {
     await handleBasicDropOnce(limited.paths, preparation);
@@ -463,8 +465,22 @@ export async function isArchiveEncrypted(
   archivePath: string,
 ): Promise<boolean | null> {
   const cached = state.browseArchiveInfoByPath.get(archivePath);
-  if (cached) {
-    return cached.encrypted;
+  const cachedIdentity = state.browseArchiveIdentityByPath.get(archivePath);
+  if (cached && cachedIdentity) {
+    try {
+      const [current] = await validateArchivePaths([archivePath], true);
+      if (current?.valid && current.identity === cachedIdentity) {
+        return cached.encrypted;
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`Could not validate cached archive identity: ${msg}`, "error");
+    }
+    clearBrowseCache(archivePath);
+  } else if (cached || cachedIdentity) {
+    // A partial cache entry can never establish that the file at this path is
+    // still the file whose listing supplied the encryption state.
+    clearBrowseCache(archivePath);
   }
 
   if (!(await ensureRuntimeReady())) return null;
@@ -472,7 +488,14 @@ export async function isArchiveEncrypted(
     const args = ["l", "-slt", "-spd", "--", archivePath];
     const result = await invoke<Run7zResult>("run_7z", { args });
     if (result.code > 1) {
-      return looksLikePasswordRequiredError(result.stdout, result.stderr);
+      // Fail closed: only return false when the listing is clearly unencrypted.
+      // Unknown failures must not skip the password prompt.
+      return looksLikePasswordRequiredError(result.stdout, result.stderr)
+        ? true
+        : null;
+    }
+    if (result.stdout_truncated || result.stderr_truncated) {
+      return null;
     }
     const info = parseArchiveListing(result.stdout);
     return info.encrypted;

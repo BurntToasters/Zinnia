@@ -967,37 +967,51 @@ async function listAllGithubPages(fetchPage, { perPage = 100 } = {}) {
 
 async function getOrCreateRelease() {
   const commit = currentReleaseCommit();
+  const findExisting = async () => {
+    try {
+      return await ghRequest(
+        "GET",
+        `/repos/${REPO_OWNER}/${REPO_NAME}/releases/tags/${TAG}`,
+      );
+    } catch (error) {
+      if (error?.statusCode !== 404) throw error;
+    }
+
+    const releases = await listAllGithubPages((page, perPage) =>
+      ghRequest(
+        "GET",
+        `/repos/${REPO_OWNER}/${REPO_NAME}/releases?per_page=${perPage}&page=${page}`,
+      ),
+    );
+    return releases.find(
+      (release) => release.draft && release.tag_name === TAG,
+    );
+  };
+
+  const existing = await findExisting();
+  if (existing) return assertReleaseTargetsCommit(existing, commit);
+
   try {
     const release = await ghRequest(
-      "GET",
-      `/repos/${REPO_OWNER}/${REPO_NAME}/releases/tags/${TAG}`,
+      "POST",
+      `/repos/${REPO_OWNER}/${REPO_NAME}/releases`,
+      {
+        tag_name: TAG,
+        target_commitish: commit,
+        name: VERSION,
+        draft: true,
+        prerelease: IS_PRERELEASE,
+      },
     );
     return assertReleaseTargetsCommit(release, commit);
   } catch (error) {
-    if (error?.statusCode !== 404) throw error;
+    if (error?.statusCode !== 422) throw error;
+    // Match ensure-draft-release.cjs: list/create can lag under concurrent VMs.
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    const raced = await findExisting();
+    if (!raced) throw error;
+    return assertReleaseTargetsCommit(raced, commit);
   }
-
-  const releases = await listAllGithubPages((page, perPage) =>
-    ghRequest(
-      "GET",
-      `/repos/${REPO_OWNER}/${REPO_NAME}/releases?per_page=${perPage}&page=${page}`,
-    ),
-  );
-  const draft = releases.find((r) => r.draft && r.tag_name === TAG);
-  if (draft) return assertReleaseTargetsCommit(draft, commit);
-
-  const release = await ghRequest(
-    "POST",
-    `/repos/${REPO_OWNER}/${REPO_NAME}/releases`,
-    {
-      tag_name: TAG,
-      target_commitish: commit,
-      name: `Zinnia ${VERSION}`,
-      draft: true,
-      prerelease: IS_PRERELEASE,
-    },
-  );
-  return assertReleaseTargetsCommit(release, commit);
 }
 
 async function uploadAssetOnce(uploadUrl, filePath) {
@@ -1113,7 +1127,11 @@ async function downloadUrlToFile(
   fs.writeFileSync(destination, bytes);
 }
 
-async function replaceReleaseAssetsTransactionally(release, files) {
+async function replaceReleaseAssetsTransactionally(
+  release,
+  files,
+  { assertStillHeld = null } = {},
+) {
   if (files.length === 0) return;
   const temporaryDirectory = fs.mkdtempSync(
     path.join(os.tmpdir(), "zinnia-release-replace-"),
@@ -1142,6 +1160,12 @@ async function replaceReleaseAssetsTransactionally(release, files) {
         backupName: `zinnia-previous-${token}-${name}`,
         previousRenamed: false,
       });
+    }
+
+    // Re-check fence ownership after the (possibly long) staging uploads and
+    // immediately before live-name renames.
+    if (typeof assertStillHeld === "function") {
+      await assertStillHeld();
     }
 
     // Upload every replacement before touching a live name. GitHub has no
@@ -1262,6 +1286,115 @@ async function replaceReleaseAssetsTransactionally(release, files) {
   }
 }
 
+const BETA_SYNC_LOCK_NAME = "zinnia-beta-manifest-sync-lock";
+const BETA_SYNC_LOCK_RETRIES = 30;
+
+function isTransactionalStagingAssetName(name) {
+  return /^(?:default\.)?zinnia-(?:pending|previous|rollback)-/i.test(name);
+}
+
+async function removeAssetBestEffort(asset, label) {
+  if (!asset || typeof asset.id !== "number") return;
+  try {
+    await ghRequest(
+      "DELETE",
+      `/repos/${REPO_OWNER}/${REPO_NAME}/releases/assets/${asset.id}`,
+    );
+  } catch (error) {
+    console.warn(
+      `  ! could not remove ${label}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+async function findBetaManifestSyncLock(releaseId) {
+  const assets = await listReleaseAssets(releaseId);
+  return assets.find((asset) => asset?.name === BETA_SYNC_LOCK_NAME) ?? null;
+}
+
+/** Fail closed if another operator or process deleted our lock asset. */
+async function assertOwnsBetaManifestSyncLock(release, acquired) {
+  if (!acquired || typeof acquired.id !== "number") {
+    throw new Error("Beta-manifest synchronization lock was not acquired.");
+  }
+  const current = await findBetaManifestSyncLock(release.id);
+  if (!current || current.id !== acquired.id) {
+    throw new Error(
+      "Lost the beta-manifest synchronization lock before mutating live feeds.",
+    );
+  }
+}
+
+async function withBetaManifestSyncLock(release, operation) {
+  const temporaryDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "zinnia-beta-sync-lock-"),
+  );
+  const lockToken = crypto.randomBytes(16).toString("hex");
+  const lockPath = path.join(temporaryDirectory, BETA_SYNC_LOCK_NAME);
+  fs.writeFileSync(
+    lockPath,
+    JSON.stringify({
+      tag: TAG,
+      pid: process.pid,
+      token: lockToken,
+      createdAt: new Date(),
+    }) + "\n",
+  );
+
+  let acquired = null;
+  try {
+    for (let attempt = 1; attempt <= BETA_SYNC_LOCK_RETRIES; attempt += 1) {
+      try {
+        acquired = await uploadAsset(release.upload_url, lockPath);
+        break;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!message.includes("(422)")) throw error;
+        if (attempt === BETA_SYNC_LOCK_RETRIES) {
+          const lock = await findBetaManifestSyncLock(release.id);
+          const createdAt = lock?.created_at
+            ? ` (created ${lock.created_at})`
+            : "";
+          throw new Error(
+            `Timed out waiting for another release VM to finish beta-manifest synchronization${createdAt}. ` +
+              `If no release signer is still running, manually delete the GitHub release asset named ` +
+              `"${BETA_SYNC_LOCK_NAME}" from the latest stable release, then retry. ` +
+              "Never remove the lock while another signer is active.",
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    }
+    if (!acquired) {
+      throw new Error(
+        "Could not acquire the beta-manifest synchronization lock.",
+      );
+    }
+    await assertOwnsBetaManifestSyncLock(release, acquired);
+    return await operation({
+      assertStillHeld: () => assertOwnsBetaManifestSyncLock(release, acquired),
+    });
+  } finally {
+    // Never delete a replacement lock created during manual recovery.
+    if (acquired && typeof acquired.id === "number") {
+      const current = await findBetaManifestSyncLock(release.id);
+      if (current?.id === acquired.id) {
+        await removeAssetBestEffort(acquired, "beta-manifest sync lock");
+      }
+    }
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
+async function cleanupTransactionalStagingAssets(release) {
+  const assets = await listReleaseAssets(release.id);
+  for (const asset of assets.filter((item) =>
+    isTransactionalStagingAssetName(item?.name ?? ""),
+  )) {
+    await removeAssetBestEffort(asset, `orphan feed asset ${asset.name}`);
+  }
+}
+
 async function uploadAssetWithReplace(
   release,
   filePath,
@@ -1322,7 +1455,14 @@ async function syncBetaManifestsToLatestStable(
     return;
   }
 
-  await replaceReleaseAssetsTransactionally(latestStable, betaManifests);
+  await withBetaManifestSyncLock(latestStable, async ({ assertStillHeld }) => {
+    await assertStillHeld();
+    await replaceReleaseAssetsTransactionally(latestStable, betaManifests, {
+      assertStillHeld,
+    });
+    await assertStillHeld();
+    await cleanupTransactionalStagingAssets(latestStable);
+  });
   for (const filePath of betaManifests) {
     console.log(
       `  ~ synced ${path.basename(filePath)} to latest stable release`,
@@ -1629,12 +1769,16 @@ async function main() {
     await uploadAssetWithReplace(release, f);
     console.log(`  ^ ${path.basename(f)}`);
   }
-  // Beta clients poll /releases/latest for latest-*-beta-*.json. Sync those
-  // manifests onto the latest *stable* release during every beta sign upload,
-  // including while this tag is still a draft (same automatic behavior as
-  // beta.22). Keep release:sync-beta-manifests for recovery/re-sync only.
+  // Never copy this VM's platform-local manifest subset onto /releases/latest.
+  // Draft assets are not public, and even a published replacement must first
+  // verify the complete cross-platform set. The explicit post-publish command
+  // downloads and verifies that full set before changing the live feed.
   if (IS_PRERELEASE) {
-    await syncBetaManifestsToLatestStable(everything, release.id);
+    console.log(
+      release.draft
+        ? "  ~ beta manifests remain staged only; after publishing, run npm run release:sync-beta-manifests"
+        : "  ~ published beta assets uploaded; run npm run release:sync-beta-manifests to verify the complete set and update the live feed",
+    );
   }
 
   console.log(
@@ -1708,6 +1852,7 @@ export {
   isChecksumTextName,
   isDirectExecution,
   isExplicitTruthy,
+  isTransactionalStagingAssetName,
   listAllGithubPages,
   rpmArtifactMatchesVersion,
   expectedPublishedBetaManifestNames,

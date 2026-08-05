@@ -18,29 +18,23 @@ import {
 } from "../error-hints";
 import { promptInput } from "../prompt-modal";
 import { withPassword } from "./args";
+import { basename } from "../path-display";
+import { formatEta, type ProgressUpdate } from "../progress-update";
+
+export const formatBatchEta = formatEta;
 
 export interface Run7zResult {
   stdout: string;
   stderr: string;
   code: number;
+  warning_code?: number;
   stdout_truncated?: boolean;
   stderr_truncated?: boolean;
-}
-
-interface ProgressUpdate {
-  percent?: number;
-  filesDone?: number;
-  currentFile?: string;
 }
 
 const OUTPUT_TRUNCATION_LIMIT_MIB = 10;
 const RUNTIME_PROBE_TIMEOUT_MS = 7000;
 let runtimeProbePromise: Promise<string> | null = null;
-
-function basename(filePath: string): string {
-  const sep = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
-  return sep >= 0 ? filePath.slice(sep + 1) : filePath;
-}
 
 export function truncateForDialog(text: string, maxChars = 4000): string {
   if (text.length <= maxChars) return text;
@@ -57,6 +51,16 @@ export async function showOperationError(
   const hint = describe7zError(stdout, stderr);
   const detail = stderr.trim() ? `\n\n${truncateForDialog(stderr.trim())}` : "";
   const hintLine = hint ? `\n\n${hint}` : "";
+  if (code === 1) {
+    await message(
+      `7-Zip stopped with warnings (exit code 1). The operation is treated as failed and its output was not published.${hintLine}${detail}`,
+      {
+        title: "Operation failed with warnings",
+        kind: "warning",
+      },
+    );
+    return;
+  }
   await message(
     `Operation failed with exit code ${code}.${hintLine}${detail}`,
     {
@@ -83,17 +87,6 @@ export function clearPasswordFields(): void {
   for (const [inputId, toggleId] of PASSWORD_FIELD_TOGGLES) {
     resetPasswordFieldControl(inputId, toggleId);
   }
-}
-
-export function formatBatchEta(elapsedMs: number, percent: number): string {
-  if (percent <= 0 || percent >= 100 || elapsedMs <= 0) return "";
-  const totalMs = elapsedMs / (percent / 100);
-  const remainingSec = Math.max(0, Math.round((totalMs - elapsedMs) / 1000));
-  if (remainingSec < 1) return "";
-  if (remainingSec < 60) return `~${remainingSec}s left`;
-  const min = Math.floor(remainingSec / 60);
-  const sec = remainingSec % 60;
-  return `~${min}m ${sec.toString().padStart(2, "0")}s left`;
 }
 
 export function logCommandResult(stdout: string, stderr: string): void {
@@ -162,16 +155,23 @@ export async function ensureRuntimeReady(): Promise<boolean> {
 
 export async function withLiveProgress<T>(fn: () => Promise<T>): Promise<T> {
   const startedAt = Date.now();
+  let sawPercent = false;
   const unlisten = await listen<ProgressUpdate>(
     "7z-progress-structured",
     (event) => {
       const update = event.payload;
+      if (update?.currentFile === "Working…") {
+        // Heartbeats fill a blank status only. Never replace a live percent/ETA.
+        if (!sawPercent) setProgress("Still working…");
+        return;
+      }
       if (typeof update?.percent !== "number") return;
       if (update.currentFile === "Finalizing…") {
         setCancelAvailable(false);
         setProgress("Finalizing…");
         return;
       }
+      sawPercent = true;
       const eta = formatBatchEta(Date.now() - startedAt, update.percent);
       const file = update.currentFile ? ` ${basename(update.currentFile)}` : "";
       setProgress(`${update.percent}%${file}${eta ? ` · ${eta}` : ""}`);
@@ -184,22 +184,54 @@ export async function withLiveProgress<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+export type PasswordCarry = { value: string };
+
 export async function runWithPasswordRetry(
   args: string[],
   retryForMissingPassword: boolean,
   confirmLabel = "Extract",
   expectedArchiveIdentity?: string,
+  passwordCarry?: PasswordCarry,
 ): Promise<Run7zResult> {
-  let result = await invoke<Run7zResult>("run_7z", {
-    args,
-    ...(expectedArchiveIdentity ? { expectedArchiveIdentity } : {}),
-  });
+  if (state.cancelRequested || state.batchCancelled) {
+    return {
+      stdout: "",
+      stderr: "Operation cancelled by user",
+      code: -1,
+    };
+  }
+  const hasPasswordSwitch = args.some(
+    (arg) => arg.length > 2 && arg.slice(0, 2).toLowerCase() === "-p",
+  );
+  let effectiveArgs =
+    passwordCarry?.value && !hasPasswordSwitch
+      ? withPassword(args, passwordCarry.value)
+      : args;
+  let result: Run7zResult;
+  try {
+    result = await invoke<Run7zResult>("run_7z", {
+      args: effectiveArgs,
+      ...(expectedArchiveIdentity ? { expectedArchiveIdentity } : {}),
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    // Header-encrypted archives can fail backend member-safety listing before
+    // `run_7z` has a normal result. Convert only a recognized password prompt
+    // into retry flow; all other backend errors remain rejected.
+    if (
+      !retryForMissingPassword ||
+      !looksLikePasswordRequiredError("", detail)
+    ) {
+      throw error;
+    }
+    result = { stdout: "", stderr: detail, code: 255 };
+  }
   if (
     retryForMissingPassword &&
     result.code > 1 &&
     looksLikePasswordRequiredError(result.stdout, result.stderr)
   ) {
-    if (state.cancelRequested) {
+    if (state.cancelRequested || state.batchCancelled) {
       return result;
     }
     const password = await promptInput({
@@ -212,9 +244,10 @@ export async function runWithPasswordRetry(
       return result;
     }
     if (password) {
+      if (passwordCarry) passwordCarry.value = password;
       setStatus("Retrying with password");
       result = await invoke<Run7zResult>("run_7z", {
-        args: withPassword(args, password),
+        args: withPassword(effectiveArgs, password),
         ...(expectedArchiveIdentity ? { expectedArchiveIdentity } : {}),
       });
     }

@@ -22,9 +22,9 @@ describe("compress fidelity helpers", () => {
     confirmMock.mockReset();
   });
 
-  it("treats only zip as weak for symlinks", () => {
-    expect(formatWeakForSymlinks("zip")).toBe(true);
-    expect(formatWeakForSymlinks("ZIP")).toBe(true);
+  it("treats bundled formats as link-safe", () => {
+    expect(formatWeakForSymlinks("zip")).toBe(false);
+    expect(formatWeakForSymlinks("ZIP")).toBe(false);
     expect(formatWeakForSymlinks("7z")).toBe(false);
     expect(formatWeakForSymlinks("tar")).toBe(false);
   });
@@ -34,35 +34,17 @@ describe("compress fidelity helpers", () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
-  it("asks before zip when nested links or apps are present", async () => {
-    invokeMock.mockResolvedValue({
-      nestedSymlinks: 2,
-      appBundles: 1,
-      nestedReparsePoints: 0,
-      examples: ["/Demo.app"],
-    });
-    confirmMock.mockResolvedValue(true);
+  it("does not warn for zip trees with links or app bundles", async () => {
     await expect(confirmZipSymlinkRisk("zip", ["/Demo.app"])).resolves.toBe(
       true,
     );
-    expect(confirmMock).toHaveBeenCalledOnce();
-  });
-
-  it("does not ask when zip inputs have no links or apps", async () => {
-    invokeMock.mockResolvedValue({
-      nestedSymlinks: 0,
-      appBundles: 0,
-      nestedReparsePoints: 0,
-      examples: [],
-    });
-    await expect(confirmZipSymlinkRisk("zip", ["/a.txt"])).resolves.toBe(true);
+    expect(invokeMock).not.toHaveBeenCalled();
     expect(confirmMock).not.toHaveBeenCalled();
   });
 
-  it("asks when zip probe fails instead of silently continuing", async () => {
-    invokeMock.mockRejectedValue(new Error("too large"));
-    confirmMock.mockResolvedValue(false);
-    await expect(confirmZipSymlinkRisk("zip", ["/a"])).resolves.toBe(false);
-    expect(confirmMock).toHaveBeenCalledOnce();
+  it("does not ask when zip inputs have no links or apps", async () => {
+    await expect(confirmZipSymlinkRisk("zip", ["/a.txt"])).resolves.toBe(true);
+    expect(invokeMock).not.toHaveBeenCalled();
+    expect(confirmMock).not.toHaveBeenCalled();
   });
 });

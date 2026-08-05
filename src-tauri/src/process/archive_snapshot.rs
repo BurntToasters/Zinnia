@@ -113,16 +113,81 @@ pub(super) fn archive_file_identity(path: &std::path::Path) -> Result<ArchiveFil
     archive_file_identity_from_open_file(path, &file)
 }
 
+fn hash_identity_bytes(hasher: &mut sha2::Sha256, bytes: &[u8]) {
+    use sha2::Digest as _;
+
+    hasher.update((bytes.len() as u64).to_le_bytes());
+    hasher.update(bytes);
+}
+
+fn hash_identity_time(hasher: &mut sha2::Sha256, value: Option<std::time::SystemTime>) {
+    use sha2::Digest as _;
+
+    let Some(value) = value else {
+        hasher.update([0]);
+        return;
+    };
+    match value.duration_since(std::time::UNIX_EPOCH) {
+        Ok(duration) => {
+            hasher.update([1]);
+            hasher.update(duration.as_secs().to_le_bytes());
+            hasher.update(duration.subsec_nanos().to_le_bytes());
+        }
+        Err(error) => {
+            let duration = error.duration();
+            hasher.update([2]);
+            hasher.update(duration.as_secs().to_le_bytes());
+            hasher.update(duration.subsec_nanos().to_le_bytes());
+        }
+    }
+}
+
+fn hash_archive_file_identity(hasher: &mut sha2::Sha256, identity: &ArchiveFileIdentity) {
+    use sha2::Digest as _;
+
+    hash_identity_bytes(
+        hasher,
+        identity.canonical_path.as_os_str().as_encoded_bytes(),
+    );
+    hasher.update(identity.len.to_le_bytes());
+    hash_identity_time(hasher, identity.modified);
+    hash_identity_time(hasher, identity.created);
+    #[cfg(unix)]
+    {
+        hasher.update(identity.device.to_le_bytes());
+        hasher.update(identity.inode.to_le_bytes());
+    }
+    #[cfg(windows)]
+    {
+        hasher.update(identity.volume_serial.to_le_bytes());
+        hasher.update(identity.file_index.to_le_bytes());
+        match identity.volume_serial_64 {
+            Some(value) => {
+                hasher.update([1]);
+                hasher.update(value.to_le_bytes());
+            }
+            None => hasher.update([0]),
+        }
+        match identity.file_id_128 {
+            Some(value) => {
+                hasher.update([1]);
+                hasher.update(value);
+            }
+            None => hasher.update([0]),
+        }
+    }
+}
+
 pub(crate) fn archive_identity_token(path: &std::path::Path) -> Result<String, String> {
     use sha2::Digest as _;
 
-    let resolved = super::resolve_existing_target(path, false)?;
+    let resolved = crate::path_safety::resolve_regular_file_input(path)?;
     let family = archive_input_family(&resolved)?;
     let mut hasher = sha2::Sha256::new();
     for member in family {
         let identity = archive_file_identity(&member)?;
-        hasher.update(member.to_string_lossy().as_bytes());
-        hasher.update(format!("{identity:?}").as_bytes());
+        hash_identity_bytes(&mut hasher, member.as_os_str().as_encoded_bytes());
+        hash_archive_file_identity(&mut hasher, &identity);
     }
     Ok(format!("{:x}", hasher.finalize()))
 }
@@ -137,7 +202,7 @@ pub(crate) fn archive_identity_token(path: &std::path::Path) -> Result<String, S
 /// This exists because extraction snapshots the *entire* input archive (and
 /// every volume of a split family) into a private staging copy before 7-Zip
 /// ever touches it, so a byte-for-byte `io::copy` of a large archive read and
-/// wrote its full size again for every extraction. APFS/Btrfs/XFS/ReFS clone
+/// wrote its full size again for every extraction. APFS/Btrfs/XFS clone
 /// primitives make the snapshot instant and use no extra disk space until a
 /// write actually diverges the two files, while keeping the exact same
 /// TOCTOU-safe identity checks around this call unchanged.
@@ -195,10 +260,18 @@ fn try_clone_snapshot_file(
     }
 }
 
-fn copy_archive_snapshot_file(
+fn copy_archive_snapshot_file<C>(
     source: &mut std::fs::File,
+    source_path: &std::path::Path,
     destination: &std::path::Path,
-) -> Result<(), String> {
+    should_cancel: &C,
+) -> Result<(), String>
+where
+    C: Fn() -> bool,
+{
+    if should_cancel() {
+        return Err("Archive operation was cancelled during input snapshot.".to_string());
+    }
     #[cfg(target_os = "macos")]
     {
         match try_clone_snapshot_file(source, destination) {
@@ -242,7 +315,11 @@ fn copy_archive_snapshot_file(
             Ok(false) => {}
             Err(error) => return Err(error),
         }
+        ensure_snapshot_byte_copy_space(source, destination)?;
     }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    ensure_snapshot_byte_copy_space(source, destination)?;
 
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
@@ -292,7 +369,13 @@ fn copy_archive_snapshot_file(
                 }
                 return Ok(());
             }
-            Ok(false) => {}
+            Ok(false) => {
+                if let Err(error) = ensure_snapshot_byte_copy_space(source, destination) {
+                    drop(destination_file);
+                    let _ = crate::fs_secure::remove_file_for_cleanup(destination);
+                    return Err(error);
+                }
+            }
             Err(error) => {
                 drop(destination_file);
                 let cleanup = crate::fs_secure::remove_file_for_cleanup(destination);
@@ -309,13 +392,33 @@ fn copy_archive_snapshot_file(
         }
     }
 
-    let result = std::io::copy(source, &mut destination_file)
-        .map_err(|error| error.to_string())
-        .and_then(|_| {
+    // Chunked copy keeps Cancel responsive on Windows, network shares, and
+    // filesystems where CoW cloning is unavailable.
+    let result = (|| {
+        use std::io::{Read as _, Write as _};
+
+        let mut buffer = vec![0u8; 1024 * 1024];
+        loop {
+            if should_cancel() {
+                return Err("Archive operation was cancelled during input snapshot.".to_string());
+            }
+            let read = source
+                .read(&mut buffer)
+                .map_err(|error| error.to_string())?;
+            if read == 0 {
+                break;
+            }
             destination_file
-                .sync_all()
-                .map_err(|error| error.to_string())
-        });
+                .write_all(&buffer[..read])
+                .map_err(|error| error.to_string())?;
+        }
+        if should_cancel() {
+            return Err("Archive operation was cancelled during input snapshot.".to_string());
+        }
+        destination_file
+            .sync_all()
+            .map_err(|error| error.to_string())
+    })();
     drop(destination_file);
 
     if let Err(error) = result {
@@ -327,6 +430,73 @@ fn copy_archive_snapshot_file(
                 format!("{error}; partial snapshot cleanup also failed: {cleanup_error}")
             }
         });
+    }
+    #[cfg(windows)]
+    copy_windows_zone_identifier(source_path, destination)?;
+    #[cfg(not(windows))]
+    let _ = source_path;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn copy_windows_zone_identifier(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+) -> Result<(), String> {
+    use std::io::{Read as _, Write as _};
+
+    const MAX_ZONE_BYTES: u64 = 64 * 1024;
+    fn stream_path(path: &std::path::Path) -> std::path::PathBuf {
+        let mut value = path.as_os_str().to_os_string();
+        value.push(":Zone.Identifier");
+        value.into()
+    }
+
+    let mut source_stream = match std::fs::File::open(stream_path(source)) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("Could not read archive Mark-of-the-Web: {error}")),
+    };
+    let length = source_stream
+        .metadata()
+        .map_err(|error| format!("Could not inspect archive Mark-of-the-Web: {error}"))?
+        .len();
+    if length > MAX_ZONE_BYTES {
+        return Err("Archive Mark-of-the-Web is unexpectedly large.".to_string());
+    }
+    let mut contents = Vec::with_capacity(length as usize);
+    source_stream
+        .read_to_end(&mut contents)
+        .map_err(|error| format!("Could not read archive Mark-of-the-Web: {error}"))?;
+    if contents.contains(&0) || !contents.starts_with(b"[ZoneTransfer]") {
+        return Err("Archive Mark-of-the-Web has an invalid format.".to_string());
+    }
+    let mut destination_stream = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(stream_path(destination))
+        .map_err(|error| format!("Could not preserve archive Mark-of-the-Web: {error}"))?;
+    destination_stream
+        .write_all(&contents)
+        .and_then(|()| destination_stream.sync_all())
+        .map_err(|error| format!("Could not preserve archive Mark-of-the-Web: {error}"))
+}
+
+fn ensure_snapshot_byte_copy_space(
+    source: &std::fs::File,
+    destination: &std::path::Path,
+) -> Result<(), String> {
+    const MIN_SNAPSHOT_DISK_RESERVE_BYTES: u64 = 512 * 1024 * 1024;
+    let required = source.metadata().map_err(|error| error.to_string())?.len();
+    let free_space = super::available_space_for_path(destination)?;
+    let reserve = (free_space / 10).max(MIN_SNAPSHOT_DISK_RESERVE_BYTES);
+    if required > free_space.saturating_sub(reserve) {
+        return Err(format!(
+            "Not enough free space to copy the archive snapshot ({} MiB required, {} MiB available).",
+            required / (1024 * 1024),
+            free_space / (1024 * 1024)
+        ));
     }
     Ok(())
 }
@@ -588,17 +758,31 @@ pub(super) fn archive_input_family(
     Ok(vec![path.to_path_buf()])
 }
 
+#[derive(Debug)]
 pub(super) struct StagedArchiveInput {
     pub(super) path: std::path::PathBuf,
     pub(super) total_len: u64,
 }
 
+#[cfg(test)]
 pub(super) fn stage_extract_input(
     archive: &std::path::Path,
     cache_dir: Option<&std::path::Path>,
     expected_identity: Option<&str>,
 ) -> Result<StagedArchiveInput, String> {
-    let archive = super::resolve_existing_target(archive, false)?;
+    stage_extract_input_with_cancel(archive, cache_dir, expected_identity, || false)
+}
+
+pub(super) fn stage_extract_input_with_cancel<C>(
+    archive: &std::path::Path,
+    cache_dir: Option<&std::path::Path>,
+    expected_identity: Option<&str>,
+    should_cancel: C,
+) -> Result<StagedArchiveInput, String>
+where
+    C: Fn() -> bool,
+{
+    let archive = crate::path_safety::resolve_regular_file_input(archive)?;
     let initial_token = archive_identity_token(&archive)?;
     if expected_identity.is_some_and(|expected| expected != initial_token) {
         return Err(
@@ -606,9 +790,6 @@ pub(super) fn stage_extract_input(
                 .to_string(),
         );
     }
-    let anchor = cache_dir
-        .map(|cache| cache.join(archive.file_name().unwrap_or_default()))
-        .unwrap_or_else(|| archive.clone());
     if let Some(cache) = cache_dir {
         std::fs::create_dir_all(cache)
             .map_err(|error| format!("Could not create archive snapshot cache: {error}"))?;
@@ -623,21 +804,31 @@ pub(super) fn stage_extract_input(
             .ok_or_else(|| "Archive volume family size overflowed.".to_string())?;
         inputs.push((source, identity));
     }
-    const MIN_SNAPSHOT_DISK_RESERVE_BYTES: u64 = 512 * 1024 * 1024;
-    let free_space = super::available_space_for_path(&anchor)?;
-    let reserve = (free_space / 10).max(MIN_SNAPSHOT_DISK_RESERVE_BYTES);
-    // Worst case every volume falls back to a full byte copy (CoW unavailable
-    // or cross-filesystem). APFS/Btrfs clones usually need far less headroom.
-    if total_len > free_space.saturating_sub(reserve) {
-        return Err(format!(
-            "Not enough free space to snapshot the complete archive volume family ({} MiB required, {} MiB available).",
-            total_len / (1024 * 1024),
-            free_space / (1024 * 1024)
-        ));
-    }
-    let stage = super::create_private_stage_dir(&anchor, "input", cache_dir)?;
+    // Prefer a private sibling of the archive. That keeps snapshots on the
+    // source filesystem, enabling APFS/Btrfs/XFS CoW and avoiding a mandatory
+    // full copy onto the system/app-cache disk. Read-only source locations fall
+    // back to app cache.
+    let stage = match super::create_private_stage_dir(&archive, "input", cache_dir) {
+        Ok(stage) => stage,
+        Err(source_error) => {
+            let Some(cache) = cache_dir else {
+                return Err(source_error);
+            };
+            let cache_anchor = cache.join(archive.file_name().unwrap_or_default());
+            super::create_private_stage_dir(&cache_anchor, "input", cache_dir).map_err(
+                |cache_error| {
+                    format!(
+                        "Could not create archive snapshot beside the input ({source_error}) or in app cache ({cache_error})."
+                    )
+                },
+            )?
+        }
+    };
     let result = (|| {
         for (source, expected) in inputs {
+            if should_cancel() {
+                return Err("Archive operation was cancelled during input snapshot.".to_string());
+            }
             let destination = stage.join(
                 source
                     .file_name()
@@ -654,12 +845,13 @@ pub(super) fn stage_extract_input(
                         .to_string(),
                 );
             }
-            copy_archive_snapshot_file(&mut source_file, &destination).map_err(|error| {
-                format!(
-                    "Could not snapshot archive input {}: {error}",
-                    source.display()
-                )
-            })?;
+            copy_archive_snapshot_file(&mut source_file, &source, &destination, &should_cancel)
+                .map_err(|error| {
+                    format!(
+                        "Could not snapshot archive input {}: {error}",
+                        source.display()
+                    )
+                })?;
             let copied_identity = archive_file_identity_from_open_file(&source, &source_file)?;
             if copied_identity != expected {
                 return Err(

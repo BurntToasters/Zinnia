@@ -11,14 +11,14 @@
   **Desktop development with C++** includes **C++ CMake tools for Windows** (updates can drop
   optional components; an old VS 2022 `cmake` on PATH stops working when 2022 is removed).
 - **Windows SDK** (`makeappx.exe`) for Win11 sparse context-menu packages
-- Node.js 22.12 through 24.x
+- Node.js 22.12 or later
 - Rust (rustup) + Visual Studio Build Tools (clang: x64 and arm64)
 
 ## macOS
 
 - macOS 26 or later
 - Xcode Command Line Tools
-- Node.js 22.12 through 24.x
+- Node.js 22.12 or later
 - Rust (rustup)
 
 ## Linux
@@ -30,7 +30,7 @@
 - Build and test RPM artifacts on Fedora 43. Test the DEB/AppImage on Debian
   13 and the RPM on Fedora 43; these distributions are runtime targets, not
   interchangeable AppImage build baselines.
-- Node.js 22.12 through 24.x
+- Node.js 22.12 or later
 - Rust (rustup)
 - Build essentials (gcc, g++, make)
 - AppImage, rpm, deb tooling if building those bundles
@@ -44,6 +44,35 @@ not pin a Rust release. Install or refresh it before building:
 ```sh
 npm run rust:update
 ```
+
+## License notice audit
+
+`npm run licenses:cargo` writes both the packaged Cargo license data and an
+exact unresolved-package report. Before a stable release, run
+`npm run licenses:cargo:strict`; it fails until every dependency has a verified
+license notice. Do not replace missing notices with generic SPDX templates.
+
+## Updating bundled 7-Zip
+
+Check the official GitHub release tag and update status:
+
+```sh
+npm run 7z:update:check
+```
+
+Download the latest official Linux, macOS, and Windows archives, extract only
+the runtime binaries and notices, verify their hashes, remove obsolete assets,
+and regenerate prepared sidecars:
+
+```sh
+npm run 7z:update
+```
+
+The updater uses the currently verified local sidecar to unpack Windows
+self-extracting archives when no system `7z`/`7zz` is available. An explicitly
+trusted extractor can be supplied with `--trusted-7z <path>` or
+`ZINNIA_TRUSTED_7Z`. Use `--force` to refresh assets when the official version
+has not changed.
 
 ## Verify the toolchain
 

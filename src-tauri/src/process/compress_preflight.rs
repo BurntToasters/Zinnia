@@ -4,6 +4,8 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 const MAX_EXAMPLES: usize = 4;
+const MAX_PROBE_ENTRIES: u64 = 1_000_000;
+const MAX_PROBE_DEPTH: usize = 256;
 
 #[derive(Default, Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -44,8 +46,20 @@ fn is_app_bundle_name(name: &std::ffi::OsStr) -> bool {
 }
 
 fn walk_path(root: &Path, probe: &mut CompressInputProbe) -> Result<(), String> {
-    let mut pending = vec![(root.to_path_buf(), true)];
-    while let Some((path, is_root)) = pending.pop() {
+    let mut pending = vec![(root.to_path_buf(), true, 0usize)];
+    let mut entries = 0u64;
+    while let Some((path, is_root, depth)) = pending.pop() {
+        entries = entries.saturating_add(1);
+        if entries > MAX_PROBE_ENTRIES {
+            return Err(format!(
+                "Compress input scan exceeded the safety limit of {MAX_PROBE_ENTRIES} entries. Select smaller folders."
+            ));
+        }
+        if depth > MAX_PROBE_DEPTH {
+            return Err(format!(
+                "Compress input scan exceeded the maximum folder depth of {MAX_PROBE_DEPTH}."
+            ));
+        }
         let meta = std::fs::symlink_metadata(&path).map_err(|error| {
             format!(
                 "Unable to read compress input '{}': {error}",
@@ -79,7 +93,7 @@ fn walk_path(root: &Path, probe: &mut CompressInputProbe) -> Result<(), String> 
             let entries = std::fs::read_dir(&path)
                 .map_err(|e| format!("Unable to read directory '{}': {e}", path.display()))?;
             for entry in entries {
-                pending.push((entry.map_err(|e| e.to_string())?.path(), false));
+                pending.push((entry.map_err(|e| e.to_string())?.path(), false, depth + 1));
             }
         }
     }

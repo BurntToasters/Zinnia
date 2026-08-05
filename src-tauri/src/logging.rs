@@ -32,7 +32,20 @@ fn log_file_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
 
 fn ensure_logs_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     let dir = logs_dir_path(app)?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    match std::fs::symlink_metadata(&dir) {
+        Ok(metadata) if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_dir() => {
+            return Err("Log directory path is not a real directory.".to_string());
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            let metadata = std::fs::symlink_metadata(&dir).map_err(|e| e.to_string())?;
+            if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_dir() {
+                return Err("Log directory path is not a real directory.".to_string());
+            }
+        }
+        Err(error) => return Err(error.to_string()),
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -43,17 +56,24 @@ fn ensure_logs_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String>
 }
 
 fn trim_log_file_if_needed(path: &std::path::Path) -> Result<(), String> {
-    let meta = match std::fs::metadata(path) {
+    let meta = match std::fs::symlink_metadata(path) {
         Ok(meta) => meta,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(err) => return Err(err.to_string()),
     };
 
+    if crate::path_safety::is_link_or_reparse(&meta) || !meta.is_file() {
+        return Err("Log file path is not a regular file.".to_string());
+    }
+
     if meta.len() <= MAX_LOG_FILE_BYTES {
         return Ok(());
     }
 
-    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let mut source = crate::path_safety::open_regular_file_nofollow(path)?;
+    let mut bytes = Vec::with_capacity(meta.len().min(usize::MAX as u64) as usize);
+    use std::io::Read as _;
+    source.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
     let contents = String::from_utf8_lossy(&bytes).to_string();
     let keep_size = (MAX_LOG_FILE_BYTES / 2) as usize;
     let mut start = contents.len().saturating_sub(keep_size);
@@ -87,7 +107,7 @@ pub fn append_local_log(
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
     }
     let mut file = options.open(&path).map_err(|e| e.to_string())?;
     #[cfg(unix)]
@@ -142,11 +162,22 @@ pub fn export_logs(
 
         let _guard = lock_log_file(&lock)?;
         let source = log_file_path(&app)?;
-        if source.exists() {
-            std::fs::copy(source, &destination).map_err(|e| e.to_string())?;
-        } else {
-            std::fs::write(&destination, "No local logs have been recorded yet.\n")
-                .map_err(|e| e.to_string())?;
+        match std::fs::symlink_metadata(&source) {
+            Ok(metadata)
+                if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_file() =>
+            {
+                return Err("Log file path is not a regular file.".to_string());
+            }
+            Ok(_) => {
+                let mut input = crate::path_safety::open_regular_file_nofollow(&source)?;
+                let mut output = std::fs::File::create(&destination).map_err(|e| e.to_string())?;
+                std::io::copy(&mut input, &mut output).map_err(|e| e.to_string())?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::write(&destination, "No local logs have been recorded yet.\n")
+                    .map_err(|e| e.to_string())?;
+            }
+            Err(error) => return Err(error.to_string()),
         }
 
         Ok(true)

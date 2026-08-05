@@ -226,6 +226,13 @@ function syncSettingsTriggerState(open: boolean) {
 }
 
 export function openSettingsModal() {
+  if (
+    state.running ||
+    state.operationPreparing ||
+    state.incomingPathsApplying
+  ) {
+    return;
+  }
   const overlay = $("settings-overlay");
   if (!overlay.hidden) return;
 

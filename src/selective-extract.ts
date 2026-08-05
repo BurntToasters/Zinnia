@@ -316,6 +316,7 @@ export function buildSelectiveExtractArgs(
     "x",
     `-o${destination}`,
     SAFE_EXTRACT_OVERWRITE_MODE,
+    "-bb1",
     "-spd",
     "-bsp1",
   ];

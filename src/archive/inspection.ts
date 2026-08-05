@@ -29,8 +29,7 @@ import {
 } from "./runtime";
 import type { ArchiveInfo } from "../browse-model";
 
-export type ArchiveTestResult =
-  "passed" | "passed_with_warnings" | "failed" | "cancelled" | "error";
+export type ArchiveTestResult = "passed" | "failed" | "cancelled" | "error";
 
 export async function testArchive(): Promise<ArchiveTestResult> {
   if (state.running) return "cancelled";
@@ -79,14 +78,16 @@ export async function testArchive(): Promise<ArchiveTestResult> {
       return "passed";
     }
     if (result.code === 1) {
-      setStatus("Integrity test passed with warnings", 3000);
-      log("Archive integrity test: OK (with warnings)");
+      setStatus("Integrity test failed with warnings", 3000);
+      log("Archive integrity test: FAILED WITH WARNINGS (exit code 1)");
+      const warningDetails = result.stderr
+        ? `\n\n${truncateForDialog(result.stderr.trim())}`
+        : "";
       await message(
-        "Archive integrity test passed with warnings. Check the log for details.",
-        { title: "Test passed" },
+        `Archive integrity test stopped with warnings (exit code 1) and is not considered a pass.${warningDetails}`,
+        { title: "Test failed with warnings", kind: "warning" },
       );
-      clearPasswordFields();
-      return "passed_with_warnings";
+      return "failed";
     }
 
     setStatus("Integrity test failed", 3000);
@@ -127,6 +128,9 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
       });
       return null;
     }
+    // Keep identity local until the listing succeeds so a failed browse does
+    // not leave an orphan identity cache entry without archive info.
+    let listingIdentity = "";
     try {
       const [validation] = await ensureArchivePaths(
         [archive],
@@ -137,8 +141,7 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
       if (!validation?.identity) {
         throw new Error("Could not capture a stable archive identity.");
       }
-      clearBrowseCache(archive);
-      state.browseArchiveIdentityByPath.set(archive, validation.identity);
+      listingIdentity = validation.identity;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       await message(msg, { title: "Invalid input", kind: "error" });
@@ -203,11 +206,10 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
       undefined,
       true,
     );
-    const beforeIdentity = state.browseArchiveIdentityByPath.get(archive);
     if (
       !afterListing?.identity ||
-      !beforeIdentity ||
-      afterListing.identity !== beforeIdentity
+      !listingIdentity ||
+      afterListing.identity !== listingIdentity
     ) {
       clearBrowseCache(archive);
       throw new Error(
@@ -215,6 +217,7 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
       );
     }
     const info = parseArchiveListing(result.stdout);
+    clearBrowseCache(archive);
     cacheBrowseInfo(archive, info);
     cacheBrowseIdentity(archive, afterListing.identity);
     setBrowsePasswordFieldVisible(info.encrypted);

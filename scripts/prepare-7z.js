@@ -45,8 +45,8 @@ function loadChecksums() {
 }
 
 const mappings = [
-  { source: "win/x64/7za.exe", target: "7z-x86_64-pc-windows-msvc.exe" },
-  { source: "win/arm64/7za.exe", target: "7z-aarch64-pc-windows-msvc.exe" },
+  { source: "win/x64/7z.exe", target: "7z-x86_64-pc-windows-msvc.exe" },
+  { source: "win/arm64/7z.exe", target: "7z-aarch64-pc-windows-msvc.exe" },
   { source: "mac/7zz", target: "7z-x86_64-apple-darwin" },
   { source: "mac/7zz", target: "7z-aarch64-apple-darwin" },
   { source: "mac/7zz", target: "7z-universal-apple-darwin" },
@@ -54,18 +54,9 @@ const mappings = [
   { source: "linux/arm64/7zzs", target: "7z-aarch64-unknown-linux-gnu" },
 ];
 
-// These upstream files are retained for provenance/debugging even though the
-// app ships only the standalone binaries above. Verify them too so no tracked
-// executable or DLL sits outside the supply-chain checksum boundary.
-const checksumOnlySources = [
-  "linux/arm64/7zz",
-  "linux/x64/7zz",
-  "win/arm64/7-ZipFar.dll",
-  "win/arm64/7za.dll",
-  "win/arm64/7zxa.dll",
-  "win/x64/7za.dll",
-  "win/x64/7zxa.dll",
-];
+// Windows full-runtime DLLs are copied by the Rust build script, so verify them
+// here even though they are not standalone sidecars.
+const checksumOnlySources = ["win/arm64/7z.dll", "win/x64/7z.dll"];
 
 const requireAll =
   process.argv.includes("--all") || process.env.ZINNIA_REQUIRE_ALL_7Z === "1";
@@ -82,8 +73,8 @@ function requiredSourcesForHost() {
   }
   if (process.platform === "win32") {
     return process.arch === "arm64"
-      ? ["win/arm64/7za.exe"]
-      : ["win/x64/7za.exe"];
+      ? ["win/arm64/7z.exe", "win/arm64/7z.dll"]
+      : ["win/x64/7z.exe", "win/x64/7z.dll"];
   }
   if (process.platform === "darwin") {
     return ["mac/7zz"];
@@ -164,7 +155,12 @@ if (
 }
 for (const [name, source] of Object.entries(provenance.sourceArchives ?? {})) {
   if (
-    !/^https:\/\/www\.7-zip\.org\/a\//.test(source.url) ||
+    !(
+      /^https:\/\/www\.7-zip\.org\/a\//.test(source.url) ||
+      /^https:\/\/github\.com\/ip7z\/7zip\/releases\/download\//.test(
+        source.url,
+      )
+    ) ||
     !/^[a-f0-9]{64}$/.test(source.sha256)
   ) {
     throw new Error(`Invalid official archive provenance for ${name}.`);

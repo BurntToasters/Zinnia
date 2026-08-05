@@ -74,6 +74,29 @@ describe("chooseOutput", () => {
     expect(state.lastAutoOutputPath).toBe("/tmp/auto-output.7z");
   });
 
+  it("discards a save result when the input session changes", async () => {
+    let resolveSave: ((value: string | null) => void) | undefined;
+    saveMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+    state.inputs = ["/tmp/original.txt"];
+
+    const pending = chooseOutput();
+    expect(state.incomingPathsApplying).toBe(true);
+    await Promise.resolve();
+    state.inputs = ["/tmp/replacement.txt"];
+    resolveSave?.("/tmp/stale.7z");
+    await pending;
+
+    expect(
+      (document.getElementById("output-path") as HTMLInputElement).value,
+    ).toBe("");
+    expect(state.incomingPathsApplying).toBe(false);
+  });
+
   it.each([
     ["gzip", "gz"],
     ["bzip2", "bz2"],
@@ -138,6 +161,28 @@ describe("addFiles", () => {
 
     expect(state.inputs).toEqual(["/tmp/a.txt", "/tmp/b.txt"]);
     expect(renderInputsMock).toHaveBeenCalled();
+  });
+
+  it("discards a file-dialog result when the input session changes", async () => {
+    let resolveOpen: ((value: string | string[] | null) => void) | undefined;
+    openMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveOpen = resolve;
+        }),
+    );
+    state.inputs = ["/tmp/original.txt"];
+
+    const pending = addFiles();
+    expect(state.incomingPathsApplying).toBe(true);
+    await Promise.resolve();
+    state.inputs = ["/tmp/replacement.txt"];
+    resolveOpen?.(["/tmp/stale.txt"]);
+    await pending;
+
+    expect(state.inputs).toEqual(["/tmp/replacement.txt"]);
+    expect(renderInputsMock).not.toHaveBeenCalled();
+    expect(state.incomingPathsApplying).toBe(false);
   });
 
   it("reports files omitted by the input cap", async () => {

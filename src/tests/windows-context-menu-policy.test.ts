@@ -132,10 +132,14 @@ describe("Windows 11 context-menu manifest", () => {
     ).version;
     const hooks = read("src-tauri/windows/nsis-hooks.nsh");
 
-    for (const destination of Object.values(tauriConfig.bundle.resources)) {
+    const shellDestinations = Object.entries(tauriConfig.bundle.resources)
+      .filter(([source]) => source !== "binaries/7z.dll")
+      .map(([, destination]) => destination);
+    for (const destination of shellDestinations) {
       expect(destination.startsWith(`shell-${packageVersion}/`)).toBe(true);
       expect(destination).not.toContain("${VERSION}");
     }
+    expect(tauriConfig.bundle.resources["binaries/7z.dll"]).toBe("7z.dll");
     expect(hooks).toContain('StrCpy $R9 "$INSTDIR\\shell-${VERSION}"');
     expect(hooks).toContain("!macro NSIS_HOOK_PREINSTALL");
     expect(hooks).toContain("zinnia_preinstall_check_reparse");

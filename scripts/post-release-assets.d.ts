@@ -1,3 +1,4 @@
+export const REPOSITORY_ROOT: string;
 export const RELEASE_DIR: string;
 export const BUILD_ONLY_DIRECTORIES: string[];
 export const BUILD_ONLY_FILES: string[];
@@ -12,6 +13,11 @@ export function pathsEqual(
   right: string,
   platform?: NodeJS.Platform,
 ): boolean;
+export function pathIsSameOrInside(
+  candidate: string,
+  parent: string,
+  platform?: NodeJS.Platform,
+): boolean;
 export function isDirectExecution(
   argv?: string[],
   platform?: NodeJS.Platform,
@@ -22,6 +28,10 @@ export function verifyCopiedPath(
   sourcePath: string,
   destinationPath: string,
 ): void;
+export function resolveMirrorPaths(
+  releaseDir: string | undefined,
+  destination: string,
+): { resolvedReleaseDir: string; resolvedDestination: string };
 export function copyReleaseAssets(
   releaseDir: string | undefined,
   destination: string,
@@ -29,7 +39,7 @@ export function copyReleaseAssets(
 ): number;
 
 export type FinalizeResult = {
-  mirrored: true;
+  mirrored: boolean;
   destination: string;
   copiedEntries: number;
 };
