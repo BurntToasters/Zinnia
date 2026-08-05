@@ -27,7 +27,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **UI:** Selective-extract results expose proper list semantics for screen readers, the Basic mode `Choose archive` cards are now keyboard accessible (Enter/Space), and browse summaries announce changes via live regions.
 - **Fix:** Cached archive encryption state is revalidated against the archive's identity before reuse, so a replaced archive at the same path can no longer show stale listing data.
 - **Fix:** Extract injects 7-Zip `-snld10` so ZIP / archive macOS `.app` bundles with nested `.framework` symlinks (`Libraries -> Versions/Current/Libraries`) no longer fail with "Dangerous link via another link".
-- **Fix:** Windows merge publish fingerprints and renames symbolic-link reparse entries (still rejects junctions and other non-symlink reparse points), so contained link trees can publish into an existing destination.
+- **Fix:** Windows merge publish fingerprints and renames symbolic-link reparse entries and whole directories that contain them (still rejects junctions and other non-symlink reparse points), so nested `.framework`-style link trees can publish into an existing destination instead of failing ACL-copy.
 - **Security:** Extract stages beside the destination (never inside it), preflights real 7-Zip `Symbolic Link =` / `Hard Link =` fields, and validates the complete staged tree before publish.
 - **Security:** Staged extract trees reject hard links that alias inodes outside the extract root (defense in depth alongside symlink containment).
 - **Security:** SLT member preflight resolves parent-relative symbolic links lexically, allowing contained Unix layouts while rejecting targets that escape the extract root.

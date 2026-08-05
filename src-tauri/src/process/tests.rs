@@ -1267,23 +1267,35 @@ fn contained_dangling_symlink_publishes_into_existing_destination() {
 }
 
 #[cfg(windows)]
+fn try_windows_symlink_file(target: &str, link: &std::path::Path) -> Result<(), String> {
+    match std::os::windows::fs::symlink_file(target, link) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            if std::env::var_os("ZINNIA_REQUIRE_WINDOWS_SYMLINK_TESTS").is_some() {
+                panic!(
+                    "Windows symlink creation failed while ZINNIA_REQUIRE_WINDOWS_SYMLINK_TESTS is set: {error}"
+                );
+            }
+            Err(error.to_string())
+        }
+    }
+}
+
+#[cfg(windows)]
 #[test]
 fn contained_dangling_symlink_publishes_into_existing_destination_windows() {
-    use std::os::windows::fs::symlink_file;
-
     let root = temp_root("zinnia-dangling-symlink-publish-win");
     let staged = root.join(".zinnia-extract-test");
     let destination = root.join("out");
     std::fs::create_dir_all(&staged).expect("stage");
     std::fs::create_dir_all(&destination).expect("destination");
     let link = staged.join("current");
-    match symlink_file("generated-later.txt", &link) {
-        Ok(()) => {}
-        Err(_) => {
-            // Symlink creation may require Developer Mode; skip quietly.
-            let _ = std::fs::remove_dir_all(root);
-            return;
-        }
+    if let Err(error) = try_windows_symlink_file("generated-later.txt", &link) {
+        eprintln!(
+            "skipping contained_dangling_symlink_publishes_into_existing_destination_windows: {error} (enable Developer Mode or set ZINNIA_REQUIRE_WINDOWS_SYMLINK_TESTS=1)"
+        );
+        let _ = std::fs::remove_dir_all(root);
+        return;
     }
 
     let entry = super::journal::path_entry_identity(&link)
@@ -1312,8 +1324,6 @@ fn contained_dangling_symlink_publishes_into_existing_destination_windows() {
 #[cfg(windows)]
 #[test]
 fn nested_symlink_directory_merges_into_existing_destination_windows() {
-    use std::os::windows::fs::symlink_file;
-
     let root = temp_root("zinnia-nested-symlink-merge-win");
     let staged = root.join("staged");
     let destination = root.join("destination");
@@ -1321,13 +1331,22 @@ fn nested_symlink_directory_merges_into_existing_destination_windows() {
     std::fs::create_dir_all(&destination).expect("destination");
     std::fs::write(staged.join("tree/payload.txt"), b"nested").expect("payload");
     let link = staged.join("tree/current");
-    match symlink_file("payload.txt", &link) {
-        Ok(()) => {}
-        Err(_) => {
-            let _ = std::fs::remove_dir_all(root);
-            return;
-        }
+    if let Err(error) = try_windows_symlink_file("payload.txt", &link) {
+        eprintln!(
+            "skipping nested_symlink_directory_merges_into_existing_destination_windows: {error} (enable Developer Mode or set ZINNIA_REQUIRE_WINDOWS_SYMLINK_TESTS=1)"
+        );
+        let _ = std::fs::remove_dir_all(root);
+        return;
     }
+
+    assert!(
+        staged_tree_contains_symlink(&staged.join("tree")).expect("scan tree"),
+        "helper must detect nested symlink before publish planning"
+    );
+    assert!(
+        !staged_tree_contains_symlink(&destination).expect("empty destination"),
+        "destination without links must scan clean"
+    );
 
     merge_staged_extract(&staged, &destination, MAX_EXTRACTED_BYTES)
         .expect("directory containing a symlink must merge-publish on Windows");
@@ -1340,6 +1359,16 @@ fn nested_symlink_directory_merges_into_existing_destination_windows() {
         std::path::PathBuf::from("payload.txt")
     );
 
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(windows)]
+#[test]
+fn staged_tree_without_symlinks_is_reported_clean_windows() {
+    let root = temp_root("zinnia-tree-scan-clean-win");
+    std::fs::create_dir_all(root.join("nested")).expect("tree");
+    std::fs::write(root.join("nested/file.txt"), b"ok").expect("file");
+    assert!(!staged_tree_contains_symlink(&root).expect("scan"));
     let _ = std::fs::remove_dir_all(root);
 }
 

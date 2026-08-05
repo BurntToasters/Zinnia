@@ -54,6 +54,8 @@ pub(crate) use commands::{
     apply_backend_link_switches, extract_warning_is_metadata_only, is_compound_tar_operation,
     prepare_password_transport, rewrite_args_for_managed_listfile, terminate_child,
 };
+#[cfg(all(test, windows))]
+pub(crate) use commit::staged_tree_contains_symlink;
 #[cfg(test)]
 pub(crate) use commit::{
     archive_backup_path, archive_stage_has_recovery_backups, assert_safe_extract_target_ancestors,
