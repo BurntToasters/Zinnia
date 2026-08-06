@@ -1109,18 +1109,35 @@ pub(crate) fn validate_staged_tree(root: &std::path::Path, max_bytes: u64) -> Re
                 }
                 #[cfg(windows)]
                 {
-                    use std::os::windows::fs::MetadataExt as _;
-                    let nlink = meta.number_of_links();
-                    match meta.file_index() {
-                        Some(file_index) => hardlink_files.push((path, file_index, nlink)),
-                        None if nlink > 1 => {
-                            return Err(format!(
+                    // `MetadataExt::{file_index,number_of_links}` need the
+                    // unstable `windows_by_handle` feature. Use the same stable
+                    // GetFileInformationByHandle path as journal identities.
+                    use std::os::windows::io::AsRawHandle as _;
+                    use windows_sys::Win32::Foundation::HANDLE;
+                    use windows_sys::Win32::Storage::FileSystem::{
+                        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+                    };
+                    let file = crate::path_safety::open_regular_file_nofollow(&path).map_err(
+                        |_| {
+                            format!(
                                 "Archive contains a hard link whose identity could not be verified: {}",
                                 path.display()
-                            ));
-                        }
-                        None => {}
+                            )
+                        },
+                    )?;
+                    let handle = file.as_raw_handle() as HANDLE;
+                    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+                    let success = unsafe { GetFileInformationByHandle(handle, &mut info) };
+                    if success == 0 {
+                        return Err(format!(
+                            "Archive contains a hard link whose identity could not be verified: {}",
+                            path.display()
+                        ));
                     }
+                    let file_index =
+                        (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
+                    let nlink = u64::from(info.nNumberOfLinks);
+                    hardlink_files.push((path, file_index, nlink));
                 }
             } else {
                 return Err(format!(
