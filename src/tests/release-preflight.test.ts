@@ -30,11 +30,12 @@ describe("release preflight policy", () => {
     expect(workspacePrepare).toContain("workspace:bootstrap");
     expect(workspacePrepare).toContain("test:all");
     expect(workspacePrepare.match(/test:all/g)).toHaveLength(1);
+    // u = full dep update + quality gate; u2 = quick update without test:all.
     expect(packageJson.scripts.u.match(/test:all/g)).toHaveLength(1);
     expect(packageJson.scripts.u).not.toContain("validate:updater");
     expect(packageJson.scripts.u2).toContain("workspace:bootstrap");
     expect(packageJson.scripts.u2).not.toContain("workspace:prepare");
-    expect(packageJson.scripts.u2.match(/test:all/g)).toHaveLength(1);
+    expect(packageJson.scripts.u2).not.toContain("test:all");
 
     for (const platform of ["win", "mac"] as const) {
       const full = packageJson.scripts[`release:${platform}`];
