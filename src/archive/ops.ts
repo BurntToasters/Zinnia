@@ -16,6 +16,7 @@ import {
 import { ensureArchivePaths, validateExtraArgs } from "../archive-rules";
 import { showToast } from "../toast";
 import { SAFE_EXTRACT_OVERWRITE_MODE } from "../extract-policy";
+import { debugLog, debugLogCommand, isDebugEnabled } from "../debug-mode";
 import { buildArgs, buildExtractArgsFor } from "./args";
 import { sanitizeCommandArgsForPreview } from "./preview";
 import { confirmZipSymlinkRisk } from "./compress-fidelity";
@@ -103,8 +104,10 @@ export async function runAction() {
       return;
     }
     devLog(`7z ${sanitizeCommandArgsForPreview(args).join(" ")}`);
+    debugLogCommand(args);
 
     setStatus("Running");
+    if (isDebugEnabled()) debugLog(`Starting ${mode} operation.`);
 
     const result = await withLiveProgress(() =>
       runWithPasswordRetry(
@@ -121,13 +124,16 @@ export async function runAction() {
       return;
     }
 
-    logCommandResult(result.stdout, result.stderr);
+    logCommandResult(result.stdout, result.stderr, result.code);
     logTruncationNotice(result);
     devLog(`Exit code: ${result.code}`);
 
     if (result.code === 0) {
       setStatus("Done", 2000);
       hideProgress();
+      if (isDebugEnabled()) {
+        debugLog(`${mode} operation finished successfully.`);
+      }
       showToast(
         mode === "extract" ? "Extraction complete." : "Archive created.",
         "success",
@@ -136,6 +142,9 @@ export async function runAction() {
       clearPasswordFields();
     } else {
       log(`7z exited with code ${result.code}`);
+      if (isDebugEnabled()) {
+        debugLog(`${mode} operation failed with exit code ${result.code}.`);
+      }
       setStatus("Error", 3000, result.stderr || "Operation failed.");
       hideProgress();
       await showOperationError(result.code, result.stdout, result.stderr);
@@ -150,6 +159,7 @@ export async function runAction() {
 
     const messageText = err instanceof Error ? err.message : String(err);
     log(`Error: ${messageText}`);
+    if (isDebugEnabled()) debugLog(`${mode} operation threw: ${messageText}`);
     setStatus("Error", 3000, messageText);
     hideProgress();
     // Basic mode already shows the in-app completion panel for failures.
@@ -247,6 +257,10 @@ export async function runBatchExtract() {
         args.push(...extraArgs);
         args.push("--", archive);
         devLog(`7z ${sanitizeCommandArgsForPreview(args).join(" ")}`);
+        debugLogCommand(args);
+        if (isDebugEnabled()) {
+          debugLog(`Batch extract ${i + 1}/${archives.length}: ${archive}`);
+        }
 
         const result = await runWithPasswordRetry(
           args,
@@ -256,7 +270,7 @@ export async function runBatchExtract() {
           passwordCarry,
         );
 
-        logCommandResult(result.stdout, result.stderr);
+        logCommandResult(result.stdout, result.stderr, result.code);
         logTruncationNotice(result);
 
         if (state.batchCancelled || state.cancelRequested) break;
@@ -274,12 +288,20 @@ export async function runBatchExtract() {
           } else {
             log(`Failed: ${archive} (exit code ${result.code})`);
           }
+          if (isDebugEnabled()) {
+            debugLog(
+              `Batch extract failed for ${archive} (exit ${result.code}).`,
+            );
+          }
         }
       } catch (err) {
         if (state.batchCancelled || state.cancelRequested) break;
         failed++;
         const msg = err instanceof Error ? err.message : String(err);
         log(`Error extracting ${archive}: ${msg}`);
+        if (isDebugEnabled()) {
+          debugLog(`Batch extract threw for ${archive}: ${msg}`);
+        }
       }
     }
 

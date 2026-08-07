@@ -49,6 +49,9 @@ describe("redactSensitiveText", () => {
       "run -p***",
     );
     expect(redactSensitiveText("7z x -spd archive.7z")).toContain("-spd");
+    expect(redactSensitiveText("7z x -p*** -- a.zip")).toBe(
+      "7z x -p*** -- a.zip",
+    );
   });
 
   it("redacts key=value passwords", () => {

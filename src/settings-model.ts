@@ -42,6 +42,8 @@ export interface UserSettings {
   updateChannel: UpdateChannel;
   localLoggingEnabled: boolean;
   logVerbosity: LogVerbosity;
+  /** Hidden About-logo debug mode; off by default, no console work when false. */
+  debug: boolean;
   lastMode: WorkingMode;
   showActivityPanel: boolean;
   workspaceMode: WorkspaceMode;
@@ -87,6 +89,7 @@ export const SETTING_DEFAULTS: UserSettings = {
   updateChannel: "auto",
   localLoggingEnabled: false,
   logVerbosity: "info",
+  debug: false,
   lastMode: "add",
   showActivityPanel: false,
   workspaceMode: "basic",
@@ -236,6 +239,7 @@ const USER_SETTING_KEYS = new Set<keyof UserSettings>([
   "updateChannel",
   "localLoggingEnabled",
   "logVerbosity",
+  "debug",
   "lastMode",
   "showActivityPanel",
   "workspaceMode",
@@ -395,6 +399,7 @@ export function normalizeUserSettings(
       LOG_VERBOSITY,
       fallback.logVerbosity,
     ),
+    debug: asBoolean(settings.debug, fallback.debug),
     lastMode: asSetValue(settings.lastMode, WORKING_MODES, fallback.lastMode),
     showActivityPanel: asBoolean(
       settings.showActivityPanel,

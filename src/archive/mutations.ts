@@ -15,6 +15,7 @@ import {
 } from "../compression-security";
 import { showToast } from "../toast";
 import { SAFE_EXTRACT_OVERWRITE_MODE } from "../extract-policy";
+import { debugLog, debugLogCommand, isDebugEnabled } from "../debug-mode";
 import {
   buildCompressionMethodSwitches,
   readSplitSize,
@@ -149,6 +150,7 @@ export async function addFilesToArchive(): Promise<void> {
 
     setStatus("Adding files");
     devLog(`7z ${sanitizeCommandArgsForPreview(args).join(" ")}`);
+    debugLogCommand(args);
     const result = await runWithPasswordRetry(
       args,
       true,
@@ -159,15 +161,21 @@ export async function addFilesToArchive(): Promise<void> {
       setStatus("Cancelled", 2000);
       return;
     }
-    logCommandResult(result.stdout, result.stderr);
+    logCommandResult(result.stdout, result.stderr, result.code);
 
     if (result.code !== 0) {
       setStatus("Error", 3000, result.stderr || "Operation failed.");
+      if (isDebugEnabled()) {
+        debugLog(`Add files failed with exit code ${result.code}.`);
+      }
       await showOperationError(result.code, result.stdout, result.stderr);
       return;
     }
 
     setStatus("Done", 2000);
+    if (isDebugEnabled()) {
+      debugLog(`Added ${files.length} file(s) to archive.`);
+    }
     showToast(
       `Added ${files.length} file${files.length === 1 ? "" : "s"} to the archive.`,
       "success",
@@ -176,6 +184,7 @@ export async function addFilesToArchive(): Promise<void> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Error: ${msg}`, "error");
+    if (isDebugEnabled()) debugLog(`Add files threw: ${msg}`);
     setStatus("Error", 3000, msg);
     await message(msg, { title: "Error", kind: "error" });
   } finally {
@@ -273,6 +282,7 @@ export async function convertArchive(): Promise<void> {
     ];
     if (password) extractArgs.push(`-p${password}`);
     extractArgs.push("--", archive);
+    debugLogCommand(extractArgs);
     const extract = await runWithPasswordRetry(
       extractArgs,
       true,
@@ -283,8 +293,12 @@ export async function convertArchive(): Promise<void> {
       setStatus("Cancelled", 2000);
       return;
     }
+    logCommandResult(extract.stdout, extract.stderr, extract.code);
     if (extract.code !== 0) {
       setStatus("Error", 3000, extract.stderr || "Extraction failed.");
+      if (isDebugEnabled()) {
+        debugLog(`Convert extract failed with exit code ${extract.code}.`);
+      }
       await showOperationError(extract.code, extract.stdout, extract.stderr);
       return;
     }
@@ -324,24 +338,32 @@ export async function convertArchive(): Promise<void> {
     }
     compress.push(dest, "--", ...children);
 
+    debugLogCommand(compress);
     const result = await invoke<Run7zResult>("run_7z", { args: compress });
     if (state.cancelRequested && result.code !== 0) {
       setStatus("Cancelled", 2000);
       return;
     }
-    logCommandResult(result.stdout, result.stderr);
+    logCommandResult(result.stdout, result.stderr, result.code);
     if (result.code !== 0) {
       setStatus("Error", 3000, result.stderr || "Conversion failed.");
+      if (isDebugEnabled()) {
+        debugLog(`Convert failed with exit code ${result.code}.`);
+      }
       await showOperationError(result.code, result.stdout, result.stderr);
       return;
     }
 
     setStatus("Done", 2000);
+    if (isDebugEnabled()) {
+      debugLog(`Converted archive to ${format.toUpperCase()}.`);
+    }
     showToast(`Converted archive to ${format.toUpperCase()}.`, "success");
     clearPasswordFields();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Error: ${msg}`, "error");
+    if (isDebugEnabled()) debugLog(`Convert threw: ${msg}`);
     setStatus("Error", 3000, msg);
     await message(msg, { title: "Conversion error", kind: "error" });
   } finally {

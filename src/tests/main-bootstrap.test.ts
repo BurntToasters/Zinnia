@@ -342,9 +342,18 @@ function ensureMainDomElements(): void {
     "close-licenses",
     "rerun-setup-wizard",
     "reset-settings",
+    "debug-console-clear",
+    "debug-console-copy",
+    "debug-console-close",
   ]) {
     ensureElement(id, "button");
   }
+
+  const aboutDebugToggle = ensureElement("about-debug-toggle", "img");
+  aboutDebugToggle.className = "about-icon";
+  const debugConsole = ensureElement("debug-console", "aside");
+  debugConsole.hidden = true;
+  ensureElement("debug-console-log", "pre");
 
   const workspaceBasic = ensureElement("workspace-mode-basic", "button");
   workspaceBasic.setAttribute("data-workspace-mode-btn", "basic");

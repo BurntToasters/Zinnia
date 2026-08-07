@@ -1769,16 +1769,12 @@ async function main() {
     await uploadAssetWithReplace(release, f);
     console.log(`  ^ ${path.basename(f)}`);
   }
-  // Never copy this VM's platform-local manifest subset onto /releases/latest.
-  // Draft assets are not public, and even a published replacement must first
-  // verify the complete cross-platform set. The explicit post-publish command
-  // downloads and verifies that full set before changing the live feed.
+  // Beta clients poll /releases/latest for latest-*-beta-*.json. Sync those
+  // manifests onto the latest *stable* release during every beta sign upload,
+  // including while this tag is still a draft (same automatic behavior as
+  // 0.6.0). Keep release:sync-beta-manifests for recovery/re-sync only.
   if (IS_PRERELEASE) {
-    console.log(
-      release.draft
-        ? "  ~ beta manifests remain staged only; after publishing, run npm run release:sync-beta-manifests"
-        : "  ~ published beta assets uploaded; run npm run release:sync-beta-manifests to verify the complete set and update the live feed",
-    );
+    await syncBetaManifestsToLatestStable(everything, release.id);
   }
 
   console.log(

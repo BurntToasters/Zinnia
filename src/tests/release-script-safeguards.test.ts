@@ -35,6 +35,7 @@ const require = createRequire(import.meta.url);
 const {
   assertReleaseTargetsCommit: assertReleaseTargetsCommitCjs,
   listAllGithubPages: listAllGithubPagesCjs,
+  readChangelogReleaseBody,
   resolveGithubToken,
   verifyReleaseSession,
 } = require("../../scripts/ensure-draft-release.cjs") as {
@@ -43,6 +44,7 @@ const {
     commit: string,
   ) => unknown;
   listAllGithubPages: typeof listAllGithubPages;
+  readChangelogReleaseBody: (changelogPath?: string) => string;
   resolveGithubToken: (env?: NodeJS.ProcessEnv) => string | undefined;
   verifyReleaseSession: (run?: typeof spawnSync) => void;
 };
@@ -286,6 +288,39 @@ describe("release script safeguards", () => {
     }
   });
 
+  it("reads CHANGELOG.md for Windows draft release notes", () => {
+    const body = readChangelogReleaseBody();
+    expect(body).toContain("## Changes in `");
+    expect(body.trim().length).toBeGreaterThan(0);
+
+    const missing = path.join(
+      os.tmpdir(),
+      `zinnia-missing-changelog-${Date.now()}.md`,
+    );
+    expect(() => readChangelogReleaseBody(missing)).toThrow(
+      /CHANGELOG\.md is required/,
+    );
+
+    const empty = path.join(
+      os.tmpdir(),
+      `zinnia-empty-changelog-${Date.now()}.md`,
+    );
+    fs.writeFileSync(empty, "   \n");
+    try {
+      expect(() => readChangelogReleaseBody(empty)).toThrow(
+        /CHANGELOG\.md is empty/,
+      );
+    } finally {
+      fs.rmSync(empty, { force: true });
+    }
+
+    const source = fs.readFileSync("scripts/ensure-draft-release.cjs", "utf8");
+    expect(source).toContain("readChangelogReleaseBody");
+    expect(source).toContain("syncReleaseNotesBody");
+    expect(source).toContain("body,");
+    expect(source).toContain("PATCH");
+  });
+
   it("requires a release session before the draft script can contact GitHub", () => {
     const rejectedSessionCheck = () => {
       const error = Object.assign(new Error("release session missing"), {
@@ -334,16 +369,15 @@ describe("release script safeguards", () => {
     },
   );
 
-  it("keeps draft beta manifests off the public live feed", () => {
+  it("auto-syncs beta manifests onto /releases/latest during signing", () => {
     const source = fs.readFileSync("scripts/gpg-sign.js", "utf8");
     expect(source).toContain("if (IS_PRERELEASE)");
     const syncBlock = source.slice(
       source.indexOf("for (const f of everything)"),
       source.indexOf("Done: ${TAG} uploaded as"),
     );
-    expect(syncBlock).not.toContain("syncBetaManifestsToLatestStable");
-    expect(syncBlock).toContain("beta manifests remain staged only");
-    expect(syncBlock).toContain("release:sync-beta-manifests");
+    expect(syncBlock).toContain("syncBetaManifestsToLatestStable");
+    expect(syncBlock).not.toContain("beta manifests remain staged only");
   });
 
   it("keeps a recovery beta→latest sync entry point", () => {

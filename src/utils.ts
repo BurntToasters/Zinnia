@@ -190,9 +190,10 @@ const KEY_VALUE_SECRET_PATTERN =
   /\b(password|passphrase|token|private[_-]?key)\s*([:=])\s*\S+/gi;
 // 7-Zip accepts the password directly after `-p` / `-P`. A rendered command
 // cannot distinguish a password containing spaces from following arguments,
-// so fail closed and redact the rest of that log line. `-spd` is preserved
-// because the password switch must start at a token boundary.
-const ARG_PASSWORD_PATTERN = /(^|[^\S\r\n])-p[^\r\n]*/gim;
+// so fail closed and redact the rest of that log line. Already-sanitized
+// `-p***` tokens are left intact so later args remain visible. `-spd` is
+// preserved because the password switch must start at a token boundary.
+const ARG_PASSWORD_PATTERN = /(^|[^\S\r\n])-p(?!\*\*\*(?:\s|$))[^\r\n]*/gim;
 
 export function redactSensitiveText(input: string): string {
   return input

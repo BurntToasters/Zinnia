@@ -100,7 +100,17 @@
         </div>
 
         <div class="extract-error" id="extract-error" role="alert" hidden>
-          <div class="extract-error-title">Extraction failed</div>
+          <div class="extract-error-header">
+            <div class="extract-error-title">Extraction failed</div>
+            <button
+              type="button"
+              class="btn btn--ghost btn--sm"
+              id="copy-error-detail"
+              hidden
+            >
+              Copy details
+            </button>
+          </div>
           <pre class="extract-error-detail" id="error-detail"></pre>
         </div>
       </div>
