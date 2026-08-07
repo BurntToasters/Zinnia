@@ -93,11 +93,12 @@ const hardLinksSupported = supportsHardLinksInTemporaryDirectory();
 describe("release script safeguards", () => {
   it("binds release drafts to exact checked-out commit", () => {
     const commit = "a".repeat(40);
+    // Empty env: a developer shell with FORCE_UPLOAD=1 must not bypass this.
     expect(() =>
-      assertReleaseTargetsCommitCjs({ target_commitish: "main" }, commit),
+      assertReleaseTargetsCommitCjs({ target_commitish: "main" }, commit, {}),
     ).toThrow("not checked-out commit");
     expect(
-      assertReleaseTargetsCommitCjs({ target_commitish: commit }, commit),
+      assertReleaseTargetsCommitCjs({ target_commitish: commit }, commit, {}),
     ).toEqual({ target_commitish: commit });
 
     const gpgSource = fs.readFileSync("scripts/gpg-sign.js", "utf8");
