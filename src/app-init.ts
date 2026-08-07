@@ -38,6 +38,7 @@ import { shouldShowSetupWizard } from "./setup-wizard";
 import { initBasicWorkspace, handleBasicDragDrop } from "./basic";
 import { refreshOsIntegrationStatus } from "./os-integration";
 import { refreshIcons } from "./icons";
+import { setDebugEnabled, debugLog } from "./debug-mode";
 import {
   allPathsAreArchives,
   applyIncomingPaths,
@@ -244,6 +245,12 @@ export async function init() {
   setActivityPanelVisible(state.currentSettings.showActivityPanel, {
     persist: false,
   });
+  setDebugEnabled(state.currentSettings.debug);
+  if (state.currentSettings.debug) {
+    debugLog(
+      `Debug mode restored (v${dom.versionLabel.textContent || "?"}, ${dom.platformLabel.textContent || state.platformName || "?"}).`,
+    );
+  }
   renderInputs();
   wireEvents();
   initBasicWorkspace();
@@ -251,6 +258,9 @@ export async function init() {
   refreshQuickActionRepeatState();
   if (loadedSettings.malformed && loadedSettings.warning) {
     log(loadedSettings.warning, "error");
+    if (state.currentSettings.debug) {
+      debugLog(`Settings load warning: ${loadedSettings.warning}`);
+    }
   }
 
   const startupRecoveryStatus = invoke<string | null>(

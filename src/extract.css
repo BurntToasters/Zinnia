@@ -179,6 +179,13 @@ body.platform-macos .extract-app {
   gap: 6px;
 }
 
+.extract-error-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .extract-error-title {
   font-size: 0.75rem;
   font-weight: 600;
@@ -195,6 +202,10 @@ body.platform-macos .extract-app {
   overflow-y: auto;
   font-family: "Cascadia Code", "SF Mono", "Fira Code", "Consolas", monospace;
   user-select: text;
+}
+
+.extract-error-detail--debug {
+  max-height: 220px;
 }
 
 .extract-footer {

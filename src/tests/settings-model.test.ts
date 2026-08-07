@@ -68,11 +68,19 @@ describe("normalizeUserSettings", () => {
       localLoggingEnabled: false,
       osIntegrationDismissed: true,
       logVerbosity: "debug",
+      debug: true,
     });
     expect(result.autoCheckUpdates).toBe(false);
     expect(result.localLoggingEnabled).toBe(false);
     expect(result.osIntegrationDismissed).toBe(true);
     expect(result.logVerbosity).toBe("debug");
+    expect(result.debug).toBe(true);
+    expect(SETTING_DEFAULTS.debug).toBe(false);
+  });
+
+  it("rejects non-boolean debug and defaults to false", () => {
+    expect(normalizeUserSettings({ debug: "true" }).debug).toBe(false);
+    expect(normalizeUserSettings({ debug: 1 }).debug).toBe(false);
   });
 
   it("accepts valid updateChannel", () => {

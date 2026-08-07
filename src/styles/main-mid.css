@@ -850,6 +850,57 @@ body.platform-macos .btn--shortcut::after {
   user-select: text;
 }
 
+.debug-console {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  max-height: min(240px, 35vh);
+  border-top: 1px solid var(--border);
+  background: var(--surface-alt, var(--bg));
+  min-height: 0;
+}
+
+.debug-console[hidden] {
+  display: none !important;
+}
+
+.debug-console__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.debug-console__title {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.debug-console__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.debug-console__log {
+  margin: 0;
+  padding: 8px 12px;
+  overflow: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: "Cascadia Code", "SF Mono", "Fira Code", "Consolas", monospace;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  user-select: text;
+  color: var(--text-secondary);
+}
+
 .toast-region {
   position: fixed;
   bottom: 16px;

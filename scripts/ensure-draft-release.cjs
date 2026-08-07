@@ -4,11 +4,15 @@
 //   --wait     poll until that draft exists; NEVER create. Run by mac/linux so
 //              they only ever reuse the draft Windows created (no duplicates).
 
+const fs = require("fs");
 const https = require("https");
 const path = require("path");
 const { execFileSync } = require("child_process");
 
 require("dotenv").config();
+
+const REPOSITORY_ROOT = path.resolve(__dirname, "..");
+const CHANGELOG_PATH = path.join(REPOSITORY_ROOT, "CHANGELOG.md");
 
 function resolveGithubToken(env = process.env) {
   return env.GH_TOKEN || env.GITHUB_TOKEN;
@@ -64,7 +68,7 @@ const IS_PRERELEASE = BETA_VERSION.test(VERSION);
 
 function currentReleaseCommit() {
   const commit = execFileSync("git", ["rev-parse", "HEAD"], {
-    cwd: path.resolve(__dirname, ".."),
+    cwd: REPOSITORY_ROOT,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   }).trim();
@@ -72,6 +76,42 @@ function currentReleaseCommit() {
     throw new Error("Could not resolve an exact release commit from git HEAD.");
   }
   return commit;
+}
+
+function readChangelogReleaseBody(changelogPath = CHANGELOG_PATH) {
+  let body;
+  try {
+    body = fs.readFileSync(changelogPath, "utf8");
+  } catch (error) {
+    throw new Error(
+      "CHANGELOG.md is required for GitHub release notes: " +
+        (error && error.message ? error.message : String(error)),
+      { cause: error },
+    );
+  }
+  if (!body.trim()) {
+    throw new Error("CHANGELOG.md is empty; refusing to set blank release notes.");
+  }
+  return body;
+}
+
+async function syncReleaseNotesBody(release, body) {
+  if (!release || typeof release.id !== "number") {
+    throw new Error("Cannot sync release notes without a GitHub release id.");
+  }
+  const updated = await githubRequestWithRetry(
+    "PATCH",
+    "/repos/" + REPO_OWNER + "/" + REPO_NAME + "/releases/" + release.id,
+    { body },
+  );
+  console.log(
+    "   Synced CHANGELOG.md into release notes (" +
+      body.length +
+      " chars) for " +
+      (release.name || TAG_NAME) +
+      ".",
+  );
+  return updated;
 }
 
 function verifyReleaseSession(run = execFileSync) {
@@ -301,6 +341,7 @@ async function findExistingRelease() {
 async function ensureDraftRelease() {
   console.log("Ensuring draft release exists for " + TAG_NAME + "...");
   const commit = currentReleaseCommit();
+  const body = readChangelogReleaseBody();
 
   const matching = await findMatchingReleases();
   const existing = matching.find((r) => r.draft) || null;
@@ -313,9 +354,12 @@ async function ensureDraftRelease() {
         existing.id +
         ", " +
         (existing.assets ? existing.assets.length : 0) +
-        " assets) - skipping create.",
+        " assets) - refreshing release notes.",
     );
-    return existing;
+    return assertReleaseTargetsCommit(
+      await syncReleaseNotesBody(existing, body),
+      commit,
+    );
   }
   if (matching.some((r) => !r.draft)) {
     throw new Error(
@@ -336,6 +380,7 @@ async function ensureDraftRelease() {
         tag_name: TAG_NAME,
         target_commitish: commit,
         name: VERSION,
+        body,
         draft: true,
         prerelease: IS_PRERELEASE,
       },
@@ -345,7 +390,7 @@ async function ensureDraftRelease() {
         (release.name || TAG_NAME) +
         " (id " +
         release.id +
-        ")",
+        ") with CHANGELOG.md release notes.",
     );
     return assertReleaseTargetsCommit(release, commit);
   } catch (error) {
@@ -357,7 +402,10 @@ async function ensureDraftRelease() {
       if (afterRetry) {
         assertReleaseTargetsCommit(afterRetry, commit);
         console.log("   Found existing draft after retry: id " + afterRetry.id);
-        return afterRetry;
+        return assertReleaseTargetsCommit(
+          await syncReleaseNotesBody(afterRetry, body),
+          commit,
+        );
       }
     }
     throw error;
@@ -445,7 +493,9 @@ module.exports = {
   assertReleaseTargetsCommit,
   currentReleaseCommit,
   listAllGithubPages,
+  readChangelogReleaseBody,
   resolveGithubToken,
+  syncReleaseNotesBody,
   verifyReleaseSession,
 };
 

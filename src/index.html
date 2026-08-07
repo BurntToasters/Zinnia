@@ -932,12 +932,15 @@
                   <h3 class="settings-section__title">App</h3>
                   <div class="about-header">
                     <img
+                      id="about-debug-toggle"
                       src="/zinnia_default-logo.png"
                       width="40"
                       height="40"
                       alt="Zinnia"
                       class="about-icon"
                       draggable="false"
+                      role="button"
+                      tabindex="0"
                     />
                     <div>
                       <h3 class="about-name">Zinnia</h3>
@@ -2757,6 +2760,47 @@
           </section>
         </div>
       </main>
+
+      <aside
+        id="debug-console"
+        class="debug-console"
+        hidden
+        aria-label="Debug console"
+      >
+        <div class="debug-console__header">
+          <h2 class="debug-console__title">Debug Console</h2>
+          <div class="debug-console__actions">
+            <button
+              type="button"
+              class="btn btn--ghost btn--sm"
+              id="debug-console-clear"
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              class="btn btn--ghost btn--sm"
+              id="debug-console-copy"
+            >
+              Copy
+            </button>
+            <button
+              type="button"
+              class="btn btn--ghost btn--sm"
+              id="debug-console-close"
+              aria-label="Hide debug console"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+        <pre
+          class="debug-console__log"
+          id="debug-console-log"
+          role="log"
+          aria-live="polite"
+        ></pre>
+      </aside>
 
       <footer class="statusbar">
         <span class="statusbar__item" id="status" aria-live="polite">Idle</span>

@@ -33,6 +33,7 @@ import {
 import type { TreeNode } from "../selective-extract";
 import { buildExtractArgsFor } from "./args";
 import { sanitizeCommandArgsForPreview } from "./preview";
+import { debugLog, debugLogCommand, isDebugEnabled } from "../debug-mode";
 import {
   ensureRuntimeReady,
   withLiveProgress,
@@ -867,6 +868,7 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
       destination,
     );
     devLog(`7z ${sanitizeCommandArgsForPreview(args).join(" ")}`);
+    debugLogCommand(args);
 
     closeSelectiveExtractModal();
 
@@ -875,6 +877,13 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
         ? "Extracting selected entries"
         : "Extracting archive",
     );
+    if (isDebugEnabled()) {
+      debugLog(
+        selectedPaths.length > 0
+          ? `Selective extract starting (${selectedPaths.length} path(s)).`
+          : "Selective extract starting (full archive).",
+      );
+    }
 
     const result = await withLiveProgress(() =>
       runWithPasswordRetry(args, true, "Extract", browsedIdentity),
@@ -886,18 +895,24 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
       return;
     }
 
-    logCommandResult(result.stdout, result.stderr);
+    logCommandResult(result.stdout, result.stderr, result.code);
     logTruncationNotice(result);
     devLog(`Exit code: ${result.code}`);
 
     if (result.code !== 0) {
       log(`7z exited with code ${result.code}`);
+      if (isDebugEnabled()) {
+        debugLog(`Selective extract failed with exit code ${result.code}.`);
+      }
       setStatus("Error", 3000, result.stderr || "Operation failed.");
       hideProgress();
       await showOperationError(result.code, result.stdout, result.stderr);
     } else {
       setStatus("Done", 2000);
       hideProgress();
+      if (isDebugEnabled()) {
+        debugLog("Selective extract finished successfully.");
+      }
       showToast(
         selectedPaths.length > 0
           ? "Selected entries extracted."
@@ -916,6 +931,7 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
 
     const msg = err instanceof Error ? err.message : String(err);
     log(`Error: ${msg}`);
+    if (isDebugEnabled()) debugLog(`Selective extract threw: ${msg}`);
     setStatus("Error", 3000, msg);
     hideProgress();
     await message(msg, { title: "Error", kind: "error" });

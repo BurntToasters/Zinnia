@@ -1,6 +1,12 @@
 import { message } from "@tauri-apps/plugin-dialog";
 import { trapFocus, releaseFocusTrap } from "../utils";
 import { buildArgs } from "./args";
+import { buildCommandPreviewText } from "./command-sanitize";
+
+export {
+  sanitizeCommandArgsForPreview,
+  buildCommandPreviewText,
+} from "./command-sanitize";
 
 let commandPreviewTrigger: HTMLElement | null = null;
 let commandPreviewCopyTimer: number | undefined;
@@ -21,24 +27,6 @@ function resetCommandPreviewCopyStateSoon(): void {
   commandPreviewCopyTimer = window.setTimeout(() => {
     setCommandPreviewCopyButton(false);
   }, 1300);
-}
-
-function isPasswordSwitchArg(arg: string): boolean {
-  const lower = arg.toLowerCase();
-  // `-spd` is DisableWildcardMatching, not a password switch.
-  if (lower === "-spd" || lower.startsWith("-spd")) return false;
-  return lower === "-p" || lower.startsWith("-p");
-}
-
-export function sanitizeCommandArgsForPreview(args: string[]): string[] {
-  return args.map((arg) => {
-    if (isPasswordSwitchArg(arg)) return "-p***";
-    return arg;
-  });
-}
-
-export function buildCommandPreviewText(args: string[]): string {
-  return `7z ${sanitizeCommandArgsForPreview(args).join(" ")}`;
 }
 
 export function closeCommandPreviewModal() {
