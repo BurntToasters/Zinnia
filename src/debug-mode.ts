@@ -147,45 +147,43 @@ async function seedPoppedOutConsole(): Promise<void> {
 }
 
 function ensurePopOutBridge(): Promise<void> {
-  if (!bridgeReady) {
-    bridgeReady = (async () => {
-      await listen("zinnia-debug-console-ready", () => {
-        if (!debugEnabled) return;
-        poppedOut = true;
-        setDebugConsoleVisible(false);
-        updatePopOutButtonLabel();
-        // Always seed on ready: listeners are attached in the pop-out page
-        // immediately before this event, so history is not lost on first paint
-        // or after a webview reload.
-        void seedPoppedOutConsole();
-      });
+  bridgeReady ??= (async () => {
+    await listen("zinnia-debug-console-ready", () => {
+      if (!debugEnabled) return;
+      poppedOut = true;
+      setDebugConsoleVisible(false);
+      updatePopOutButtonLabel();
+      // Always seed on ready: listeners are attached in the pop-out page
+      // immediately before this event, so history is not lost on first paint
+      // or after a webview reload.
+      void seedPoppedOutConsole();
+    });
 
-      await listen("zinnia-debug-console-closed", () => {
-        if (!poppedOut) return;
-        poppedOut = false;
-        seedInFlight = false;
-        reseedRequested = false;
-        pendingRelayLines = [];
-        // Do not clear debugConsolePoppedOut here: Destroyed also fires on app
-        // quit, and wiping the preference would prevent restore on next launch.
-        updatePopOutButtonLabel();
-        if (debugEnabled) {
-          setDebugConsoleVisible(true);
-          renderDockedFromBuffer();
-        }
-      });
+    await listen("zinnia-debug-console-closed", () => {
+      if (!poppedOut) return;
+      poppedOut = false;
+      seedInFlight = false;
+      reseedRequested = false;
+      pendingRelayLines = [];
+      // Do not clear debugConsolePoppedOut here: Destroyed also fires on app
+      // quit, and wiping the preference would prevent restore on next launch.
+      updatePopOutButtonLabel();
+      if (debugEnabled) {
+        setDebugConsoleVisible(true);
+        renderDockedFromBuffer();
+      }
+    });
 
-      await listen("zinnia-debug-console-dock-request", () => {
-        if (!debugEnabled) return;
-        void persistPopOutPreference(false);
-      });
+    await listen("zinnia-debug-console-dock-request", () => {
+      if (!debugEnabled) return;
+      void persistPopOutPreference(false);
+    });
 
-      await listen("zinnia-debug-console-clear-request", () => {
-        if (!debugEnabled) return;
-        clearDebugConsole();
-      });
-    })();
-  }
+    await listen("zinnia-debug-console-clear-request", () => {
+      if (!debugEnabled) return;
+      clearDebugConsole();
+    });
+  })();
   return bridgeReady;
 }
 

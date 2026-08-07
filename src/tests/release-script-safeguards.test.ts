@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   artifactMatchesVersion,
+  assertReleaseTargetsCommit,
   buildUploadList,
   checksumTargetKeysForArtifactName,
   expectedPublishedBetaManifestNames,
@@ -42,6 +43,8 @@ const {
   assertReleaseTargetsCommit: (
     release: { target_commitish?: string },
     commit: string,
+    env?: NodeJS.ProcessEnv,
+    log?: { warn: (message: string) => void },
   ) => unknown;
   listAllGithubPages: typeof listAllGithubPages;
   readChangelogReleaseBody: (changelogPath?: string) => string;
@@ -104,13 +107,40 @@ describe("release script safeguards", () => {
     );
     expect(gpgSource).toContain("target_commitish: commit");
     expect(gpgSource).toContain("assertReleaseTargetsCommit");
+    expect(gpgSource).toContain("FORCE_UPLOAD");
     expect(gpgSource).toContain("if (error?.statusCode !== 422) throw error");
     expect(gpgSource).toContain(
       "await new Promise((resolve) => setTimeout(resolve, 2000));",
     );
     expect(gpgSource).toContain("name: VERSION");
+    expect(draftSource).toContain("FORCE_UPLOAD");
     expect(draftSource).toMatch(
       /if \(afterRetry\) \{\s*assertReleaseTargetsCommit\(afterRetry, commit\);/,
+    );
+  });
+
+  it("allows FORCE_UPLOAD to bypass draft commit mismatch", () => {
+    const commit = "b".repeat(40);
+    const release = { target_commitish: "beta" };
+    const warnings: string[] = [];
+    const log = { warn: (message: string) => warnings.push(String(message)) };
+
+    expect(
+      assertReleaseTargetsCommit(release, commit, { FORCE_UPLOAD: "1" }, log),
+    ).toEqual(release);
+    expect(warnings.join("\n")).toContain("FORCE_UPLOAD=1");
+
+    expect(
+      assertReleaseTargetsCommitCjs(
+        release,
+        commit,
+        { FORCE_UPLOAD: "true" },
+        log,
+      ),
+    ).toEqual(release);
+
+    expect(() => assertReleaseTargetsCommit(release, commit, {}, log)).toThrow(
+      /FORCE_UPLOAD=1 to bypass/,
     );
   });
   it("publishes beta-target updater manifests for stable and beta releases", () => {
