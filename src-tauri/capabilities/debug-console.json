@@ -1,0 +1,24 @@
+{
+  "$schema": "https://schema.tauri.app/capabilities/2",
+  "identifier": "debug-console-window",
+  "description": "Permissions for the popped-out Debug Console window",
+  "windows": ["debug-console"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:event:allow-emit",
+    "core:window:allow-close",
+    "core:window:allow-destroy",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-maximize",
+    "core:window:allow-unmaximize",
+    "core:window:allow-is-maximized",
+    "core:window:allow-set-size",
+    "allow-close-debug-console-window",
+    "allow-get-platform-info",
+    "allow-load-settings",
+    "allow-set-workspace-window-fx",
+    "allow-supports-workspace-window-fx"
+  ]
+}

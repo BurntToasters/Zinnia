@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-relay-debug-console-clear"
+description = "Enables the relay_debug_console_clear command without any pre-configured scope."
+commands.allow = ["relay_debug_console_clear"]
+
+[[permission]]
+identifier = "deny-relay-debug-console-clear"
+description = "Denies the relay_debug_console_clear command without any pre-configured scope."
+commands.deny = ["relay_debug_console_clear"]

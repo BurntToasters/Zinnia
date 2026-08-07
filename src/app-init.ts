@@ -38,7 +38,11 @@ import { shouldShowSetupWizard } from "./setup-wizard";
 import { initBasicWorkspace, handleBasicDragDrop } from "./basic";
 import { refreshOsIntegrationStatus } from "./os-integration";
 import { refreshIcons } from "./icons";
-import { setDebugEnabled, debugLog } from "./debug-mode";
+import {
+  setDebugEnabled,
+  debugLog,
+  restoreDebugConsolePopOutIfNeeded,
+} from "./debug-mode";
 import {
   allPathsAreArchives,
   applyIncomingPaths,
@@ -250,6 +254,7 @@ export async function init() {
     debugLog(
       `Debug mode restored (v${dom.versionLabel.textContent || "?"}, ${dom.platformLabel.textContent || state.platformName || "?"}).`,
     );
+    void restoreDebugConsolePopOutIfNeeded();
   }
   renderInputs();
   wireEvents();
