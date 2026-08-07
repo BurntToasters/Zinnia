@@ -10,6 +10,7 @@ import {
 } from "@tauri-apps/plugin-notification";
 import { log, devLog, setStatus } from "./ui";
 import { state } from "./state";
+import { debugLog, isDebugEnabled } from "./debug-mode";
 
 let pendingUpdate: Update | null = null;
 let pendingVersion: string | null = null;
@@ -244,6 +245,11 @@ async function runUpdateCheck(interactive: boolean): Promise<void> {
       return;
     }
     if (interactive) setStatus("Checking updates");
+    if (isDebugEnabled()) {
+      debugLog(
+        `Update check started (interactive=${interactive}, target=${target ?? "default"}).`,
+      );
+    }
     checkedUpdate = await checkUpdateFeed(target);
     if (generation !== updateGeneration) {
       await checkedUpdate?.close().catch(() => {});
@@ -255,6 +261,7 @@ async function runUpdateCheck(interactive: boolean): Promise<void> {
           ? "No updates available."
           : "Auto-update check: no updates available.",
       );
+      if (isDebugEnabled()) debugLog("Update check: no updates available.");
       if (interactive) {
         await message("You are running the latest version.", {
           title: "No updates",
@@ -264,6 +271,9 @@ async function runUpdateCheck(interactive: boolean): Promise<void> {
       return;
     }
     log(`Update available: ${checkedUpdate.version}`);
+    if (isDebugEnabled()) {
+      debugLog(`Update available: ${checkedUpdate.version}`);
+    }
     if (!interactive) {
       await notifyIfAlreadyGranted(
         "Zinnia Update Available",
@@ -294,6 +304,7 @@ async function runUpdateCheck(interactive: boolean): Promise<void> {
     log(
       `${interactive ? "Updater error" : "Update check failed"}: ${messageText}`,
     );
+    if (isDebugEnabled()) debugLog(`Update check failed: ${messageText}`);
     setStatus("Idle");
     if (interactive) {
       await message(`Failed to check for updates.\n\n${messageText}`, {

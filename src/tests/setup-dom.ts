@@ -83,6 +83,16 @@ addEl("div", "progress");
 addEl("div", "version-label");
 addEl("div", "platform-label");
 
+const debugConsole = addEl("aside", "debug-console");
+debugConsole.hidden = true;
+debugConsole.className = "debug-console";
+addEl("button", "debug-console-clear");
+addEl("button", "debug-console-copy");
+addEl("button", "debug-console-close");
+addEl("pre", "debug-console-log");
+const aboutDebugToggle = addEl("img", "about-debug-toggle");
+aboutDebugToggle.className = "about-icon";
+
 const grid = document.createElement("div");
 grid.className = "grid";
 document.body.appendChild(grid);

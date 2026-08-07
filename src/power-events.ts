@@ -76,6 +76,13 @@ import {
 } from "./basic";
 import { wireOsIntegrationEvents } from "./os-integration";
 import { runBenchmark } from "./benchmark";
+import { showToast } from "./toast";
+import {
+  isDebugEnabled,
+  setDebugEnabled,
+  setDebugConsoleVisible,
+  wireDebugConsoleControls,
+} from "./debug-mode";
 import {
   isEditableTarget,
   resetRuntimeStateForFirstRun,
@@ -89,6 +96,42 @@ import {
 import { exportLocalLogs, openLogsFolder, clearLocalLogs } from "./power-logs";
 
 export { openShortcutsModal } from "./power-shortcuts";
+
+export async function promptAndToggleDebugMode(): Promise<void> {
+  const enabling = !isDebugEnabled();
+  const confirmed = await ask(
+    enabling
+      ? "Enable debug mode? This shows a Debug Console with verbose process output."
+      : "Disable debug mode and hide the Debug Console?",
+    {
+      title: enabling ? "Enable debug mode" : "Disable debug mode",
+      kind: "info",
+      okLabel: enabling ? "Enable" : "Disable",
+      cancelLabel: "Cancel",
+    },
+  );
+  if (!confirmed) return;
+
+  state.currentSettings = { ...state.currentSettings, debug: enabling };
+  try {
+    await persistSettingsImmediately(
+      state.currentSettings,
+      state.settingsExtras,
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    showToast(`Could not save debug setting: ${msg}`, "error");
+    return;
+  }
+
+  setDebugEnabled(enabling);
+  if (enabling) {
+    setDebugConsoleVisible(true);
+    showToast("Debug mode enabled.", "info");
+  } else {
+    showToast("Debug mode disabled.", "info");
+  }
+}
 
 const BASIC_RECENT_ARCHIVES_KEY = "zinnia.basic.recentArchives";
 
@@ -580,6 +623,16 @@ export function wireEvents() {
   $("about-show-licenses").addEventListener("click", (e) =>
     openLicensesModal(e.currentTarget as HTMLElement),
   );
+  const aboutDebugToggle = $("about-debug-toggle");
+  aboutDebugToggle.addEventListener("click", () => {
+    void promptAndToggleDebugMode();
+  });
+  aboutDebugToggle.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    void promptAndToggleDebugMode();
+  });
+  wireDebugConsoleControls();
   wireOsIntegrationEvents();
 
   $("close-licenses").addEventListener("click", closeLicensesModal);

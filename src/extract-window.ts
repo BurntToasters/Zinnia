@@ -16,6 +16,9 @@ import {
   formatEta as formatSharedEta,
   type ProgressUpdate,
 } from "./progress-update";
+import { redactSensitiveText } from "./utils";
+import { sanitizeCommandArgsForPreview } from "./archive/command-sanitize";
+import { formatCommandOutputForLogs } from "./output-logging";
 
 export { formatEta } from "./progress-update";
 
@@ -278,13 +281,18 @@ async function run() {
   let destination = "";
 
   let autoCloseDelay = 1.5;
+  let debugMode = false;
   try {
     const raw = await invoke<string>("load_settings");
-    const parsed = JSON.parse(raw) as { extractAutoCloseSeconds?: unknown };
+    const parsed = JSON.parse(raw) as {
+      extractAutoCloseSeconds?: unknown;
+      debug?: unknown;
+    };
     autoCloseDelay = normalizeAutoCloseDelay(
       parsed.extractAutoCloseSeconds,
       1.5,
     );
+    debugMode = parsed.debug === true;
   } catch {}
 
   let autoCloseInterval: ReturnType<typeof setInterval> | null = null;
@@ -369,9 +377,61 @@ async function run() {
     }
   };
 
-  const showError = (detail: string) => {
+  const copyErrorBtn = document.getElementById(
+    "copy-error-detail",
+  ) as HTMLButtonElement | null;
+  copyErrorBtn?.addEventListener("click", async () => {
+    const text = $("error-detail").textContent ?? "";
+    if (!text.trim()) return;
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("Clipboard API unavailable");
+      }
+      await navigator.clipboard.writeText(text);
+      copyErrorBtn.textContent = "Copied";
+      window.setTimeout(() => {
+        copyErrorBtn.textContent = "Copy details";
+      }, 1300);
+    } catch {
+      copyErrorBtn.textContent = "Copy failed";
+      window.setTimeout(() => {
+        copyErrorBtn.textContent = "Copy details";
+      }, 1300);
+    }
+  });
+
+  const showError = (
+    detail: string,
+    debugDump?: { args?: string[]; result?: Run7zResult; extra?: string },
+  ) => {
     $("extract-error").hidden = false;
-    $("error-detail").textContent = detail;
+    const detailEl = $("error-detail");
+    let text = detail;
+    if (debugMode && debugDump) {
+      const parts = [detail, "", "--- debug ---"];
+      if (debugDump.args) {
+        parts.push(
+          `cmd: 7z ${sanitizeCommandArgsForPreview(debugDump.args).join(" ")}`,
+        );
+      }
+      if (debugDump.result) {
+        parts.push(`exit: ${debugDump.result.code}`);
+        const streams = formatCommandOutputForLogs(
+          debugDump.result.stdout ?? "",
+          debugDump.result.stderr ?? "",
+          "debug",
+        );
+        for (const entry of streams) parts.push(entry.text);
+        if (streams.length === 0) parts.push("(empty stdout/stderr)");
+      }
+      if (debugDump.extra) parts.push(debugDump.extra);
+      text = redactSensitiveText(parts.join("\n"));
+      detailEl.classList.add("extract-error-detail--debug");
+    } else {
+      detailEl.classList.remove("extract-error-detail--debug");
+    }
+    detailEl.textContent = text;
+    if (copyErrorBtn) copyErrorBtn.hidden = false;
     finish("Failed", 100, true, false);
   };
 
@@ -633,7 +693,7 @@ async function run() {
         result.code === 1
           ? `7-Zip stopped with warnings (exit code 1). Extraction was not completed.\n\n${result.stderr?.trim() || "Check the application log for warning details."}`
           : result.stderr?.trim() || `Exit code ${result.code}`;
-      showError(hint ? `${hint}\n\n${base}` : base);
+      showError(hint ? `${hint}\n\n${base}` : base, { args, result });
       return;
     }
 
@@ -644,7 +704,11 @@ async function run() {
       finish("Cancelled", 100, false, false, true);
       return;
     }
-    showError(err instanceof Error ? err.message : String(err));
+    const messageText = err instanceof Error ? err.message : String(err);
+    showError(messageText, {
+      args,
+      extra: `throw: ${messageText}`,
+    });
   }
 }
 

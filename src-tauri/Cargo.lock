@@ -5563,7 +5563,7 @@ dependencies = [
 
 [[package]]
 name = "zinnia"
-version = "0.6.1-beta.3"
+version = "0.6.1-beta.4"
 dependencies = [
  "block2",
  "getrandom 0.3.4",

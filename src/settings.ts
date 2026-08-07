@@ -167,6 +167,7 @@ export function readSettingsModal(): UserSettings {
     logVerbosity: $<HTMLSelectElement>("s-log-verbosity")
       .value as UserSettings["logVerbosity"],
     lastMode: state.currentSettings.lastMode,
+    debug: state.currentSettings.debug,
     showActivityPanel: state.currentSettings.showActivityPanel,
     workspaceMode: $<HTMLSelectElement>("s-workspace-mode")
       .value as UserSettings["workspaceMode"],

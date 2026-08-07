@@ -20,6 +20,7 @@ import { promptInput } from "../prompt-modal";
 import { withPassword } from "./args";
 import { basename } from "../path-display";
 import { formatEta, type ProgressUpdate } from "../progress-update";
+import { debugLog, isDebugEnabled } from "../debug-mode";
 
 export const formatBatchEta = formatEta;
 
@@ -47,6 +48,11 @@ export async function showOperationError(
   stdout: string,
   stderr: string,
 ): Promise<void> {
+  if (isDebugEnabled()) {
+    debugLog(
+      `Operation error dialog (exit ${code}): ${describe7zError(stdout, stderr) || "(no hint)"}${stderr.trim() ? `\nstderr: ${stderr.trim().slice(0, 2000)}` : ""}`,
+    );
+  }
   if (getWorkspaceMode() === "basic") return;
   const hint = describe7zError(stdout, stderr);
   const detail = stderr.trim() ? `\n\n${truncateForDialog(stderr.trim())}` : "";
@@ -89,7 +95,11 @@ export function clearPasswordFields(): void {
   }
 }
 
-export function logCommandResult(stdout: string, stderr: string): void {
+export function logCommandResult(
+  stdout: string,
+  stderr: string,
+  code?: number,
+): void {
   const entries = formatCommandOutputForLogs(
     stdout,
     stderr,
@@ -97,6 +107,17 @@ export function logCommandResult(stdout: string, stderr: string): void {
   );
   for (const entry of entries) {
     log(entry.text, entry.level === "error" ? "error" : "info");
+  }
+  if (isDebugEnabled()) {
+    const parts: string[] = [];
+    if (typeof code === "number") parts.push(`Exit code: ${code}`);
+    const debugEntries = formatCommandOutputForLogs(stdout, stderr, "debug");
+    if (debugEntries.length === 0) {
+      parts.push("7z finished with empty stdout/stderr.");
+    } else {
+      for (const entry of debugEntries) parts.push(entry.text);
+    }
+    debugLog(parts.join("\n"));
   }
 }
 
