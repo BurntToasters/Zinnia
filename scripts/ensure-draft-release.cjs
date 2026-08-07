@@ -90,7 +90,9 @@ function readChangelogReleaseBody(changelogPath = CHANGELOG_PATH) {
     );
   }
   if (!body.trim()) {
-    throw new Error("CHANGELOG.md is empty; refusing to set blank release notes.");
+    throw new Error(
+      "CHANGELOG.md is empty; refusing to set blank release notes.",
+    );
   }
   return body;
 }
@@ -132,8 +134,29 @@ function verifyReleaseSession(run = execFileSync) {
   }
 }
 
-function assertReleaseTargetsCommit(release, commit) {
+function isExplicitTruthy(value) {
+  return /^(1|true|yes|on)$/i.test(String(value || "").trim());
+}
+
+function assertReleaseTargetsCommit(
+  release,
+  commit,
+  env = process.env,
+  log = console,
+) {
   if (release?.target_commitish === commit) return release;
+  if (isExplicitTruthy(env.FORCE_UPLOAD)) {
+    log.warn(
+      "WARNING: Draft release " +
+        TAG_NAME +
+        " targets " +
+        (release?.target_commitish || "an unknown commit") +
+        ", not checked-out commit " +
+        commit +
+        ". FORCE_UPLOAD=1 bypassing commit check.",
+    );
+    return release;
+  }
   throw new Error(
     "Draft release " +
       TAG_NAME +
@@ -141,7 +164,7 @@ function assertReleaseTargetsCommit(release, commit) {
       (release?.target_commitish || "an unknown commit") +
       ", not checked-out commit " +
       commit +
-      ". Delete or retarget stale draft before uploading assets.",
+      ". Delete or retarget stale draft before uploading assets. Or set FORCE_UPLOAD=1 to bypass.",
   );
 }
 

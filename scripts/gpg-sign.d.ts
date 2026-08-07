@@ -3,6 +3,12 @@ export type UpdaterChannelVariant = {
   baseUrl: string;
 };
 
+export function assertReleaseTargetsCommit(
+  release: { target_commitish?: string } | null | undefined,
+  commit: string,
+  env?: NodeJS.ProcessEnv,
+  log?: { warn: (message: string) => void },
+): { target_commitish?: string } | null | undefined;
 export function artifactMatchesVersion(
   name: string,
   releaseVersion?: string,
