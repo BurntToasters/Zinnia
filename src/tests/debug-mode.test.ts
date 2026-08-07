@@ -5,8 +5,11 @@ import {
   clearDebugConsole,
   debugLog,
   debugLogCommand,
+  isDebugConsolePoppedOut,
   isDebugConsoleVisible,
   isDebugEnabled,
+  popOutDebugConsole,
+  restoreDebugConsolePopOutIfNeeded,
   setDebugConsoleVisible,
   setDebugEnabled,
 } from "../debug-mode";
@@ -25,6 +28,7 @@ beforeEach(() => {
   vi.mocked(ask).mockResolvedValue(false);
   vi.mocked(invoke).mockReset();
   vi.mocked(invoke).mockResolvedValue(undefined);
+  expect(isDebugConsolePoppedOut()).toBe(false);
 });
 
 describe("debugLog", () => {
@@ -128,5 +132,115 @@ describe("logCommandResult debug sink", () => {
     expect(text).toContain("stdout line");
     expect(text).toContain("stderr:");
     expect(text).toContain("stderr line");
+  });
+});
+
+describe("popOutDebugConsole", () => {
+  it("opens the detached window and hides the docked panel", async () => {
+    setDebugEnabled(true, { banner: false });
+    debugLog("before pop");
+    await popOutDebugConsole();
+    expect(invoke).toHaveBeenCalledWith("open_debug_console_window");
+    expect(isDebugConsolePoppedOut()).toBe(true);
+    expect(isDebugConsoleVisible()).toBe(false);
+    debugLog("while popped");
+    expect(invoke).toHaveBeenCalledWith(
+      "relay_debug_console_line",
+      expect.objectContaining({
+        line: expect.stringContaining("while popped"),
+      }),
+    );
+  });
+
+  it("is a no-op when debug mode is off", async () => {
+    await popOutDebugConsole();
+    expect(invoke).not.toHaveBeenCalledWith("open_debug_console_window");
+    expect(isDebugConsolePoppedOut()).toBe(false);
+  });
+
+  it("disabling debug closes the popped-out window", async () => {
+    setDebugEnabled(true, { banner: false });
+    await popOutDebugConsole();
+    expect(isDebugConsolePoppedOut()).toBe(true);
+    setDebugEnabled(false);
+    expect(isDebugConsolePoppedOut()).toBe(false);
+    expect(invoke).toHaveBeenCalledWith("close_debug_console_window");
+  });
+
+  it("seeds immediately when the pop-out window is already open", async () => {
+    setDebugEnabled(true, { banner: false });
+    debugLog("history line");
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === "debug_console_window_open") return true;
+      return undefined;
+    });
+    await popOutDebugConsole();
+    expect(invoke).toHaveBeenCalledWith(
+      "relay_debug_console_seed",
+      expect.objectContaining({
+        lines: expect.arrayContaining([
+          expect.stringContaining("history line"),
+        ]),
+      }),
+    );
+  });
+
+  it("does not seed before ready when opening a new pop-out window", async () => {
+    setDebugEnabled(true, { banner: false });
+    debugLog("fresh history");
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === "debug_console_window_open") return false;
+      return undefined;
+    });
+    await popOutDebugConsole();
+    expect(invoke).not.toHaveBeenCalledWith(
+      "relay_debug_console_seed",
+      expect.anything(),
+    );
+    expect(isDebugConsolePoppedOut()).toBe(true);
+  });
+
+  it("persists pop-out preference when opening", async () => {
+    setDebugEnabled(true, { banner: false });
+    await popOutDebugConsole();
+    expect(state.currentSettings.debugConsolePoppedOut).toBe(true);
+    expect(invoke).toHaveBeenCalledWith(
+      "save_settings",
+      expect.objectContaining({
+        json: expect.stringContaining('"debugConsolePoppedOut":true'),
+      }),
+    );
+  });
+
+  it("restores pop-out from settings when debug is on", async () => {
+    setDebugEnabled(true, { banner: false });
+    state.currentSettings = {
+      ...state.currentSettings,
+      debug: true,
+      debugConsolePoppedOut: true,
+    };
+    await restoreDebugConsolePopOutIfNeeded();
+    expect(invoke).toHaveBeenCalledWith("open_debug_console_window");
+    expect(isDebugConsolePoppedOut()).toBe(true);
+  });
+
+  it("does not restore pop-out when the preference is off", async () => {
+    setDebugEnabled(true, { banner: false });
+    state.currentSettings.debugConsolePoppedOut = false;
+    await restoreDebugConsolePopOutIfNeeded();
+    expect(invoke).not.toHaveBeenCalledWith("open_debug_console_window");
+  });
+
+  it("keeps pop-out preference when disabling debug", async () => {
+    setDebugEnabled(true, { banner: false });
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === "debug_console_window_open") return true;
+      return undefined;
+    });
+    await popOutDebugConsole();
+    expect(state.currentSettings.debugConsolePoppedOut).toBe(true);
+    setDebugEnabled(false);
+    expect(isDebugConsolePoppedOut()).toBe(false);
+    expect(state.currentSettings.debugConsolePoppedOut).toBe(true);
   });
 });
