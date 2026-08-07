@@ -83,6 +83,18 @@ describe("normalizeUserSettings", () => {
     expect(normalizeUserSettings({ debug: 1 }).debug).toBe(false);
   });
 
+  it("accepts debugConsolePoppedOut and defaults to false", () => {
+    expect(
+      normalizeUserSettings({ debugConsolePoppedOut: true })
+        .debugConsolePoppedOut,
+    ).toBe(true);
+    expect(
+      normalizeUserSettings({ debugConsolePoppedOut: "yes" })
+        .debugConsolePoppedOut,
+    ).toBe(false);
+    expect(SETTING_DEFAULTS.debugConsolePoppedOut).toBe(false);
+  });
+
   it("accepts valid updateChannel", () => {
     const result = normalizeUserSettings({
       updateChannel: "beta",

@@ -227,7 +227,11 @@ fn try_clone_snapshot_file(
         // Cross-device, unsupported filesystem, or no kernel/fs clone
         // support: fall back to the byte copy. Anything else (e.g. the
         // destination unexpectedly already existing) is a real error.
-        Some(libc::EXDEV | libc::ENOTSUP | libc::ENOTTY) => Ok(false),
+        // `EINVAL` / `EOPNOTSUPP` cover FUSE and shared-folder clone refusals
+        // (on Darwin `ENOTSUP` and `EOPNOTSUPP` are distinct values).
+        Some(libc::EXDEV | libc::ENOTSUP | libc::EOPNOTSUPP | libc::ENOTTY | libc::EINVAL) => {
+            Ok(false)
+        }
         _ => Err(std::io::Error::last_os_error().to_string()),
     }
 }
@@ -291,7 +295,7 @@ where
                         .read(true)
                         .open(destination)
                         .map_err(|error| error.to_string())?;
-                    synced.sync_all().map_err(|error| error.to_string())?;
+                    super::commit::sync_file_best_effort(&synced)?;
                     Ok(())
                 })();
                 if let Err(error) = finalize {
@@ -347,9 +351,7 @@ where
     {
         match try_clone_snapshot_file(source, &destination_file) {
             Ok(true) => {
-                let result = destination_file
-                    .sync_all()
-                    .map_err(|error| error.to_string());
+                let result = super::commit::sync_file_best_effort(&destination_file);
                 drop(destination_file);
                 if let Err(error) = result {
                     let cleanup = crate::fs_secure::remove_file_for_cleanup(destination);
@@ -415,9 +417,7 @@ where
         if should_cancel() {
             return Err("Archive operation was cancelled during input snapshot.".to_string());
         }
-        destination_file
-            .sync_all()
-            .map_err(|error| error.to_string())
+        super::commit::sync_file_best_effort(&destination_file)
     })();
     drop(destination_file);
 
