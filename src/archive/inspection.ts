@@ -27,6 +27,7 @@ import {
   truncateForDialog,
   type Run7zResult,
 } from "./runtime";
+import { debugLog, debugLogCommand, isDebugEnabled } from "../debug-mode";
 import type { ArchiveInfo } from "../browse-model";
 
 export type ArchiveTestResult = "passed" | "failed" | "cancelled" | "error";
@@ -60,12 +61,13 @@ export async function testArchive(): Promise<ArchiveTestResult> {
 
     if (!(await ensureRuntimeReady())) return "error";
     setStatus("Testing archive integrity");
+    debugLogCommand(args);
     const result = await invoke<Run7zResult>("run_7z", { args });
     if (state.cancelRequested) {
       setStatus("Cancelled", 2000);
       return "cancelled";
     }
-    logCommandResult(result.stdout, result.stderr);
+    logCommandResult(result.stdout, result.stderr, result.code);
     logTruncationNotice(result);
 
     if (result.code === 0) {
@@ -155,6 +157,8 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
 
     if (!(await ensureRuntimeReady())) return null;
     setStatus("Listing archive contents");
+    if (isDebugEnabled()) debugLog(`Listing archive: ${archive}`);
+    debugLogCommand(args);
     const result = await invoke<Run7zResult>("run_7z", { args });
     if (state.cancelRequested) {
       setStatus("Cancelled", 2000);
@@ -168,7 +172,7 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
         result.stderr,
       );
       setBrowsePasswordFieldVisible(needsPassword);
-      logCommandResult(result.stdout, result.stderr);
+      logCommandResult(result.stdout, result.stderr, result.code);
       setStatus("Failed to list archive", 3000);
       if (needsPassword)
         log("Archive appears to be encrypted. Enter a password and try again.");
@@ -223,10 +227,16 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
     setBrowsePasswordFieldVisible(info.encrypted);
     renderBrowseTable(info);
     setStatus(`${info.entries.length} entries listed`, 3000);
+    if (isDebugEnabled()) {
+      debugLog(
+        `Browse finished: ${info.entries.length} entries (encrypted=${info.encrypted}).`,
+      );
+    }
     return info;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Browse error: ${msg}`);
+    if (isDebugEnabled()) debugLog(`Browse error: ${msg}`);
     setStatus("Error", 3000, msg);
     await message(msg, { title: "Browse error", kind: "error" });
     return null;

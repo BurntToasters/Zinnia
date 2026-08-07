@@ -33,6 +33,7 @@
   </provides>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.6.1-beta.4" date="2026-08-07"/>
     <release version="0.6.1-beta.3" date="2026-08-03"/>
     <release version="0.6.1-beta.2" date="2026-07-29"/>
     <release version="0.6.1-beta.1" date="2026-07-27"/>

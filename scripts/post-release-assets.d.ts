@@ -8,6 +8,14 @@ export function cleanReleaseArtifacts(releaseDir?: string): void;
 export function getAfterPackLocation(
   env?: Record<string, string | undefined>,
 ): string;
+export function isBetaReleaseVersion(
+  version: string | undefined | null,
+): boolean;
+export function readPackageVersion(repositoryRoot?: string): string;
+export function shouldSkipBetaMirror(
+  env: Record<string, string | undefined> | undefined,
+  version: string | undefined | null,
+): boolean;
 export function pathsEqual(
   left: string,
   right: string,
@@ -42,10 +50,19 @@ export type FinalizeResult = {
   mirrored: boolean;
   destination: string;
   copiedEntries: number;
+  skippedBetaMirror: boolean;
 };
 
 export function run(options?: {
   releaseDir?: string;
   env?: Record<string, string | undefined>;
   logger?: Pick<Console, "log" | "warn" | "error">;
+  version?: string;
+}): FinalizeResult;
+
+export function finalizeReleaseAssets(options?: {
+  releaseDir?: string;
+  env?: Record<string, string | undefined>;
+  logger?: Pick<Console, "log" | "warn" | "error">;
+  version?: string;
 }): FinalizeResult;

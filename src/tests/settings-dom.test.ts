@@ -244,10 +244,12 @@ describe("readSettingsModal", () => {
   it("preserves working context settings from current state", () => {
     state.currentSettings.lastMode = "extract";
     state.currentSettings.showActivityPanel = true;
+    state.currentSettings.debug = true;
 
     const settings = readSettingsModal();
     expect(settings.lastMode).toBe("extract");
     expect(settings.showActivityPanel).toBe(true);
+    expect(settings.debug).toBe(true);
   });
 
   it("round-trips settings through populate and read", () => {

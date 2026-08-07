@@ -289,6 +289,14 @@
   height: 40px;
   filter: none;
   opacity: 1;
+  cursor: pointer;
+  border-radius: 8px;
+  user-select: none;
+}
+
+.about-icon:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .about-name {

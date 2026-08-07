@@ -16,7 +16,12 @@ function mountExtractDom(): void {
         </div>
         <div id="extract-status">Preparing...</div>
         <div id="extract-error" hidden>
-          <div class="extract-error-title">Extraction failed</div>
+          <div class="extract-error-header">
+            <div class="extract-error-title">Extraction failed</div>
+            <button type="button" id="copy-error-detail" hidden>
+              Copy details
+            </button>
+          </div>
           <pre id="error-detail"></pre>
         </div>
       </div>
@@ -316,6 +321,39 @@ describe("extract-window", () => {
     expect(
       (document.getElementById("error-detail") as HTMLElement).textContent,
     ).toContain("minor warning");
+  });
+
+  it("includes copyable debug dump on extract failure when settings.debug is true", async () => {
+    await setupAndRun(async (cmd) => {
+      if (cmd === "load_settings") {
+        return JSON.stringify({
+          debug: true,
+          extractAutoCloseSeconds: -1,
+        });
+      }
+      if (cmd === "get_extract_paths") return ["/tmp/archive.7z"];
+      if (cmd === "run_7z") {
+        return {
+          stdout: "stdout body",
+          stderr: "stderr body",
+          code: 2,
+        };
+      }
+      return undefined;
+    });
+
+    const text =
+      (document.getElementById("error-detail") as HTMLElement).textContent ??
+      "";
+    expect(text).toContain("--- debug ---");
+    expect(text).toContain("exit: 2");
+    expect(text).toContain("cmd: 7z x");
+    expect(text).toContain("stdout body");
+    expect(text).toContain("stderr body");
+    expect(
+      (document.getElementById("copy-error-detail") as HTMLButtonElement)
+        .hidden,
+    ).toBe(false);
   });
 
   it("retries when header-encrypted member preflight requests a password", async () => {

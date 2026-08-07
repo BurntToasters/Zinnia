@@ -88,16 +88,16 @@ native build runs.
   build environment.
   They stage updater manifests, artifacts, checksum files, and detached `.asc`
   signatures in the matching draft GitHub release.
-- After publishing a beta release, run `npm run release:sync-beta-manifests` to
-  copy its verified `latest-*-beta-*.json` set onto the latest stable
-  `/releases/latest`. Draft signing never changes the live feed because draft
-  assets are not publicly downloadable.
-- After publishing and, for a beta, syncing, run
-  `npm run release:verify:published`. It requires the complete standard target
-  matrix for the current stable or beta channel and verifies the exact release
-  version. Stable verification also requires the beta-target endpoints that
-  move final-beta installs onto stable. `REQUIRED_UPDATER_TARGETS` adds
-  intentional optional targets such as Linux ARM64 to that required set.
+- Beta signing auto-syncs that VM's `latest-*-beta-*.json` manifests onto the
+  latest stable `/releases/latest` (same as 0.6.0). Use
+  `npm run release:sync-beta-manifests` only for recovery/re-sync after a
+  published beta if needed.
+- After publishing, run `npm run release:verify:published`. It requires the
+  complete standard target matrix for the current stable or beta channel and
+  verifies the exact release version. Stable verification also requires the
+  beta-target endpoints that move final-beta installs onto stable.
+  `REQUIRED_UPDATER_TARGETS` adds intentional optional targets such as Linux
+  ARM64 to that required set.
 - Each full release command prepares and tests once. If `release:prepare` was
   already run separately on the same VM, use the matching `release:*:resume`
   command; its build session is bound to the exact commit, lockfiles, platform,
