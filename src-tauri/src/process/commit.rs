@@ -621,13 +621,17 @@ pub(crate) fn rename_file_no_replace(
 /// next reader is this process (private archive snapshots, publish temps).
 #[cfg(unix)]
 fn is_unsupported_file_flush(error: &std::io::Error) -> bool {
-    matches!(
-        error.raw_os_error(),
-        // ENOTTY: common on Parallels/VMware shared folders for F_FULLFSYNC.
-        // ENOTSUP / EOPNOTSUPP: SMB and other network mounts (distinct on Darwin).
-        // EINVAL: some FUSE / virtiofs flush refusals.
-        Some(libc::ENOTTY | libc::ENOTSUP | libc::EOPNOTSUPP | libc::EINVAL)
-    )
+    let Some(code) = error.raw_os_error() else {
+        return false;
+    };
+    // Compare with `==` (not an or-pattern): on Linux `ENOTSUP` and
+    // `EOPNOTSUPP` are the same constant, which makes
+    // `ENOTSUP | EOPNOTSUPP` an unreachable-pattern error under clippy.
+    // On Darwin they are distinct (45 vs 102).
+    code == libc::ENOTTY
+        || code == libc::ENOTSUP
+        || code == libc::EOPNOTSUPP
+        || code == libc::EINVAL
 }
 
 /// Flush file data with mount-tolerant fallbacks.
@@ -2399,7 +2403,12 @@ mod sync_file_best_effort_tests {
     #[cfg(unix)]
     #[test]
     fn unsupported_file_flush_matches_shared_folder_errnos() {
-        for errno in [libc::ENOTTY, libc::ENOTSUP, libc::EOPNOTSUPP, libc::EINVAL] {
+        let mut errnos = vec![libc::ENOTTY, libc::ENOTSUP, libc::EINVAL];
+        // Darwin keeps these distinct; Linux aliases them to one value.
+        if libc::EOPNOTSUPP != libc::ENOTSUP {
+            errnos.push(libc::EOPNOTSUPP);
+        }
+        for errno in errnos {
             let error = std::io::Error::from_raw_os_error(errno);
             assert!(
                 is_unsupported_file_flush(&error),
