@@ -342,6 +342,7 @@ function ensureMainDomElements(): void {
     "close-licenses",
     "rerun-setup-wizard",
     "reset-settings",
+    "debug-console-popout",
     "debug-console-clear",
     "debug-console-copy",
     "debug-console-close",

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-relay-debug-console-seed"
+description = "Enables the relay_debug_console_seed command without any pre-configured scope."
+commands.allow = ["relay_debug_console_seed"]
+
+[[permission]]
+identifier = "deny-relay-debug-console-seed"
+description = "Denies the relay_debug_console_seed command without any pre-configured scope."
+commands.deny = ["relay_debug_console_seed"]

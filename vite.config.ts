@@ -12,6 +12,7 @@ export default defineConfig({
       input: {
         main: resolve(import.meta.dirname, "src/index.html"),
         extract: resolve(import.meta.dirname, "src/extract.html"),
+        debugConsole: resolve(import.meta.dirname, "src/debug-console.html"),
       },
     },
   },

@@ -82,6 +82,7 @@ import {
   setDebugEnabled,
   setDebugConsoleVisible,
   wireDebugConsoleControls,
+  restoreDebugConsolePopOutIfNeeded,
 } from "./debug-mode";
 import {
   isEditableTarget,
@@ -128,6 +129,7 @@ export async function promptAndToggleDebugMode(): Promise<void> {
   if (enabling) {
     setDebugConsoleVisible(true);
     showToast("Debug mode enabled.", "info");
+    void restoreDebugConsolePopOutIfNeeded();
   } else {
     showToast("Debug mode disabled.", "info");
   }

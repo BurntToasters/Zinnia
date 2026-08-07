@@ -18,6 +18,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 }));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn().mockResolvedValue(() => {}),
+  emit: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@tauri-apps/api/app", () => ({
   getVersion: vi.fn().mockResolvedValue("0.0.0-test"),
@@ -30,6 +31,9 @@ vi.mock("@tauri-apps/api/webviewWindow", () => ({
     setMaximizable: vi.fn().mockResolvedValue(undefined),
     isMaximized: vi.fn().mockResolvedValue(false),
     unmaximize: vi.fn().mockResolvedValue(undefined),
+    maximize: vi.fn().mockResolvedValue(undefined),
+    minimize: vi.fn().mockResolvedValue(undefined),
+    destroy: vi.fn().mockResolvedValue(undefined),
   }),
 }));
 vi.mock("@tauri-apps/plugin-updater", () => ({
@@ -86,6 +90,7 @@ addEl("div", "platform-label");
 const debugConsole = addEl("aside", "debug-console");
 debugConsole.hidden = true;
 debugConsole.className = "debug-console";
+addEl("button", "debug-console-popout");
 addEl("button", "debug-console-clear");
 addEl("button", "debug-console-copy");
 addEl("button", "debug-console-close");

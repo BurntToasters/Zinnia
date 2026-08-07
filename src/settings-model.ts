@@ -44,6 +44,8 @@ export interface UserSettings {
   logVerbosity: LogVerbosity;
   /** Hidden About-logo debug mode; off by default, no console work when false. */
   debug: boolean;
+  /** Remember Debug Console pop-out across launches when debug stays on. */
+  debugConsolePoppedOut: boolean;
   lastMode: WorkingMode;
   showActivityPanel: boolean;
   workspaceMode: WorkspaceMode;
@@ -90,6 +92,7 @@ export const SETTING_DEFAULTS: UserSettings = {
   localLoggingEnabled: false,
   logVerbosity: "info",
   debug: false,
+  debugConsolePoppedOut: false,
   lastMode: "add",
   showActivityPanel: false,
   workspaceMode: "basic",
@@ -240,6 +243,7 @@ const USER_SETTING_KEYS = new Set<keyof UserSettings>([
   "localLoggingEnabled",
   "logVerbosity",
   "debug",
+  "debugConsolePoppedOut",
   "lastMode",
   "showActivityPanel",
   "workspaceMode",
@@ -400,6 +404,10 @@ export function normalizeUserSettings(
       fallback.logVerbosity,
     ),
     debug: asBoolean(settings.debug, fallback.debug),
+    debugConsolePoppedOut: asBoolean(
+      settings.debugConsolePoppedOut,
+      fallback.debugConsolePoppedOut,
+    ),
     lastMode: asSetValue(settings.lastMode, WORKING_MODES, fallback.lastMode),
     showActivityPanel: asBoolean(
       settings.showActivityPanel,
