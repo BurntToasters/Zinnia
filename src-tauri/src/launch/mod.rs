@@ -47,9 +47,11 @@ pub fn is_extract_window_label(label: &str) -> bool {
 pub use debug_console_window::{
     close_debug_console_window, debug_console_window_open, open_debug_console_window,
     relay_debug_console_clear, relay_debug_console_line, relay_debug_console_seed,
+    relay_debug_console_signal,
 };
 
 // Public API re-exports (stable `launch::…` paths for main.rs / process / macos_services).
+pub(crate) use extract_window::bump_extract_warm_idle_generation;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 #[allow(unused_imports)]
 pub use extract_window::first_extract_window;
@@ -80,10 +82,10 @@ pub use debug_console_window::{
     __cmd__close_debug_console_window, __cmd__debug_console_window_open,
     __cmd__open_debug_console_window, __cmd__relay_debug_console_clear,
     __cmd__relay_debug_console_line, __cmd__relay_debug_console_seed,
-    __tauri_command_name_close_debug_console_window,
+    __cmd__relay_debug_console_signal, __tauri_command_name_close_debug_console_window,
     __tauri_command_name_debug_console_window_open, __tauri_command_name_open_debug_console_window,
     __tauri_command_name_relay_debug_console_clear, __tauri_command_name_relay_debug_console_line,
-    __tauri_command_name_relay_debug_console_seed,
+    __tauri_command_name_relay_debug_console_seed, __tauri_command_name_relay_debug_console_signal,
 };
 #[doc(hidden)]
 pub use extract_window::{

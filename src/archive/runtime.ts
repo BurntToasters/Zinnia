@@ -174,12 +174,39 @@ export async function ensureRuntimeReady(): Promise<boolean> {
   }
 }
 
+/** True only while a `run_7z` invoke is in flight (not during a password prompt). */
+let sevenZipRunInFlight = false;
+
+export function isSevenZipRunInFlight(): boolean {
+  return sevenZipRunInFlight;
+}
+
+export function setSevenZipRunInFlight(active: boolean): void {
+  sevenZipRunInFlight = active;
+}
+
+async function invokeRun7z(
+  args: string[],
+  expectedArchiveIdentity?: string,
+): Promise<Run7zResult> {
+  sevenZipRunInFlight = true;
+  try {
+    return await invoke<Run7zResult>("run_7z", {
+      args,
+      ...(expectedArchiveIdentity ? { expectedArchiveIdentity } : {}),
+    });
+  } finally {
+    sevenZipRunInFlight = false;
+  }
+}
+
 export async function withLiveProgress<T>(fn: () => Promise<T>): Promise<T> {
   const startedAt = Date.now();
   let sawPercent = false;
   const unlisten = await listen<ProgressUpdate>(
     "7z-progress-structured",
     (event) => {
+      if (!sevenZipRunInFlight) return;
       const update = event.payload;
       if (update?.currentFile === "Working…") {
         // Heartbeats fill a blank status only. Never replace a live percent/ETA.
@@ -230,10 +257,7 @@ export async function runWithPasswordRetry(
       : args;
   let result: Run7zResult;
   try {
-    result = await invoke<Run7zResult>("run_7z", {
-      args: effectiveArgs,
-      ...(expectedArchiveIdentity ? { expectedArchiveIdentity } : {}),
-    });
+    result = await invokeRun7z(effectiveArgs, expectedArchiveIdentity);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     // Header-encrypted archives can fail backend member-safety listing before
@@ -255,6 +279,7 @@ export async function runWithPasswordRetry(
     if (state.cancelRequested || state.batchCancelled) {
       return result;
     }
+    setCancelAvailable(true);
     const password = await promptInput({
       title: "Password required",
       label: "This archive is encrypted. Enter password:",
@@ -267,10 +292,10 @@ export async function runWithPasswordRetry(
     if (password) {
       if (passwordCarry) passwordCarry.value = password;
       setStatus("Retrying with password");
-      result = await invoke<Run7zResult>("run_7z", {
-        args: withPassword(effectiveArgs, password),
-        ...(expectedArchiveIdentity ? { expectedArchiveIdentity } : {}),
-      });
+      result = await invokeRun7z(
+        withPassword(effectiveArgs, password),
+        expectedArchiveIdentity,
+      );
     }
   }
   return result;

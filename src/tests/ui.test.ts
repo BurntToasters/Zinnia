@@ -238,6 +238,9 @@ describe("workspace and density", () => {
     setWorkspaceMode("power", { persist: false });
     expect(getWorkspaceMode()).toBe("power");
     expect(state.currentSettings.workspaceMode).toBe("power");
+    expect(
+      (document.getElementById("s-workspace-mode") as HTMLSelectElement).value,
+    ).toBe("power");
   });
 
   it("blocks workspace and settings mode changes during a run", () => {

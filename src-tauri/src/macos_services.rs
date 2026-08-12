@@ -19,6 +19,7 @@ use crate::launch::{
 };
 
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
+const MAX_PATHS_PER_REQUEST: usize = 1_000;
 
 struct ServiceIvars;
 
@@ -141,6 +142,11 @@ fn read_paths_from_pasteboard(pasteboard: &NSPasteboard) -> Result<Vec<String>, 
             if !path.is_empty() {
                 paths.push(path.to_string());
             }
+        }
+        if paths.len() > MAX_PATHS_PER_REQUEST {
+            return Err(format!(
+                "Finder Services selection exceeds {MAX_PATHS_PER_REQUEST} paths."
+            ));
         }
         Ok(paths)
     }

@@ -240,28 +240,74 @@ describe("checkUpdates", () => {
     );
   });
 
-  it("releases the archive-operation reservation when install times out", async () => {
+  it("keeps the archive-operation reservation when install watchdog fires", async () => {
     vi.useFakeTimers();
-    const install = vi.fn().mockImplementation(() => new Promise(() => {}));
+    let resolveInstall: (() => void) | undefined;
+    const install = vi.fn().mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveInstall = resolve;
+        }),
+    );
     checkMock.mockResolvedValue({
       version: "0.5.0",
       download: vi.fn().mockResolvedValue(undefined),
       install,
+      close: vi.fn().mockResolvedValue(undefined),
     } as unknown as Awaited<ReturnType<typeof check>>);
     askMock.mockResolvedValue(true);
 
     try {
       const pending = checkUpdates();
       await vi.advanceTimersByTimeAsync(180_000);
+      expect(invokeMock).not.toHaveBeenCalledWith("is_7z_running", {
+        mode: "release_update",
+      });
+      expect(logMock).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Update install still running after 180 seconds",
+        ),
+      );
+      expect(setStatusMock).toHaveBeenCalledWith("Still installing update");
+      expect(relaunchMock).not.toHaveBeenCalled();
+
+      resolveInstall?.();
       await pending;
 
       expect(invokeMock).toHaveBeenCalledWith("is_7z_running", {
         mode: "release_update",
       });
-      expect(logMock).toHaveBeenCalledWith(
-        expect.stringContaining("Update install timed out after 180 seconds."),
-      );
-      expect(relaunchMock).not.toHaveBeenCalled();
+      expect(relaunchMock).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("refreshes the update reservation while a long install is in flight", async () => {
+    vi.useFakeTimers();
+    let resolveInstall: (() => void) | undefined;
+    const install = vi.fn().mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveInstall = resolve;
+        }),
+    );
+    checkMock.mockResolvedValue({
+      version: "0.5.0",
+      download: vi.fn().mockResolvedValue(undefined),
+      install,
+      close: vi.fn().mockResolvedValue(undefined),
+    } as unknown as Awaited<ReturnType<typeof check>>);
+    askMock.mockResolvedValue(true);
+
+    try {
+      const pending = checkUpdates();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(invokeMock).toHaveBeenCalledWith("is_7z_running", {
+        mode: "touch_update",
+      });
+      resolveInstall?.();
+      await pending;
     } finally {
       vi.useRealTimers();
     }

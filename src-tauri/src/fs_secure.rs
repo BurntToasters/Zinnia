@@ -79,7 +79,13 @@ pub fn apply_parent_directory_mode(path: &Path) -> io::Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no parent"))?;
-    let mode = std::fs::metadata(parent)?.permissions().mode() & 0o7777;
+    // Copy standard permission bits from the parent. Keep any special bits
+    // already present on `path` (mkdir under a setgid parent inherits setgid;
+    // blindly chmod'ing 0o777 would clear it). Do not copy sticky/setuid/setgid
+    // from the parent onto rename-published 0o700 stages.
+    let parent_mode = std::fs::metadata(parent)?.permissions().mode();
+    let current_mode = std::fs::metadata(path)?.permissions().mode();
+    let mode = (parent_mode & 0o777) | (current_mode & 0o7000);
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
 }
 
@@ -190,16 +196,65 @@ pub fn sync_directory(path: &Path) -> Result<(), String> {
 
     #[cfg(unix)]
     {
-        match std::fs::File::open(path).and_then(|directory| directory.sync_all()) {
-            Ok(()) => Ok(()),
-            Err(error) => Err(error.to_string()),
-        }
+        let directory = std::fs::File::open(path).map_err(|error| error.to_string())?;
+        sync_file_best_effort(&directory)
     }
 
     #[cfg(not(any(unix, windows)))]
     {
         let _ = path;
         Ok(())
+    }
+}
+
+/// Errnos that mean "this mount cannot honor a durable flush ioctl", not that
+/// the prior write failed. Used after a successful byte copy / clone when the
+/// next reader is this process (private archive snapshots, publish temps).
+#[cfg(unix)]
+pub(crate) fn is_unsupported_file_flush(error: &std::io::Error) -> bool {
+    let Some(code) = error.raw_os_error() else {
+        return false;
+    };
+    // Compare with `==` (not an or-pattern): on Linux `ENOTSUP` and
+    // `EOPNOTSUPP` are the same constant, which makes
+    // `ENOTSUP | EOPNOTSUPP` an unreachable-pattern error under clippy.
+    // On Darwin they are distinct (45 vs 102).
+    code == libc::ENOTTY
+        || code == libc::ENOTSUP
+        || code == libc::EOPNOTSUPP
+        || code == libc::EINVAL
+}
+
+/// Flush file data with mount-tolerant fallbacks.
+///
+/// - Windows: `PermissionDenied` from `FlushFileBuffers` is ignored (same
+///   policy as [`sync_directory`]).
+/// - Unix/macOS: `File::sync_all` is `F_FULLFSYNC` on Darwin. VM shared folders
+///   and SMB often reject that ioctl even after a successful write. Follow the
+///   SQLite/LevelDB/Go pattern: fall back to plain `fsync` on any `sync_all`
+///   failure, then treat only "flush unsupported" fsync errors as success.
+///   Real I/O failures from `fsync` (for example `EIO`) still fail the caller.
+pub fn sync_file_best_effort(file: &std::fs::File) -> Result<(), String> {
+    match file.sync_all() {
+        Ok(()) => Ok(()),
+        #[cfg(windows)]
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(()),
+        #[cfg(unix)]
+        Err(_full_sync_error) => {
+            use std::os::fd::AsRawFd as _;
+            let rc = unsafe { libc::fsync(file.as_raw_fd()) };
+            if rc == 0 {
+                return Ok(());
+            }
+            let fsync_error = std::io::Error::last_os_error();
+            if is_unsupported_file_flush(&fsync_error) {
+                Ok(())
+            } else {
+                Err(fsync_error.to_string())
+            }
+        }
+        #[cfg(not(unix))]
+        Err(error) => Err(error.to_string()),
     }
 }
 
@@ -1146,6 +1201,57 @@ mod tests {
         assert!(!sddl.contains(";;;BU)"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn apply_parent_directory_mode_preserves_inherited_setgid() {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+
+        let mut random = [0u8; 8];
+        getrandom::fill(&mut random).expect("random setgid test suffix");
+        let suffix: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+        let root = std::env::temp_dir().join(format!("zinnia-setgid-mode-{suffix}"));
+        std::fs::create_dir(&root).expect("setgid test root");
+        let parent = root.join("parent");
+        std::fs::DirBuilder::new()
+            .mode(0o2755)
+            .create(&parent)
+            .expect("setgid parent");
+        if std::fs::metadata(&parent)
+            .expect("parent meta")
+            .permissions()
+            .mode()
+            & 0o2000
+            == 0
+        {
+            let _ = std::fs::remove_dir_all(&root);
+            eprintln!("skipping: filesystem did not honor setgid on mkdir");
+            return;
+        }
+        let child = parent.join("child");
+        std::fs::create_dir(&child).expect("child under setgid parent");
+        let before = std::fs::metadata(&child)
+            .expect("child meta")
+            .permissions()
+            .mode();
+        if before & 0o2000 == 0 {
+            let _ = std::fs::remove_dir_all(&root);
+            eprintln!("skipping: mkdir did not inherit setgid");
+            return;
+        }
+        apply_parent_directory_mode(&child).expect("apply parent mode");
+        let after = std::fs::metadata(&child)
+            .expect("child after")
+            .permissions()
+            .mode();
+        assert_ne!(
+            after & 0o2000,
+            0,
+            "inherited setgid must survive parent-mode apply"
+        );
+        assert_eq!(after & 0o777, 0o755, "standard bits should match parent");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[cfg(windows)]
     #[test]
     fn private_directory_creation_round_trips_security_descriptor() {
@@ -1361,6 +1467,85 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn extraction_publish_recreates_nested_target_acl_for_symlink_trees() {
+        fn open_acl_object(path: &Path) -> std::fs::File {
+            if path.is_dir() {
+                open_directory_for_acl_verification(path).expect("open ACL directory")
+            } else {
+                std::fs::File::open(path).expect("open ACL file")
+            }
+        }
+
+        fn dacl_matches(left: &Path, right: &Path) -> bool {
+            let left_handle = open_acl_object(left);
+            let right_handle = open_acl_object(right);
+            let left_storage =
+                read_directory_security_descriptor(&left_handle).expect("left descriptor");
+            let right_storage =
+                read_directory_security_descriptor(&right_handle).expect("right descriptor");
+            let left_descriptor = left_storage.as_ptr().cast_mut().cast();
+            let right_descriptor = right_storage.as_ptr().cast_mut().cast();
+            let left_dacl = security_descriptor_dacl(left_descriptor).expect("left DACL");
+            let right_dacl = security_descriptor_dacl(right_descriptor).expect("right DACL");
+            dacl_matches_expected(left_dacl, right_dacl).expect("compare DACLs")
+        }
+
+        let mut random = [0u8; 8];
+        getrandom::fill(&mut random).expect("random symlink ACL test suffix");
+        let suffix: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+        let root = std::env::temp_dir().join(format!("zinnia-symlink-acl-{suffix}"));
+        std::fs::create_dir(&root).expect("symlink ACL test parent");
+
+        let destination = root.join("destination");
+        create_private_dir(&destination).expect("destination ACL B");
+        let nested_source = root.join("nested-policy");
+        std::fs::create_dir(&nested_source).expect("nested ACL A");
+        let nested = destination.join("nested");
+        std::fs::rename(&nested_source, &nested).expect("install nested ACL A under B");
+
+        let direct_directory = nested.join("direct-directory");
+        std::fs::create_dir(&direct_directory).expect("direct nested directory");
+
+        let stage = destination.join(".zinnia-extract-0123456789abcdef0123456789abcdef");
+        create_inheriting_stage_dir(&stage).expect("inside-destination stage");
+        let staged_nested = stage.join("nested");
+        std::fs::create_dir(&staged_nested).expect("staged existing nested path");
+        let staged_directory = staged_nested.join("published-directory");
+        std::fs::create_dir(&staged_directory).expect("staged directory tree");
+        std::fs::write(staged_directory.join("payload.txt"), b"payload").expect("staged payload");
+        match std::os::windows::fs::symlink_file("payload.txt", staged_directory.join("current")) {
+            Ok(()) => {}
+            Err(error) => {
+                eprintln!(
+                    "skipping extraction_publish_recreates_nested_target_acl_for_symlink_trees: {error}"
+                );
+                let _ = std::fs::remove_dir_all(&root);
+                return;
+            }
+        }
+
+        crate::process::merge_staged_extract(
+            &stage,
+            &destination,
+            crate::process::MAX_EXTRACTED_BYTES,
+        )
+        .expect("publish symlink-bearing nested extraction");
+
+        let published_directory = nested.join("published-directory");
+        assert!(
+            dacl_matches(&published_directory, &direct_directory),
+            "symlink-bearing directory did not inherit the real nested target ACL"
+        );
+        assert_eq!(
+            std::fs::read_link(published_directory.join("current")).expect("published link"),
+            std::path::PathBuf::from("payload.txt")
+        );
+
+        std::fs::remove_dir_all(&root).expect("remove symlink ACL test tree");
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn current_user_sid_from_token_returns_sid_string() {
         let sid = current_user_sid_from_token().expect("process token SID");
         assert!(is_valid_windows_sid_string(&sid), "unexpected SID: {sid}");
@@ -1399,5 +1584,36 @@ mod tests {
         assert_handle_owned_by_current_user(&file).expect("current-user owner");
         drop(file);
         std::fs::remove_dir_all(&dir).expect("cleanup owner-check tree");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unsupported_file_flush_matches_shared_folder_errnos() {
+        let mut errnos = vec![libc::ENOTTY, libc::ENOTSUP, libc::EINVAL];
+        if libc::EOPNOTSUPP != libc::ENOTSUP {
+            errnos.push(libc::EOPNOTSUPP);
+        }
+        for errno in errnos {
+            let error = std::io::Error::from_raw_os_error(errno);
+            assert!(
+                is_unsupported_file_flush(&error),
+                "expected errno {errno} to be treated as unsupported flush"
+            );
+        }
+        let io_error = std::io::Error::from_raw_os_error(libc::EIO);
+        assert!(!is_unsupported_file_flush(&io_error));
+    }
+
+    #[test]
+    fn sync_file_best_effort_accepts_local_temp_file() {
+        let dir =
+            std::env::temp_dir().join(format!("zinnia-sync-best-effort-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("file.bin");
+        std::fs::write(&path, b"hello").expect("write");
+        let file = std::fs::File::open(&path).expect("open");
+        sync_file_best_effort(&file).expect("local flush");
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

@@ -105,6 +105,9 @@ static HRESULT GetSelectedPaths(IShellItemArray* items,
   DWORD count = 0;
   HRESULT hr = items->GetCount(&count);
   if (FAILED(hr)) return hr;
+  if (count > kMaxPathsPerRequest) {
+    return HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);
+  }
   DWORD resolved = 0;
   for (DWORD i = 0; i < count; ++i) {
     IShellItem* item = nullptr;

@@ -165,6 +165,10 @@ export function setWorkspaceMode(
     el.setAttribute("aria-pressed", String(isActive));
   });
   state.currentSettings.workspaceMode = mode;
+  const workspaceSelect = document.getElementById(
+    "s-workspace-mode",
+  ) as HTMLSelectElement | null;
+  if (workspaceSelect) workspaceSelect.value = mode;
   if (options.persist !== false && previousMode !== mode) {
     queuePersistWorkingContext();
   }
@@ -194,6 +198,10 @@ export function setUiDensity(
     toggle.textContent = compactEnabled ? "Comfortable" : "Compact";
   }
   state.currentSettings.uiDensity = density;
+  const densitySelect = document.getElementById(
+    "s-ui-density",
+  ) as HTMLSelectElement | null;
+  if (densitySelect) densitySelect.value = density;
   if (options.persist !== false && previousDensity !== density) {
     queuePersistWorkingContext();
   }

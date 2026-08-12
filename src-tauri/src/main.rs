@@ -175,6 +175,10 @@ fn main() {
     {
         builder = builder
             .plugin(tauri_plugin_single_instance::init(|app, argv, _| {
+                // Invalidate extract warm-idle before the deferred main-thread
+                // dispatch so an in-flight idle-exit cannot destroy the window
+                // that this second-instance open is about to reuse.
+                launch::bump_extract_warm_idle_generation();
                 // Window creation from the single-instance callback can deadlock
                 // WebView2 on Windows. Dispatch after the callback returns.
                 let dispatch_handle = app.clone();
@@ -318,6 +322,7 @@ fn main() {
             process::is_7z_running,
             process::probe_7z,
             process::probe_compress_inputs,
+            process::archive_output_selection_token,
             process::get_startup_recovery_status,
             archive_detect::validate_archive_paths,
             settings_store::load_settings,
@@ -341,6 +346,7 @@ fn main() {
             launch::relay_debug_console_line,
             launch::relay_debug_console_seed,
             launch::relay_debug_console_clear,
+            launch::relay_debug_console_signal,
             launch::debug_console_window_open,
             launch::mark_main_window_ready,
             platform::get_platform_info,

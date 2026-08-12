@@ -139,10 +139,10 @@ export async function addFilesToArchive(): Promise<void> {
     const args = ["u", "-sse", "-snl", "-snh", "-spd"];
     const archivePassword = $<HTMLInputElement>("browse-password").value;
     if (archivePassword) args.push(`-p${archivePassword}`);
+    const zipDest = archive.toLowerCase().endsWith(".zip");
+    if (archivePassword && zipDest) args.push("-mem=AES256");
     if (threads) args.push(`-mmt=${threads}`);
     args.push(archive, "--", ...files);
-
-    const zipDest = archive.toLowerCase().endsWith(".zip");
     if (zipDest && !(await confirmZipSymlinkRisk("zip", files))) {
       setStatus("Cancelled", 2000);
       return;
@@ -246,6 +246,23 @@ export async function convertArchive(): Promise<void> {
     return;
   }
 
+  // Snapshot before the long extract so a file created in that window cannot
+  // be mistaken for an intentional overwrite target at recompress time.
+  let outputSelectionToken: string;
+  try {
+    outputSelectionToken = await invoke<string>(
+      "archive_output_selection_token",
+      {
+        path: dest,
+      },
+    );
+  } catch (err) {
+    picked.release();
+    const msg = err instanceof Error ? err.message : String(err);
+    await message(msg, { title: "Conversion error", kind: "error" });
+    return;
+  }
+
   state.cancelRequested = false;
   setRunning(true);
   picked.release();
@@ -339,7 +356,10 @@ export async function convertArchive(): Promise<void> {
     compress.push(dest, "--", ...children);
 
     debugLogCommand(compress);
-    const result = await invoke<Run7zResult>("run_7z", { args: compress });
+    const result = await invoke<Run7zResult>("run_7z", {
+      args: compress,
+      expectedArchiveIdentity: outputSelectionToken,
+    });
     if (state.cancelRequested && result.code !== 0) {
       setStatus("Cancelled", 2000);
       return;

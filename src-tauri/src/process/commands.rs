@@ -16,9 +16,11 @@ use crate::progress::parse_progress_line;
 use crate::validation::validate_run_7z_args;
 
 use super::archive_snapshot::assert_archive_identity_unchanged;
-use super::commit::{commit_cleanup, commit_failure_should_scrub_staging, rollback_cleanup};
+use super::commit::{
+    commit_cleanup, commit_failure_should_scrub_staging, rollback_cleanup, validate_staged_tree,
+};
 use super::journal::{clear_cleanup_journal, write_cleanup_journal, CleanupJournalGuard};
-use super::quota::{monitor_extract_quota, staged_tree_usage, MAX_EXTRACT_ENTRIES};
+use super::quota::monitor_extract_quota;
 use super::recovery::{
     recover_interrupted_transaction, retract_scrub_archive_journal_or_fail,
     wait_for_startup_recovery,
@@ -468,6 +470,14 @@ pub(crate) fn harden_7z_args(args: &mut Vec<String>) {
     if command == Some("x") && !args.iter().any(|arg| arg.eq_ignore_ascii_case("-spod")) {
         args.insert(1, "-spod".to_string());
     }
+    if crate::validation::is_password_protected_zip_create(args) {
+        args.retain(|arg| !arg.to_ascii_lowercase().starts_with("-mem="));
+        let insert_at = args
+            .iter()
+            .position(|arg| arg == "--")
+            .unwrap_or(args.len());
+        args.insert(insert_at, "-mem=AES256".to_string());
+    }
 }
 
 /// Inject backend-owned symlink / hard-link policy switches.
@@ -764,6 +774,28 @@ fn find_single_compound_tar(root: &std::path::Path) -> Result<std::path::PathBuf
     Ok(file)
 }
 
+pub(crate) fn compound_tar_outer_extract_args(
+    snapshot: &std::path::Path,
+    outer_stage: &std::path::Path,
+) -> Vec<String> {
+    let mut outer_args = vec![
+        "x".to_string(),
+        "-spd".to_string(),
+        "-snld10".to_string(),
+        "-aou".to_string(),
+        format!("-o{}", outer_stage.to_string_lossy()),
+        "--".to_string(),
+        snapshot.to_string_lossy().into_owned(),
+    ];
+    harden_7z_args(&mut outer_args);
+    apply_backend_link_switches(&mut outer_args);
+    outer_args
+}
+
+pub(crate) fn compound_tar_outer_unpack_ok(code: i32, stdout: &str, stderr: &str) -> bool {
+    code == 0 || (code == 1 && extract_warning_is_metadata_only(stdout, stderr))
+}
+
 async fn prepare_compound_tar_snapshot(
     app: &tauri::AppHandle,
     state: &tauri::State<'_, RunningProcess>,
@@ -781,15 +813,8 @@ async fn prepare_compound_tar_snapshot(
         .map_err(|error| format!("Could not create compound TAR staging: {error}"))?;
 
     let result = async {
-        let outer_args = vec![
-            "x".to_string(),
-            "-spd".to_string(),
-            "-snld10".to_string(),
-            "-aou".to_string(),
-            format!("-o{}", outer_stage.to_string_lossy()),
-            "--".to_string(),
-            snapshot.to_string_lossy().into_owned(),
-        ];
+        let outer_args = compound_tar_outer_extract_args(&snapshot, &outer_stage);
+        assert_extract_archive_members_safe(app, state, &outer_args).await?;
         let (mut rx, child, pending_password) = spawn_7z_noninteractive(app, outer_args)?;
         {
             let mut process = lock_process(state)?;
@@ -838,7 +863,7 @@ async fn prepare_compound_tar_snapshot(
             .as_ref()
             .and_then(|payload| payload.code)
             .unwrap_or(-1);
-        if code != 0 {
+        if !compound_tar_outer_unpack_ok(code, &collected.stdout, &collected.stderr) {
             let detail = sanitize_output(if collected.stderr.trim().is_empty() {
                 collected.stdout.trim()
             } else {
@@ -852,7 +877,7 @@ async fn prepare_compound_tar_snapshot(
         }
 
         let max_bytes = cleanup_plan.max_extract_bytes.unwrap_or(u64::MAX);
-        staged_tree_usage(&outer_stage, MAX_EXTRACT_ENTRIES, max_bytes)?;
+        validate_staged_tree(&outer_stage, max_bytes)?;
         let inner = find_single_compound_tar(&outer_stage)?;
         let promoted = snapshot_parent.join(format!(".zinnia-compound-{token}.tar"));
         std::fs::rename(&inner, &promoted)
@@ -882,6 +907,17 @@ pub async fn probe_compress_inputs(
     })
     .await
     .map_err(|error| format!("Compress-input probe worker failed: {error}"))?
+}
+
+/// Snapshot an archive create destination at selection time so a long extract
+/// (conversion) cannot treat a newly created file as intentional overwrite.
+#[tauri::command]
+pub fn archive_output_selection_token(path: String) -> Result<String, String> {
+    let path = std::path::PathBuf::from(path);
+    if !super::staging::path_entry_exists(&path)? {
+        return Ok(super::staging::ARCHIVE_OUTPUT_ABSENT_TOKEN.to_string());
+    }
+    super::archive_identity_token(&path)
 }
 
 pub(crate) fn store_probed_7z_version(version: Option<String>) {
@@ -1756,6 +1792,11 @@ pub fn is_7z_running(
                 process.release_prepare_slot();
             }
             Ok(false)
+        }
+        Some("touch_update") => {
+            process.expire_stale_update_reservation();
+            process.touch_update_reservation(window.label())?;
+            Ok(true)
         }
         Some(_) => Err("Unknown archive-operation status mode.".to_string()),
     }

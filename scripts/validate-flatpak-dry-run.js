@@ -115,5 +115,114 @@ runValidator("appstreamcli", [
 ]);
 runValidator("desktop-file-validate", ["run.rosie.zinnia.desktop"]);
 
+// Keep compound TAR MIME types distinct from plain compressions across packaging
+// surfaces. AppImage reuses debian::generate_data, so deb.desktopTemplate also
+// covers AppImage desktop entries (Open/Extract/Compress + MimeType list).
+const compoundMimeByExt = {
+  tgz: "application/x-compressed-tar",
+  tbz2: "application/x-bzip2-compressed-tar",
+  txz: "application/x-xz-compressed-tar",
+};
+const associationConfigs = [
+  "src-tauri/tauri.conf.json",
+  "src-tauri/tauri.linux.conf.json",
+  "src-tauri/tauri.macos.conf.json",
+  "src-tauri/tauri.windows.conf.json",
+];
+for (const rel of associationConfigs) {
+  const full = path.join(root, rel);
+  if (!fs.existsSync(full)) {
+    console.error(`flatpak-dry-run: missing ${rel}`);
+    failed = true;
+    continue;
+  }
+  const conf = JSON.parse(fs.readFileSync(full, "utf8"));
+  const associations = conf.bundle?.fileAssociations ?? [];
+  const byExt = new Map();
+  for (const association of associations) {
+    const mime = association.mimeType;
+    for (const ext of association.ext ?? []) {
+      byExt.set(String(ext).toLowerCase(), mime);
+    }
+  }
+  for (const [ext, expectedMime] of Object.entries(compoundMimeByExt)) {
+    const actual = byExt.get(ext);
+    if (actual !== expectedMime) {
+      console.error(
+        `flatpak-dry-run: ${rel} maps .${ext} to ${actual ?? "(missing)"}; expected ${expectedMime}`,
+      );
+      failed = true;
+    }
+  }
+}
+
+const tauriConfPath = path.join(root, "src-tauri/tauri.conf.json");
+if (fs.existsSync(tauriConfPath)) {
+  const tauriConf = JSON.parse(fs.readFileSync(tauriConfPath, "utf8"));
+  const linux = tauriConf.bundle?.linux ?? {};
+  for (const kind of ["deb", "rpm"]) {
+    const template = linux[kind]?.desktopTemplate;
+    if (template !== "linux/desktop-template.hbs") {
+      console.error(
+        `flatpak-dry-run: bundle.linux.${kind}.desktopTemplate must be linux/desktop-template.hbs`,
+      );
+      failed = true;
+    }
+  }
+}
+
+const desktopTemplate = path.join(root, "src-tauri/linux/desktop-template.hbs");
+if (fs.existsSync(desktopTemplate)) {
+  const hbs = fs.readFileSync(desktopTemplate, "utf8");
+  for (const marker of [
+    "application/x-compressed-tar",
+    "application/x-bzip2-compressed-tar",
+    "application/x-xz-compressed-tar",
+    "Actions=Open;Extract;Compress;",
+    "Exec={{exec}} --extract %F",
+    "Exec={{exec}} --compress %F",
+  ]) {
+    if (!hbs.includes(marker)) {
+      console.error(`flatpak-dry-run: desktop template missing ${marker}`);
+      failed = true;
+    }
+  }
+}
+
+const cargoToml = path.join(root, "src-tauri/Cargo.toml");
+const vendorUpdater = path.join(
+  root,
+  "src-tauri/vendor/tauri-plugin-updater/src/updater.rs",
+);
+if (fs.existsSync(cargoToml)) {
+  const cargo = fs.readFileSync(cargoToml, "utf8");
+  if (
+    !cargo.includes(
+      'tauri-plugin-updater = { path = "vendor/tauri-plugin-updater" }',
+    )
+  ) {
+    console.error(
+      "flatpak-dry-run: Cargo.toml must path-patch tauri-plugin-updater for macOS install quoting",
+    );
+    failed = true;
+  }
+}
+if (!fs.existsSync(vendorUpdater)) {
+  console.error(
+    "flatpak-dry-run: missing vendored tauri-plugin-updater sources",
+  );
+  failed = true;
+} else {
+  const updaterSrc = fs.readFileSync(vendorUpdater, "utf8");
+  for (const marker of ["quoted form of", "execute_function"]) {
+    if (!updaterSrc.includes(marker)) {
+      console.error(
+        `flatpak-dry-run: vendored updater missing privileged-install marker ${marker}`,
+      );
+      failed = true;
+    }
+  }
+}
+
 if (failed) process.exit(1);
 console.log("flatpak-dry-run: ok");

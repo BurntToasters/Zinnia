@@ -18,31 +18,20 @@ let pendingTarget: string | undefined;
 let updateCheckInFlight: Promise<void> | null = null;
 let inFlightCheckIsInteractive = false;
 let updateGeneration = 0;
+/** True while native `update.install()` is live. Timeout must not unlock. */
+let installInFlight = false;
 const UPDATE_CHECK_TIMEOUT_MS = 30_000;
 const UPDATE_DOWNLOAD_TIMEOUT_MS = 120_000;
-const UPDATE_INSTALL_TIMEOUT_MS = 180_000;
+const UPDATE_INSTALL_WATCHDOG_MS = 180_000;
+const UPDATE_RESERVATION_HEARTBEAT_MS = 60_000;
 
-function withTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  timeoutMessage: string,
-): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error(timeoutMessage)),
-      timeoutMs,
-    );
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
+async function touchUpdateReservation(): Promise<void> {
+  try {
+    await invoke<boolean>("is_7z_running", { mode: "touch_update" });
+  } catch (err) {
+    const text = err instanceof Error ? err.message : String(err);
+    devLog(`Unable to refresh update reservation: ${text}`);
+  }
 }
 
 function clearPendingUpdate(closeResource: boolean): void {
@@ -195,12 +184,26 @@ async function promptInstallAndRestart(
       return;
     }
     setStatus("Installing update");
-    try {
-      await withTimeout(
-        update.install(),
-        UPDATE_INSTALL_TIMEOUT_MS,
-        `Update install timed out after ${UPDATE_INSTALL_TIMEOUT_MS / 1000} seconds.`,
+    installInFlight = true;
+    let watchdogFired = false;
+    const watchdog = setTimeout(() => {
+      watchdogFired = true;
+      // Native install (pkexec / AppleScript auth) cannot be cancelled. Keep the
+      // archive-operation reservation and only surface a still-installing state.
+      setStatus("Still installing update");
+      log(
+        `Update install still running after ${UPDATE_INSTALL_WATCHDOG_MS / 1000} seconds; waiting for native installer to finish.`,
       );
+      void notifyIfAlreadyGranted(
+        "Zinnia",
+        "Update installation is still in progress. Archive operations stay blocked until it finishes.",
+      );
+    }, UPDATE_INSTALL_WATCHDOG_MS);
+    const heartbeat = setInterval(() => {
+      void touchUpdateReservation();
+    }, UPDATE_RESERVATION_HEARTBEAT_MS);
+    try {
+      await update.install();
       clearPendingUpdate(false);
       // Drop archive-operation reservation before requesting process restart.
       // Native exit handling deliberately blocks Quit while the reservation is
@@ -213,7 +216,14 @@ async function promptInstallAndRestart(
       } catch {
         // Already logged; still surface the install failure.
       }
+      if (watchdogFired) {
+        setStatus("Idle");
+      }
       throw error;
+    } finally {
+      clearTimeout(watchdog);
+      clearInterval(heartbeat);
+      installInFlight = false;
     }
   } else {
     await notify(
@@ -316,6 +326,16 @@ async function runUpdateCheck(interactive: boolean): Promise<void> {
 }
 
 function startUpdateCheck(interactive: boolean): Promise<void> {
+  if (installInFlight) {
+    if (interactive) {
+      setStatus("Still installing update");
+      return message(
+        "An update installation is still running. Archive operations and another update attempt stay blocked until it finishes.",
+        { title: "Update in progress", kind: "info" },
+      ).then(() => undefined);
+    }
+    return Promise.resolve();
+  }
   if (updateCheckInFlight) {
     if (interactive && !inFlightCheckIsInteractive) {
       return updateCheckInFlight.then(() => startUpdateCheck(true));

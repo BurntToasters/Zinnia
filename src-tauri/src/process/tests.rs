@@ -88,6 +88,31 @@ fn ensure_idle_detects_busy_state() {
 }
 
 #[test]
+fn harden_7z_args_forces_aes256_on_password_zip() {
+    let mut args = vec![
+        "u".to_string(),
+        "-psecret".to_string(),
+        "-mem=ZipCrypto".to_string(),
+        "out.zip".to_string(),
+        "--".to_string(),
+        "in.txt".to_string(),
+    ];
+    super::commands::harden_7z_args(&mut args);
+    assert_eq!(
+        args.iter()
+            .filter(|arg| arg.to_ascii_lowercase().starts_with("-mem="))
+            .count(),
+        1
+    );
+    assert!(args
+        .iter()
+        .any(|arg| arg.eq_ignore_ascii_case("-mem=AES256")));
+    assert!(!args
+        .iter()
+        .any(|arg| arg.eq_ignore_ascii_case("-mem=zipcrypto")));
+}
+
+#[test]
 fn preparation_failure_release_clears_every_soft_lock_field() {
     let state = RunningProcess::new();
     {
@@ -179,6 +204,50 @@ fn compound_tar_operations_are_detected_for_extract_list_and_test() {
         "--".to_string(),
         "/tmp/source.gz".to_string(),
     ]));
+}
+
+#[test]
+fn compound_tar_outer_unpack_accepts_metadata_only_exit_one() {
+    assert!(compound_tar_outer_unpack_ok(0, "", ""));
+    assert!(compound_tar_outer_unpack_ok(
+        1,
+        "WARNING: There are data after the end of archive",
+        ""
+    ));
+    assert!(!compound_tar_outer_unpack_ok(
+        1,
+        "Warnings: 1",
+        "WARNING: CRC Failed"
+    ));
+    assert!(!compound_tar_outer_unpack_ok(
+        2,
+        "",
+        "ERROR: broken archive"
+    ));
+}
+
+#[test]
+fn compound_tar_outer_extract_args_harden_and_link_policy() {
+    let args = compound_tar_outer_extract_args(
+        std::path::Path::new("/tmp/source.tar.gz"),
+        std::path::Path::new("/tmp/outer-stage"),
+    );
+    assert_eq!(args.first().map(String::as_str), Some("x"));
+    assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-snld10")));
+    assert!(args.iter().any(|arg| arg == "--"));
+    #[cfg(not(target_os = "windows"))]
+    assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-spod")));
+    #[cfg(target_os = "windows")]
+    {
+        assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-sccUTF-8")));
+        assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-snz")));
+        assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-sns-")));
+    }
+    let source = include_str!("commands.rs");
+    assert!(source.contains("compound_tar_outer_extract_args(&snapshot, &outer_stage)"));
+    assert!(
+        source.contains("compound_tar_outer_unpack_ok(code, &collected.stdout, &collected.stderr)")
+    );
 }
 
 #[test]
@@ -1074,6 +1143,51 @@ fn merge_publish_applies_destination_parent_mode_to_directories() {
         std::fs::read(published.join("file.txt")).expect("file"),
         b"payload"
     );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn create_refuses_output_that_appeared_after_absent_selection() {
+    let root = temp_root("zinnia-create-absent-toctou");
+    std::fs::create_dir_all(&root).expect("test directory");
+    let input = root.join("input.txt");
+    std::fs::write(&input, b"payload").expect("input");
+    let destination = root.join("converted.7z");
+    // Selection snapshotted "absent", but the path exists when create prepares.
+    std::fs::write(&destination, b"race").expect("raced output");
+    let args = vec![
+        "a".to_string(),
+        "-t7z".to_string(),
+        destination.to_string_lossy().to_string(),
+        "--".to_string(),
+        input.to_string_lossy().to_string(),
+    ];
+    let error = prepare_cleanup_plan(&args, None, Some("absent"))
+        .expect_err("absent selection must refuse a newly present output");
+    assert!(
+        error.contains("appeared after it was selected"),
+        "unexpected error: {error}"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn create_accepts_absent_selection_when_output_still_missing() {
+    let root = temp_root("zinnia-create-absent-ok");
+    std::fs::create_dir_all(&root).expect("test directory");
+    let input = root.join("input.txt");
+    std::fs::write(&input, b"payload").expect("input");
+    let destination = root.join("converted.7z");
+    let args = vec![
+        "a".to_string(),
+        "-t7z".to_string(),
+        destination.to_string_lossy().to_string(),
+        "--".to_string(),
+        input.to_string_lossy().to_string(),
+    ];
+    let plan = prepare_cleanup_plan(&args, None, Some("absent")).expect("absent create plan");
+    assert!(plan.expected_archive_family.is_empty());
+    rollback_cleanup(&plan).expect("rollback");
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -3492,8 +3606,8 @@ fn archive_journal_rollback_preserves_an_output_modified_in_place() {
 }
 
 #[test]
-fn archive_journal_rollback_preserves_identity_only_legacy_output() {
-    let root = temp_root("zinnia-journal-legacy-identity-only");
+fn archive_journal_rollback_retracts_unfingerprinted_matching_output() {
+    let root = temp_root("zinnia-journal-unfingerprinted-retract");
     let stage = root.join(".zinnia-archive-abc");
     let destination = root.join("out.7z");
     std::fs::create_dir_all(&stage).expect("stage");
@@ -3514,9 +3628,41 @@ fn archive_journal_rollback_preserves_identity_only_legacy_output() {
         archive_phase: Some(ArchiveJournalPhase::InProgress),
     };
 
-    let error = rollback_archive_journal(&journal).expect_err("legacy output must fail closed");
-    assert!(error.contains("content fingerprint was not recorded"));
-    assert_eq!(std::fs::read(&destination).unwrap(), b"published");
+    rollback_archive_journal(&journal).expect("matching inode can be retracted");
+    assert!(
+        !destination.exists(),
+        "copy-fallback output should be removed"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn archive_journal_rollback_preserves_replaced_unfingerprinted_output() {
+    let root = temp_root("zinnia-journal-unfingerprinted-replaced");
+    let stage = root.join(".zinnia-archive-abc");
+    let destination = root.join("out.7z");
+    std::fs::create_dir_all(&stage).expect("stage");
+    std::fs::write(&destination, b"published").expect("published output");
+    let identity_only = super::journal::regular_file_identity(&destination).unwrap();
+    std::fs::remove_file(&destination).expect("remove original");
+    std::fs::write(&destination, b"user replacement").expect("replacement");
+    let journal = CleanupJournal {
+        stage: stage.clone(),
+        destination: destination.clone(),
+        archive: true,
+        extract_stage_placement: None,
+        move_plan_sidecar: false,
+        previous_archive_family: Vec::new(),
+        previous_archive_identities: Vec::new(),
+        next_archive_family: vec![destination.clone()],
+        next_archive_identities: vec![Some(identity_only)],
+        extract_stage_identity: None,
+        extract_phase: None,
+        archive_phase: Some(ArchiveJournalPhase::InProgress),
+    };
+
+    rollback_archive_journal(&journal).expect_err("replaced inode must be preserved");
+    assert_eq!(std::fs::read(&destination).unwrap(), b"user replacement");
     let _ = std::fs::remove_dir_all(root);
 }
 

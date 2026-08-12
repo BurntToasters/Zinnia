@@ -29,8 +29,7 @@ import {
   getBasicView,
   setBasicView,
   setBasicBrowsePasswordVisible,
-  syncBasicToPower,
-  syncBasicExtractToPower,
+  syncBasicBeforeRun,
   syncBasicBrowsePasswordToPower,
 } from "./sync";
 import {
@@ -399,8 +398,8 @@ async function handleBasicCompressActionOnce(
     basicArchiveName.value = ""; // Let output path dictate name
   }
 
-  syncBasicToPower();
   setMode("add");
+  syncBasicBeforeRun();
   showBasicProgress("compress");
   hideBasicCompletion("compress");
   // Re-validate immediately before unlocking prep and starting the job so a
@@ -625,8 +624,8 @@ async function handleBasicExtractActionOnce(
     basicExtractPath.value = output;
   }
 
-  syncBasicExtractToPower();
   setMode("extract");
+  syncBasicBeforeRun();
   showBasicProgress("extract");
   hideBasicCompletion("extract");
   // Re-validate immediately before unlocking prep and starting the job so a
