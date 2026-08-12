@@ -69,6 +69,11 @@ pub(crate) fn emit_pending_shell_handoff_error(app: &tauri::AppHandle) {
     if app.get_webview_window("main").is_none() {
         return;
     }
+    // Cold start creates the main webview before JS listeners and before
+    // `mark_main_window_ready`. Taking here would drop the error into the void.
+    if !super::MAIN_WINDOW_READY.load(Ordering::SeqCst) {
+        return;
+    }
     let message = take_shell_handoff_error();
     if let Some(message) = message {
         let _ = app.emit(

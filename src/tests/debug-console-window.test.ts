@@ -27,9 +27,6 @@ async function setupAndRun(options?: {
   invokeImpl?: (cmd: string, payload?: unknown) => unknown;
 }): Promise<{
   listeners: Map<string, Listener>;
-  emit: ReturnType<
-    typeof vi.mocked<(typeof import("@tauri-apps/api/event"))["emit"]>
-  >;
   invoke: ReturnType<
     typeof vi.mocked<(typeof import("@tauri-apps/api/core"))["invoke"]>
   >;
@@ -70,7 +67,10 @@ async function setupAndRun(options?: {
   const invokeMock = vi.mocked(core.invoke);
   invokeMock.mockReset();
   invokeMock.mockImplementation(async (cmd: string, payload?: unknown) => {
-    if (options?.invokeImpl) return options.invokeImpl(cmd, payload);
+    if (options?.invokeImpl) {
+      const custom = await options.invokeImpl(cmd, payload);
+      if (custom !== undefined) return custom;
+    }
     if (cmd === "get_platform_info") return "macos";
     if (cmd === "supports_workspace_window_fx") return true;
     if (cmd === "load_settings") {
@@ -78,6 +78,7 @@ async function setupAndRun(options?: {
     }
     if (cmd === "set_workspace_window_fx") return undefined;
     if (cmd === "close_debug_console_window") return undefined;
+    if (cmd === "relay_debug_console_signal") return undefined;
     return undefined;
   });
 
@@ -86,7 +87,6 @@ async function setupAndRun(options?: {
 
   return {
     listeners,
-    emit: vi.mocked(eventApi.emit),
     invoke: invokeMock,
     appWindow,
   };
@@ -101,12 +101,14 @@ describe("debug console window", () => {
     });
   });
 
-  it("wires platform/theme and emits ready after listeners attach", async () => {
-    const { emit, listeners } = await setupAndRun();
+  it("wires platform/theme and signals ready after listeners attach", async () => {
+    const { invoke, listeners } = await setupAndRun();
     expect(document.body.classList.contains("platform-macos")).toBe(true);
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
     expect(document.documentElement.dataset.windowFx).toBe("basic");
-    expect(emit).toHaveBeenCalledWith("zinnia-debug-console-ready");
+    expect(invoke).toHaveBeenCalledWith("relay_debug_console_signal", {
+      signal: "ready",
+    });
     expect(listeners.has("zinnia-debug-log")).toBe(true);
     expect(listeners.has("zinnia-debug-seed")).toBe(true);
     expect(listeners.has("zinnia-debug-clear")).toBe(true);
@@ -130,22 +132,28 @@ describe("debug console window", () => {
     expect(log?.textContent).toBe("");
   });
 
-  it("Dock emits preference clear and closes the window", async () => {
-    const { emit, invoke } = await setupAndRun();
+  it("Dock signals preference clear and closes the window", async () => {
+    const { invoke } = await setupAndRun();
     document.getElementById("dbg-dock")?.click();
     await flushAsync();
-    expect(emit).toHaveBeenCalledWith("zinnia-debug-console-dock-request");
-    expect(emit).toHaveBeenCalledWith("zinnia-debug-console-closed");
+    expect(invoke).toHaveBeenCalledWith("relay_debug_console_signal", {
+      signal: "dock",
+    });
+    expect(invoke).toHaveBeenCalledWith("relay_debug_console_signal", {
+      signal: "closed",
+    });
     expect(invoke).toHaveBeenCalledWith("close_debug_console_window");
   });
 
   it("Clear empties the log and asks main to clear the shared buffer", async () => {
-    const { emit, listeners } = await setupAndRun();
+    const { invoke, listeners } = await setupAndRun();
     listeners.get("zinnia-debug-log")?.({ payload: "keep me" });
     document.getElementById("dbg-clear")?.click();
     await flushAsync();
     expect(document.getElementById("dbg-log")?.textContent).toBe("");
-    expect(emit).toHaveBeenCalledWith("zinnia-debug-console-clear-request");
+    expect(invoke).toHaveBeenCalledWith("relay_debug_console_signal", {
+      signal: "clear",
+    });
   });
 
   it("Copy writes the log to the clipboard", async () => {
@@ -189,7 +197,7 @@ describe("debug console window", () => {
       },
     });
     document.getElementById("titlebar-close")?.click();
-    await flushAsync();
+    await flushAsync(20);
     expect(appWindow.destroy).toHaveBeenCalled();
   });
 });

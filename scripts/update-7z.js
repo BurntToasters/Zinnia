@@ -12,7 +12,6 @@ import { validateTrusted7zPath } from "./prepare-7z-helpers.js";
 const root = process.cwd();
 const assetsDirectory = path.join(root, "assets");
 const outputDirectory = path.join(root, "src-tauri", "binaries");
-const checksumsPath = path.join(assetsDirectory, "7z-checksums.json");
 const provenancePath = path.join(assetsDirectory, "7z-provenance.json");
 const latestReleaseUrl = "https://github.com/ip7z/7zip/releases/latest";
 const officialDownloadPage = "https://www.7-zip.org/download.html";
@@ -188,14 +187,6 @@ function resolveOnPath(command) {
   return result.stdout.split(/\r?\n/).find(Boolean);
 }
 
-function currentChecksums() {
-  try {
-    return JSON.parse(fs.readFileSync(checksumsPath, "utf8"));
-  } catch {
-    return {};
-  }
-}
-
 function resolveTrustedExtractor() {
   const supplied = optionValue("--trusted-7z") || process.env.ZINNIA_TRUSTED_7Z;
   const suppliedPath = supplied
@@ -210,37 +201,6 @@ function resolveTrustedExtractor() {
       assetsDirectory,
       outputDirectory,
     });
-  }
-
-  const checksums = currentChecksums();
-  const bundledRelative =
-    process.platform === "win32"
-      ? `win/${process.arch === "arm64" ? "arm64" : "x64"}/7z.exe`
-      : process.platform === "darwin"
-        ? "mac/7zz"
-        : process.arch === "arm64"
-          ? "linux/arm64/7zzs"
-          : "linux/x64/7zzs";
-  const bundledPath = path.join(assetsDirectory, bundledRelative);
-  const bundledDll =
-    process.platform === "win32"
-      ? path.join(
-          assetsDirectory,
-          `win/${process.arch === "arm64" ? "arm64" : "x64"}/7z.dll`,
-        )
-      : undefined;
-  if (
-    fs.existsSync(bundledPath) &&
-    checksums[bundledRelative] === sha256File(bundledPath) &&
-    (!bundledDll ||
-      (fs.existsSync(bundledDll) &&
-        checksums[path.relative(assetsDirectory, bundledDll)] ===
-          sha256File(bundledDll)))
-  ) {
-    if (process.platform !== "win32") {
-      fs.chmodSync(bundledPath, 0o755);
-    }
-    return bundledPath;
   }
 
   throw new Error(

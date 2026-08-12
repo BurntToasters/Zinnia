@@ -37,6 +37,18 @@ describe("validateExtraArgs", () => {
     expect(() => validateExtraArgs(["-aou"])).not.toThrow();
   });
 
+  it("allows only progress stream switches -bsp1 and -bsp2", () => {
+    expect(() => validateExtraArgs(["-bsp1"])).not.toThrow();
+    expect(() => validateExtraArgs(["-bsp2"])).not.toThrow();
+    expect(() => validateExtraArgs(["-bse0"])).toThrow(/-bsp1 \/ -bsp2/);
+    expect(() => validateExtraArgs(["-bso0"])).toThrow(/-bsp1 \/ -bsp2/);
+  });
+
+  it("rejects ZipCrypto method switches", () => {
+    expect(() => validateExtraArgs(["-mem=ZipCrypto"])).toThrow(/AES-256/);
+    expect(() => validateExtraArgs(["-mem=AES256"])).not.toThrow();
+  });
+
   it("rejects blocked archive type args", () => {
     expect(() => validateExtraArgs(["-tzip"])).toThrow(
       /not allowed in extra args/,

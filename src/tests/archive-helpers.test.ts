@@ -11,7 +11,12 @@ import {
   withPassword,
   formatBatchEta,
 } from "../archive";
-import { runWithPasswordRetry, withLiveProgress } from "../archive/runtime";
+import {
+  isSevenZipRunInFlight,
+  runWithPasswordRetry,
+  setSevenZipRunInFlight,
+  withLiveProgress,
+} from "../archive/runtime";
 
 vi.mock("../prompt-modal", () => ({
   promptInput: vi.fn().mockResolvedValue(null),
@@ -312,6 +317,56 @@ describe("runWithPasswordRetry", () => {
     ).rejects.toBe(failure);
     expect(promptMock).not.toHaveBeenCalled();
   });
+
+  it("re-enables Cancel and ignores Finalizing while the password prompt is open", async () => {
+    const invokeMock = vi.mocked(invoke);
+    const promptMock = vi.mocked(promptInput);
+    invokeMock.mockReset();
+    promptMock.mockReset();
+    let handler: ((event: { payload: unknown }) => void) | undefined;
+    vi.mocked(listen).mockImplementation(async (_eventName, callback) => {
+      handler = callback as (event: { payload: unknown }) => void;
+      return () => {};
+    });
+    invokeMock.mockRejectedValueOnce(
+      new Error(
+        "Could not list archive members for path safety: Enter password:",
+      ),
+    );
+    let resolvePrompt: ((value: string | null) => void) | undefined;
+    promptMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvePrompt = resolve;
+        }),
+    );
+    const cancel = document.getElementById(
+      "cancel-action",
+    ) as HTMLButtonElement;
+    cancel.hidden = false;
+    cancel.disabled = true;
+    document.getElementById("progress")!.textContent = "Extracting";
+
+    const result = withLiveProgress(() =>
+      runWithPasswordRetry(["x", "-o/tmp/out", "--", "/tmp/headers.7z"], true),
+    );
+    await vi.waitFor(() => {
+      expect(promptMock).toHaveBeenCalledOnce();
+    });
+    expect(isSevenZipRunInFlight()).toBe(false);
+    expect(cancel.disabled).toBe(false);
+
+    handler?.({
+      payload: { currentFile: "Finalizing…", percent: 100 },
+    });
+    expect(cancel.disabled).toBe(false);
+    expect(document.getElementById("progress")?.textContent).not.toBe(
+      "Finalizing…",
+    );
+
+    resolvePrompt?.(null);
+    await result;
+  });
 });
 
 describe("formatBatchEta", () => {
@@ -341,6 +396,7 @@ describe("withLiveProgress", () => {
     });
     const result = withLiveProgress(() => action);
     await Promise.resolve();
+    setSevenZipRunInFlight(true);
 
     handler?.({
       payload: { percent: 50, currentFile: "/tmp/nested/archive.7z" },
@@ -352,6 +408,7 @@ describe("withLiveProgress", () => {
     complete?.("done");
     await expect(result).resolves.toBe("done");
     expect(unlisten).toHaveBeenCalledOnce();
+    setSevenZipRunInFlight(false);
   });
 
   it("shows Still working… before percent, then keeps percent on heartbeats", async () => {
@@ -368,6 +425,7 @@ describe("withLiveProgress", () => {
     });
     const result = withLiveProgress(() => action);
     await Promise.resolve();
+    setSevenZipRunInFlight(true);
 
     handler?.({ payload: { currentFile: "Working…" } });
     expect(document.getElementById("progress")?.textContent).toBe(
@@ -386,5 +444,30 @@ describe("withLiveProgress", () => {
 
     complete?.("done");
     await expect(result).resolves.toBe("done");
+    setSevenZipRunInFlight(false);
+  });
+
+  it("ignores Finalizing while run_7z is not in flight", async () => {
+    let handler: ((event: { payload: unknown }) => void) | undefined;
+    vi.mocked(listen).mockImplementation(async (_eventName, callback) => {
+      handler = callback as (event: { payload: unknown }) => void;
+      return () => {};
+    });
+    const cancel = document.getElementById(
+      "cancel-action",
+    ) as HTMLButtonElement;
+    cancel.hidden = false;
+    cancel.disabled = false;
+    document.getElementById("progress")!.textContent = "Waiting";
+    setSevenZipRunInFlight(false);
+
+    const result = withLiveProgress(() => Promise.resolve("ok"));
+    await Promise.resolve();
+    handler?.({
+      payload: { currentFile: "Finalizing…", percent: 100 },
+    });
+    expect(cancel.disabled).toBe(false);
+    expect(document.getElementById("progress")?.textContent).toBe("Waiting");
+    await expect(result).resolves.toBe("ok");
   });
 });

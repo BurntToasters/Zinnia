@@ -7,8 +7,8 @@
 IDI_ZINNIA ICON "..\\..\\icons\\icon.ico"
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 0,6,1,5
- PRODUCTVERSION 0,6,1,5
+ FILEVERSION 0,6,1,6
+ PRODUCTVERSION 0,6,1,6
  FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
 #ifdef _DEBUG
  FILEFLAGS VS_FF_DEBUG | VS_FF_PRERELEASE
@@ -25,12 +25,12 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "BurntToasters\0"
       VALUE "FileDescription", "Zinnia archive extraction context menu\0"
-      VALUE "FileVersion", "0.6.1-beta.5\0"
+      VALUE "FileVersion", "0.6.1-beta.6\0"
       VALUE "InternalName", "zinnia_extract_shell.dll\0"
       VALUE "LegalCopyright", "Copyright (c) 2025-2026 BurntToasters\0"
       VALUE "OriginalFilename", "zinnia_extract_shell.dll\0"
       VALUE "ProductName", "Zinnia\0"
-      VALUE "ProductVersion", "0.6.1-beta.5\0"
+      VALUE "ProductVersion", "0.6.1-beta.6\0"
     END
   END
   BLOCK "VarFileInfo"

@@ -139,10 +139,10 @@ export async function addFilesToArchive(): Promise<void> {
     const args = ["u", "-sse", "-snl", "-snh", "-spd"];
     const archivePassword = $<HTMLInputElement>("browse-password").value;
     if (archivePassword) args.push(`-p${archivePassword}`);
+    const zipDest = archive.toLowerCase().endsWith(".zip");
+    if (archivePassword && zipDest) args.push("-mem=AES256");
     if (threads) args.push(`-mmt=${threads}`);
     args.push(archive, "--", ...files);
-
-    const zipDest = archive.toLowerCase().endsWith(".zip");
     if (zipDest && !(await confirmZipSymlinkRisk("zip", files))) {
       setStatus("Cancelled", 2000);
       return;

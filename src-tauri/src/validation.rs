@@ -26,11 +26,67 @@ fn is_numbered_switch(arg: &str, prefix: &str, max: u8) -> bool {
 }
 
 fn is_stream_switch(arg: &str) -> bool {
-    let bytes = arg.as_bytes();
-    bytes.len() == 5
-        && bytes[0..3].eq_ignore_ascii_case(b"-bs")
-        && matches!(bytes[3].to_ascii_lowercase(), b'o' | b'e' | b'p')
-        && matches!(bytes[4], b'0' | b'1' | b'2')
+    let lower = arg.to_ascii_lowercase();
+    lower == "-bsp1" || lower == "-bsp2"
+}
+
+fn archive_type_switches(args: &[String]) -> Vec<String> {
+    let separator = args
+        .iter()
+        .position(|arg| arg == "--")
+        .unwrap_or(args.len());
+    args.iter()
+        .take(separator)
+        .skip(1)
+        .filter_map(|arg| {
+            let lower = arg.to_ascii_lowercase();
+            if lower == "-stl" || lower.starts_with("-stx") {
+                return None;
+            }
+            lower
+                .strip_prefix("-t")
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        })
+        .collect()
+}
+
+fn create_output_looks_like_zip(args: &[String]) -> bool {
+    let separator = args
+        .iter()
+        .position(|arg| arg == "--")
+        .unwrap_or(args.len());
+    args[1..separator]
+        .iter()
+        .rev()
+        .find(|arg| !arg.starts_with('-'))
+        .is_some_and(|path| path.to_ascii_lowercase().ends_with(".zip"))
+}
+
+/// Password-protected ZIP create/update must use AES-256, never ZipCrypto.
+pub(crate) fn is_password_protected_zip_create(args: &[String]) -> bool {
+    let Some(cmd) = args.first() else {
+        return false;
+    };
+    if !matches!(cmd.as_str(), "a" | "u") {
+        return false;
+    }
+    let separator = args
+        .iter()
+        .position(|arg| arg == "--")
+        .unwrap_or(args.len());
+    let has_password = args[1..separator].iter().any(|arg| {
+        let lower = arg.to_ascii_lowercase();
+        lower.starts_with("-p") && arg.len() > 2
+    });
+    if !has_password {
+        return false;
+    }
+    match archive_type_switches(args).last().map(String::as_str) {
+        Some("zip") => true,
+        None => create_output_looks_like_zip(args),
+        _ => false,
+    }
 }
 
 fn is_include_or_exclude(arg: &str) -> bool {
@@ -350,24 +406,7 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
     // 7-Zip honors the last -t when several are present, so evaluate the last
     // type and reject more than one -t with a password (fail closed).
     if password_switches > 0 && matches!(cmd, "a" | "u") {
-        let formats: Vec<String> = args
-            .iter()
-            .take(separator_index.unwrap_or(args.len()))
-            .skip(1)
-            .filter_map(|arg| {
-                // ASCII-only: compared prefixes/values are ASCII archive-type
-                // tokens (7z/zip/tar/gzip/...); no need for Unicode casing.
-                let lower = arg.to_ascii_lowercase();
-                // `-stl` / `-stx…` are not archive-type switches; only `-tTYPE`.
-                if lower == "-stl" || lower.starts_with("-stx") {
-                    return None;
-                }
-                lower
-                    .strip_prefix("-t")
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_string)
-            })
-            .collect();
+        let formats = archive_type_switches(args);
         if formats.len() > 1 {
             return Err(
                 "Password-protected create/update allows at most one archive type (-t)."
@@ -381,6 +420,18 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
                 return Err(format!(
                     "Password encryption is not supported for archive format '{other}'."
                 ));
+            }
+        }
+        if is_password_protected_zip_create(args) {
+            let separator = separator_index.unwrap_or(args.len());
+            for arg in &args[1..separator] {
+                let lower = arg.to_ascii_lowercase();
+                if lower.starts_with("-mem=") && lower != "-mem=aes256" {
+                    return Err(
+                        "Password-protected ZIP archives must use AES-256 (-mem=AES256)."
+                            .to_string(),
+                    );
+                }
             }
         }
     }
@@ -1171,5 +1222,72 @@ mod tests {
         ])
         .expect_err("multi -t with password");
         assert!(err.contains("at most one archive type"), "{err}");
+    }
+
+    #[test]
+    fn validate_run_7z_args_rejects_zipcrypto_for_password_zip() {
+        let err = validate_run_7z_args(&[
+            "u".to_string(),
+            "-tzip".to_string(),
+            "-psecret".to_string(),
+            "-mem=ZipCrypto".to_string(),
+            "out.zip".to_string(),
+            "--".to_string(),
+            "in.txt".to_string(),
+        ])
+        .expect_err("ZipCrypto on password ZIP");
+        assert!(err.contains("AES-256"), "{err}");
+        validate_run_7z_args(&[
+            "u".to_string(),
+            "-tzip".to_string(),
+            "-psecret".to_string(),
+            "-mem=AES256".to_string(),
+            "out.zip".to_string(),
+            "--".to_string(),
+            "in.txt".to_string(),
+        ])
+        .expect("AES-256 password ZIP");
+        validate_run_7z_args(&[
+            "u".to_string(),
+            "-psecret".to_string(),
+            "out.zip".to_string(),
+            "--".to_string(),
+            "in.txt".to_string(),
+        ])
+        .expect("password ZIP without explicit -mem (backend injects AES-256)");
+    }
+
+    #[test]
+    fn validate_run_7z_args_rejects_stderr_silence_stream_switches() {
+        for switch in ["-bse0", "-bso0", "-bsp0", "-bse1", "-bso1"] {
+            let err = validate_run_7z_args(&[
+                "x".to_string(),
+                switch.to_string(),
+                "-aou".to_string(),
+                "-o/tmp/out".to_string(),
+                "--".to_string(),
+                "in.zip".to_string(),
+            ])
+            .expect_err(switch);
+            assert!(err.contains("not permitted"), "{switch}: {err}");
+        }
+        validate_run_7z_args(&[
+            "x".to_string(),
+            "-bsp1".to_string(),
+            "-aou".to_string(),
+            "-o/tmp/out".to_string(),
+            "--".to_string(),
+            "in.zip".to_string(),
+        ])
+        .expect("-bsp1 progress stream");
+        validate_run_7z_args(&[
+            "x".to_string(),
+            "-bsp2".to_string(),
+            "-aou".to_string(),
+            "-o/tmp/out".to_string(),
+            "--".to_string(),
+            "in.zip".to_string(),
+        ])
+        .expect("-bsp2 progress stream");
     }
 }

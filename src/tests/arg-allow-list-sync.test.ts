@@ -15,7 +15,6 @@ describe("custom argument allow-list", () => {
       "-i",
       "-ao",
       "-bb",
-      "-bs",
       "-bt",
       "-scs",
       "-slt",

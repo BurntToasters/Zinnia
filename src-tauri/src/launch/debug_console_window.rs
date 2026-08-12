@@ -99,3 +99,26 @@ pub fn relay_debug_console_clear(app: tauri::AppHandle) -> Result<(), String> {
 pub fn debug_console_window_open(app: tauri::AppHandle) -> bool {
     debug_console_is_open(&app)
 }
+
+/// Forward a pop-out console lifecycle signal to main. Only the debug-console
+/// window may invoke this; the event name is allowlisted.
+#[tauri::command]
+pub fn relay_debug_console_signal(
+    window: tauri::Window,
+    app: tauri::AppHandle,
+    signal: String,
+) -> Result<(), String> {
+    if window.label() != DEBUG_CONSOLE_LABEL {
+        return Err(
+            "Debug console signals can only be sent from the debug console window.".to_string(),
+        );
+    }
+    let event = match signal.as_str() {
+        "ready" => "zinnia-debug-console-ready",
+        "closed" => "zinnia-debug-console-closed",
+        "dock" => "zinnia-debug-console-dock-request",
+        "clear" => "zinnia-debug-console-clear-request",
+        _ => return Err(format!("Unknown debug console signal '{signal}'.")),
+    };
+    app.emit(event, ()).map_err(|error| error.to_string())
+}

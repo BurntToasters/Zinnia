@@ -181,6 +181,7 @@ import {
   updateBasicStatus,
 } from "../basic";
 import { isArchiveEncrypted } from "../basic/actions";
+import { setSevenZipRunInFlight } from "../archive/runtime";
 
 const openMock = vi.mocked(open);
 const confirmMock = vi.mocked(confirm);
@@ -703,6 +704,49 @@ describe("basic-ui state transitions", () => {
     ).toBe(true);
   });
 
+  it("ignores Finalizing while run_7z is not in flight", async () => {
+    uiMocks.runtime.mode = "extract";
+    let handler:
+      | ((event: {
+          payload?: { percent?: number; currentFile?: string };
+        }) => void)
+      | undefined;
+    listenMock.mockImplementation(async (_eventName, callback) => {
+      handler = callback as typeof handler;
+      return () => {};
+    });
+
+    updateBasicRunningState(true);
+    await vi.waitFor(() => {
+      expect(handler).toBeDefined();
+    });
+
+    const cancel = document.getElementById(
+      "basic-extract-cancel",
+    ) as HTMLButtonElement;
+    cancel.disabled = false;
+    const status = document.getElementById("basic-extract-status")!;
+    status.textContent = "Extracting";
+    setSevenZipRunInFlight(false);
+    handler?.({
+      payload: { currentFile: "Finalizing…", percent: 100 },
+    });
+    handler?.({
+      payload: { currentFile: "secret.txt", percent: 40 },
+    });
+    expect(cancel.disabled).toBe(false);
+    expect(status.textContent).toBe("Extracting");
+
+    setSevenZipRunInFlight(true);
+    handler?.({
+      payload: { currentFile: "Finalizing…", percent: 100 },
+    });
+    expect(cancel.disabled).toBe(true);
+    expect(status.textContent).toBe("Finalizing…");
+    setSevenZipRunInFlight(false);
+    updateBasicRunningState(false);
+  });
+
   it("toggles running state across compress and extract sections", () => {
     uiMocks.runtime.mode = "add";
 
@@ -882,6 +926,9 @@ describe("basic-ui state transitions", () => {
     (document.getElementById("update-mode") as HTMLInputElement).checked = true;
     (document.getElementById("path-mode") as HTMLSelectElement).value =
       "absolute";
+    (document.getElementById("extra-args") as HTMLInputElement).value = "-bb3";
+    (document.getElementById("extract-extra-args") as HTMLInputElement).value =
+      "-bsp1";
 
     syncBasicBeforeRun();
 
@@ -891,6 +938,12 @@ describe("basic-ui state transitions", () => {
     expect(
       (document.getElementById("path-mode") as HTMLSelectElement).value,
     ).toBe("relative");
+    expect(
+      (document.getElementById("extra-args") as HTMLInputElement).value,
+    ).toBe("");
+    expect(
+      (document.getElementById("extract-extra-args") as HTMLInputElement).value,
+    ).toBe("");
   });
 
   it("syncs power extract/browse passwords and custom split into basic", () => {

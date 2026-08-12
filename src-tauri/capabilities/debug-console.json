@@ -6,7 +6,6 @@
   "permissions": [
     "core:event:allow-listen",
     "core:event:allow-unlisten",
-    "core:event:allow-emit",
     "core:window:allow-close",
     "core:window:allow-destroy",
     "core:window:allow-start-dragging",
@@ -16,6 +15,7 @@
     "core:window:allow-is-maximized",
     "core:window:allow-set-size",
     "allow-close-debug-console-window",
+    "allow-relay-debug-console-signal",
     "allow-get-platform-info",
     "allow-load-settings",
     "allow-set-workspace-window-fx",

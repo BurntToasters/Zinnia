@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { emit, listen } from "@tauri-apps/api/event";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 const MAX_LOG_LINES = 1000;
@@ -67,6 +67,12 @@ async function syncThemeAndFx(): Promise<void> {
   }
 }
 
+async function relaySignal(
+  signal: "ready" | "closed" | "dock" | "clear",
+): Promise<void> {
+  await invoke("relay_debug_console_signal", { signal });
+}
+
 async function closeWindow(
   options: { clearPreference?: boolean } = {},
 ): Promise<void> {
@@ -74,13 +80,13 @@ async function closeWindow(
   // Native Destroyed alone must not (app quit also destroys this window).
   if (options.clearPreference !== false) {
     try {
-      await emit("zinnia-debug-console-dock-request");
+      await relaySignal("dock");
     } catch {
       // Main may already be gone.
     }
   }
   try {
-    await emit("zinnia-debug-console-closed");
+    await relaySignal("closed");
   } catch {
     // Main may already be gone.
   }
@@ -120,7 +126,7 @@ async function run(): Promise<void> {
 
   $("dbg-clear").addEventListener("click", () => {
     $("dbg-log").textContent = "";
-    void emit("zinnia-debug-console-clear-request");
+    void relaySignal("clear");
   });
   $("dbg-copy").addEventListener("click", async () => {
     const text = $("dbg-log").textContent ?? "";
@@ -164,7 +170,7 @@ async function run(): Promise<void> {
   });
 
   // Ask main to seed buffered lines after listeners are attached.
-  await emit("zinnia-debug-console-ready");
+  await relaySignal("ready");
 }
 
 run().catch((err) => {

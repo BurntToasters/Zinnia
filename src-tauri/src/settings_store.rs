@@ -169,7 +169,8 @@ pub fn atomic_write_text(path: &std::path::Path, contents: &str) -> Result<(), S
         reserved.ok_or_else(|| "Could not reserve a unique settings temp file.".to_string())?;
     if let Err(error) = file
         .write_all(contents.as_bytes())
-        .and_then(|()| file.sync_all())
+        .map_err(|error| error.to_string())
+        .and_then(|()| crate::fs_secure::sync_file_best_effort(&file))
     {
         drop(file);
         if let Err(cleanup_error) = std::fs::remove_file(&tmp) {
