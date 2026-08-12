@@ -82,6 +82,20 @@ function readInjectedExtractSession(): InjectedExtractSession | null {
   return injected;
 }
 
+/** True only while this window's `run_7z` invoke is in flight. */
+let extractRunInFlight = false;
+
+async function invokeExtractRun(
+  args: Record<string, unknown>,
+): Promise<Run7zResult> {
+  extractRunInFlight = true;
+  try {
+    return await invoke<Run7zResult>("run_7z", args);
+  } finally {
+    extractRunInFlight = false;
+  }
+}
+
 async function runWithPasswordRetry(
   args: string[],
   shouldAbort: () => boolean,
@@ -93,7 +107,7 @@ async function runWithPasswordRetry(
   };
   let result: Run7zResult;
   try {
-    result = await invoke<Run7zResult>("run_7z", invokeArgs);
+    result = await invokeExtractRun(invokeArgs);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     // Header encryption can make backend safety listing request a password
@@ -111,6 +125,10 @@ async function runWithPasswordRetry(
     if (shouldAbort()) {
       return result;
     }
+    const cancelBtn = document.getElementById(
+      "cancel-btn",
+    ) as HTMLButtonElement | null;
+    if (cancelBtn) cancelBtn.disabled = false;
     const { promptInput } = await import("./prompt-modal");
     const password = await promptInput({
       title: "Password required",
@@ -122,7 +140,7 @@ async function runWithPasswordRetry(
       return result;
     }
     if (password) {
-      result = await invoke<Run7zResult>("run_7z", {
+      result = await invokeExtractRun({
         args: withPassword(args, password),
         ...(expectedArchiveIdentity ? { expectedArchiveIdentity } : {}),
       });
@@ -601,6 +619,7 @@ async function run() {
     });
   const structuredListen = registerProgressListener(
     listen<ProgressUpdate>("7z-progress-structured", (event) => {
+      if (!extractRunInFlight) return;
       const update = event.payload;
       if (update?.currentFile === "Working…") {
         // Heartbeats fill blank status only; keep file name / ETA lines.
@@ -632,7 +651,7 @@ async function run() {
   );
   const rawListen = registerProgressListener(
     listen<string>("7z-progress", (event) => {
-      if (sawStructuredPercent) return;
+      if (!extractRunInFlight || sawStructuredPercent) return;
       const chunk = typeof event.payload === "string" ? event.payload : "";
       for (const line of chunk.split(/[\r\n]+/)) {
         const match = line.trim().match(/^-\s+(.+)/);

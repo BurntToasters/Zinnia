@@ -468,19 +468,27 @@ export function updateBasicPasswordField(): void {
 
 export function syncBasicBeforeRun(): void {
   if (getWorkspaceMode() !== "basic") return;
+  // Basic does not expose these Power-only controls. Clear them before every
+  // Basic run so a prior Power session cannot leak update mode or extra args.
+  const updateMode = document.getElementById(
+    "update-mode",
+  ) as HTMLInputElement | null;
+  if (updateMode) updateMode.checked = false;
+  const pathMode = document.getElementById(
+    "path-mode",
+  ) as HTMLInputElement | null;
+  if (pathMode) pathMode.value = "relative";
+  const extraArgs = document.getElementById(
+    "extra-args",
+  ) as HTMLInputElement | null;
+  if (extraArgs) extraArgs.value = "";
+  const extractExtraArgs = document.getElementById(
+    "extract-extra-args",
+  ) as HTMLInputElement | null;
+  if (extractExtraArgs) extractExtraArgs.value = "";
   const mode = getMode();
   if (mode === "add") {
     syncBasicToPower();
-    // Basic mode does not expose these Power-only controls; force safe defaults
-    // so a prior Power session cannot leak update behavior into Basic runs.
-    const updateMode = document.getElementById(
-      "update-mode",
-    ) as HTMLInputElement | null;
-    if (updateMode) updateMode.checked = false;
-    const pathMode = document.getElementById(
-      "path-mode",
-    ) as HTMLInputElement | null;
-    if (pathMode) pathMode.value = "relative";
   } else if (mode === "extract") {
     syncBasicExtractToPower();
   } else if (mode === "browse") {

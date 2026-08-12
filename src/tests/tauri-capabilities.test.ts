@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-function readCapability(name: "default" | "extract"): {
+function readCapability(name: "default" | "extract" | "debug-console"): {
   permissions: string[];
 } {
   const file = path.resolve(
@@ -149,5 +149,28 @@ describe("Tauri capability policy", () => {
       ]),
     );
     expect(permissions).not.toContain("core:default");
+  });
+
+  it("keeps the debug console window to listen plus an allowlisted signal relay", () => {
+    const source = fs.readFileSync(
+      path.resolve(process.cwd(), "src", "debug-console-window.ts"),
+      "utf8",
+    );
+    const commands = [
+      ...source.matchAll(/invoke(?:<[^>]+>)?\(\s*["'](\w+)["']/g),
+    ].map((match) => match[1]);
+    expect(commands).toContain("relay_debug_console_signal");
+
+    const { permissions } = readCapability("debug-console");
+    const granted = new Set(permissions);
+    for (const command of new Set(commands)) {
+      const allow = `allow-${command.replaceAll("_", "-")}`;
+      expect(granted, `debug console invokes ${command}`).toContain(allow);
+    }
+    expect(permissions).toContain("allow-relay-debug-console-signal");
+    expect(permissions).not.toContain("core:event:allow-emit");
+    expect(permissions).not.toContain("allow-run-7z");
+    expect(permissions).not.toContain("allow-open-path");
+    expect(permissions).not.toContain("updater:allow-check");
   });
 });

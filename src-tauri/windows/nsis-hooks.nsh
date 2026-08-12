@@ -130,11 +130,14 @@
   ; Retry once, then fail the PowerShell step if either sparse package remains.
   ; Leaving packages registered against a deleted ExternalLocation breaks modern
   ; menus after uninstall; surface that instead of claiming cleanup succeeded.
+  ; $R5 = 1 when unregister failed so POSTUNINSTALL can leave $INSTDIR in place.
+  StrCpy $R5 "0"
   DetailPrint "Unregistering Win11 sparse context-menu packages…"
   nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference=\"Stop\"; $names=@(\"run.rosie.zinnia.contextmenu\",\"run.rosie.zinnia.extractmenu\"); for($attempt=0;$attempt -lt 2;$attempt++){ foreach($name in $names){ Get-AppxPackage -Name $name -ErrorAction SilentlyContinue | Remove-AppxPackage -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 400 }; $left=@(); foreach($name in $names){ $left += @(Get-AppxPackage -Name $name -ErrorAction SilentlyContinue) }; if($left.Count -gt 0){ $joined=(($left | ForEach-Object Name) -join \", \"); Write-Error \"Zinnia AppX packages still registered after uninstall: $joined\"; exit 1 }"'
   Pop $0
   IntCmp $0 0 zinnia_win11_unregister_ok 0 0
-  DetailPrint "WARNING: Could not fully unregister Win11 sparse context-menu packages (exit $0). Remove run.rosie.zinnia.contextmenu / extractmenu manually if menus misbehave."
+  StrCpy $R5 "1"
+  DetailPrint "WARNING: Could not fully unregister Win11 sparse context-menu packages (exit $0). Leaving $INSTDIR so ExternalLocation stays valid. Remove run.rosie.zinnia.contextmenu / extractmenu manually if menus misbehave."
   FileOpen $R8 "$INSTDIR\zinnia-context-menu-register.log" a
   FileSeek $R8 0 END
   FileWrite $R8 "WARNING: Win11 sparse package unregister incomplete during uninstall (exit $0)$\r$\n"
@@ -230,12 +233,18 @@
 !macro NSIS_HOOK_POSTUNINSTALL
   ; Tauri checks for a running app before reaching this hook, so canceling that
   ; prompt cannot partially unregister an otherwise installed app. Its normal
-  ; resource deletes run first; this then unregisters the packages and schedules
-  ; any DLLs still mapped by a shell host for deletion after reboot.
+  ; resource deletes run first; this then unregisters the packages. If sparse
+  ; packages remain registered, keep shell payloads and $INSTDIR so
+  ; ExternalLocation still resolves; do not schedule those DLLs for reboot delete.
   !insertmacro ZINNIA_UNREGISTER_WIN11_CONTEXT_MENU
+  IntCmp $R5 1 zinnia_keep_shell_payloads 0 0
   !insertmacro ZINNIA_CLEAN_SHELL_PAYLOADS "" zinnia_uninstall_shell_cleanup
   !insertmacro ZINNIA_CLEAN_LEGACY_SHELL_PAYLOAD
   Delete /REBOOTOK "$INSTDIR\zinnia-context-menu-register.log"
+  Goto zinnia_postuninstall_verbs
+  zinnia_keep_shell_payloads:
+  DetailPrint "Keeping shell payloads and $INSTDIR because Win11 sparse packages could not be unregistered."
+  zinnia_postuninstall_verbs:
   !insertmacro ZINNIA_UNREGISTER_COMPRESS_VERBS
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".7z"
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".zip"
@@ -244,5 +253,10 @@
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".bz2"
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".xz"
   DeleteRegKey HKCU "Software\Classes\Zinnia.Archive"
+  IntCmp $R5 1 zinnia_skip_instdir_rmdir 0 0
   RMDir /REBOOTOK "$INSTDIR"
+  Goto zinnia_postuninstall_done
+  zinnia_skip_instdir_rmdir:
+  DetailPrint "Keeping $INSTDIR because Win11 sparse packages could not be unregistered."
+  zinnia_postuninstall_done:
 !macroend

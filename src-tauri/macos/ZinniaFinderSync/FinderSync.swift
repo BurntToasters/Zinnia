@@ -111,11 +111,12 @@ final class FinderSync: FIFinderSync {
 
   private func isArchiveURL(_ url: URL) -> Bool {
     let name = url.lastPathComponent.lowercased()
+    // Compound TAR families are first-class archives (backend + Services).
     if name.hasSuffix(".tar.gz") || name.hasSuffix(".tar.bz2") ||
       name.hasSuffix(".tar.xz") || name.hasSuffix(".tgz") ||
       name.hasSuffix(".tbz2") || name.hasSuffix(".txz")
     {
-      return false
+      return true
     }
     let ext = url.pathExtension.lowercased()
     if ext == "001" {
