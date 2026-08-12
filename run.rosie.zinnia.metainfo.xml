@@ -27,8 +27,11 @@
     <mediatype>application/zip</mediatype>
     <mediatype>application/x-tar</mediatype>
     <mediatype>application/gzip</mediatype>
+    <mediatype>application/x-compressed-tar</mediatype>
     <mediatype>application/x-bzip2</mediatype>
+    <mediatype>application/x-bzip2-compressed-tar</mediatype>
     <mediatype>application/x-xz</mediatype>
+    <mediatype>application/x-xz-compressed-tar</mediatype>
     <mediatype>application/vnd.rar</mediatype>
   </provides>
   <content_rating type="oars-1.1" />

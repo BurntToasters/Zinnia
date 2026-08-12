@@ -30,8 +30,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md), [CONTRIBUTING.md](CONTRIBUTING.md), and
   Explorer integration requires a signed NSIS install.
 - Linux x64: Ubuntu 24.04+, Debian 13+, or Fedora 43+ (or a compatible
   distribution with the required WebKitGTK runtime). The public release ships
-  x64 AppImage, DEB, RPM, and sideloaded Flatpak bundles; ARM64 packages are
-  published only when explicitly built for that release.
+  x64 AppImage, DEB, RPM, and sideloaded Flatpak bundles. ARM64 AppImage/DEB/RPM
+  are published only when explicitly built for that release; Flatpak stays x64.
 
 ## Dev
 

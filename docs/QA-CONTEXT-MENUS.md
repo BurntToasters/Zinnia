@@ -168,4 +168,6 @@ Wayland and X11 where the desktop environment supports them.
    accidental glibc drift from a newer build host.
 
 > **Release gate:** Complete the package-specific matrix above before publishing
-> a stable Linux artifact. One distro is not a substitute for the others.
+> a stable Linux artifact. One distro is not a substitute for the others. GitHub
+> CI unsigned `--no-bundle` smoke does **not** satisfy this gate; AppImage/DEB/
+> RPM/Flatpak MIME handlers and desktop actions must be exercised on build VMs.

@@ -318,6 +318,7 @@ fn main() {
             process::is_7z_running,
             process::probe_7z,
             process::probe_compress_inputs,
+            process::archive_output_selection_token,
             process::get_startup_recovery_status,
             archive_detect::validate_archive_paths,
             settings_store::load_settings,

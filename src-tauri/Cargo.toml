@@ -51,6 +51,10 @@ libc = "0.2"
 [dev-dependencies]
 minisign-verify = "0.2.5"
 
+# Patched: macOS privileged install must not interpolate bundle paths into shell.
+[patch.crates-io]
+tauri-plugin-updater = { path = "vendor/tauri-plugin-updater" }
+
 [profile.release]
 panic = "abort"
 codegen-units = 16

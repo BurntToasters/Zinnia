@@ -29,7 +29,7 @@ pub struct ArchiveDefaultTarget {
     mime_type: &'static str,
 }
 
-pub(crate) const ARCHIVE_DEFAULT_TARGETS: [ArchiveDefaultTarget; 7] = [
+pub(crate) const ARCHIVE_DEFAULT_TARGETS: [ArchiveDefaultTarget; 10] = [
     ArchiveDefaultTarget {
         key: "zip",
         label: "ZIP",
@@ -55,16 +55,34 @@ pub(crate) const ARCHIVE_DEFAULT_TARGETS: [ArchiveDefaultTarget; 7] = [
         mime_type: "application/gzip",
     },
     ArchiveDefaultTarget {
+        key: "tgz",
+        label: "TGZ",
+        extension: "tgz",
+        mime_type: "application/x-compressed-tar",
+    },
+    ArchiveDefaultTarget {
         key: "bzip2",
         label: "Bzip2",
         extension: "bz2",
         mime_type: "application/x-bzip2",
     },
     ArchiveDefaultTarget {
+        key: "tbz2",
+        label: "TBZ2",
+        extension: "tbz2",
+        mime_type: "application/x-bzip2-compressed-tar",
+    },
+    ArchiveDefaultTarget {
         key: "xz",
         label: "XZ",
         extension: "xz",
         mime_type: "application/x-xz",
+    },
+    ArchiveDefaultTarget {
+        key: "txz",
+        label: "TXZ",
+        extension: "txz",
+        mime_type: "application/x-xz-compressed-tar",
     },
     ArchiveDefaultTarget {
         key: "rar",

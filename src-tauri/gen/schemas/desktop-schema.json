@@ -393,6 +393,12 @@
           "markdownDescription": "Enables the append_local_log command without any pre-configured scope."
         },
         {
+          "description": "Enables the archive_output_selection_token command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-archive-output-selection-token",
+          "markdownDescription": "Enables the archive_output_selection_token command without any pre-configured scope."
+        },
+        {
           "description": "Enables the cancel_7z command without any pre-configured scope.",
           "type": "string",
           "const": "allow-cancel-7z",
@@ -673,6 +679,12 @@
           "type": "string",
           "const": "deny-append-local-log",
           "markdownDescription": "Denies the append_local_log command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the archive_output_selection_token command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-archive-output-selection-token",
+          "markdownDescription": "Denies the archive_output_selection_token command without any pre-configured scope."
         },
         {
           "description": "Denies the cancel_7z command without any pre-configured scope.",

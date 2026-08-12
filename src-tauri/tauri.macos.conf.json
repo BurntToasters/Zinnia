@@ -17,19 +17,34 @@
         "description": "TAR Archive"
       },
       {
-        "ext": ["gz", "tgz"],
+        "ext": ["gz"],
         "mimeType": "application/gzip",
         "description": "Gzip Archive"
       },
       {
-        "ext": ["bz2", "tbz2"],
+        "ext": ["tgz"],
+        "mimeType": "application/x-compressed-tar",
+        "description": "Gzip Compressed TAR Archive"
+      },
+      {
+        "ext": ["bz2"],
         "mimeType": "application/x-bzip2",
         "description": "Bzip2 Archive"
       },
       {
-        "ext": ["xz", "txz"],
+        "ext": ["tbz2"],
+        "mimeType": "application/x-bzip2-compressed-tar",
+        "description": "Bzip2 Compressed TAR Archive"
+      },
+      {
+        "ext": ["xz"],
         "mimeType": "application/x-xz",
         "description": "XZ Archive"
+      },
+      {
+        "ext": ["txz"],
+        "mimeType": "application/x-xz-compressed-tar",
+        "description": "XZ Compressed TAR Archive"
       },
       {
         "ext": ["rar"],
