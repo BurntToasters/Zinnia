@@ -69,6 +69,7 @@ async function setupAndRun(
     destroy: ReturnType<typeof vi.fn>;
   };
   progressUnlisten: ReturnType<typeof vi.fn>;
+  progressListeners: Map<string, (event: { payload: unknown }) => void>;
 }> {
   vi.resetModules();
   mountExtractDom();
@@ -95,9 +96,17 @@ async function setupAndRun(
   };
 
   const listenerRegistrations = [...(options?.listenerRegistrations ?? [])];
-  vi.mocked(eventApi.listen).mockImplementation(
-    () => listenerRegistrations.shift() ?? Promise.resolve(progressUnlisten),
-  );
+  const progressListeners = new Map<
+    string,
+    (event: { payload: unknown }) => void
+  >();
+  vi.mocked(eventApi.listen).mockImplementation((event, handler) => {
+    progressListeners.set(
+      String(event),
+      handler as (event: { payload: unknown }) => void,
+    );
+    return listenerRegistrations.shift() ?? Promise.resolve(progressUnlisten);
+  });
   vi.mocked(webviewApi.getCurrentWebviewWindow).mockReturnValue(
     appWindow as never,
   );
@@ -162,7 +171,7 @@ async function setupAndRun(
     );
   }
 
-  return { invokeMock, appWindow, progressUnlisten };
+  return { invokeMock, appWindow, progressUnlisten, progressListeners };
 }
 
 beforeEach(() => {
@@ -395,6 +404,45 @@ describe("extract-window", () => {
         "Done",
       );
     });
+  });
+
+  it("ignores Finalizing progress while waiting for a password", async () => {
+    let runCount = 0;
+    const { progressListeners } = await setupAndRun(
+      async (cmd) => {
+        if (cmd === "get_extract_paths") return ["/tmp/headers.7z"];
+        if (cmd === "run_7z") {
+          runCount += 1;
+          if (runCount === 1) {
+            throw new Error(
+              "Could not list archive members for path safety: Enter password:",
+            );
+          }
+          return new Promise(() => undefined);
+        }
+        return undefined;
+      },
+      { waitForSettle: false },
+    );
+
+    await vi.waitFor(() => {
+      expect(
+        (document.getElementById("input-modal-overlay") as HTMLElement).hidden,
+      ).toBe(false);
+    });
+    const cancelBtn = document.getElementById(
+      "cancel-btn",
+    ) as HTMLButtonElement;
+    expect(cancelBtn.disabled).toBe(false);
+
+    progressListeners.get("7z-progress-structured")?.({
+      payload: { currentFile: "Finalizing…", percent: 100 },
+    });
+    await flushAsync();
+    expect(cancelBtn.disabled).toBe(false);
+    expect(document.getElementById("extract-status")?.textContent).not.toBe(
+      "Finalizing…",
+    );
   });
 
   it("shows failure details for non-warning extraction failures", async () => {

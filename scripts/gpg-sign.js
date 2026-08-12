@@ -1002,27 +1002,9 @@ async function getOrCreateRelease() {
   const existing = await findExisting();
   if (existing) return assertReleaseTargetsCommit(existing, commit);
 
-  try {
-    const release = await ghRequest(
-      "POST",
-      `/repos/${REPO_OWNER}/${REPO_NAME}/releases`,
-      {
-        tag_name: TAG,
-        target_commitish: commit,
-        name: VERSION,
-        draft: true,
-        prerelease: IS_PRERELEASE,
-      },
-    );
-    return assertReleaseTargetsCommit(release, commit);
-  } catch (error) {
-    if (error?.statusCode !== 422) throw error;
-    // Match ensure-draft-release.cjs: list/create can lag under concurrent VMs.
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    const raced = await findExisting();
-    if (!raced) throw error;
-    return assertReleaseTargetsCommit(raced, commit);
-  }
+  throw new Error(
+    `No GitHub release exists for ${TAG}. Create the draft with npm run release:draft on Windows first; Mac/Linux wait for that draft.`,
+  );
 }
 
 async function uploadAssetOnce(uploadUrl, filePath) {

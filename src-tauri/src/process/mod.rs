@@ -34,10 +34,10 @@ pub use recovery::{
 #[doc(hidden)]
 pub use commands::{
     __cmd__archive_output_selection_token, __cmd__cancel_7z, __cmd__is_7z_running, __cmd__probe_7z,
-    __cmd__probe_compress_inputs, __cmd__run_7z, __tauri_command_name_archive_output_selection_token,
-    __tauri_command_name_cancel_7z, __tauri_command_name_is_7z_running,
-    __tauri_command_name_probe_7z, __tauri_command_name_probe_compress_inputs,
-    __tauri_command_name_run_7z,
+    __cmd__probe_compress_inputs, __cmd__run_7z,
+    __tauri_command_name_archive_output_selection_token, __tauri_command_name_cancel_7z,
+    __tauri_command_name_is_7z_running, __tauri_command_name_probe_7z,
+    __tauri_command_name_probe_compress_inputs, __tauri_command_name_run_7z,
 };
 #[doc(hidden)]
 pub use recovery::{
@@ -52,9 +52,12 @@ pub(crate) use staging::create_private_stage_dir;
 
 #[cfg(test)]
 pub(crate) use commands::{
-    apply_backend_link_switches, extract_warning_is_metadata_only, is_compound_tar_operation,
-    prepare_password_transport, rewrite_args_for_managed_listfile, terminate_child,
+    apply_backend_link_switches, compound_tar_outer_extract_args, compound_tar_outer_unpack_ok,
+    extract_warning_is_metadata_only, is_compound_tar_operation, prepare_password_transport,
+    rewrite_args_for_managed_listfile, terminate_child,
 };
+#[cfg(test)]
+pub(crate) use commit::publish_file_no_replace;
 #[cfg(test)]
 pub(crate) use commit::staged_tree_contains_symlink;
 #[cfg(test)]
@@ -64,8 +67,6 @@ pub(crate) use commit::{
     promote_archive_family, rollback_cleanup, rollback_persisted_move_plan, validate_move_record,
     write_move_plan, MAX_EXTRACTED_BYTES,
 };
-#[cfg(test)]
-pub(crate) use commit::publish_file_no_replace;
 #[cfg(test)]
 pub(crate) use journal::{
     is_safe_stage_dir_name, move_identity_log_path, move_plan_path, read_pending_stages,

@@ -167,15 +167,28 @@ describe("Windows 11 context-menu manifest", () => {
     expect(hooks).toContain(
       '!insertmacro ZINNIA_CLEAN_SHELL_PAYLOADS "" zinnia_uninstall_shell_cleanup',
     );
-    expect(hooks.indexOf("!macro NSIS_HOOK_POSTUNINSTALL")).toBeLessThan(
-      hooks.indexOf(
-        '!insertmacro ZINNIA_CLEAN_SHELL_PAYLOADS "" zinnia_uninstall_shell_cleanup',
-      ),
+    const postUninstall = hooks.slice(
+      hooks.indexOf("!macro NSIS_HOOK_POSTUNINSTALL"),
     );
+    const skipCleanup = postUninstall.indexOf(
+      "IntCmp $R5 1 zinnia_keep_shell_payloads",
+    );
+    const cleanPayloads = postUninstall.indexOf(
+      '!insertmacro ZINNIA_CLEAN_SHELL_PAYLOADS "" zinnia_uninstall_shell_cleanup',
+    );
+    const logDelete = postUninstall.indexOf(
+      'Delete /REBOOTOK "$INSTDIR\\zinnia-context-menu-register.log"',
+    );
+    const keepPayloads = postUninstall.indexOf("zinnia_keep_shell_payloads:");
+    expect(skipCleanup).toBeGreaterThan(-1);
+    expect(cleanPayloads).toBeGreaterThan(skipCleanup);
+    expect(logDelete).toBeGreaterThan(cleanPayloads);
+    expect(keepPayloads).toBeGreaterThan(logDelete);
     expect(hooks).toContain(
       'Delete /REBOOTOK "$INSTDIR\\zinnia-context-menu-register.log"',
     );
     expect(hooks).toContain('RMDir /REBOOTOK "$INSTDIR"');
+    expect(hooks).toContain("IntCmp $R5 1 zinnia_skip_instdir_rmdir");
     expect(hooks).not.toContain("taskkill");
     expect(hooks).toContain(
       '"$SYSDIR\\WindowsPowerShell\\v1.0\\powershell.exe"',
@@ -245,6 +258,7 @@ describe("Windows 11 context-menu manifest", () => {
     );
     expect(unregister).toContain("Pop $0");
     expect(unregister).toContain("IntCmp $0 0 zinnia_win11_unregister_ok");
+    expect(unregister).toContain('StrCpy $R5 "1"');
   });
 
   it("avoids stacking classic HKCU verbs on top of Win11 package verbs", () => {
@@ -315,6 +329,7 @@ describe("Windows 11 context-menu manifest", () => {
     expect(shellSource).not.toContain("kMaxPathsPerBatch");
     expect(shellSource).not.toContain("kSafeParameterChars");
     expect(shellSource).toContain("kMaxPathsPerRequest = 4'096");
+    expect(shellSource).toContain("count > kMaxPathsPerRequest");
     expect(shellSource).toContain("selectionCount > kMaxPathsPerRequest");
     expect(openRoutingSource).toContain("MAX_PENDING_PATHS: usize = 4_096");
     expect(openRoutingSource).toContain(

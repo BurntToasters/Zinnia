@@ -408,6 +408,7 @@ fn main() {
         "relay_debug_console_line",
         "relay_debug_console_seed",
         "relay_debug_console_clear",
+        "relay_debug_console_signal",
         "debug_console_window_open",
         "mark_main_window_ready",
         "get_platform_info",

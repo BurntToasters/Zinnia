@@ -106,14 +106,10 @@ describe("release script safeguards", () => {
       "scripts/ensure-draft-release.cjs",
       "utf8",
     );
-    expect(gpgSource).toContain("target_commitish: commit");
     expect(gpgSource).toContain("assertReleaseTargetsCommit");
     expect(gpgSource).toContain("FORCE_UPLOAD");
-    expect(gpgSource).toContain("if (error?.statusCode !== 422) throw error");
-    expect(gpgSource).toContain(
-      "await new Promise((resolve) => setTimeout(resolve, 2000));",
-    );
-    expect(gpgSource).toContain("name: VERSION");
+    expect(gpgSource).toContain("npm run release:draft");
+    expect(gpgSource).not.toContain("target_commitish: commit,");
     expect(draftSource).toContain("FORCE_UPLOAD");
     expect(draftSource).toMatch(
       /if \(afterRetry\) \{\s*assertReleaseTargetsCommit\(afterRetry, commit\);/,
@@ -409,6 +405,17 @@ describe("release script safeguards", () => {
     );
     expect(syncBlock).toContain("syncBetaManifestsToLatestStable");
     expect(syncBlock).not.toContain("beta manifests remain staged only");
+    expect(syncBlock).not.toContain("!release.draft");
+  });
+
+  it("refuses to create a GitHub release during signing", () => {
+    const source = fs.readFileSync("scripts/gpg-sign.js", "utf8");
+    const fn = source.slice(
+      source.indexOf("async function getOrCreateRelease"),
+      source.indexOf("async function uploadAssetOnce"),
+    );
+    expect(fn).toContain("npm run release:draft");
+    expect(fn).not.toMatch(/"POST"/);
   });
 
   it("keeps a recovery beta→latest sync entry point", () => {
@@ -630,6 +637,13 @@ describe("release script safeguards", () => {
     expect(`${result.stderr}${result.stdout}`).toContain(
       "Checksum updates require --all",
     );
+  });
+
+  it("does not treat the in-tree 7-Zip sidecar as a trusted extractor for updates", () => {
+    const source = fs.readFileSync("scripts/update-7z.js", "utf8");
+    expect(source).toContain("No trusted 7-Zip extractor found");
+    expect(source).not.toContain("bundledRelative");
+    expect(source).not.toContain("bundledPath");
   });
 
   it("requires an explicitly trusted extractor for checksum updates", () => {

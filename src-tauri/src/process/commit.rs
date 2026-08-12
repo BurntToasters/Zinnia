@@ -3,7 +3,7 @@
 use super::journal::move_identity_log_path;
 use super::journal::{
     ensure_path_entry_identity, ensure_path_identity, ensure_recovery_path_unchanged,
-    file_identities_match, file_identity, identity_with_file_content,
+    ensure_retract_path_matches, file_identities_match, file_identity, identity_with_file_content,
     identity_with_fingerprint_from, mark_archive_journal_committed, mark_extract_journal_committed,
     move_plan_path, path_identity, path_identity_with_fingerprint, record_archive_journal_backup,
     record_archive_journal_published, regular_file_identity,
@@ -631,56 +631,7 @@ pub(crate) fn rename_file_no_replace(
     Err("Atomic no-replace rename is unavailable on this platform.".to_string())
 }
 
-/// Errnos that mean "this mount cannot honor a durable flush ioctl", not that
-/// the prior write failed. Used after a successful byte copy / clone when the
-/// next reader is this process (private archive snapshots, publish temps).
-#[cfg(unix)]
-fn is_unsupported_file_flush(error: &std::io::Error) -> bool {
-    let Some(code) = error.raw_os_error() else {
-        return false;
-    };
-    // Compare with `==` (not an or-pattern): on Linux `ENOTSUP` and
-    // `EOPNOTSUPP` are the same constant, which makes
-    // `ENOTSUP | EOPNOTSUPP` an unreachable-pattern error under clippy.
-    // On Darwin they are distinct (45 vs 102).
-    code == libc::ENOTTY
-        || code == libc::ENOTSUP
-        || code == libc::EOPNOTSUPP
-        || code == libc::EINVAL
-}
-
-/// Flush file data with mount-tolerant fallbacks.
-///
-/// - Windows: `PermissionDenied` from `FlushFileBuffers` is ignored (same
-///   policy as [`crate::fs_secure::sync_directory`]).
-/// - Unix/macOS: `File::sync_all` is `F_FULLFSYNC` on Darwin. VM shared folders
-///   and SMB often reject that ioctl even after a successful write. Follow the
-///   SQLite/LevelDB/Go pattern: fall back to plain `fsync` on any `sync_all`
-///   failure, then treat only "flush unsupported" fsync errors as success.
-///   Real I/O failures from `fsync` (for example `EIO`) still fail the caller.
-pub(crate) fn sync_file_best_effort(file: &std::fs::File) -> Result<(), String> {
-    match file.sync_all() {
-        Ok(()) => Ok(()),
-        #[cfg(windows)]
-        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(()),
-        #[cfg(unix)]
-        Err(_full_sync_error) => {
-            use std::os::fd::AsRawFd as _;
-            let rc = unsafe { libc::fsync(file.as_raw_fd()) };
-            if rc == 0 {
-                return Ok(());
-            }
-            let fsync_error = std::io::Error::last_os_error();
-            if is_unsupported_file_flush(&fsync_error) {
-                Ok(())
-            } else {
-                Err(fsync_error.to_string())
-            }
-        }
-        #[cfg(not(unix))]
-        Err(error) => Err(error.to_string()),
-    }
-}
+pub(crate) use crate::fs_secure::sync_file_best_effort;
 
 fn restore_archive_backups(
     backups: Vec<(
@@ -1790,8 +1741,8 @@ fn atomic_replace_move_plan_windows(path: &std::path::Path, contents: &str) -> R
         .ok_or_else(|| "Could not reserve a unique extraction move-plan temp file.".to_string())?;
     let write_result = file
         .write_all(contents.as_bytes())
-        .and_then(|()| file.sync_all())
-        .map_err(|error| error.to_string());
+        .map_err(|error| error.to_string())
+        .and_then(|()| sync_file_best_effort(&file));
     drop(file);
     if let Err(error) = write_result {
         let _ = std::fs::remove_file(&temp);
@@ -1892,13 +1843,13 @@ fn rollback_target_local_record(record: &MoveRecord, crash_recovery: bool) -> Re
         // was recorded when the publish temp was created.
         if target_exists && ensure_path_identity(&record.target, identity).is_ok() {
             if crash_recovery {
-                ensure_recovery_path_unchanged(&record.target, identity)?;
+                ensure_retract_path_matches(&record.target, identity)?;
             }
             remove_path_if_matches(&record.target, identity)?;
         }
         if temp_exists {
             if crash_recovery {
-                ensure_recovery_path_unchanged(publish_temp, identity)?;
+                ensure_retract_path_matches(publish_temp, identity)?;
             }
             remove_path_if_matches(publish_temp, identity)?;
         }
@@ -1910,7 +1861,7 @@ fn rollback_target_local_record(record: &MoveRecord, crash_recovery: bool) -> Re
     // before commit or a manual repair moved it.
     if target_exists && ensure_path_identity(&record.target, identity).is_ok() {
         if crash_recovery {
-            ensure_recovery_path_unchanged(&record.target, identity)?;
+            ensure_retract_path_matches(&record.target, identity)?;
         }
         if let Some(parent) = record.source.parent() {
             std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -1919,7 +1870,7 @@ fn rollback_target_local_record(record: &MoveRecord, crash_recovery: bool) -> Re
     }
     if temp_exists && ensure_path_identity(publish_temp, identity).is_ok() {
         if crash_recovery {
-            ensure_recovery_path_unchanged(publish_temp, identity)?;
+            ensure_retract_path_matches(publish_temp, identity)?;
         }
         if let Some(parent) = record.source.parent() {
             std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -1996,7 +1947,7 @@ fn rollback_move_records_impl(
                     continue;
                 };
                 if crash_recovery {
-                    if let Err(error) = ensure_recovery_path_unchanged(&record.target, identity) {
+                    if let Err(error) = ensure_retract_path_matches(&record.target, identity) {
                         failures.push(error);
                         continue;
                     }
@@ -2020,7 +1971,7 @@ fn rollback_move_records_impl(
             continue;
         };
         let unchanged = if crash_recovery {
-            ensure_recovery_path_unchanged(&record.target, identity)
+            ensure_retract_path_matches(&record.target, identity)
         } else {
             ensure_path_entry_identity(&record.target, identity)
         };
@@ -2354,41 +2305,4 @@ pub(crate) fn commit_cleanup(app: &tauri::AppHandle, plan: &CleanupPlan) -> Resu
     }
     unregister_plan_stages(plan);
     Ok(())
-}
-
-#[cfg(test)]
-mod sync_file_best_effort_tests {
-    use super::*;
-
-    #[cfg(unix)]
-    #[test]
-    fn unsupported_file_flush_matches_shared_folder_errnos() {
-        let mut errnos = vec![libc::ENOTTY, libc::ENOTSUP, libc::EINVAL];
-        // Darwin keeps these distinct; Linux aliases them to one value.
-        if libc::EOPNOTSUPP != libc::ENOTSUP {
-            errnos.push(libc::EOPNOTSUPP);
-        }
-        for errno in errnos {
-            let error = std::io::Error::from_raw_os_error(errno);
-            assert!(
-                is_unsupported_file_flush(&error),
-                "expected errno {errno} to be treated as unsupported flush"
-            );
-        }
-        let io_error = std::io::Error::from_raw_os_error(libc::EIO);
-        assert!(!is_unsupported_file_flush(&io_error));
-    }
-
-    #[test]
-    fn sync_file_best_effort_accepts_local_temp_file() {
-        let dir =
-            std::env::temp_dir().join(format!("zinnia-sync-best-effort-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("temp dir");
-        let path = dir.join("file.bin");
-        std::fs::write(&path, b"hello").expect("write");
-        let file = std::fs::File::open(&path).expect("open");
-        sync_file_best_effort(&file).expect("local flush");
-        let _ = std::fs::remove_dir_all(dir);
-    }
 }

@@ -248,6 +248,43 @@ describe("addFilesToArchive", () => {
     );
   });
 
+  it("uses AES-256 when adding files to a password-protected ZIP", async () => {
+    const archive = uniqueArchivePath("add-files-zip").replace(
+      /\.7z$/i,
+      ".zip",
+    );
+    state.inputs = [archive];
+    (document.getElementById("browse-password") as HTMLInputElement).value =
+      "secret";
+    openMock.mockResolvedValue(["/tmp/one.txt"]);
+
+    const runArgs: string[][] = [];
+    setInvokeRouter((command, payload) => {
+      if (command === "validate_archive_paths") {
+        return pathsFromValidationPayload(payload).map((path) => ({
+          path,
+          valid: true,
+        }));
+      }
+      if (command === "probe_7z") return undefined;
+      if (command === "run_7z") {
+        const args = (payload as { args?: string[] } | undefined)?.args ?? [];
+        runArgs.push(args);
+        if (args[0] === "l") {
+          return { stdout: "", stderr: "", code: 0 };
+        }
+        return { stdout: "Everything is Ok", stderr: "", code: 0 };
+      }
+      return undefined;
+    });
+
+    await addFilesToArchive();
+
+    expect(runArgs[0]).toEqual(
+      expect.arrayContaining(["u", "-psecret", "-mem=AES256", archive]),
+    );
+  });
+
   it("handles a rejected mutation file dialog", async () => {
     state.inputs = [uniqueArchivePath("add-files-dialog-error")];
     openMock.mockRejectedValueOnce(new Error("portal unavailable"));

@@ -1,4 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
+import { isSevenZipRunInFlight } from "../archive/runtime";
 import { state } from "../state";
 import { log, getWorkspaceMode, getMode, triggerIconRefresh } from "../ui";
 import {
@@ -197,6 +198,7 @@ export function updateBasicRunningState(active: boolean): void {
     void listen<{ percent?: number; currentFile?: string }>(
       "7z-progress-structured",
       (event) => {
+        if (!isSevenZipRunInFlight()) return;
         if (event.payload?.currentFile === "Finalizing…") {
           setBasicBarDeterminate(section, 100);
           for (const id of ["basic-compress-cancel", "basic-extract-cancel"]) {

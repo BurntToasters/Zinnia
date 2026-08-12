@@ -46,6 +46,7 @@ describe("release preflight policy", () => {
       expect(resume).toContain("prerelease:prepare");
       expect(resume).not.toContain("npm run release:prepare");
       expect(continuation).toContain("release:session:verify");
+      expect(continuation).toContain("npm run licenses");
       expect(continuation).toContain(":prepared");
     }
     for (const architecture of ["x64", "arm64"] as const) {
@@ -57,6 +58,7 @@ describe("release preflight policy", () => {
       expect(full.match(/npm run release:prepare/g)).toHaveLength(1);
       expect(resume).not.toContain("npm run release:prepare");
       expect(continuation).toContain("release:session:verify");
+      expect(continuation).toContain("npm run licenses");
       expect(continuation).toContain(":prepared");
     }
 

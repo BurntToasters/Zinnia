@@ -196,16 +196,65 @@ pub fn sync_directory(path: &Path) -> Result<(), String> {
 
     #[cfg(unix)]
     {
-        match std::fs::File::open(path).and_then(|directory| directory.sync_all()) {
-            Ok(()) => Ok(()),
-            Err(error) => Err(error.to_string()),
-        }
+        let directory = std::fs::File::open(path).map_err(|error| error.to_string())?;
+        sync_file_best_effort(&directory)
     }
 
     #[cfg(not(any(unix, windows)))]
     {
         let _ = path;
         Ok(())
+    }
+}
+
+/// Errnos that mean "this mount cannot honor a durable flush ioctl", not that
+/// the prior write failed. Used after a successful byte copy / clone when the
+/// next reader is this process (private archive snapshots, publish temps).
+#[cfg(unix)]
+pub(crate) fn is_unsupported_file_flush(error: &std::io::Error) -> bool {
+    let Some(code) = error.raw_os_error() else {
+        return false;
+    };
+    // Compare with `==` (not an or-pattern): on Linux `ENOTSUP` and
+    // `EOPNOTSUPP` are the same constant, which makes
+    // `ENOTSUP | EOPNOTSUPP` an unreachable-pattern error under clippy.
+    // On Darwin they are distinct (45 vs 102).
+    code == libc::ENOTTY
+        || code == libc::ENOTSUP
+        || code == libc::EOPNOTSUPP
+        || code == libc::EINVAL
+}
+
+/// Flush file data with mount-tolerant fallbacks.
+///
+/// - Windows: `PermissionDenied` from `FlushFileBuffers` is ignored (same
+///   policy as [`sync_directory`]).
+/// - Unix/macOS: `File::sync_all` is `F_FULLFSYNC` on Darwin. VM shared folders
+///   and SMB often reject that ioctl even after a successful write. Follow the
+///   SQLite/LevelDB/Go pattern: fall back to plain `fsync` on any `sync_all`
+///   failure, then treat only "flush unsupported" fsync errors as success.
+///   Real I/O failures from `fsync` (for example `EIO`) still fail the caller.
+pub fn sync_file_best_effort(file: &std::fs::File) -> Result<(), String> {
+    match file.sync_all() {
+        Ok(()) => Ok(()),
+        #[cfg(windows)]
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(()),
+        #[cfg(unix)]
+        Err(_full_sync_error) => {
+            use std::os::fd::AsRawFd as _;
+            let rc = unsafe { libc::fsync(file.as_raw_fd()) };
+            if rc == 0 {
+                return Ok(());
+            }
+            let fsync_error = std::io::Error::last_os_error();
+            if is_unsupported_file_flush(&fsync_error) {
+                Ok(())
+            } else {
+                Err(fsync_error.to_string())
+            }
+        }
+        #[cfg(not(unix))]
+        Err(error) => Err(error.to_string()),
     }
 }
 
@@ -1167,22 +1216,38 @@ mod tests {
             .mode(0o2755)
             .create(&parent)
             .expect("setgid parent");
-        if std::fs::metadata(&parent).expect("parent meta").permissions().mode() & 0o2000 == 0 {
+        if std::fs::metadata(&parent)
+            .expect("parent meta")
+            .permissions()
+            .mode()
+            & 0o2000
+            == 0
+        {
             let _ = std::fs::remove_dir_all(&root);
             eprintln!("skipping: filesystem did not honor setgid on mkdir");
             return;
         }
         let child = parent.join("child");
         std::fs::create_dir(&child).expect("child under setgid parent");
-        let before = std::fs::metadata(&child).expect("child meta").permissions().mode();
+        let before = std::fs::metadata(&child)
+            .expect("child meta")
+            .permissions()
+            .mode();
         if before & 0o2000 == 0 {
             let _ = std::fs::remove_dir_all(&root);
             eprintln!("skipping: mkdir did not inherit setgid");
             return;
         }
         apply_parent_directory_mode(&child).expect("apply parent mode");
-        let after = std::fs::metadata(&child).expect("child after").permissions().mode();
-        assert_ne!(after & 0o2000, 0, "inherited setgid must survive parent-mode apply");
+        let after = std::fs::metadata(&child)
+            .expect("child after")
+            .permissions()
+            .mode();
+        assert_ne!(
+            after & 0o2000,
+            0,
+            "inherited setgid must survive parent-mode apply"
+        );
         assert_eq!(after & 0o777, 0o755, "standard bits should match parent");
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -1448,10 +1513,7 @@ mod tests {
         let staged_directory = staged_nested.join("published-directory");
         std::fs::create_dir(&staged_directory).expect("staged directory tree");
         std::fs::write(staged_directory.join("payload.txt"), b"payload").expect("staged payload");
-        match std::os::windows::fs::symlink_file(
-            "payload.txt",
-            staged_directory.join("current"),
-        ) {
+        match std::os::windows::fs::symlink_file("payload.txt", staged_directory.join("current")) {
             Ok(()) => {}
             Err(error) => {
                 eprintln!(
@@ -1522,5 +1584,36 @@ mod tests {
         assert_handle_owned_by_current_user(&file).expect("current-user owner");
         drop(file);
         std::fs::remove_dir_all(&dir).expect("cleanup owner-check tree");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unsupported_file_flush_matches_shared_folder_errnos() {
+        let mut errnos = vec![libc::ENOTTY, libc::ENOTSUP, libc::EINVAL];
+        if libc::EOPNOTSUPP != libc::ENOTSUP {
+            errnos.push(libc::EOPNOTSUPP);
+        }
+        for errno in errnos {
+            let error = std::io::Error::from_raw_os_error(errno);
+            assert!(
+                is_unsupported_file_flush(&error),
+                "expected errno {errno} to be treated as unsupported flush"
+            );
+        }
+        let io_error = std::io::Error::from_raw_os_error(libc::EIO);
+        assert!(!is_unsupported_file_flush(&io_error));
+    }
+
+    #[test]
+    fn sync_file_best_effort_accepts_local_temp_file() {
+        let dir =
+            std::env::temp_dir().join(format!("zinnia-sync-best-effort-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("file.bin");
+        std::fs::write(&path, b"hello").expect("write");
+        let file = std::fs::File::open(&path).expect("open");
+        sync_file_best_effort(&file).expect("local flush");
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

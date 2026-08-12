@@ -575,6 +575,21 @@ pub(crate) fn ensure_recovery_path_unchanged(
     Ok(())
 }
 
+/// Crash-recovery retract of a published object. Fingerprinted identities
+/// still require an unchanged content hash. Copy-fallback journals the inode
+/// before bytes are copied, so an unfingerprinted identity may be deleted
+/// only when the inode still matches.
+pub(crate) fn ensure_retract_path_matches(
+    path: &std::path::Path,
+    expected: &FileIdentity,
+) -> Result<(), String> {
+    if expected.fingerprint().is_some() {
+        ensure_recovery_path_unchanged(path, expected)
+    } else {
+        ensure_path_entry_identity(path, expected)
+    }
+}
+
 pub(crate) fn regular_file_identity(path: &std::path::Path) -> Result<FileIdentity, String> {
     let metadata = std::fs::symlink_metadata(path).map_err(|error| error.to_string())?;
     if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_file() {
@@ -640,7 +655,7 @@ pub(crate) fn remove_recovery_regular_file_if_matches(
     path: &std::path::Path,
     expected: &FileIdentity,
 ) -> Result<(), String> {
-    ensure_recovery_path_unchanged(path, expected)?;
+    ensure_retract_path_matches(path, expected)?;
     crate::fs_secure::remove_file_for_cleanup(path).map_err(|error| error.to_string())
 }
 

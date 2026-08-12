@@ -621,6 +621,12 @@
           "markdownDescription": "Enables the relay_debug_console_seed command without any pre-configured scope."
         },
         {
+          "description": "Enables the relay_debug_console_signal command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-relay-debug-console-signal",
+          "markdownDescription": "Enables the relay_debug_console_signal command without any pre-configured scope."
+        },
+        {
           "description": "Enables the remove_managed_temp_dir command without any pre-configured scope.",
           "type": "string",
           "const": "allow-remove-managed-temp-dir",
@@ -907,6 +913,12 @@
           "type": "string",
           "const": "deny-relay-debug-console-seed",
           "markdownDescription": "Denies the relay_debug_console_seed command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the relay_debug_console_signal command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-relay-debug-console-signal",
+          "markdownDescription": "Denies the relay_debug_console_signal command without any pre-configured scope."
         },
         {
           "description": "Denies the remove_managed_temp_dir command without any pre-configured scope.",

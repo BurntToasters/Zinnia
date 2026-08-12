@@ -23,7 +23,6 @@ export const ALLOWED_EXTRA_PREFIXES = [
   "-i",
   "-ao",
   "-bb",
-  "-bs",
   "-bt",
   "-scs",
   "-slt",
@@ -177,6 +176,21 @@ export function validateExtraArgs(args: string[]): void {
       throw new Error(
         `"${arg}" is not allowed. Zinnia only permits safe extract overwrite modes (-aou / -aos).`,
       );
+    }
+    if (lower.startsWith("-bs")) {
+      if (lower !== "-bsp1" && lower !== "-bsp2") {
+        throw new Error(
+          `"${arg}" is not allowed. Only -bsp1 / -bsp2 progress streams are permitted.`,
+        );
+      }
+      continue;
+    }
+    if (lower.startsWith("-mem=")) {
+      if (lower === "-mem=zipcrypto") {
+        throw new Error(
+          `"${arg}" is not allowed. Password-protected ZIP archives must use AES-256.`,
+        );
+      }
     }
     if (blocked.some((b) => lower.startsWith(b))) {
       throw new Error(
