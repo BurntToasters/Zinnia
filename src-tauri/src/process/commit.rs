@@ -210,6 +210,7 @@ pub(crate) fn archive_destination_for(
     Ok(destination_base.with_file_name(format!("{destination_name}{suffix}")))
 }
 
+#[cfg(test)]
 pub(crate) fn publish_file_no_replace(
     source: &std::path::Path,
     target: &std::path::Path,
@@ -456,7 +457,6 @@ fn copy_windows_directory_metadata(
     copy_windows_times_and_attributes(source, &source_file, target, &target_file, true)
 }
 
-#[cfg(windows)]
 fn copy_tree_with_inherited_acl(
     source: &std::path::Path,
     target: &std::path::Path,
@@ -468,19 +468,27 @@ fn copy_tree_with_inherited_acl(
         let metadata =
             std::fs::symlink_metadata(&source_child).map_err(|error| error.to_string())?;
         if metadata.file_type().is_symlink() {
-            // Defense in depth: symlink-bearing trees normally rename instead of
-            // ACL-copying, but recreate contained links if this path is used.
+            // Recreate already-validated relative links under the final parent
+            // so the containing tree inherits destination ACL/mode policy.
             let link_target =
                 std::fs::read_link(&source_child).map_err(|error| error.to_string())?;
-            let is_directory_link = {
-                use std::os::windows::fs::FileTypeExt as _;
-                metadata.file_type().is_symlink_dir()
-            };
-            if is_directory_link {
-                std::os::windows::fs::symlink_dir(&link_target, &target_child)
-                    .map_err(|error| error.to_string())?;
-            } else {
-                std::os::windows::fs::symlink_file(&link_target, &target_child)
+            #[cfg(windows)]
+            {
+                let is_directory_link = {
+                    use std::os::windows::fs::FileTypeExt as _;
+                    metadata.file_type().is_symlink_dir()
+                };
+                if is_directory_link {
+                    std::os::windows::fs::symlink_dir(&link_target, &target_child)
+                        .map_err(|error| error.to_string())?;
+                } else {
+                    std::os::windows::fs::symlink_file(&link_target, &target_child)
+                        .map_err(|error| error.to_string())?;
+                }
+            }
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(&link_target, &target_child)
                     .map_err(|error| error.to_string())?;
             }
             continue;
@@ -492,8 +500,15 @@ fn copy_tree_with_inherited_acl(
             ));
         }
         if metadata.is_dir() {
+            // Plain create inherits default ACL / setgid from `target`. Apply
+            // parent mode before recursing so nested creates see the corrected
+            // policy, not a brief umask-only mode.
             std::fs::create_dir(&target_child).map_err(|error| error.to_string())?;
+            #[cfg(unix)]
+            crate::fs_secure::apply_parent_directory_mode(&target_child)
+                .map_err(|error| error.to_string())?;
             copy_tree_with_inherited_acl(&source_child, &target_child)?;
+            #[cfg(windows)]
             copy_windows_directory_metadata(&source_child, &target_child)?;
         } else if metadata.is_file() {
             copy_file_no_replace(&source_child, &target_child)?;
@@ -1278,7 +1293,6 @@ pub(crate) fn plan_staged_contents(
     Ok(())
 }
 
-#[cfg(windows)]
 fn is_publish_temp_name(path: &std::path::Path) -> bool {
     let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
         return false;
@@ -1290,8 +1304,8 @@ fn is_publish_temp_name(path: &std::path::Path) -> bool {
 }
 
 /// True when `root` contains any symbolic-link entry. Non-symlink reparse points
-/// are rejected  -  staged trees should already have failed closed on those.
-#[cfg(windows)]
+/// are rejected: staged trees should already have failed closed on those.
+#[cfg(test)]
 pub(crate) fn staged_tree_contains_symlink(root: &std::path::Path) -> Result<bool, String> {
     let mut pending = vec![root.to_path_buf()];
     while let Some(directory) = pending.pop() {
@@ -1316,7 +1330,10 @@ pub(crate) fn staged_tree_contains_symlink(root: &std::path::Path) -> Result<boo
     Ok(false)
 }
 
-#[cfg(windows)]
+/// Create each published object under its final parent so destination default
+/// ACL / setgid / NTFS inheritance apply. Top-level symlink/reparse entries
+/// still rename in place; trees that contain relative symlinks are recreated
+/// under the parent after `prepare_planned_links` rewrites their targets.
 fn prepare_target_local_publish_paths(
     plan: &mut [MoveRecord],
     reserved: &mut std::collections::HashSet<std::path::PathBuf>,
@@ -1324,13 +1341,9 @@ fn prepare_target_local_publish_paths(
     for record in plan {
         let metadata =
             std::fs::symlink_metadata(&record.source).map_err(|error| error.to_string())?;
-        // Publish links (and directories that contain them) by renaming the
-        // staged entry. Target-local ACL copy cannot move reparse points and
-        // would otherwise reject nested `.framework`-style link trees.
+        // Symlink/reparse roots cannot be ACL-copied as ordinary trees; rename
+        // preserves the already-validated relative link after rewrite.
         if crate::path_safety::is_link_or_reparse(&metadata) {
-            continue;
-        }
-        if metadata.is_dir() && staged_tree_contains_symlink(&record.source)? {
             continue;
         }
         let parent = record
@@ -1389,9 +1402,9 @@ fn remove_path_if_matches(path: &std::path::Path, identity: &FileIdentity) -> Re
 #[derive(serde::Serialize, serde::Deserialize)]
 struct MoveIdentityLogRecord {
     index: usize,
-    /// Windows target-local publish creates a temp object directly under the
-    /// real target parent so a copy inherits that parent's ACL; every other
-    /// publish path (rename / hard-link, on any platform) leaves this `None`.
+    /// Target-local publish creates a temp object directly under the real
+    /// target parent so the copy inherits that parent's ACL/mode policy;
+    /// rename-only symlink roots leave this `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     publish_temp: Option<std::path::PathBuf>,
     identity: FileIdentity,
@@ -1516,7 +1529,6 @@ fn record_publish_identity(
     Ok(())
 }
 
-#[cfg(windows)]
 fn publish_target_local_copy(
     identity_log: &mut MoveIdentityLogWriter,
     plan: &mut [MoveRecord],
@@ -1542,7 +1554,16 @@ fn publish_target_local_copy(
             record_publish_identity(identity_log, plan, index, identity)
         })
     } else if metadata.is_dir() {
+        // Create under the final parent so default ACL / setgid / NTFS policy
+        // inherit. Windows uses the inheriting helper for SMB-safe DACLs;
+        // Unix uses plain mkdir (explicit 0o700 would defeat inheritance).
+        #[cfg(windows)]
         crate::fs_secure::create_inheriting_stage_dir(&publish_temp)
+            .map_err(|error| error.to_string())?;
+        #[cfg(unix)]
+        std::fs::create_dir(&publish_temp).map_err(|error| error.to_string())?;
+        #[cfg(unix)]
+        crate::fs_secure::apply_parent_directory_mode(&publish_temp)
             .map_err(|error| error.to_string())?;
         let identity = path_identity(&publish_temp)?;
         let journal_result = record_publish_identity(identity_log, plan, index, &identity);
@@ -1556,7 +1577,11 @@ fn publish_target_local_copy(
             });
         }
         let result = copy_tree_with_inherited_acl(&source, &publish_temp)
-            .and_then(|()| copy_windows_directory_metadata(&source, &publish_temp))
+            .and_then(|()| {
+                #[cfg(windows)]
+                copy_windows_directory_metadata(&source, &publish_temp)?;
+                Ok(())
+            })
             .and_then(|()| sync_directory(&publish_temp));
         if let Err(error) = result {
             let cleanup = remove_path_if_matches(&publish_temp, &identity);
@@ -1584,9 +1609,8 @@ fn publish_target_local_copy(
     }
     record_publish_identity(identity_log, plan, index, &published_snapshot)?;
 
-    // The temporary object was created directly under the final parent, so it
-    // already has the correct NTFS/server ACL. MoveFileW preserves that ACL and
-    // refuses an existing destination.
+    // Created under the final parent, so rename preserves inherited ACL/mode
+    // and still refuses an existing destination.
     rename_file_no_replace(&publish_temp, &target)?;
     if let Some(parent) = target.parent() {
         sync_directory(parent)?;
@@ -1809,31 +1833,20 @@ pub(crate) fn validate_move_record(
         return Err("Refusing unsafe extraction recovery move plan.".to_string());
     }
     if let Some(publish_temp) = &record.publish_temp {
-        #[cfg(not(windows))]
+        if publish_temp.parent() != record.target.parent()
+            || !crate::path_safety::path_is_under_or_equal(destination, publish_temp)
+            || !is_publish_temp_name(publish_temp)
         {
-            let _ = publish_temp;
-            return Err("Refusing a Windows publish path on this platform.".to_string());
-        }
-        #[cfg(windows)]
-        {
-            if publish_temp.parent() != record.target.parent()
-                || !crate::path_safety::path_is_under_or_equal(destination, publish_temp)
-                || !is_publish_temp_name(publish_temp)
-            {
-                return Err("Refusing unsafe extraction publish path.".to_string());
-            }
+            return Err("Refusing unsafe extraction publish path.".to_string());
         }
     } else if record.publish_identity.is_some() {
         #[cfg(windows)]
         {
-            // Rename-published symbolic links and symlink-bearing directory
-            // trees journal an identity without a target-local publish_temp.
-            // Plain files still require the ACL-copy publish path.
+            // New Windows publishes always set publish_temp for non-link roots.
+            // Only rename-published symlink/reparse roots may omit it.
             let allows_rename_publish = |path: &std::path::Path| -> bool {
                 std::fs::symlink_metadata(path)
-                    .map(|metadata| {
-                        crate::path_safety::is_link_or_reparse(&metadata) || metadata.is_dir()
-                    })
+                    .map(|metadata| crate::path_safety::is_link_or_reparse(&metadata))
                     .unwrap_or(false)
             };
             if !allows_rename_publish(&record.source) && !allows_rename_publish(&record.target) {
@@ -1842,6 +1855,8 @@ pub(crate) fn validate_move_record(
                 );
             }
         }
+        // Unix still accepts legacy rename/hardlink journals without
+        // publish_temp so interrupted pre-0.6.1 merges can recover.
     }
     Ok(())
 }
@@ -2168,7 +2183,6 @@ where
     let mut plan = Vec::new();
     plan_staged_contents(staged, destination, &mut reserved, &mut plan)?;
     prepare_planned_links(staged, destination, &plan)?;
-    #[cfg(windows)]
     prepare_target_local_publish_paths(&mut plan, &mut reserved)?;
     match std::fs::remove_file(move_identity_log_path(staged)) {
         Ok(()) => {}
@@ -2193,82 +2207,28 @@ where
                     target.display()
                 ));
             }
-            #[cfg(windows)]
             if plan[index].publish_temp.is_some() {
                 return publish_target_local_copy(&mut identity_log, &mut plan, index);
             }
             let metadata = std::fs::symlink_metadata(&source).map_err(|e| e.to_string())?;
-            if crate::path_safety::is_link_or_reparse(&metadata) {
-                let expected = path_identity_with_fingerprint(&source)?;
-                record_publish_identity(&mut identity_log, &mut plan, index, &expected)?;
-            }
-            if metadata.is_file() {
-                // Journal identity before visibility so hard-link retract cannot
-                // fail closed with both source and target present and no id.
-                if !crate::path_safety::is_link_or_reparse(&metadata) {
-                    let expected = path_identity_with_fingerprint(&source)?;
-                    record_publish_identity(&mut identity_log, &mut plan, index, &expected)?;
-                }
-                publish_file_no_replace(&plan[index].source, &plan[index].target)?;
-                if let Some(expected) = plan[index].publish_identity.clone() {
-                    let actual = path_identity(&plan[index].target)?;
-                    if !file_identities_match(&actual, &expected) {
-                        let actual = path_identity_with_fingerprint(&plan[index].target)?;
-                        if actual.fingerprint() != expected.fingerprint() {
-                            return Err(format!(
-                                "Extraction target changed during commit: {}",
-                                plan[index].target.display()
-                            ));
-                        }
-                        // Rename and hard-link publication preserve the source's
-                        // identity on every platform Zinnia ships for, so this
-                        // only fires for the rare copy fallback used when a
-                        // filesystem has neither atomic primitive. Append the
-                        // correction; hydration takes the latest record per index.
-                        record_publish_identity(&mut identity_log, &mut plan, index, &actual)?;
-                    }
-                }
-                return Ok(());
-            }
             if !crate::path_safety::is_link_or_reparse(&metadata) {
-                let expected = path_identity_with_fingerprint(&source)?;
-                record_publish_identity(&mut identity_log, &mut plan, index, &expected)?;
+                return Err(format!(
+                    "Extraction publish path missing for non-link entry: {}",
+                    source.display()
+                ));
             }
+            let expected = path_identity_with_fingerprint(&source)?;
+            record_publish_identity(&mut identity_log, &mut plan, index, &expected)?;
             rename_file_no_replace(&source, &target)?;
-            // Stage roots are 0o700 while private. Renamed directories must
-            // inherit the destination parent's mode so merge publishes are
-            // not left owner-only under shared/group-readable trees.
-            if metadata.is_dir() {
-                crate::fs_secure::apply_parent_directory_mode(&plan[index].target)
-                    .map_err(|error| error.to_string())?;
+            let actual = path_identity_with_fingerprint(&plan[index].target)?;
+            if actual.fingerprint() != expected.fingerprint() {
+                return Err(format!(
+                    "Extraction link changed during commit: {}",
+                    plan[index].target.display()
+                ));
             }
-            if !crate::path_safety::is_link_or_reparse(&metadata) {
-                let actual = path_identity(&plan[index].target)?;
-                let expected = plan[index]
-                    .publish_identity
-                    .as_ref()
-                    .ok_or_else(|| "Extraction publish snapshot was not recorded.".to_string())?;
-                if !file_identities_match(&actual, expected) {
-                    let actual = path_identity_with_fingerprint(&plan[index].target)?;
-                    if actual.fingerprint() != expected.fingerprint() {
-                        return Err(format!(
-                            "Extraction target changed during commit: {}",
-                            plan[index].target.display()
-                        ));
-                    }
-                    record_publish_identity(&mut identity_log, &mut plan, index, &actual)?;
-                }
-            } else if let Some(expected) = plan[index].publish_identity.clone() {
-                let actual = path_identity_with_fingerprint(&plan[index].target)?;
-                if actual.fingerprint() != expected.fingerprint() {
-                    return Err(format!(
-                        "Extraction link changed during commit: {}",
-                        plan[index].target.display()
-                    ));
-                }
-                if !file_identities_match(&actual, &expected) {
-                    record_publish_identity(&mut identity_log, &mut plan, index, &actual)?;
-                }
+            if !file_identities_match(&actual, &expected) {
+                record_publish_identity(&mut identity_log, &mut plan, index, &actual)?;
             }
             Ok(())
         };

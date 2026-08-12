@@ -564,15 +564,24 @@ pub fn emit_open_paths(app: &tauri::AppHandle, argv: Vec<String>) -> bool {
     route_open_request(app, paths, mode)
 }
 
+fn cli_args_lossy() -> impl Iterator<Item = String> {
+    // `std::env::args()` panics on non-UTF-8 argv. Unix filenames may contain
+    // arbitrary bytes; lossy conversion keeps startup alive and still opens
+    // the vast majority of real paths.
+    std::env::args_os()
+        .skip(1)
+        .map(|arg| arg.to_string_lossy().into_owned())
+}
+
 pub fn collect_cli_context() -> (Vec<String>, String) {
     // Do not consume shell handoffs here. A secondary single-instance process
     // would delete the file before the primary receives forwarded argv.
-    parse_open_request_args_ex(std::env::args().skip(1), false)
+    parse_open_request_args_ex(cli_args_lossy(), false)
 }
 
 /// Resolve launch argv including Windows shell handoffs. Call only from the
 /// primary instance (app setup / open routing), never from a process that may
 /// exit as a single-instance secondary.
 pub fn resolve_cli_context_with_handoffs() -> (Vec<String>, String) {
-    parse_open_request_args_ex(std::env::args().skip(1), true)
+    parse_open_request_args_ex(cli_args_lossy(), true)
 }

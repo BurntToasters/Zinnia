@@ -13,6 +13,9 @@ use super::journal::{register_pending_stage, unregister_pending_stage};
 use super::quota::available_space_for_path;
 use super::{lock_process, CleanupPlan, RunningProcess};
 
+/// Selection token meaning "output path must still be absent at create time".
+pub(crate) const ARCHIVE_OUTPUT_ABSENT_TOKEN: &str = "absent";
+
 // For a compress/update command, the output archive is the single positional
 // arg before `--`. For extract, the -o<dir> destination is returned.
 pub(crate) fn operation_output_path(args: &[String]) -> Option<std::path::PathBuf> {
@@ -191,9 +194,9 @@ pub(crate) fn next_extract_stage_path(
     // uses `-snld10` for macOS `.framework` chains; an inside-destination stage
     // would let a crafted relative escape symlink write into the live user
     // folder during 7-Zip extract, before staged-tree validation. Existing
-    // destinations still get correct ACLs via target-local publish on Windows
-    // and parent-mode apply on Unix. Keep InsideDestination journal recovery
-    // for older in-flight transactions.
+    // destinations still get correct ACLs/mode via target-local publish under
+    // the final parent. Keep InsideDestination journal recovery for older
+    // in-flight transactions.
     create_publish_stage_dir(target, "extract", cache_dir)
 }
 
@@ -668,6 +671,28 @@ where
             })
         }
         Some("a") => {
+            if let Some(expected) = expected_archive_identity {
+                if expected == ARCHIVE_OUTPUT_ABSENT_TOKEN {
+                    if path_entry_exists(&target)? {
+                        return Err(
+                            "Archive output appeared after it was selected; choose a different output path."
+                                .to_string(),
+                        );
+                    }
+                } else if path_entry_exists(&target)? {
+                    if archive_identity_token(&target)? != expected {
+                        return Err(
+                            "Archive output changed after it was selected; choose the current file again."
+                                .to_string(),
+                        );
+                    }
+                } else {
+                    return Err(
+                        "Archive output disappeared after it was selected; choose a new output path."
+                            .to_string(),
+                    );
+                }
+            }
             let target = if path_entry_exists(&target)? {
                 resolve_existing_target(&target, false)?
             } else {

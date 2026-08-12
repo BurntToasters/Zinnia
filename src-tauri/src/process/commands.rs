@@ -884,6 +884,17 @@ pub async fn probe_compress_inputs(
     .map_err(|error| format!("Compress-input probe worker failed: {error}"))?
 }
 
+/// Snapshot an archive create destination at selection time so a long extract
+/// (conversion) cannot treat a newly created file as intentional overwrite.
+#[tauri::command]
+pub fn archive_output_selection_token(path: String) -> Result<String, String> {
+    let path = std::path::PathBuf::from(path);
+    if !super::staging::path_entry_exists(&path)? {
+        return Ok(super::staging::ARCHIVE_OUTPUT_ABSENT_TOKEN.to_string());
+    }
+    super::archive_identity_token(&path)
+}
+
 pub(crate) fn store_probed_7z_version(version: Option<String>) {
     if let Ok(mut guard) = PROBED_7Z_VERSION.lock() {
         *guard = version;
@@ -1756,6 +1767,11 @@ pub fn is_7z_running(
                 process.release_prepare_slot();
             }
             Ok(false)
+        }
+        Some("touch_update") => {
+            process.expire_stale_update_reservation();
+            process.touch_update_reservation(window.label())?;
+            Ok(true)
         }
         Some(_) => Err("Unknown archive-operation status mode.".to_string()),
     }

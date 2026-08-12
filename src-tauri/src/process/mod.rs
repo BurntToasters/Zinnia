@@ -18,8 +18,8 @@ mod tests;
 // Public API + tauri command companions (needed by generate_handler!).
 #[allow(unused_imports)] // re-exported for main.rs / invoke_handler
 pub use commands::{
-    cancel_7z, is_7z_running, is_non_running_kill_error, parse_7z_version, probe_7z,
-    probe_compress_inputs, probed_7z_version, run_7z,
+    archive_output_selection_token, cancel_7z, is_7z_running, is_non_running_kill_error,
+    parse_7z_version, probe_7z, probe_compress_inputs, probed_7z_version, run_7z,
 };
 #[allow(unused_imports)]
 pub use journal::cleanup_orphan_stages;
@@ -33,8 +33,9 @@ pub use recovery::{
 // up on the same path as the function (`process::run_7z` → `process::__cmd__run_7z`).
 #[doc(hidden)]
 pub use commands::{
-    __cmd__cancel_7z, __cmd__is_7z_running, __cmd__probe_7z, __cmd__probe_compress_inputs,
-    __cmd__run_7z, __tauri_command_name_cancel_7z, __tauri_command_name_is_7z_running,
+    __cmd__archive_output_selection_token, __cmd__cancel_7z, __cmd__is_7z_running, __cmd__probe_7z,
+    __cmd__probe_compress_inputs, __cmd__run_7z, __tauri_command_name_archive_output_selection_token,
+    __tauri_command_name_cancel_7z, __tauri_command_name_is_7z_running,
     __tauri_command_name_probe_7z, __tauri_command_name_probe_compress_inputs,
     __tauri_command_name_run_7z,
 };
@@ -54,15 +55,17 @@ pub(crate) use commands::{
     apply_backend_link_switches, extract_warning_is_metadata_only, is_compound_tar_operation,
     prepare_password_transport, rewrite_args_for_managed_listfile, terminate_child,
 };
-#[cfg(all(test, windows))]
+#[cfg(test)]
 pub(crate) use commit::staged_tree_contains_symlink;
 #[cfg(test)]
 pub(crate) use commit::{
     archive_backup_path, archive_stage_has_recovery_backups, assert_safe_extract_target_ancestors,
     commit_failure_should_scrub_staging, merge_staged_extract, merge_staged_extract_with_commit,
-    promote_archive_family, publish_file_no_replace, rollback_cleanup,
-    rollback_persisted_move_plan, validate_move_record, write_move_plan, MAX_EXTRACTED_BYTES,
+    promote_archive_family, rollback_cleanup, rollback_persisted_move_plan, validate_move_record,
+    write_move_plan, MAX_EXTRACTED_BYTES,
 };
+#[cfg(test)]
+pub(crate) use commit::publish_file_no_replace;
 #[cfg(test)]
 pub(crate) use journal::{
     is_safe_stage_dir_name, move_identity_log_path, move_plan_path, read_pending_stages,
@@ -139,9 +142,10 @@ pub(crate) struct ArchiveDestinationSnapshot {
     pub(crate) sha256: [u8; 32],
 }
 
-/// Slightly longer than the frontend install timeout (180s) so a hung install
-/// can still finish, but a dead webview cannot soft-lock archive ops forever.
-pub(crate) const UPDATE_RESERVATION_TTL: std::time::Duration = std::time::Duration::from_secs(210);
+/// Crash-recovery only. Frontend heartbeats refresh `update_reserved_at` while
+/// native install is alive; this TTL must outlast expected auth prompts
+/// (pkexec / AppleScript) without unlocking a still-running installer.
+pub(crate) const UPDATE_RESERVATION_TTL: std::time::Duration = std::time::Duration::from_secs(1800);
 
 impl ProcessState {
     pub fn idle() -> Self {
@@ -168,8 +172,24 @@ impl ProcessState {
         self.cleanup_plan = None;
     }
 
+    /// Refresh the update soft-lock clock while native installation is still
+    /// alive. Only the reserving window may touch.
+    pub(crate) fn touch_update_reservation(&mut self, owner_label: &str) -> Result<(), String> {
+        if self.abort_reason.as_deref() != Some("Installing application update") {
+            return Err("No update installation reservation is active.".to_string());
+        }
+        if self.owner_label.as_deref() != Some(owner_label) {
+            return Err(
+                "Only the window that reserved update installation may refresh it.".to_string(),
+            );
+        }
+        self.update_reserved_at = Some(std::time::Instant::now());
+        Ok(())
+    }
+
     /// Drop a stale update reservation left behind when the webview crashes or
-    /// never reaches `release_update` after `reserve_update`.
+    /// never reaches `release_update` after `reserve_update`. Heartbeats from a
+    /// live install reset the clock, so this only fires after the UI is gone.
     pub(crate) fn expire_stale_update_reservation(&mut self) {
         let Some(reserved_at) = self.update_reserved_at else {
             return;

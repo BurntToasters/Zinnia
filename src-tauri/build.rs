@@ -384,6 +384,7 @@ fn main() {
         "is_7z_running",
         "probe_7z",
         "probe_compress_inputs",
+        "archive_output_selection_token",
         "get_startup_recovery_status",
         "validate_archive_paths",
         "load_settings",

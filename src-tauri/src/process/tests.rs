@@ -1078,6 +1078,51 @@ fn merge_publish_applies_destination_parent_mode_to_directories() {
 }
 
 #[test]
+fn create_refuses_output_that_appeared_after_absent_selection() {
+    let root = temp_root("zinnia-create-absent-toctou");
+    std::fs::create_dir_all(&root).expect("test directory");
+    let input = root.join("input.txt");
+    std::fs::write(&input, b"payload").expect("input");
+    let destination = root.join("converted.7z");
+    // Selection snapshotted "absent", but the path exists when create prepares.
+    std::fs::write(&destination, b"race").expect("raced output");
+    let args = vec![
+        "a".to_string(),
+        "-t7z".to_string(),
+        destination.to_string_lossy().to_string(),
+        "--".to_string(),
+        input.to_string_lossy().to_string(),
+    ];
+    let error = prepare_cleanup_plan(&args, None, Some("absent"))
+        .expect_err("absent selection must refuse a newly present output");
+    assert!(
+        error.contains("appeared after it was selected"),
+        "unexpected error: {error}"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn create_accepts_absent_selection_when_output_still_missing() {
+    let root = temp_root("zinnia-create-absent-ok");
+    std::fs::create_dir_all(&root).expect("test directory");
+    let input = root.join("input.txt");
+    std::fs::write(&input, b"payload").expect("input");
+    let destination = root.join("converted.7z");
+    let args = vec![
+        "a".to_string(),
+        "-t7z".to_string(),
+        destination.to_string_lossy().to_string(),
+        "--".to_string(),
+        input.to_string_lossy().to_string(),
+    ];
+    let plan = prepare_cleanup_plan(&args, None, Some("absent")).expect("absent create plan");
+    assert!(plan.expected_archive_family.is_empty());
+    rollback_cleanup(&plan).expect("rollback");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn extraction_commit_point_precedes_stage_cleanup() {
     let root = temp_root("zinnia-extract-commit-point");
     let destination = root.join("destination");

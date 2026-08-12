@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-archive-output-selection-token"
+description = "Enables the archive_output_selection_token command without any pre-configured scope."
+commands.allow = ["archive_output_selection_token"]
+
+[[permission]]
+identifier = "deny-archive-output-selection-token"
+description = "Denies the archive_output_selection_token command without any pre-configured scope."
+commands.deny = ["archive_output_selection_token"]

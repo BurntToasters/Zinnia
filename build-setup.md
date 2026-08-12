@@ -128,7 +128,18 @@ verify that the draft contains the expected Windows x64/ARM64 NSIS installers,
 universal macOS DMG/ZIP, Linux x64 AppImage/DEB/RPM/Flatpak, updater
 manifests/signatures, SHA-256 lists, and GPG detached signatures. Include Linux
 ARM64 AppImage/DEB/RPM only when intentionally running `release:linux:arm64`;
-the normal public release currently ships Linux x64 only.
+the normal public release currently ships Linux x64 only. Flatpak remains
+x64-only (`flatpak:bundle` / `release:linux:x64`); `release:linux:arm64` does
+not build a Flatpak.
+
+AppImage desktop entries reuse the Debian data layout, including
+`bundle.linux.deb.desktopTemplate` (`linux/desktop-template.hbs`). Keep that
+template (and compound TAR MIME associations) correct for AppImage as well as
+DEB/RPM.
+
+CI `tauri build --no-bundle` is compile smoke only. Before publishing, run the
+Linux package matrix in `docs/QA-CONTEXT-MENUS.md` on build VMs (AppImage/DEB/
+RPM/Flatpak launchers, MIME handlers, and desktop actions).
 
 The Tauri plugins are already declared in `package.json` and
 `src-tauri/Cargo.toml`; do not re-add them during normal setup.
