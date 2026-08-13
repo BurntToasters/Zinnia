@@ -24,11 +24,20 @@ Prerequisites per platform are in [build-setup.md](build-setup.md).
 Rust changes should also pass `cargo clippy --manifest-path src-tauri/Cargo.toml
 --all-targets -- -D warnings`.
 
-## Pre-commit hook
+## Git hooks
 
 `npm install` runs `scripts/install-git-hooks.js`, which points git at the
-tracked [`.githooks`](.githooks) directory. The `pre-commit` hook runs
-format/lint/typecheck when staged files touch `.ts/.css/.html/.js`.
+tracked [`.githooks`](.githooks) directory.
+
+- `pre-commit` runs format/lint/typecheck when staged files touch `.ts/.css/.html/.js`.
+- `prepare-commit-msg` / `commit-msg` strip `Co-authored-by` trailers that
+  include an email, so GitHub does not add extra contributors. To keep a
+  human co-author, prefix the email with `!`:
+
+  `Co-authored-by: Name <!you@example.com>`
+
+  The hook removes the `!` and leaves a normal GitHub trailer. Agent
+  addresses (`@cursor.com`, Copilot, Claude) cannot be kept this way.
 
 - Enable manually: `git config core.hooksPath .githooks`
 - Bypass once: `git commit --no-verify`
