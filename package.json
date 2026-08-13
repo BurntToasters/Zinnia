@@ -126,17 +126,17 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",
-    "@types/node": "^24.13.3",
-    "@typescript-eslint/eslint-plugin": "^8.57.1",
+    "@types/node": "^26.2.0",
+    "@typescript-eslint/eslint-plugin": "^8.67.0",
     "@typescript-eslint/parser": "^8.57.1",
     "@vitest/coverage-v8": "^4.1.0",
-    "dotenv-cli": "^8.0.0",
-    "eslint": "^10.0.3",
-    "jsdom": "^29.0.0",
-    "license-checker-rseidelsohn": "^4.4.2",
+    "dotenv-cli": "^11.0.0",
+    "eslint": "^10.8.1",
+    "jsdom": "^30.0.1",
+    "license-checker-rseidelsohn": "^5.0.1",
     "prettier": "^3.8.1",
-    "typescript": "^6.0.2",
-    "vite": "^8.0.8",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.1",
     "vitest": "^4.1.0"
   }
 }
