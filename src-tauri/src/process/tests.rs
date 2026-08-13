@@ -1476,10 +1476,9 @@ fn nested_symlink_directory_merges_into_existing_destination_windows() {
     let _ = std::fs::remove_dir_all(root);
 }
 
-#[cfg(windows)]
 #[test]
-fn staged_tree_without_symlinks_is_reported_clean_windows() {
-    let root = temp_root("zinnia-tree-scan-clean-win");
+fn staged_tree_without_symlinks_is_reported_clean() {
+    let root = temp_root("zinnia-tree-scan-clean");
     std::fs::create_dir_all(root.join("nested")).expect("tree");
     std::fs::write(root.join("nested/file.txt"), b"ok").expect("file");
     assert!(!staged_tree_contains_symlink(&root).expect("scan"));
@@ -3644,8 +3643,11 @@ fn archive_journal_rollback_preserves_replaced_unfingerprinted_output() {
     std::fs::create_dir_all(&stage).expect("stage");
     std::fs::write(&destination, b"published").expect("published output");
     let identity_only = super::journal::regular_file_identity(&destination).unwrap();
-    std::fs::remove_file(&destination).expect("remove original");
-    std::fs::write(&destination, b"user replacement").expect("replacement");
+    // Replace via a sibling rename so the new file cannot inherit the old
+    // inode (tmpfs on Linux CI reuses inodes after unlink+recreate).
+    let replacement = root.join("replacement.7z");
+    std::fs::write(&replacement, b"user replacement").expect("replacement");
+    std::fs::rename(&replacement, &destination).expect("replace destination");
     let journal = CleanupJournal {
         stage: stage.clone(),
         destination: destination.clone(),
