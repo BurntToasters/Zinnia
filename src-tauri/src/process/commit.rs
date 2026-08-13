@@ -1527,13 +1527,10 @@ fn publish_target_local_copy(
                 }
             });
         }
-        let result = copy_tree_with_inherited_acl(&source, &publish_temp)
-            .and_then(|()| {
-                #[cfg(windows)]
-                copy_windows_directory_metadata(&source, &publish_temp)?;
-                Ok(())
-            })
-            .and_then(|()| sync_directory(&publish_temp));
+        let copied = copy_tree_with_inherited_acl(&source, &publish_temp);
+        #[cfg(windows)]
+        let copied = copied.and_then(|()| copy_windows_directory_metadata(&source, &publish_temp));
+        let result = copied.and_then(|()| sync_directory(&publish_temp));
         if let Err(error) = result {
             let cleanup = remove_path_if_matches(&publish_temp, &identity);
             return Err(match cleanup {
