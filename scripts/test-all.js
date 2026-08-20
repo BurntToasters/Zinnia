@@ -413,6 +413,7 @@ function main() {
       "cargo",
       [
         "clippy",
+        "--locked",
         "--manifest-path",
         "src-tauri/Cargo.toml",
         "--all-targets",
@@ -427,7 +428,13 @@ function main() {
     runCommand(
       "rust",
       "cargo",
-      ["test", "--manifest-path", "src-tauri/Cargo.toml", "--all-targets"],
+      [
+        "test",
+        "--locked",
+        "--manifest-path",
+        "src-tauri/Cargo.toml",
+        "--all-targets",
+      ],
       null,
       results,
       { timeout: rustTimeoutMs },
