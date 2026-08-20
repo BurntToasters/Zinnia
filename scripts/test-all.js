@@ -51,6 +51,8 @@ function createInitialResults() {
     changelog: { status: "pending" },
     updater: { status: "pending" },
     flatpak: { status: "pending" },
+    cargoSafeUpdate: { status: "pending" },
+    cargoUpdatePolicy: { status: "pending" },
     test: { status: "pending", passed: null, failed: null, files: null },
     coverage: {
       status: "pending",
@@ -298,6 +300,20 @@ ${colors.reset}`);
     }${colors.reset}`,
   );
   console.log(
+    `${colors.bold}Cargo Safe Update:${colors.reset} ${
+      results.cargoSafeUpdate?.status === "passed"
+        ? `${colors.green}✓ PASS`
+        : `${colors.red}✗ FAIL`
+    }${colors.reset}`,
+  );
+  console.log(
+    `${colors.bold}Cargo Policy:${colors.reset}      ${
+      results.cargoUpdatePolicy?.status === "passed"
+        ? `${colors.green}✓ PASS`
+        : `${colors.red}✗ FAIL`
+    }${colors.reset}`,
+  );
+  console.log(
     `${colors.bold}Tests:${colors.reset}      ${
       results.test.status === "passed"
         ? `${colors.green}✓ PASS`
@@ -358,21 +374,40 @@ ${colors.reset}`);
   return 1;
 }
 
-function main() {
+function main({
+  root = resolve(__dirname, ".."),
+  clearProof = clearQualityGateProof,
+  recordProof = recordSuccessfulQualityGate,
+  runner = runCommand,
+} = {}) {
   // A failed or interrupted run must invalidate any earlier release proof.
-  clearQualityGateProof(resolve(__dirname, ".."));
+  clearProof(root);
   const results = createInitialResults();
   const npm = getNpmCommand();
   printBanner();
 
-  runCommand("typecheck", npm, ["run", "typecheck"], null, results);
-  runCommand("lint", npm, ["run", "lint"], null, results);
-  runCommand("format", npm, ["run", "format:check"], null, results);
-  runCommand("noEmDash", npm, ["run", "validate:no-em-dash"], null, results);
-  runCommand("changelog", npm, ["run", "validate:changelog"], null, results);
-  runCommand("updater", npm, ["run", "validate:updater"], null, results);
-  runCommand("flatpak", npm, ["run", "validate:flatpak"], null, results);
-  const testPassed = runCommand(
+  runner("typecheck", npm, ["run", "typecheck"], null, results);
+  runner("lint", npm, ["run", "lint"], null, results);
+  runner("format", npm, ["run", "format:check"], null, results);
+  runner("noEmDash", npm, ["run", "validate:no-em-dash"], null, results);
+  runner("changelog", npm, ["run", "validate:changelog"], null, results);
+  runner("updater", npm, ["run", "validate:updater"], null, results);
+  runner("flatpak", npm, ["run", "validate:flatpak"], null, results);
+  runner(
+    "cargoSafeUpdate",
+    npm,
+    ["run", "test:cargo-safe-update"],
+    null,
+    results,
+  );
+  runner(
+    "cargoUpdatePolicy",
+    npm,
+    ["run", "check:cargo-update-policy"],
+    null,
+    results,
+  );
+  const testPassed = runner(
     "test",
     npm,
     ["run", "test:cov"],
@@ -384,7 +419,7 @@ function main() {
   } else {
     results.coverage.status = "failed";
   }
-  runCommand(
+  runner(
     "rustfmt",
     "cargo",
     [
@@ -399,7 +434,7 @@ function main() {
     results,
     { timeout: rustTimeoutMs },
   );
-  const rustPrepared = runCommand(
+  const rustPrepared = runner(
     "rustprep",
     npm,
     ["run", "prepare:rust-tests"],
@@ -408,7 +443,7 @@ function main() {
     { timeout: rustTimeoutMs },
   );
   if (rustPrepared) {
-    runCommand(
+    runner(
       "clippy",
       "cargo",
       [
@@ -425,7 +460,7 @@ function main() {
       results,
       { timeout: rustTimeoutMs },
     );
-    runCommand(
+    runner(
       "rust",
       "cargo",
       [
@@ -449,7 +484,7 @@ function main() {
 
   const exitCode = printSummary(results);
   if (exitCode === 0) {
-    const qualityGate = recordSuccessfulQualityGate(resolve(__dirname, ".."));
+    const qualityGate = recordProof(root);
     if (qualityGate.recorded) {
       console.log("Release quality-gate proof recorded for this clean commit.");
     } else {
@@ -465,4 +500,21 @@ function main() {
   return exitCode;
 }
 
-process.exit(main());
+function isDirectExecution() {
+  if (!process.argv[1]) return false;
+  return fileURLToPath(import.meta.url) === resolve(process.argv[1]);
+}
+
+if (isDirectExecution()) {
+  process.exit(main());
+}
+
+export {
+  createInitialResults,
+  getNpmCommand,
+  main,
+  parseCoverage,
+  parseTest,
+  printSummary,
+  runCommand,
+};
