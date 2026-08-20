@@ -19,7 +19,7 @@
     "prepare:rust-tests": "npm run prepare:7z && node scripts/ensure-windows-context-menu-stubs.mjs",
     "test:rust": "npm run prepare:rust-tests && cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets",
     "test:all": "node scripts/test-all.js",
-    "test:cargo-safe-update": "node --test scripts/cargo-safe-update.test.mjs",
+    "test:cargo-safe-update": "node --test scripts/cargo-safe-update.test.mjs scripts/check-cargo-update-policy.test.mjs",
     "check:cargo-update-policy": "node scripts/check-cargo-update-policy.mjs",
     "typecheck": "tsc --noEmit",
     "validate:updater": "node scripts/validate-updater-manifest.js",
