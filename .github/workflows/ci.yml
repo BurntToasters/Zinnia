@@ -16,6 +16,7 @@ permissions:
   contents: read
 
 env:
+  NODE_VERSION: "22.22.2"
   NPM_VERSION: "12.0.2"
   RUST_VERSION: "1.97.1"
   CARGO_AUDIT_VERSION: "0.22.2"
@@ -31,7 +32,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: 22.13
+          node-version: ${{ env.NODE_VERSION }}
       - name: Pin npm
         run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts
       - name: Enforce Co-authored-by email policy
@@ -45,7 +46,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: 22.13
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - name: Pin npm
         run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts
@@ -81,7 +82,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: 22.13
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - name: Pin npm
         run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts
@@ -108,7 +109,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: 22.13
+          node-version: ${{ env.NODE_VERSION }}
       - name: Pin npm
         run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts
       - run: npm run validate:updater
@@ -152,7 +153,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: 22.13
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - name: Pin npm
         run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts
@@ -206,7 +207,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: 22.13
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - name: Pin npm
         run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts
