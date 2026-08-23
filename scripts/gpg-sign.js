@@ -4,7 +4,6 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { execSync, spawnSync } from "child_process";
-import https from "https";
 import os from "os";
 import { fileURLToPath, pathToFileURL } from "url";
 import {
@@ -12,6 +11,10 @@ import {
   verifyUpdaterSignatures,
 } from "./updater-signature-verifier.js";
 import { verifyReleaseSession } from "./release-session.js";
+import githubCli from "./github-cli.cjs";
+
+const { assertGitHubCliAuthenticated, githubApi, uploadReleaseAsset } =
+  githubCli;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -39,7 +42,6 @@ const EXPECTED_TAG = (process.env.EXPECTED_TAG || "").trim();
 
 const GPG_KEY_ID = process.env.GPG_KEY_ID;
 const GPG_PASSPHRASE = process.env.GPG_PASSPHRASE;
-const GH_TOKEN = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
 const REPO_OWNER = process.env.GH_REPO_OWNER || "BurntToasters";
 const REPO_NAME = process.env.GH_REPO_NAME || "zinnia";
 const TAG_DOWNLOAD_BASE_URL = `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${encodeURIComponent(TAG)}`;
@@ -909,55 +911,7 @@ function signArtifacts(files) {
 }
 
 function ghRequest(method, endpoint, body) {
-  return new Promise((resolve, reject) => {
-    const opts = {
-      hostname: "api.github.com",
-      path: endpoint,
-      method,
-      headers: {
-        Authorization: `Bearer ${GH_TOKEN}`,
-        "User-Agent": "Zinnia-Release",
-        Accept: "application/vnd.github.v3+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-      },
-    };
-    if (body) opts.headers["Content-Type"] = "application/json";
-
-    const req = https.request(opts, (res) => {
-      let data = "";
-      res.on("data", (c) => (data += c));
-      res.on("end", () => {
-        try {
-          const json = data ? JSON.parse(data) : {};
-          if (res.statusCode >= 200 && res.statusCode < 300) {
-            resolve(json);
-          } else {
-            const error = new Error(
-              `GitHub ${res.statusCode}: ${json.message || data}`,
-            );
-            error.statusCode = res.statusCode;
-            reject(error);
-          }
-        } catch {
-          if (res.statusCode >= 200 && res.statusCode < 300) {
-            resolve(data);
-          } else {
-            const error = new Error(
-              `GitHub ${res.statusCode}: ${data || "Non-JSON error response"}`,
-            );
-            error.statusCode = res.statusCode;
-            reject(error);
-          }
-        }
-      });
-    });
-    req.on("error", reject);
-    req.setTimeout(30_000, () => {
-      req.destroy(new Error("GitHub API request timed out."));
-    });
-    if (body) req.write(JSON.stringify(body));
-    req.end();
-  });
+  return Promise.resolve(githubApi(method, endpoint, body));
 }
 
 /**
@@ -1008,74 +962,13 @@ async function getOrCreateRelease() {
 }
 
 async function uploadAssetOnce(uploadUrl, filePath) {
-  const fileName = path.basename(filePath);
-  const contentLength = fs.statSync(filePath).size;
-  const url = new URL(uploadUrl.replace("{?name,label}", ""));
-  url.searchParams.set("name", fileName);
-
-  const isText = /\.(asc|txt|json)$/i.test(fileName);
-
-  // Must return the parsed GitHub asset body  -  beta feed sync needs `id`.
-  return await new Promise((resolve, reject) => {
-    const req = https.request(
-      {
-        hostname: url.hostname,
-        path: url.pathname + url.search,
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${GH_TOKEN}`,
-          "User-Agent": "Zinnia-Release",
-          Accept: "application/vnd.github.v3+json",
-          "Content-Type": isText ? "text/plain" : "application/octet-stream",
-          "Content-Length": contentLength,
-        },
-      },
-      (res) => {
-        let data = "";
-        res.on("data", (c) => (data += c));
-        res.on("end", () => {
-          if (res.statusCode < 300) {
-            try {
-              const parsed = data ? JSON.parse(data) : null;
-              if (!parsed || typeof parsed.id !== "number") {
-                reject(
-                  new Error(
-                    `Upload ${fileName} succeeded but GitHub returned no asset id.`,
-                  ),
-                );
-                return;
-              }
-              resolve(parsed);
-            } catch {
-              reject(
-                new Error(
-                  `Upload ${fileName} returned an invalid GitHub response.`,
-                ),
-              );
-            }
-          } else if (res.statusCode === 422) {
-            let detail = data;
-            try {
-              const parsed = JSON.parse(data);
-              if (parsed?.message) detail = parsed.message;
-            } catch {}
-            reject(new Error(`Upload ${fileName} rejected (422): ${detail}.`));
-          } else {
-            reject(
-              new Error(`Upload ${fileName} failed ${res.statusCode}: ${data}`),
-            );
-          }
-        });
-      },
+  const uploaded = uploadReleaseAsset(uploadUrl, filePath);
+  if (!uploaded || typeof uploaded.id !== "number") {
+    throw new Error(
+      `Upload ${path.basename(filePath)} succeeded but GitHub returned no asset id.`,
     );
-    req.on("error", reject);
-    req.setTimeout(120_000, () => {
-      req.destroy(new Error(`Upload ${fileName} timed out.`));
-    });
-    const stream = fs.createReadStream(filePath);
-    stream.on("error", (error) => req.destroy(error));
-    stream.pipe(req);
-  });
+  }
+  return uploaded;
 }
 
 async function uploadAsset(uploadUrl, filePath) {
@@ -1102,16 +995,11 @@ async function listReleaseAssets(releaseId) {
   );
 }
 
-async function downloadUrlToFile(
-  url,
-  destination,
-  { authenticated = true } = {},
-) {
+async function downloadUrlToFile(url, destination) {
   const headers = {
     Accept: "application/octet-stream",
     "User-Agent": "Zinnia-Release",
   };
-  if (authenticated && GH_TOKEN) headers.Authorization = `Bearer ${GH_TOKEN}`;
   const response = await fetch(url, { headers, redirect: "follow" });
   if (!response.ok) {
     throw new Error(`Download ${url} failed with HTTP ${response.status}.`);
@@ -1586,9 +1474,7 @@ async function loadAndVerifyPublishedBetaManifests(currentRelease) {
     for (const name of expectedNames) {
       const asset = byName.get(name);
       const manifestPath = path.join(temporaryDirectory, name);
-      await downloadUrlToFile(asset.browser_download_url, manifestPath, {
-        authenticated: false,
-      });
+      await downloadUrlToFile(asset.browser_download_url, manifestPath);
       const contents = fs.readFileSync(manifestPath, "utf8");
       const referenced = validatePublishedBetaManifest({
         name,
@@ -1626,9 +1512,7 @@ async function loadAndVerifyPublishedBetaManifests(currentRelease) {
     for (const record of artifactRecords.values()) {
       const artifactPath = path.join(temporaryDirectory, record.name);
       // Public, unauthenticated fetch proves clients can actually download it.
-      await downloadUrlToFile(record.url, artifactPath, {
-        authenticated: false,
-      });
+      await downloadUrlToFile(record.url, artifactPath);
       const signaturePath = `${artifactPath}.sig`;
       fs.writeFileSync(signaturePath, `${record.signature}\n`);
       localArtifacts.set(record.name, artifactPath);
@@ -1702,6 +1586,7 @@ function buildUploadList({
 
 async function main() {
   console.log(`\nZinnia ${VERSION}: release pipeline\n`);
+  assertGitHubCliAuthenticated();
 
   if (EXPECTED_TAG && EXPECTED_TAG !== TAG) {
     throw new Error(
@@ -1736,12 +1621,6 @@ async function main() {
   for (const checksumFile of checksumFiles) {
     ascFiles.push(signFile(checksumFile));
     console.log(`  + ${path.basename(checksumFile)}.asc`);
-  }
-
-  if (!GH_TOKEN) {
-    console.log("\n[5/5] GH_TOKEN not set; skipping GitHub upload.");
-    console.log(`Artifacts staged in: ${releaseDir}\n`);
-    return;
   }
 
   console.log("[5/5] Uploading to GitHub...");
@@ -1781,11 +1660,7 @@ async function syncBetaManifestsAfterPublish() {
       "release:sync-beta-manifests is only for beta versions (syncs latest-*-beta-*.json onto /releases/latest).",
     );
   }
-  if (!GH_TOKEN) {
-    throw new Error(
-      "GH_TOKEN or GITHUB_TOKEN is required to sync beta manifests.",
-    );
-  }
+  assertGitHubCliAuthenticated();
   let currentRelease;
   try {
     currentRelease = await ghRequest(

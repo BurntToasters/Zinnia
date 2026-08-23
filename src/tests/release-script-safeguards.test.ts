@@ -24,7 +24,6 @@ import {
   officialArchiveExtractionCommand,
   validateTrusted7zPath,
 } from "../../scripts/prepare-7z-helpers.js";
-import { githubAuthorizationForUrl } from "../../scripts/updater-live-helpers.js";
 import {
   assertBinaryContainsAppGroup,
   assertUniversalBinaryContainsAppGroup,
@@ -37,7 +36,6 @@ const {
   assertReleaseTargetsCommit: assertReleaseTargetsCommitCjs,
   listAllGithubPages: listAllGithubPagesCjs,
   readChangelogReleaseBody,
-  resolveGithubToken,
   verifyReleaseSession,
 } = require("../../scripts/ensure-draft-release.cjs") as {
   assertReleaseTargetsCommit: (
@@ -48,7 +46,6 @@ const {
   ) => unknown;
   listAllGithubPages: typeof listAllGithubPages;
   readChangelogReleaseBody: (changelogPath?: string) => string;
-  resolveGithubToken: (env?: NodeJS.ProcessEnv) => string | undefined;
   verifyReleaseSession: (run?: typeof spawnSync) => void;
 };
 
@@ -283,38 +280,6 @@ describe("release script safeguards", () => {
     }
   });
 
-  it("resolves GitHub tokens from GH_TOKEN or GITHUB_TOKEN", () => {
-    expect(resolveGithubToken({ GH_TOKEN: "from-gh" })).toBe("from-gh");
-    expect(resolveGithubToken({ GITHUB_TOKEN: "from-github" })).toBe(
-      "from-github",
-    );
-    expect(
-      resolveGithubToken({ GH_TOKEN: "preferred", GITHUB_TOKEN: "fallback" }),
-    ).toBe("preferred");
-    expect(resolveGithubToken({})).toBeUndefined();
-  });
-
-  it("fails ensure-draft when no token is set in create or wait mode", () => {
-    // Empty strings win over dotenv defaults (dotenv does not override).
-    const env = {
-      ...process.env,
-      GH_TOKEN: "",
-      GITHUB_TOKEN: "",
-    };
-
-    for (const args of [[], ["--wait"]] as const) {
-      const result = spawnSync(
-        process.execPath,
-        ["scripts/ensure-draft-release.cjs", ...args],
-        { cwd: process.cwd(), encoding: "utf8", env },
-      );
-      expect(result.status).not.toBe(0);
-      expect(`${result.stderr}${result.stdout}`).toMatch(
-        /GH_TOKEN or GITHUB_TOKEN is required/,
-      );
-    }
-  });
-
   it("reads CHANGELOG.md for Windows draft release notes", () => {
     const body = readChangelogReleaseBody();
     expect(body).toContain("## Changes in `");
@@ -434,12 +399,8 @@ describe("release script safeguards", () => {
       source.indexOf("async function uploadAssetOnce"),
       source.indexOf("async function uploadAsset("),
     );
-    // Regression: awaiting without return made beta→latest sync always fail
-    // with "GitHub did not identify staged asset".
-    expect(uploadOnce).toMatch(
-      /return await new Promise\(\(resolve, reject\) => \{/,
-    );
-    expect(uploadOnce).toContain('typeof parsed.id !== "number"');
+    expect(uploadOnce).toContain("typeof uploaded.id");
+    expect(uploadOnce).toContain("return uploaded");
 
     const transaction = source.slice(
       source.indexOf("async function replaceReleaseAssetsTransactionally"),
@@ -528,11 +489,11 @@ describe("release script safeguards", () => {
     ).toThrow(/outside the published/);
   });
 
-  it("passes GH_TOKEN or GITHUB_TOKEN into updater-live GitHub authorization", () => {
+  it("checks public updater downloads without injecting GitHub tokens", () => {
     const source = fs.readFileSync("scripts/validate-updater-live.js", "utf8");
-    expect(source).toContain(
-      "process.env.GH_TOKEN || process.env.GITHUB_TOKEN",
-    );
+    expect(source).not.toContain("GH_TOKEN");
+    expect(source).not.toContain("GITHUB_TOKEN");
+    expect(source).not.toContain("headers.Authorization");
   });
 
   it("discovers Windows Artifact Signing tools like 0.6.0 (path presence, no client-tool Authenticode gate)", () => {
@@ -604,27 +565,6 @@ describe("release script safeguards", () => {
     } finally {
       fs.rmSync(temporaryDirectory, { recursive: true, force: true });
     }
-  });
-
-  it("sends GitHub authorization only to HTTPS github.com URLs", () => {
-    expect(
-      githubAuthorizationForUrl(
-        "https://github.com/owner/repo/releases/latest",
-        "secret",
-      ),
-    ).toBe("Bearer secret");
-    expect(
-      githubAuthorizationForUrl(
-        "https://github.com.evil.test/release",
-        "secret",
-      ),
-    ).toBeUndefined();
-    expect(
-      githubAuthorizationForUrl("https://example.test/release", "secret"),
-    ).toBeUndefined();
-    expect(
-      githubAuthorizationForUrl("http://github.com/release", "secret"),
-    ).toBeUndefined();
   });
 
   it("requires --all before updating 7-Zip checksums", () => {
