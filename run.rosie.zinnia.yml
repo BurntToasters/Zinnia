@@ -36,7 +36,7 @@ modules:
       # sources come from the clean commit export prepared by the host script.
       build-args:
         - --share=network
-      append-path: /usr/lib/sdk/node22/bin:/usr/lib/sdk/rust-stable/bin
+      append-path: /run/build/zinnia/npm-global/bin:/usr/lib/sdk/node22/bin:/usr/lib/sdk/rust-stable/bin
       env:
         CARGO_HOME: /run/build/zinnia/cargo
         RUSTUP_HOME: /run/build/zinnia/rustup
@@ -44,6 +44,9 @@ modules:
         HUSKY: "0"
         RUSTUP_TOOLCHAIN: stable
     build-commands:
+      # node22 SDK ships npm 10.x, which does not support --min-release-age.
+      # npm@12 plus --before 3 days ago takes the newest 12.x that is old enough.
+      - npm install --global npm@12 --ignore-scripts --engine-strict=false --before="$(date -u -d '3 days ago' +%Y-%m-%dT%H:%M:%SZ)" --prefix /run/build/zinnia/npm-global
       - npm ci
       - npm run sync-version
       - npm run prepare:7z:all
