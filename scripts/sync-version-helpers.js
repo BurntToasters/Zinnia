@@ -252,3 +252,29 @@ export function syncChangelogForVersion(changelog, version) {
 
   return updated;
 }
+
+export function syncNpmLockfileVersion(lockText, version) {
+  let parsed;
+  try {
+    parsed = JSON.parse(lockText);
+  } catch (error) {
+    throw new Error(
+      `package-lock.json is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("package-lock.json root must be an object");
+  }
+  if (!parsed.packages || typeof parsed.packages !== "object") {
+    throw new Error("package-lock.json is missing packages");
+  }
+  if (!parsed.packages[""] || typeof parsed.packages[""] !== "object") {
+    throw new Error('package-lock.json is missing packages[""]');
+  }
+  if (parsed.version === version && parsed.packages[""].version === version) {
+    return lockText;
+  }
+  parsed.version = version;
+  parsed.packages[""].version = version;
+  return `${JSON.stringify(parsed, null, 2)}\n`;
+}

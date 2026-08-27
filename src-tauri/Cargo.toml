@@ -1,6 +1,6 @@
 [package]
 name = "zinnia"
-version = "0.6.1-beta.6"
+version = "0.6.1-beta.7"
 description = "Cross-platform 7z GUI built with Tauri."
 authors = ["BurntToasters <code@rosie.run>"]
 edition = "2021"
@@ -51,7 +51,7 @@ libc = "0.2"
 [dev-dependencies]
 minisign-verify = "0.2.5"
 
-# Patched: macOS privileged install must not interpolate bundle paths into shell.
+# Patched: macOS transactional install, confined tar, Linux helper PATH, Windows ShellExecute.
 [patch.crates-io]
 tauri-plugin-updater = { path = "vendor/tauri-plugin-updater" }
 

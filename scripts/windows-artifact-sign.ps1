@@ -7,6 +7,8 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+& node (Join-Path $PSScriptRoot 'release-policy.cjs')
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 if ($env:SKIP_WIN_CODESIGN -eq '1') {
   Write-Host "SKIP_WIN_CODESIGN=1; leaving Windows artifact unsigned: $FilePath"
   exit 0

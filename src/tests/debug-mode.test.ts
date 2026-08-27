@@ -112,6 +112,14 @@ describe("promptAndToggleDebugMode", () => {
     expect(state.currentSettings.debug).toBe(false);
     expect(invoke).not.toHaveBeenCalled();
   });
+
+  it("restores previous settings when persist fails", async () => {
+    vi.mocked(ask).mockResolvedValue(true);
+    vi.mocked(invoke).mockRejectedValueOnce(new Error("disk full"));
+    await promptAndToggleDebugMode();
+    expect(state.currentSettings.debug).toBe(false);
+    expect(isDebugEnabled()).toBe(false);
+  });
 });
 
 describe("logCommandResult debug sink", () => {

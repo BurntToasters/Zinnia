@@ -23,6 +23,7 @@ use tauri::{
 mod commands;
 mod config;
 mod error;
+mod install_safety;
 mod updater;
 
 pub use config::Config;

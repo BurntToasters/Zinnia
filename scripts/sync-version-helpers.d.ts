@@ -37,3 +37,8 @@ export function syncChangelogForVersion(
   changelog: string,
   version: string,
 ): string;
+
+export function syncNpmLockfileVersion(
+  lockText: string,
+  version: string,
+): string;

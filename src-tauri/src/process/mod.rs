@@ -50,11 +50,14 @@ pub(crate) use journal::unregister_pending_stage;
 pub(crate) use quota::available_space_for_path;
 pub(crate) use staging::create_private_stage_dir;
 
+pub(crate) use commands::terminate_child;
+
 #[cfg(test)]
 pub(crate) use commands::{
-    apply_backend_link_switches, compound_tar_outer_extract_args, compound_tar_outer_unpack_ok,
-    extract_warning_is_metadata_only, is_compound_tar_operation, prepare_password_transport,
-    rewrite_args_for_managed_listfile, terminate_child,
+    apply_backend_link_switches, collect_command_output, compound_tar_outer_extract_args,
+    compound_tar_outer_unpack_ok, extract_warning_is_metadata_only, finalize_preparation_error,
+    interpret_terminate_wait, is_compound_tar_operation, prepare_password_transport,
+    rewrite_args_for_managed_listfile,
 };
 #[cfg(test)]
 pub(crate) use commit::publish_file_no_replace;
@@ -83,8 +86,9 @@ pub(crate) use recovery::{
 };
 #[cfg(test)]
 pub(crate) use staging::{
-    assert_slt_archive_members_safe, extract_member_list_args, operation_output_path,
-    prepare_cleanup_plan, random_token,
+    archive_output_family_token, assert_slt_archive_members_safe, extract_member_list_args,
+    listing_preflight_exit_is_acceptable, operation_output_path, prepare_cleanup_plan,
+    random_token, ARCHIVE_OUTPUT_ABSENT_TOKEN,
 };
 
 #[derive(serde::Serialize)]
@@ -205,6 +209,13 @@ impl ProcessState {
             return;
         }
         self.release_prepare_slot();
+    }
+
+    pub(crate) fn blocks_quit_for_update_install(&self) -> bool {
+        self.child.is_none()
+            && self.preparing
+            && self.update_reserved_at.is_some()
+            && self.abort_reason.as_deref() == Some("Installing application update")
     }
 }
 

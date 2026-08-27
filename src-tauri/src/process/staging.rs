@@ -7,14 +7,49 @@ use super::archive_snapshot::{
     archive_file_identity, archive_identity_token, stage_extract_input_with_cancel,
     ArchiveFileIdentity,
 };
-use super::commands::{collect_command_output, terminate_child};
+use super::commands::{
+    collect_command_output, extract_warning_is_metadata_only, terminate_registered_child,
+};
 use super::commit::archive_destination_family_snapshot;
 use super::journal::{register_pending_stage, unregister_pending_stage};
 use super::quota::available_space_for_path;
-use super::{lock_process, CleanupPlan, RunningProcess};
+use super::{lock_process, ArchiveDestinationSnapshot, CleanupPlan, RunningProcess};
 
 /// Selection token meaning "output path must still be absent at create time".
 pub(crate) const ARCHIVE_OUTPUT_ABSENT_TOKEN: &str = "absent";
+
+/// Hash of the create destination family (base + contiguous `.001`…) at pick
+/// time. Empty family is `ARCHIVE_OUTPUT_ABSENT_TOKEN`.
+pub(crate) fn archive_output_family_token(path: &std::path::Path) -> Result<String, String> {
+    let family = archive_destination_family_snapshot(path)?;
+    Ok(archive_output_family_token_from_snapshots(&family))
+}
+
+fn archive_output_family_token_from_snapshots(family: &[ArchiveDestinationSnapshot]) -> String {
+    use sha2::Digest as _;
+
+    if family.is_empty() {
+        return ARCHIVE_OUTPUT_ABSENT_TOKEN.to_string();
+    }
+    let mut hasher = sha2::Sha256::new();
+    for member in family {
+        hasher.update(member.path.as_os_str().as_encoded_bytes());
+        hasher.update(member.len.to_le_bytes());
+        hasher.update(member.sha256);
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+fn archive_family_content_matches(
+    left: &[ArchiveDestinationSnapshot],
+    right: &[ArchiveDestinationSnapshot],
+) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right)
+            .all(|(a, b)| a.len == b.len && a.sha256 == b.sha256)
+}
 
 // For a compress/update command, the output archive is the single positional
 // arg before `--`. For extract, the -o<dir> destination is returned.
@@ -316,6 +351,10 @@ fn hard_link_target_is_unsafe(target: &str) -> bool {
     link_target_is_absolute(target) || archive_member_path_is_unsafe(target)
 }
 
+pub(crate) fn listing_preflight_exit_is_acceptable(code: i32, stdout: &str, stderr: &str) -> bool {
+    code == 0 || (code == 1 && extract_warning_is_metadata_only(stdout, stderr))
+}
+
 pub(crate) fn assert_slt_archive_members_safe(
     slt_output: &str,
     archive_path: &str,
@@ -408,14 +447,12 @@ pub(crate) async fn assert_extract_archive_members_safe(
     let archive_path = std::path::PathBuf::from(&archive);
     let identity = archive_file_identity(&archive_path)?;
     let (mut rx, child, pending_password) =
-        super::commands::spawn_7z_noninteractive(app, list_args)?;
+        super::commands::spawn_7z_noninteractive(app, list_args, state)?;
     {
         let mut process = lock_process(state)?;
         if process.cancelling {
-            process.child = None;
-            // Keep preparing/cancelling until run_7z finishes rollback/journal clear.
             drop(process);
-            terminate_child(&child);
+            terminate_registered_child(state, &child)?;
             return Err("Operation cancelled.".to_string());
         }
         // Register before password stdin so cancel can kill a blocked write.
@@ -428,20 +465,17 @@ pub(crate) async fn assert_extract_archive_members_safe(
             let cancelled = lock_process(state)
                 .map(|process| process.cancelling)
                 .unwrap_or(false);
-            if let Ok(mut process) = lock_process(state) {
-                process.child = None;
-            }
+            terminate_registered_child(state, &child)?;
             return Err(if cancelled {
                 "Operation cancelled.".to_string()
             } else {
                 error
             });
         }
-        let mut process = lock_process(state)?;
+        let process = lock_process(state)?;
         if process.cancelling {
-            process.child = None;
             drop(process);
-            terminate_child(&child);
+            terminate_registered_child(state, &child)?;
             return Err("Operation cancelled.".to_string());
         }
     }
@@ -455,15 +489,13 @@ pub(crate) async fn assert_extract_archive_members_safe(
     {
         Ok(collected) => collected,
         Err(_) => {
-            let child = lock_process(state)
-                .ok()
-                .and_then(|mut process| process.child.take());
-            if let Some(child) = child {
-                terminate_child(&child);
-            }
+            terminate_registered_child(state, &child)?;
             return Err("Archive member-safety preflight timed out after 120 seconds.".to_string());
         }
     };
+    if collected.stream_error.is_some() || collected.exit.is_none() {
+        terminate_registered_child(state, &child)?;
+    }
     {
         let mut process = lock_process(state)?;
         process.child = None;
@@ -482,8 +514,7 @@ pub(crate) async fn assert_extract_archive_members_safe(
                 .to_string(),
         );
     }
-    // 7-Zip uses exit code 1 for warnings (e.g. recoverable issues); still parse.
-    if code != 0 && code != 1 {
+    if !listing_preflight_exit_is_acceptable(code, &collected.stdout, &collected.stderr) {
         let detail = sanitize_output(collected.stderr.trim());
         let detail = if detail.is_empty() {
             sanitize_output(collected.stdout.trim())
@@ -671,24 +702,24 @@ where
             })
         }
         Some("a") => {
+            let pre_family = archive_destination_family_snapshot(&target)?;
             if let Some(expected) = expected_archive_identity {
+                let current = archive_output_family_token_from_snapshots(&pre_family);
                 if expected == ARCHIVE_OUTPUT_ABSENT_TOKEN {
-                    if path_entry_exists(&target)? {
+                    if current != ARCHIVE_OUTPUT_ABSENT_TOKEN {
                         return Err(
                             "Archive output appeared after it was selected; choose a different output path."
                                 .to_string(),
                         );
                     }
-                } else if path_entry_exists(&target)? {
-                    if archive_identity_token(&target)? != expected {
-                        return Err(
-                            "Archive output changed after it was selected; choose the current file again."
-                                .to_string(),
-                        );
-                    }
-                } else {
+                } else if current == ARCHIVE_OUTPUT_ABSENT_TOKEN {
                     return Err(
                         "Archive output disappeared after it was selected; choose a new output path."
+                            .to_string(),
+                    );
+                } else if current != expected {
+                    return Err(
+                        "Archive output changed after it was selected; choose the current file again."
                             .to_string(),
                     );
                 }
@@ -699,6 +730,12 @@ where
                 resolve_new_target(&target)?
             };
             let expected_archive_family = archive_destination_family_snapshot(&target)?;
+            if !archive_family_content_matches(&pre_family, &expected_archive_family) {
+                return Err(
+                    "Archive output changed after it was selected; choose the current file again."
+                        .to_string(),
+                );
+            }
             let stage_dir = create_publish_stage_dir(&target, "archive", cache_ref)?;
             let staged = stage_dir.join(
                 target

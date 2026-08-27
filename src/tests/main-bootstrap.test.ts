@@ -280,6 +280,10 @@ function ensureSelect(id: string, options: string[] = []): HTMLSelectElement {
 function ensureMainDomElements(): void {
   const app = ensureElement("app", "div");
   app.setAttribute("data-mode", app.getAttribute("data-mode") ?? "add");
+  const recoveryBanner = ensureElement("startup-recovery-banner", "div");
+  recoveryBanner.hidden = true;
+  ensureElement("startup-recovery-banner-text", "span");
+  ensureElement("startup-recovery-banner-dismiss", "button");
   ensureElement("input-list", "div");
   ensureElement("log", "div");
   ensureElement("status", "div");
@@ -1270,6 +1274,100 @@ describe("main bootstrap", () => {
     );
     // Wizard failure must not abort app bootstrap.
     expect(document.body.textContent ?? "").not.toContain("Failed to start:");
+  });
+
+  it("shows a persistent malformed-settings banner before the setup wizard", async () => {
+    const warning =
+      "Settings file is malformed (Unexpected token). Defaults were loaded.";
+    mocks.settings.loadSettingsWithMetadata.mockResolvedValue({
+      settings: {
+        ...SETTING_DEFAULTS,
+        workspaceMode: "basic",
+        uiDensity: "comfortable",
+        autoCheckUpdates: true,
+        lastMode: "add",
+        showActivityPanel: true,
+        theme: "system",
+      },
+      extras: {},
+      malformed: true,
+      warning,
+    });
+    mocks.setupWizard.shouldShowSetupWizard.mockReturnValue(true);
+    mocks.setupWizard.showSetupWizard.mockImplementation(async () => {
+      const banner = document.getElementById("startup-recovery-banner");
+      expect(banner?.hidden).toBe(false);
+      expect(
+        document.getElementById("startup-recovery-banner-text")?.textContent,
+      ).toContain("malformed");
+      return {
+        workspaceMode: "basic",
+        theme: "system",
+        autoCheckUpdates: true,
+        updateChannel: "stable",
+      };
+    });
+
+    await loadMainModule();
+
+    expect(mocks.setupWizard.showSetupWizard).toHaveBeenCalled();
+    expect(mocks.ui.log).toHaveBeenCalledWith(warning, "error");
+  });
+
+  it("keeps Explorer handoff failures on the persistent banner", async () => {
+    setInvokeRouter((command) => {
+      if (command === "get_shell_handoff_error") return "handoff file missing";
+      if (command === "probe_7z") return undefined;
+      if (command === "get_cpu_count") return 8;
+      if (command === "get_log_dir") return "/tmp/logs";
+      if (command === "get_platform_info") return "windows";
+      if (command === "is_packaged") return true;
+      if (command === "is_flatpak") return false;
+      if (command === "get_initial_mode") return "";
+      if (command === "get_initial_paths") return [];
+      if (command === "drain_pending_paths") return [];
+      return undefined;
+    });
+
+    await loadMainModule();
+    await flushAsync();
+
+    const banner = document.getElementById("startup-recovery-banner");
+    expect(banner?.hidden).toBe(false);
+    expect(
+      document.getElementById("startup-recovery-banner-text")?.textContent,
+    ).toContain("Could not read the file selection from Explorer");
+    const toastText = [...document.querySelectorAll(".toast")]
+      .map((el) => el.textContent ?? "")
+      .join("\n");
+    expect(toastText).not.toContain(
+      "Could not read the file selection from Explorer",
+    );
+  });
+
+  it("keeps warm Explorer handoff failures on the persistent banner", async () => {
+    type DroppedHandler = (event: { payload: string }) => void;
+    let droppedHandler: DroppedHandler | null = null;
+    listenMock.mockImplementation(async (event, handler) => {
+      if (event === "open-paths-dropped") {
+        droppedHandler = handler as DroppedHandler;
+      }
+      return () => {};
+    });
+
+    await loadMainModule();
+    expect(droppedHandler).toBeTruthy();
+    droppedHandler!({ payload: "selection is too large" });
+
+    const banner = document.getElementById("startup-recovery-banner");
+    expect(banner?.hidden).toBe(false);
+    expect(
+      document.getElementById("startup-recovery-banner-text")?.textContent,
+    ).toContain("selection is too large");
+    const toastText = [...document.querySelectorAll(".toast")]
+      .map((el) => el.textContent ?? "")
+      .join("\n");
+    expect(toastText).not.toContain("selection is too large");
   });
 
   it("processes pending path batches into extract mode for multi-archive drops", async () => {

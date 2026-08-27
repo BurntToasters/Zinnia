@@ -5,27 +5,22 @@
 //              they only ever reuse the draft Windows created (no duplicates).
 
 const fs = require("fs");
-const https = require("https");
 const path = require("path");
 const { execFileSync } = require("child_process");
 
 require("dotenv").config();
+const {
+  assertGitHubCliAuthenticated,
+  githubApi,
+} = require("./github-cli.cjs");
+const { assertStableReleaseOverridesAllowed } = require("./release-policy.cjs");
 
 const REPOSITORY_ROOT = path.resolve(__dirname, "..");
 const CHANGELOG_PATH = path.join(REPOSITORY_ROOT, "CHANGELOG.md");
 
-function resolveGithubToken(env = process.env) {
-  return env.GH_TOKEN || env.GITHUB_TOKEN;
-}
-
-const GH_TOKEN = resolveGithubToken();
 const REPO_OWNER = process.env.GH_REPO_OWNER || "BurntToasters";
 // Keep default casing aligned with scripts/gpg-sign.js and updater URLs.
 const REPO_NAME = process.env.GH_REPO_NAME || "zinnia";
-const GH_REQUEST_TIMEOUT_MS = Number.parseInt(
-  process.env.GH_REQUEST_TIMEOUT_MS || "30000",
-  10,
-);
 const GH_REQUEST_RETRIES = Number.parseInt(
   process.env.GH_REQUEST_RETRIES || "3",
   10,
@@ -206,89 +201,7 @@ function isRetryableGithubError(error) {
 }
 
 function githubRequest(method, endpoint, body) {
-  return new Promise((resolve, reject) => {
-    const options = {
-      hostname: "api.github.com",
-      path: endpoint,
-      method: method,
-      headers: {
-        Authorization: "Bearer " + GH_TOKEN,
-        "User-Agent": "Zinnia-Release-Script",
-        Accept: "application/vnd.github.v3+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-      },
-    };
-
-    if (body) {
-      options.headers["Content-Type"] = "application/json";
-    }
-
-    const req = https.request(options, (res) => {
-      let data = "";
-      res.setEncoding("utf8");
-      res.on("data", (chunk) => (data += chunk));
-      res.on("aborted", () => {
-        const err = new Error(
-          "GitHub API response aborted for " + method + " " + endpoint,
-        );
-        err.code = "ECONNRESET";
-        reject(err);
-      });
-      res.on("end", () => {
-        const statusCode = res.statusCode || 0;
-        try {
-          if (statusCode >= 200 && statusCode < 300) {
-            resolve(data ? JSON.parse(data) : {});
-          } else {
-            const json = data ? JSON.parse(data) : {};
-            const err = new Error(
-              "GitHub API error " +
-                statusCode +
-                " for " +
-                method +
-                " " +
-                endpoint +
-                ": " +
-                (json.message || data || "unknown error"),
-            );
-            err.statusCode = statusCode;
-            reject(err);
-          }
-        } catch (e) {
-          const err = new Error(
-            "GitHub API invalid JSON for " +
-              method +
-              " " +
-              endpoint +
-              ": " +
-              e.message,
-          );
-          err.statusCode = statusCode;
-          reject(err);
-        }
-      });
-    });
-
-    req.setTimeout(GH_REQUEST_TIMEOUT_MS, () => {
-      const err = new Error(
-        "GitHub API timeout after " +
-          GH_REQUEST_TIMEOUT_MS +
-          "ms for " +
-          method +
-          " " +
-          endpoint,
-      );
-      err.code = "ETIMEDOUT";
-      req.destroy(err);
-    });
-
-    req.on("error", reject);
-
-    if (body) {
-      req.write(JSON.stringify(body));
-    }
-    req.end();
-  });
+  return Promise.resolve(githubApi(method, endpoint, body));
 }
 
 async function githubRequestWithRetry(method, endpoint, body) {
@@ -492,16 +405,8 @@ async function waitForDraftRelease() {
 }
 
 async function main() {
-  if (!GH_TOKEN) {
-    const action = WAIT_MODE
-      ? "wait for the Windows-created draft release"
-      : "create or reuse the draft release";
-    throw new Error(
-      "GH_TOKEN or GITHUB_TOKEN is required to " +
-        action +
-        ". Set one of those environment variables and retry.",
-    );
-  }
+  assertStableReleaseOverridesAllowed(process.env, VERSION);
+  assertGitHubCliAuthenticated();
 
   verifyReleaseSession();
 
@@ -517,7 +422,6 @@ module.exports = {
   currentReleaseCommit,
   listAllGithubPages,
   readChangelogReleaseBody,
-  resolveGithubToken,
   syncReleaseNotesBody,
   verifyReleaseSession,
 };

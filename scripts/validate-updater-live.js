@@ -21,9 +21,9 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 import { spawnSync } from "child_process";
-import { githubAuthorizationForUrl } from "./updater-live-helpers.js";
+import { verifyUpdaterSignatures } from "./updater-signature-verifier.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
@@ -150,13 +150,6 @@ async function fetchManifest(target) {
     Accept: "application/json",
     "User-Agent": "zinnia-ci",
   };
-  const authorization = githubAuthorizationForUrl(
-    url,
-    process.env.GH_TOKEN || process.env.GITHUB_TOKEN,
-  );
-  if (authorization) {
-    headers.Authorization = authorization;
-  }
   const response = await fetch(url, {
     headers,
     redirect: "follow",
@@ -188,88 +181,225 @@ function assertExpectedVersion(target, body) {
   }
 }
 
-const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "zinnia-updater-live-"));
-const files = [];
-const skipped = [];
+export function shouldVerifyLiveArtifacts({
+  shapeOnly: shapeOnlyFlag,
+  requestedExpectedVersion: requested,
+} = {}) {
+  return !shapeOnlyFlag && requested === "current";
+}
 
-try {
-  for (const target of selectedTargets) {
-    const result = await fetchManifest(target);
-    if (result.status === 404) {
-      console.warn(`updater-live: skip missing ${result.url}`);
-      skipped.push(target);
-      continue;
+export function collectManifestArtifactRefs(bodies) {
+  const artifacts = new Map();
+  for (const body of bodies) {
+    let manifest;
+    try {
+      manifest = JSON.parse(body);
+    } catch (error) {
+      throw new Error(
+        `updater-live: manifest is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
-    assertExpectedVersion(target, result.body);
-    const filePath = path.join(tmpDir, `latest-${target}.json`);
-    fs.writeFileSync(filePath, result.body, "utf8");
-    files.push(filePath);
-    console.log(`updater-live: fetched ${result.url}`);
+    for (const [target, entry] of Object.entries(manifest.platforms || {})) {
+      if (
+        !entry ||
+        typeof entry.url !== "string" ||
+        typeof entry.signature !== "string"
+      ) {
+        throw new Error(`updater-live: invalid platform entry for ${target}.`);
+      }
+      let name;
+      try {
+        name = decodeURIComponent(
+          new URL(entry.url).pathname.split("/").pop() || "",
+        );
+      } catch {
+        throw new Error(
+          `updater-live: invalid artifact URL for ${target}: ${entry.url}`,
+        );
+      }
+      if (!name) {
+        throw new Error(
+          `updater-live: artifact URL for ${target} has no filename`,
+        );
+      }
+      const previous = artifacts.get(name);
+      if (previous && previous.url !== entry.url) {
+        throw new Error(`updater-live: conflicting URLs for ${name}`);
+      }
+      artifacts.set(name, { url: entry.url, signature: entry.signature });
+    }
   }
+  return artifacts;
+}
 
-  if (files.length === 0) {
-    const message =
-      "updater-live: no published manifests found (all 404); nothing to validate";
-    if (requireLive || expectedVersion || requiredTargets.length > 0) {
-      const requirements = [
-        requireLive && "REQUIRE_UPDATER_LIVE=1",
-        expectedVersion && `expected version ${expectedVersion}`,
-        requiredTargets.length > 0 &&
-          `required targets ${requiredTargets.join(", ")}`,
-      ].filter(Boolean);
-      console.error(`${message} (${requirements.join("; ")})`);
+export function resolveLiveUpdaterTargets(name) {
+  const lower = String(name || "").toLowerCase();
+  if (
+    lower.endsWith(".sig") ||
+    lower.endsWith(".asc") ||
+    lower.endsWith(".json") ||
+    /^sha256sums/i.test(name)
+  ) {
+    return [];
+  }
+  if (/\.(exe|msi|dmg|deb|rpm|flatpak|appimage|zip)$/i.test(name)) {
+    return [{ os: "live", arch: "artifact" }];
+  }
+  return [];
+}
+
+async function downloadToFile(url, dest) {
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/octet-stream",
+      "User-Agent": "zinnia-ci",
+    },
+    redirect: "follow",
+  });
+  if (!response.ok) {
+    throw new Error(`${url}: HTTP ${response.status}`);
+  }
+  fs.writeFileSync(dest, Buffer.from(await response.arrayBuffer()));
+}
+
+async function verifyDownloadedArtifacts(manifestBodies) {
+  const artifacts = collectManifestArtifactRefs(manifestBodies);
+  if (artifacts.size === 0) {
+    throw new Error(
+      "updater-live: no updater artifacts referenced by manifests",
+    );
+  }
+  const artifactDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "zinnia-updater-live-artifacts-"),
+  );
+  try {
+    const byName = new Map();
+    const signatureByBaseName = new Map();
+    for (const [name, { url, signature }] of artifacts) {
+      const dest = path.join(artifactDir, name);
+      console.log(`updater-live: downloading ${url}`);
+      await downloadToFile(url, dest);
+      byName.set(name, dest);
+      const sigPath = path.join(artifactDir, `${name}.sig`);
+      fs.writeFileSync(sigPath, signature);
+      signatureByBaseName.set(name, sigPath);
+    }
+    verifyUpdaterSignatures({
+      root,
+      releaseDir: artifactDir,
+      byName,
+      signatureByBaseName,
+      resolveUpdaterTargets: resolveLiveUpdaterTargets,
+    });
+  } finally {
+    fs.rmSync(artifactDir, { recursive: true, force: true });
+  }
+}
+
+async function run() {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "zinnia-updater-live-"));
+  const files = [];
+  const skipped = [];
+
+  try {
+    for (const target of selectedTargets) {
+      const result = await fetchManifest(target);
+      if (result.status === 404) {
+        console.warn(`updater-live: skip missing ${result.url}`);
+        skipped.push(target);
+        continue;
+      }
+      assertExpectedVersion(target, result.body);
+      const filePath = path.join(tmpDir, `latest-${target}.json`);
+      fs.writeFileSync(filePath, result.body, "utf8");
+      files.push(filePath);
+      console.log(`updater-live: fetched ${result.url}`);
+    }
+
+    if (files.length === 0) {
+      const message =
+        "updater-live: no published manifests found (all 404); nothing to validate";
+      if (requireLive || expectedVersion || requiredTargets.length > 0) {
+        const requirements = [
+          requireLive && "REQUIRE_UPDATER_LIVE=1",
+          expectedVersion && `expected version ${expectedVersion}`,
+          requiredTargets.length > 0 &&
+            `required targets ${requiredTargets.join(", ")}`,
+        ].filter(Boolean);
+        console.error(`${message} (${requirements.join("; ")})`);
+        process.exit(1);
+      }
+      console.warn(message);
+      process.exit(0);
+    }
+    if (requiredTargets.length > 0 && skipped.length > 0) {
+      console.error(
+        `updater-live: required manifest${skipped.length === 1 ? " is" : "s are"} missing: ${skipped.join(", ")}.`,
+      );
       process.exit(1);
     }
-    console.warn(message);
-    process.exit(0);
-  }
-  if (requiredTargets.length > 0 && skipped.length > 0) {
-    console.error(
-      `updater-live: required manifest${skipped.length === 1 ? " is" : "s are"} missing: ${skipped.join(", ")}.`,
-    );
-    process.exit(1);
-  }
 
-  // Soft CI smoke still shape-checks whatever /latest has. When no explicit
-  // --expected-version was set, also fail if a same-channel feed is stale
-  // relative to package.json (avoids all-404 soft-pass hiding a wrong beta).
-  if (!requestedExpectedVersion && !shapeOnly) {
-    const pkg = currentPackageVersion();
-    const pkgIsBeta = /-beta\.\d+$/.test(pkg);
-    for (const filePath of files) {
-      const base = path.basename(filePath, ".json"); // latest-<target>
-      const target = base.replace(/^latest-/, "");
-      if (target.includes("-beta-") !== pkgIsBeta) continue;
-      const body = fs.readFileSync(filePath, "utf8");
-      let manifest;
-      try {
-        manifest = JSON.parse(body);
-      } catch (error) {
-        console.error(
-          `updater-live: ${base}.json is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        process.exit(1);
-      }
-      if (manifest.version !== pkg) {
-        console.error(
-          `updater-live: ${base}.json reports version ${JSON.stringify(manifest.version)}, expected package.json ${pkg} (same-channel stale feed). Pass --expected-version=… to override.`,
-        );
-        process.exit(1);
+    // Soft CI smoke still shape-checks whatever /latest has. When no explicit
+    // --expected-version was set, also fail if a same-channel feed is stale
+    // relative to package.json (avoids all-404 soft-pass hiding a wrong beta).
+    if (!requestedExpectedVersion && !shapeOnly) {
+      const pkg = currentPackageVersion();
+      const pkgIsBeta = /-beta\.\d+$/.test(pkg);
+      for (const filePath of files) {
+        const base = path.basename(filePath, ".json"); // latest-<target>
+        const target = base.replace(/^latest-/, "");
+        if (target.includes("-beta-") !== pkgIsBeta) continue;
+        const body = fs.readFileSync(filePath, "utf8");
+        let manifest;
+        try {
+          manifest = JSON.parse(body);
+        } catch (error) {
+          console.error(
+            `updater-live: ${base}.json is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          process.exit(1);
+        }
+        if (manifest.version !== pkg) {
+          console.error(
+            `updater-live: ${base}.json reports version ${JSON.stringify(manifest.version)}, expected package.json ${pkg} (same-channel stale feed). Pass --expected-version=… to override.`,
+          );
+          process.exit(1);
+        }
       }
     }
-  }
 
-  const check = spawnSync(process.execPath, [validator, ...files], {
-    encoding: "utf8",
-  });
-  if (check.stdout) process.stdout.write(check.stdout);
-  if (check.stderr) process.stderr.write(check.stderr);
-  if (check.status !== 0) {
-    process.exit(check.status ?? 1);
+    const check = spawnSync(process.execPath, [validator, ...files], {
+      encoding: "utf8",
+    });
+    if (check.stdout) process.stdout.write(check.stdout);
+    if (check.stderr) process.stderr.write(check.stderr);
+    if (check.status !== 0) {
+      process.exit(check.status ?? 1);
+    }
+    if (
+      shouldVerifyLiveArtifacts({
+        shapeOnly,
+        requestedExpectedVersion,
+      })
+    ) {
+      const bodies = files.map((filePath) => fs.readFileSync(filePath, "utf8"));
+      await verifyDownloadedArtifacts(bodies);
+    }
+    console.log(
+      `updater-live: ok (${files.length} published, ${skipped.length} missing${expectedVersion ? `, version ${expectedVersion}` : ""})`,
+    );
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   }
-  console.log(
-    `updater-live: ok (${files.length} published, ${skipped.length} missing${expectedVersion ? `, version ${expectedVersion}` : ""})`,
+}
+
+function isDirectExecution() {
+  return Boolean(
+    process.argv[1] &&
+    pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url,
   );
-} finally {
-  fs.rmSync(tmpDir, { recursive: true, force: true });
+}
+
+if (isDirectExecution()) {
+  await run();
 }
