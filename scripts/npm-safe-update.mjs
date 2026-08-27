@@ -69,6 +69,10 @@ export function npmUpdateArguments(cachePath) {
   ];
 }
 
+export function usesWindowsCmdShell(command) {
+  return process.platform === "win32" && /\.cmd$/i.test(String(command));
+}
+
 function run(
   command,
   args,
@@ -78,7 +82,8 @@ function run(
     cwd,
     env,
     encoding: "utf8",
-    shell: false,
+    shell: usesWindowsCmdShell(command),
+    windowsHide: true,
     stdio: capture ? "pipe" : "inherit",
   });
   if (result.error) throw result.error;

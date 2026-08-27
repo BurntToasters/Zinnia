@@ -41,6 +41,7 @@ import {
   npmUpdateArguments,
   parseVersion,
   restoreSnapshot,
+  usesWindowsCmdShell,
 } from "./npm-safe-update.mjs";
 
 // Skip real Cargo integration tests if SKIP_CARGO_INTEGRATION=1
@@ -1593,6 +1594,13 @@ test("46. npm lock update cannot install packages or run lifecycle scripts", () 
     "--min-release-age=3",
     "--cache=/isolated/npm-cache",
   ]);
+});
+
+test("46b. Windows npm.cmd spawn uses a shell; other commands stay shell-less", () => {
+  assert.equal(usesWindowsCmdShell("npm"), false);
+  assert.equal(usesWindowsCmdShell("cargo"), false);
+  assert.equal(usesWindowsCmdShell("npm.cmd"), process.platform === "win32");
+  assert.equal(usesWindowsCmdShell("NPM.CMD"), process.platform === "win32");
 });
 
 test("47. concurrent Cargo dependency updates are rejected", () => {
