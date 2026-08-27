@@ -17,7 +17,7 @@ fn main() -> Result<(), String> {
     let public_key = PublicKey::decode(&public_key_text)
         .map_err(|error| format!("invalid updater public key: {error}"))?;
 
-    for pair in args[1..].chunks_exact(2) {
+    for pair in args[1..].as_chunks::<2>().0 {
         let artifact = std::path::Path::new(&pair[0]);
         let signature_text = std::fs::read_to_string(&pair[1]).map_err(|error| {
             format!(

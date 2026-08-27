@@ -7,9 +7,10 @@ function readRepositoryFile(...segments: string[]): string {
 }
 
 describe("Rust toolchain policy", () => {
-  it("uses the latest stable channel across local, CI, release, and Flatpak builds", () => {
+  it("tracks the rustup stable channel and uses the Flatpak stable extension", () => {
+    const rustChannel = "stable";
     expect(readRepositoryFile("rust-toolchain.toml")).toMatch(
-      /^channel = "stable"$/m,
+      new RegExp(`^channel = "${rustChannel}"$`, "m"),
     );
 
     const packageJson = JSON.parse(readRepositoryFile("package.json")) as {
@@ -20,21 +21,26 @@ describe("Rust toolchain policy", () => {
     );
     expect(rustScripts.length).toBeGreaterThan(0);
     for (const [, command] of rustScripts) {
-      expect(command).toMatch(/(?:install stable|--toolchain stable)/);
+      expect(command).toContain(rustChannel);
     }
 
     const workflow = readRepositoryFile(".github", "workflows", "ci.yml");
+    expect(workflow).toContain(`RUST_VERSION: "${rustChannel}"`);
     const workflowToolchains = workflow.match(/^\s+toolchain: .+$/gm) ?? [];
     expect(workflowToolchains.length).toBeGreaterThan(0);
-    expect(workflowToolchains.every((line) => line.endsWith("stable"))).toBe(
-      true,
-    );
+    expect(
+      workflowToolchains.every((line) =>
+        line.endsWith("${{ env.RUST_VERSION }}"),
+      ),
+    ).toBe(true);
     expect(workflow).toMatch(
-      /rust-check:[\s\S]*cargo clippy --manifest-path src-tauri\/Cargo\.toml --all-targets -- -D warnings/,
+      /rust-check:[\s\S]*cargo clippy --locked --manifest-path src-tauri\/Cargo\.toml --all-targets -- -D warnings/,
     );
 
-    expect(readRepositoryFile("run.rosie.zinnia.yml")).toMatch(
-      /^\s+RUSTUP_TOOLCHAIN: stable$/m,
+    const flatpakManifest = readRepositoryFile("run.rosie.zinnia.yml");
+    expect(flatpakManifest).toContain(
+      "org.freedesktop.Sdk.Extension.rust-stable",
     );
+    expect(flatpakManifest).toMatch(/^\s+RUSTUP_TOOLCHAIN: stable$/m);
   });
 });

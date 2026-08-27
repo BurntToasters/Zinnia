@@ -17,6 +17,9 @@ describe("release preflight policy", () => {
     expect(packageJson.scripts["prerelease:prepare"]).toContain(
       "release:preflight",
     );
+    expect(packageJson.scripts["prerelease:prepare"]).toContain(
+      "release:licenses",
+    );
     expect(packageJson.scripts["release:prepare"]).toContain(
       "workspace:prepare",
     );
@@ -30,12 +33,15 @@ describe("release preflight policy", () => {
     expect(workspacePrepare).toContain("workspace:bootstrap");
     expect(workspacePrepare).toContain("test:all");
     expect(workspacePrepare.match(/test:all/g)).toHaveLength(1);
-    // u = full dep update + quality gate; u2 = quick update without test:all.
-    expect(packageJson.scripts.u.match(/test:all/g)).toHaveLength(1);
-    expect(packageJson.scripts.u).not.toContain("validate:updater");
-    expect(packageJson.scripts.u2).toContain("workspace:bootstrap");
-    expect(packageJson.scripts.u2).not.toContain("workspace:prepare");
-    expect(packageJson.scripts.u2).not.toContain("test:all");
+    // Update entry points only mutate lockfiles; dependency code runs later.
+    expect(packageJson.scripts.u2).toBe(packageJson.scripts.u);
+    for (const command of [packageJson.scripts.u, packageJson.scripts.u2]) {
+      expect(command).toContain("node scripts/npm-safe-update.mjs");
+      expect(command).toContain("node scripts/cargo-safe-update.mjs");
+      expect(command).not.toContain("workspace:");
+      expect(command).not.toContain("test:all");
+      expect(command).not.toContain("validate:updater");
+    }
 
     for (const platform of ["win", "mac"] as const) {
       const full = packageJson.scripts[`release:${platform}`];
@@ -46,7 +52,7 @@ describe("release preflight policy", () => {
       expect(resume).toContain("prerelease:prepare");
       expect(resume).not.toContain("npm run release:prepare");
       expect(continuation).toContain("release:session:verify");
-      expect(continuation).toContain("npm run licenses");
+      expect(continuation).toContain("npm run release:licenses");
       expect(continuation).toContain(":prepared");
     }
     for (const architecture of ["x64", "arm64"] as const) {
@@ -58,16 +64,16 @@ describe("release preflight policy", () => {
       expect(full.match(/npm run release:prepare/g)).toHaveLength(1);
       expect(resume).not.toContain("npm run release:prepare");
       expect(continuation).toContain("release:session:verify");
-      expect(continuation).toContain("npm run licenses");
+      expect(continuation).toContain("npm run release:licenses");
       expect(continuation).toContain(":prepared");
     }
 
     expect(packageJson.scripts["build:win"]).toContain("build:win:prepared");
     expect(packageJson.scripts["build:win"].match(/licenses/g)).toHaveLength(1);
     // Branch/clean-tree gates stay on publish entry points only, not u/u2.
-    expect(packageJson.scripts.u).toContain("workspace:bootstrap");
+    expect(packageJson.scripts.u).not.toContain("workspace:bootstrap");
     expect(packageJson.scripts.u).not.toContain("release:prepare");
-    expect(packageJson.scripts.u2).toContain("workspace:bootstrap");
+    expect(packageJson.scripts.u2).not.toContain("workspace:bootstrap");
     expect(packageJson.scripts.u2).not.toContain("release:prepare");
     expect(packageJson.scripts.u).not.toContain("release:preflight");
     expect(packageJson.scripts.u2).not.toContain("release:preflight");

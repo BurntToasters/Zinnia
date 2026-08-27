@@ -64,6 +64,16 @@ if (fs.existsSync(manifest)) {
     );
     failed = true;
   }
+  if (
+    !yaml.includes("npm@12 --") ||
+    !yaml.includes("--before=") ||
+    !yaml.includes("3 days ago")
+  ) {
+    console.error(
+      "flatpak-dry-run: node22 SDK npm 10.x must be upgraded to newest npm 12 with a 3-day --before age gate before npm ci",
+    );
+    failed = true;
+  }
   if (!yaml.includes("tauri build --no-bundle -- --locked")) {
     console.error("flatpak-dry-run: Cargo build must enforce Cargo.lock");
     failed = true;

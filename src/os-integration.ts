@@ -403,6 +403,40 @@ export async function refreshDefaultArchiverActionButton(
   }
 }
 
+function renderOsIntegrationRefreshFailure(): void {
+  latestStatus = null;
+  const help = document.getElementById("os-integration-help");
+  if (help) {
+    if (!help.hasAttribute("aria-live")) {
+      help.setAttribute("aria-live", "polite");
+    }
+    help.textContent = "Unable to check OS integration status.";
+  }
+  setText("os-platform-label", "Unable to check");
+  setText("os-package-label", "Unable to check");
+  const list = document.getElementById("os-archive-default-list");
+  if (list) list.innerHTML = "";
+  for (const id of [
+    "os-file-assoc-status",
+    "os-context-status",
+    "os-finder-sync-status",
+    "os-finder-services-status",
+    "os-win11-menu-status",
+  ]) {
+    setTriStatePill(id, false, false, "", "", "Unable to check");
+  }
+  for (const id of [
+    "open-os-integration-settings",
+    "reset-os-integration-defaults",
+  ]) {
+    const button = document.getElementById(id) as HTMLButtonElement | null;
+    if (button) {
+      button.disabled = true;
+      button.title = "Unable to check OS integration status.";
+    }
+  }
+}
+
 export async function refreshOsIntegrationStatus(): Promise<void> {
   if (osIntegrationRefreshInFlight) return osIntegrationRefreshInFlight;
   osIntegrationRefreshInFlight = (async () => {
@@ -416,6 +450,7 @@ export async function refreshOsIntegrationStatus(): Promise<void> {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`Failed to refresh OS integration status: ${msg}`);
+      renderOsIntegrationRefreshFailure();
     } finally {
       if (refresh) refresh.disabled = false;
       osIntegrationRefreshInFlight = null;

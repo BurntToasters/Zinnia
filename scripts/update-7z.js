@@ -7,6 +7,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
+import { pathToFileURL } from "node:url";
 import { validateTrusted7zPath } from "./prepare-7z-helpers.js";
 
 const root = process.cwd();
@@ -30,9 +31,81 @@ const obsoletePaths = [
   "public/7zip-license-windows-extra.txt",
 ];
 
-function optionValue(name) {
-  const index = process.argv.indexOf(name);
-  return index >= 0 ? process.argv[index + 1] : undefined;
+function optionValue(name, argv = process.argv) {
+  const index = argv.indexOf(name);
+  return index >= 0 ? argv[index + 1] : undefined;
+}
+
+const UPDATE_7Z_FLAGS = new Set([
+  "--check",
+  "--update",
+  "--force",
+  "--trusted-7z",
+  "--help",
+  "-h",
+]);
+
+export function parseUpdate7zArgv(argv) {
+  const flags = {
+    help: false,
+    check: false,
+    update: false,
+    force: false,
+  };
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--help" || arg === "-h") {
+      flags.help = true;
+      continue;
+    }
+    if (arg === "--check") {
+      flags.check = true;
+      continue;
+    }
+    if (arg === "--update") {
+      flags.update = true;
+      continue;
+    }
+    if (arg === "--force") {
+      flags.force = true;
+      continue;
+    }
+    if (arg === "--trusted-7z") {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("-")) {
+        throw new Error("--trusted-7z requires a path");
+      }
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--trusted-7z=")) {
+      if (!arg.slice("--trusted-7z=".length)) {
+        throw new Error("--trusted-7z requires a path");
+      }
+      continue;
+    }
+    throw new Error(
+      `Unknown 7z:update argument: ${arg}. Allowed: ${Array.from(UPDATE_7Z_FLAGS).join(", ")}`,
+    );
+  }
+  if (flags.check && (flags.update || flags.force)) {
+    throw new Error("--check cannot be combined with --update or --force");
+  }
+  if (!flags.help && !flags.check && !flags.update && !flags.force) {
+    throw new Error("7z:update requires --check, --update, or --force");
+  }
+  return flags;
+}
+
+export function printUpdate7zUsage() {
+  console.log(`Usage: node scripts/update-7z.js --check | --update | --force [--trusted-7z <path>]
+
+  --help, -h     Show this help and exit without network or writes
+  --check        Report whether a newer official 7-Zip exists (no writes)
+  --update       Download and replace vendored 7-Zip assets if newer
+  --force        Refresh assets even when the version matches
+  --trusted-7z   External extractor (or set ZINNIA_TRUSTED_7Z)
+`);
 }
 
 function sha256File(filePath) {
@@ -421,11 +494,17 @@ async function update(version) {
 }
 
 async function main() {
+  const flags = parseUpdate7zArgv(process.argv.slice(2));
+  if (flags.help) {
+    printUpdate7zUsage();
+    return;
+  }
+
   const currentProvenance = JSON.parse(fs.readFileSync(provenancePath, "utf8"));
   const currentVersion = normalizeVersion(currentProvenance.version);
   const latestVersion = await fetchLatestVersion();
 
-  if (process.argv.includes("--check")) {
+  if (flags.check) {
     console.log(`Current official 7-Zip: ${currentVersion}`);
     console.log(`Latest official 7-Zip: ${latestVersion}`);
     if (compareVersions(latestVersion, currentVersion) > 0) {
@@ -436,10 +515,7 @@ async function main() {
     return;
   }
 
-  if (
-    compareVersions(latestVersion, currentVersion) <= 0 &&
-    !process.argv.includes("--force")
-  ) {
+  if (compareVersions(latestVersion, currentVersion) <= 0 && !flags.force) {
     console.log(
       `7-Zip ${currentVersion} already matches or exceeds latest ${latestVersion}. Use --force to refresh assets.`,
     );
@@ -448,7 +524,16 @@ async function main() {
   await update(latestVersion);
 }
 
-main().catch((error) => {
-  console.error(`7z update failed: ${error.message}`);
-  process.exitCode = 1;
-});
+function isDirectExecution() {
+  return Boolean(
+    process.argv[1] &&
+    pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url,
+  );
+}
+
+if (isDirectExecution()) {
+  main().catch((error) => {
+    console.error(`7z update failed: ${error.message}`);
+    process.exitCode = 1;
+  });
+}

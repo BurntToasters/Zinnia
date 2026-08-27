@@ -294,8 +294,94 @@ fn cancellation_helper_kills_and_reaps_spawned_child() {
     };
     let child =
         std::sync::Arc::new(shared_child::SharedChild::spawn(&mut command).expect("spawn child"));
-    terminate_child(&child);
+    terminate_child(&child).expect("terminate child");
     assert!(child.try_wait().expect("poll reaped child").is_some());
+}
+
+#[test]
+fn interpret_terminate_wait_treats_timeout_as_failure() {
+    assert!(interpret_terminate_wait(Ok(None)).is_err());
+}
+
+#[test]
+fn finalize_preparation_error_keeps_slot_when_child_is_still_running() {
+    #[cfg(unix)]
+    let mut command = {
+        let mut command = std::process::Command::new("sh");
+        command.args(["-c", "sleep 30"]);
+        command
+    };
+    #[cfg(windows)]
+    let mut command = {
+        let mut command = std::process::Command::new("cmd");
+        command.args(["/C", "ping -n 30 127.0.0.1 >NUL"]);
+        command
+    };
+    let child =
+        std::sync::Arc::new(shared_child::SharedChild::spawn(&mut command).expect("spawn child"));
+    let state = RunningProcess(std::sync::Mutex::new({
+        let mut process = ProcessState::idle();
+        process.child = Some(child.clone());
+        process.preparing = true;
+        process
+    }));
+    let plan = CleanupPlan {
+        staged_extract: None,
+        staged_archive: None,
+        expected_archive_family: Vec::new(),
+        staged_input_archive: None,
+        cache_dir: None,
+        max_extract_bytes: None,
+        min_free_bytes: None,
+    };
+    let message = finalize_preparation_error(&state, &plan, None, "stream error");
+    assert!(
+        message.contains("still running"),
+        "unexpected finalize message: {message}"
+    );
+    {
+        let process = state.0.lock().expect("process lock");
+        assert!(process.child.is_some(), "live child must stay in the slot");
+        assert!(process.preparing, "prepare slot must stay reserved");
+    }
+    terminate_child(&child).expect("reap test child");
+}
+
+#[test]
+fn stream_error_does_not_fake_child_exit() {
+    tauri::async_runtime::block_on(async {
+        let (tx, mut rx) =
+            tauri::async_runtime::channel::<tauri_plugin_shell::process::CommandEvent>(4);
+        tx.send(tauri_plugin_shell::process::CommandEvent::Error(
+            "broken pipe".to_string(),
+        ))
+        .await
+        .expect("send stream error");
+        drop(tx);
+        let collected = collect_command_output(&mut rx, 1024, |_| {}).await;
+        assert!(
+            collected.exit.is_none(),
+            "a stream error must not be treated as child death"
+        );
+        assert_eq!(collected.stream_error.as_deref(), Some("broken pipe"));
+    });
+}
+
+#[test]
+fn stale_update_reservation_does_not_block_quit_after_ttl() {
+    let mut process = ProcessState::idle();
+    process.preparing = true;
+    process.abort_reason = Some("Installing application update".to_string());
+    process.update_reserved_at = Some(
+        std::time::Instant::now()
+            .checked_sub(UPDATE_RESERVATION_TTL + std::time::Duration::from_secs(1))
+            .expect("reservation instant"),
+    );
+    assert!(process.blocks_quit_for_update_install());
+    process.expire_stale_update_reservation();
+    assert!(!process.blocks_quit_for_update_install());
+    assert!(!process.preparing);
+    assert!(process.update_reserved_at.is_none());
 }
 
 #[test]
@@ -1188,6 +1274,47 @@ fn create_accepts_absent_selection_when_output_still_missing() {
     let plan = prepare_cleanup_plan(&args, None, Some("absent")).expect("absent create plan");
     assert!(plan.expected_archive_family.is_empty());
     rollback_cleanup(&plan).expect("rollback");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn create_refuses_split_volume_that_appeared_after_absent_selection() {
+    let root = temp_root("zinnia-create-split-toctou");
+    std::fs::create_dir_all(&root).expect("test directory");
+    let input = root.join("input.txt");
+    std::fs::write(&input, b"payload").expect("input");
+    let destination = root.join("converted.7z");
+    std::fs::write(root.join("converted.7z.001"), b"race").expect("raced volume");
+    let args = vec![
+        "a".to_string(),
+        "-t7z".to_string(),
+        destination.to_string_lossy().to_string(),
+        "--".to_string(),
+        input.to_string_lossy().to_string(),
+    ];
+    let error = prepare_cleanup_plan(&args, None, Some(ARCHIVE_OUTPUT_ABSENT_TOKEN))
+        .expect_err("absent selection must refuse a newly present split volume");
+    assert!(
+        error.contains("appeared after it was selected"),
+        "unexpected error: {error}"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn archive_output_family_token_covers_split_volumes() {
+    let root = temp_root("zinnia-family-token");
+    std::fs::create_dir_all(&root).expect("test directory");
+    let destination = root.join("converted.7z");
+    let first = root.join("converted.7z.001");
+    let second = root.join("converted.7z.002");
+    std::fs::write(&first, b"one").expect("volume 1");
+    std::fs::write(&second, b"two").expect("volume 2");
+    let token = archive_output_family_token(&destination).expect("family token");
+    assert_ne!(token, ARCHIVE_OUTPUT_ABSENT_TOKEN);
+    std::fs::write(&first, b"changed").expect("mutate volume");
+    let changed = archive_output_family_token(&destination).expect("changed family token");
+    assert_ne!(token, changed);
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -2414,6 +2541,32 @@ Size = 0
 
     assert_slt_archive_members_safe("", "/tmp/empty.7z").expect("empty archive");
     assert!(assert_slt_archive_members_safe("unexpected schema", "/tmp/archive.7z").is_err());
+}
+
+#[test]
+fn listing_exit_1_fails_closed_unless_metadata_only() {
+    let visible_only = "\
+Path = visible.txt
+Size = 4
+";
+    assert_slt_archive_members_safe(visible_only, "/tmp/archive.7z")
+        .expect("partial listing looks safe on its own");
+    assert!(listing_preflight_exit_is_acceptable(0, visible_only, ""));
+    assert!(listing_preflight_exit_is_acceptable(
+        1,
+        "WARNING: There are data after the end of archive\nPath = visible.txt\nSize = 4\n",
+        "",
+    ));
+    assert!(
+        !listing_preflight_exit_is_acceptable(1, visible_only, "WARNING: CRC Failed\n",),
+        "CRC warnings must not publish a truncated listing that omitted members"
+    );
+    assert!(!listing_preflight_exit_is_acceptable(
+        1,
+        visible_only,
+        "WARNING: Unexpected end of data\n",
+    ));
+    assert!(!listing_preflight_exit_is_acceptable(2, visible_only, ""));
 }
 
 #[test]

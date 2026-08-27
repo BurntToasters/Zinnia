@@ -113,18 +113,18 @@ export async function promptAndToggleDebugMode(): Promise<void> {
   );
   if (!confirmed) return;
 
-  state.currentSettings = { ...state.currentSettings, debug: enabling };
+  const previousSettings = state.currentSettings;
+  const nextSettings = { ...previousSettings, debug: enabling };
   try {
-    await persistSettingsImmediately(
-      state.currentSettings,
-      state.settingsExtras,
-    );
+    await persistSettingsImmediately(nextSettings, state.settingsExtras);
   } catch (err) {
+    state.currentSettings = previousSettings;
     const msg = err instanceof Error ? err.message : String(err);
     showToast(`Could not save debug setting: ${msg}`, "error");
     return;
   }
 
+  state.currentSettings = nextSettings;
   setDebugEnabled(enabling);
   if (enabling) {
     setDebugConsoleVisible(true);

@@ -4,6 +4,7 @@ import {
   macBundleVersionFromSemver,
   macMarketingVersionFromSemver,
   syncChangelogForVersion,
+  syncNpmLockfileVersion,
   updatePlistStringValue,
   updateCargoLockPackageVersion,
   updateWindowsResourceFlags,
@@ -304,5 +305,43 @@ describe("CHANGELOG version synchronization", () => {
     );
     expect(synced).toContain("## Changes in `v0.6.1-beta.2:`");
     expect(synced).toContain("## Changes in `v0.6.1-beta.1:`");
+  });
+});
+
+describe("package-lock.json version", () => {
+  const lockfile = `{
+  "name": "zinnia",
+  "version": "0.6.1-beta.5",
+  "lockfileVersion": 3,
+  "packages": {
+    "": {
+      "name": "zinnia",
+      "version": "0.6.1-beta.5"
+    },
+    "node_modules/left-pad": {
+      "version": "1.3.0"
+    }
+  }
+}
+`;
+
+  it("rewrites only the root and packages empty-key version fields", () => {
+    const updated = JSON.parse(
+      syncNpmLockfileVersion(lockfile, "0.6.1-beta.6"),
+    );
+    expect(updated.version).toBe("0.6.1-beta.6");
+    expect(updated.packages[""].version).toBe("0.6.1-beta.6");
+    expect(updated.packages["node_modules/left-pad"].version).toBe("1.3.0");
+  });
+
+  it("returns the original text when versions already match", () => {
+    const current = lockfile.replaceAll("0.6.1-beta.5", "0.6.1-beta.6");
+    expect(syncNpmLockfileVersion(current, "0.6.1-beta.6")).toBe(current);
+  });
+
+  it("fails closed when the lockfile packages empty key is missing", () => {
+    expect(() =>
+      syncNpmLockfileVersion(`{"name":"zinnia","version":"1.0.0"}`, "1.0.0"),
+    ).toThrow(/packages/);
   });
 });

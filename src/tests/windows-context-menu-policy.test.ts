@@ -142,13 +142,19 @@ describe("Windows 11 context-menu manifest", () => {
     expect(tauriConfig.bundle.resources["binaries/7z.dll"]).toBe("7z.dll");
     expect(hooks).toContain('StrCpy $R9 "$INSTDIR\\shell-${VERSION}"');
     expect(hooks).toContain("!macro NSIS_HOOK_PREINSTALL");
+    expect(hooks).toContain("!macro NSIS_HOOK_PREUNINSTALL");
+    expect(hooks).toContain("!macro NSIS_HOOK_POSTUNINSTALL");
     expect(hooks).toContain("zinnia_preinstall_check_reparse");
     expect(hooks).toContain(
       "cannot install into a shell directory that is a junction or symbolic link",
     );
     expect(hooks).toContain("SetOverwrite ifdiff");
     expect(hooks).toContain("SetOverwrite on");
-    expect(hooks).not.toContain("!macro NSIS_HOOK_PREUNINSTALL");
+    expect(hooks).toContain("!macro NSIS_HOOK_PREUNINSTALL");
+    expect(hooks).toContain("zinnia_preuninstall_abort");
+    expect(hooks).toContain(
+      "Uninstall was cancelled so Explorer can still find the shell files",
+    );
     expect(hooks).toContain("!macro NSIS_HOOK_POSTUNINSTALL");
     expect(hooks).toContain("!macro ZINNIA_CLEAN_LEGACY_SHELL_PAYLOAD");
     expect(hooks).toContain('Delete /REBOOTOK "$INSTDIR\\zinnia_shell.dll"');
@@ -170,25 +176,22 @@ describe("Windows 11 context-menu manifest", () => {
     const postUninstall = hooks.slice(
       hooks.indexOf("!macro NSIS_HOOK_POSTUNINSTALL"),
     );
-    const skipCleanup = postUninstall.indexOf(
-      "IntCmp $R5 1 zinnia_keep_shell_payloads",
-    );
-    const cleanPayloads = postUninstall.indexOf(
+    expect(postUninstall).not.toContain("ZINNIA_UNREGISTER_WIN11_CONTEXT_MENU");
+    expect(postUninstall).toContain(
       '!insertmacro ZINNIA_CLEAN_SHELL_PAYLOADS "" zinnia_uninstall_shell_cleanup',
     );
-    const logDelete = postUninstall.indexOf(
-      'Delete /REBOOTOK "$INSTDIR\\zinnia-context-menu-register.log"',
+    const preUninstall = hooks.slice(
+      hooks.indexOf("!macro NSIS_HOOK_PREUNINSTALL"),
+      hooks.indexOf("!macro NSIS_HOOK_POSTUNINSTALL"),
     );
-    const keepPayloads = postUninstall.indexOf("zinnia_keep_shell_payloads:");
-    expect(skipCleanup).toBeGreaterThan(-1);
-    expect(cleanPayloads).toBeGreaterThan(skipCleanup);
-    expect(logDelete).toBeGreaterThan(cleanPayloads);
-    expect(keepPayloads).toBeGreaterThan(logDelete);
+    expect(preUninstall).toContain("ZINNIA_UNREGISTER_WIN11_CONTEXT_MENU");
+    expect(preUninstall).toMatch(/^\s*Abort\s*$/m);
+    expect(preUninstall).toContain("IntCmp $R5 1 zinnia_preuninstall_abort");
     expect(hooks).toContain(
       'Delete /REBOOTOK "$INSTDIR\\zinnia-context-menu-register.log"',
     );
     expect(hooks).toContain('RMDir /REBOOTOK "$INSTDIR"');
-    expect(hooks).toContain("IntCmp $R5 1 zinnia_skip_instdir_rmdir");
+    expect(hooks).not.toContain("zinnia_skip_instdir_rmdir");
     expect(hooks).not.toContain("taskkill");
     expect(hooks).toContain(
       '"$SYSDIR\\WindowsPowerShell\\v1.0\\powershell.exe"',
@@ -206,8 +209,19 @@ describe("Windows 11 context-menu manifest", () => {
       "ShellPayloadLocation must not be a reparse point",
     );
     expect(registration).not.toContain("-Recurse");
+    expect(registration).toContain("Find-PreviousShellPayloads");
+    expect(registration).toContain("Restore-PreviousShellPackages");
+    expect(registration).toContain("Restoring previous packages from");
+    expect(registration).toContain("-ForceUpdateFromAnyVersion");
+    expect(registration).toContain("Unregister-ZinniaShellPackages");
+    expect(registration).toContain("[switch]$Unregister");
+    expect(registration).not.toContain(
+      "if ($previousPayload -and $hadPreviousPackages)",
+    );
     expect(registration).toContain("Could not write registration log");
     expect(registration).toContain("Could not reset registration log");
+    expect(registration).toContain("$attempt -lt 5");
+    expect(hooks).toContain('StrCmp $0 "error"');
     expect(registration).toContain(
       "Cleanup of stale shell payloads was deferred",
     );
@@ -248,10 +262,9 @@ describe("Windows 11 context-menu manifest", () => {
       hooks.indexOf("!macro ZINNIA_UNREGISTER_WIN11_CONTEXT_MENU"),
       hooks.indexOf("!macro ZINNIA_CLEAN_SHELL_PAYLOADS"),
     );
-    expect(unregister).toContain("for($attempt=0;$attempt -lt 2;$attempt++)");
-    expect(unregister).toContain(
-      "Zinnia AppX packages still registered after uninstall",
-    );
+    expect(unregister).toContain("-Unregister");
+    expect(unregister).toContain('-File "$R8"');
+    expect(unregister).toContain('StrCmp $0 "error"');
     expect(unregister).toContain("zinnia_win11_unregister_ok");
     expect(unregister).toContain(
       "Could not fully unregister Win11 sparse context-menu packages",
@@ -285,7 +298,7 @@ describe("Windows 11 context-menu manifest", () => {
     expect(hooks).toContain("ZINNIA_POSTINSTALL_CLASSIC_EXTRACT_FALLBACK");
     const postInstall = hooks.slice(
       hooks.indexOf("!macro NSIS_HOOK_POSTINSTALL"),
-      hooks.indexOf("!macro NSIS_HOOK_POSTUNINSTALL"),
+      hooks.indexOf("!macro NSIS_HOOK_PREUNINSTALL"),
     );
     expect(postInstall).toContain("ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS");
     expect(postInstall).toContain("ZINNIA_REGISTER_PROGID_OPEN");

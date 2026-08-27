@@ -8,6 +8,7 @@ import {
   CLI_FLAG,
   REPOSITORY_ROOT,
   copyReleaseAssets,
+  copyReleaseEntryToMirror,
   isBetaReleaseVersion,
   isDirectExecution,
   pathsEqual,
@@ -115,6 +116,24 @@ describe("post-release assets", () => {
         "utf8",
       ),
     ).toBe("hash");
+  });
+
+  it("copies over an existing mirror entry without deleting it first", () => {
+    const root = makeTemporaryDirectory();
+    const source = path.join(root, "Zinnia-Windows-x64.exe");
+    const destination = path.join(root, "mirror", "Zinnia-Windows-x64.exe");
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.writeFileSync(source, "new-installer");
+    fs.writeFileSync(destination, "old-installer");
+
+    copyReleaseEntryToMirror(source, destination);
+
+    expect(fs.readFileSync(destination, "utf8")).toBe("new-installer");
+    expect(
+      fs
+        .readdirSync(path.dirname(destination))
+        .filter((name) => name.startsWith(".zinnia-mirror-")),
+    ).toEqual([]);
   });
 
   it("cleans build-only files but skips the mirror when AFTER_PACK_LOC is unset", () => {
@@ -271,6 +290,10 @@ describe("post-release assets", () => {
       path.resolve(process.cwd(), "scripts", "finalize-release-assets.js"),
       path.join(scriptsDir, "finalize-release-assets.js"),
     );
+    fs.copyFileSync(
+      path.resolve(process.cwd(), "scripts", "release-policy.cjs"),
+      path.join(scriptsDir, "release-policy.cjs"),
+    );
     fs.writeFileSync(
       path.join(releaseDir, "Zinnia-Windows-x64.exe"),
       "installer",
@@ -281,7 +304,14 @@ describe("post-release assets", () => {
       [path.join(scriptsDir, "finalize-release-assets.js")],
       {
         encoding: "utf8",
-        env: { ...process.env, AFTER_PACK_LOC: destination },
+        env: {
+          ...process.env,
+          AFTER_PACK_LOC: destination,
+          SKIP_RELEASE_MIRROR: "",
+          FORCE_UPLOAD: "",
+          SKIP_WIN_CODESIGN: "",
+          ALLOW_ASSET_REPLACE: "",
+        },
       },
     );
     const combined = `${ran.stdout ?? ""}${ran.stderr ?? ""}`;

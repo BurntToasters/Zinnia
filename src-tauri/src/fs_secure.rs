@@ -350,12 +350,14 @@ fn decode_windows_command_file(bytes: &[u8]) -> Result<String, String> {
             return Err("UTF-16 command output has an odd byte count".to_string());
         }
         let words: Vec<u16> = payload
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| {
                 if little_endian {
-                    u16::from_le_bytes([pair[0], pair[1]])
+                    u16::from_le_bytes(*pair)
                 } else {
-                    u16::from_be_bytes([pair[0], pair[1]])
+                    u16::from_be_bytes(*pair)
                 }
             })
             .collect();
@@ -373,9 +375,10 @@ fn decode_windows_command_file(bytes: &[u8]) -> Result<String, String> {
     // is redirected. SDDL and path output is predominantly ASCII, producing a
     // reliable zero high-byte pattern.
     if bytes.len() >= 4 && bytes.len().is_multiple_of(2) {
-        let sample = bytes.chunks_exact(2).take(256);
+        let chunks = bytes.as_chunks::<2>().0;
+        let sample = &chunks[..chunks.len().min(256)];
         let total = sample.len();
-        let zero_high_bytes = sample.filter(|pair| pair[1] == 0).count();
+        let zero_high_bytes = sample.iter().filter(|pair| pair[1] == 0).count();
         if zero_high_bytes * 4 >= total * 3 {
             return decode_utf16(bytes, true);
         }

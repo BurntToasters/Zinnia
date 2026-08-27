@@ -71,6 +71,7 @@ export function verifyUpdaterSignatures({
     );
     const verifierArgs = [
       "run",
+      "--locked",
       "--quiet",
       "--manifest-path",
       path.join(root, "src-tauri", "Cargo.toml"),
