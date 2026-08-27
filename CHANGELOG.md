@@ -5,10 +5,10 @@
 
 | <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                                          | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux        |
 | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------- |
-| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.6/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.6/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.6/Zinnia-macOS.dmg)**   | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.6/Zinnia-Linux-x64.AppImage) |
-| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>-->                     | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.6/Zinnia-macOS.zip)**   | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.6/Zinnia-Linux-x64.deb)           |
-| <!--*See MSI note below*-->                                                                                                                                                                                                |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.6/Zinnia-Linux-x64.rpm)           |
-|                                                                                                                                                                                                                            |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.6/Zinnia-Linux-x64.flatpak)   |
+| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.7/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.7/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.7/Zinnia-macOS.dmg)**   | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.7/Zinnia-Linux-x64.AppImage) |
+| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>-->                     | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.7/Zinnia-macOS.zip)**   | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.7/Zinnia-Linux-x64.deb)           |
+| <!--*See MSI note below*-->                                                                                                                                                                                                |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.7/Zinnia-Linux-x64.rpm)           |
+|                                                                                                                                                                                                                            |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.7/Zinnia-Linux-x64.flatpak)   |
 
 > macOS downloads require macOS 26 or later.
 
@@ -21,6 +21,16 @@
 
 Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
+## Changes in `v0.6.1-beta.7:`
+
+- **Release:** Release candidate for stable 0.6.1. Hardens in-app update install, Windows uninstall, 7-Zip cancellation, and the draft-verify gate.
+- **macOS:** In-app updates rename the live `.app` to a sibling `.zinnia-update-backup` before moving the new bundle in place, verify `Contents`, and restore the backup if the swap fails (including an interrupted `/Applications` copy). Updater `.app.tar.gz` members stay confined: no `..` / absolute paths, no hard links, and only relative symlinks that stay inside the extract root.
+- **Linux:** Deb/rpm updates resolve `pkexec`, `sudo`, `dpkg`, and `rpm` from `/usr/bin` or `/bin` (never `PATH`), keep session display/DBus variables so the polkit prompt can appear, and time out hung `sudo` installs.
+- **Windows:** Updater launch treats `ShellExecuteW` codes of 32 or below as failure. Win11 context-menu unregister runs in NSIS PREUNINSTALL via `-File -Unregister` and aborts uninstall if packages remain. Registration upgrades in place (`-ForceUpdateFromAnyVersion`) and does not delete restored `shell-*` payloads after a failed add. nsExec `"error"` is treated as failure, not success.
+- **Fix:** 7-Zip stream errors and Cancel wait for the child to exit before rollback; a failed kill keeps the operation slot. Closing the window expires a stale update reservation the same way Quit does. Create/convert snapshots the split-volume family at pick time and refuses a family that appears or changes. Archive listing exit 1 is fail-closed unless the warning is the same metadata-only class as extract publish.
+- **Fix:** Debug mode persist restores previous settings if save fails. Malformed settings and Explorer handoff errors stay on a persistent banner, including after the main window is already ready. OS integration refresh failure shows Unable to check and disables mutating actions.
+- **Tooling:** `release:verify:draft` lists unpublished drafts, paginates assets, matches the files signing actually uploads, and reads draft manifests with `gh` auth. Stable continue scripts run `licenses:cargo:strict` and refuse `SKIP_WIN_CODESIGN`, `FORCE_UPLOAD`, `SKIP_RELEASE_MIRROR`, and `ALLOW_ASSET_REPLACE`. `7z:update --help` does not fetch. `sync-version` asserts the npm lockfile version.
+
 ## Changes in `v0.6.1-beta.6:`
 
 - **Fix:** Directory metadata, settings, and Windows move-plan temps use the same best-effort flush as archive snapshots (fsync fallback, then allow unsupported-flush mounts).
@@ -31,12 +41,12 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Fix:** Power, Basic, and quick-extract ignore progress (including Finalizing) while a password prompt is open, so Cancel stays usable.
 - **Fix:** Copy-fallback crash recovery can retract an unfingerprinted published object when the inode still matches. Restore-from-backup still requires a content fingerprint.
 - **Fix:** Explorer shell-handoff errors stay queued until the main window is ready, and a second-instance open bumps extract warm-idle generation immediately so idle-exit cannot race the new request.
-- **Windows:** Uninstall leaves `$INSTDIR` and shell payloads in place if Win11 sparse context-menu packages cannot be unregistered. Explorer selections are capped inside `GetSelectedPaths`.
+- **Windows:** Uninstall aborts in NSIS PREUNINSTALL if Win11 sparse context-menu packages cannot be unregistered, so files are not deleted while still registered. Explorer selections are capped inside `GetSelectedPaths`.
 - **macOS:** Finder Services selections are capped at 1,000 paths (same as Finder Sync).
 - **Debug:** The popped-out Debug Console relays ready/dock/clear/closed through an allowlisted command instead of unscoped `core:event:allow-emit`.
 - **UI:** Header workspace/density changes keep the Settings form selects in sync so Save cannot revert them.
-- **Tooling:** Signing refuses to create a missing draft; use `release:draft` on Windows first. Beta signing still auto-syncs `latest-*-beta-*.json` onto `/releases/latest` during each sign upload (manual `release:sync-beta-manifests` remains for recovery only).
-- **Tooling:** `7z:update` no longer treats the in-tree sidecar as a trusted extractor. Continue scripts regenerate license files. Node 22.13 (`engines.node` is `>=22.13`).
+- **Tooling:** Signing refuses to create a missing draft; use `release:draft` on Windows first. Beta live-feed promotion (`latest-*-beta-*.json` onto `/releases/latest`) waits until `release:sync-beta-manifests` after the tag is published. Draft signing no longer copies those files itself.
+- **Tooling:** `7z:update` no longer treats the in-tree sidecar as a trusted extractor. Continue scripts regenerate license files. Node engines are `^22.22.2 || ^24.15.0 || >=26`.
 
 ## Changes in `v0.6.1-beta.5:`
 
@@ -45,7 +55,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
 ## Changes in `v0.6.1-beta.4:`
 
-- **Tooling:** Beta signing again auto-syncs `latest-*-beta-*.json` onto `/releases/latest` during each sign upload (manual `release:sync-beta-manifests` remains for recovery only).
+- **Tooling:** Beta signing again auto-syncs `latest-*-beta-*.json` onto `/releases/latest` during each sign upload (manual `release:sync-beta-manifests` remains for recovery only). Superseded later in 0.6.1: draft signing no longer auto-syncs; use `release:sync-beta-manifests` after publish.
 - **Tooling:** Beta versions (`X.Y.Z-beta.N`) skip `AFTER_PACK_LOC` mirroring automatically; set `OVERRIDE_BETA_MIRROR_SKIP=1` to force a beta mirror.
 - **Tooling:** Windows `release:draft` copies `CHANGELOG.md` into the GitHub draft release notes (creates with body, refreshes on reuse).
 - **Debug:** Hidden About-logo toggle enables an off-by-default Debug Console (`debug` in `settings.json`) with verbose process/error detail (redacted command lines, exit codes, full stdout/stderr); when disabled it adds no console work. Quick-extract failures also expose copyable debug dumps when `debug` is on.

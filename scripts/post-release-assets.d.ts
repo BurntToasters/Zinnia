@@ -36,6 +36,10 @@ export function verifyCopiedPath(
   sourcePath: string,
   destinationPath: string,
 ): void;
+export function copyReleaseEntryToMirror(
+  sourcePath: string,
+  destinationPath: string,
+): void;
 export function resolveMirrorPaths(
   releaseDir: string | undefined,
   destination: string,

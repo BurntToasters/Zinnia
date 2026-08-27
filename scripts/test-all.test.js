@@ -19,13 +19,14 @@ test("createInitialResults includes cargoSafeUpdate and cargoUpdatePolicy in ini
   const results = createInitialResults();
   assert.equal(results.cargoSafeUpdate.status, "pending");
   assert.equal(results.cargoUpdatePolicy.status, "pending");
+  assert.equal(results.vendorUpdater.status, "pending");
 });
 
 test("package.json scripts define cargo safe update test and policy check", () => {
   const scripts = readPackageJsonScripts();
   assert.equal(
     scripts["test:cargo-safe-update"],
-    "node --test scripts/cargo-safe-update.test.mjs scripts/check-cargo-update-policy.test.mjs",
+    "node --test scripts/cargo-safe-update.test.mjs scripts/check-cargo-update-policy.test.mjs scripts/test-all.test.js scripts/github-cli.test.cjs",
   );
   assert.equal(
     scripts["check:cargo-update-policy"],
@@ -99,6 +100,9 @@ test("main records quality-gate proof when all checks pass", () => {
     recordProof: () => {
       calls.push("recordProof");
       return { recorded: true };
+    },
+    parseCoverage: (results) => {
+      results.coverage.status = "passed";
     },
     runner: (name, _cmd, _args, _parser, results) => {
       calls.push(`run:${name}`);

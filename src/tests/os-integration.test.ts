@@ -137,6 +137,55 @@ describe("OS integration UI", () => {
     ).toBe(true);
   });
 
+  it("shows Unable to check when OS integration status refresh fails", async () => {
+    invokeMock.mockRejectedValueOnce(new Error("backend offline"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await refreshOsIntegrationStatus();
+
+    expect(document.getElementById("os-integration-help")?.textContent).toBe(
+      "Unable to check OS integration status.",
+    );
+    expect(
+      document.getElementById("os-integration-help")?.getAttribute("aria-live"),
+    ).toBe("polite");
+    expect(document.getElementById("os-file-assoc-status")?.textContent).toBe(
+      "Unable to check",
+    );
+    expect(document.getElementById("os-package-label")?.textContent).toBe(
+      "Unable to check",
+    );
+    expect(document.getElementById("os-platform-label")?.textContent).toBe(
+      "Unable to check",
+    );
+    expect(
+      (
+        document.getElementById(
+          "open-os-integration-settings",
+        ) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    expect(
+      (
+        document.getElementById(
+          "reset-os-integration-defaults",
+        ) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    expect(document.getElementById("os-archive-default-list")?.innerHTML).toBe(
+      "",
+    );
+    expect(
+      document
+        .getElementById("os-file-assoc-status")
+        ?.classList.contains("status-pill--unknown"),
+    ).toBe(true);
+    expect(document.getElementById("os-context-status")?.textContent).toBe(
+      "Unable to check",
+    );
+    warn.mockRestore();
+  });
+
   it("sets Zinnia as the default archiver and refreshes status", async () => {
     invokeMock.mockResolvedValueOnce({
       platform: "linux",

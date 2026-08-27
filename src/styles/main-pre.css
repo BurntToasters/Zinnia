@@ -33,6 +33,8 @@
 }
 
 .startup-recovery-banner {
+  position: relative;
+  z-index: 10001;
   display: flex;
   flex: 0 0 auto;
   min-width: 0;

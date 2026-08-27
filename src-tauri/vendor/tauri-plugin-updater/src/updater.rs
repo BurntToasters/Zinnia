@@ -834,11 +834,6 @@ impl Update {
             }
         };
 
-        if let Some(on_before_exit) = self.on_before_exit.as_ref() {
-            log::debug!("running on_before_exit hook");
-            on_before_exit();
-        }
-
         let file = match &updater_type {
             WindowsUpdaterType::Nsis { path, .. } => path.as_os_str().to_os_string(),
             WindowsUpdaterType::Msi { .. } => std::env::var("SYSTEMROOT").as_ref().map_or_else(
@@ -851,7 +846,7 @@ impl Update {
         let parameters = installer_args.join(OsStr::new(" "));
         let parameters = encode_wide(parameters);
 
-        unsafe {
+        let launched = unsafe {
             ShellExecuteW(
                 std::ptr::null_mut(),
                 w!("open"),
@@ -860,7 +855,17 @@ impl Update {
                 std::ptr::null(),
                 SW_SHOW,
             )
-        };
+        } as isize;
+        if !crate::install_safety::shell_execute_launch_ok(launched) {
+            return Err(Error::Io(std::io::Error::other(format!(
+                "failed to launch updater installer (ShellExecuteW={launched})"
+            ))));
+        }
+
+        if let Some(on_before_exit) = self.on_before_exit.as_ref() {
+            log::debug!("running on_before_exit hook");
+            on_before_exit();
+        }
 
         std::process::exit(0);
     }
@@ -1109,66 +1114,77 @@ impl Update {
         install_cmd: &str,
         install_arg: &str,
     ) -> Result<()> {
+        let installer = crate::install_safety::resolve_trusted_system_helper(install_cmd)
+            .map_err(|_| Error::PackageInstallFailed)?;
+        let pkexec = crate::install_safety::resolve_trusted_system_helper("pkexec").ok();
+        let sudo = crate::install_safety::resolve_trusted_system_helper("sudo").ok();
+
         // 1. First try using pkexec (graphical sudo prompt)
-        if let Ok(status) = std::process::Command::new("pkexec")
-            .arg(install_cmd)
-            .arg(install_arg)
-            .arg(pkg_path)
-            .status()
-        {
-            if status.success() {
-                log::debug!("installed {pkg_path:?} with pkexec");
-                return Ok(());
+        if let Some(pkexec) = pkexec.as_ref() {
+            if let Ok(status) = linux_privileged_command(pkexec)
+                .arg(&installer)
+                .arg(install_arg)
+                .arg(pkg_path)
+                .status()
+            {
+                if status.success() {
+                    log::debug!("installed {pkg_path:?} with pkexec");
+                    return Ok(());
+                }
             }
         }
 
         // 2. Try zenity or kdialog for a graphical sudo experience
-        if let Ok(password) = self.get_password_graphically() {
-            if self.install_with_sudo(pkg_path, &password, install_cmd, install_arg)? {
-                log::debug!("installed {pkg_path:?} with GUI sudo");
+        if let Some(sudo) = sudo.as_ref() {
+            if let Ok(password) = self.get_password_graphically() {
+                if self.install_with_sudo(sudo, &installer, pkg_path, &password, install_arg)? {
+                    log::debug!("installed {pkg_path:?} with GUI sudo");
+                    return Ok(());
+                }
+            }
+
+            // 3. Final fallback: terminal sudo
+            let status = linux_privileged_command(sudo)
+                .arg(&installer)
+                .arg(install_arg)
+                .arg(pkg_path)
+                .status()?;
+
+            if status.success() {
+                log::debug!("installed {pkg_path:?} with sudo");
                 return Ok(());
             }
         }
 
-        // 3. Final fallback: terminal sudo
-        let status = std::process::Command::new("sudo")
-            .arg(install_cmd)
-            .arg(install_arg)
-            .arg(pkg_path)
-            .status()?;
-
-        if status.success() {
-            log::debug!("installed {pkg_path:?} with sudo");
-            Ok(())
-        } else {
-            Err(Error::PackageInstallFailed)
-        }
+        Err(Error::PackageInstallFailed)
     }
 
     fn get_password_graphically(&self) -> Result<String> {
-        // Try zenity first
-        let zenity_result = std::process::Command::new("zenity")
-            .args([
-                "--password",
-                "--title=Authentication Required",
-                "--text=Enter your password to install the update:",
-            ])
-            .output();
+        if let Ok(zenity) = crate::install_safety::resolve_trusted_system_helper("zenity") {
+            let zenity_result = linux_privileged_command(&zenity)
+                .args([
+                    "--password",
+                    "--title=Authentication Required",
+                    "--text=Enter your password to install the update:",
+                ])
+                .output();
 
-        if let Ok(output) = zenity_result {
-            if output.status.success() {
-                return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
+            if let Ok(output) = zenity_result {
+                if output.status.success() {
+                    return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
+                }
             }
         }
 
-        // Fall back to kdialog if zenity fails or isn't available
-        let kdialog_result = std::process::Command::new("kdialog")
-            .args(["--password", "Enter your password to install the update:"])
-            .output();
+        if let Ok(kdialog) = crate::install_safety::resolve_trusted_system_helper("kdialog") {
+            let kdialog_result = linux_privileged_command(&kdialog)
+                .args(["--password", "Enter your password to install the update:"])
+                .output();
 
-        if let Ok(output) = kdialog_result {
-            if output.status.success() {
-                return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
+            if let Ok(output) = kdialog_result {
+                if output.status.success() {
+                    return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
+                }
             }
         }
 
@@ -1177,32 +1193,88 @@ impl Update {
 
     fn install_with_sudo(
         &self,
+        sudo: &Path,
+        installer: &Path,
         pkg_path: &Path,
         password: &str,
-        install_cmd: &str,
         install_arg: &str,
     ) -> Result<bool> {
         use std::io::Write;
-        use std::process::{Command, Stdio};
+        use std::os::unix::process::CommandExt;
+        use std::process::Stdio;
+        use std::time::Duration;
 
-        let mut child = Command::new("sudo")
+        let mut command = linux_privileged_command(sudo);
+        command
             .arg("-S") // read password from stdin
-            .arg(install_cmd)
+            .arg(installer)
             .arg(install_arg)
             .arg(pkg_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
+            .stderr(Stdio::piped());
+        // Isolate the sudo/dpkg group so a timeout can kill the whole tree.
+        command.process_group(0);
+
+        let mut child = command.spawn()?;
+        let pid = child.id();
 
         if let Some(mut stdin) = child.stdin.take() {
-            // Write password to stdin
             writeln!(stdin, "{password}")?;
         }
 
-        let status = child.wait()?;
-        Ok(status.success())
+        let output = wait_child_output_timeout(child, pid, Duration::from_secs(600))?;
+        Ok(output.status.success())
     }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_privileged_command(program: &Path) -> std::process::Command {
+    let mut command = std::process::Command::new(program);
+    command.env_clear();
+    command.env("PATH", "/usr/bin:/bin");
+    command.env("LC_ALL", "C");
+    command.env("LANG", "C");
+    for key in crate::install_safety::LINUX_PRIVILEGED_ENV_ALLOWLIST {
+        if let Some(value) = std::env::var_os(key) {
+            command.env(key, value);
+        }
+    }
+    command
+}
+
+#[cfg(target_os = "linux")]
+fn wait_child_output_timeout(
+    child: std::process::Child,
+    pid: u32,
+    timeout: std::time::Duration,
+) -> std::io::Result<std::process::Output> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    let finished = Arc::new(AtomicBool::new(false));
+    let finished_for_killer = finished.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(timeout);
+        if finished_for_killer.load(Ordering::SeqCst) {
+            return;
+        }
+        let pgid = format!("-{pid}");
+        let _ = std::process::Command::new("/bin/kill")
+            .args(["-TERM", "--", &pgid])
+            .status();
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        if finished_for_killer.load(Ordering::SeqCst) {
+            return;
+        }
+        let _ = std::process::Command::new("/bin/kill")
+            .args(["-KILL", "--", &pgid])
+            .status();
+    });
+
+    let output = child.wait_with_output();
+    finished.store(true, Ordering::SeqCst);
+    output
 }
 
 /// MacOS
@@ -1215,104 +1287,118 @@ impl Update {
     /// │          └── ...
     /// └── ...
     fn install_inner(&self, bytes: &[u8]) -> Result<()> {
-        use flate2::read::GzDecoder;
-
-        let cursor = Cursor::new(bytes);
-        let mut extracted_files: Vec<PathBuf> = Vec::new();
-
-        // Create temp directories for backup and extraction
-        let tmp_backup_dir = tempfile::Builder::new()
-            .prefix("tauri_current_app")
-            .tempdir()?;
-
-        let tmp_extract_dir = tempfile::Builder::new()
-            .prefix("tauri_updated_app")
-            .tempdir()?;
-
-        let decoder = GzDecoder::new(cursor);
-        let mut archive = tar::Archive::new(decoder);
-
-        // Extract files to temporary directory
-        for entry in archive.entries()? {
-            let mut entry = entry?;
-            let collected_path: PathBuf = entry.path()?.iter().skip(1).collect();
-            let extraction_path = tmp_extract_dir.path().join(&collected_path);
-
-            // Ensure parent directories exist
-            if let Some(parent) = extraction_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-
-            if let Err(err) = entry.unpack(&extraction_path) {
-                // Cleanup on error
-                std::fs::remove_dir_all(tmp_extract_dir.path()).ok();
-                return Err(err.into());
-            }
-            extracted_files.push(extraction_path);
-        }
-
-        // Try to move the current app to backup
-        let move_result = std::fs::rename(
-            &self.extract_path,
-            tmp_backup_dir.path().join("current_app"),
-        );
-        let need_authorization = if let Err(err) = move_result {
-            if err.kind() == std::io::ErrorKind::PermissionDenied {
-                true
-            } else {
-                std::fs::remove_dir_all(tmp_extract_dir.path()).ok();
-                return Err(err.into());
-            }
-        } else {
-            false
+        use crate::install_safety::{
+            is_cross_device, macos_app_bundle_complete, macos_update_backup_path,
+            move_dir_replacing, MACOS_PRIVILEGED_INSTALL_SCRIPT,
         };
 
-        if need_authorization {
-            log::debug!("app installation needs admin privileges");
-            // Never interpolate filesystem paths into a shell string. Pass them as
-            // AppleScript handler arguments and quote with `quoted form of` so a
-            // renamed bundle path cannot inject root shell syntax through the
-            // administrator authorization dialog.
-            const ADMIN_INSTALL_SCRIPT: &str = r#"
-on installUpdate(srcPath, newPath)
-  do shell script "rm -rf " & quoted form of srcPath & " && mv -f " & quoted form of newPath & " " & quoted form of srcPath with administrator privileges
-end installUpdate
-"#;
-            let src = self.extract_path.to_string_lossy().into_owned();
-            let new = tmp_extract_dir.path().to_string_lossy().into_owned();
+        let app_parent = self
+            .extract_path
+            .parent()
+            .ok_or(Error::FailedToDetermineExtractPath)?;
+        let backup_path = macos_update_backup_path(&self.extract_path)
+            .ok_or(Error::FailedToDetermineExtractPath)?;
 
-            let (tx, rx) = std::sync::mpsc::channel();
-            let res = (self.run_on_main_thread)(Box::new(move || {
-                let mut script = osakit::Script::new_from_source(
-                    osakit::Language::AppleScript,
-                    ADMIN_INSTALL_SCRIPT,
-                );
-                script.compile().expect("invalid AppleScript");
-                let r = script.execute_function(
-                    "installUpdate",
-                    [
-                        osakit::Value::String(src),
-                        osakit::Value::String(new),
-                    ],
-                );
-                tx.send(r).unwrap();
-            }));
-            let result = rx.recv().unwrap();
-
-            if res.is_err() || result.is_err() {
-                std::fs::remove_dir_all(tmp_extract_dir.path()).ok();
-                return Err(Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::PermissionDenied,
-                    "Failed to move the new app into place",
-                )));
+        let tmp_extract_dir = match tempfile::Builder::new()
+            .prefix(".zinnia-updated-app-")
+            .tempdir_in(app_parent)
+        {
+            Ok(dir) => dir,
+            Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+                // `/Applications` is not user-writable. Extract in a user temp
+                // dir; the privileged swap copies onto the app volume. Restore
+                // must never nest `mv` into a partial `$SRC`.
+                tempfile::Builder::new()
+                    .prefix("tauri_updated_app")
+                    .tempdir()?
             }
-        } else {
-            // Remove existing directory if it exists
+            Err(err) => return Err(err.into()),
+        };
+
+        extract_macos_app_archive(bytes, tmp_extract_dir.path())?;
+        if !macos_app_bundle_complete(tmp_extract_dir.path()) {
+            return Err(Error::BinaryNotFoundInArchive);
+        }
+
+        if !macos_app_bundle_complete(&self.extract_path) && macos_app_bundle_complete(&backup_path)
+        {
             if self.extract_path.exists() {
-                std::fs::remove_dir_all(&self.extract_path)?;
+                let _ = std::fs::remove_dir_all(&self.extract_path);
             }
-            // Move the new app to the target path
-            std::fs::rename(tmp_extract_dir.path(), &self.extract_path)?;
+            if let Err(err) = std::fs::rename(&backup_path, &self.extract_path) {
+                if err.kind() != std::io::ErrorKind::PermissionDenied {
+                    return Err(err.into());
+                }
+            }
+        } else if macos_app_bundle_complete(&self.extract_path) && backup_path.exists() {
+            let _ = std::fs::remove_dir_all(&backup_path);
+        }
+
+        let unprivileged = (|| -> std::io::Result<()> {
+            std::fs::rename(&self.extract_path, &backup_path)?;
+            match move_dir_replacing(tmp_extract_dir.path(), &self.extract_path) {
+                Ok(()) => {
+                    if !macos_app_bundle_complete(&self.extract_path) {
+                        if self.extract_path.exists() {
+                            let _ = std::fs::remove_dir_all(&self.extract_path);
+                        }
+                        std::fs::rename(&backup_path, &self.extract_path)?;
+                        return Err(std::io::Error::other(
+                            "new app bundle is missing Contents after install",
+                        ));
+                    }
+                    let _ = std::fs::remove_dir_all(&backup_path);
+                    Ok(())
+                }
+                Err(err) => {
+                    if self.extract_path.exists() {
+                        let _ = std::fs::remove_dir_all(&self.extract_path);
+                    }
+                    let _ = std::fs::rename(&backup_path, &self.extract_path);
+                    Err(err)
+                }
+            }
+        })();
+
+        match unprivileged {
+            Ok(()) => {
+                let _ = tmp_extract_dir.into_path();
+            }
+            Err(err)
+                if err.kind() == std::io::ErrorKind::PermissionDenied || is_cross_device(&err) =>
+            {
+                log::debug!("app installation needs admin privileges");
+                let src = self.extract_path.to_string_lossy().into_owned();
+                let new = tmp_extract_dir.path().to_string_lossy().into_owned();
+                let backup = backup_path.to_string_lossy().into_owned();
+                let (tx, rx) = std::sync::mpsc::channel();
+                let res = (self.run_on_main_thread)(Box::new(move || {
+                    let mut script = osakit::Script::new_from_source(
+                        osakit::Language::AppleScript,
+                        MACOS_PRIVILEGED_INSTALL_SCRIPT,
+                    );
+                    script.compile().expect("invalid AppleScript");
+                    let r = script.execute_function(
+                        "installUpdate",
+                        [
+                            osakit::Value::String(src),
+                            osakit::Value::String(new),
+                            osakit::Value::String(backup),
+                        ],
+                    );
+                    tx.send(r).unwrap();
+                }));
+                let result = rx.recv().unwrap();
+
+                if res.is_err() || result.is_err() {
+                    return Err(Error::Io(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        "Failed to move the new app into place",
+                    )));
+                }
+                let _ = tmp_extract_dir.into_path();
+            }
+            Err(err) => return Err(err.into()),
         }
 
         let _ = std::process::Command::new("touch")
@@ -1321,6 +1407,91 @@ end installUpdate
 
         Ok(())
     }
+}
+
+#[cfg(target_os = "macos")]
+fn extract_macos_app_archive(bytes: &[u8], dest_root: &Path) -> Result<()> {
+    use crate::install_safety::{
+        confined_symlink_target, confined_tar_member_relative, create_confined_parent_dirs,
+        path_is_inside,
+    };
+    use flate2::read::GzDecoder;
+    use tar::EntryType;
+
+    let decoder = GzDecoder::new(Cursor::new(bytes));
+    let mut archive = tar::Archive::new(decoder);
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        let entry_path = entry.path()?.into_owned();
+        let relative = confined_tar_member_relative(&entry_path).map_err(|_| {
+            Error::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "updater archive member path is not confined",
+            ))
+        })?;
+        if relative.as_os_str().is_empty() {
+            continue;
+        }
+        let dest = dest_root.join(&relative);
+        if !path_is_inside(dest_root, &dest) {
+            return Err(Error::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "updater archive member path is not confined",
+            )));
+        }
+        let kind = entry.header().entry_type();
+        if kind == EntryType::Link {
+            return Err(Error::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "hard links are not allowed in updater archives",
+            )));
+        }
+        if kind.is_symlink() {
+            let target = entry.link_name()?.ok_or_else(|| {
+                Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "symlink is missing a target",
+                ))
+            })?;
+            let parent = dest.parent().unwrap_or(dest_root);
+            if !confined_symlink_target(dest_root, parent, target.as_ref()) {
+                return Err(Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "symlink target escapes updater extract root",
+                )));
+            }
+            create_confined_parent_dirs(dest_root, &dest)?;
+            std::os::unix::fs::symlink(target.as_ref(), &dest)?;
+            continue;
+        }
+        if kind.is_dir() {
+            create_confined_parent_dirs(dest_root, &dest)?;
+            match std::fs::symlink_metadata(&dest) {
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    std::fs::create_dir(&dest)?;
+                }
+                Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => {}
+                Ok(_) => {
+                    return Err(Error::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "updater archive directory collides with a non-directory",
+                    )));
+                }
+                Err(err) => return Err(err.into()),
+            }
+            continue;
+        }
+        if kind.is_file() || matches!(kind, EntryType::GNUSparse) {
+            create_confined_parent_dirs(dest_root, &dest)?;
+            entry.unpack(&dest)?;
+            continue;
+        }
+        return Err(Error::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("unsupported updater archive member type {kind:?}"),
+        )));
+    }
+    Ok(())
 }
 
 /// Gets the base target string used by the updater. If bundle type is available it
@@ -1678,25 +1849,31 @@ mod tests {
 
     #[test]
     fn macos_admin_install_script_quotes_paths_via_handler_args() {
-        // Keep this constant aligned with the macOS install_inner privileged path.
-        // Paths must never be interpolated into the script text.
-        const ADMIN_INSTALL_SCRIPT: &str = r#"
-on installUpdate(srcPath, newPath)
-  do shell script "rm -rf " & quoted form of srcPath & " && mv -f " & quoted form of newPath & " " & quoted form of srcPath with administrator privileges
-end installUpdate
-"#;
+        use crate::install_safety::MACOS_PRIVILEGED_INSTALL_SCRIPT;
         assert!(
-            ADMIN_INSTALL_SCRIPT.contains("quoted form of"),
+            MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("quoted form of"),
             "privileged install must quote paths with AppleScript quoted form of"
         );
         assert!(
-            !ADMIN_INSTALL_SCRIPT.contains("Zinnia.app")
-                && !ADMIN_INSTALL_SCRIPT.contains("/Applications"),
+            MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("backupPath"),
+            "privileged install must restore from a sibling backup"
+        );
+        assert!(
+            MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("/bin/test -d \\\"$SRC/Contents\\\""),
+            "privileged install must verify Contents before deleting the backup"
+        );
+        assert!(
+            !MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("rm -rf \" & quoted form of srcPath"),
+            "privileged install must never rm -rf the live bundle via AppleScript concatenation"
+        );
+        assert!(
+            !MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("Zinnia.app")
+                && !MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("/Applications"),
             "script template must not embed filesystem paths"
         );
         let malicious = "/Applications/Don't '; touch /tmp/pwned; '.app";
         assert!(
-            !ADMIN_INSTALL_SCRIPT.contains(malicious),
+            !MACOS_PRIVILEGED_INSTALL_SCRIPT.contains(malicious),
             "malicious path must stay outside the constant script body"
         );
     }

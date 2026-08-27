@@ -57,6 +57,26 @@ import {
 } from "./power-events";
 import { MAX_ARCHIVE_PATHS } from "./archive-rules";
 
+let persistentAlertDismissWired = false;
+
+function showPersistentAlertBanner(message: string): void {
+  const banner = document.getElementById("startup-recovery-banner");
+  const text = document.getElementById("startup-recovery-banner-text");
+  const dismiss = document.getElementById("startup-recovery-banner-dismiss");
+  if (!banner || !text) return;
+  const existing = text.textContent?.trim() ?? "";
+  text.textContent =
+    existing && existing !== message ? `${existing} ${message}` : message;
+  banner.hidden = false;
+  if (persistentAlertDismissWired) return;
+  persistentAlertDismissWired = true;
+  dismiss?.addEventListener("click", () => {
+    banner.hidden = true;
+    text.textContent = "";
+    persistentAlertDismissWired = false;
+  });
+}
+
 function wireTitlebar(): void {
   const appWindow = getCurrentWebviewWindow();
   const minBtn = document.getElementById("titlebar-min");
@@ -156,7 +176,7 @@ export async function init() {
         typeof event.payload === "string" && event.payload.trim()
           ? event.payload
           : "Zinnia could not accept another open request right now.";
-      showToast(detail, "error", 5000);
+      showPersistentAlertBanner(detail);
       log(detail, "error");
     });
   } catch (err) {
@@ -206,6 +226,14 @@ export async function init() {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     devLog(`Unable to detect Flatpak context: ${msg}`);
+  }
+
+  if (loadedSettings.malformed && loadedSettings.warning) {
+    showPersistentAlertBanner(loadedSettings.warning);
+    log(loadedSettings.warning, "error");
+    if (state.currentSettings.debug) {
+      debugLog(`Settings load warning: ${loadedSettings.warning}`);
+    }
   }
 
   if (shouldShowSetupWizard()) {
@@ -261,12 +289,6 @@ export async function init() {
   initBasicWorkspace();
   uiReadyForOpenPaths = true;
   refreshQuickActionRepeatState();
-  if (loadedSettings.malformed && loadedSettings.warning) {
-    log(loadedSettings.warning, "error");
-    if (state.currentSettings.debug) {
-      debugLog(`Settings load warning: ${loadedSettings.warning}`);
-    }
-  }
 
   const startupRecoveryStatus = invoke<string | null>(
     "get_startup_recovery_status",
@@ -274,20 +296,8 @@ export async function init() {
   void startupRecoveryStatus
     .then((message) => {
       if (!message) return;
-      const banner = document.getElementById("startup-recovery-banner");
-      const text = document.getElementById("startup-recovery-banner-text");
-      const dismiss = document.getElementById(
-        "startup-recovery-banner-dismiss",
-      );
-      if (!banner || !text) return;
-      text.textContent = `Could not finish recovering an interrupted archive job: ${message}`;
-      banner.hidden = false;
-      dismiss?.addEventListener(
-        "click",
-        () => {
-          banner.hidden = true;
-        },
-        { once: true },
+      showPersistentAlertBanner(
+        `Could not finish recovering an interrupted archive job: ${message}`,
       );
     })
     .catch((err) => {
@@ -298,15 +308,13 @@ export async function init() {
   // A cold launch resolves a Windows shell handoff (Explorer's "Extract
   // with Zinnia" / "Compress with Zinnia") during Rust setup(), before any
   // window or event listener exists to receive an emitted failure. Poll it
-  // once here instead, same as the startup recovery status above, and reuse
-  // the toast already wired for the "open-paths-dropped" event so a rejected
-  // or unreadable handoff is visible instead of silently opening with no
-  // paths.
-  void invoke<string | null>("get_shell_handoff_error")
+  // once here instead, same as the startup recovery status above, so a
+  // rejected or unreadable handoff stays visible instead of a 5s toast.
+  const shellHandoffError = invoke<string | null>("get_shell_handoff_error")
     .then((message) => {
       if (!message) return;
       const detail = `Could not read the file selection from Explorer: ${message}`;
-      showToast(detail, "error", 5000);
+      showPersistentAlertBanner(detail);
       log(detail, "error");
     })
     .catch((err) => {
@@ -380,6 +388,7 @@ export async function init() {
 
   // Drain any paths that queued up while we were initializing
   await drainPendingPaths();
+  await shellHandoffError;
   await invoke("mark_main_window_ready").catch((err) => {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Failed to mark main window ready: ${msg}`, "error");

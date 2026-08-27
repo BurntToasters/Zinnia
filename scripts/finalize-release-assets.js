@@ -6,6 +6,7 @@ import {
   readPackageVersion,
   shouldSkipBetaMirror,
 } from "./post-release-assets.js";
+import { assertStableReleaseOverridesAllowed } from "./release-policy.cjs";
 
 // Dedicated entry point: never gate on argv/path identity (Windows ESM footgun).
 function banner(message) {
@@ -14,6 +15,7 @@ function banner(message) {
 }
 
 const version = readPackageVersion();
+assertStableReleaseOverridesAllowed(process.env, version);
 banner("starting");
 banner(`platform=${process.platform}; node=${process.version}`);
 banner(`cwd=${process.cwd()}`);
@@ -40,7 +42,7 @@ try {
   const skipForced = allowSkipMirror();
   if (!skipBeta && !skipForced && !getAfterPackLocation()) {
     throw new Error(
-      `Stable release ${version} requires AFTER_PACK_LOC so artifacts are mirrored before git clean. Set AFTER_PACK_LOC or SKIP_RELEASE_MIRROR=1. Beta versions (X.Y.Z-beta.N) skip the mirror by default.`,
+      `Stable release ${version} requires AFTER_PACK_LOC so artifacts are mirrored before git clean. Set AFTER_PACK_LOC. Beta versions (X.Y.Z-beta.N) skip the mirror by default.`,
     );
   }
   const result = finalizeReleaseAssets({ logger: console, version });

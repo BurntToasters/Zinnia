@@ -12,6 +12,7 @@ import {
 } from "./updater-signature-verifier.js";
 import { verifyReleaseSession } from "./release-session.js";
 import githubCli from "./github-cli.cjs";
+import { assertStableReleaseOverridesAllowed } from "./release-policy.cjs";
 
 const { assertGitHubCliAuthenticated, githubApi, uploadReleaseAsset } =
   githubCli;
@@ -1585,6 +1586,7 @@ function buildUploadList({
 }
 
 async function main() {
+  assertStableReleaseOverridesAllowed(process.env, VERSION);
   console.log(`\nZinnia ${VERSION}: release pipeline\n`);
   assertGitHubCliAuthenticated();
 
@@ -1641,13 +1643,9 @@ async function main() {
     await uploadAssetWithReplace(release, f);
     console.log(`  ^ ${path.basename(f)}`);
   }
-  // Beta clients poll /releases/latest for latest-*-beta-*.json. Sync those
-  // manifests onto the latest *stable* release during every beta sign upload,
-  // including while this tag is still a draft (same automatic behavior as
-  // 0.6.0). Keep release:sync-beta-manifests for recovery/re-sync only.
-  if (IS_PRERELEASE) {
-    await syncBetaManifestsToLatestStable(everything, release.id);
-  }
+  // Do not mutate /releases/latest while this tag is still a draft. Promote
+  // beta live-feed manifests with release:sync-beta-manifests after publish
+  // (published tag + complete matrix).
 
   console.log(
     `\nDone: ${TAG} uploaded as ${release.draft ? "draft" : "published"}.\n`,

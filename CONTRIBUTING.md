@@ -3,31 +3,36 @@
 ## Setup
 
 ```sh
-npm install        # also installs the git pre-commit hook (see below)
+npm ci --ignore-scripts
+node scripts/install-git-hooks.js
 npm run tauri:dev  # run the app
 ```
+
+`.npmrc` sets `ignore-scripts=true`, so `npm install` / `npm ci` will not run
+the `prepare` hook. Install git hooks with `node scripts/install-git-hooks.js`.
 
 Prerequisites per platform are in [build-setup.md](build-setup.md).
 
 ## Checks
 
-| Command                | What it does                                 |
-| ---------------------- | -------------------------------------------- |
-| `npm run typecheck`    | `tsc --noEmit` (strict)                      |
-| `npm run lint`         | ESLint over `src/` and `scripts/`            |
-| `npm run format:check` | Prettier check (use `npm run format` to fix) |
+| Command                       | What it does                                     |
+| ----------------------------- | ------------------------------------------------ |
+| `npm run typecheck`           | `tsc --noEmit` (strict)                          |
+| `npm run lint`                | ESLint over `src/` and `scripts/`                |
+| `npm run format:check`        | Prettier check (use `npm run format` to fix)     |
 | `npm run validate:no-em-dash` | Rejects Unicode em dash (U+2014) in tracked text |
-| `npm test`             | Vitest (frontend)                            |
-| `npm run test:rust`    | `cargo test` (backend)                       |
-| `npm run test:all`     | All of the above, the way CI runs them       |
+| `npm test`                    | Vitest (frontend)                                |
+| `npm run test:rust`           | `cargo test` (backend)                           |
+| `npm run test:all`            | All of the above, the way CI runs them           |
 
 Rust changes should also pass `cargo clippy --manifest-path src-tauri/Cargo.toml
 --all-targets -- -D warnings`.
 
 ## Git hooks
 
-`npm install` runs `scripts/install-git-hooks.js`, which points git at the
-tracked [`.githooks`](.githooks) directory.
+`npm ci --ignore-scripts` (or `npm install`) does not install git hooks because
+`.npmrc` has `ignore-scripts=true`. Run `node scripts/install-git-hooks.js`,
+which points git at the tracked [`.githooks`](.githooks) directory.
 
 - `pre-commit` runs format/lint/typecheck when staged files touch `.ts/.css/.html/.js`.
 - `prepare-commit-msg` / `commit-msg` strip `Co-authored-by` trailers that
@@ -45,8 +50,9 @@ tracked [`.githooks`](.githooks) directory.
 ## CI and merge protection
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the quality gate on
-every push and PR to `main` and `beta`, plus Rust checks on Windows/macOS and a
-security audit (`npm audit`, `cargo audit`, `cargo clippy -D warnings`).
+every push (all branches) and on PRs to `main` and `beta`, plus Rust checks on
+Windows/macOS and a security audit (`npm audit`, `cargo audit`,
+`cargo clippy -D warnings`).
 
 CI runs do not block merges by default. To make the quality gate a hard
 requirement, a maintainer must enable branch protection on each protected
@@ -68,12 +74,12 @@ branch:
 
 ### Where to put new code
 
-| Change                             | Prefer                                   |
-| ---------------------------------- | ---------------------------------------- |
-| Basic workspace UI / sync          | `src/basic/`                             |
-| 7z arg building or archive ops     | `src/archive/`                           |
-| Shared status/progress/mode chrome | `src/ui/`                                |
+| Change                             | Prefer                                                                                                          |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Basic workspace UI / sync          | `src/basic/`                                                                                                    |
+| 7z arg building or archive ops     | `src/archive/`                                                                                                  |
+| Shared status/progress/mode chrome | `src/ui/`                                                                                                       |
 | App boot / Power event wiring      | `src/app-init.ts`, `src/power-events.ts`, `src/power-helpers.ts`, `src/power-shortcuts.ts`, `src/power-logs.ts` |
-| Staging, journal, `run_7z`         | `src-tauri/src/process/`                 |
-| OS integration / defaults          | `src-tauri/src/platform/`                |
-| File-open / extract window routing | `src-tauri/src/launch/`                  |
+| Staging, journal, `run_7z`         | `src-tauri/src/process/`                                                                                        |
+| OS integration / defaults          | `src-tauri/src/platform/`                                                                                       |
+| File-open / extract window routing | `src-tauri/src/launch/`                                                                                         |

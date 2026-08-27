@@ -19,6 +19,17 @@ import {
   updaterChannelVariants,
   validatePublishedBetaManifest,
 } from "../../scripts/gpg-sign.js";
+import {
+  assertDraftReleaseShape,
+  requiredDraftAssetNames,
+  selectDraftRelease,
+} from "../../scripts/verify-release-draft.js";
+import { validateChangelogForVersion } from "../../scripts/validate-changelog-version.js";
+import {
+  collectManifestArtifactRefs,
+  shouldVerifyLiveArtifacts,
+} from "../../scripts/validate-updater-live.js";
+import { parseUpdate7zArgv } from "../../scripts/update-7z.js";
 import { isDirectExecution as isGitPruneDirectExecution } from "../../scripts/git-prune-local-branches.js";
 import {
   officialArchiveExtractionCommand,
@@ -48,6 +59,14 @@ const {
   readChangelogReleaseBody: (changelogPath?: string) => string;
   verifyReleaseSession: (run?: typeof spawnSync) => void;
 };
+const { assertStableReleaseOverridesAllowed, isStableReleaseVersion } =
+  require("../../scripts/release-policy.cjs") as {
+    assertStableReleaseOverridesAllowed: (
+      env?: NodeJS.ProcessEnv,
+      version?: string,
+    ) => void;
+    isStableReleaseVersion: (version: string | undefined | null) => boolean;
+  };
 
 const unsupportedHardLinkErrors = new Set([
   "EACCES",
@@ -361,16 +380,14 @@ describe("release script safeguards", () => {
     },
   );
 
-  it("auto-syncs beta manifests onto /releases/latest during signing", () => {
+  it("does not auto-sync beta manifests onto /releases/latest during draft signing", () => {
     const source = fs.readFileSync("scripts/gpg-sign.js", "utf8");
-    expect(source).toContain("if (IS_PRERELEASE)");
     const syncBlock = source.slice(
       source.indexOf("for (const f of everything)"),
       source.indexOf("Done: ${TAG} uploaded as"),
     );
-    expect(syncBlock).toContain("syncBetaManifestsToLatestStable");
-    expect(syncBlock).not.toContain("beta manifests remain staged only");
-    expect(syncBlock).not.toContain("!release.draft");
+    expect(syncBlock).not.toContain("syncBetaManifestsToLatestStable");
+    expect(syncBlock).toContain("release:sync-beta-manifests");
   });
 
   it("refuses to create a GitHub release during signing", () => {
@@ -830,5 +847,233 @@ describe("release script safeguards", () => {
         "/tmp/other.js",
       ),
     ).toBe(false);
+  });
+
+  it("requires the full draft installer, sidecar, checksum, and manifest matrix", () => {
+    const names = requiredDraftAssetNames();
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "Zinnia-Windows-x64.exe",
+        "Zinnia-Windows-x64.exe.sig",
+        "Zinnia-Windows-x64.exe.asc",
+        "Zinnia-macOS.dmg",
+        "Zinnia-macOS.dmg.asc",
+        "Zinnia-Linux-x64.AppImage",
+        "Zinnia-Linux-x64.AppImage.sig",
+        "Zinnia-Linux-x64.flatpak",
+        "Zinnia-Linux-x64.flatpak.asc",
+        "SHA256SUMS-windows-x86_64.txt",
+        "SHA256SUMS-windows-x86_64.txt.asc",
+        "latest-windows-x86_64.json",
+        "latest-linux-x86_64.json",
+        ...requiredPublishedBetaManifestNames(),
+      ]),
+    );
+    expect(names).not.toContain("Zinnia-macOS.dmg.sig");
+    expect(names).not.toContain("Zinnia-Linux-x64.flatpak.sig");
+    expect(names).not.toContain("latest-linux-x86_64-deb.json");
+    expect(names).not.toContain("Zinnia-Linux-arm64.AppImage");
+    expect(names).not.toContain("latest-linux-beta-aarch64.json");
+    expect(requiredDraftAssetNames({ requireLinuxAarch64: true })).toEqual(
+      expect.arrayContaining([
+        "Zinnia-Linux-arm64.deb",
+        "latest-linux-aarch64.json",
+        "latest-linux-beta-aarch64-rpm.json",
+        "SHA256SUMS-linux-aarch64.txt",
+      ]),
+    );
+  });
+
+  it("fails closed when a draft is missing required assets or metadata", () => {
+    const version = "0.6.1-beta.6";
+    const headCommit = "c".repeat(40);
+    const release = {
+      draft: true,
+      prerelease: true,
+      target_commitish: headCommit,
+    };
+    expect(() =>
+      assertDraftReleaseShape({
+        release: { ...release, draft: false },
+        assetNames: requiredDraftAssetNames(),
+        version,
+        headCommit,
+      }),
+    ).toThrow(/must still be a draft/);
+    expect(() =>
+      assertDraftReleaseShape({
+        release: { ...release, prerelease: false },
+        assetNames: requiredDraftAssetNames(),
+        version,
+        headCommit,
+      }),
+    ).toThrow(/prerelease=/);
+    expect(() =>
+      assertDraftReleaseShape({
+        release,
+        assetNames: requiredDraftAssetNames(),
+        version,
+        headCommit: "d".repeat(40),
+      }),
+    ).toThrow(/not HEAD/);
+    expect(() =>
+      assertDraftReleaseShape({
+        release,
+        assetNames: requiredDraftAssetNames().filter(
+          (name: string) => name !== "Zinnia-Windows-x64.exe",
+        ),
+        version,
+        headCommit,
+      }),
+    ).toThrow(/Zinnia-Windows-x64\.exe/);
+    expect(
+      assertDraftReleaseShape({
+        release,
+        assetNames: requiredDraftAssetNames(),
+        version,
+        headCommit,
+      }).tag,
+    ).toBe("v0.6.1-beta.6");
+  });
+
+  it("selects unpublished drafts by tag and refuses published matches", () => {
+    expect(
+      selectDraftRelease(
+        [
+          { tag_name: "v0.6.0", draft: false },
+          { tag_name: "v0.6.1-beta.6", draft: true },
+        ],
+        "v0.6.1-beta.6",
+      )?.draft,
+    ).toBe(true);
+    expect(selectDraftRelease([], "v0.6.1-beta.6")).toBeNull();
+    expect(() =>
+      selectDraftRelease([{ tag_name: "v0.6.1", draft: false }], "v0.6.1"),
+    ).toThrow(/already published/);
+  });
+
+  it("refuses stable-only release overrides", () => {
+    expect(isStableReleaseVersion("0.6.1")).toBe(true);
+    expect(isStableReleaseVersion("0.6.1-beta.6")).toBe(false);
+    expect(() =>
+      assertStableReleaseOverridesAllowed({ SKIP_WIN_CODESIGN: "1" }, "0.6.1"),
+    ).toThrow(/SKIP_WIN_CODESIGN/);
+    expect(() =>
+      assertStableReleaseOverridesAllowed({ FORCE_UPLOAD: "true" }, "0.6.1"),
+    ).toThrow(/FORCE_UPLOAD/);
+    expect(() =>
+      assertStableReleaseOverridesAllowed(
+        { SKIP_RELEASE_MIRROR: "1", ALLOW_ASSET_REPLACE: "1" },
+        "0.6.1",
+      ),
+    ).toThrow(/SKIP_RELEASE_MIRROR/);
+    expect(() =>
+      assertStableReleaseOverridesAllowed(
+        { FORCE_UPLOAD: "1", SKIP_WIN_CODESIGN: "1" },
+        "0.6.1-beta.6",
+      ),
+    ).not.toThrow();
+  });
+
+  it("rejects Beta banners, placeholders, and prerelease URLs on stable CHANGELOG", () => {
+    const betaOk = [
+      "> 🅱️ This is a Beta build.\n",
+      "# ⬇️ Downloads\n",
+      "/download/v0.6.1-beta.6/Zinnia-Windows-x64.exe\n",
+      "## Changes in `v0.6.1-beta.6:`\n",
+      "- **Fix:** notes\n",
+    ].join("");
+    expect(validateChangelogForVersion(betaOk, "0.6.1-beta.6")).toEqual([]);
+
+    const stableBad = [
+      "> 🅱️ This is a Beta build.\n",
+      "# ⬇️ Downloads\n",
+      "/download/v0.6.1-beta.6/Zinnia-Windows-x64.exe\n",
+      "## Changes in `v0.6.1:`\n",
+      "- **Fix:** (add release notes)\n",
+    ].join("");
+    expect(validateChangelogForVersion(stableBad, "0.6.1")).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/Beta callout/),
+        expect.stringMatching(/placeholder notes/),
+        expect.stringMatching(/prerelease download URLs/),
+      ]),
+    );
+
+    const stableOk = [
+      "# ⬇️ Downloads\n",
+      "/download/v0.6.1/Zinnia-Windows-x64.exe\n",
+      "## Changes in `v0.6.1:`\n",
+      "- **Fix:** notes\n",
+    ].join("");
+    expect(validateChangelogForVersion(stableOk, "0.6.1")).toEqual([]);
+  });
+
+  it("downloads live updater artifacts only for --expected-version=current", () => {
+    expect(
+      shouldVerifyLiveArtifacts({
+        shapeOnly: true,
+        requestedExpectedVersion: "current",
+      }),
+    ).toBe(false);
+    expect(
+      shouldVerifyLiveArtifacts({
+        shapeOnly: false,
+        requestedExpectedVersion: "0.6.0",
+      }),
+    ).toBe(false);
+    expect(
+      shouldVerifyLiveArtifacts({
+        shapeOnly: false,
+        requestedExpectedVersion: "current",
+      }),
+    ).toBe(true);
+    const refs = collectManifestArtifactRefs([
+      JSON.stringify({
+        version: "0.6.1-beta.6",
+        platforms: {
+          "windows-x86_64": {
+            url: "https://github.com/BurntToasters/zinnia/releases/download/v0.6.1-beta.6/Zinnia-Windows-x64.exe",
+            signature: "sig",
+          },
+        },
+      }),
+    ]);
+    expect(refs.get("Zinnia-Windows-x64.exe")).toEqual({
+      url: "https://github.com/BurntToasters/zinnia/releases/download/v0.6.1-beta.6/Zinnia-Windows-x64.exe",
+      signature: "sig",
+    });
+  });
+
+  it("requires an explicit 7z:update action and treats --help as non-mutating", () => {
+    expect(parseUpdate7zArgv(["--help"]).help).toBe(true);
+    expect(parseUpdate7zArgv(["--update", "--help"]).help).toBe(true);
+    expect(parseUpdate7zArgv(["--check"]).check).toBe(true);
+    expect(() => parseUpdate7zArgv([])).toThrow(/requires --check/);
+    expect(() => parseUpdate7zArgv(["--help-me"])).toThrow(/Unknown/);
+    expect(() => parseUpdate7zArgv(["--check", "--update"])).toThrow(
+      /cannot be combined/,
+    );
+    const help = spawnSync(
+      process.execPath,
+      ["scripts/update-7z.js", "--update", "--help"],
+      { cwd: process.cwd(), encoding: "utf8" },
+    );
+    expect(help.status).toBe(0);
+    expect(`${help.stdout}${help.stderr}`).toMatch(/Usage:/);
+    expect(`${help.stdout}${help.stderr}`).not.toMatch(/Downloading/);
+  });
+
+  it("keeps VM reset scripts as inline destructive git for release hosts", () => {
+    const packageJson = JSON.parse(fs.readFileSync("package.json", "utf8")) as {
+      scripts: Record<string, string>;
+    };
+    expect(packageJson.scripts.b).toContain("git switch -C beta origin/beta");
+    expect(packageJson.scripts.b).toContain("git reset --hard");
+    expect(packageJson.scripts.r).toContain("git switch -C main origin/main");
+    expect(packageJson.scripts.r).toContain("gitprune:force");
+    expect(packageJson.scripts["release:verify:draft"]).toContain(
+      "verify-release-draft.js",
+    );
   });
 });

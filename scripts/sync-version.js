@@ -13,6 +13,7 @@ import {
   updateWindowsResourceVersion,
   updateWindowsShellResourceDestinations,
   windowsPackageVersionFromSemver,
+  syncNpmLockfileVersion,
 } from "./sync-version-helpers.js";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -217,4 +218,26 @@ try {
 if (syncedChangelog !== changelog) {
   fs.writeFileSync(changelogPath, syncedChangelog);
   console.log(`CHANGELOG.md    → ${version} (download URLs + section)`);
+}
+
+const npmLockPath = path.join(root, "package-lock.json");
+const npmLock = fs.readFileSync(npmLockPath, "utf8");
+let updatedNpmLock;
+try {
+  updatedNpmLock = syncNpmLockfileVersion(npmLock, version);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
+if (updatedNpmLock !== npmLock) {
+  fs.writeFileSync(npmLockPath, updatedNpmLock);
+  const lockVerify = JSON.parse(fs.readFileSync(npmLockPath, "utf8"));
+  if (
+    lockVerify.version !== version ||
+    lockVerify.packages?.[""]?.version !== version
+  ) {
+    console.error("package-lock.json write verification failed");
+    process.exit(1);
+  }
+  console.log(`package-lock.json → ${version}`);
 }

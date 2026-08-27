@@ -1449,6 +1449,7 @@ describe("convertArchive", () => {
         }));
       }
       if (command === "probe_7z") return undefined;
+      if (command === "archive_output_selection_token") return "absent";
       if (command === "create_temp_extract_dir")
         return "/tmp/zinnia-convert-tmp";
       if (command === "list_managed_temp_children")
@@ -1478,6 +1479,15 @@ describe("convertArchive", () => {
       "run_7z",
       expect.objectContaining({
         expectedArchiveIdentity: `identity:${archive}`,
+      }),
+    );
+    expect(invokeMock).toHaveBeenCalledWith("archive_output_selection_token", {
+      path: "/tmp/converted.7z",
+    });
+    expect(invokeMock).toHaveBeenCalledWith(
+      "run_7z",
+      expect.objectContaining({
+        expectedArchiveIdentity: "absent",
       }),
     );
   });

@@ -88,13 +88,15 @@ native build runs.
   build environment.
   They stage updater manifests, artifacts, checksum files, and detached `.asc`
   signatures in the matching draft GitHub release.
-- Beta signing auto-syncs that VM's `latest-*-beta-*.json` manifests onto the
-  latest stable `/releases/latest` (same as 0.6.0). Use
-  `npm run release:sync-beta-manifests` only for recovery/re-sync after a
-  published beta if needed.
-- After publishing, run `npm run release:verify:published`. It requires the
+- After publishing a beta, run `npm run release:sync-beta-manifests` so
+  `latest-*-beta-*.json` is copied onto the latest stable `/releases/latest`.
+  Signing a draft does not update that live feed. Keep the same command for
+  recovery/re-sync after a published beta if needed.
+- After the draft is complete, run `npm run release:verify:draft` (read-only).
+  After publishing, run `npm run release:verify:published`. It requires the
   complete standard target matrix for the current stable or beta channel and
-  verifies the exact release version. Stable verification also requires the
+  verifies the exact release version, then downloads referenced updater
+  artifacts and checks their signatures. Stable verification also requires the
   beta-target endpoints that move final-beta installs onto stable.
   `REQUIRED_UPDATER_TARGETS` adds intentional optional targets such as Linux
   ARM64 to that required set.
@@ -102,9 +104,10 @@ native build runs.
   already run separately on the same VM, use the matching `release:*:resume`
   command; its build session is bound to the exact commit, lockfiles, platform,
   architecture, and Node/Rust toolchain and expires after 24 hours.
-- After changing the package version, `release:prepare` / `npm run u` / `u2`
+- After changing the package version, `release:prepare` / `workspace:bootstrap`
   write the AppStream release entry via `node scripts/update-metainfo.js`
-  (commit the XML change with the version bump). You can also run that script
+  (commit the XML change with the version bump). `npm run u` / `u2` only update
+  lockfiles; they do not write AppStream. You can also run the metainfo script
   alone. `--check` remains available if you only want validation.
 - Do not push a release tag until every platform artifact is present and its
   updater signature and checksum have been verified.

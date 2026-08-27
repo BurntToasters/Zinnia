@@ -3,7 +3,7 @@
   <assemblyIdentity
     type="win32"
     name="run.rosie.zinnia.extract.shell"
-    version="0.6.1.6"/>
+    version="0.6.1.7"/>
   <msix xmlns="urn:schemas-microsoft-com:msix.v1"
     publisher="__PUBLISHER_DN__"
     packageName="run.rosie.zinnia.extractmenu"
