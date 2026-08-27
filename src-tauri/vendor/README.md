@@ -18,10 +18,13 @@ fixes:
   copies onto the app's volume before the swap.
 - Tar extraction must reject `Prefix` / `RootDir` / `ParentDir`, hard links,
   and symlinks that escape the extract root.
-- Linux `pkexec` / `sudo` / `dpkg` / `rpm` must be absolute, root-owned,
-  non-group/world-writable helpers (`/usr/bin` or `/bin`), with a minimal
-  `PATH=/usr/bin:/bin` environment. `sudo -S` must drain output and time out
-  instead of piping both stdio and calling `wait()`.
+- Linux `pkexec` / `sudo` / `dpkg` / `rpm` must be absolute, root-owned
+  helpers (`/usr/bin` or `/bin`), never resolved from `PATH`, with a minimal
+  `PATH=/usr/bin:/bin` environment. Regular files must not be group/world
+  writable. Root-owned helper symlinks are followed and the target must still
+  be a trusted regular file (Linux symlink mode is always 0777 and unused).
+  `sudo -S` must drain output and time out instead of piping both stdio and
+  calling `wait()`.
 - Windows must treat `ShellExecuteW <= 32` as failure and must not run
   `on_before_exit` / `exit` until the installer actually launches.
 
