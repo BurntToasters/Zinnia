@@ -1,9 +1,14 @@
 import { defineConfig } from "vite";
 import { resolve } from "path";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   root: "src",
   publicDir: "../public",
+  define: {
+    "import.meta.env.VITE_ZINNIA_E2E": JSON.stringify(
+      mode === "e2e" ? "1" : "",
+    ),
+  },
   build: {
     outDir: "../dist",
     emptyOutDir: true,
@@ -21,4 +26,4 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
   },
-});
+}));

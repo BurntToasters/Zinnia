@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import path from "node:path";
 import { invoke } from "@tauri-apps/api/core";
 import { confirm, message, open, save } from "@tauri-apps/plugin-dialog";
 import {
@@ -369,6 +370,69 @@ describe("archive test/browse/selective flows", () => {
       expect.objectContaining({
         args: expect.arrayContaining(["t", "/tmp/sample.7z"]),
       }),
+    );
+  });
+
+  it("tests the committed zips/hello.7z fixture path", async () => {
+    const archive = path.resolve(process.cwd(), "zips", "hello.7z");
+    state.inputs = [archive];
+    setInvokeRouter((command, payload) => {
+      if (command === "validate_archive_paths") {
+        return pathsFromValidationPayload(payload).map((item) => ({
+          path: item,
+          valid: true,
+        }));
+      }
+      if (command === "probe_7z") return undefined;
+      if (command === "run_7z") {
+        return { stdout: "Everything is Ok", stderr: "", code: 0 };
+      }
+      return undefined;
+    });
+
+    const result = await testArchive();
+    expect(result).toBe("passed");
+    expect(invokeMock).toHaveBeenCalledWith(
+      "run_7z",
+      expect.objectContaining({
+        args: expect.arrayContaining(["t", "-spd", "--", archive]),
+      }),
+    );
+  });
+
+  it("browses zips/hello.zip and renders the hello.txt member from the manifest", async () => {
+    const archive = path.resolve(process.cwd(), "zips", "hello.zip");
+    state.inputs = [archive];
+    setInvokeRouter((command, payload) => {
+      if (command === "validate_archive_paths") {
+        return pathsFromValidationPayload(payload).map((item) => ({
+          path: item,
+          valid: true,
+        }));
+      }
+      if (command === "probe_7z") return undefined;
+      if (command === "run_7z") {
+        return {
+          stdout: sltListing([
+            {
+              path: "hello.txt",
+              size: 23,
+              packedSize: 23,
+              modified: "2026-08-26",
+              isFolder: false,
+            },
+          ]),
+          stderr: "",
+          code: 0,
+        };
+      }
+      return undefined;
+    });
+
+    const result = await browseArchive();
+    expect(result?.entries.map((entry) => entry.path)).toEqual(["hello.txt"]);
+    expect(document.getElementById("browse-summary")?.textContent).toContain(
+      "1 file",
     );
   });
 
@@ -1410,6 +1474,20 @@ describe("convertArchive", () => {
       expect.objectContaining({ title: "No archive", kind: "warning" }),
     );
     expect(saveMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses converting zips/hello.7z into a compound TAR path", async () => {
+    state.inputs = [path.resolve(process.cwd(), "zips", "hello.7z")];
+    (document.getElementById("format") as HTMLSelectElement).value = "gzip";
+    saveMock.mockResolvedValueOnce("/tmp/hello.tar.gz");
+    await convertArchive();
+    expect(messageMock).toHaveBeenCalledWith(
+      expect.stringMatching(/compound TAR/i),
+      expect.objectContaining({ title: "Invalid output filename" }),
+    );
+    expect(invokeMock.mock.calls.some(([name]) => name === "run_7z")).toBe(
+      false,
+    );
   });
 
   it("discards a conversion dialog result after the archive session changes", async () => {

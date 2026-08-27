@@ -1643,9 +1643,15 @@ async function main() {
     await uploadAssetWithReplace(release, f);
     console.log(`  ^ ${path.basename(f)}`);
   }
-  // Do not mutate /releases/latest while this tag is still a draft. Promote
-  // beta live-feed manifests with release:sync-beta-manifests after publish
-  // (published tag + complete matrix).
+  // Beta clients poll /releases/latest for latest-*-beta-*.json. Sync those
+  // manifests onto the latest *stable* release during every beta sign upload,
+  // including while this tag is still a draft. That is intentional: each
+  // release:*:continue VM should publish its platform feed as soon as it
+  // signs, same automatic behavior as 0.6.0 / 0.6.1-beta.4.
+  // Keep release:sync-beta-manifests for recovery/re-sync only.
+  if (IS_PRERELEASE) {
+    await syncBetaManifestsToLatestStable(everything, release.id);
+  }
 
   console.log(
     `\nDone: ${TAG} uploaded as ${release.draft ? "draft" : "published"}.\n`,

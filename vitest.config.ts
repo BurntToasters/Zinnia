@@ -12,7 +12,12 @@ export default defineConfig({
       reporter: ["text", "json-summary", "html"],
       reportsDirectory: "coverage",
       include: ["src/**/*.ts"],
-      exclude: ["src/tests/**", "src/vite-env.d.ts"],
+      exclude: [
+        "src/tests/**",
+        "src/vite-env.d.ts",
+        "src/e2e-hook.ts",
+        "src/e2e-wdio-plugin.ts",
+      ],
       thresholds: {
         lines: 79.5,
         functions: 76,

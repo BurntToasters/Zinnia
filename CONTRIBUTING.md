@@ -18,10 +18,12 @@ Prerequisites per platform are in [build-setup.md](build-setup.md).
 | Command                       | What it does                                     |
 | ----------------------------- | ------------------------------------------------ |
 | `npm run typecheck`           | `tsc --noEmit` (strict)                          |
-| `npm run lint`                | ESLint over `src/` and `scripts/`                |
+| `npm run lint`                | ESLint over `src/`, `scripts/`, and `e2e/`       |
 | `npm run format:check`        | Prettier check (use `npm run format` to fix)     |
 | `npm run validate:no-em-dash` | Rejects Unicode em dash (U+2014) in tracked text |
 | `npm test`                    | Vitest (frontend)                                |
+| `npm run test:archives`       | Real 7-Zip extract/create against [`zips/`](zips/) |
+| `npm run test:e2e`            | Unpackaged-app WebdriverIO against Basic/Power UI |
 | `npm run test:rust`           | `cargo test` (backend)                           |
 | `npm run test:all`            | All of the above, the way CI runs them           |
 
@@ -70,6 +72,15 @@ branch:
   code uses the jsdom fixture in [`src/tests/setup-dom.ts`](src/tests/setup-dom.ts).
 - New 7z switches/commands need both a Vitest arg-builder test and a Rust
   `validate_run_7z_args` test.
+- Archive format coverage lives in [`zips/`](zips/). Regenerating writable
+  fixtures: `npm run prepare:7z && npm run test:archives:generate`. Do not
+  overwrite `hello.rar` unless you pass `--write-rar` (7-Zip cannot create RAR).
+- GUI E2E is `npm run test:e2e` (also part of `test:all`). It builds a debug
+  binary with `--features e2e` and never belongs in release/signed builds.
+  The WebDriver capability is inlined in [`src-tauri/tauri.e2e.conf.json`](src-tauri/tauri.e2e.conf.json)
+  so production ACL generation never sees `wdio-webdriver`. Linux CI uses xvfb.
+  `SKIP_E2E=1` skips the stage. `ZINNIA_E2E_REBUILD=1` forces a rebuild of the
+  debug app.
 - See [ARCHITECTURE.md](ARCHITECTURE.md) for the module map.
 
 ### Where to put new code

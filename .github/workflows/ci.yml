@@ -63,10 +63,14 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
-            patchelf
+            patchelf \
+            xvfb
       - run: npm ci --ignore-scripts
       - run: npm audit signatures
-      - run: npm run test:all
+      - name: Quality gate
+        env:
+          WEBKIT_DISABLE_COMPOSITING_MODE: "1"
+        run: npm run test:all
 
   rust-check:
     needs: quality-gate
@@ -93,6 +97,7 @@ jobs:
       - run: npm audit signatures
       - run: npm run test:cov
       - run: npm run prepare:7z
+      - run: npm run test:archives
       - name: Compile Finder Sync extension smoke
         if: runner.os == 'macOS'
         run: npm run prepare:macos:finder-sync
@@ -100,6 +105,7 @@ jobs:
       - run: npm run prepare:win-shell-stubs
       - run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
       - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets
+      - run: npm run test:e2e
 
   updater-manifest:
     runs-on: ubuntu-latest

@@ -28,6 +28,9 @@ fn binary_path() -> Option<PathBuf> {
             return Some(path);
         }
     }
+    if std::env::var_os("ZINNIA_REQUIRE_7Z").is_some() {
+        panic!("bundled 7z binary not found (ZINNIA_REQUIRE_7Z=1; run npm run prepare:7z)");
+    }
     None
 }
 
@@ -41,6 +44,40 @@ fn temp_dir(tag: &str) -> PathBuf {
     ));
     std::fs::create_dir_all(&base).unwrap();
     base
+}
+
+/// Stream formats (gzip/bzip2/xz) often emit the archive stem instead of the
+/// original member name. Prefer `input.txt`, then any unique content match.
+fn find_extracted_payload(root: &Path, expected: &str) -> Option<PathBuf> {
+    let named = root.join("input.txt");
+    if named.is_file() && std::fs::read_to_string(&named).unwrap_or_default() == expected {
+        return Some(named);
+    }
+    let mut stack = vec![root.to_path_buf()];
+    let mut matches = Vec::new();
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if meta.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if meta.is_file() && std::fs::read_to_string(&path).unwrap_or_default() == expected {
+                matches.push(path);
+            }
+        }
+    }
+    if matches.len() == 1 {
+        Some(matches.remove(0))
+    } else {
+        None
+    }
 }
 
 fn output_with_piped_password(command: &mut Command, password: &str) -> std::process::Output {
@@ -541,6 +578,35 @@ fn ui_compression_switch_matrix_runs_on_bundled_sidecar() {
             test.status.success(),
             "{format} integrity test failed: {}",
             String::from_utf8_lossy(&test.stderr)
+        );
+
+        let out = work.join(format!("out-{format}"));
+        let extract = Command::new(&bin)
+            .arg("x")
+            .arg(format!("-o{}", out.display()))
+            .arg("-aou")
+            .arg("--")
+            .arg(&archive)
+            .output()
+            .expect("7z matrix extract should run");
+        assert!(
+            extract.status.success(),
+            "{format} extract failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&extract.stdout),
+            String::from_utf8_lossy(&extract.stderr)
+        );
+        let extracted = find_extracted_payload(&out, "format matrix\n");
+        assert!(
+            extracted.is_some(),
+            "{format} extracted payload mismatch; listing={:?}",
+            std::fs::read_dir(&out)
+                .map(|entries| {
+                    entries
+                        .flatten()
+                        .map(|entry| entry.file_name())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
         );
     }
 

@@ -630,4 +630,36 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(base);
     }
+
+    #[test]
+    fn zips_fixtures_match_detector_allowlist() {
+        let zips = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../zips")
+            .canonicalize()
+            .expect("zips/ fixture directory");
+        let manifest: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(zips.join("manifest.json")).expect("zips/manifest.json"),
+        )
+        .expect("manifest json");
+        for entry in manifest["extract"].as_array().expect("extract list") {
+            let file = entry["file"].as_str().expect("file");
+            let path = zips.join(file);
+            let result = validate_archive_path(&path.to_string_lossy());
+            assert!(
+                result.valid,
+                "{file} should be a supported archive: {:?}",
+                result.reason
+            );
+        }
+        for entry in manifest["negative"].as_array().expect("negative list") {
+            let file = entry["file"].as_str().expect("file");
+            let detect = entry["detect"].as_bool().expect("detect");
+            let result = validate_archive_path(&zips.join(file).to_string_lossy());
+            assert_eq!(
+                result.valid, detect,
+                "{file} detect={}, reason={:?}",
+                detect, result.reason
+            );
+        }
+    }
 }

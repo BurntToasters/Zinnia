@@ -88,10 +88,12 @@ native build runs.
   build environment.
   They stage updater manifests, artifacts, checksum files, and detached `.asc`
   signatures in the matching draft GitHub release.
-- After publishing a beta, run `npm run release:sync-beta-manifests` so
-  `latest-*-beta-*.json` is copied onto the latest stable `/releases/latest`.
-  Signing a draft does not update that live feed. Keep the same command for
-  recovery/re-sync after a published beta if needed.
+- Beta `release:*:continue` signing auto-syncs that VM's `latest-*-beta-*.json`
+  manifests onto the latest stable `/releases/latest`, **including while the
+  tag is still a draft**. That is intentional: beta clients poll the live feed,
+  so each platform's updater JSON is published as soon as that VM signs.
+  Use `npm run release:sync-beta-manifests` only for recovery/re-sync after a
+  published beta if needed.
 - After the draft is complete, run `npm run release:verify:draft` (read-only).
   After publishing, run `npm run release:verify:published`. It requires the
   complete standard target matrix for the current stable or beta channel and

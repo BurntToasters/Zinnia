@@ -5,6 +5,7 @@ import { validateArchivePaths } from "./archive-rules";
 import { deriveExtractDestinationPath } from "./extract-path";
 import { describe7zError, looksLikePasswordRequiredError } from "./error-hints";
 import { SAFE_EXTRACT_OVERWRITE_MODE } from "./extract-policy";
+import { installWdioGuestPluginIfEnabled } from "./e2e-wdio-plugin";
 import {
   setProgressIndeterminateClass,
   setProgressPercentClass,
@@ -260,6 +261,7 @@ async function syncExtractWindowFx(): Promise<void> {
 }
 
 async function run() {
+  await installWdioGuestPluginIfEnabled();
   const appWindow = getCurrentWebviewWindow();
 
   // Platform styling is independent of extraction startup; do not put it on

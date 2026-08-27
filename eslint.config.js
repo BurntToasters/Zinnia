@@ -34,7 +34,7 @@ export default [
     },
   },
   {
-    files: ["scripts/**/*.{js,ts}"],
+    files: ["scripts/**/*.{js,ts}", "e2e/**/*.js"],
     languageOptions: {
       parser: tsParser,
     },

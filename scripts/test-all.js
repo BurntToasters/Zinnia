@@ -18,7 +18,7 @@ const coverageSummaryPath = resolve(
 );
 const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
 const appVersion = packageJson.version ?? "unknown";
-const scriptVersion = "1.1.2";
+const scriptVersion = "1.1.4";
 const criticalCoverageThresholds = {
   // Directory keys (trailing `/`) aggregate all matching `src/<dir>/**/*.ts` files.
   "archive/": { lines: 80, branches: 62, functions: 88 },
@@ -41,6 +41,7 @@ const colors = {
 };
 const defaultTimeoutMs = 300_000;
 const rustTimeoutMs = process.platform === "win32" ? 1_200_000 : 600_000;
+const e2eTimeoutMs = process.platform === "win32" ? 1_200_000 : 900_000;
 
 function createInitialResults() {
   return {
@@ -63,6 +64,8 @@ function createInitialResults() {
     },
     rustfmt: { status: "pending" },
     rustprep: { status: "pending" },
+    archives: { status: "pending" },
+    e2e: { status: "pending" },
     clippy: { status: "pending" },
     rust: { status: "pending" },
     vendorUpdater: { status: "pending" },
@@ -204,6 +207,7 @@ function runCommand(name, command, args, parser, results, options = {}) {
     shell: useShell,
     windowsHide: true,
     timeout,
+    env: options.env ? { ...process.env, ...options.env } : process.env,
   });
 
   const stdout = run.stdout || "";
@@ -248,7 +252,7 @@ function printSummary(results) {
 ${colors.reset}`);
 
   const allPassed = Object.values(results).every(
-    (result) => result.status === "passed",
+    (result) => result.status === "passed" || result.status === "skipped",
   );
 
   console.log(
@@ -347,6 +351,13 @@ ${colors.reset}`);
     }${colors.reset}`,
   );
   console.log(
+    `${colors.bold}Archives:${colors.reset}   ${
+      results.archives?.status === "passed"
+        ? `${colors.green}✓ PASS`
+        : `${colors.red}✗ FAIL`
+    }${colors.reset}`,
+  );
+  console.log(
     `${colors.bold}Clippy:${colors.reset}      ${
       results.clippy.status === "passed"
         ? `${colors.green}✓ PASS`
@@ -365,6 +376,15 @@ ${colors.reset}`);
       results.vendorUpdater?.status === "passed"
         ? `${colors.green}✓ PASS`
         : `${colors.red}✗ FAIL`
+    }${colors.reset}`,
+  );
+  console.log(
+    `${colors.bold}E2E:${colors.reset}        ${
+      results.e2e?.status === "passed"
+        ? `${colors.green}✓ PASS`
+        : results.e2e?.status === "skipped"
+          ? `${colors.blue}SKIP`
+          : `${colors.red}✗ FAIL`
     }${colors.reset}`,
   );
 
@@ -452,6 +472,9 @@ function main({
     { timeout: rustTimeoutMs },
   );
   if (rustPrepared) {
+    runner("archives", npm, ["run", "test:archives"], null, results, {
+      timeout: rustTimeoutMs,
+    });
     runner(
       "clippy",
       "cargo",
@@ -481,7 +504,10 @@ function main({
       ],
       null,
       results,
-      { timeout: rustTimeoutMs },
+      {
+        timeout: rustTimeoutMs,
+        env: { ZINNIA_REQUIRE_7Z: "1" },
+      },
     );
     runner(
       "vendorUpdater",
@@ -499,10 +525,15 @@ function main({
       results,
       { timeout: rustTimeoutMs },
     );
+    runner("e2e", npm, ["run", "test:e2e"], null, results, {
+      timeout: e2eTimeoutMs,
+    });
   } else {
     results.clippy.status = "failed";
     results.rust.status = "failed";
     results.vendorUpdater.status = "failed";
+    results.archives.status = "failed";
+    results.e2e.status = "failed";
     console.log(
       `${colors.red}Skipping clippy and Rust tests because Rust test assets could not be prepared.${colors.reset}\n`,
     );
