@@ -225,6 +225,23 @@ pub fn unix_metadata_is_trusted_helper(uid: u32, mode: u32, is_regular_file: boo
     is_regular_file && uid == 0 && (mode & 0o022) == 0
 }
 
+/// Trust check for the directory entry at a helper path before following it.
+///
+/// Regular files must be root-owned and not group/world-writable. Symlink
+/// inodes must be root-owned; their mode is ignored because Linux always
+/// reports 0777 on symlinks and never uses those bits (`man 7 symlink`).
+/// Rejecting 0777 would refuse `/usr/bin/sh` -> `dash` and any distro helper
+/// that is an alias.
+pub fn unix_directory_entry_is_trusted_helper(uid: u32, mode: u32, is_symlink: bool) -> bool {
+    if uid != 0 {
+        return false;
+    }
+    if is_symlink {
+        return true;
+    }
+    (mode & 0o022) == 0
+}
+
 #[cfg(unix)]
 pub fn unix_helper_is_trusted(path: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
@@ -232,9 +249,13 @@ pub fn unix_helper_is_trusted(path: &Path) -> bool {
     let Ok(link_meta) = std::fs::symlink_metadata(path) else {
         return false;
     };
-    // The directory entry (file or symlink inode) must be root-owned and not
-    // group/world-writable so a user-writable /usr/bin link cannot be swapped.
-    if link_meta.uid() != 0 || (link_meta.mode() & 0o022) != 0 {
+    // The directory entry must be root-owned. A user-owned /usr/bin symlink
+    // cannot be swapped in. Writable-bit checks apply to regular files only.
+    if !unix_directory_entry_is_trusted_helper(
+        link_meta.uid(),
+        link_meta.mode(),
+        link_meta.file_type().is_symlink(),
+    ) {
         return false;
     }
     let Ok(meta) = std::fs::metadata(path) else {
@@ -479,6 +500,13 @@ mod tests {
         assert!(!unix_metadata_is_trusted_helper(0, 0o757, true));
         assert!(!unix_metadata_is_trusted_helper(501, 0o755, true));
         assert!(!unix_metadata_is_trusted_helper(0, 0o755, false));
+        // Linux symlink inodes are always 0777; a root-owned link must still
+        // be a valid helper directory entry.
+        assert!(unix_directory_entry_is_trusted_helper(0, 0o777, true));
+        assert!(unix_directory_entry_is_trusted_helper(0, 0o755, true));
+        assert!(!unix_directory_entry_is_trusted_helper(501, 0o777, true));
+        assert!(!unix_directory_entry_is_trusted_helper(0, 0o777, false));
+        assert!(!unix_directory_entry_is_trusted_helper(0, 0o775, false));
     }
 
     #[cfg(unix)]
@@ -495,6 +523,14 @@ mod tests {
         let _ = std::fs::write(&hostile, b"#!/bin/sh\n");
         assert!(!unix_helper_is_trusted(&hostile));
         let _ = std::fs::remove_file(&hostile);
+        let hostile_link = std::env::temp_dir().join("zinnia-hostile-sh-link");
+        let _ = std::fs::remove_file(&hostile_link);
+        std::os::unix::fs::symlink(&resolved, &hostile_link).unwrap();
+        assert!(
+            !unix_helper_is_trusted(&hostile_link),
+            "a user-owned symlink to a trusted helper must not be trusted"
+        );
+        let _ = std::fs::remove_file(&hostile_link);
         assert!(resolve_trusted_system_helper("definitely-not-a-zinnia-helper").is_err());
     }
 }
