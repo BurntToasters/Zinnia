@@ -35,6 +35,50 @@ fn bundled_7z_test_binary() -> Option<std::path::PathBuf> {
             return Some(path);
         }
     }
+    if std::env::var_os("ZINNIA_REQUIRE_7Z").is_some() {
+        panic!("bundled 7z binary not found (ZINNIA_REQUIRE_7Z=1; run npm run prepare:7z)");
+    }
+    None
+}
+
+fn zips_dir() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("zips")
+        .canonicalize()
+        .expect("zips/ fixture directory")
+}
+
+fn copy_zips_fixture(dest_dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let source = zips_dir().join(name);
+    assert!(source.is_file(), "zips/{name} must exist");
+    let dest = dest_dir.join(name);
+    std::fs::copy(&source, &dest).expect("copy fixture into temp");
+    dest
+}
+
+fn fixture_payload() -> String {
+    std::fs::read_to_string(zips_dir().join("hello.txt")).expect("zips/hello.txt")
+}
+
+fn find_named_file(root: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if meta.is_dir() {
+                stack.push(path);
+            } else if path.file_name().is_some_and(|file_name| file_name == name) {
+                return Some(path);
+            }
+        }
+    }
     None
 }
 
@@ -910,6 +954,153 @@ fn real_7z_extract_uses_snapshot_publish_stage_and_safe_commit() {
         }
     }
 
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn real_7z_extracts_zips_hello_7z_through_snapshot_publish() {
+    let Some(binary) = bundled_7z_test_binary() else {
+        eprintln!("skipping: bundled 7z binary not found (run npm run prepare:7z)");
+        return;
+    };
+    let root = temp_root("zinnia-fixture-7z");
+    let cache = root.join("cache");
+    std::fs::create_dir_all(&root).expect("root");
+    let archive = copy_zips_fixture(&root, "hello.7z");
+    let destination = root.join("out");
+    let mut args = vec![
+        "x".to_string(),
+        "-aou".to_string(),
+        format!("-o{}", destination.display()),
+        "--".to_string(),
+        archive.to_string_lossy().into_owned(),
+    ];
+    crate::validation::validate_run_7z_args(&args).expect("valid extract arguments");
+    super::commands::harden_7z_args(&mut args);
+    super::commands::apply_backend_link_switches(&mut args);
+
+    let plan = prepare_cleanup_plan(&args, Some(cache), None).expect("prepare plan");
+    let staged_snapshot = plan
+        .staged_input_archive
+        .as_ref()
+        .expect("private archive snapshot");
+    let (staged_output, resolved_destination) =
+        plan.staged_extract.as_ref().expect("publish stage");
+    let mut execution_args = args.clone();
+    super::staging::rewrite_extract_archive(&mut execution_args, staged_snapshot)
+        .expect("rewrite snapshot input");
+    super::staging::rewrite_extract_output(&mut execution_args, staged_output)
+        .expect("rewrite publish stage");
+    let extract = std::process::Command::new(&binary)
+        .args(&execution_args)
+        .output()
+        .expect("extract into publish stage");
+    assert!(
+        extract.status.success(),
+        "7z extract failed: {}",
+        String::from_utf8_lossy(&extract.stderr)
+    );
+    merge_staged_extract(
+        staged_output,
+        resolved_destination,
+        plan.max_extract_bytes.expect("extract quota"),
+    )
+    .expect("safe staged commit");
+    std::fs::remove_dir_all(
+        staged_snapshot
+            .parent()
+            .expect("snapshot staging directory"),
+    )
+    .expect("remove snapshot stage");
+    unregister_plan_stages(&plan);
+    let published = find_named_file(&destination, "hello.txt").expect("published hello.txt");
+    assert_eq!(
+        std::fs::read_to_string(published).unwrap(),
+        fixture_payload()
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn real_7z_extracts_zips_hello_tar_gz_through_compound_two_pass() {
+    let Some(binary) = bundled_7z_test_binary() else {
+        eprintln!("skipping: bundled 7z binary not found (run npm run prepare:7z)");
+        return;
+    };
+    let root = temp_root("zinnia-fixture-tgz");
+    let cache = root.join("cache");
+    std::fs::create_dir_all(&root).expect("root");
+    let archive = copy_zips_fixture(&root, "hello.tar.gz");
+    let destination = root.join("out");
+    let mut args = vec![
+        "x".to_string(),
+        "-aou".to_string(),
+        format!("-o{}", destination.display()),
+        "--".to_string(),
+        archive.to_string_lossy().into_owned(),
+    ];
+    crate::validation::validate_run_7z_args(&args).expect("valid extract arguments");
+    super::commands::harden_7z_args(&mut args);
+    super::commands::apply_backend_link_switches(&mut args);
+    assert!(
+        is_compound_tar_operation(&args),
+        "hello.tar.gz must use the compound TAR path"
+    );
+
+    let plan = prepare_cleanup_plan(&args, Some(cache), None).expect("prepare plan");
+    let staged_snapshot = plan
+        .staged_input_archive
+        .as_ref()
+        .expect("private archive snapshot");
+    let (staged_output, resolved_destination) =
+        plan.staged_extract.as_ref().expect("publish stage");
+    let snapshot_parent = staged_snapshot.parent().expect("snapshot parent");
+    let outer_stage = snapshot_parent.join("outer");
+    std::fs::create_dir_all(&outer_stage).expect("outer stage");
+    let outer_args = compound_tar_outer_extract_args(staged_snapshot, &outer_stage);
+    let outer = std::process::Command::new(&binary)
+        .args(&outer_args)
+        .output()
+        .expect("outer extract");
+    assert!(
+        compound_tar_outer_unpack_ok(
+            outer.status.code().unwrap_or(1),
+            &String::from_utf8_lossy(&outer.stdout),
+            &String::from_utf8_lossy(&outer.stderr)
+        ),
+        "outer compound extract failed: {}",
+        String::from_utf8_lossy(&outer.stderr)
+    );
+    let inner_tar = find_named_file(&outer_stage, "hello.tar").expect("inner hello.tar");
+    std::fs::create_dir_all(staged_output).expect("inner stage");
+    let inner = std::process::Command::new(&binary)
+        .args(["x", &format!("-o{}", staged_output.display()), "-aou", "--"])
+        .arg(&inner_tar)
+        .output()
+        .expect("inner extract");
+    assert!(
+        inner.status.success(),
+        "inner tar extract failed: {}",
+        String::from_utf8_lossy(&inner.stderr)
+    );
+    merge_staged_extract(
+        staged_output,
+        resolved_destination,
+        plan.max_extract_bytes.expect("extract quota"),
+    )
+    .expect("safe staged commit");
+    std::fs::remove_dir_all(
+        staged_snapshot
+            .parent()
+            .expect("snapshot staging directory"),
+    )
+    .expect("remove snapshot stage");
+    unregister_plan_stages(&plan);
+    let published = find_named_file(&destination, "hello.txt").expect("published hello.txt");
+    assert_eq!(
+        std::fs::read_to_string(published).unwrap(),
+        fixture_payload()
+    );
     let _ = std::fs::remove_dir_all(root);
 }
 

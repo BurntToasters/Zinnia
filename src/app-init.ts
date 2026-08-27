@@ -56,6 +56,7 @@ import {
   runSetupWizardFlow,
 } from "./power-events";
 import { MAX_ARCHIVE_PATHS } from "./archive-rules";
+import { installE2eHookIfEnabled } from "./e2e-hook";
 
 let persistentAlertDismissWired = false;
 
@@ -108,6 +109,7 @@ function wireTitlebar(): void {
 }
 
 export async function init() {
+  await installE2eHookIfEnabled();
   let uiReadyForOpenPaths = false;
   let openPathsQueue = Promise.resolve();
 

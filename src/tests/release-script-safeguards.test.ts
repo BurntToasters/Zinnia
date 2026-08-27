@@ -380,14 +380,16 @@ describe("release script safeguards", () => {
     },
   );
 
-  it("does not auto-sync beta manifests onto /releases/latest during draft signing", () => {
+  it("auto-syncs beta manifests onto /releases/latest during each sign upload", () => {
     const source = fs.readFileSync("scripts/gpg-sign.js", "utf8");
     const syncBlock = source.slice(
       source.indexOf("for (const f of everything)"),
       source.indexOf("Done: ${TAG} uploaded as"),
     );
-    expect(syncBlock).not.toContain("syncBetaManifestsToLatestStable");
-    expect(syncBlock).toContain("release:sync-beta-manifests");
+    expect(syncBlock).toContain("if (IS_PRERELEASE)");
+    expect(syncBlock).toContain(
+      "syncBetaManifestsToLatestStable(everything, release.id)",
+    );
   });
 
   it("refuses to create a GitHub release during signing", () => {

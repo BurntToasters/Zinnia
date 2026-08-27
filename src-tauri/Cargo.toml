@@ -16,6 +16,8 @@ tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"
 tauri-plugin-notification = "2"
+tauri-plugin-wdio = { version = "1", optional = true }
+tauri-plugin-wdio-webdriver = { version = "1", optional = true }
 tokio = { version = "1", features = ["time"] }
 shared_child = "1.1"
 getrandom = "0.3"
@@ -50,6 +52,9 @@ libc = "0.2"
 
 [dev-dependencies]
 minisign-verify = "0.2.5"
+
+[features]
+e2e = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
 
 # Patched: macOS transactional install, confined tar, Linux helper PATH, Windows ShellExecute.
 [patch.crates-io]
