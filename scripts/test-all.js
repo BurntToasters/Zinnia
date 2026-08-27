@@ -65,6 +65,7 @@ function createInitialResults() {
     rustprep: { status: "pending" },
     clippy: { status: "pending" },
     rust: { status: "pending" },
+    vendorUpdater: { status: "pending" },
   };
 }
 
@@ -359,6 +360,13 @@ ${colors.reset}`);
         : `${colors.red}✗ FAIL`
     }${colors.reset}`,
   );
+  console.log(
+    `${colors.bold}Vendor Updater:${colors.reset} ${
+      results.vendorUpdater?.status === "passed"
+        ? `${colors.green}✓ PASS`
+        : `${colors.red}✗ FAIL`
+    }${colors.reset}`,
+  );
 
   console.log("");
   if (allPassed) {
@@ -379,6 +387,7 @@ function main({
   clearProof = clearQualityGateProof,
   recordProof = recordSuccessfulQualityGate,
   runner = runCommand,
+  parseCoverage: parseCoverageResults = parseCoverage,
 } = {}) {
   // A failed or interrupted run must invalidate any earlier release proof.
   clearProof(root);
@@ -415,7 +424,7 @@ function main({
     results,
   );
   if (testPassed) {
-    parseCoverage(results);
+    parseCoverageResults(results);
   } else {
     results.coverage.status = "failed";
   }
@@ -474,9 +483,26 @@ function main({
       results,
       { timeout: rustTimeoutMs },
     );
+    runner(
+      "vendorUpdater",
+      "cargo",
+      [
+        "test",
+        "--locked",
+        "--manifest-path",
+        "src-tauri/vendor/tauri-plugin-updater/Cargo.toml",
+        // Upstream doctests need a concrete Tauri Runtime; unit tests cover the
+        // Zinnia install-safety patches.
+        "--lib",
+      ],
+      null,
+      results,
+      { timeout: rustTimeoutMs },
+    );
   } else {
     results.clippy.status = "failed";
     results.rust.status = "failed";
+    results.vendorUpdater.status = "failed";
     console.log(
       `${colors.red}Skipping clippy and Rust tests because Rust test assets could not be prepared.${colors.reset}\n`,
     );

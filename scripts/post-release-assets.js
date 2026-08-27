@@ -227,10 +227,49 @@ function copyPathRecursive(sourcePath, destinationPath) {
   copyFileForMirror(sourcePath, destinationPath);
 }
 
+function uniqueMirrorSibling(destinationPath, label) {
+  const dir = path.dirname(destinationPath);
+  const base = path.basename(destinationPath);
+  return path.join(
+    dir,
+    `.zinnia-mirror-${label}-${process.pid}-${crypto.randomBytes(6).toString("hex")}-${base}`,
+  );
+}
+
 function copyReleaseEntryToMirror(sourcePath, destinationPath) {
-  removePath(destinationPath);
-  copyPathRecursive(sourcePath, destinationPath);
+  const stagingPath = uniqueMirrorSibling(destinationPath, "new");
+  const rollbackPath = uniqueMirrorSibling(destinationPath, "old");
+  removePath(stagingPath);
+  copyPathRecursive(sourcePath, stagingPath);
+  try {
+    verifyCopiedPath(sourcePath, stagingPath);
+  } catch (error) {
+    removePath(stagingPath);
+    throw error;
+  }
+
+  const hadPrevious = fs.existsSync(destinationPath);
+  if (hadPrevious) {
+    removePath(rollbackPath);
+    fs.renameSync(destinationPath, rollbackPath);
+  }
+  try {
+    fs.renameSync(stagingPath, destinationPath);
+  } catch (error) {
+    if (hadPrevious && fs.existsSync(rollbackPath)) {
+      try {
+        fs.renameSync(rollbackPath, destinationPath);
+      } catch {
+        // Leave rollback beside dest for manual recovery.
+      }
+    }
+    removePath(stagingPath);
+    throw error;
+  }
   verifyCopiedPath(sourcePath, destinationPath);
+  if (hadPrevious) {
+    removePath(rollbackPath);
+  }
 }
 
 function resolveMirrorPaths(releaseDir = RELEASE_DIR, destination) {
@@ -445,6 +484,7 @@ export {
   getReleaseEntries,
   resolveMirrorPaths,
   verifyCopiedPath,
+  copyReleaseEntryToMirror,
   copyReleaseAssets,
   run,
   finalizeReleaseAssets,

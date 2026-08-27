@@ -269,7 +269,7 @@ basicFxRow.hidden = true;
 addEl("div", "s-log-dir");
 addEl("button", "run-benchmark");
 addEl("div", "benchmark-result");
-addEl("div", "os-integration-help");
+addEl("div", "os-integration-help").setAttribute("aria-live", "polite");
 addEl("div", "os-platform-label");
 addEl("div", "os-package-label");
 addEl("div", "os-file-assoc-status");

@@ -141,4 +141,48 @@ describe("macOS compatibility", () => {
     expect(finderSyncPlist).toContain("NSExtensionAttributes");
     expect(finderSyncPlist).toContain("ZinniaAppGroupIdentifier");
   });
+
+  it("replaces the live app with a sibling backup instead of rm -rf before mv", () => {
+    const updaterSrc = fs.readFileSync(
+      path.resolve(
+        process.cwd(),
+        "src-tauri",
+        "vendor",
+        "tauri-plugin-updater",
+        "src",
+        "install_safety.rs",
+      ),
+      "utf8",
+    );
+    expect(updaterSrc).toContain("MACOS_PRIVILEGED_INSTALL_SCRIPT");
+    expect(updaterSrc).toContain("quoted form of");
+    expect(updaterSrc).toContain(".zinnia-update-backup");
+    const script = updaterSrc.slice(
+      updaterSrc.indexOf("on installUpdate"),
+      updaterSrc.indexOf("end installUpdate"),
+    );
+    expect(script).toContain('/bin/mv -f \\"$BAK\\" \\"$SRC\\"');
+    expect(script).toContain('/bin/test -d \\"$SRC/Contents\\"');
+    expect(script).toContain(
+      '/bin/rm -rf \\"$SRC\\"; fi; /bin/mv -f \\"$BAK\\" \\"$SRC\\"',
+    );
+    expect(script).not.toContain('rm -rf " & quoted form of srcPath');
+    expect(script).toContain(
+      'if /bin/test -e \\"$BAK\\"; then /bin/rm -rf \\"$BAK\\"; fi; /bin/mv -f \\"$SRC\\" \\"$BAK\\"',
+    );
+    const installInner = fs.readFileSync(
+      path.resolve(
+        process.cwd(),
+        "src-tauri",
+        "vendor",
+        "tauri-plugin-updater",
+        "src",
+        "updater.rs",
+      ),
+      "utf8",
+    );
+    expect(installInner).toContain("MACOS_PRIVILEGED_INSTALL_SCRIPT");
+    const productionInstall = installInner.split("#[cfg(test)]")[0];
+    expect(productionInstall).not.toMatch(/rm -rf .*quoted form of srcPath/);
+  });
 });

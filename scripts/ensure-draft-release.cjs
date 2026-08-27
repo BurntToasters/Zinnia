@@ -13,6 +13,7 @@ const {
   assertGitHubCliAuthenticated,
   githubApi,
 } = require("./github-cli.cjs");
+const { assertStableReleaseOverridesAllowed } = require("./release-policy.cjs");
 
 const REPOSITORY_ROOT = path.resolve(__dirname, "..");
 const CHANGELOG_PATH = path.join(REPOSITORY_ROOT, "CHANGELOG.md");
@@ -404,6 +405,7 @@ async function waitForDraftRelease() {
 }
 
 async function main() {
+  assertStableReleaseOverridesAllowed(process.env, VERSION);
   assertGitHubCliAuthenticated();
 
   verifyReleaseSession();

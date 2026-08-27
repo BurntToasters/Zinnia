@@ -184,17 +184,60 @@ fn prepare_managed_listfile(args: &mut Vec<String>) -> Result<Option<ManagedList
     Ok(Some(listfile))
 }
 
-pub(crate) fn terminate_child(child: &Arc<SharedChild>) {
-    let _ = child.kill();
-    match child.wait_timeout(std::time::Duration::from_secs(5)) {
-        Ok(Some(_)) => {}
-        Ok(None) | Err(_) => {
-            // Never hold the command/UI path indefinitely if termination failed.
-            // Keep an owner alive and reap asynchronously if the process exits later.
-            let child = Arc::clone(child);
-            std::thread::spawn(move || {
-                let _ = child.wait();
-            });
+pub(crate) fn terminate_child(child: &Arc<SharedChild>) -> Result<(), String> {
+    terminate_child_with_timeout(child, std::time::Duration::from_secs(5))
+}
+
+pub(crate) fn terminate_child_with_timeout(
+    child: &Arc<SharedChild>,
+    timeout: std::time::Duration,
+) -> Result<(), String> {
+    if let Err(error) = child.kill() {
+        let msg = error.to_string();
+        if !is_non_running_kill_error(&msg) {
+            return Err(format!("Could not stop 7-Zip: {msg}"));
+        }
+    }
+    interpret_terminate_wait(child.wait_timeout(timeout))
+}
+
+pub(crate) fn interpret_terminate_wait(
+    result: std::io::Result<Option<std::process::ExitStatus>>,
+) -> Result<(), String> {
+    match result {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => Err("7-Zip did not exit after terminate (waited 5s).".to_string()),
+        Err(error) => Err(format!("Could not wait for 7-Zip to exit: {error}")),
+    }
+}
+
+/// Kill and wait for a child that may be in the process slot. On failure keep
+/// the handle and `cancelling` so rollback cannot race a still-running 7-Zip.
+pub(crate) fn terminate_registered_child(
+    state: &RunningProcess,
+    child: &Arc<SharedChild>,
+) -> Result<(), String> {
+    match terminate_child(child) {
+        Ok(()) => {
+            if let Ok(mut process) = lock_process(state) {
+                if process
+                    .child
+                    .as_ref()
+                    .is_some_and(|owned| Arc::ptr_eq(owned, child))
+                {
+                    process.child = None;
+                }
+            }
+            Ok(())
+        }
+        Err(error) => {
+            if let Ok(mut process) = lock_process(state) {
+                process.cancelling = true;
+                if process.child.is_none() {
+                    process.child = Some(Arc::clone(child));
+                }
+            }
+            Err(error)
         }
     }
 }
@@ -299,7 +342,7 @@ fn complete_password_transport_blocking(
             Ok::<_, String>(())
         })();
         if result.is_err() {
-            terminate_child(&child_for_password);
+            let _ = terminate_child(&child_for_password);
         }
         let _ = password_tx.send(result);
     });
@@ -307,7 +350,7 @@ fn complete_password_transport_blocking(
         Ok(Ok(())) => Ok(()),
         Ok(Err(error)) => Err(error),
         Err(_) => {
-            terminate_child(child);
+            let _ = terminate_child(child);
             Err("Password setup for 7-Zip did not complete.".to_string())
         }
     }
@@ -343,6 +386,7 @@ pub(crate) async fn complete_password_transport(
 pub(crate) fn spawn_7z_noninteractive(
     app: &tauri::AppHandle,
     mut args: Vec<String>,
+    state: &RunningProcess,
 ) -> Result<Spawned7z, String> {
     // A command-line password is visible to same-user process inspection on
     // several desktop platforms. Remove it before spawn and answer 7-Zip's
@@ -395,7 +439,9 @@ pub(crate) fn spawn_7z_noninteractive(
     let (stdout, stderr) = match setup {
         Ok(streams) => streams,
         Err(error) => {
-            terminate_child(&child);
+            if let Err(term) = terminate_registered_child(state, &child) {
+                return Err(format!("{error}; also could not stop 7-Zip: {term}"));
+            }
             return Err(error);
         }
     };
@@ -634,16 +680,28 @@ fn abort_cancelled_preparation(state: &RunningProcess) -> Result<(), String> {
     Err("Archive operation was cancelled during preparation.".to_string())
 }
 
+fn live_child_blocks_preparation_rollback(state: &RunningProcess) -> bool {
+    match lock_process(state) {
+        Ok(process) => process.child.is_some(),
+        Err(_) => true,
+    }
+}
+
 /// Roll back every pre-spawn resource before releasing the single-operation
 /// slot. Keeping this sequence in one function prevents new error paths from
 /// forgetting the journal or leaving `preparing`/`cancelling` set.
-fn finalize_preparation_error(
+pub(crate) fn finalize_preparation_error(
     state: &RunningProcess,
     cleanup_plan: &CleanupPlan,
     journal_guard: Option<&mut CleanupJournalGuard>,
     error: impl Into<String>,
 ) -> String {
     let error = error.into();
+    if live_child_blocks_preparation_rollback(state) {
+        return format!(
+            "{error} 7-Zip is still running; staging was kept and the operation slot was not released."
+        );
+    }
     let rollback_error = rollback_cleanup(cleanup_plan).err();
     let journal_error = if rollback_error.is_none() {
         journal_guard.and_then(|guard| guard.clear().err())
@@ -815,19 +873,22 @@ async fn prepare_compound_tar_snapshot(
     let result = async {
         let outer_args = compound_tar_outer_extract_args(&snapshot, &outer_stage);
         assert_extract_archive_members_safe(app, state, &outer_args).await?;
-        let (mut rx, child, pending_password) = spawn_7z_noninteractive(app, outer_args)?;
+        let (mut rx, child, pending_password) = spawn_7z_noninteractive(app, outer_args, state)?;
         {
             let mut process = lock_process(state)?;
             if process.cancelling {
                 drop(process);
-                terminate_child(&child);
+                terminate_registered_child(state, &child)?;
                 return Err("Archive operation was cancelled during preparation.".to_string());
             }
             process.child = Some(child.clone());
             process.cleanup_plan = Some(cleanup_plan.clone());
         }
         if let Some(password) = pending_password {
-            complete_password_transport(&child, password).await?;
+            if let Err(error) = complete_password_transport(&child, password).await {
+                terminate_registered_child(state, &child)?;
+                return Err(error);
+            }
         }
 
         let finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -847,6 +908,9 @@ async fn prepare_compound_tar_snapshot(
         finished.store(true, std::sync::atomic::Ordering::Relaxed);
         if let Some(task) = quota_task {
             let _ = task.await;
+        }
+        if collected.stream_error.is_some() || collected.exit.is_none() {
+            terminate_registered_child(state, &child)?;
         }
         let (cancelled, abort_reason) = {
             let mut process = lock_process(state)?;
@@ -893,7 +957,12 @@ async fn prepare_compound_tar_snapshot(
     .await;
 
     if result.is_err() {
-        let _ = crate::fs_secure::remove_dir_all_for_cleanup(&outer_stage);
+        let keep_stage = lock_process(state)
+            .map(|process| process.child.is_some())
+            .unwrap_or(true);
+        if !keep_stage {
+            let _ = crate::fs_secure::remove_dir_all_for_cleanup(&outer_stage);
+        }
     }
     result
 }
@@ -914,10 +983,7 @@ pub async fn probe_compress_inputs(
 #[tauri::command]
 pub fn archive_output_selection_token(path: String) -> Result<String, String> {
     let path = std::path::PathBuf::from(path);
-    if !super::staging::path_entry_exists(&path)? {
-        return Ok(super::staging::ARCHIVE_OUTPUT_ABSENT_TOKEN.to_string());
-    }
-    super::archive_identity_token(&path)
+    super::staging::archive_output_family_token(&path)
 }
 
 pub(crate) fn store_probed_7z_version(version: Option<String>) {
@@ -966,6 +1032,7 @@ pub(crate) struct CollectedOutput {
     pub(crate) stdout_truncated: bool,
     pub(crate) stderr_truncated: bool,
     pub(crate) exit: Option<TerminatedPayload>,
+    pub(crate) stream_error: Option<String>,
 }
 
 // `on_stdout_line` runs per decoded stdout chunk for progress streaming.
@@ -983,6 +1050,7 @@ where
         stdout_truncated: false,
         stderr_truncated: false,
         exit: None,
+        stream_error: None,
     };
     let mut stdout_decoder = Utf8StreamDecoder::default();
     let mut stderr_decoder = Utf8StreamDecoder::default();
@@ -1037,10 +1105,7 @@ where
                     max_bytes,
                     &mut out.stderr_truncated,
                 );
-                out.exit = Some(TerminatedPayload {
-                    code: Some(-1),
-                    signal: None,
-                });
+                out.stream_error = Some(error);
                 break;
             }
             _ => {}
@@ -1304,9 +1369,9 @@ pub async fn run_7z(
         ));
     }
 
-    let mut rx = {
+    let (mut rx, child) = {
         let (rx, child, pending_password) =
-            match spawn_7z_noninteractive(&app, execution_args.clone()) {
+            match spawn_7z_noninteractive(&app, execution_args.clone(), &state) {
                 Ok(result) => result,
                 Err(e) => {
                     return Err(finalize_preparation_error(
@@ -1327,7 +1392,7 @@ pub async fn run_7z(
             let mut process = match lock_process(&state) {
                 Ok(process) => process,
                 Err(error) => {
-                    terminate_child(&child);
+                    terminate_registered_child(&state, &child)?;
                     return Err(finalize_preparation_error(
                         &state,
                         &cleanup_plan,
@@ -1337,10 +1402,8 @@ pub async fn run_7z(
                 }
             };
             if process.cancelling {
-                process.child = None;
-                // Keep preparing/cancelling until rollback and journal clear finish.
                 drop(process);
-                terminate_child(&child);
+                terminate_registered_child(&state, &child)?;
                 return Err(finalize_preparation_error(
                     &state,
                     &cleanup_plan,
@@ -1360,9 +1423,7 @@ pub async fn run_7z(
                 let cancelled = lock_process(&state)
                     .map(|process| process.cancelling)
                     .unwrap_or(false);
-                if let Ok(mut process) = lock_process(&state) {
-                    process.child = None;
-                }
+                terminate_registered_child(&state, &child)?;
                 let error = if cancelled {
                     "Archive operation was cancelled during preparation.".to_string()
                 } else {
@@ -1380,7 +1441,7 @@ pub async fn run_7z(
         let mut process = match lock_process(&state) {
             Ok(process) => process,
             Err(error) => {
-                terminate_child(&child);
+                terminate_registered_child(&state, &child)?;
                 return Err(finalize_preparation_error(
                     &state,
                     &cleanup_plan,
@@ -1390,9 +1451,8 @@ pub async fn run_7z(
             }
         };
         if process.cancelling {
-            process.child = None;
             drop(process);
-            terminate_child(&child);
+            terminate_registered_child(&state, &child)?;
             return Err(finalize_preparation_error(
                 &state,
                 &cleanup_plan,
@@ -1403,7 +1463,7 @@ pub async fn run_7z(
 
         process.preparing = false;
         process.cancelling = false;
-        rx
+        (rx, child)
     };
 
     let emit_window = window.clone();
@@ -1491,6 +1551,10 @@ pub async fn run_7z(
     quota_finished.store(true, std::sync::atomic::Ordering::Relaxed);
     if let Some(task) = quota_task {
         let _ = task.await;
+    }
+
+    if collected.stream_error.is_some() || collected.exit.is_none() {
+        terminate_registered_child(&state, &child)?;
     }
 
     let exit_code = collected
@@ -1638,12 +1702,12 @@ pub async fn probe_7z(
 
     let result = async {
         let (mut rx, child, _pending_password) =
-            spawn_7z_noninteractive(&app, vec!["i".to_string()])?;
+            spawn_7z_noninteractive(&app, vec!["i".to_string()], &state)?;
         {
             let mut process = lock_process(&state)?;
             if process.cancelling {
                 drop(process);
-                terminate_child(&child);
+                terminate_registered_child(&state, &child)?;
                 return Err("7z runtime probe was cancelled.".to_string());
             }
             process.child = Some(child.clone());
@@ -1651,6 +1715,9 @@ pub async fn probe_7z(
 
         let probe = async {
             let collected = collect_command_output(&mut rx, PROBE_OUTPUT_LIMIT, |_| {}).await;
+            if collected.stream_error.is_some() || collected.exit.is_none() {
+                terminate_registered_child(&state, &child)?;
+            }
 
             let Some(payload) = collected.exit else {
                 return Err("7z probe exited before reporting status.".to_string());
@@ -1679,7 +1746,7 @@ pub async fn probe_7z(
         match tokio::time::timeout(PROBE_TIMEOUT, probe).await {
             Ok(result) => result,
             Err(_) => {
-                terminate_child(&child);
+                terminate_registered_child(&state, &child)?;
                 store_probed_7z_version(None);
                 Err("7z runtime probe timed out.".to_string())
             }
@@ -1688,7 +1755,9 @@ pub async fn probe_7z(
     .await;
 
     if let Ok(mut process) = lock_process(&state) {
-        if process.owner_label.as_deref() == Some(window.label()) {
+        if process.owner_label.as_deref() == Some(window.label())
+            && (result.is_ok() || process.child.is_none())
+        {
             process.child = None;
             process.release_prepare_slot();
         }

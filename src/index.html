@@ -30,7 +30,7 @@
         type="button"
         class="btn btn--ghost btn--sm"
         id="startup-recovery-banner-dismiss"
-        aria-label="Dismiss recovery warning"
+        aria-label="Dismiss warning"
       >
         Dismiss
       </button>
@@ -798,7 +798,11 @@
               >
                 <section class="settings-section">
                   <h3 class="settings-section__title">Status</h3>
-                  <p class="settings-hint" id="os-integration-help">
+                  <p
+                    class="settings-hint"
+                    id="os-integration-help"
+                    aria-live="polite"
+                  >
                     Checking OS integration status…
                   </p>
                   <div class="os-status-grid">

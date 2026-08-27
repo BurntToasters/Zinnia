@@ -41,9 +41,13 @@ fn defer_close_while_operation_finishes(
     api: &tauri::CloseRequestApi,
 ) -> bool {
     let state = app.state::<RunningProcess>();
-    let owns_busy_operation = state.0.lock().map_or(true, |process| {
+    let owns_busy_operation = state.0.lock().map_or(true, |mut process| {
+        process.expire_stale_update_reservation();
         process.owner_label.as_deref() == Some(label)
-            && (process.child.is_some() || process.preparing || process.cancelling)
+            && (process.child.is_some()
+                || process.preparing
+                || process.cancelling
+                || process.blocks_quit_for_update_install())
     });
     if !owns_busy_operation {
         if launch::is_extract_window_label(label) {
@@ -77,15 +81,32 @@ fn force_exit_after_busy_teardown(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let state = app.state::<RunningProcess>();
         let owner = {
+            let child = {
+                let process = match state.0.lock() {
+                    Ok(guard) => guard,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                process.child.clone()
+            };
+            if let Some(child) = child {
+                if let Err(error) = process::terminate_child(&child) {
+                    eprintln!("Could not stop archive process during forced exit: {error}");
+                    let mut process = match state.0.lock() {
+                        Ok(guard) => guard,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    process.cancelling = true;
+                    if process.child.is_none() {
+                        process.child = Some(child);
+                    }
+                    return;
+                }
+            }
             let mut process = match state.0.lock() {
                 Ok(guard) => guard,
                 Err(poisoned) => poisoned.into_inner(),
             };
-            if let Some(child) = process.child.take() {
-                if let Err(error) = child.kill() {
-                    eprintln!("Could not stop archive process during forced exit: {error}");
-                }
-            }
+            process.child = None;
             process.cancelling = true;
             process.owner_label.clone()
         };
@@ -106,16 +127,13 @@ fn defer_exit_while_operation_finishes(
 ) -> bool {
     let state = app.state::<RunningProcess>();
     let owner = match state.0.lock() {
-        Ok(process) => {
+        Ok(mut process) => {
             // An update reservation has no child to cancel. Do not mistake a
             // user/system Quit during installation for the later updater
             // relaunch. The frontend releases this reservation immediately
             // before calling relaunch; until then, keep the process alive.
-            if process.child.is_none()
-                && process.preparing
-                && process.update_reserved_at.is_some()
-                && process.abort_reason.as_deref() == Some("Installing application update")
-            {
+            process.expire_stale_update_reservation();
+            if process.blocks_quit_for_update_install() {
                 api.prevent_exit();
                 return true;
             }
@@ -126,12 +144,9 @@ fn defer_exit_while_operation_finishes(
             }
         }
         Err(poisoned) => {
-            let process = poisoned.into_inner();
-            if process.child.is_none()
-                && process.preparing
-                && process.update_reserved_at.is_some()
-                && process.abort_reason.as_deref() == Some("Installing application update")
-            {
+            let mut process = poisoned.into_inner();
+            process.expire_stale_update_reservation();
+            if process.blocks_quit_for_update_install() {
                 api.prevent_exit();
                 return true;
             }

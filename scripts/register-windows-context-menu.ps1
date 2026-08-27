@@ -1,11 +1,14 @@
 #requires -Version 5.1
-# Registers both sparse Win11 context-menu packages. Called from NSIS post-install.
-[CmdletBinding()]
+# Registers or unregisters both sparse Win11 context-menu packages.
+# Called from NSIS post-install (register) and PREUNINSTALL (unregister).
+[CmdletBinding(DefaultParameterSetName = 'Register')]
 param(
-  [Parameter(Mandatory = $true)][string]$MsixPath,
-  [Parameter(Mandatory = $true)][string]$ExtractMsixPath,
-  [Parameter(Mandatory = $true)][string]$ExternalLocation,
-  [Parameter(Mandatory = $true)][string]$ShellPayloadLocation,
+  [Parameter(ParameterSetName = 'Unregister')]
+  [switch]$Unregister,
+  [Parameter(ParameterSetName = 'Register', Mandatory = $true)][string]$MsixPath,
+  [Parameter(ParameterSetName = 'Register', Mandatory = $true)][string]$ExtractMsixPath,
+  [Parameter(ParameterSetName = 'Register', Mandatory = $true)][string]$ExternalLocation,
+  [Parameter(ParameterSetName = 'Register', Mandatory = $true)][string]$ShellPayloadLocation,
   [Parameter(Mandatory = $true)][string]$LogPath
 )
 Set-StrictMode -Version Latest
@@ -22,6 +25,74 @@ function Write-Log([string]$Message) {
     Write-Host "NOTICE: Could not write registration log: $($_.Exception.Message)"
   }
   Write-Host $line
+}
+
+function Find-PreviousShellPayloads([string]$CurrentLocation, [string]$InstallRoot) {
+  $current = [System.IO.Path]::GetFullPath($CurrentLocation).TrimEnd('\')
+  Get-ChildItem -LiteralPath $InstallRoot -Directory -Filter 'shell-*' -ErrorAction SilentlyContinue |
+    ForEach-Object {
+      if ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        return
+      }
+      $candidate = [System.IO.Path]::GetFullPath($_.FullName).TrimEnd('\')
+      if ([StringComparer]::OrdinalIgnoreCase.Equals($candidate, $current)) {
+        return
+      }
+      $rootMsix = Join-Path $candidate 'ZinniaContextMenu.msix'
+      $extractMsix = Join-Path $candidate 'ZinniaExtractContextMenu.msix'
+      $rootDll = Join-Path $candidate 'zinnia_shell.dll'
+      $extractDll = Join-Path $candidate 'zinnia_extract_shell.dll'
+      if ((Test-Path -LiteralPath $rootMsix) -and (Test-Path -LiteralPath $extractMsix) -and
+          (Test-Path -LiteralPath $rootDll) -and (Test-Path -LiteralPath $extractDll)) {
+        return [pscustomobject]@{
+          Location = $candidate
+          RootMsix = $rootMsix
+          ExtractMsix = $extractMsix
+          SortName = $_.Name
+        }
+      }
+    }
+}
+
+function Restore-PreviousShellPackages(
+  [object]$PreviousPayload,
+  [string]$ExternalLocation
+) {
+  if (-not $PreviousPayload) {
+    return $false
+  }
+  if (-not (Test-Path -LiteralPath $PreviousPayload.RootMsix) -or
+      -not (Test-Path -LiteralPath $PreviousPayload.ExtractMsix)) {
+    Write-Log "NOTICE: previous MSIX payloads are no longer on disk; cannot restore menus."
+    return $false
+  }
+  Write-Log "Restoring previous packages from $($PreviousPayload.Location)"
+  Add-AppxPackage -ForceUpdateFromAnyVersion -Path $PreviousPayload.RootMsix -ExternalLocation $ExternalLocation -ErrorAction Stop
+  Add-AppxPackage -ForceUpdateFromAnyVersion -Path $PreviousPayload.ExtractMsix -ExternalLocation $ExternalLocation -ErrorAction Stop
+  Write-Log 'OK: Restored previous Win11 context menu packages.'
+  return $true
+}
+
+function Unregister-ZinniaShellPackages {
+  $names = @('run.rosie.zinnia.contextmenu', 'run.rosie.zinnia.extractmenu')
+  for ($attempt = 0; $attempt -lt 5; $attempt++) {
+    foreach ($name in $names) {
+      Get-AppxPackage -Name $name -ErrorAction SilentlyContinue |
+        Remove-AppxPackage -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Milliseconds 1000
+    $left = @()
+    foreach ($name in $names) {
+      $left += @(Get-AppxPackage -Name $name -ErrorAction SilentlyContinue)
+    }
+    if ($left.Count -eq 0) {
+      Write-Log 'OK: Win11 sparse context-menu packages unregistered.'
+      return
+    }
+    Write-Log "NOTICE: unregister attempt $($attempt + 1) still saw $(($left | ForEach-Object Name) -join ', ')"
+  }
+  $joined = (($left | ForEach-Object Name) -join ', ')
+  throw "Zinnia AppX packages still registered after uninstall: $joined"
 }
 
 function Remove-StaleShellPayloads([string]$CurrentLocation) {
@@ -86,6 +157,12 @@ catch {
 }
 
 try {
+  if ($Unregister) {
+    Unregister-ZinniaShellPackages
+    exit 0
+  }
+
+  $previousPayload = $null
   if (-not (Test-Path -LiteralPath $MsixPath)) {
     throw "MSIX not found: $MsixPath"
   }
@@ -124,19 +201,14 @@ try {
     throw "Extract shell DLL not found in ShellPayloadLocation: $extractDll"
   }
 
-  $packageNames = @('run.rosie.zinnia.contextmenu', 'run.rosie.zinnia.extractmenu')
-  foreach ($packageName in $packageNames) {
-    $existing = Get-AppxPackage -Name $packageName -ErrorAction SilentlyContinue
-    if ($existing) {
-      Write-Log "Removing existing package $($existing.PackageFullName)"
-      $existing | Remove-AppxPackage -ErrorAction Stop
-    }
-  }
+  $previousPayload = Find-PreviousShellPayloads -CurrentLocation $ShellPayloadLocation -InstallRoot $externalRoot |
+    Sort-Object -Property SortName -Descending |
+    Select-Object -First 1
 
-  Write-Log "Add-AppxPackage -Path $MsixPath -ExternalLocation $ExternalLocation"
-  Add-AppxPackage -Path $MsixPath -ExternalLocation $ExternalLocation -ErrorAction Stop
-  Write-Log "Add-AppxPackage -Path $ExtractMsixPath -ExternalLocation $ExternalLocation"
-  Add-AppxPackage -Path $ExtractMsixPath -ExternalLocation $ExternalLocation -ErrorAction Stop
+  Write-Log "Add-AppxPackage -ForceUpdateFromAnyVersion -Path $MsixPath -ExternalLocation $ExternalLocation"
+  Add-AppxPackage -ForceUpdateFromAnyVersion -Path $MsixPath -ExternalLocation $ExternalLocation -ErrorAction Stop
+  Write-Log "Add-AppxPackage -ForceUpdateFromAnyVersion -Path $ExtractMsixPath -ExternalLocation $ExternalLocation"
+  Add-AppxPackage -ForceUpdateFromAnyVersion -Path $ExtractMsixPath -ExternalLocation $ExternalLocation -ErrorAction Stop
   Write-Log 'OK: Win11 context menu packages registered.'
   try {
     Remove-StaleShellPayloads -CurrentLocation $ShellPayloadLocation
@@ -151,9 +223,17 @@ try {
 catch {
   Write-Log "ERROR: $($_.Exception.Message)"
   Write-Log ($_ | Out-String)
-  foreach ($packageName in @('run.rosie.zinnia.contextmenu', 'run.rosie.zinnia.extractmenu')) {
-    Get-AppxPackage -Name $packageName -ErrorAction SilentlyContinue |
-      Remove-AppxPackage -ErrorAction SilentlyContinue
+  if (-not $Unregister -and $previousPayload) {
+    try {
+      $null = Restore-PreviousShellPackages -PreviousPayload $previousPayload -ExternalLocation $ExternalLocation
+    }
+    catch {
+      Write-Log "ERROR: Could not restore previous Win11 context menu packages: $($_.Exception.Message)"
+    }
+  }
+  if ($Unregister) {
+    Write-Host "ERROR: Could not unregister Win11 context-menu packages. See log: $LogPath"
+    exit 1
   }
   Write-Host 'WARNING: Win11 context menu registration failed. Classic menu verbs still work.'
   Write-Host "See log: $LogPath"

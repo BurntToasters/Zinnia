@@ -1,7 +1,7 @@
 name: CI
 
-# Note: CI workflows are only run on the main and beta branches.
-# Additionally, CI workflows only run tests and smoke runs, not actually release builds.
+# Note: `on.push` is unfiltered (every branch). `pull_request` is limited to
+# main and beta. Jobs run tests and smoke builds, not signed release artifacts.
 
 on:
   push:

@@ -2,8 +2,10 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertStableReleaseOverridesAllowed } from "./release-policy.cjs";
 
 const args = process.argv.slice(2);
+assertStableReleaseOverridesAllowed();
 const skipWindowsCodeSigning = process.env.SKIP_WIN_CODESIGN?.trim() === "1";
 const skipContextMenu = process.env.SKIP_WIN_CONTEXT_MENU?.trim() === "1";
 const required = [
