@@ -6,8 +6,19 @@ import type { ArchiveFormat } from "../settings-model";
 import { deriveExtractFolderName } from "../extract-path";
 import { SAFE_EXTRACT_OVERWRITE_MODE } from "../extract-policy";
 import { buildExtractArgsFor } from "../archive";
+import { buildSelectiveExtractArgs } from "../selective-extract";
 import { validateArchiveOutputExtension } from "../archive/args";
 import { state } from "../state";
+import {
+  APP_CREATE_PREFIX,
+  APP_EXTRACT_SWITCHES,
+  APP_LIST_SWITCHES,
+  APP_TEST_SWITCHES,
+  APP_UPDATE_SWITCHES,
+  UPDATE_FORMATS,
+  listingHasMember,
+  parseSltMemberPaths,
+} from "../../scripts/archive-fixtures.js";
 
 interface ManifestExtractEntry {
   file: string;
@@ -128,5 +139,61 @@ describe("extract policy with fixture paths", () => {
     expect(args[0]).toBe("x");
     expect(args).toContain(SAFE_EXTRACT_OVERWRITE_MODE);
     expect(args).toContain(state.inputs[0]);
+    for (const flag of APP_EXTRACT_SWITCHES) {
+      expect(args).toContain(flag);
+    }
+  });
+});
+
+describe("archive fixture helpers match app 7-Zip switches", () => {
+  it("keeps extract/list/test/update/create prefixes aligned with the UI", () => {
+    expect(APP_EXTRACT_SWITCHES).toEqual(["-aou", "-bb1", "-spd", "-bsp1"]);
+    expect(APP_LIST_SWITCHES).toEqual(["l", "-slt", "-spd"]);
+    expect(APP_TEST_SWITCHES).toEqual(["t", "-spd"]);
+    expect(APP_UPDATE_SWITCHES).toEqual(["u", "-sse", "-snl", "-snh", "-spd"]);
+    expect(APP_CREATE_PREFIX).toEqual(["-sse", "-snl", "-snh", "-spd"]);
+    expect(UPDATE_FORMATS).toEqual(["7z", "zip", "tar"]);
+    expect(
+      buildSelectiveExtractArgs("/tmp/a.7z", "/tmp/out", "", [], []),
+    ).toEqual(
+      expect.arrayContaining(["x", ...APP_EXTRACT_SWITCHES, "--", "/tmp/a.7z"]),
+    );
+  });
+
+  it("parses 7-Zip slt member paths and ignores the archive header Path", () => {
+    const stdout = [
+      "--",
+      "Path = /tmp/hello.zip",
+      "Type = zip",
+      "----------",
+      "Path = nested/hello.txt",
+      "Size = 12",
+      "",
+      "Path = héllo.txt",
+      "Size = 12",
+      "",
+    ].join("\n");
+    expect(parseSltMemberPaths(stdout)).toEqual([
+      "nested/hello.txt",
+      "héllo.txt",
+    ]);
+    expect(listingHasMember(stdout, "nested/hello.txt")).toBe(true);
+    expect(listingHasMember(stdout, "nested\\hello.txt")).toBe(true);
+    expect(listingHasMember(stdout, "héllo.txt")).toBe(true);
+    expect(listingHasMember(stdout, "missing.txt")).toBe(false);
+  });
+
+  it("keeps test-archives covering list, add, selective extract, convert, and password denial", () => {
+    const src = fs.readFileSync(
+      path.resolve(process.cwd(), "scripts", "test-archives.js"),
+      "utf8",
+    );
+    expect(src).toContain("testIntegrityListExtract");
+    expect(src).toContain("testEncryptedDeniedWithoutPassword");
+    expect(src).toContain("testAddToExisting");
+    expect(src).toContain("testSelectiveExtract");
+    expect(src).toContain("testConvertRoundtrip");
+    expect(src).toContain("APP_LIST_SWITCHES");
+    expect(src).toContain("APP_UPDATE_SWITCHES");
   });
 });

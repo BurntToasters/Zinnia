@@ -29,6 +29,62 @@ export const CREATE_MATRIX = [
   { format: "xz", extension: "xz", methodSwitches: ["-md=64m", "-mfb=64"] },
 ];
 
+/** Formats the UI can update in place (`addFilesToArchive`). */
+export const UPDATE_FORMATS = ["7z", "zip", "tar"];
+
+/** Extract switches from `buildSelectiveExtractArgs` (Rust still injects `-snld10`). */
+export const APP_EXTRACT_SWITCHES = ["-aou", "-bb1", "-spd", "-bsp1"];
+
+/** Browse listing from `browseArchive`. */
+export const APP_LIST_SWITCHES = ["l", "-slt", "-spd"];
+
+/** Integrity test from `testArchive`. */
+export const APP_TEST_SWITCHES = ["t", "-spd"];
+
+/** Add-to-existing from `addFilesToArchive`. */
+export const APP_UPDATE_SWITCHES = ["u", "-sse", "-snl", "-snh", "-spd"];
+
+/** Create/convert prefix from `buildArgs` / `convertArchive`. */
+export const APP_CREATE_PREFIX = ["-sse", "-snl", "-snh", "-spd"];
+
+export function passwordArgs(password) {
+  return password ? [`-p${password}`] : [];
+}
+
+/** Member `Path =` values from `7z l -slt` (skips the archive-header Path). */
+export function parseSltMemberPaths(stdout) {
+  const paths = [];
+  let inFiles = false;
+  for (const raw of String(stdout).split(/\r?\n/)) {
+    const trimmed = raw.trim();
+    if (trimmed.startsWith("----------")) {
+      inFiles = true;
+      continue;
+    }
+    if (!inFiles) continue;
+    const eqIdx = raw.indexOf(" = ");
+    if (eqIdx === -1) continue;
+    if (raw.substring(0, eqIdx).trim() !== "Path") continue;
+    const value = raw.substring(eqIdx + 3);
+    if (value) paths.push(value);
+  }
+  return paths;
+}
+
+export function listingHasMember(stdout, memberPath) {
+  const wanted = String(memberPath).split(/[/\\]/).filter(Boolean);
+  const wantedPosix = wanted.join("/");
+  const wantedBase = wanted.at(-1);
+  return parseSltMemberPaths(stdout).some((entry) => {
+    const normalized = entry.split(/[/\\]/).filter(Boolean).join("/");
+    return (
+      normalized === wantedPosix ||
+      entry === memberPath ||
+      normalized.split("/").at(-1) === wantedBase
+    );
+  });
+}
+
 export function loadArchiveManifest() {
   return JSON.parse(fs.readFileSync(MANIFEST_PATH, "utf8"));
 }
@@ -75,7 +131,7 @@ export function requireHostSidecar(repoRoot = REPO_ROOT) {
 export function run7z(sidecar, args, options = {}) {
   const result = spawnSync(sidecar, args, {
     encoding: "buffer",
-    stdio: "pipe",
+    stdio: options.input != null ? "pipe" : ["ignore", "pipe", "pipe"],
     windowsHide: true,
     cwd: options.cwd,
     input: options.input,

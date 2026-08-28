@@ -84,14 +84,26 @@ export function createE2eProfile(repoRoot = REPO_ROOT) {
   const manifest = loadArchiveManifest(repoRoot);
   const copies = {};
   const zipsDir = path.join(repoRoot, "zips");
-  for (const name of [manifest.payloadFile, "hello.7z"]) {
+  for (const name of [
+    manifest.payloadFile,
+    "hello.7z",
+    "hello.zip",
+    "nested.zip",
+    "encrypted.7z",
+  ]) {
     const dest = path.join(work, name);
     fs.copyFileSync(path.join(zipsDir, name), dest);
     copies[name] = dest;
   }
   copies.extractOut = path.join(work, "extract-out");
+  copies.extractOutZip = path.join(work, "extract-out-zip");
+  copies.extractOutNested = path.join(work, "extract-out-nested");
+  copies.extractOutEncrypted = path.join(work, "extract-out-encrypted");
   copies.compressOut = path.join(work, `hello-e2e.7z`);
   fs.mkdirSync(copies.extractOut, { recursive: true });
+  fs.mkdirSync(copies.extractOutZip, { recursive: true });
+  fs.mkdirSync(copies.extractOutNested, { recursive: true });
+  fs.mkdirSync(copies.extractOutEncrypted, { recursive: true });
   const env = {
     ZINNIA_E2E: "1",
     HOME: home,

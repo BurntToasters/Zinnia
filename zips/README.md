@@ -4,6 +4,12 @@ Tiny committed archives used by `npm run test:archives`, Cargo sidecar tests, an
 Vitest manifest checks. They cover every format Zinnia actually opens or creates,
 not the full 7-Zip format list.
 
+`npm run test:archives` drives the bundled sidecar with the same 7-Zip
+switches the app uses: integrity (`t -spd`), browse listing (`l -slt -spd`),
+extract (`x -aou -bb1 -spd -bsp1`), create, add-to-existing (`u`) for 7z/zip/tar,
+selective extract, and zip-to-7z convert. Encrypted fixtures must fail
+extract/test without the password.
+
 ## Payload
 
 `hello.txt` contains:
