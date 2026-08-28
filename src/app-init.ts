@@ -57,6 +57,7 @@ import {
 } from "./power-events";
 import { MAX_ARCHIVE_PATHS } from "./archive-rules";
 import { installE2eHookIfEnabled } from "./e2e-hook";
+import { installNativeWebviewContextMenuGuard } from "./webview-context-menu";
 
 let persistentAlertDismissWired = false;
 
@@ -109,6 +110,7 @@ function wireTitlebar(): void {
 }
 
 export async function init() {
+  installNativeWebviewContextMenuGuard();
   await installE2eHookIfEnabled();
   let uiReadyForOpenPaths = false;
   let openPathsQueue = Promise.resolve();

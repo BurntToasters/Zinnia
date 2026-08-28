@@ -259,6 +259,7 @@ pub fn ensure_main_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow
 
     tauri::WebviewWindowBuilder::from_config(app, config)
         .map_err(|e| e.to_string())?
+        .initialization_script(super::webview_context_menu::NATIVE_CONTEXT_MENU_GUARD_SCRIPT)
         .build()
         .map_err(|e| e.to_string())
 }
@@ -411,7 +412,8 @@ pub fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Resul
     .resizable(false)
     .minimizable(true)
     .maximizable(false)
-    .initialization_script(init_script);
+    .initialization_script(init_script)
+    .initialization_script(super::webview_context_menu::NATIVE_CONTEXT_MENU_GUARD_SCRIPT);
 
     #[cfg(target_os = "macos")]
     {

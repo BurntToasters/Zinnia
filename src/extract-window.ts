@@ -20,6 +20,10 @@ import {
 import { redactSensitiveText } from "./utils";
 import { sanitizeCommandArgsForPreview } from "./archive/command-sanitize";
 import { formatCommandOutputForLogs } from "./output-logging";
+import {
+  installNativeWebviewContextMenuGuard,
+  setNativeWebviewContextMenuAllowed,
+} from "./webview-context-menu";
 
 export { formatEta } from "./progress-update";
 
@@ -261,6 +265,7 @@ async function syncExtractWindowFx(): Promise<void> {
 }
 
 async function run() {
+  installNativeWebviewContextMenuGuard();
   await installWdioGuestPluginIfEnabled();
   const appWindow = getCurrentWebviewWindow();
 
@@ -314,6 +319,7 @@ async function run() {
     );
     debugMode = parsed.debug === true;
   } catch {}
+  setNativeWebviewContextMenuAllowed(debugMode);
 
   let autoCloseInterval: ReturnType<typeof setInterval> | null = null;
   const autoCloseAbortEvents = ["mousemove", "keydown", "click"] as const;
