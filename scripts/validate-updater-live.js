@@ -6,7 +6,9 @@
  * Usage:
  *   node scripts/validate-updater-live.js --shape-only
  *   node scripts/validate-updater-live.js --expected-version=current
- *   EXPECTED_UPDATER_VERSION=0.6.0-beta.16 REQUIRED_UPDATER_TARGETS=windows-beta-x86_64 node scripts/validate-updater-live.js
+ *   EXPECTED_UPDATER_VERSION=0.6.0-beta.16 \
+ *     REQUIRED_UPDATER_TARGETS=windows-beta-x86_64 \
+ *     node scripts/validate-updater-live.js
  *
  * Missing manifests (HTTP 404) are skipped with a warning during the soft CI
  * smoke. Present manifests must pass the same shape checks as
