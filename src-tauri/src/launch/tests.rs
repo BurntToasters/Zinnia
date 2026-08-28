@@ -42,6 +42,15 @@ fn extract_session_init_script_escapes_js_line_separators() {
 }
 
 #[test]
+fn native_context_menu_guard_script_blocks_until_debug_flag() {
+    let script = super::webview_context_menu::NATIVE_CONTEXT_MENU_GUARD_SCRIPT;
+    assert!(script.contains("__ZINNIA_ALLOW_NATIVE_CONTEXT_MENU__"));
+    assert!(script.contains("__ZINNIA_NATIVE_CONTEXT_MENU_GUARD__"));
+    assert!(script.contains("preventDefault"));
+    assert!(script.contains("contextmenu"));
+}
+
+#[test]
 fn derive_extract_destination_matches_frontend_rules() {
     assert_eq!(
         derive_extract_destination_path("/downloads/example.zip"),

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { isNativeWebviewContextMenuAllowed } from "../webview-context-menu";
 
 type Listener = (event: { payload: unknown }) => void;
 
@@ -112,6 +113,7 @@ describe("debug console window", () => {
     expect(listeners.has("zinnia-debug-log")).toBe(true);
     expect(listeners.has("zinnia-debug-seed")).toBe(true);
     expect(listeners.has("zinnia-debug-clear")).toBe(true);
+    expect(isNativeWebviewContextMenuAllowed()).toBe(true);
   });
 
   it("appends seeded and live lines, then clears on request", async () => {

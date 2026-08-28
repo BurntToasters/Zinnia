@@ -5,6 +5,7 @@ import { showToast } from "./toast";
 import { sanitizeCommandArgsForPreview } from "./archive/command-sanitize";
 import { state } from "./state";
 import { persistSettingsImmediately } from "./ui/workspace";
+import { setNativeWebviewContextMenuAllowed } from "./webview-context-menu";
 
 let debugEnabled = false;
 let consoleControlsWired = false;
@@ -324,6 +325,7 @@ export function setDebugEnabled(
 ): void {
   const wasEnabled = debugEnabled;
   debugEnabled = enabled;
+  setNativeWebviewContextMenuAllowed(enabled);
 
   if (!enabled) {
     // Keep the pop-out preference so re-enabling debug later can restore it;

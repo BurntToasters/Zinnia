@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { isNativeWebviewContextMenuAllowed } from "../webview-context-menu";
 
 type AnyInvoke = (cmd: string, payload?: unknown) => unknown;
 
@@ -184,6 +185,22 @@ beforeEach(() => {
 });
 
 describe("extract-window", () => {
+  it("blocks the native webview context menu unless debug is on", async () => {
+    await setupAndRun();
+    expect(isNativeWebviewContextMenuAllowed()).toBe(false);
+
+    await setupAndRun(async (cmd) => {
+      if (cmd === "load_settings") {
+        return JSON.stringify({
+          debug: true,
+          extractAutoCloseSeconds: -1,
+        });
+      }
+      return undefined;
+    });
+    expect(isNativeWebviewContextMenuAllowed()).toBe(true);
+  });
+
   it("applies the system dark theme and enabled window effects", async () => {
     const matchMedia = vi.fn().mockReturnValue({ matches: true });
     Object.defineProperty(window, "matchMedia", {

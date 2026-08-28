@@ -24,6 +24,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 ## Changes in `v0.6.1-beta.7:`
 
 - **Release:** Release candidate for stable 0.6.1. Hardens in-app update install, Windows uninstall, 7-Zip cancellation, and the draft-verify gate.
+- **UI:** Native webview right-click menus (Windows Back/Reload/Inspect, WebKit Reload) stay hidden unless hidden debug mode is on.
 - **macOS:** In-app updates rename the live `.app` to a sibling `.zinnia-update-backup` before moving the new bundle in place, verify `Contents`, and restore the backup if the swap fails (including an interrupted `/Applications` copy). Updater `.app.tar.gz` members stay confined: no `..` / absolute paths, no hard links, and only relative symlinks that stay inside the extract root.
 - **Linux:** Deb/rpm updates resolve `pkexec`, `sudo`, `dpkg`, and `rpm` from `/usr/bin` or `/bin` (never `PATH`), keep session display/DBus variables so the polkit prompt can appear, and time out hung `sudo` installs. Root-owned helper symlinks (for example `/usr/bin/sh` -> `dash`) are accepted; Linux always reports 0777 on symlink inodes and those bits are unused.
 - **Windows:** Updater launch treats `ShellExecuteW` codes of 32 or below as failure. Win11 context-menu unregister runs in NSIS PREUNINSTALL via `-File -Unregister` and aborts uninstall if packages remain. Registration upgrades in place (`-ForceUpdateFromAnyVersion`) and does not delete restored `shell-*` payloads after a failed add. nsExec `"error"` is treated as failure, not success.
