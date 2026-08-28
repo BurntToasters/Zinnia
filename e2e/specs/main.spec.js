@@ -39,6 +39,16 @@ async function setInputValue(selector, value) {
   await el.setValue(value);
 }
 
+async function extractArchiveTo(archive, dest, options = {}) {
+  await $('[data-mode-btn="extract"]').waitForDisplayed({ timeout: 10_000 });
+  await applyIncomingPaths([archive], "extract");
+  if (options.password) {
+    await setInputValue("#extract-password", options.password);
+  }
+  await setInputValue("#extract-path", dest);
+  await $("#extract-run").click();
+}
+
 describe("Zinnia main window", () => {
   before(async () => {
     await waitForMainWindow();
@@ -88,14 +98,51 @@ describe("Zinnia main window", () => {
     const dest = process.env.ZINNIA_E2E_EXTRACT_OUT;
     const payload = process.env.ZINNIA_E2E_PAYLOAD;
     await $("#workspace-mode-power").click();
-    await $('[data-mode-btn="extract"]').waitForDisplayed({ timeout: 10_000 });
-    await applyIncomingPaths([archive], "extract");
-    await setInputValue("#extract-path", dest);
-    await $("#extract-run").click();
+    await extractArchiveTo(archive, dest);
     const extracted = path.join(dest, "hello.txt");
     await browser.waitUntil(() => fs.existsSync(extracted), {
       timeout: 60_000,
       timeoutMsg: `extract did not write ${extracted}`,
+    });
+    assert.equal(fs.readFileSync(extracted, "utf8"), payload);
+  });
+
+  it("extracts hello.zip from Power using a typed destination", async () => {
+    const archive = process.env.ZINNIA_E2E_HELLO_ZIP;
+    const dest = process.env.ZINNIA_E2E_EXTRACT_OUT_ZIP;
+    const payload = process.env.ZINNIA_E2E_PAYLOAD;
+    await extractArchiveTo(archive, dest);
+    const extracted = path.join(dest, "hello.txt");
+    await browser.waitUntil(() => fs.existsSync(extracted), {
+      timeout: 60_000,
+      timeoutMsg: `zip extract did not write ${extracted}`,
+    });
+    assert.equal(fs.readFileSync(extracted, "utf8"), payload);
+  });
+
+  it("extracts nested.zip preserving the nested member path", async () => {
+    const archive = process.env.ZINNIA_E2E_NESTED_ZIP;
+    const dest = process.env.ZINNIA_E2E_EXTRACT_OUT_NESTED;
+    const payload = process.env.ZINNIA_E2E_PAYLOAD;
+    await extractArchiveTo(archive, dest);
+    const extracted = path.join(dest, "nested", "hello.txt");
+    await browser.waitUntil(() => fs.existsSync(extracted), {
+      timeout: 60_000,
+      timeoutMsg: `nested extract did not write ${extracted}`,
+    });
+    assert.equal(fs.readFileSync(extracted, "utf8"), payload);
+  });
+
+  it("extracts encrypted.7z when the password field is set", async () => {
+    const archive = process.env.ZINNIA_E2E_ENCRYPTED_7Z;
+    const dest = process.env.ZINNIA_E2E_EXTRACT_OUT_ENCRYPTED;
+    const payload = process.env.ZINNIA_E2E_PAYLOAD;
+    const password = process.env.ZINNIA_E2E_PASSWORD;
+    await extractArchiveTo(archive, dest, { password });
+    const extracted = path.join(dest, "hello.txt");
+    await browser.waitUntil(() => fs.existsSync(extracted), {
+      timeout: 60_000,
+      timeoutMsg: `encrypted extract did not write ${extracted}`,
     });
     assert.equal(fs.readFileSync(extracted, "utf8"), payload);
   });
@@ -124,6 +171,20 @@ describe("Zinnia main window", () => {
       {
         timeout: 20_000,
         timeoutMsg: "browse listing did not include hello.txt",
+      },
+    );
+  });
+
+  it("lists nested/hello.txt when browsing nested.zip", async () => {
+    const archive = process.env.ZINNIA_E2E_NESTED_ZIP;
+    await applyIncomingPaths([archive], "");
+    const tbody = await $("#browse-tbody");
+    await tbody.waitForDisplayed({ timeout: 20_000 });
+    await browser.waitUntil(
+      async () => (await tbody.getText()).includes("hello.txt"),
+      {
+        timeout: 20_000,
+        timeoutMsg: "nested zip browse listing did not include hello.txt",
       },
     );
   });

@@ -15,17 +15,17 @@ Prerequisites per platform are in [build-setup.md](build-setup.md).
 
 ## Checks
 
-| Command                       | What it does                                     |
-| ----------------------------- | ------------------------------------------------ |
-| `npm run typecheck`           | `tsc --noEmit` (strict)                          |
-| `npm run lint`                | ESLint over `src/`, `scripts/`, and `e2e/`       |
-| `npm run format:check`        | Prettier check (use `npm run format` to fix)     |
-| `npm run validate:no-em-dash` | Rejects Unicode em dash (U+2014) in tracked text |
-| `npm test`                    | Vitest (frontend)                                |
-| `npm run test:archives`       | Real 7-Zip extract/create against [`zips/`](zips/) |
-| `npm run test:e2e`            | Unpackaged-app WebdriverIO against Basic/Power UI |
-| `npm run test:rust`           | `cargo test` (backend)                           |
-| `npm run test:all`            | All of the above, the way CI runs them           |
+| Command                       | What it does                                                        |
+| ----------------------------- | ------------------------------------------------------------------- |
+| `npm run typecheck`           | `tsc --noEmit` (strict)                                             |
+| `npm run lint`                | ESLint over `src/`, `scripts/`, and `e2e/`                          |
+| `npm run format:check`        | Prettier check (use `npm run format` to fix)                        |
+| `npm run validate:no-em-dash` | Rejects Unicode em dash (U+2014) in tracked text                    |
+| `npm test`                    | Vitest (frontend)                                                   |
+| `npm run test:archives`       | Real 7-Zip extract/list/create/add/convert against [`zips/`](zips/) |
+| `npm run test:e2e`            | Unpackaged-app WebdriverIO against Basic/Power UI                   |
+| `npm run test:rust`           | `cargo test` (backend)                                              |
+| `npm run test:all`            | All of the above, the way CI runs them                              |
 
 Rust changes should also pass `cargo clippy --manifest-path src-tauri/Cargo.toml
 --all-targets -- -D warnings`.

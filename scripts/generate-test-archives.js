@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
+  APP_CREATE_PREFIX,
   CREATE_MATRIX,
   ZIPS_DIR,
   buildStoredRar4,
@@ -40,11 +41,10 @@ function generate() {
         sidecar,
         [
           "a",
+          ...APP_CREATE_PREFIX,
           `-t${format}`,
           "-mx=5",
           ...methodSwitches,
-          "-snl",
-          "-snh",
           archive,
           "--",
           "hello.txt",

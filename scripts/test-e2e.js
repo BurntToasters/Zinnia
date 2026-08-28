@@ -123,9 +123,16 @@ function runWdio(profile, spec, appArgs) {
     ZINNIA_E2E_WORK: profile.work,
     ZINNIA_E2E_HELLO_TXT: profile.copies["hello.txt"],
     ZINNIA_E2E_HELLO_7Z: profile.copies["hello.7z"],
+    ZINNIA_E2E_HELLO_ZIP: profile.copies["hello.zip"],
+    ZINNIA_E2E_NESTED_ZIP: profile.copies["nested.zip"],
+    ZINNIA_E2E_ENCRYPTED_7Z: profile.copies["encrypted.7z"],
     ZINNIA_E2E_EXTRACT_OUT: profile.copies.extractOut,
+    ZINNIA_E2E_EXTRACT_OUT_ZIP: profile.copies.extractOutZip,
+    ZINNIA_E2E_EXTRACT_OUT_NESTED: profile.copies.extractOutNested,
+    ZINNIA_E2E_EXTRACT_OUT_ENCRYPTED: profile.copies.extractOutEncrypted,
     ZINNIA_E2E_COMPRESS_OUT: profile.copies.compressOut,
     ZINNIA_E2E_PAYLOAD: profile.manifest.payloadText,
+    ZINNIA_E2E_PASSWORD: profile.manifest.password,
   };
   if (spec.includes("extract-window")) {
     env.ZINNIA_E2E_WINDOW_LABEL = "extract-0";
