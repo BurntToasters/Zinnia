@@ -266,10 +266,24 @@ pub(crate) fn release_preparation_failure_best_effort(state: &RunningProcess) {
 // the frontend prevents this in normal flow. This keeps resource use
 // predictable and avoids partial-output races on shared state.
 pub fn ensure_idle(state: &ProcessState) -> Result<(), String> {
-    if state.child.is_some() || state.preparing || state.cancelling {
+    if archive_slot_is_busy(state) {
         Err("Another archive operation is already running.".to_string())
     } else {
         Ok(())
+    }
+}
+
+pub(crate) fn archive_slot_is_busy(state: &ProcessState) -> bool {
+    state.child.is_some() || state.preparing || state.cancelling
+}
+
+pub(crate) fn running_process_is_busy(state: &RunningProcess) -> bool {
+    match state.0.lock() {
+        Ok(mut process) => {
+            process.expire_stale_update_reservation();
+            archive_slot_is_busy(&process)
+        }
+        Err(_) => true,
     }
 }
 

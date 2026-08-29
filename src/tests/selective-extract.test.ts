@@ -397,6 +397,28 @@ describe("normalizeSelectiveSearchQuery", () => {
   it("handles mixed case and whitespace", () => {
     expect(normalizeSelectiveSearchQuery("\tDocs/Guide\n")).toBe("docs/guide");
   });
+
+  it("compares Unicode search terms in NFC", () => {
+    const composed = "héllo";
+    const decomposed = "he\u0301llo";
+    expect(normalizeSelectiveSearchQuery(decomposed)).toBe(
+      normalizeSelectiveSearchQuery(composed),
+    );
+    expect(
+      filterBrowseEntriesByQuery(
+        [
+          {
+            path: composed,
+            size: 1,
+            packedSize: 1,
+            modified: "",
+            isFolder: false,
+          },
+        ],
+        decomposed,
+      ),
+    ).toHaveLength(1);
+  });
 });
 
 describe("buildEntryTree", () => {

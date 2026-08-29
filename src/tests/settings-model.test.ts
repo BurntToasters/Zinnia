@@ -203,7 +203,7 @@ describe("normalizeUserSettings", () => {
     expect(result.customPresets[1].format).toBe(SETTING_DEFAULTS.format);
   });
 
-  it("sanitizes every custom preset compression field", () => {
+  it("drops custom presets whose string fields are present but invalid", () => {
     const result = normalizeUserSettings({
       customPresets: [
         {
@@ -218,15 +218,7 @@ describe("normalizeUserSettings", () => {
       ],
     });
 
-    expect(result.customPresets[0]).toEqual({
-      name: "Hostile",
-      format: SETTING_DEFAULTS.format,
-      level: SETTING_DEFAULTS.level,
-      method: SETTING_DEFAULTS.method,
-      dict: SETTING_DEFAULTS.dict,
-      wordSize: SETTING_DEFAULTS.wordSize,
-      solid: SETTING_DEFAULTS.solid,
-    });
+    expect(result.customPresets).toHaveLength(0);
   });
 
   it("falls back when customPresets is not an array", () => {

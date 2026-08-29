@@ -9,10 +9,7 @@ const path = require("path");
 const { execFileSync } = require("child_process");
 
 require("dotenv").config();
-const {
-  assertGitHubCliAuthenticated,
-  githubApi,
-} = require("./github-cli.cjs");
+const { assertGitHubCliAuthenticated, githubApi } = require("./github-cli.cjs");
 const { assertStableReleaseOverridesAllowed } = require("./release-policy.cjs");
 
 const REPOSITORY_ROOT = path.resolve(__dirname, "..");
@@ -73,7 +70,10 @@ function currentReleaseCommit() {
   return commit;
 }
 
-function readChangelogReleaseBody(changelogPath = CHANGELOG_PATH) {
+function readChangelogReleaseBody(
+  changelogPath = CHANGELOG_PATH,
+  version = VERSION,
+) {
   let body;
   try {
     body = fs.readFileSync(changelogPath, "utf8");
@@ -89,7 +89,33 @@ function readChangelogReleaseBody(changelogPath = CHANGELOG_PATH) {
       "CHANGELOG.md is empty; refusing to set blank release notes.",
     );
   }
-  return body;
+  const heading = "## Changes in `v" + version + ":`";
+  const start = body.indexOf(heading);
+  if (start === -1) {
+    throw new Error(
+      "CHANGELOG.md has no " + heading + " section for this version.",
+    );
+  }
+  const next = body.indexOf("\n## Changes in `", start + heading.length);
+  const section = body.slice(start, next === -1 ? body.length : next).trim();
+  if (!section.slice(heading.length).trim()) {
+    throw new Error("CHANGELOG.md section for " + heading + " is empty.");
+  }
+  return section + "\n";
+}
+
+function singleDraftRelease(matching) {
+  const drafts = (Array.isArray(matching) ? matching : []).filter(
+    (release) => release && release.draft,
+  );
+  if (drafts.length > 1) {
+    throw new Error(
+      "Multiple draft releases exist for " +
+        TAG_NAME +
+        ". Resolve duplicates before continuing.",
+    );
+  }
+  return drafts[0] || null;
 }
 
 async function syncReleaseNotesBody(release, body) {
@@ -271,7 +297,7 @@ async function findMatchingReleases() {
 async function findExistingRelease() {
   const matching = await findMatchingReleases();
   // Never treat a published release as a draft handoff target.
-  return matching.find((r) => r.draft) || null;
+  return singleDraftRelease(matching);
 }
 
 async function ensureDraftRelease() {
@@ -280,7 +306,7 @@ async function ensureDraftRelease() {
   const body = readChangelogReleaseBody();
 
   const matching = await findMatchingReleases();
-  const existing = matching.find((r) => r.draft) || null;
+  const existing = singleDraftRelease(matching);
   if (existing) {
     assertReleaseTargetsCommit(existing, commit);
     console.log(
@@ -361,19 +387,26 @@ async function waitForDraftRelease() {
   for (;;) {
     attempt += 1;
     const matching = await findMatchingReleases();
-    const existing = matching.find((r) => r.draft) || null;
+    const existing = singleDraftRelease(matching);
     if (existing) {
       assertReleaseTargetsCommit(existing, commit);
+      const body = readChangelogReleaseBody();
+      const updated = await syncReleaseNotesBody(existing, body);
+      assertReleaseTargetsCommit(updated, commit);
       console.log(
         "   Found draft: " +
-          (existing.name || TAG_NAME) +
+          (updated.name || existing.name || TAG_NAME) +
           " (id " +
-          existing.id +
+          (updated.id || existing.id) +
           ", " +
-          (existing.assets ? existing.assets.length : 0) +
-          " assets). Proceeding.",
+          (updated.assets
+            ? updated.assets.length
+            : existing.assets
+              ? existing.assets.length
+              : 0) +
+          " assets). Synced release notes. Proceeding.",
       );
-      return existing;
+      return updated;
     }
     if (matching.some((r) => !r.draft)) {
       throw new Error(
@@ -389,7 +422,7 @@ async function waitForDraftRelease() {
           Math.round(WAIT_TIMEOUT_MS / 1000) +
           "s waiting for draft " +
           TAG_NAME +
-          '. Run "npm run release:draft" on the Windows machine first (or run it here once), then retry.',
+          '. Run "npm run release:draft" on the Windows machine first, then retry.',
       );
     }
 
@@ -422,6 +455,7 @@ module.exports = {
   currentReleaseCommit,
   listAllGithubPages,
   readChangelogReleaseBody,
+  singleDraftRelease,
   syncReleaseNotesBody,
   verifyReleaseSession,
 };

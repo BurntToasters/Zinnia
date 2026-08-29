@@ -14,6 +14,7 @@ use super::{
     OpenPathsPayload, PendingPaths, EXTRACT_ONLY_LAUNCH, FILE_OPEN_SIGNAL,
     MAC_FALLBACK_MAIN_PENDING,
 };
+use crate::process::{running_process_is_busy, RunningProcess};
 
 // Finder caps one request at 1,000 paths and Explorer may split one selection
 // across several 1,000-path launches. Keep the aggregate aligned with archive
@@ -148,6 +149,15 @@ pub(crate) fn should_use_extract_window(paths: &[String], mode: &str) -> bool {
     }
 
     looks_like_archive_path(&paths[0])
+}
+
+/// Queue Explorer/Finder extracts onto main when another extract window is
+/// open or the shared 7-Zip slot is already held (compress/extract on main).
+pub(crate) fn should_queue_extract_to_main(
+    has_extract_windows: bool,
+    archive_slot_busy: bool,
+) -> bool {
+    has_extract_windows || archive_slot_busy
 }
 
 pub(crate) fn looks_like_archive_extension(lower: &str) -> bool {
@@ -462,7 +472,8 @@ pub(crate) fn route_open_request(app: &tauri::AppHandle, paths: Vec<String>, mod
         // The backend intentionally owns one 7z job at a time. Route additional
         // open requests into the main window's existing pending FIFO instead of
         // creating a second quick window that can only fail as busy.
-        if has_extract_windows(app) {
+        let archive_slot_busy = running_process_is_busy(&app.state::<RunningProcess>());
+        if should_queue_extract_to_main(has_extract_windows(app), archive_slot_busy) {
             EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);
             leave_extract_warm(app);
             let pending = app.state::<PendingPaths>();

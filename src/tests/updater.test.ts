@@ -40,6 +40,15 @@ import {
   discardPendingUpdate,
 } from "../updater";
 
+function defaultInvoke(command: string): Promise<unknown> {
+  if (command === "is_7z_running") return Promise.resolve(false);
+  if (command === "is_flatpak") return Promise.resolve(false);
+  if (command === "get_beta_updater_target") {
+    return Promise.resolve("windows-beta-x86_64-nsis");
+  }
+  return Promise.resolve("windows");
+}
+
 const askMock = vi.mocked(ask);
 const messageMock = vi.mocked(message);
 const getVersionMock = vi.mocked(getVersion);
@@ -70,9 +79,7 @@ beforeEach(() => {
   askMock.mockResolvedValue(false);
   messageMock.mockResolvedValue("Ok");
   getVersionMock.mockResolvedValue("0.4.1");
-  invokeMock.mockImplementation((command) =>
-    Promise.resolve(command === "is_7z_running" ? false : "windows"),
-  );
+  invokeMock.mockImplementation((command) => defaultInvoke(String(command)));
   checkMock.mockResolvedValue(null);
   relaunchMock.mockResolvedValue(undefined);
   isPermissionGrantedMock.mockResolvedValue(true);
@@ -131,15 +138,29 @@ describe("checkUpdates", () => {
     expect(setStatusMock).toHaveBeenLastCalledWith("Idle");
   });
 
+  it("skips the in-app updater on Flatpak", async () => {
+    invokeMock.mockImplementation((command) => {
+      if (command === "is_flatpak") return Promise.resolve(true);
+      return defaultInvoke(String(command));
+    });
+
+    await checkUpdates();
+
+    expect(checkMock).not.toHaveBeenCalled();
+    expect(messageMock).toHaveBeenCalledWith(
+      "Flatpak builds update through Flathub or a reinstalled bundle, not the in-app updater.",
+      { title: "Updates unavailable" },
+    );
+  });
+
   it("uses beta target when beta channel is selected", async () => {
     mockState.currentSettings.updateChannel = "beta";
-    invokeMock.mockImplementation((command) =>
-      Promise.resolve(
-        command === "get_beta_updater_target"
-          ? "windows-beta-x86_64-nsis"
-          : false,
-      ),
-    );
+    invokeMock.mockImplementation((command) => {
+      if (command === "get_beta_updater_target") {
+        return Promise.resolve("windows-beta-x86_64-nsis");
+      }
+      return defaultInvoke(String(command));
+    });
     checkMock.mockResolvedValue(null);
 
     await checkUpdates();
@@ -154,7 +175,7 @@ describe("checkUpdates", () => {
 
   it("retries a transient beta feed lookup failure once", async () => {
     mockState.currentSettings.updateChannel = "beta";
-    invokeMock.mockResolvedValue("windows-beta-x86_64-nsis");
+    invokeMock.mockImplementation((command) => defaultInvoke(String(command)));
     checkMock
       .mockRejectedValueOnce(new Error("feed swap"))
       .mockResolvedValueOnce(null);
@@ -227,7 +248,7 @@ describe("checkUpdates", () => {
       ) {
         return Promise.reject(new Error("release IPC unavailable"));
       }
-      return Promise.resolve(false);
+      return defaultInvoke(String(command));
     });
 
     await checkUpdates();
@@ -331,7 +352,7 @@ describe("checkUpdates", () => {
       ) {
         return Promise.reject(new Error("release ipc failed"));
       }
-      return Promise.resolve(command === "is_7z_running" ? false : "windows");
+      return defaultInvoke(String(command));
     });
 
     await checkUpdates();
@@ -492,7 +513,7 @@ describe("autoCheckUpdates", () => {
     await autoCheckUpdates();
 
     expect(checkMock).toHaveBeenCalledWith({ timeout: 30_000 });
-    expect(invokeMock).not.toHaveBeenCalled();
+    expect(invokeMock).toHaveBeenCalledWith("is_flatpak");
     expect(devLogMock).toHaveBeenCalledWith(
       "Auto-update check: no updates available.",
     );

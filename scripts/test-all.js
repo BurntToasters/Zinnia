@@ -413,6 +413,12 @@ function main({
   clearProof(root);
   const results = createInitialResults();
   const npm = getNpmCommand();
+  if (process.env.SKIP_E2E === "1") {
+    console.error(
+      `${colors.red}SKIP_E2E=1 is not allowed for npm run test:all. Unset it so the unpackaged WebdriverIO suite runs.${colors.reset}`,
+    );
+    return 1;
+  }
   printBanner();
 
   runner("typecheck", npm, ["run", "typecheck"], null, results);

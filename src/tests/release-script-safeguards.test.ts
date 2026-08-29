@@ -47,6 +47,7 @@ const {
   assertReleaseTargetsCommit: assertReleaseTargetsCommitCjs,
   listAllGithubPages: listAllGithubPagesCjs,
   readChangelogReleaseBody,
+  singleDraftRelease,
   verifyReleaseSession,
 } = require("../../scripts/ensure-draft-release.cjs") as {
   assertReleaseTargetsCommit: (
@@ -56,7 +57,13 @@ const {
     log?: { warn: (message: string) => void },
   ) => unknown;
   listAllGithubPages: typeof listAllGithubPages;
-  readChangelogReleaseBody: (changelogPath?: string) => string;
+  readChangelogReleaseBody: (
+    changelogPath?: string,
+    version?: string,
+  ) => string;
+  singleDraftRelease: (
+    matching: Array<{ draft?: boolean; tag_name?: string; id?: number }>,
+  ) => { draft?: boolean; tag_name?: string; id?: number } | null;
   verifyReleaseSession: (run?: typeof spawnSync) => void;
 };
 const { assertStableReleaseOverridesAllowed, isStableReleaseVersion } =
@@ -299,10 +306,39 @@ describe("release script safeguards", () => {
     }
   });
 
-  it("reads CHANGELOG.md for Windows draft release notes", () => {
+  it("reads only the current CHANGELOG.md version section for Windows draft notes", () => {
+    const pkg = JSON.parse(fs.readFileSync("package.json", "utf8")) as {
+      version: string;
+    };
     const body = readChangelogReleaseBody();
-    expect(body).toContain("## Changes in `");
+    expect(body).toContain(`## Changes in \`v${pkg.version}:\``);
     expect(body.trim().length).toBeGreaterThan(0);
+    expect(body).not.toContain("## Changes in `v0.6.1-beta.6:`");
+
+    const mixed = path.join(
+      os.tmpdir(),
+      `zinnia-mixed-changelog-${Date.now()}.md`,
+    );
+    fs.writeFileSync(
+      mixed,
+      [
+        "## Changes in `v9.9.9:`",
+        "",
+        "- **Fix:** current notes only.",
+        "",
+        "## Changes in `v0.1.0:`",
+        "",
+        "- **Fix:** historical notes must not ship.",
+        "",
+      ].join("\n"),
+    );
+    try {
+      const extracted = readChangelogReleaseBody(mixed, "9.9.9");
+      expect(extracted).toContain("current notes only");
+      expect(extracted).not.toContain("historical notes must not ship");
+    } finally {
+      fs.rmSync(mixed, { force: true });
+    }
 
     const missing = path.join(
       os.tmpdir(),
@@ -327,9 +363,26 @@ describe("release script safeguards", () => {
 
     const source = fs.readFileSync("scripts/ensure-draft-release.cjs", "utf8");
     expect(source).toContain("readChangelogReleaseBody");
+    expect(source).toContain("singleDraftRelease");
     expect(source).toContain("syncReleaseNotesBody");
     expect(source).toContain("body,");
     expect(source).toContain("PATCH");
+    expect(source).not.toContain("or run it here once");
+  });
+
+  it("refuses duplicate drafts for the same tag", () => {
+    expect(singleDraftRelease([])).toBeNull();
+    expect(singleDraftRelease([{ draft: false }])).toBeNull();
+    expect(singleDraftRelease([{ draft: true, id: 1 }])).toEqual({
+      draft: true,
+      id: 1,
+    });
+    expect(() =>
+      singleDraftRelease([
+        { draft: true, id: 1 },
+        { draft: true, id: 2 },
+      ]),
+    ).toThrow(/Multiple draft releases/);
   });
 
   it("requires a release session before the draft script can contact GitHub", () => {
@@ -969,6 +1022,21 @@ describe("release script safeguards", () => {
         "0.6.1",
       ),
     ).toThrow(/SKIP_RELEASE_MIRROR/);
+    expect(() =>
+      assertStableReleaseOverridesAllowed({ SKIP_E2E: "1" }, "0.6.1"),
+    ).toThrow(/SKIP_E2E/);
+    expect(() =>
+      assertStableReleaseOverridesAllowed(
+        { SKIP_WIN_CONTEXT_MENU: "1" },
+        "0.6.1",
+      ),
+    ).toThrow(/SKIP_WIN_CONTEXT_MENU/);
+    expect(() =>
+      assertStableReleaseOverridesAllowed(
+        { SKIP_CARGO_INTEGRATION: "1" },
+        "0.6.1",
+      ),
+    ).toThrow(/SKIP_CARGO_INTEGRATION/);
     expect(() =>
       assertStableReleaseOverridesAllowed(
         { FORCE_UPLOAD: "1", SKIP_WIN_CODESIGN: "1" },

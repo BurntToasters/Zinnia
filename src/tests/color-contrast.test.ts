@@ -56,6 +56,7 @@ describe("theme text contrast", () => {
         theme.get("text"),
         theme.get("text-secondary"),
         theme.get("accent-fg"),
+        theme.get("danger-fg"),
       ]) {
         for (const background of surfaces) {
           expect(contrast(foreground!, background!)).toBeGreaterThanOrEqual(

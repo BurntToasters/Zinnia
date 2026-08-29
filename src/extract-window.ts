@@ -183,6 +183,7 @@ function stopProgressAt(widthPercent: number, error: boolean): void {
     bar.setAttribute("aria-valuenow", String(widthPercent));
     bar.setAttribute("aria-valuemin", "0");
     bar.setAttribute("aria-valuemax", "100");
+    bar.removeAttribute("aria-busy");
   }
 }
 
@@ -190,6 +191,13 @@ function startIndeterminateProgress(): void {
   const fill = $("progress-fill");
   fill.classList.remove("extract-progress-fill--error");
   setProgressIndeterminateClass(fill);
+  const bar = document.getElementById("extract-progress");
+  if (bar) {
+    bar.setAttribute("aria-busy", "true");
+    bar.setAttribute("aria-valuenow", "0");
+    bar.setAttribute("aria-valuemin", "0");
+    bar.setAttribute("aria-valuemax", "100");
+  }
 }
 
 function setDeterminateProgress(widthPercent: number): void {
@@ -202,6 +210,7 @@ function setDeterminateProgress(widthPercent: number): void {
     bar.setAttribute("aria-valuenow", String(clamped));
     bar.setAttribute("aria-valuemin", "0");
     bar.setAttribute("aria-valuemax", "100");
+    bar.removeAttribute("aria-busy");
   }
 }
 
@@ -318,7 +327,10 @@ async function run() {
       1.5,
     );
     debugMode = parsed.debug === true;
-  } catch {}
+  } catch {
+    autoCloseDelay = -1;
+    debugMode = false;
+  }
   setNativeWebviewContextMenuAllowed(debugMode);
 
   let autoCloseInterval: ReturnType<typeof setInterval> | null = null;

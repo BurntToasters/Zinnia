@@ -36,7 +36,7 @@ use logging::LogFileLock;
 use process::RunningProcess;
 
 fn e2e_session_active() -> bool {
-    std::env::var_os("ZINNIA_E2E").is_some()
+    std::env::var("ZINNIA_E2E").is_ok_and(|value| value == "1")
 }
 
 fn defer_close_while_operation_finishes(

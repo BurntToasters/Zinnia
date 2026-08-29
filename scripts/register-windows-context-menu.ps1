@@ -27,6 +27,27 @@ function Write-Log([string]$Message) {
   Write-Host $line
 }
 
+function Convert-ShellPayloadSortKey([string]$DirectoryName) {
+  if ($DirectoryName -notmatch '^shell-(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:-beta\.(?<beta>\d+))?$') {
+    return $null
+  }
+  $betaRank = if ($Matches['beta']) { [int]$Matches['beta'] } else { [int]::MaxValue }
+  return ('{0:D6}.{1:D6}.{2:D6}.{3:D6}' -f [int]$Matches['major'], [int]$Matches['minor'], [int]$Matches['patch'], $betaRank)
+}
+
+function Assert-PayloadAuthenticode([string[]]$Paths) {
+  if ($env:SKIP_WIN_CODESIGN -eq '1') {
+    Write-Log 'SKIP_WIN_CODESIGN=1; skipping Authenticode checks on context-menu payloads.'
+    return
+  }
+  foreach ($payloadPath in $Paths) {
+    $signature = Get-AuthenticodeSignature -LiteralPath $payloadPath
+    if ($signature.Status -ne 'Valid') {
+      throw "Authenticode status for $payloadPath is $($signature.Status), expected Valid."
+    }
+  }
+}
+
 function Find-PreviousShellPayloads([string]$CurrentLocation, [string]$InstallRoot) {
   $current = [System.IO.Path]::GetFullPath($CurrentLocation).TrimEnd('\')
   Get-ChildItem -LiteralPath $InstallRoot -Directory -Filter 'shell-*' -ErrorAction SilentlyContinue |
@@ -44,11 +65,15 @@ function Find-PreviousShellPayloads([string]$CurrentLocation, [string]$InstallRo
       $extractDll = Join-Path $candidate 'zinnia_extract_shell.dll'
       if ((Test-Path -LiteralPath $rootMsix) -and (Test-Path -LiteralPath $extractMsix) -and
           (Test-Path -LiteralPath $rootDll) -and (Test-Path -LiteralPath $extractDll)) {
+        $sortKey = Convert-ShellPayloadSortKey $_.Name
+        if (-not $sortKey) {
+          return
+        }
         return [pscustomobject]@{
           Location = $candidate
           RootMsix = $rootMsix
           ExtractMsix = $extractMsix
-          SortName = $_.Name
+          SortKey = $sortKey
         }
       }
     }
@@ -202,8 +227,15 @@ try {
   }
 
   $previousPayload = Find-PreviousShellPayloads -CurrentLocation $ShellPayloadLocation -InstallRoot $externalRoot |
-    Sort-Object -Property SortName -Descending |
+    Sort-Object -Property SortKey -Descending |
     Select-Object -First 1
+
+  Assert-PayloadAuthenticode @(
+    $dll,
+    $extractDll,
+    $MsixPath,
+    $ExtractMsixPath
+  )
 
   Write-Log "Add-AppxPackage -ForceUpdateFromAnyVersion -Path $MsixPath -ExternalLocation $ExternalLocation"
   Add-AppxPackage -ForceUpdateFromAnyVersion -Path $MsixPath -ExternalLocation $ExternalLocation -ErrorAction Stop
@@ -223,9 +255,10 @@ try {
 catch {
   Write-Log "ERROR: $($_.Exception.Message)"
   Write-Log ($_ | Out-String)
+  $restored = $false
   if (-not $Unregister -and $previousPayload) {
     try {
-      $null = Restore-PreviousShellPackages -PreviousPayload $previousPayload -ExternalLocation $ExternalLocation
+      $restored = Restore-PreviousShellPackages -PreviousPayload $previousPayload -ExternalLocation $ExternalLocation
     }
     catch {
       Write-Log "ERROR: Could not restore previous Win11 context menu packages: $($_.Exception.Message)"
@@ -237,6 +270,11 @@ catch {
   }
   Write-Host 'WARNING: Win11 context menu registration failed. Classic menu verbs still work.'
   Write-Host "See log: $LogPath"
+  if ($restored) {
+    Write-Host 'Previous Win11 context-menu packages were restored.'
+    # Zero so NSIS does not also install classic verbs on top of a working modern menu.
+    exit 0
+  }
   # Non-zero so NSIS can DetailPrint a warning; install still continues.
   exit 1
 }

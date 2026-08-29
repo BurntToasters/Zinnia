@@ -210,6 +210,14 @@ describe("Windows 11 context-menu manifest", () => {
     );
     expect(registration).not.toContain("-Recurse");
     expect(registration).toContain("Find-PreviousShellPayloads");
+    expect(registration).toContain("Convert-ShellPayloadSortKey");
+    expect(registration).toContain("Sort-Object -Property SortKey");
+    expect(registration).not.toContain("SortName");
+    expect(registration).toContain("Assert-PayloadAuthenticode");
+    expect(registration).toContain("Get-AuthenticodeSignature");
+    expect(registration).toContain(
+      "Previous Win11 context-menu packages were restored",
+    );
     expect(registration).toContain("Restore-PreviousShellPackages");
     expect(registration).toContain("Restoring previous packages from");
     expect(registration).toContain("-ForceUpdateFromAnyVersion");
@@ -359,5 +367,8 @@ describe("Windows 11 context-menu manifest", () => {
     );
     expect(shellSource).toContain("LaunchOneBatch");
     expect(shellSource).toContain("QuoteArgument");
+    expect(shellSource).toContain("DirectoryNameStartsWithShellDash");
+    expect(shellSource).toContain("if (length == 0) return std::wstring();");
+    expect(shellSource).not.toContain('if (length == 0) return L"zinnia.exe";');
   });
 });

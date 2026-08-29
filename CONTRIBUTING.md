@@ -79,7 +79,8 @@ branch:
   binary with `--features e2e` and never belongs in release/signed builds.
   The WebDriver capability is inlined in [`src-tauri/tauri.e2e.conf.json`](src-tauri/tauri.e2e.conf.json)
   so production ACL generation never sees `wdio-webdriver`. Linux CI uses xvfb.
-  `SKIP_E2E=1` skips the stage. `ZINNIA_E2E_REBUILD=1` forces a rebuild of the
+  `SKIP_E2E=1` is refused (exit 1) so quality-gate proof cannot skip the suite.
+  `ZINNIA_E2E_REBUILD=1` forces a rebuild of the
   debug app.
 - See [ARCHITECTURE.md](ARCHITECTURE.md) for the module map.
 

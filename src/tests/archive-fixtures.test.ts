@@ -16,6 +16,7 @@ import {
   APP_TEST_SWITCHES,
   APP_UPDATE_SWITCHES,
   UPDATE_FORMATS,
+  hardenFixture7zArgs,
   listingHasMember,
   parseSltMemberPaths,
 } from "../../scripts/archive-fixtures.js";
@@ -181,6 +182,21 @@ describe("archive fixture helpers match app 7-Zip switches", () => {
     expect(listingHasMember(stdout, "nested\\hello.txt")).toBe(true);
     expect(listingHasMember(stdout, "héllo.txt")).toBe(true);
     expect(listingHasMember(stdout, "missing.txt")).toBe(false);
+    expect(listingHasMember(stdout, "hello.txt")).toBe(false);
+  });
+
+  it("injects Windows -sccUTF-8 the same way harden_7z_args does", () => {
+    expect(
+      hardenFixture7zArgs(["l", "-slt", "-spd", "--", "a.zip"], "win32"),
+    ).toEqual(["l", "-sccUTF-8", "-slt", "-spd", "--", "a.zip"]);
+    expect(
+      hardenFixture7zArgs(["l", "-sccUTF-8", "-slt", "-spd"], "win32"),
+    ).toEqual(["l", "-sccUTF-8", "-slt", "-spd"]);
+    expect(hardenFixture7zArgs(["l", "-slt", "-spd"], "linux")).toEqual([
+      "l",
+      "-slt",
+      "-spd",
+    ]);
   });
 
   it("keeps test-archives covering list, add, selective extract, convert, and password denial", () => {

@@ -70,6 +70,11 @@ html[data-window-fx="basic"] body {
   padding: 3px 8px;
 }
 
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .debug-console-window {
   flex: 1 1 auto;
   min-height: 0;

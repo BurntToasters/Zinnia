@@ -63,10 +63,18 @@ function twoStepCompoundExtract(sidecar, archivePath, dest) {
   }
 }
 
-function assertPayload(extractRoot, memberPath, expectedText) {
-  const found = findMemberFile(extractRoot, memberPath);
-  if (found && fs.readFileSync(found, "utf8") === expectedText) {
-    return;
+function assertPayload(
+  extractRoot,
+  memberPath,
+  expectedText,
+  alternateMemberPaths = [],
+) {
+  const candidates = [memberPath, ...alternateMemberPaths];
+  for (const candidate of candidates) {
+    const found = findMemberFile(extractRoot, candidate);
+    if (found && fs.readFileSync(found, "utf8") === expectedText) {
+      return;
+    }
   }
   const extractedFiles = walkFiles(extractRoot).filter((file) => {
     try {
@@ -75,18 +83,24 @@ function assertPayload(extractRoot, memberPath, expectedText) {
       return false;
     }
   });
-  const contentMatch = extractedFiles.filter(
-    (file) => fs.readFileSync(file, "utf8") === expectedText,
-  );
-  if (contentMatch.length === 1) {
-    return;
-  }
   const names = extractedFiles
     .map((file) => path.relative(extractRoot, file))
     .join(", ");
   throw new Error(
     `missing member ${memberPath}; extracted: ${names || "(empty)"}`,
   );
+}
+
+function streamExtractMemberNames(entry) {
+  if (entry.compoundTar) return [];
+  if (
+    entry.family !== "gzip" &&
+    entry.family !== "bzip2" &&
+    entry.family !== "xz"
+  ) {
+    return [];
+  }
+  return [path.basename(entry.file, path.extname(entry.file))];
 }
 
 function copyFixture(fileName, destDir) {
@@ -156,7 +170,12 @@ function testIntegrityListExtract(sidecar, manifest) {
         extractArchive(sidecar, archivePath, dest, extra);
       }
       for (const member of entry.members) {
-        assertPayload(dest, member, manifest.payloadText);
+        assertPayload(
+          dest,
+          member,
+          manifest.payloadText,
+          streamExtractMemberNames(entry),
+        );
       }
     } finally {
       fs.rmSync(dest, { recursive: true, force: true });
@@ -286,7 +305,11 @@ function testCreateRoundtrip(sidecar, manifest) {
       }
       const dest = path.join(work, `out-${format}`);
       extractArchive(sidecar, archive, dest);
-      assertPayload(dest, "hello.txt", manifest.payloadText);
+      const streamNames =
+        format === "gzip" || format === "bzip2" || format === "xz"
+          ? [path.basename(archive, path.extname(archive))]
+          : [];
+      assertPayload(dest, "hello.txt", manifest.payloadText, streamNames);
       console.log(`  create ${format}`);
     }
     assert(

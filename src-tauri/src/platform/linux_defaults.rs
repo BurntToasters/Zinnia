@@ -17,11 +17,28 @@ pub(crate) trait LinuxMimeBackend {
 #[cfg(target_os = "linux")]
 pub(crate) struct XdgMimeBackend;
 
+/// Prefer absolute helpers so a hostile PATH cannot substitute `xdg-mime`.
+#[cfg(any(target_os = "linux", test))]
+fn xdg_mime_bin() -> &'static str {
+    const CANDIDATES: [&str; 2] = ["/usr/bin/xdg-mime", "/bin/xdg-mime"];
+    for path in CANDIDATES {
+        if std::path::Path::new(path).is_file() {
+            return path;
+        }
+    }
+    "/usr/bin/xdg-mime"
+}
+
+#[cfg(target_os = "linux")]
+fn xdg_mime_command() -> Command {
+    Command::new(xdg_mime_bin())
+}
+
 #[cfg(target_os = "linux")]
 impl LinuxMimeBackend for XdgMimeBackend {
     fn query_default(&self, mime_type: &str) -> Result<Option<String>, String> {
         let output = command_output_with_timeout(
-            Command::new("xdg-mime").args(["query", "default", mime_type]),
+            xdg_mime_command().args(["query", "default", mime_type]),
             std::time::Duration::from_secs(5),
         )
         .map_err(|e| format!("Unable to run xdg-mime: {e}"))?;
@@ -38,7 +55,7 @@ impl LinuxMimeBackend for XdgMimeBackend {
 
     fn set_default(&mut self, desktop_id: &str, mime_type: &str) -> Result<(), String> {
         let output = command_output_with_timeout(
-            Command::new("xdg-mime").args(["default", desktop_id, mime_type]),
+            xdg_mime_command().args(["default", desktop_id, mime_type]),
             std::time::Duration::from_secs(5),
         )
         .map_err(|e| format!("Unable to run xdg-mime: {e}"))?;
@@ -183,6 +200,12 @@ mod tests {
                 .insert(mime_type.to_string(), desktop_id.to_string());
             Ok(())
         }
+    }
+
+    #[test]
+    fn xdg_mime_bin_uses_absolute_helpers() {
+        let path = xdg_mime_bin();
+        assert!(path == "/usr/bin/xdg-mime" || path == "/bin/xdg-mime");
     }
 
     #[test]
