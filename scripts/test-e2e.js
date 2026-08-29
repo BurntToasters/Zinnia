@@ -9,7 +9,7 @@ import {
   e2eStampPath,
 } from "../e2e/helpers/profile.js";
 
-const __filename = fileURLToPath(import.meta.url);
+import { usesWindowsCmdShell } from "./npm-safe-update.mjs";
 
 function npmCommand() {
   return process.platform === "win32" ? "npm.cmd" : "npm";
@@ -34,6 +34,7 @@ function run(command, args, options = {}) {
     stdio: "inherit",
     windowsHide: true,
     encoding: "utf8",
+    shell: usesWindowsCmdShell(command),
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
@@ -142,8 +143,9 @@ function runWdio(profile, spec, appArgs) {
 
 function main() {
   if (process.env.SKIP_E2E === "1") {
-    console.log("Skipping E2E because SKIP_E2E=1");
-    return;
+    throw new Error(
+      "SKIP_E2E=1 is not allowed. Unset it and run the unpackaged WebdriverIO suite.",
+    );
   }
   reexecUnderXvfb();
   if (!e2eBinaryIsFresh() || process.env.ZINNIA_E2E_REBUILD === "1") {

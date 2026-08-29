@@ -25,6 +25,17 @@ describe("unpackaged E2E must not ship in release builds", () => {
     const hook = read("src/e2e-hook.ts");
     expect(hook).toContain('import.meta.env.VITE_ZINNIA_E2E !== "1"');
     expect(read("src/e2e-wdio-plugin.ts")).toContain(
+      'import.meta.env.VITE_ZINNIA_E2E !== "1"',
+    );
+    expect(main).toContain(
+      'std::env::var("ZINNIA_E2E").is_ok_and(|value| value == "1")',
+    );
+    expect(read("scripts/test-e2e.js")).toContain("usesWindowsCmdShell");
+    expect(read("scripts/test-e2e.js")).toContain("SKIP_E2E=1 is not allowed");
+    expect(read("scripts/test-all.js")).toContain(
+      "SKIP_E2E=1 is not allowed for npm run test:all",
+    );
+    expect(read("src/e2e-wdio-plugin.ts")).toContain(
       'await import("@wdio/tauri-plugin")',
     );
   });

@@ -72,17 +72,28 @@ export function parseSltMemberPaths(stdout) {
 }
 
 export function listingHasMember(stdout, memberPath) {
-  const wanted = String(memberPath).split(/[/\\]/).filter(Boolean);
-  const wantedPosix = wanted.join("/");
-  const wantedBase = wanted.at(-1);
+  const wantedPosix = String(memberPath)
+    .split(/[/\\]/)
+    .filter(Boolean)
+    .join("/");
   return parseSltMemberPaths(stdout).some((entry) => {
     const normalized = entry.split(/[/\\]/).filter(Boolean).join("/");
-    return (
-      normalized === wantedPosix ||
-      entry === memberPath ||
-      normalized.split("/").at(-1) === wantedBase
-    );
+    return normalized === wantedPosix || entry === memberPath;
   });
+}
+
+/** Match `harden_7z_args` so Windows listings use UTF-8 member names. */
+export function hardenFixture7zArgs(args, platform = process.platform) {
+  const next = [...args];
+  const command = next[0];
+  if (
+    platform === "win32" &&
+    ["a", "u", "x", "l", "t"].includes(command) &&
+    !next.some((arg) => String(arg).toLowerCase() === "-sccutf-8")
+  ) {
+    next.splice(1, 0, "-sccUTF-8");
+  }
+  return next;
 }
 
 export function loadArchiveManifest() {
@@ -129,7 +140,8 @@ export function requireHostSidecar(repoRoot = REPO_ROOT) {
 }
 
 export function run7z(sidecar, args, options = {}) {
-  const result = spawnSync(sidecar, args, {
+  const hardened = hardenFixture7zArgs(args);
+  const result = spawnSync(sidecar, hardened, {
     encoding: "buffer",
     stdio: options.input != null ? "pipe" : ["ignore", "pipe", "pipe"],
     windowsHide: true,
@@ -153,7 +165,7 @@ export function run7z(sidecar, args, options = {}) {
   }
   if (code !== 0) {
     const error = new Error(
-      `7z ${args[0] ?? ""} exited ${code}: ${stderr || stdout}`,
+      `7z ${hardened[0] ?? ""} exited ${code}: ${stderr || stdout}`,
     );
     error.code = code;
     error.stdout = stdout;
@@ -245,9 +257,7 @@ export function findMemberFile(extractRoot, memberPath) {
   const files = walkFiles(extractRoot);
   const match = files.find((file) => {
     const relative = path.relative(extractRoot, file).split(path.sep).join("/");
-    return (
-      relative === expectedPosix || path.basename(file) === expected.at(-1)
-    );
+    return relative === expectedPosix;
   });
   return match ?? null;
 }

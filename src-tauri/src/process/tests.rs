@@ -132,6 +132,17 @@ fn ensure_idle_detects_busy_state() {
 }
 
 #[test]
+fn running_process_is_busy_after_stale_update_reservation_expires() {
+    let state = RunningProcess::new();
+    assert!(!running_process_is_busy(&state));
+    {
+        let mut process = lock_process(&state).expect("process lock");
+        process.preparing = true;
+    }
+    assert!(running_process_is_busy(&state));
+}
+
+#[test]
 fn harden_7z_args_forces_aes256_on_password_zip() {
     let mut args = vec![
         "u".to_string(),

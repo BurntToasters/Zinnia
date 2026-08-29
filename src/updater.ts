@@ -238,6 +238,16 @@ async function runUpdateCheck(interactive: boolean): Promise<void> {
   let checkedUpdate: Update | null = null;
   let generation = updateGeneration;
   try {
+    const isFlatpak = await invoke<boolean>("is_flatpak");
+    if (isFlatpak) {
+      if (interactive) {
+        await message(
+          "Flatpak builds update through Flathub or a reinstalled bundle, not the in-app updater.",
+          { title: "Updates unavailable" },
+        );
+      }
+      return;
+    }
     const target = await getUpdateCheckTarget();
     if (generation !== updateGeneration) return;
     if (pendingUpdate && pendingTarget !== target) {

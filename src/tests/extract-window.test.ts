@@ -139,6 +139,9 @@ async function setupAndRun(
     if (cmd === "run_7z") {
       return { stdout: "", stderr: "", code: 0 };
     }
+    if (cmd === "load_settings") {
+      return JSON.stringify({ extractAutoCloseSeconds: 1.5 });
+    }
     if (cmd === "close_extract_window") return undefined;
     if (cmd === "open_path") return undefined;
     if (cmd === "cancel_7z") return true;
@@ -199,6 +202,22 @@ describe("extract-window", () => {
       return undefined;
     });
     expect(isNativeWebviewContextMenuAllowed()).toBe(true);
+  });
+
+  it("disables auto-close when load_settings fails", async () => {
+    await setupAndRun(async (cmd) => {
+      if (cmd === "load_settings") {
+        throw new Error("settings unavailable");
+      }
+      if (cmd === "run_7z") {
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      return undefined;
+    });
+
+    expect(
+      (document.getElementById("close-btn") as HTMLButtonElement).textContent,
+    ).toBe("Close");
   });
 
   it("applies the system dark theme and enabled window effects", async () => {

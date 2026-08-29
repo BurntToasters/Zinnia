@@ -63,7 +63,9 @@ native build runs.
 - macOS users can choose Zinnia from Finder's Open With/Get Info default-app
   flow; Zinnia routes archive launches to the quick extract window. Packaged
   builds also expose Finder Sync context-menu items and Finder Services:
-  **Extract with Zinnia** and **Compress with Zinnia**.
+  **Extract with Zinnia** and **Compress with Zinnia**. Finder Sync only
+  monitors Desktop, Documents, Downloads, Movies, Music, Pictures, and
+  `/Volumes`. Use Finder Services for files in other folders.
 
 ## Builds
 

@@ -93,6 +93,35 @@ describe("Zinnia main window", () => {
     );
   });
 
+  it("extracts hello.7z from Basic using a typed destination", async () => {
+    const archive = process.env.ZINNIA_E2E_HELLO_7Z;
+    const work = process.env.ZINNIA_E2E_WORK;
+    const dest = path.join(work, "basic-extract");
+    const payload = process.env.ZINNIA_E2E_PAYLOAD;
+    fs.mkdirSync(dest, { recursive: true });
+    await applyIncomingPaths([archive], "extract");
+    await setInputValue("#basic-extract-path", dest);
+    await $("#basic-run-extract").click();
+    const extracted = path.join(dest, "hello.txt");
+    await browser.waitUntil(() => fs.existsSync(extracted), {
+      timeout: 60_000,
+      timeoutMsg: `basic extract did not write ${extracted}`,
+    });
+    assert.equal(fs.readFileSync(extracted, "utf8"), payload);
+  });
+
+  it("compresses hello.txt from Basic using a typed destination", async () => {
+    const input = process.env.ZINNIA_E2E_HELLO_TXT;
+    const output = path.join(process.env.ZINNIA_E2E_WORK, "basic-compress.7z");
+    await applyIncomingPaths([input], "compress");
+    await setInputValue("#basic-output-path", output);
+    await $("#basic-run-compress").click();
+    await browser.waitUntil(() => fs.existsSync(output), {
+      timeout: 60_000,
+      timeoutMsg: `basic compress did not write ${output}`,
+    });
+  });
+
   it("extracts hello.7z from Power using a typed destination", async () => {
     const archive = process.env.ZINNIA_E2E_HELLO_7Z;
     const dest = process.env.ZINNIA_E2E_EXTRACT_OUT;

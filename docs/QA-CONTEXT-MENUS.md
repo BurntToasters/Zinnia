@@ -33,11 +33,14 @@ below before publishing.
    cold-launch checks below.
 3. Settings → **OS Integration** → **Finder context menu** → **Enable…**
    (or System Settings → General → Login Items & Extensions → enable **Zinnia Finder**).
-4. With Zinnia stopped, select an archive in Finder → right-click → **Extract
-   with Zinnia**. Confirm quick extract receives the selected path (not merely
-   an activated empty app window).
-5. Keep Zinnia running, select a file/folder → **Compress with Zinnia** from
-   the primary menu. Confirm the already-running app receives that new request.
+4. With Zinnia stopped, select an archive in Finder **on Desktop, Documents,
+   Downloads, Movies, Music, Pictures, or a mounted volume** → right-click →
+   **Extract with Zinnia**. Confirm quick extract receives the selected path (not
+   merely an activated empty app window). Files outside those folders need
+   Finder Services instead.
+5. Keep Zinnia running, select a file/folder **in a monitored folder** →
+   **Compress with Zinnia** from the primary menu. Confirm the already-running
+   app receives that new request.
 6. Confirm both items are in Finder's **primary** menu (not only under Services),
    then refresh OS Integration: Finder context menu shows **Enabled**.
 7. Trigger Compress and then Extract rapidly. Confirm they arrive oldest-first,

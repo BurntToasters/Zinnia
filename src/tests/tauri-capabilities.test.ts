@@ -14,6 +14,55 @@ function readCapability(name: "default" | "extract" | "debug-console"): {
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
+const INVOKE_RE = /invoke(?:<[^>]+>)?\(\s*["'](\w+)["']/g;
+const IMPORT_RE = /from\s+["'](\.[^"']+)["']/g;
+
+function collectInvokes(entryRel: string): Set<string> {
+  const srcRoot = path.resolve(process.cwd(), "src");
+  const visited = new Set<string>();
+  const commands = new Set<string>();
+
+  function visit(file: string): void {
+    const abs = path.normalize(file);
+    if (visited.has(abs)) return;
+    if (!abs.startsWith(srcRoot)) return;
+    const base = path.basename(abs);
+    if (base.startsWith("e2e-") || base.endsWith(".test.ts")) return;
+    if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) return;
+    visited.add(abs);
+    const source = fs.readFileSync(abs, "utf8");
+    for (const match of source.matchAll(INVOKE_RE)) {
+      commands.add(match[1]);
+    }
+    for (const match of source.matchAll(IMPORT_RE)) {
+      const spec = match[1].replace(/\.js$/, "");
+      const resolved = path.resolve(path.dirname(abs), spec);
+      const candidates = [
+        resolved,
+        `${resolved}.ts`,
+        path.join(resolved, "index.ts"),
+      ];
+      for (const candidate of candidates) {
+        if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+          visit(candidate);
+          break;
+        }
+      }
+    }
+  }
+
+  visit(path.resolve(process.cwd(), entryRel));
+  return commands;
+}
+
+function allowPermission(command: string): string {
+  return `allow-${command.replaceAll("_", "-")}`;
+}
+
+function customAllowPermissions(permissions: string[]): string[] {
+  return permissions.filter((permission) => permission.startsWith("allow-"));
+}
+
 describe("Tauri capability policy", () => {
   it("keeps generated command permissions aligned with the Rust manifest and handler", () => {
     const buildRs = fs.readFileSync(
@@ -114,22 +163,44 @@ describe("Tauri capability policy", () => {
     expect(generated.default?.permissions).toContain("shell:default");
   });
 
-  it("grants every invoke used by extract-window.ts", () => {
-    const source = fs.readFileSync(
-      path.resolve(process.cwd(), "src", "extract-window.ts"),
-      "utf8",
-    );
-    const commands = [
-      ...source.matchAll(/invoke(?:<[^>]+>)?\(\s*["'](\w+)["']/g),
-    ].map((match) => match[1]);
-    expect(commands.length).toBeGreaterThan(0);
+  it("grants every import-transitive invoke used by extract-window.ts, and no extra allow-*", () => {
+    const commands = collectInvokes(path.join("src", "extract-window.ts"));
+    expect(commands.size).toBeGreaterThan(0);
 
     const { permissions } = readCapability("extract");
     const granted = new Set(permissions);
-    for (const command of new Set(commands)) {
-      const allow = `allow-${command.replaceAll("_", "-")}`;
-      expect(granted, `extract window invokes ${command}`).toContain(allow);
+    for (const command of commands) {
+      expect(granted, `extract window invokes ${command}`).toContain(
+        allowPermission(command),
+      );
     }
+    const unused = customAllowPermissions(permissions).filter(
+      (permission) =>
+        ![...commands].some(
+          (command) => allowPermission(command) === permission,
+        ),
+    );
+    expect(unused).toEqual([]);
+  });
+
+  it("grants every import-transitive invoke used by main.ts, and no extra allow-*", () => {
+    const commands = collectInvokes(path.join("src", "main.ts"));
+    expect(commands.size).toBeGreaterThan(0);
+
+    const { permissions } = readCapability("default");
+    const granted = new Set(permissions);
+    for (const command of commands) {
+      expect(granted, `main window invokes ${command}`).toContain(
+        allowPermission(command),
+      );
+    }
+    const unused = customAllowPermissions(permissions).filter(
+      (permission) =>
+        ![...commands].some(
+          (command) => allowPermission(command) === permission,
+        ),
+    );
+    expect(unused).toEqual([]);
   });
 
   it("keeps extract windows to their explicit core APIs", () => {
