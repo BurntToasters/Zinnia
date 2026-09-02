@@ -4,6 +4,8 @@ import os from "os";
 import path from "path";
 import { spawnSync } from "child_process";
 import {
+  assertExtractedTreeContained,
+  assertOfficialArchiveMembersSafe,
   officialArchiveExtractionCommand,
   validateTrusted7zPath,
 } from "./prepare-7z-helpers.js";
@@ -307,6 +309,11 @@ function verifyOfficialDownloads(downloadDirectory) {
       }
       const destination = path.join(extractionRoot, sourceName);
       fs.mkdirSync(destination);
+      assertOfficialArchiveMembersSafe({
+        archivePath,
+        destination,
+        trusted7zPath,
+      });
       const extractionCommand = officialArchiveExtractionCommand({
         archivePath,
         destination,
@@ -321,6 +328,7 @@ function verifyOfficialDownloads(downloadDirectory) {
           `Could not extract official archive ${archiveName}: ${extraction.message}`,
         );
       }
+      assertExtractedTreeContained(destination);
     }
     for (const [asset, record] of Object.entries(provenance.artifacts)) {
       const extracted = path.join(extractionRoot, record.source, record.member);

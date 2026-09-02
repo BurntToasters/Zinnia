@@ -5,7 +5,25 @@ use std::path::{Path, PathBuf};
 
 const MAX_EXAMPLES: usize = 4;
 const MAX_PROBE_ENTRIES: u64 = 1_000_000;
+const MAX_PROBE_PATH_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_PROBE_DEPTH: usize = 256;
+const MAX_PROBE_DURATION: std::time::Duration = std::time::Duration::from_secs(60);
+
+struct ProbeBudget {
+    entries: u64,
+    path_bytes: u64,
+    deadline: std::time::Instant,
+}
+
+impl ProbeBudget {
+    fn new() -> Self {
+        Self {
+            entries: 0,
+            path_bytes: 0,
+            deadline: std::time::Instant::now() + MAX_PROBE_DURATION,
+        }
+    }
+}
 
 #[derive(Default, Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -19,13 +37,28 @@ pub struct CompressInputProbe {
 /// Walk selected compress inputs (files/folders). Top-level symlink inputs are
 /// rejected elsewhere; this finds nested links and Windows non-symlink reparse.
 pub fn probe_compress_input_paths(paths: &[String]) -> Result<CompressInputProbe, String> {
+    probe_compress_input_paths_with_cancel(paths, || false)
+}
+
+pub fn probe_compress_input_paths_with_cancel<C>(
+    paths: &[String],
+    should_cancel: C,
+) -> Result<CompressInputProbe, String>
+where
+    C: Fn() -> bool,
+{
     if paths.len() > 4096 {
         return Err("Too many compress inputs to probe.".to_string());
     }
     let mut probe = CompressInputProbe::default();
+    let mut budget = ProbeBudget::new();
+    let mut seen_roots = std::collections::HashSet::new();
     for raw in paths {
         let path = PathBuf::from(raw);
-        walk_path(&path, &mut probe)?;
+        if !seen_roots.insert(path.clone()) {
+            continue;
+        }
+        walk_path(&path, &mut probe, &mut budget, &should_cancel)?;
     }
     Ok(probe)
 }
@@ -45,14 +78,36 @@ fn is_app_bundle_name(name: &std::ffi::OsStr) -> bool {
         .is_some_and(|s| s.len() > 4 && s.to_ascii_lowercase().ends_with(".app"))
 }
 
-fn walk_path(root: &Path, probe: &mut CompressInputProbe) -> Result<(), String> {
+fn walk_path<C>(
+    root: &Path,
+    probe: &mut CompressInputProbe,
+    budget: &mut ProbeBudget,
+    should_cancel: &C,
+) -> Result<(), String>
+where
+    C: Fn() -> bool,
+{
     let mut pending = vec![(root.to_path_buf(), true, 0usize)];
-    let mut entries = 0u64;
     while let Some((path, is_root, depth)) = pending.pop() {
-        entries = entries.saturating_add(1);
-        if entries > MAX_PROBE_ENTRIES {
+        if should_cancel() {
+            return Err("Compress input scan was cancelled.".to_string());
+        }
+        if std::time::Instant::now() >= budget.deadline {
+            return Err("Compress input scan exceeded its 60-second safety deadline.".to_string());
+        }
+        budget.entries = budget.entries.saturating_add(1);
+        if budget.entries > MAX_PROBE_ENTRIES {
             return Err(format!(
-                "Compress input scan exceeded the safety limit of {MAX_PROBE_ENTRIES} entries. Select smaller folders."
+                "Compress input scan exceeded the safety limit of {MAX_PROBE_ENTRIES} entries across all selected roots. Select smaller folders."
+            ));
+        }
+        budget.path_bytes = budget
+            .path_bytes
+            .saturating_add(path.as_os_str().as_encoded_bytes().len() as u64);
+        if budget.path_bytes > MAX_PROBE_PATH_BYTES {
+            return Err(format!(
+                "Compress input scan exceeded its {} MiB aggregate path-name safety limit.",
+                MAX_PROBE_PATH_BYTES / (1024 * 1024)
             ));
         }
         if depth > MAX_PROBE_DEPTH {
@@ -93,6 +148,14 @@ fn walk_path(root: &Path, probe: &mut CompressInputProbe) -> Result<(), String> 
             let entries = std::fs::read_dir(&path)
                 .map_err(|e| format!("Unable to read directory '{}': {e}", path.display()))?;
             for entry in entries {
+                if should_cancel() {
+                    return Err("Compress input scan was cancelled.".to_string());
+                }
+                if std::time::Instant::now() >= budget.deadline {
+                    return Err(
+                        "Compress input scan exceeded its 60-second safety deadline.".to_string(),
+                    );
+                }
                 pending.push((entry.map_err(|e| e.to_string())?.path(), false, depth + 1));
             }
         }
@@ -100,28 +163,36 @@ fn walk_path(root: &Path, probe: &mut CompressInputProbe) -> Result<(), String> 
     Ok(())
 }
 
-/// Fail closed when compress trees contain Windows cloud/junction reparse points.
-pub fn assert_no_nested_reparse_for_compress(paths: &[String]) -> Result<(), String> {
-    #[cfg(not(windows))]
-    {
-        let _ = paths;
-        Ok(())
-    }
+/// Enforce one bounded, cancellable traversal across every selected root. On
+/// Windows, nested non-symlink reparse points additionally fail closed.
+pub fn assert_compress_inputs_safe_with_cancel<C>(
+    paths: &[String],
+    should_cancel: C,
+) -> Result<(), String>
+where
+    C: Fn() -> bool,
+{
+    let probe = probe_compress_input_paths_with_cancel(paths, should_cancel)?;
     #[cfg(windows)]
-    {
-        let probe = probe_compress_input_paths(paths)?;
-        if probe.nested_reparse_points == 0 {
-            return Ok(());
-        }
+    if probe.nested_reparse_points != 0 {
         let sample = probe
             .examples
             .first()
             .cloned()
             .unwrap_or_else(|| "(path omitted)".to_string());
-        Err(format!(
+        return Err(format!(
             "Compress inputs contain a Windows reparse point (junction or cloud placeholder) that is not a symbolic link: {sample}. Copy the real files locally, or remove the reparse entry, then try again."
-        ))
+        ));
     }
+    #[cfg(not(windows))]
+    let _ = probe;
+    Ok(())
+}
+
+/// Compatibility wrapper used by focused platform tests.
+#[cfg(test)]
+pub fn assert_no_nested_reparse_for_compress(paths: &[String]) -> Result<(), String> {
+    assert_compress_inputs_safe_with_cancel(paths, || false)
 }
 
 #[cfg(test)]
@@ -149,8 +220,11 @@ mod tests {
 
     #[cfg(not(windows))]
     #[test]
-    fn backend_reparse_guard_does_not_walk_non_windows_inputs() {
-        assert_no_nested_reparse_for_compress(&["/definitely/missing".to_string()])
-            .expect("Windows-only guard must be a no-op");
+    fn backend_compress_guard_walks_non_windows_inputs() {
+        assert!(
+            assert_no_nested_reparse_for_compress(&["/definitely/missing".to_string()])
+                .expect_err("global traversal must validate every platform")
+                .contains("Unable to read compress input")
+        );
     }
 }

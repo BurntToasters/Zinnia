@@ -21,12 +21,9 @@ pub(super) struct ArchiveFileIdentity {
 }
 
 fn archive_file_identity_from_open_file(
-    path: &std::path::Path,
+    canonical_path: &std::path::Path,
     file: &std::fs::File,
 ) -> Result<ArchiveFileIdentity, String> {
-    let canonical_path = path
-        .canonicalize()
-        .map_err(|e| format!("Could not resolve archive identity: {e}"))?;
     let metadata = file
         .metadata()
         .map_err(|e| format!("Could not read archive identity: {e}"))?;
@@ -40,7 +37,7 @@ fn archive_file_identity_from_open_file(
     let windows_identity = windows_file_identity(file)?;
 
     Ok(ArchiveFileIdentity {
-        canonical_path,
+        canonical_path: canonical_path.to_path_buf(),
         len: metadata.len(),
         modified: metadata.modified().ok(),
         created: metadata.created().ok(),
@@ -108,9 +105,12 @@ fn windows_file_identity(file: &std::fs::File) -> Result<WindowsArchiveFileIdent
 }
 
 pub(super) fn archive_file_identity(path: &std::path::Path) -> Result<ArchiveFileIdentity, String> {
-    let file = crate::path_safety::open_regular_file_nofollow(path)
+    let canonical_path = path
+        .canonicalize()
+        .map_err(|e| format!("Could not resolve archive identity: {e}"))?;
+    let file = crate::path_safety::open_regular_file_nofollow(&canonical_path)
         .map_err(|e| format!("Could not open archive identity: {e}"))?;
-    archive_file_identity_from_open_file(path, &file)
+    archive_file_identity_from_open_file(&canonical_path, &file)
 }
 
 fn hash_identity_bytes(hasher: &mut sha2::Sha256, bytes: &[u8]) {
@@ -178,18 +178,49 @@ fn hash_archive_file_identity(hasher: &mut sha2::Sha256, identity: &ArchiveFileI
     }
 }
 
-pub(crate) fn archive_identity_token(path: &std::path::Path) -> Result<String, String> {
+fn archive_identity_token_from_family(
+    resolved: &std::path::Path,
+    selected_file: Option<&std::fs::File>,
+) -> Result<String, String> {
     use sha2::Digest as _;
 
-    let resolved = crate::path_safety::resolve_regular_file_input(path)?;
-    let family = archive_input_family(&resolved)?;
+    let family = archive_input_family(resolved)?;
     let mut hasher = sha2::Sha256::new();
-    for member in family {
-        let identity = archive_file_identity(&member)?;
+    let mut used_selected = false;
+    for member in &family {
+        let identity = if member == resolved {
+            if let Some(file) = selected_file {
+                used_selected = true;
+                archive_file_identity_from_open_file(member, file)?
+            } else {
+                archive_file_identity(member)?
+            }
+        } else {
+            archive_file_identity(member)?
+        };
         hash_identity_bytes(&mut hasher, member.as_os_str().as_encoded_bytes());
         hash_archive_file_identity(&mut hasher, &identity);
     }
+    if selected_file.is_some() && !used_selected {
+        return Err("Selected archive is not a member of its resolved volume family.".to_string());
+    }
+    let after = archive_input_family(resolved)?;
+    if after != family {
+        return Err("Archive volume family changed while its identity was generated.".to_string());
+    }
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+pub(crate) fn archive_identity_token_from_open_file(
+    resolved: &std::path::Path,
+    file: &std::fs::File,
+) -> Result<String, String> {
+    archive_identity_token_from_family(resolved, Some(file))
+}
+
+pub(crate) fn archive_identity_token(path: &std::path::Path) -> Result<String, String> {
+    let resolved = crate::path_safety::resolve_regular_file_input(path)?;
+    archive_identity_token_from_family(&resolved, None)
 }
 
 /// Attempt a copy-on-write clone of `source` into the already-created,
@@ -618,6 +649,15 @@ pub(super) fn archive_input_family(
             let candidate = parent.join(candidate_for(index));
             let Some(candidate) = resolve_volume(&candidate, family_prefix, folded_siblings)?
             else {
+                for later in index.saturating_add(1)..=MAX_ARCHIVE_VOLUMES.saturating_add(1) {
+                    let later_candidate = parent.join(candidate_for(later));
+                    if resolve_volume(&later_candidate, family_prefix, folded_siblings)?.is_some() {
+                        return Err(format!(
+                            "Archive volume family has a numbering gap before {}.",
+                            later_candidate.display()
+                        ));
+                    }
+                }
                 return Ok(family);
             };
             family.push(candidate);
@@ -709,6 +749,19 @@ pub(super) fn archive_input_family(
                 let Some(candidate) =
                     resolve_volume(&candidate, &family_prefix, &mut folded_siblings)?
                 else {
+                    for later in index.saturating_add(1)..900u32 {
+                        let later_letter = char::from(b'r' + (later / 100) as u8);
+                        let later_candidate =
+                            parent.join(format!("{base}.{later_letter}{:02}", later % 100));
+                        if resolve_volume(&later_candidate, &family_prefix, &mut folded_siblings)?
+                            .is_some()
+                        {
+                            return Err(format!(
+                                "Archive volume family has a numbering gap before {}.",
+                                later_candidate.display()
+                            ));
+                        }
+                    }
                     break;
                 };
                 family.push(candidate);
@@ -761,6 +814,7 @@ pub(super) fn archive_input_family(
 #[derive(Debug)]
 pub(super) struct StagedArchiveInput {
     pub(super) path: std::path::PathBuf,
+    pub(super) stage_identity: super::journal::FileIdentity,
     pub(super) total_len: u64,
 }
 
@@ -808,9 +862,12 @@ where
     // source filesystem, enabling APFS/Btrfs/XFS CoW and avoiding a mandatory
     // full copy onto the system/app-cache disk. Read-only source locations fall
     // back to app cache.
-    let stage = match super::create_private_stage_dir(&archive, "input", cache_dir) {
+    let created_stage = match super::create_private_stage_dir(&archive, "input", cache_dir) {
         Ok(stage) => stage,
         Err(source_error) => {
+            if super::staging::preparation_error_requires_recovery(&source_error) {
+                return Err(source_error);
+            }
             let Some(cache) = cache_dir else {
                 return Err(source_error);
             };
@@ -824,6 +881,9 @@ where
             )?
         }
     };
+    let stage = created_stage.path;
+    let stage_identity = created_stage.identity;
+    let cleanup_identity = stage_identity.clone();
     let result = (|| {
         for (source, expected) in inputs {
             if should_cancel() {
@@ -873,14 +933,30 @@ where
                     .file_name()
                     .ok_or_else(|| "Archive input has no file name.".to_string())?,
             ),
+            stage_identity,
             total_len,
         })
     })();
-    if result.is_err() {
-        let _ = crate::fs_secure::remove_dir_all_for_cleanup(&stage);
-        if let Some(cache) = cache_dir {
-            let _ = super::unregister_pending_stage(cache, &stage);
+    match result {
+        Ok(staged) => Ok(staged),
+        Err(operation_error) => {
+            let cleanup_result =
+                super::journal::remove_directory_if_matches(&stage, &cleanup_identity).and_then(
+                    |()| {
+                        if let Some(cache) = cache_dir {
+                            super::unregister_pending_stage(cache, &stage)
+                        } else {
+                            Ok(())
+                        }
+                    },
+                );
+            match cleanup_result {
+                Ok(()) => Err(operation_error),
+                Err(cleanup_error) => Err(super::staging::preparation_cleanup_failed(
+                    operation_error,
+                    cleanup_error,
+                )),
+            }
         }
     }
-    result
 }

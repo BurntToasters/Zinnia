@@ -27,6 +27,9 @@ describe("unpackaged E2E must not ship in release builds", () => {
     expect(read("src/e2e-wdio-plugin.ts")).toContain(
       'import.meta.env.VITE_ZINNIA_E2E !== "1"',
     );
+    expect(main).toContain('#[cfg(feature = "e2e")]\nfn e2e_session_active()');
+    expect(main).toContain('#[cfg(not(feature = "e2e"))]');
+    expect(main).toContain("production_integrations_enabled()");
     expect(main).toContain(
       'std::env::var("ZINNIA_E2E").is_ok_and(|value| value == "1")',
     );
@@ -112,5 +115,52 @@ describe("unpackaged E2E must not ship in release builds", () => {
     );
     expect(read(".github/workflows/ci.yml")).toContain("npm run test:e2e");
     expect(read(".github/workflows/ci.yml")).toContain("xvfb");
+  });
+});
+
+describe("production archive IPC policy", () => {
+  function productionTypeScriptFiles(directory: string): string[] {
+    const files: string[] = [];
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name !== "tests")
+          files.push(...productionTypeScriptFiles(absolute));
+      } else if (entry.isFile() && entry.name.endsWith(".ts")) {
+        files.push(absolute);
+      }
+    }
+    return files;
+  }
+
+  it("centralizes bounded run_7z and probe envelopes in backend-ipc", () => {
+    const backendPath = path.resolve(
+      process.cwd(),
+      "src/archive/backend-ipc.ts",
+    );
+    const backend = fs.readFileSync(backendPath, "utf8");
+    expect(backend).not.toContain("import.meta.env.MODE");
+    expect(backend).toContain('invoke<T>("run_7z", run7zInvokeArgs(request))');
+    expect(backend).toMatch(
+      /invoke<T>\(\s*"probe_compress_inputs",\s*compressInputProbeInvokeArgs\(paths\),?\s*\)/,
+    );
+
+    for (const file of productionTypeScriptFiles(
+      path.resolve(process.cwd(), "src"),
+    )) {
+      if (file === backendPath) continue;
+      const source = fs.readFileSync(file, "utf8");
+      expect(source, file).not.toMatch(
+        /invoke(?:<[^>]+>)?\(\s*["'](?:run_7z|probe_compress_inputs)["']/,
+      );
+    }
+
+    const commands = read("src-tauri/src/process/commands.rs");
+    expect(commands).toMatch(
+      /pub async fn run_7z\([\s\S]*?request_json: String,[\s\S]*?\) -> Result<RunResult, String>/,
+    );
+    expect(commands).toMatch(
+      /pub async fn probe_compress_inputs\(\s*request_json: String,\s*\)/,
+    );
   });
 });

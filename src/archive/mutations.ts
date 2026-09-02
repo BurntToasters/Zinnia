@@ -32,6 +32,7 @@ import {
   type Run7zResult,
 } from "./runtime";
 import { confirmZipSymlinkRisk } from "./compress-fidelity";
+import { invokeRun7z } from "./backend-ipc";
 
 let mutationDialogOpen = false;
 
@@ -132,6 +133,15 @@ export async function addFilesToArchive(): Promise<void> {
     if (!validation?.identity) {
       throw new Error("Could not capture a stable archive identity.");
     }
+    const outputSelectionToken = await invoke<string>(
+      "archive_output_selection_token",
+      { path: archive },
+    );
+    if (!outputSelectionToken || outputSelectionToken === "absent") {
+      throw new Error(
+        "Archive output disappeared after it was selected; choose the current file again.",
+      );
+    }
     const threads = parseThreads(
       $<HTMLInputElement>("threads").value,
       SETTING_DEFAULTS.threads,
@@ -155,7 +165,7 @@ export async function addFilesToArchive(): Promise<void> {
       args,
       true,
       "Add files",
-      validation.identity,
+      outputSelectionToken,
     );
     if (state.cancelRequested && result.code !== 0) {
       setStatus("Cancelled", 2000);
@@ -356,7 +366,7 @@ export async function convertArchive(): Promise<void> {
     compress.push(dest, "--", ...children);
 
     debugLogCommand(compress);
-    const result = await invoke<Run7zResult>("run_7z", {
+    const result = await invokeRun7z<Run7zResult>({
       args: compress,
       expectedArchiveIdentity: outputSelectionToken,
     });

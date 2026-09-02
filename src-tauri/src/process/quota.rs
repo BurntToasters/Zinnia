@@ -2,7 +2,7 @@
 
 use tauri::Manager;
 
-use super::{lock_process, RunningProcess};
+use super::{commands::terminate_registered_child, lock_process, RunningProcess};
 
 // Large SDK/source/app archives routinely exceed 25k entries. Keep a high
 // anti-DoS ceiling and enforce it during member listing before extraction, then
@@ -156,8 +156,14 @@ pub(crate) async fn monitor_extract_quota(
     finished: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
     let mut next_tree_scan = std::time::Instant::now();
+    let mut poll_delay = std::time::Duration::from_millis(250);
+    let mut first_poll = true;
+    const TRANSIENT_FREE_SPACE_HEADROOM: u64 = 64 * 1024 * 1024;
     while !finished.load(std::sync::atomic::Ordering::Relaxed) {
-        tokio::time::sleep(std::time::Duration::from_millis(750)).await;
+        if !first_poll {
+            tokio::time::sleep(poll_delay).await;
+        }
+        first_poll = false;
         if finished.load(std::sync::atomic::Ordering::Relaxed) {
             break;
         }
@@ -168,10 +174,15 @@ pub(crate) async fn monitor_extract_quota(
         let free_path = staged.clone();
         let free_space = tokio::task::spawn_blocking(move || available_space(&free_path)).await;
         let low_space_reason = match free_space {
-            Ok(Ok(bytes)) if bytes <= min_free_bytes => Some(format!(
-                "Extraction stopped to preserve at least {:.1} GiB of free disk space.",
-                min_free_bytes as f64 / 1_073_741_824.0
-            )),
+            Ok(Ok(bytes))
+                if bytes
+                    <= min_free_bytes.saturating_add(TRANSIENT_FREE_SPACE_HEADROOM) =>
+            {
+                Some(format!(
+                    "Extraction stopped near its free-space reserve ({:.1} GiB plus transient headroom).",
+                    min_free_bytes as f64 / 1_073_741_824.0
+                ))
+            }
             Ok(Err(error)) => Some(format!("Extraction disk-space check failed: {error}")),
             Err(error) => Some(format!("Extraction disk-space task failed: {error}")),
             Ok(Ok(_)) => None,
@@ -194,19 +205,38 @@ pub(crate) async fn monitor_extract_quota(
             Ok(Err(reason)) => Some(reason),
             Err(error) => Some(format!("Extraction safety scan failed: {error}")),
             Ok(Ok((files, bytes))) => {
-                // Huge extracts: back off harder when still under half the limits so
-                // quota monitoring does not dominate I/O with full-tree walks.
+                // Poll aggressively near either limit. This reduces, but cannot
+                // eliminate, transient overshoot while an external 7-Zip child
+                // keeps writing between filesystem observations.
+                let near_limit = files >= MAX_EXTRACT_ENTRIES.saturating_mul(3) / 4
+                    || bytes >= max_bytes.saturating_mul(3) / 4;
                 let under_half = files <= MAX_EXTRACT_ENTRIES / 2 && bytes <= max_bytes / 2;
-                let multiplier = if under_half { 8 } else { 4 };
-                let max_delay = if under_half {
-                    std::time::Duration::from_secs(15)
+                let (multiplier, min_delay, max_delay) = if near_limit {
+                    poll_delay = std::time::Duration::from_millis(100);
+                    (
+                        1,
+                        std::time::Duration::from_millis(250),
+                        std::time::Duration::from_secs(1),
+                    )
+                } else if under_half {
+                    poll_delay = std::time::Duration::from_millis(250);
+                    (
+                        8,
+                        std::time::Duration::from_secs(2),
+                        std::time::Duration::from_secs(15),
+                    )
                 } else {
-                    std::time::Duration::from_secs(8)
+                    poll_delay = std::time::Duration::from_millis(250);
+                    (
+                        3,
+                        std::time::Duration::from_secs(1),
+                        std::time::Duration::from_secs(5),
+                    )
                 };
                 let scan_delay = scan_started
                     .elapsed()
                     .saturating_mul(multiplier)
-                    .clamp(std::time::Duration::from_secs(2), max_delay);
+                    .clamp(min_delay, max_delay);
                 next_tree_scan = std::time::Instant::now() + scan_delay;
                 None
             }
@@ -224,32 +254,20 @@ pub(crate) fn stop_extract_for_quota(app: &tauri::AppHandle, reason: String) {
         Ok(mut process) => {
             process.cancelling = true;
             process.abort_reason = Some(reason);
-            process.child.take()
+            process.child.as_ref().map(std::sync::Arc::clone)
         }
         Err(_) => None,
     };
     if let Some(child) = child {
-        if let Err(error) = child.kill() {
-            let msg = error.to_string();
-            // Same predicates as cancel_7z / is_non_running_kill_error.
-            if msg.contains("finished")
-                || msg.contains("not running")
-                || msg.contains("No such process")
-            {
-                return;
-            }
-            // Put the handle back so cancel_7z can retry the kill (same as cancel_7z).
+        if let Err(error) = terminate_registered_child(&state, &child) {
             if let Ok(mut process) = lock_process(&state) {
-                if process.child.is_none() {
-                    process.child = Some(child);
-                }
                 let prior = process.abort_reason.take().unwrap_or_default();
                 process.abort_reason = Some(if prior.is_empty() {
                     format!(
-                        "Extraction exceeded a safety limit, but its process could not be stopped: {msg}"
+                        "Extraction exceeded a safety limit, but its process could not be stopped: {error}"
                     )
                 } else {
-                    format!("{prior}; process could not be stopped: {msg}")
+                    format!("{prior}; process could not be stopped: {error}")
                 });
             }
         }

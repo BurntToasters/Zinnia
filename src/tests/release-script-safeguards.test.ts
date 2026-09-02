@@ -32,6 +32,9 @@ import {
 import { parseUpdate7zArgv } from "../../scripts/update-7z.js";
 import { isDirectExecution as isGitPruneDirectExecution } from "../../scripts/git-prune-local-branches.js";
 import {
+  assertArchiveMemberNameSafe,
+  assertExtractedTreeContained,
+  findExtractedRegularFile,
   officialArchiveExtractionCommand,
   validateTrusted7zPath,
 } from "../../scripts/prepare-7z-helpers.js";
@@ -443,6 +446,7 @@ describe("release script safeguards", () => {
     expect(syncBlock).toContain(
       "syncBetaManifestsToLatestStable(everything, release.id)",
     );
+    expect(syncBlock).not.toContain("!release.draft");
   });
 
   it("refuses to create a GitHub release during signing", () => {
@@ -688,6 +692,17 @@ describe("release script safeguards", () => {
     }
   });
 
+  it("unlocks the signing keychain without putting the password on argv", () => {
+    const source = fs.readFileSync("scripts/mac-keychain-ssh.sh", "utf8");
+    expect(source).toContain("security -i");
+    expect(source).not.toMatch(
+      /unlock-keychain -p "\$\{?KEYCHAIN_PASSWORD\}?"/,
+    );
+    expect(source).not.toMatch(
+      /set-key-partition-list[^\n]*-k "\$\{?KEYCHAIN_PASSWORD\}?"/,
+    );
+  });
+
   it("uses system tar and only the trusted extractor for official archives", () => {
     expect(
       officialArchiveExtractionCommand({
@@ -726,6 +741,36 @@ describe("release script safeguards", () => {
       }),
     ).toThrow(/trusted 7-Zip extractor is required/);
   });
+
+  it("rejects archive members that would escape the extract destination", () => {
+    expect(() =>
+      assertArchiveMemberNameSafe("../secret", "/tmp/extracted"),
+    ).toThrow(/escapes/);
+    expect(() =>
+      assertArchiveMemberNameSafe("/etc/passwd", "/tmp/extracted"),
+    ).toThrow(/absolute/);
+    expect(() =>
+      assertArchiveMemberNameSafe("C:\\Windows\\system32", "/tmp/extracted"),
+    ).toThrow(/absolute/);
+    expect(() =>
+      assertArchiveMemberNameSafe("bin/7zz", "/tmp/extracted"),
+    ).not.toThrow();
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "refuses extracted symlinks when resolving 7-Zip members",
+    () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "zinnia-7z-member-"));
+      try {
+        fs.writeFileSync(path.join(root, "real"), "payload");
+        fs.symlinkSync("real", path.join(root, "7zz"));
+        expect(() => findExtractedRegularFile(root, "7zz")).toThrow(/symlink/);
+        expect(() => assertExtractedTreeContained(root)).toThrow(/symlink/);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("packages full Windows 7-Zip runtime and RAR integration", () => {
     const prepare = fs.readFileSync("scripts/prepare-7z.js", "utf8");

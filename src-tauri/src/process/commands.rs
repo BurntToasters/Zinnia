@@ -34,6 +34,70 @@ use super::{
     release_prepare_slot_best_effort, CleanupPlan, RunResult, RunningProcess,
 };
 
+const MAX_RUN_7Z_REQUEST_BYTES: usize = 64 * 1024 * 1024;
+const MAX_COMPRESS_PROBE_REQUEST_BYTES: usize = 4 * 1024 * 1024;
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Run7zRequest {
+    args: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_present_optional_string")]
+    expected_archive_identity: Option<String>,
+}
+
+/// Missing is allowed for non-mutating calls, but mutating commands (`x`, `a`,
+/// `u`) must send `absent` or a 64-character hex family token. An explicitly
+/// present value must be a string. In particular, JSON `null` must not
+/// silently disable the archive identity precondition at the command boundary.
+fn deserialize_present_optional_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    <String as serde::Deserialize>::deserialize(deserializer).map(Some)
+}
+
+fn parse_run_7z_request(request_json: &str) -> Result<Run7zRequest, String> {
+    if request_json.len() > MAX_RUN_7Z_REQUEST_BYTES {
+        return Err("7-Zip request exceeds its aggregate IPC byte limit.".to_string());
+    }
+    let request: Run7zRequest = serde_json::from_str(request_json)
+        .map_err(|error| format!("Invalid 7-Zip request: {error}"))?;
+    if let Some(identity) = request.expected_archive_identity.as_deref() {
+        let valid = identity == super::staging::ARCHIVE_OUTPUT_ABSENT_TOKEN
+            || (identity.len() == 64 && identity.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        if !valid {
+            return Err("Archive identity token has an invalid shape.".to_string());
+        }
+    }
+    validate_run_7z_args(&request.args)?;
+    if matches!(
+        request.args.first().map(String::as_str),
+        Some("x" | "a" | "u")
+    ) && request.expected_archive_identity.is_none()
+    {
+        return Err("Mutating archive operations require an archive identity token.".to_string());
+    }
+    Ok(request)
+}
+
+fn parse_compress_probe_request(request_json: &str) -> Result<Vec<String>, String> {
+    if request_json.len() > MAX_COMPRESS_PROBE_REQUEST_BYTES {
+        return Err("Compress-input probe exceeds its aggregate IPC byte limit.".to_string());
+    }
+    let paths: Vec<String> = serde_json::from_str(request_json)
+        .map_err(|error| format!("Invalid compress-input probe request: {error}"))?;
+    if paths.len() > 4096 {
+        return Err("Too many compress inputs to probe.".to_string());
+    }
+    if paths
+        .iter()
+        .any(|path| path.len() > 8192 || path.contains('\0'))
+    {
+        return Err("A compress-input path is invalid or exceeds its byte limit.".to_string());
+    }
+    Ok(paths)
+}
+
 fn read_command_stream<R, F>(reader: R, tx: Sender<CommandEvent>, wrap: F)
 where
     R: std::io::Read,
@@ -346,10 +410,20 @@ fn complete_password_transport_blocking(
         }
         let _ = password_tx.send(result);
     });
-    match password_rx.recv() {
+    match password_rx.recv_timeout(std::time::Duration::from_secs(10)) {
         Ok(Ok(())) => Ok(()),
         Ok(Err(error)) => Err(error),
-        Err(_) => {
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            let terminate = terminate_child(child);
+            Err(match terminate {
+                Ok(()) => "Password setup for 7-Zip timed out and the process was stopped."
+                    .to_string(),
+                Err(error) => format!(
+                    "Password setup for 7-Zip timed out, and the process could not be stopped safely: {error}"
+                ),
+            })
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
             let _ = terminate_child(child);
             Err("Password setup for 7-Zip did not complete.".to_string())
         }
@@ -572,10 +646,14 @@ static PROBED_7Z_VERSION: Mutex<Option<String>> = Mutex::new(None);
 /// inside a real directory are stored via `-snl`/`-snh`. Symlink *members*
 /// under a managed convert temp dir are allowed so convert can round-trip
 /// top-level links extracted from an archive.
-fn assert_compress_inputs_are_real_paths(
+fn assert_compress_inputs_are_real_paths<C>(
     app: &tauri::AppHandle,
     args: &[String],
-) -> Result<(), String> {
+    should_cancel: C,
+) -> Result<(), String>
+where
+    C: Fn() -> bool,
+{
     let Some(cmd) = args.first().map(String::as_str) else {
         return Ok(());
     };
@@ -610,6 +688,9 @@ fn assert_compress_inputs_are_real_paths(
     let resolved_output = output_parent.join(output_name);
     let mut top_level_names = std::collections::HashMap::<String, String>::new();
     for path in &inputs {
+        if should_cancel() {
+            return Err("Compress input scan was cancelled.".to_string());
+        }
         let fs_path = std::path::Path::new(path);
         let meta = match std::fs::symlink_metadata(fs_path) {
             Ok(meta) => meta,
@@ -660,7 +741,7 @@ fn assert_compress_inputs_are_real_paths(
             }
         }
     }
-    super::compress_preflight::assert_no_nested_reparse_for_compress(&inputs)
+    super::compress_preflight::assert_compress_inputs_safe_with_cancel(&inputs, should_cancel)
 }
 
 /// Check whether the owning window cancelled while an operation is in its
@@ -687,6 +768,43 @@ fn live_child_blocks_preparation_rollback(state: &RunningProcess) -> bool {
     }
 }
 
+fn checkpoint_cleanup_plan(state: &RunningProcess, cleanup_plan: &CleanupPlan) {
+    match state.0.lock() {
+        Ok(mut process) => process.cleanup_plan = Some(cleanup_plan.clone()),
+        Err(poisoned) => poisoned.into_inner().cleanup_plan = Some(cleanup_plan.clone()),
+    }
+}
+
+/// Settle a pre-spawn failure using the same nested ownership rule as post-child
+/// finalization: release only after rollback and journal cleanup both succeed.
+pub(crate) fn settle_preparation_failure<R, J>(
+    state: &RunningProcess,
+    cleanup_plan: &CleanupPlan,
+    error: impl Into<String>,
+    rollback: R,
+    clear_journal: J,
+) -> String
+where
+    R: FnOnce() -> Result<(), String>,
+    J: FnOnce() -> Result<(), String>,
+{
+    let error = error.into();
+    checkpoint_cleanup_plan(state, cleanup_plan);
+    if live_child_blocks_preparation_rollback(state) {
+        return format!(
+            "{error} 7-Zip is still running; staging was kept and the operation slot was not released."
+        );
+    }
+    if let Err(rollback_error) = rollback() {
+        return format!("{error}; staging cleanup also failed: {rollback_error}");
+    }
+    if let Err(journal_error) = clear_journal() {
+        return format!("{error}; recovery journal cleanup also failed: {journal_error}");
+    }
+    release_preparation_failure_best_effort(state);
+    error
+}
+
 /// Roll back every pre-spawn resource before releasing the single-operation
 /// slot. Keeping this sequence in one function prevents new error paths from
 /// forgetting the journal or leaving `preparing`/`cancelling` set.
@@ -696,30 +814,41 @@ pub(crate) fn finalize_preparation_error(
     journal_guard: Option<&mut CleanupJournalGuard>,
     error: impl Into<String>,
 ) -> String {
-    let error = error.into();
-    if live_child_blocks_preparation_rollback(state) {
-        return format!(
-            "{error} 7-Zip is still running; staging was kept and the operation slot was not released."
-        );
-    }
-    let rollback_error = rollback_cleanup(cleanup_plan).err();
-    let journal_error = if rollback_error.is_none() {
-        journal_guard.and_then(|guard| guard.clear().err())
-    } else {
-        None
-    };
-    release_preparation_failure_best_effort(state);
-    match rollback_error {
-        Some(rollback_error) => {
-            format!("{error}; staging cleanup also failed: {rollback_error}")
-        }
-        None => match journal_error {
-            Some(journal_error) => {
-                format!("{error}; recovery journal cleanup also failed: {journal_error}")
-            }
-            None => error,
+    settle_preparation_failure(
+        state,
+        cleanup_plan,
+        error,
+        || rollback_cleanup(cleanup_plan),
+        || match journal_guard {
+            Some(guard) => guard.clear(),
+            None => Ok(()),
         },
+    )
+}
+
+/// Settle post-child finalization without conflating the archive operation's
+/// result with recovery ownership. An outer error means cleanup is incomplete
+/// and deliberately retains the slot. An inner error is returned only after
+/// the durable journal has been cleared and the slot released.
+pub(crate) fn settle_archive_finalization<F>(
+    state: &RunningProcess,
+    finalize_result: Result<Result<(), String>, String>,
+    clear_journal: F,
+) -> Result<(), String>
+where
+    F: FnOnce() -> Result<(), String>,
+{
+    let operation_result = finalize_result?;
+    clear_journal()?;
+    {
+        let mut process = state
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        process.child = None;
+        process.release_prepare_slot();
     }
+    operation_result
 }
 
 pub(crate) fn is_compound_tar_operation(args: &[String]) -> bool {
@@ -872,7 +1001,13 @@ async fn prepare_compound_tar_snapshot(
 
     let result = async {
         let outer_args = compound_tar_outer_extract_args(&snapshot, &outer_stage);
-        assert_extract_archive_members_safe(app, state, &outer_args).await?;
+        assert_extract_archive_members_safe(
+            app,
+            state,
+            &outer_args,
+            cleanup_plan.max_extract_bytes,
+        )
+        .await?;
         let (mut rx, child, pending_password) = spawn_7z_noninteractive(app, outer_args, state)?;
         {
             let mut process = lock_process(state)?;
@@ -922,12 +1057,10 @@ async fn prepare_compound_tar_snapshot(
                 "Archive operation was cancelled during compound TAR preparation.".to_string()
             }));
         }
-        let code = collected
-            .exit
-            .as_ref()
-            .and_then(|payload| payload.code)
-            .unwrap_or(-1);
-        if !compound_tar_outer_unpack_ok(code, &collected.stdout, &collected.stderr) {
+        let code = collected.exit_code();
+        if !collected.output_is_complete()
+            || !compound_tar_outer_unpack_ok(code, &collected.stdout, &collected.stderr)
+        {
             let detail = sanitize_output(if collected.stderr.trim().is_empty() {
                 collected.stdout.trim()
             } else {
@@ -969,8 +1102,10 @@ async fn prepare_compound_tar_snapshot(
 
 #[tauri::command]
 pub async fn probe_compress_inputs(
-    paths: Vec<String>,
+    request_json: String,
 ) -> Result<super::compress_preflight::CompressInputProbe, String> {
+    let paths = parse_compress_probe_request(&request_json)?;
+    drop(request_json);
     tokio::task::spawn_blocking(move || {
         super::compress_preflight::probe_compress_input_paths(&paths)
     })
@@ -1033,6 +1168,26 @@ pub(crate) struct CollectedOutput {
     pub(crate) stderr_truncated: bool,
     pub(crate) exit: Option<TerminatedPayload>,
     pub(crate) stream_error: Option<String>,
+}
+
+impl CollectedOutput {
+    pub(crate) fn exit_code(&self) -> i32 {
+        self.exit
+            .as_ref()
+            .and_then(|payload| payload.code)
+            .unwrap_or(-1)
+    }
+
+    pub(crate) fn output_is_complete(&self) -> bool {
+        !self.stdout_truncated && !self.stderr_truncated
+    }
+
+    pub(crate) fn accepts_exit_one_with(
+        &self,
+        classifier: impl FnOnce(&str, &str) -> bool,
+    ) -> bool {
+        self.exit_code() == 1 && self.output_is_complete() && classifier(&self.stdout, &self.stderr)
+    }
 }
 
 // `on_stdout_line` runs per decoded stdout chunk for progress streaming.
@@ -1119,11 +1274,19 @@ where
 pub async fn run_7z(
     app: tauri::AppHandle,
     window: tauri::Window,
-    args: Vec<String>,
-    expected_archive_identity: Option<String>,
+    request_json: String,
     state: tauri::State<'_, RunningProcess>,
 ) -> Result<RunResult, String> {
-    validate_run_7z_args(&args)?;
+    // Tauri must allocate the outer string before command dispatch; keeping the
+    // nested request as one bounded string prevents an additional unbounded
+    // Vec<String> deserialization at the command boundary. Drop the aggregate
+    // copy immediately after parsing so password-bearing arguments do not stay
+    // live through the operation.
+    let Run7zRequest {
+        args,
+        expected_archive_identity,
+    } = parse_run_7z_request(&request_json)?;
+    drop(request_json);
 
     // Claim the slot before every potentially slow pre-spawn phase. Without
     // this, Cancel could report "idle" while a recursive input scan or startup
@@ -1137,15 +1300,22 @@ pub async fn run_7z(
     }
 
     let preflight_app = app.clone();
-    let preflight_args = args.clone();
     let preflight_result = tokio::task::spawn_blocking(move || {
-        assert_compress_inputs_are_real_paths(&preflight_app, &preflight_args)
+        let result = assert_compress_inputs_are_real_paths(&preflight_app, &args, || {
+            let state = preflight_app.state::<RunningProcess>();
+            state
+                .0
+                .lock()
+                .map(|process| process.cancelling)
+                .unwrap_or(true)
+        });
+        (args, result)
     })
     .await;
     abort_cancelled_preparation(&state)?;
-    match preflight_result {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => {
+    let mut args = match preflight_result {
+        Ok((args, Ok(()))) => args,
+        Ok((_args, Err(error))) => {
             release_prepare_slot_best_effort(&state);
             return Err(error);
         }
@@ -1153,9 +1323,8 @@ pub async fn run_7z(
             release_prepare_slot_best_effort(&state);
             return Err(format!("Compress-input preflight worker failed: {error}"));
         }
-    }
+    };
 
-    let mut args = args;
     harden_7z_args(&mut args);
     apply_backend_link_switches(&mut args);
     let compound_tar_operation = is_compound_tar_operation(&args);
@@ -1246,14 +1415,24 @@ pub async fn run_7z(
     {
         Ok(Ok(plan)) => plan,
         Ok(Err(error)) => {
+            let (message, recovery_required) = error.into_parts();
+            if recovery_required {
+                return Err(format!(
+                    "{message}; preparation ownership was retained and the operation slot was not released."
+                ));
+            }
             release_prepare_slot_best_effort(&state);
-            return Err(error);
+            return Err(message);
         }
         Err(error) => {
-            release_prepare_slot_best_effort(&state);
-            return Err(format!("Archive preparation task failed: {error}"));
+            return Err(format!(
+                "Archive preparation task failed and ownership is uncertain; the operation slot was not released: {error}"
+            ));
         }
     };
+    // Checkpoint ownership before any member preflight, compound child, journal
+    // write, or cancellation branch can fail.
+    checkpoint_cleanup_plan(&state, &cleanup_plan);
 
     // This worker may have created a private stage. Roll it back before
     // releasing ownership so another operation cannot race the cleanup.
@@ -1279,18 +1458,22 @@ pub async fn run_7z(
 
     // Persist the journal as soon as staging exists so a crash during rewrite
     // or member preflight can still recover the stage path.
-    let journal_active = match write_cleanup_journal(&app, &cleanup_plan) {
-        Ok(active) => active,
+    // A write error can occur after the atomic rename but during parent sync,
+    // so treat the journal as possibly active until an explicit clear succeeds.
+    let mut journal_guard = CleanupJournalGuard::new(app.clone(), true);
+    match write_cleanup_journal(&app, &cleanup_plan) {
+        Ok(active) => {
+            journal_guard = CleanupJournalGuard::new(app.clone(), active);
+        }
         Err(error) => {
             return Err(finalize_preparation_error(
                 &state,
                 &cleanup_plan,
-                None,
+                Some(&mut journal_guard),
                 format!("Could not create recovery journal: {error}"),
             ));
         }
-    };
-    let mut journal_guard = CleanupJournalGuard::new(app.clone(), journal_active);
+    }
 
     let mut snapshot_args = args.clone();
     if let Some(staged_archive) = &cleanup_plan.staged_input_archive {
@@ -1304,7 +1487,14 @@ pub async fn run_7z(
         }
     }
     let extract_archive_identity = if cleanup_plan.staged_extract.is_some() {
-        match assert_extract_archive_members_safe(&app, &state, &snapshot_args).await {
+        match assert_extract_archive_members_safe(
+            &app,
+            &state,
+            &snapshot_args,
+            cleanup_plan.max_extract_bytes,
+        )
+        .await
+        {
             Ok(identity) => Some(identity),
             Err(error) => {
                 return Err(finalize_preparation_error(
@@ -1557,14 +1747,9 @@ pub async fn run_7z(
         terminate_registered_child(&state, &child)?;
     }
 
-    let exit_code = collected
-        .exit
-        .as_ref()
-        .and_then(|payload| payload.code)
-        .unwrap_or(-1);
-    let warning_code = (exit_code == 1
-        && cleanup_plan.staged_extract.is_some()
-        && extract_warning_is_metadata_only(&collected.stdout, &collected.stderr))
+    let exit_code = collected.exit_code();
+    let warning_code = (cleanup_plan.staged_extract.is_some()
+        && collected.accepts_exit_one_with(extract_warning_is_metadata_only))
     .then_some(exit_code);
 
     // Keep `cancelling` true as a general finalizing/busy marker until all
@@ -1592,12 +1777,15 @@ pub async fn run_7z(
     let finalize_join = tokio::task::spawn_blocking(move || {
         // Exit 1 is usually partial data. Publish only the narrow metadata-only
         // warning class identified above; every other warning rolls back.
+        // The outer Result tracks whether cleanup is complete. The inner Result
+        // preserves an operation error that is safe to return after ownership is
+        // released (for example a commit error followed by a successful scrub).
         let commit_ok = !was_cancelled && (exit_code == 0 || warning_code.is_some());
         if !commit_ok {
             if let Err(error) = rollback_cleanup(&finalize_plan) {
                 Err(format!("7z operation ended, but rollback failed: {error}"))
             } else {
-                Ok(())
+                Ok(Ok(()))
             }
         } else {
             let _ = finalize_emit.emit(
@@ -1609,7 +1797,7 @@ pub async fn run_7z(
                 },
             );
             match commit_cleanup(&finalize_app, &finalize_plan) {
-                Ok(()) => Ok(()),
+                Ok(()) => Ok(Ok(())),
                 Err(error) => {
                     if commit_failure_should_scrub_staging(&finalize_plan, &error) {
                         // Safe orphan scrub (add-mode / no recovery backups).
@@ -1626,7 +1814,9 @@ pub async fn run_7z(
                                     ));
                                 }
                                 match clear_cleanup_journal(&finalize_app) {
-                                    Ok(()) => Err(error),
+                                    // Cleanup is complete. Preserve the original
+                                    // operation failure, but release ownership below.
+                                    Ok(()) => Ok(Err(error)),
                                     Err(journal_error) => Err(format!(
                                         "{error}; also failed to clear recovery journal: {journal_error}"
                                     )),
@@ -1648,28 +1838,14 @@ pub async fn run_7z(
     })
     .await;
 
-    // Always clear the operation slot, including when the blocking task panics
-    // or the process mutex is poisoned. Leaving `cancelling` set would soft-lock
-    // every later run_7z until restart.
-    {
-        let mut process = state
-            .0
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        process.child = None;
-        process.preparing = false;
-        process.cancelling = false;
-        process.owner_label = None;
-        process.abort_reason = None;
-        process.cleanup_plan = None;
-    }
-
     let finalize_result = match finalize_join {
         Ok(result) => result,
         Err(error) => Err(format!("Archive finalization task failed: {error}")),
     };
-    finalize_result?;
-    journal_guard.clear()?;
+    // Keep the operation slot fail-closed until finalization and durable
+    // journal removal both succeed. A cleanup-complete operation error is
+    // returned only after the slot is released.
+    settle_archive_finalization(&state, finalize_result, || journal_guard.clear())?;
     if let Some(reason) = abort_reason {
         return Err(reason);
     }
@@ -1719,13 +1895,21 @@ pub async fn probe_7z(
                 terminate_registered_child(&state, &child)?;
             }
 
-            let Some(payload) = collected.exit else {
+            if collected.exit.is_none() {
                 return Err("7z probe exited before reporting status.".to_string());
-            };
+            }
 
-            let code = payload.code.unwrap_or(-1);
+            let code = collected.exit_code();
+            if !collected.output_is_complete() {
+                store_probed_7z_version(None);
+                return Err("7z probe output exceeded its safety limit.".to_string());
+            }
             let combined = format!("{}\n{}", collected.stdout, collected.stderr);
-            if code == 0 || code == 1 {
+            if code == 0
+                || collected.accepts_exit_one_with(|stdout, stderr| {
+                    parse_7z_version(&format!("{stdout}\n{stderr}")).is_some()
+                })
+            {
                 let version = parse_7z_version(&combined).unwrap_or_else(|| "unknown".to_string());
                 store_probed_7z_version(Some(version.clone()));
                 return Ok(version);
@@ -1786,7 +1970,7 @@ pub fn cancel_7z(
                 );
             }
         }
-        match process.child.take() {
+        match process.child.as_ref().map(Arc::clone) {
             Some(child) => {
                 process.cancelling = true;
                 (Some(child), true)
@@ -1800,24 +1984,7 @@ pub fn cancel_7z(
     };
 
     if let Some(child) = child {
-        match child.kill() {
-            Ok(()) => Ok(true),
-            Err(e) => {
-                let msg = e.to_string();
-                if is_non_running_kill_error(&msg) {
-                    Ok(true)
-                } else {
-                    // Put the handle back so a later cancel can retry the kill.
-                    if let Ok(mut process) = lock_process(&state) {
-                        if process.child.is_none() {
-                            process.child = Some(child);
-                        }
-                    }
-                    eprintln!("Failed to kill 7z process: {msg}");
-                    Err(format!("Could not stop 7z safely: {msg}. Restart Zinnia before starting another operation."))
-                }
-            }
-        }
+        terminate_registered_child(&state, &child).map(|()| true)
     } else {
         Ok(armed)
     }
@@ -1868,5 +2035,131 @@ pub fn is_7z_running(
             Ok(true)
         }
         Some(_) => Err("Unknown archive-operation status mode.".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod ipc_envelope_tests {
+    use super::{
+        parse_compress_probe_request, parse_run_7z_request, MAX_COMPRESS_PROBE_REQUEST_BYTES,
+        MAX_RUN_7Z_REQUEST_BYTES,
+    };
+
+    #[test]
+    fn run_7z_parser_accepts_frontend_camel_case_envelope() {
+        let identity = "A".repeat(64);
+        let json = serde_json::json!({
+            "args": ["x", "-o/tmp/out", "-aou", "-spd", "--", "/tmp/archive.7z"],
+            "expectedArchiveIdentity": identity,
+        })
+        .to_string();
+        let request = parse_run_7z_request(&json).expect("frontend envelope");
+        assert_eq!(
+            request.args,
+            ["x", "-o/tmp/out", "-aou", "-spd", "--", "/tmp/archive.7z"]
+        );
+        assert_eq!(request.expected_archive_identity, Some("A".repeat(64)));
+
+        let omitted = parse_run_7z_request(r#"{"args":["b"]}"#).expect("omitted identity");
+        assert_eq!(omitted.expected_archive_identity, None);
+        assert!(
+            parse_run_7z_request(r#"{"args":["a","-t7z","/tmp/out.7z","--","/tmp/in.txt"]}"#)
+                .is_err(),
+            "mutating create must require an identity token"
+        );
+        assert!(
+            parse_run_7z_request(
+                r#"{"args":["a","-t7z","/tmp/out.7z","--","/tmp/in.txt"],"expectedArchiveIdentity":"absent"}"#
+            )
+            .is_ok(),
+            "absent is a valid create identity"
+        );
+    }
+
+    #[test]
+    fn run_7z_parser_rejects_malformed_unknown_and_invalid_identity_payloads() {
+        assert!(parse_run_7z_request("{").is_err());
+        assert!(parse_run_7z_request(r#"{"args":["b"],"legacy":[]}"#).is_err());
+        for identity in [
+            "",
+            "present",
+            "a/b",
+            &"g".repeat(64),
+            &"a".repeat(63),
+            &"a".repeat(65),
+        ] {
+            let json = serde_json::json!({
+                "args": ["b"],
+                "expectedArchiveIdentity": identity,
+            })
+            .to_string();
+            assert!(
+                parse_run_7z_request(&json).is_err(),
+                "accepted invalid identity {identity:?}"
+            );
+        }
+        for wrong_type in ["null", "1", "[]", "{}"] {
+            let json = format!(r#"{{"args":["b"],"expectedArchiveIdentity":{wrong_type}}}"#);
+            assert!(
+                parse_run_7z_request(&json).is_err(),
+                "accepted identity with JSON value {wrong_type}"
+            );
+        }
+        assert!(
+            parse_run_7z_request(r#"{"args":["b"],"expectedArchiveIdentity":"absent"}"#).is_ok()
+        );
+    }
+
+    #[test]
+    fn run_7z_parser_enforces_aggregate_count_and_per_string_limits() {
+        // Valid JSON whose item count and individual strings are each exactly
+        // at their limits, but whose cumulative encoded size exceeds 64 MiB.
+        let mut cumulative = String::with_capacity(MAX_RUN_7Z_REQUEST_BYTES + 32 * 1024);
+        cumulative.push_str(r#"{"args":["#);
+        for index in 0..8192 {
+            if index > 0 {
+                cumulative.push(',');
+            }
+            cumulative.push('"');
+            for _ in 0..8192 {
+                cumulative.push('x');
+            }
+            cumulative.push('"');
+        }
+        cumulative.push_str("]}");
+        assert!(cumulative.len() > MAX_RUN_7Z_REQUEST_BYTES);
+        assert!(parse_run_7z_request(&cumulative).is_err());
+
+        let too_many = serde_json::json!({ "args": vec!["b"; 8193] }).to_string();
+        assert!(parse_run_7z_request(&too_many).is_err());
+
+        let long_argument = serde_json::json!({ "args": ["x".repeat(8193)] }).to_string();
+        assert!(parse_run_7z_request(&long_argument).is_err());
+
+        let multibyte_argument = serde_json::json!({ "args": ["é".repeat(4097)] }).to_string();
+        assert!(parse_run_7z_request(&multibyte_argument).is_err());
+    }
+
+    #[test]
+    fn compress_probe_parser_enforces_malformed_count_string_and_cumulative_limits() {
+        assert!(parse_compress_probe_request("[").is_err());
+
+        let too_many = serde_json::to_string(&vec!["/tmp/a"; 4097]).expect("count payload");
+        assert!(parse_compress_probe_request(&too_many).is_err());
+
+        let long_path = serde_json::to_string(&vec!["x".repeat(8193)]).expect("long path payload");
+        assert!(parse_compress_probe_request(&long_path).is_err());
+
+        let multibyte_path =
+            serde_json::to_string(&vec!["é".repeat(4097)]).expect("multibyte path payload");
+        assert!(parse_compress_probe_request(&multibyte_path).is_err());
+
+        let nul_path = serde_json::to_string(&vec!["/tmp/a\0b"]).expect("NUL payload");
+        assert!(parse_compress_probe_request(&nul_path).is_err());
+
+        let cumulative =
+            serde_json::to_string(&vec!["x".repeat(1024); 4096]).expect("cumulative payload");
+        assert!(cumulative.len() > MAX_COMPRESS_PROBE_REQUEST_BYTES);
+        assert!(parse_compress_probe_request(&cumulative).is_err());
     }
 }

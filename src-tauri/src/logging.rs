@@ -12,6 +12,183 @@ const MAX_LOG_FILE_BYTES: u64 = 5 * 1024 * 1024;
 const LOG_FILE_NAME: &str = "zinnia.log";
 const LOG_EXPORT_FILE_NAME: &str = "zinnia-logs.txt";
 
+fn resolve_log_export_parent(
+    path: &std::path::Path,
+) -> Result<(std::path::PathBuf, std::ffi::OsString), String> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let parent = parent
+        .canonicalize()
+        .map_err(|error| format!("Could not resolve log export directory: {error}"))?;
+    let metadata = std::fs::symlink_metadata(&parent).map_err(|error| error.to_string())?;
+    if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_dir() {
+        return Err("Log export parent is not a real directory.".to_string());
+    }
+    let name = path
+        .file_name()
+        .ok_or_else(|| "Log export destination has no file name.".to_string())?
+        .to_os_string();
+    Ok((parent, name))
+}
+
+fn open_log_export_source(path: &std::path::Path) -> Result<Option<std::fs::File>, String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata)
+            if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_file() =>
+        {
+            Err("Log file path is not a regular file.".to_string())
+        }
+        Ok(_) => crate::path_safety::open_regular_file_nofollow(path).map(Some),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn create_log_export_temp(
+    destination: &std::path::Path,
+) -> Result<(std::path::PathBuf, std::fs::File), String> {
+    let (parent, _) = resolve_log_export_parent(destination)?;
+    for _ in 0..32 {
+        let mut random = [0u8; 16];
+        getrandom::fill(&mut random)
+            .map_err(|error| format!("Could not generate a log export temp name: {error}"))?;
+        let name = format!(
+            ".zinnia-log-export-{}.tmp",
+            random
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        );
+        let path = parent.join(&name);
+
+        #[cfg(unix)]
+        let opened: Result<std::fs::File, String> = {
+            use std::os::fd::{AsRawFd as _, FromRawFd as _};
+            use std::os::unix::fs::OpenOptionsExt as _;
+
+            let directory = std::fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+                .open(&parent)
+                .map_err(|error| error.to_string())?;
+            let name = std::ffi::CString::new(name.as_bytes())
+                .map_err(|_| "Log export file name contains a NUL byte.".to_string())?;
+            let fd = unsafe {
+                libc::openat(
+                    directory.as_raw_fd(),
+                    name.as_ptr(),
+                    libc::O_WRONLY
+                        | libc::O_CREAT
+                        | libc::O_EXCL
+                        | libc::O_NOFOLLOW
+                        | libc::O_CLOEXEC,
+                    0o600,
+                )
+            };
+            if fd < 0 {
+                let error = std::io::Error::last_os_error();
+                if error.kind() == std::io::ErrorKind::AlreadyExists {
+                    continue;
+                }
+                return Err(error.to_string());
+            }
+            let file = unsafe { std::fs::File::from_raw_fd(fd) };
+            let file_meta = file.metadata().map_err(|error| error.to_string())?;
+            if !file_meta.is_file() {
+                drop(file);
+                let _ = std::fs::remove_file(&path);
+                return Err("Log export temporary file is not a regular file.".to_string());
+            }
+            Ok(file)
+        };
+
+        #[cfg(windows)]
+        let opened = {
+            use std::os::windows::fs::OpenOptionsExt as _;
+            use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+                .open(&path)
+            {
+                Ok(file) => {
+                    let file_meta = file.metadata().map_err(|error| error.to_string())?;
+                    if crate::path_safety::is_link_or_reparse(&file_meta) || !file_meta.is_file() {
+                        drop(file);
+                        let _ = std::fs::remove_file(&path);
+                        return Err("Log export temporary file is not a regular file.".to_string());
+                    }
+                    Ok(file)
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => Err(error.to_string()),
+            }
+        };
+
+        #[cfg(not(any(unix, windows)))]
+        let opened = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(file) => Ok(file),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => Err(error.to_string()),
+        };
+
+        return Ok((path, opened?));
+    }
+    Err("Could not reserve a unique log export temp file.".to_string())
+}
+
+fn publish_log_export(temp: &std::path::Path, destination: &std::path::Path) -> Result<(), String> {
+    match std::fs::symlink_metadata(destination) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            let _ = std::fs::remove_file(temp);
+            return Err(error.to_string());
+        }
+        Ok(metadata) if metadata.is_dir() && !crate::path_safety::is_link_or_reparse(&metadata) => {
+            let _ = std::fs::remove_file(temp);
+            return Err("Destination path must be a file, not a directory.".to_string());
+        }
+        Ok(_) => {}
+    }
+    std::fs::rename(temp, destination).map_err(|error| {
+        let _ = std::fs::remove_file(temp);
+        error.to_string()
+    })
+}
+
+fn export_log_contents(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+) -> Result<(), String> {
+    let source_file = open_log_export_source(source)?;
+    let (temp, mut output) = create_log_export_temp(destination)?;
+    let copied = (|| {
+        match source_file {
+            Some(mut input) => std::io::copy(&mut input, &mut output)
+                .map(|_| ())
+                .map_err(|error| error.to_string()),
+            None => output
+                .write_all(b"No local logs have been recorded yet.\n")
+                .map_err(|error| error.to_string()),
+        }?;
+        output.sync_all().map_err(|error| error.to_string())
+    })();
+    drop(output);
+    if let Err(error) = copied {
+        let _ = std::fs::remove_file(&temp);
+        return Err(error);
+    }
+    publish_log_export(&temp, destination)?;
+    crate::settings_store::sync_parent_directory(destination)
+}
+
 pub struct LogFileLock(pub Mutex<()>);
 
 fn lock_log_file(state: &LogFileLock) -> Result<std::sync::MutexGuard<'_, ()>, String> {
@@ -162,23 +339,7 @@ pub fn export_logs(
 
         let _guard = lock_log_file(&lock)?;
         let source = log_file_path(&app)?;
-        match std::fs::symlink_metadata(&source) {
-            Ok(metadata)
-                if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_file() =>
-            {
-                return Err("Log file path is not a regular file.".to_string());
-            }
-            Ok(_) => {
-                let mut input = crate::path_safety::open_regular_file_nofollow(&source)?;
-                let mut output = std::fs::File::create(&destination).map_err(|e| e.to_string())?;
-                std::io::copy(&mut input, &mut output).map_err(|e| e.to_string())?;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                std::fs::write(&destination, "No local logs have been recorded yet.\n")
-                    .map_err(|e| e.to_string())?;
-            }
-            Err(error) => return Err(error.to_string()),
-        }
+        export_log_contents(&source, &destination)?;
 
         Ok(true)
     }
@@ -205,4 +366,76 @@ pub fn open_log_dir(app: tauri::AppHandle) -> Result<(), String> {
     let dir = ensure_logs_dir(&app)?;
     let dir_str = dir.to_string_lossy().to_string();
     app.shell().open(&dir_str, None).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{export_log_contents, LOG_EXPORT_FILE_NAME};
+
+    fn temp_root(prefix: &str) -> std::path::PathBuf {
+        let mut random = [0u8; 8];
+        getrandom::fill(&mut random).expect("random log export test suffix");
+        let suffix: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+        let root = std::env::temp_dir().join(format!("{prefix}-{suffix}"));
+        std::fs::create_dir_all(&root).expect("log export test root");
+        root
+    }
+
+    #[test]
+    fn export_replaces_destination_only_after_source_copy() {
+        let root = temp_root("zinnia-log-export-ok");
+        let source = root.join("zinnia.log");
+        let destination = root.join(LOG_EXPORT_FILE_NAME);
+        std::fs::write(&source, b"recorded-log\n").expect("source log");
+        std::fs::write(&destination, b"previous-export").expect("existing dest");
+        export_log_contents(&source, &destination).expect("export");
+        assert_eq!(
+            std::fs::read(&destination).expect("exported"),
+            b"recorded-log\n"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn export_preserves_destination_when_source_is_not_a_regular_file() {
+        let root = temp_root("zinnia-log-export-invalid-source");
+        let source = root.join("zinnia.log");
+        let destination = root.join(LOG_EXPORT_FILE_NAME);
+        std::fs::create_dir(&source).expect("directory disguised as log");
+        std::fs::write(&destination, b"keep-me").expect("existing dest");
+        let error = export_log_contents(&source, &destination).expect_err("invalid source");
+        assert!(error.contains("regular file"), "{error}");
+        assert_eq!(std::fs::read(&destination).expect("preserved"), b"keep-me");
+        let leftover: Vec<_> = std::fs::read_dir(&root)
+            .expect("export root")
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".zinnia-log-export-")
+            })
+            .collect();
+        assert!(
+            leftover.is_empty(),
+            "failed export must not leave a temp file"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn export_preserves_destination_when_source_is_a_symlink() {
+        let root = temp_root("zinnia-log-export-symlink-source");
+        let real = root.join("real.log");
+        let source = root.join("zinnia.log");
+        let destination = root.join(LOG_EXPORT_FILE_NAME);
+        std::fs::write(&real, b"secret").expect("real log");
+        std::os::unix::fs::symlink(&real, &source).expect("symlink log path");
+        std::fs::write(&destination, b"keep-me").expect("existing dest");
+        let error = export_log_contents(&source, &destination).expect_err("symlink source");
+        assert!(error.contains("regular file"), "{error}");
+        assert_eq!(std::fs::read(&destination).expect("preserved"), b"keep-me");
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

@@ -159,20 +159,28 @@ pub fn path_has_tar_signature(path: &std::path::Path) -> Result<bool, String> {
     read_probe_bytes(path, ARCHIVE_SIGNATURE_SCAN_BYTES).map(|bytes| has_tar_signature(&bytes))
 }
 
-fn read_probe_bytes(path: &std::path::Path, max_bytes: usize) -> Result<Vec<u8>, String> {
-    let mut file = crate::path_safety::open_regular_file_nofollow(path)?;
+fn read_probe_bytes_from_open_file(
+    file: &mut std::fs::File,
+    max_bytes: usize,
+) -> Result<Vec<u8>, String> {
+    file.seek(SeekFrom::Start(0))
+        .map_err(|error| error.to_string())?;
     let mut buf = vec![0u8; max_bytes];
     let read = file.read(&mut buf).map_err(|e| e.to_string())?;
     buf.truncate(read);
     Ok(buf)
 }
 
+fn read_probe_bytes(path: &std::path::Path, max_bytes: usize) -> Result<Vec<u8>, String> {
+    let mut file = crate::path_safety::open_regular_file_nofollow(path)?;
+    read_probe_bytes_from_open_file(&mut file, max_bytes)
+}
+
 /// ZIP self-extracting archives may contain an arbitrary executable preamble,
 /// so the first local-file header is not necessarily near byte zero. Validate
 /// the mandatory end-of-central-directory record from the tail instead.
-fn has_zip_end_record(path: &std::path::Path) -> Result<bool, String> {
+fn has_zip_end_record_from_open_file(file: &mut std::fs::File) -> Result<bool, String> {
     const MAX_EOCD_SEARCH: u64 = 65_535 + 22;
-    let mut file = crate::path_safety::open_regular_file_nofollow(path)?;
     let len = file.metadata().map_err(|error| error.to_string())?.len();
     let start = len.saturating_sub(MAX_EOCD_SEARCH);
     file.seek(SeekFrom::Start(start))
@@ -285,21 +293,33 @@ fn validate_archive_path_impl(path: &str, include_identity: bool) -> ArchivePath
     };
     let fs_path = resolved_path.as_path();
 
-    let bytes = match read_probe_bytes(fs_path, ARCHIVE_SIGNATURE_SCAN_BYTES) {
-        Ok(bytes) => bytes,
+    let mut selected_file = match crate::path_safety::open_regular_file_nofollow(fs_path) {
+        Ok(file) => file,
         Err(err) => {
             return ArchivePathValidation {
                 path: candidate.to_string(),
                 valid: false,
-                reason: Some(format!("Unable to read file contents: {}", err)),
+                reason: Some(format!("Unable to open file contents safely: {err}")),
                 identity: None,
             };
         }
     };
+    let bytes =
+        match read_probe_bytes_from_open_file(&mut selected_file, ARCHIVE_SIGNATURE_SCAN_BYTES) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                return ArchivePathValidation {
+                    path: candidate.to_string(),
+                    valid: false,
+                    reason: Some(format!("Unable to read file contents: {}", err)),
+                    identity: None,
+                };
+            }
+        };
 
     let signature = detect_archive_signature(&bytes);
     let tar = has_tar_signature(&bytes);
-    let zip_end_record = has_zip_end_record(fs_path).unwrap_or(false);
+    let zip_end_record = has_zip_end_record_from_open_file(&mut selected_file).unwrap_or(false);
 
     let split_zip_header_valid = || {
         let base = fs_path.with_extension("");
@@ -330,15 +350,28 @@ fn validate_archive_path_impl(path: &str, include_identity: bool) -> ArchivePath
     };
 
     if valid {
+        let identity = if include_identity {
+            match crate::process::archive_identity_token_from_open_file(fs_path, &selected_file) {
+                Ok(identity) => Some(identity),
+                Err(error) => {
+                    return ArchivePathValidation {
+                        path: candidate.to_string(),
+                        valid: false,
+                        reason: Some(format!(
+                            "Archive identity could not be established safely: {error}"
+                        )),
+                        identity: None,
+                    };
+                }
+            }
+        } else {
+            None
+        };
         return ArchivePathValidation {
             path: candidate.to_string(),
             valid: true,
             reason: None,
-            identity: if include_identity {
-                crate::process::archive_identity_token(fs_path).ok()
-            } else {
-                None
-            },
+            identity,
         };
     }
 

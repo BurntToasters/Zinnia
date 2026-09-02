@@ -4,19 +4,62 @@ use crate::output::sanitize_output;
 use crate::validation::archive_member_path_is_unsafe;
 
 use super::archive_snapshot::{
-    archive_file_identity, archive_identity_token, stage_extract_input_with_cancel,
-    ArchiveFileIdentity,
+    archive_file_identity, stage_extract_input_with_cancel, ArchiveFileIdentity,
 };
 use super::commands::{
     collect_command_output, extract_warning_is_metadata_only, terminate_registered_child,
 };
 use super::commit::archive_destination_family_snapshot;
-use super::journal::{register_pending_stage, unregister_pending_stage};
+use super::journal::{
+    file_identity, register_pending_stage, unregister_pending_stage, FileIdentity,
+};
 use super::quota::available_space_for_path;
 use super::{lock_process, ArchiveDestinationSnapshot, CleanupPlan, RunningProcess};
 
 /// Selection token meaning "output path must still be absent at create time".
 pub(crate) const ARCHIVE_OUTPUT_ABSENT_TOKEN: &str = "absent";
+
+const PREPARATION_RECOVERY_REQUIRED_PREFIX: &str = "\0zinnia-recovery-required:";
+
+#[derive(Debug)]
+pub(crate) enum PreparationPlanError {
+    CleanupComplete(String),
+    RecoveryRequired(String),
+}
+
+impl PreparationPlanError {
+    pub(crate) fn into_parts(self) -> (String, bool) {
+        match self {
+            Self::CleanupComplete(message) => (message, false),
+            Self::RecoveryRequired(message) => (message, true),
+        }
+    }
+}
+
+pub(super) fn preparation_cleanup_failed(
+    operation_error: impl AsRef<str>,
+    cleanup_error: impl AsRef<str>,
+) -> String {
+    let operation_error = operation_error
+        .as_ref()
+        .strip_prefix(PREPARATION_RECOVERY_REQUIRED_PREFIX)
+        .unwrap_or_else(|| operation_error.as_ref());
+    format!(
+        "{PREPARATION_RECOVERY_REQUIRED_PREFIX}{operation_error}; preparation cleanup also failed: {}",
+        cleanup_error.as_ref()
+    )
+}
+
+pub(super) fn preparation_error_requires_recovery(error: &str) -> bool {
+    error.starts_with(PREPARATION_RECOVERY_REQUIRED_PREFIX)
+}
+
+fn classify_preparation_error(error: String) -> PreparationPlanError {
+    match error.strip_prefix(PREPARATION_RECOVERY_REQUIRED_PREFIX) {
+        Some(message) => PreparationPlanError::RecoveryRequired(message.to_string()),
+        None => PreparationPlanError::CleanupComplete(error),
+    }
+}
 
 /// Hash of the create destination family (base + contiguous `.001`…) at pick
 /// time. Empty family is `ARCHIVE_OUTPUT_ABSENT_TOKEN`.
@@ -147,28 +190,80 @@ pub(crate) fn resolve_existing_target(
     target.canonicalize().map_err(|e| e.to_string())
 }
 
+#[derive(Debug)]
+pub(crate) struct CreatedStageDir {
+    pub(crate) path: std::path::PathBuf,
+    pub(crate) identity: FileIdentity,
+}
+
+fn cleanup_owned_stage(
+    stage: &std::path::Path,
+    identity: &FileIdentity,
+    cache_dir: Option<&std::path::Path>,
+) -> Result<(), String> {
+    super::journal::remove_directory_if_matches(stage, identity)?;
+    if let Some(cache_dir) = cache_dir {
+        unregister_pending_stage(cache_dir, stage)?;
+    }
+    Ok(())
+}
+
 fn create_stage_dir_under(
     parent: &std::path::Path,
     purpose: &str,
     cache_dir: Option<&std::path::Path>,
-    create: impl Fn(&std::path::Path) -> std::io::Result<()>,
-) -> Result<std::path::PathBuf, String> {
+    create: impl Fn(&std::path::Path, &std::ffi::OsStr) -> std::io::Result<std::fs::File>,
+) -> Result<CreatedStageDir, String> {
     // Keep the stage basename independent of the user destination. Besides
     // avoiding NAME_MAX failures, this prevents 7-Zip output-path wildcard
     // substitution from interpreting a literal `*` in a destination name.
     for _ in 0..32 {
         let candidate = parent.join(format!(".zinnia-{purpose}-{}", random_token()?));
-        match create(&candidate) {
-            Ok(()) => {
-                if let Some(cache_dir) = cache_dir {
-                    if let Err(error) = register_pending_stage(cache_dir, &candidate) {
-                        let _ = crate::fs_secure::remove_dir_all_for_cleanup(&candidate);
-                        return Err(format!(
-                            "Could not register staging directory for recovery: {error}"
+        let name = candidate
+            .file_name()
+            .ok_or_else(|| "Staging directory has no file name.".to_string())?;
+        match create(parent, name) {
+            Ok(directory) => {
+                // Capture ownership only from the handle returned by the held-
+                // parent creation operation. The pathname is used below solely
+                // to reject replacement before durable registration; it can
+                // never manufacture a different ownership identity.
+                let identity = match file_identity(&directory) {
+                    Ok(identity) => identity,
+                    Err(error) => {
+                        drop(directory);
+                        return Err(preparation_cleanup_failed(
+                            format!(
+                                "Could not identify newly created staging directory {}: {error}",
+                                candidate.display()
+                            ),
+                            "ownership of the created directory could not be recorded",
                         ));
                     }
+                };
+                if let Some(cache_dir) = cache_dir {
+                    if let Err(error) = register_pending_stage(cache_dir, &candidate, &identity) {
+                        drop(directory);
+                        return match super::journal::remove_directory_if_matches(
+                            &candidate, &identity,
+                        ) {
+                            Ok(()) => Err(format!(
+                                "Could not register staging directory for recovery: {error}"
+                            )),
+                            Err(cleanup_error) => Err(preparation_cleanup_failed(
+                                format!(
+                                    "Could not register staging directory for recovery: {error}"
+                                ),
+                                cleanup_error,
+                            )),
+                        };
+                    }
                 }
-                return Ok(candidate);
+                drop(directory);
+                return Ok(CreatedStageDir {
+                    path: candidate,
+                    identity,
+                });
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(format!("Could not create staging directory: {error}")),
@@ -185,13 +280,13 @@ pub(crate) fn create_private_stage_dir(
     anchor: &std::path::Path,
     purpose: &str,
     cache_dir: Option<&std::path::Path>,
-) -> Result<std::path::PathBuf, String> {
+) -> Result<CreatedStageDir, String> {
     let parent = anchor.parent().unwrap_or_else(|| std::path::Path::new("."));
     create_stage_dir_under(
         parent,
         purpose,
         cache_dir,
-        crate::fs_secure::create_private_dir,
+        crate::fs_secure::create_private_stage_dir_open,
     )
 }
 
@@ -201,20 +296,20 @@ pub(crate) fn create_publish_stage_dir(
     target: &std::path::Path,
     purpose: &str,
     cache_dir: Option<&std::path::Path>,
-) -> Result<std::path::PathBuf, String> {
+) -> Result<CreatedStageDir, String> {
     let parent = target.parent().unwrap_or_else(|| std::path::Path::new("."));
     create_stage_dir_under(
         parent,
         purpose,
         cache_dir,
-        crate::fs_secure::create_inheriting_stage_dir,
+        crate::fs_secure::create_inheriting_stage_dir_open_in,
     )
 }
 
 pub(crate) fn next_extract_stage_path(
     target: &std::path::Path,
     cache_dir: Option<&std::path::Path>,
-) -> Result<std::path::PathBuf, String> {
+) -> Result<CreatedStageDir, String> {
     if path_entry_exists(target)? {
         let meta = std::fs::symlink_metadata(target).map_err(|e| e.to_string())?;
         crate::path_safety::reject_link_or_reparse(target, &meta).map_err(|_| {
@@ -359,9 +454,6 @@ pub(crate) fn assert_slt_archive_members_safe(
     slt_output: &str,
     archive_path: &str,
 ) -> Result<(), String> {
-    let archive_name = std::path::Path::new(archive_path)
-        .file_name()
-        .and_then(|name| name.to_str());
     let mut seen_member = false;
     let mut member_count = 0u64;
     let mut current_member: Option<&str> = None;
@@ -371,9 +463,10 @@ pub(crate) fn assert_slt_archive_members_safe(
                 continue;
             }
             // `-ba` suppresses the archive-container record, so every Path entry is
-            // normally a member. Keep exact-container tolerance for older/future
-            // sidecars without ever skipping an arbitrary first member.
-            if path == archive_path || archive_name == Some(path) {
+            // normally a member. Keep exact full-path container tolerance for older
+            // sidecars without `-ba`. Never skip a member that only matches the
+            // archive basename; that name is a legal archive member.
+            if path == archive_path {
                 current_member = None;
                 continue;
             }
@@ -434,10 +527,45 @@ pub(crate) fn assert_slt_archive_members_safe(
     Ok(())
 }
 
+pub(crate) fn assert_slt_declared_size_within_limit(
+    slt_output: &str,
+    archive_path: &str,
+    max_bytes: u64,
+) -> Result<(), String> {
+    let mut current_is_member = false;
+    let mut declared_bytes = 0u64;
+    for line in slt_output.lines() {
+        if let Some(path) = line.strip_prefix("Path = ") {
+            current_is_member = !path.is_empty() && path != archive_path;
+            continue;
+        }
+        if !current_is_member {
+            continue;
+        }
+        let Some(size) = line.strip_prefix("Size = ") else {
+            continue;
+        };
+        let size = size
+            .parse::<u64>()
+            .map_err(|_| "Archive listing contains an invalid declared member size.".to_string())?;
+        declared_bytes = declared_bytes
+            .checked_add(size)
+            .ok_or_else(|| "Archive declared size overflowed its safety counter.".to_string())?;
+        if declared_bytes > max_bytes {
+            return Err(format!(
+                "Archive declares more than {:.1} GiB of extracted data.",
+                max_bytes as f64 / 1_073_741_824.0
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) async fn assert_extract_archive_members_safe(
     app: &tauri::AppHandle,
     state: &tauri::State<'_, RunningProcess>,
     args: &[String],
+    max_declared_bytes: Option<u64>,
 ) -> Result<(std::path::PathBuf, ArchiveFileIdentity), String> {
     let list_args = extract_member_list_args(args)?;
     let archive = list_args
@@ -528,6 +656,9 @@ pub(crate) async fn assert_extract_archive_members_safe(
         });
     }
     assert_slt_archive_members_safe(&collected.stdout, &archive)?;
+    if let Some(max_bytes) = max_declared_bytes {
+        assert_slt_declared_size_within_limit(&collected.stdout, &archive, max_bytes)?;
+    }
     Ok((archive_path, identity))
 }
 
@@ -538,9 +669,23 @@ pub(crate) fn prepare_cleanup_plan(
     expected_archive_identity: Option<&str>,
 ) -> Result<CleanupPlan, String> {
     prepare_cleanup_plan_with_cancel(args, cache_dir, expected_archive_identity, || false)
+        .map_err(|error| error.into_parts().0)
 }
 
 pub(crate) fn prepare_cleanup_plan_with_cancel<C>(
+    args: &[String],
+    cache_dir: Option<std::path::PathBuf>,
+    expected_archive_identity: Option<&str>,
+    should_cancel: C,
+) -> Result<CleanupPlan, PreparationPlanError>
+where
+    C: Fn() -> bool,
+{
+    prepare_cleanup_plan_inner(args, cache_dir, expected_archive_identity, should_cancel)
+        .map_err(classify_preparation_error)
+}
+
+fn prepare_cleanup_plan_inner<C>(
     args: &[String],
     cache_dir: Option<std::path::PathBuf>,
     expected_archive_identity: Option<&str>,
@@ -594,18 +739,31 @@ where
                     staged_extract: None,
                     staged_archive: None,
                     expected_archive_family: Vec::new(),
+                    stage_identities: vec![(
+                        staged_input
+                            .path
+                            .parent()
+                            .expect("staged input has a parent")
+                            .to_path_buf(),
+                        staged_input.stage_identity.clone(),
+                    )],
                     staged_input_archive: Some(staged_input.path),
                     cache_dir,
                     max_extract_bytes: Some(max_extract_bytes),
                     min_free_bytes: Some(min_free_bytes),
                 }),
                 Err(error) => {
-                    if let Some(parent) = staged_input.path.parent() {
-                        let _ = crate::fs_secure::remove_dir_all_for_cleanup(parent);
-                        if let Some(cache) = cache_ref {
-                            let _ = unregister_pending_stage(cache, parent);
+                    let error = if let Some(parent) = staged_input.path.parent() {
+                        match cleanup_owned_stage(parent, &staged_input.stage_identity, cache_ref) {
+                            Ok(()) => error,
+                            Err(cleanup_error) => preparation_cleanup_failed(error, cleanup_error),
                         }
-                    }
+                    } else {
+                        preparation_cleanup_failed(
+                            error,
+                            "staged archive input has no parent directory",
+                        )
+                    };
                     Err(error)
                 }
             };
@@ -616,6 +774,7 @@ where
             expected_archive_family: Vec::new(),
             staged_input_archive: None,
             cache_dir,
+            stage_identities: Vec::new(),
             max_extract_bytes: None,
             min_free_bytes: None,
         });
@@ -623,6 +782,9 @@ where
 
     match args.first().map(String::as_str) {
         Some("x") => {
+            let expected_archive_identity = expected_archive_identity.ok_or_else(|| {
+                "Mutating archive operations require an archive identity token.".to_string()
+            })?;
             let destination = if path_entry_exists(&target)? {
                 resolve_existing_target(&target, true)
                     .map_err(|e| format!("Could not resolve the extraction destination: {e}"))?
@@ -635,22 +797,24 @@ where
                 .unwrap_or(args.len());
             const MAX_EXTRACT_BYTES: u64 = 1024 * 1024 * 1024 * 1024;
             const MIN_DISK_RESERVE_BYTES: u64 = 512 * 1024 * 1024;
-            let stage = next_extract_stage_path(&destination, cache_ref)?;
+            let created_stage = next_extract_stage_path(&destination, cache_ref)?;
+            let stage = created_stage.path;
+            let stage_identity = created_stage.identity;
             let archive = args
                 .get(separator + 1)
                 .ok_or_else(|| "Extraction command is missing an archive path.".to_string())?;
             let staged_input = match stage_extract_input_with_cancel(
                 std::path::Path::new(archive),
                 cache_ref,
-                expected_archive_identity,
+                Some(expected_archive_identity),
                 &should_cancel,
             ) {
                 Ok(snapshot) => snapshot,
                 Err(error) => {
-                    let _ = crate::fs_secure::remove_dir_all_for_cleanup(&stage);
-                    if let Some(cache) = cache_ref {
-                        let _ = unregister_pending_stage(cache, &stage);
-                    }
+                    let error = match cleanup_owned_stage(&stage, &stage_identity, cache_ref) {
+                        Ok(()) => error,
+                        Err(cleanup_error) => preparation_cleanup_failed(error, cleanup_error),
+                    };
                     return Err(error);
                 }
             };
@@ -675,23 +839,44 @@ where
                 Ok(preparation) => preparation,
                 Err(error) => {
                     let input_stage = staged_input.path.parent().map(std::path::Path::to_path_buf);
-                    let _ = crate::fs_secure::remove_dir_all_for_cleanup(&stage);
-                    if let Some(input_stage) = &input_stage {
-                        let _ = crate::fs_secure::remove_dir_all_for_cleanup(input_stage);
+                    let mut error = error;
+                    if let Err(cleanup_error) =
+                        cleanup_owned_stage(&stage, &stage_identity, cache_ref)
+                    {
+                        error = preparation_cleanup_failed(error, cleanup_error);
                     }
-                    if let Some(cache) = cache_ref {
-                        let _ = unregister_pending_stage(cache, &stage);
-                        if let Some(input_stage) = &input_stage {
-                            let _ = unregister_pending_stage(cache, input_stage);
+                    if let Some(input_stage) = &input_stage {
+                        if let Err(cleanup_error) = cleanup_owned_stage(
+                            input_stage,
+                            &staged_input.stage_identity,
+                            cache_ref,
+                        ) {
+                            error = preparation_cleanup_failed(error, cleanup_error);
                         }
+                    } else {
+                        error = preparation_cleanup_failed(
+                            error,
+                            "staged archive input has no parent directory",
+                        );
                     }
                     return Err(error);
                 }
             };
             Ok(CleanupPlan {
-                staged_extract: Some((stage, destination)),
+                staged_extract: Some((stage.clone(), destination)),
                 staged_archive: None,
                 expected_archive_family: Vec::new(),
+                stage_identities: vec![
+                    (stage, stage_identity),
+                    (
+                        staged_input
+                            .path
+                            .parent()
+                            .expect("staged input has a parent")
+                            .to_path_buf(),
+                        staged_input.stage_identity.clone(),
+                    ),
+                ],
                 staged_input_archive: Some(staged_input.path),
                 // Member preflight plus a fixed, wildcard-free stage
                 // contains 7-Zip output. Unrelated siblings may legitimately
@@ -702,27 +887,28 @@ where
             })
         }
         Some("a") => {
+            let expected = expected_archive_identity.ok_or_else(|| {
+                "Mutating archive operations require an archive identity token.".to_string()
+            })?;
             let pre_family = archive_destination_family_snapshot(&target)?;
-            if let Some(expected) = expected_archive_identity {
-                let current = archive_output_family_token_from_snapshots(&pre_family);
-                if expected == ARCHIVE_OUTPUT_ABSENT_TOKEN {
-                    if current != ARCHIVE_OUTPUT_ABSENT_TOKEN {
-                        return Err(
-                            "Archive output appeared after it was selected; choose a different output path."
-                                .to_string(),
-                        );
-                    }
-                } else if current == ARCHIVE_OUTPUT_ABSENT_TOKEN {
+            let current = archive_output_family_token_from_snapshots(&pre_family);
+            if expected == ARCHIVE_OUTPUT_ABSENT_TOKEN {
+                if current != ARCHIVE_OUTPUT_ABSENT_TOKEN {
                     return Err(
-                        "Archive output disappeared after it was selected; choose a new output path."
-                            .to_string(),
-                    );
-                } else if current != expected {
-                    return Err(
-                        "Archive output changed after it was selected; choose the current file again."
+                        "Archive output appeared after it was selected; choose a different output path."
                             .to_string(),
                     );
                 }
+            } else if current == ARCHIVE_OUTPUT_ABSENT_TOKEN {
+                return Err(
+                    "Archive output disappeared after it was selected; choose a new output path."
+                        .to_string(),
+                );
+            } else if current != expected {
+                return Err(
+                    "Archive output changed after it was selected; choose the current file again."
+                        .to_string(),
+                );
             }
             let target = if path_entry_exists(&target)? {
                 resolve_existing_target(&target, false)?
@@ -736,7 +922,8 @@ where
                         .to_string(),
                 );
             }
-            let stage_dir = create_publish_stage_dir(&target, "archive", cache_ref)?;
+            let created_stage = create_publish_stage_dir(&target, "archive", cache_ref)?;
+            let stage_dir = created_stage.path;
             let staged = stage_dir.join(
                 target
                     .file_name()
@@ -748,23 +935,29 @@ where
                 expected_archive_family,
                 staged_input_archive: None,
                 cache_dir,
+                stage_identities: vec![(stage_dir, created_stage.identity)],
                 max_extract_bytes: None,
                 min_free_bytes: None,
             })
         }
         Some("u") => {
+            let expected = expected_archive_identity.ok_or_else(|| {
+                "Mutating archive operations require an archive identity token.".to_string()
+            })?;
             if !path_entry_exists(&target)? {
                 return Err("Update requires an existing output archive file.".to_string());
             }
-            let target = resolve_existing_target(&target, false)?;
-            if let Some(expected) = expected_archive_identity {
-                if archive_identity_token(&target)? != expected {
-                    return Err(
-                        "Archive changed after it was selected; review the current archive before updating it."
-                            .to_string(),
-                    );
-                }
+            let current = archive_output_family_token(&target)?;
+            if expected == ARCHIVE_OUTPUT_ABSENT_TOKEN || current == ARCHIVE_OUTPUT_ABSENT_TOKEN {
+                return Err("Update requires an existing output archive file.".to_string());
             }
+            if current != expected {
+                return Err(
+                    "Archive changed after it was selected; review the current archive before updating it."
+                        .to_string(),
+                );
+            }
+            let target = resolve_existing_target(&target, false)?;
             let expected_archive_family = archive_destination_family_snapshot(&target)?;
             if expected_archive_family.len() != 1 {
                 return Err(
@@ -772,18 +965,21 @@ where
                         .to_string(),
                 );
             }
-            let stage_dir = create_publish_stage_dir(&target, "archive", cache_ref)?;
+            let created_stage = create_publish_stage_dir(&target, "archive", cache_ref)?;
+            let stage_dir = created_stage.path;
             let staged = stage_dir.join(
                 target
                     .file_name()
                     .ok_or_else(|| "Archive output has no file name.".to_string())?,
             );
             if let Err(error) = std::fs::copy(&target, &staged) {
-                let _ = crate::fs_secure::remove_dir_all_for_cleanup(&stage_dir);
-                if let Some(cache_dir) = cache_ref {
-                    let _ = unregister_pending_stage(cache_dir, &stage_dir);
-                }
-                return Err(format!("Could not stage the archive for update: {error}"));
+                let operation_error = format!("Could not stage the archive for update: {error}");
+                return match cleanup_owned_stage(&stage_dir, &created_stage.identity, cache_ref) {
+                    Ok(()) => Err(operation_error),
+                    Err(cleanup_error) => {
+                        Err(preparation_cleanup_failed(operation_error, cleanup_error))
+                    }
+                };
             }
             Ok(CleanupPlan {
                 staged_extract: None,
@@ -791,6 +987,7 @@ where
                 expected_archive_family,
                 staged_input_archive: None,
                 cache_dir,
+                stage_identities: vec![(stage_dir, created_stage.identity)],
                 max_extract_bytes: None,
                 min_free_bytes: None,
             })
@@ -801,6 +998,7 @@ where
             expected_archive_family: Vec::new(),
             staged_input_archive: None,
             cache_dir,
+            stage_identities: Vec::new(),
             max_extract_bytes: None,
             min_free_bytes: None,
         }),

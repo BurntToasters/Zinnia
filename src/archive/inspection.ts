@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import { message } from "@tauri-apps/plugin-dialog";
 import { $ } from "../utils";
 import {
@@ -29,6 +28,7 @@ import {
 } from "./runtime";
 import { debugLog, debugLogCommand, isDebugEnabled } from "../debug-mode";
 import type { ArchiveInfo } from "../browse-model";
+import { invokeRun7z } from "./backend-ipc";
 
 export type ArchiveTestResult = "passed" | "failed" | "cancelled" | "error";
 
@@ -62,7 +62,7 @@ export async function testArchive(): Promise<ArchiveTestResult> {
     if (!(await ensureRuntimeReady())) return "error";
     setStatus("Testing archive integrity");
     debugLogCommand(args);
-    const result = await invoke<Run7zResult>("run_7z", { args });
+    const result = await invokeRun7z<Run7zResult>({ args });
     if (state.cancelRequested) {
       setStatus("Cancelled", 2000);
       return "cancelled";
@@ -159,7 +159,7 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
     setStatus("Listing archive contents");
     if (isDebugEnabled()) debugLog(`Listing archive: ${archive}`);
     debugLogCommand(args);
-    const result = await invoke<Run7zResult>("run_7z", { args });
+    const result = await invokeRun7z<Run7zResult>({ args });
     if (state.cancelRequested) {
       setStatus("Cancelled", 2000);
       return null;

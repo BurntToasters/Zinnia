@@ -35,8 +35,20 @@ use launch::{emit_open_urls, first_extract_window, leave_extract_warm};
 use logging::LogFileLock;
 use process::RunningProcess;
 
+#[cfg(feature = "e2e")]
 fn e2e_session_active() -> bool {
     std::env::var("ZINNIA_E2E").is_ok_and(|value| value == "1")
+}
+
+fn production_integrations_enabled() -> bool {
+    #[cfg(feature = "e2e")]
+    {
+        !e2e_session_active()
+    }
+    #[cfg(not(feature = "e2e"))]
+    {
+        true
+    }
 }
 
 fn defer_close_while_operation_finishes(
@@ -199,7 +211,7 @@ fn main() {
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
-        if !e2e_session_active() {
+        if production_integrations_enabled() {
             builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _| {
                 // Invalidate extract warm-idle before the deferred main-thread
                 // dispatch so an in-flight idle-exit cannot destroy the window
@@ -317,7 +329,7 @@ fn main() {
                 // pluginkit can take several seconds when Launch Services is
                 // unhealthy. Registration is best-effort, so keep it off the
                 // setup/main thread and show the first window without waiting.
-                if !e2e_session_active() {
+                if production_integrations_enabled() {
                     std::thread::spawn(platform::register_macos_finder_sync);
                 }
             }
