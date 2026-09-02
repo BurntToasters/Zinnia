@@ -19,6 +19,7 @@ import {
 } from "./progress-update";
 import { redactSensitiveText } from "./utils";
 import { sanitizeCommandArgsForPreview } from "./archive/command-sanitize";
+import { invokeRun7z, type Run7zRequest } from "./archive/backend-ipc";
 import { formatCommandOutputForLogs } from "./output-logging";
 import {
   installNativeWebviewContextMenuGuard,
@@ -90,12 +91,10 @@ function readInjectedExtractSession(): InjectedExtractSession | null {
 /** True only while this window's `run_7z` invoke is in flight. */
 let extractRunInFlight = false;
 
-async function invokeExtractRun(
-  args: Record<string, unknown>,
-): Promise<Run7zResult> {
+async function invokeExtractRun(args: Run7zRequest): Promise<Run7zResult> {
   extractRunInFlight = true;
   try {
-    return await invoke<Run7zResult>("run_7z", args);
+    return await invokeRun7z<Run7zResult>(args);
   } finally {
     extractRunInFlight = false;
   }
