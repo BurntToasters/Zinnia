@@ -5,6 +5,7 @@ import { validateArchivePaths } from "./archive-rules";
 import { deriveExtractDestinationPath } from "./extract-path";
 import { describe7zError, looksLikePasswordRequiredError } from "./error-hints";
 import { SAFE_EXTRACT_OVERWRITE_MODE } from "./extract-policy";
+import { installWdioGuestPluginIfEnabled } from "./e2e-wdio-plugin";
 import {
   setProgressIndeterminateClass,
   setProgressPercentClass,
@@ -18,7 +19,12 @@ import {
 } from "./progress-update";
 import { redactSensitiveText } from "./utils";
 import { sanitizeCommandArgsForPreview } from "./archive/command-sanitize";
+import { invokeRun7z, type Run7zRequest } from "./archive/backend-ipc";
 import { formatCommandOutputForLogs } from "./output-logging";
+import {
+  installNativeWebviewContextMenuGuard,
+  setNativeWebviewContextMenuAllowed,
+} from "./webview-context-menu";
 
 export { formatEta } from "./progress-update";
 
@@ -85,12 +91,10 @@ function readInjectedExtractSession(): InjectedExtractSession | null {
 /** True only while this window's `run_7z` invoke is in flight. */
 let extractRunInFlight = false;
 
-async function invokeExtractRun(
-  args: Record<string, unknown>,
-): Promise<Run7zResult> {
+async function invokeExtractRun(args: Run7zRequest): Promise<Run7zResult> {
   extractRunInFlight = true;
   try {
-    return await invoke<Run7zResult>("run_7z", args);
+    return await invokeRun7z<Run7zResult>(args);
   } finally {
     extractRunInFlight = false;
   }
@@ -178,6 +182,7 @@ function stopProgressAt(widthPercent: number, error: boolean): void {
     bar.setAttribute("aria-valuenow", String(widthPercent));
     bar.setAttribute("aria-valuemin", "0");
     bar.setAttribute("aria-valuemax", "100");
+    bar.removeAttribute("aria-busy");
   }
 }
 
@@ -185,6 +190,13 @@ function startIndeterminateProgress(): void {
   const fill = $("progress-fill");
   fill.classList.remove("extract-progress-fill--error");
   setProgressIndeterminateClass(fill);
+  const bar = document.getElementById("extract-progress");
+  if (bar) {
+    bar.setAttribute("aria-busy", "true");
+    bar.setAttribute("aria-valuenow", "0");
+    bar.setAttribute("aria-valuemin", "0");
+    bar.setAttribute("aria-valuemax", "100");
+  }
 }
 
 function setDeterminateProgress(widthPercent: number): void {
@@ -197,6 +209,7 @@ function setDeterminateProgress(widthPercent: number): void {
     bar.setAttribute("aria-valuenow", String(clamped));
     bar.setAttribute("aria-valuemin", "0");
     bar.setAttribute("aria-valuemax", "100");
+    bar.removeAttribute("aria-busy");
   }
 }
 
@@ -260,6 +273,8 @@ async function syncExtractWindowFx(): Promise<void> {
 }
 
 async function run() {
+  installNativeWebviewContextMenuGuard();
+  await installWdioGuestPluginIfEnabled();
   const appWindow = getCurrentWebviewWindow();
 
   // Platform styling is independent of extraction startup; do not put it on
@@ -311,7 +326,11 @@ async function run() {
       1.5,
     );
     debugMode = parsed.debug === true;
-  } catch {}
+  } catch {
+    autoCloseDelay = -1;
+    debugMode = false;
+  }
+  setNativeWebviewContextMenuAllowed(debugMode);
 
   let autoCloseInterval: ReturnType<typeof setInterval> | null = null;
   const autoCloseAbortEvents = ["mousemove", "keydown", "click"] as const;

@@ -12,6 +12,11 @@ mod quota;
 mod recovery;
 mod staging;
 
+#[cfg(windows)]
+pub(crate) use commit::rename_file_no_replace;
+#[cfg(windows)]
+pub(crate) use journal::{file_identities_match, file_identity};
+
 #[cfg(test)]
 mod tests;
 
@@ -45,12 +50,14 @@ pub use recovery::{
 };
 
 // Bridge helpers that `archive_snapshot` still calls via `super::`.
+#[cfg(test)]
 pub(crate) use archive_snapshot::archive_identity_token;
+pub(crate) use archive_snapshot::archive_identity_token_from_open_file;
 pub(crate) use journal::unregister_pending_stage;
 pub(crate) use quota::available_space_for_path;
 pub(crate) use staging::create_private_stage_dir;
 
-pub(crate) use commands::terminate_child;
+pub(crate) use commands::{terminate_child, terminate_registered_child};
 
 #[cfg(test)]
 pub(crate) use commands::{
@@ -72,9 +79,9 @@ pub(crate) use commit::{
 };
 #[cfg(test)]
 pub(crate) use journal::{
-    is_safe_stage_dir_name, move_identity_log_path, move_plan_path, read_pending_stages,
-    register_pending_stage, unregister_plan_stages, ArchiveJournalPhase, CleanupJournal,
-    ExtractJournalPhase, ExtractStagePlacement, MoveRecord,
+    cleanup_orphan_stages_at, is_safe_stage_dir_name, move_identity_log_path, move_plan_path,
+    read_pending_stages, register_pending_stage, unregister_plan_stages, ArchiveJournalPhase,
+    CleanupJournal, ExtractJournalPhase, ExtractStagePlacement, MoveRecord,
 };
 #[cfg(test)]
 pub(crate) use quota::staged_tree_usage;
@@ -86,7 +93,8 @@ pub(crate) use recovery::{
 };
 #[cfg(test)]
 pub(crate) use staging::{
-    archive_output_family_token, assert_slt_archive_members_safe, extract_member_list_args,
+    archive_output_family_token, assert_slt_archive_members_safe,
+    assert_slt_declared_size_within_limit, extract_member_list_args,
     listing_preflight_exit_is_acceptable, operation_output_path, prepare_cleanup_plan,
     random_token, ARCHIVE_OUTPUT_ABSENT_TOKEN,
 };
@@ -134,8 +142,20 @@ pub(crate) struct CleanupPlan {
     pub(crate) staged_input_archive: Option<std::path::PathBuf>,
     /// App cache dir used to register pending stage paths for orphan cleanup.
     pub(crate) cache_dir: Option<std::path::PathBuf>,
+    /// Creation-held identities for every transaction-owned stage root. Paths
+    /// are only lookup keys; destructive cleanup and durable journals must
+    /// verify the matching identity before acting.
+    pub(crate) stage_identities: Vec<(std::path::PathBuf, journal::FileIdentity)>,
     pub(crate) max_extract_bytes: Option<u64>,
     pub(crate) min_free_bytes: Option<u64>,
+}
+
+impl CleanupPlan {
+    pub(crate) fn stage_identity(&self, stage: &std::path::Path) -> Option<&journal::FileIdentity> {
+        self.stage_identities
+            .iter()
+            .find_map(|(path, identity)| (path == stage).then_some(identity))
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -266,10 +286,24 @@ pub(crate) fn release_preparation_failure_best_effort(state: &RunningProcess) {
 // the frontend prevents this in normal flow. This keeps resource use
 // predictable and avoids partial-output races on shared state.
 pub fn ensure_idle(state: &ProcessState) -> Result<(), String> {
-    if state.child.is_some() || state.preparing || state.cancelling {
+    if archive_slot_is_busy(state) {
         Err("Another archive operation is already running.".to_string())
     } else {
         Ok(())
+    }
+}
+
+pub(crate) fn archive_slot_is_busy(state: &ProcessState) -> bool {
+    state.child.is_some() || state.preparing || state.cancelling
+}
+
+pub(crate) fn running_process_is_busy(state: &RunningProcess) -> bool {
+    match state.0.lock() {
+        Ok(mut process) => {
+            process.expire_stale_update_reservation();
+            archive_slot_is_busy(&process)
+        }
+        Err(_) => true,
     }
 }
 

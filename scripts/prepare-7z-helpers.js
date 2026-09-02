@@ -1,3 +1,4 @@
+import { spawnSync } from "child_process";
 import fs from "fs";
 import path from "path";
 
@@ -153,4 +154,146 @@ export function officialArchiveExtractionCommand({
   throw new Error(
     `Unsupported official source archive ${path.basename(archivePath)}.`,
   );
+}
+
+export function assertArchiveMemberNameSafe(member, destination) {
+  const normalized = String(member).replaceAll("\\", "/").replace(/\/+$/, "");
+  if (!normalized) return;
+  if (path.isAbsolute(normalized) || path.win32.isAbsolute(normalized)) {
+    throw new Error(`Archive member is absolute: ${member}`);
+  }
+  const parts = normalized.split("/").filter((part) => part && part !== ".");
+  if (parts.some((part) => part === "..")) {
+    throw new Error(`Archive member escapes destination: ${member}`);
+  }
+  const resolved = path.resolve(destination, ...parts);
+  if (!isPathInside(resolved, path.resolve(destination))) {
+    throw new Error(`Archive member escapes destination: ${member}`);
+  }
+}
+
+function listTarMembers(archivePath) {
+  const listed = spawnSync("tar", ["-tJf", archivePath], {
+    encoding: "utf8",
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  if (listed.status !== 0) {
+    throw new Error(
+      `Could not list tar members: ${listed.stderr || listed.stdout || listed.status}`,
+    );
+  }
+  return listed.stdout.split(/\r?\n/).filter(Boolean);
+}
+
+function listSevenZipMembers(trusted7zPath, archivePath) {
+  const listed = spawnSync(trusted7zPath, ["l", "-slt", "-ba", archivePath], {
+    encoding: "utf8",
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  if (listed.status !== 0) {
+    throw new Error(
+      `Could not list archive members: ${listed.stderr || listed.stdout || listed.status}`,
+    );
+  }
+  const archiveName = path.basename(archivePath);
+  const members = [];
+  for (const line of `${listed.stdout}\n${listed.stderr}`.split(/\r?\n/)) {
+    const match = /^Path = (.*)$/.exec(line);
+    if (!match) continue;
+    const member = match[1];
+    if (!member || member === archiveName || member === archivePath) continue;
+    members.push(member);
+  }
+  return members;
+}
+
+export function assertOfficialArchiveMembersSafe({
+  archivePath,
+  destination,
+  trusted7zPath,
+}) {
+  const members = archivePath.endsWith(".tar.xz")
+    ? listTarMembers(archivePath)
+    : listSevenZipMembers(trusted7zPath, archivePath);
+  for (const member of members) {
+    assertArchiveMemberNameSafe(member, destination);
+  }
+}
+
+export function assertExtractedTreeContained(rootDirectory) {
+  const root = fs.realpathSync(rootDirectory);
+  const pending = [root];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const candidate = path.join(current, entry.name);
+      if (entry.isSymbolicLink()) {
+        throw new Error(`Refusing extracted symlink: ${candidate}`);
+      }
+      if (entry.isDirectory()) {
+        const real = fs.realpathSync(candidate);
+        if (!isPathInside(real, root)) {
+          throw new Error(
+            `Extracted directory escaped destination: ${candidate}`,
+          );
+        }
+        pending.push(candidate);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const real = fs.realpathSync(candidate);
+      if (!isPathInside(real, root)) {
+        throw new Error(`Extracted file escaped destination: ${candidate}`);
+      }
+    }
+  }
+}
+
+export function findExtractedRegularFile(rootDirectory, member) {
+  const root = fs.realpathSync(rootDirectory);
+  const directPath = path.join(rootDirectory, ...String(member).split("/"));
+  let directStat;
+  try {
+    directStat = fs.lstatSync(directPath);
+  } catch {
+    directStat = null;
+  }
+  if (directStat?.isSymbolicLink()) {
+    throw new Error(`Refusing extracted symlink member: ${directPath}`);
+  }
+  if (directStat?.isFile()) {
+    const real = fs.realpathSync(directPath);
+    if (!isPathInside(real, root)) {
+      throw new Error(`Extracted member escaped destination: ${directPath}`);
+    }
+    return real;
+  }
+
+  const matches = [];
+  const pending = [rootDirectory];
+  const wanted = path.basename(member);
+  while (pending.length > 0) {
+    const current = pending.pop();
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const candidate = path.join(current, entry.name);
+      if (entry.isSymbolicLink()) {
+        throw new Error(`Refusing extracted symlink: ${candidate}`);
+      }
+      if (entry.isDirectory()) {
+        pending.push(candidate);
+      } else if (entry.isFile() && entry.name === wanted) {
+        const real = fs.realpathSync(candidate);
+        if (!isPathInside(real, root)) {
+          throw new Error(`Extracted member escaped destination: ${candidate}`);
+        }
+        matches.push(real);
+      }
+    }
+  }
+  if (matches.length !== 1) {
+    throw new Error(
+      `Could not resolve unique ${member} in extracted ${rootDirectory}. Found ${matches.length}.`,
+    );
+  }
+  return matches[0];
 }

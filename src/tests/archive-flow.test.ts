@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import path from "node:path";
 import { invoke } from "@tauri-apps/api/core";
 import { confirm, message, open, save } from "@tauri-apps/plugin-dialog";
 import {
@@ -25,6 +26,7 @@ import type { ArchiveInfo } from "../browse-model";
 import { SAFE_EXTRACT_OVERWRITE_MODE } from "../extract-policy";
 import { MAX_ARCHIVE_TREE_DEPTH } from "../selective-extract";
 import { setMode } from "../ui";
+import { decodeRun7zInvokePayload } from "./backend-ipc-test-utils";
 
 const invokeMock = vi.mocked(invoke);
 const messageMock = vi.mocked(message);
@@ -203,8 +205,9 @@ describe("addFilesToArchive", () => {
         }));
       }
       if (command === "probe_7z") return undefined;
+      if (command === "archive_output_selection_token") return "a".repeat(64);
       if (command === "run_7z") {
-        const args = (payload as { args?: string[] } | undefined)?.args ?? [];
+        const args = decodeRun7zInvokePayload(payload).args;
         runArgs.push(args);
         if (args[0] === "l") {
           return {
@@ -267,8 +270,9 @@ describe("addFilesToArchive", () => {
         }));
       }
       if (command === "probe_7z") return undefined;
+      if (command === "archive_output_selection_token") return "a".repeat(64);
       if (command === "run_7z") {
-        const args = (payload as { args?: string[] } | undefined)?.args ?? [];
+        const args = decodeRun7zInvokePayload(payload).args;
         runArgs.push(args);
         if (args[0] === "l") {
           return { stdout: "", stderr: "", code: 0 };
@@ -364,11 +368,70 @@ describe("archive test/browse/selective flows", () => {
     const result = await testArchive();
 
     expect(result).toBe("failed");
-    expect(invokeMock).toHaveBeenCalledWith(
-      "run_7z",
-      expect.objectContaining({
-        args: expect.arrayContaining(["t", "/tmp/sample.7z"]),
-      }),
+    const runCall = invokeMock.mock.calls.find(([name]) => name === "run_7z");
+    expect(decodeRun7zInvokePayload(runCall?.[1]).args).toEqual(
+      expect.arrayContaining(["t", "/tmp/sample.7z"]),
+    );
+  });
+
+  it("tests the committed zips/hello.7z fixture path", async () => {
+    const archive = path.resolve(process.cwd(), "zips", "hello.7z");
+    state.inputs = [archive];
+    setInvokeRouter((command, payload) => {
+      if (command === "validate_archive_paths") {
+        return pathsFromValidationPayload(payload).map((item) => ({
+          path: item,
+          valid: true,
+        }));
+      }
+      if (command === "probe_7z") return undefined;
+      if (command === "run_7z") {
+        return { stdout: "Everything is Ok", stderr: "", code: 0 };
+      }
+      return undefined;
+    });
+
+    const result = await testArchive();
+    expect(result).toBe("passed");
+    const runCall = invokeMock.mock.calls.find(([name]) => name === "run_7z");
+    expect(decodeRun7zInvokePayload(runCall?.[1]).args).toEqual(
+      expect.arrayContaining(["t", "-spd", "--", archive]),
+    );
+  });
+
+  it("browses zips/hello.zip and renders the hello.txt member from the manifest", async () => {
+    const archive = path.resolve(process.cwd(), "zips", "hello.zip");
+    state.inputs = [archive];
+    setInvokeRouter((command, payload) => {
+      if (command === "validate_archive_paths") {
+        return pathsFromValidationPayload(payload).map((item) => ({
+          path: item,
+          valid: true,
+        }));
+      }
+      if (command === "probe_7z") return undefined;
+      if (command === "run_7z") {
+        return {
+          stdout: sltListing([
+            {
+              path: "hello.txt",
+              size: 23,
+              packedSize: 23,
+              modified: "2026-08-26",
+              isFolder: false,
+            },
+          ]),
+          stderr: "",
+          code: 0,
+        };
+      }
+      return undefined;
+    });
+
+    const result = await browseArchive();
+    expect(result?.entries.map((entry) => entry.path)).toEqual(["hello.txt"]);
+    expect(document.getElementById("browse-summary")?.textContent).toContain(
+      "1 file",
     );
   });
 
@@ -612,7 +675,7 @@ describe("archive test/browse/selective flows", () => {
       }
       if (command === "probe_7z") return undefined;
       if (command === "run_7z") {
-        const args = (payload as { args?: string[] } | undefined)?.args ?? [];
+        const args = decodeRun7zInvokePayload(payload).args;
         if (args.includes("-slt")) {
           return {
             stdout: sltListing([
@@ -645,10 +708,10 @@ describe("archive test/browse/selective flows", () => {
 
     const runCall = invokeMock.mock.calls.find(([name, payload]) => {
       if (name !== "run_7z") return false;
-      const args = (payload as { args?: string[] } | undefined)?.args ?? [];
+      const args = decodeRun7zInvokePayload(payload).args;
       return args[0] === "x" && args.includes("-spd");
     });
-    const args = (runCall?.[1] as { args?: string[] } | undefined)?.args ?? [];
+    const args = decodeRun7zInvokePayload(runCall?.[1]).args;
     expect(args).toContain("-spd");
     expect(args).toContain(archive);
     expect(args).toContain("docs/readme.md");
@@ -744,7 +807,7 @@ describe("archive test/browse/selective flows", () => {
 
     expect(result).toBe("passed");
     const runCall = invokeMock.mock.calls.find(([name]) => name === "run_7z");
-    const args = (runCall?.[1] as { args?: string[] } | undefined)?.args ?? [];
+    const args = decodeRun7zInvokePayload(runCall?.[1]).args;
     expect(args).toContain("-psecret");
   });
 
@@ -1078,6 +1141,7 @@ describe("archive test/browse/selective flows", () => {
 
     setInvokeRouter((command) => {
       if (command === "probe_7z") return undefined;
+      if (command === "archive_output_selection_token") return "absent";
       if (command === "run_7z") {
         return {
           stdout: "25%\n100%",
@@ -1092,8 +1156,9 @@ describe("archive test/browse/selective flows", () => {
     await runAction();
 
     const runCall = invokeMock.mock.calls.find(([name]) => name === "run_7z");
-    const args = (runCall?.[1] as { args?: string[] } | undefined)?.args ?? [];
-    expect(args[0]).toBe("a");
+    const payload = decodeRun7zInvokePayload(runCall?.[1]);
+    expect(payload.args[0]).toBe("a");
+    expect(payload.expectedArchiveIdentity).toBe("absent");
     expect(messageMock).toHaveBeenCalledWith(
       expect.stringContaining("exit code 1"),
       expect.objectContaining({ kind: "warning" }),
@@ -1130,8 +1195,7 @@ describe("archive test/browse/selective flows", () => {
     expect(
       runCalls.map(
         ([, payload]) =>
-          (payload as { expectedArchiveIdentity?: string })
-            .expectedArchiveIdentity,
+          decodeRun7zInvokePayload(payload).expectedArchiveIdentity,
       ),
     ).toEqual([`identity:${archiveA}`, `identity:${archiveB}`]);
     expect(messageMock).toHaveBeenCalledWith(
@@ -1260,6 +1324,7 @@ describe("archive test/browse/selective flows", () => {
 
     setInvokeRouter((command) => {
       if (command === "probe_7z") return undefined;
+      if (command === "archive_output_selection_token") return "absent";
       if (command === "run_7z") {
         return { stdout: "", stderr: "fail", code: 2 };
       }
@@ -1272,6 +1337,7 @@ describe("archive test/browse/selective flows", () => {
     messageMock.mockClear();
     setInvokeRouter((command) => {
       if (command === "probe_7z") return undefined;
+      if (command === "archive_output_selection_token") return "absent";
       if (command === "run_7z") throw new Error("backend down");
       return undefined;
     });
@@ -1412,6 +1478,20 @@ describe("convertArchive", () => {
     expect(saveMock).not.toHaveBeenCalled();
   });
 
+  it("refuses converting zips/hello.7z into a compound TAR path", async () => {
+    state.inputs = [path.resolve(process.cwd(), "zips", "hello.7z")];
+    (document.getElementById("format") as HTMLSelectElement).value = "gzip";
+    saveMock.mockResolvedValueOnce("/tmp/hello.tar.gz");
+    await convertArchive();
+    expect(messageMock).toHaveBeenCalledWith(
+      expect.stringMatching(/compound TAR/i),
+      expect.objectContaining({ title: "Invalid output filename" }),
+    );
+    expect(invokeMock.mock.calls.some(([name]) => name === "run_7z")).toBe(
+      false,
+    );
+  });
+
   it("discards a conversion dialog result after the archive session changes", async () => {
     state.inputs = [uniqueArchivePath("convert-race")];
     let resolveSave: ((value: string | null) => void) | undefined;
@@ -1456,7 +1536,7 @@ describe("convertArchive", () => {
         return ["/tmp/zinnia-convert-tmp/document.txt"];
       if (command === "remove_managed_temp_dir") return undefined;
       if (command === "run_7z") {
-        const args = (payload as { args?: string[] } | undefined)?.args ?? [];
+        const args = decodeRun7zInvokePayload(payload).args;
         runArgs.push(args);
         return { stdout: "", stderr: "", code: 0 };
       }
@@ -1475,21 +1555,15 @@ describe("convertArchive", () => {
     expect(invokeMock).toHaveBeenCalledWith("remove_managed_temp_dir", {
       path: "/tmp/zinnia-convert-tmp",
     });
-    expect(invokeMock).toHaveBeenCalledWith(
-      "run_7z",
-      expect.objectContaining({
-        expectedArchiveIdentity: `identity:${archive}`,
-      }),
-    );
+    const runRequests = invokeMock.mock.calls
+      .filter(([name]) => name === "run_7z")
+      .map(([, payload]) => decodeRun7zInvokePayload(payload));
+    expect(
+      runRequests.map((request) => request.expectedArchiveIdentity),
+    ).toEqual([`identity:${archive}`, "absent"]);
     expect(invokeMock).toHaveBeenCalledWith("archive_output_selection_token", {
       path: "/tmp/converted.7z",
     });
-    expect(invokeMock).toHaveBeenCalledWith(
-      "run_7z",
-      expect.objectContaining({
-        expectedArchiveIdentity: "absent",
-      }),
-    );
   });
 
   it("does not recompress conversion output after a warning exit", async () => {
@@ -1547,7 +1621,7 @@ describe("convertArchive", () => {
       if (command === "list_managed_temp_children") return [];
       if (command === "remove_managed_temp_dir") return undefined;
       if (command === "run_7z") {
-        const args = (payload as { args?: string[] } | undefined)?.args ?? [];
+        const args = decodeRun7zInvokePayload(payload).args;
         runArgs.push(args);
         return { stdout: "", stderr: "", code: 0 };
       }
@@ -1595,7 +1669,7 @@ describe("convertArchive", () => {
       }
       if (command === "remove_managed_temp_dir") return undefined;
       if (command === "run_7z") {
-        const args = (payload as { args?: string[] } | undefined)?.args ?? [];
+        const args = decodeRun7zInvokePayload(payload).args;
         runArgs.push(args);
         return { stdout: "", stderr: "", code: 0 };
       }
@@ -1652,7 +1726,7 @@ describe("convertArchive", () => {
       }
       if (command === "remove_managed_temp_dir") return undefined;
       if (command === "run_7z") {
-        const args = (payload as { args?: string[] } | undefined)?.args ?? [];
+        const args = decodeRun7zInvokePayload(payload).args;
         runArgs.push(args);
         return { stdout: "", stderr: "", code: 0 };
       }

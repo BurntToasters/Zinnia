@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { isNativeWebviewContextMenuAllowed } from "../webview-context-menu";
+import { decodeRun7zInvokePayload } from "./backend-ipc-test-utils";
 
 type AnyInvoke = (cmd: string, payload?: unknown) => unknown;
 
@@ -138,6 +140,9 @@ async function setupAndRun(
     if (cmd === "run_7z") {
       return { stdout: "", stderr: "", code: 0 };
     }
+    if (cmd === "load_settings") {
+      return JSON.stringify({ extractAutoCloseSeconds: 1.5 });
+    }
     if (cmd === "close_extract_window") return undefined;
     if (cmd === "open_path") return undefined;
     if (cmd === "cancel_7z") return true;
@@ -184,6 +189,38 @@ beforeEach(() => {
 });
 
 describe("extract-window", () => {
+  it("blocks the native webview context menu unless debug is on", async () => {
+    await setupAndRun();
+    expect(isNativeWebviewContextMenuAllowed()).toBe(false);
+
+    await setupAndRun(async (cmd) => {
+      if (cmd === "load_settings") {
+        return JSON.stringify({
+          debug: true,
+          extractAutoCloseSeconds: -1,
+        });
+      }
+      return undefined;
+    });
+    expect(isNativeWebviewContextMenuAllowed()).toBe(true);
+  });
+
+  it("disables auto-close when load_settings fails", async () => {
+    await setupAndRun(async (cmd) => {
+      if (cmd === "load_settings") {
+        throw new Error("settings unavailable");
+      }
+      if (cmd === "run_7z") {
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      return undefined;
+    });
+
+    expect(
+      (document.getElementById("close-btn") as HTMLButtonElement).textContent,
+    ).toBe("Close");
+  });
+
   it("applies the system dark theme and enabled window effects", async () => {
     const matchMedia = vi.fn().mockReturnValue({ matches: true });
     Object.defineProperty(window, "matchMedia", {
@@ -262,7 +299,10 @@ describe("extract-window", () => {
     expect(
       (document.getElementById("extract-dest") as HTMLElement).textContent,
     ).toBe("/Downloads/packed");
-    expect(invokeMock).toHaveBeenCalledWith("run_7z", {
+    const runCall = invokeMock.mock.calls.find(
+      ([command]) => command === "run_7z",
+    );
+    expect(decodeRun7zInvokePayload(runCall?.[1])).toEqual({
       args: [
         "x",
         "-o/Downloads/packed",
@@ -312,10 +352,9 @@ describe("extract-window", () => {
         ];
       }
       if (cmd === "run_7z") {
-        expect(
-          (payload as { expectedArchiveIdentity?: string } | undefined)
-            ?.expectedArchiveIdentity,
-        ).toBe("identity:/tmp/archive.7z");
+        expect(decodeRun7zInvokePayload(payload).expectedArchiveIdentity).toBe(
+          "identity:/tmp/archive.7z",
+        );
         return { stdout: "", stderr: "minor warning", code: 1 };
       }
       return undefined;
@@ -377,7 +416,7 @@ describe("extract-window", () => {
               "Could not list archive members for path safety: Enter password:",
             );
           }
-          expect((payload as { args: string[] }).args).toContain("-psecret");
+          expect(decodeRun7zInvokePayload(payload).args).toContain("-psecret");
           return { stdout: "", stderr: "", code: 0 };
         }
         return undefined;
@@ -643,7 +682,10 @@ describe("extract-window", () => {
       (document.getElementById("extract-dest") as HTMLElement).textContent,
     ).toBe("/Downloads/test");
 
-    expect(invokeMock).toHaveBeenCalledWith("run_7z", {
+    const runCall = invokeMock.mock.calls.find(
+      ([command]) => command === "run_7z",
+    );
+    expect(decodeRun7zInvokePayload(runCall?.[1])).toEqual({
       args: [
         "x",
         "-o/Downloads/test",

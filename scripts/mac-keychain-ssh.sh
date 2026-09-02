@@ -41,10 +41,20 @@ if [[ -z "${KEYCHAIN_PASSWORD:-}" ]]; then
 fi
 
 echo "Preparing keychain for non-GUI codesign..."
-security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-security list-keychains -d user -s "$KEYCHAIN_PATH"
-security default-keychain -d user -s "$KEYCHAIN_PATH"
-security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+case $KEYCHAIN_PASSWORD in
+  *[[:space:]\'\"\\$\`]*)
+    echo "KEYCHAIN_PASSWORD must not contain whitespace, quotes, backslashes, or expansion characters."
+    exit 1
+    ;;
+esac
+# Password goes on security's stdin, not argv (ps). Prefer KEYCHAIN_PATH to a
+# dedicated signing keychain; partition-list still applies to that file.
+security -i <<EOF
+unlock-keychain -p $KEYCHAIN_PASSWORD $KEYCHAIN_PATH
+set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+list-keychains -d user -s $KEYCHAIN_PATH
+default-keychain -d user -s $KEYCHAIN_PATH
+set-key-partition-list -S apple-tool:,apple:,codesign: -s -k $KEYCHAIN_PASSWORD $KEYCHAIN_PATH
+EOF
 
 echo "Keychain ready for SSH signing."

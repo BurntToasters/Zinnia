@@ -20,6 +20,8 @@ test("createInitialResults includes cargoSafeUpdate and cargoUpdatePolicy in ini
   assert.equal(results.cargoSafeUpdate.status, "pending");
   assert.equal(results.cargoUpdatePolicy.status, "pending");
   assert.equal(results.vendorUpdater.status, "pending");
+  assert.equal(results.archives.status, "pending");
+  assert.equal(results.e2e.status, "pending");
 });
 
 test("package.json scripts define cargo safe update test and policy check", () => {
@@ -32,6 +34,8 @@ test("package.json scripts define cargo safe update test and policy check", () =
     scripts["check:cargo-update-policy"],
     "node scripts/check-cargo-update-policy.mjs",
   );
+  assert.equal(scripts["test:archives"], "node scripts/test-archives.js");
+  assert.equal(scripts["test:e2e"], "node scripts/test-e2e.js");
 });
 
 test("main prevents quality-gate proof recording when cargoSafeUpdate fails", () => {
@@ -112,6 +116,8 @@ test("main records quality-gate proof when all checks pass", () => {
     },
   });
 
+  assert.ok(calls.includes("run:archives"));
+  assert.ok(calls.includes("run:e2e"));
   assert.ok(calls.includes("recordProof"));
   assert.equal(exitCode, 0);
 });

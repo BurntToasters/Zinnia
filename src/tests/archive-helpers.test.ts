@@ -17,6 +17,7 @@ import {
   setSevenZipRunInFlight,
   withLiveProgress,
 } from "../archive/runtime";
+import { decodeRun7zInvokePayload } from "./backend-ipc-test-utils";
 
 vi.mock("../prompt-modal", () => ({
   promptInput: vi.fn().mockResolvedValue(null),
@@ -298,7 +299,8 @@ describe("runWithPasswordRetry", () => {
     );
 
     expect(result.code).toBe(0);
-    expect(invokeMock).toHaveBeenNthCalledWith(2, "run_7z", {
+    expect(invokeMock.mock.calls[1]?.[0]).toBe("run_7z");
+    expect(decodeRun7zInvokePayload(invokeMock.mock.calls[1]?.[1])).toEqual({
       args: ["x", "-o/tmp/out", "-psecret", "--", "/tmp/headers.7z"],
       expectedArchiveIdentity: "archive-identity",
     });

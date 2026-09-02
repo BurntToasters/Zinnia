@@ -8,7 +8,12 @@ import { spawnSync } from "node:child_process";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
-import { validateTrusted7zPath } from "./prepare-7z-helpers.js";
+import {
+  assertExtractedTreeContained,
+  assertOfficialArchiveMembersSafe,
+  findExtractedRegularFile,
+  validateTrusted7zPath,
+} from "./prepare-7z-helpers.js";
 
 const root = process.cwd();
 const assetsDirectory = path.join(root, "assets");
@@ -283,39 +288,17 @@ function resolveTrustedExtractor() {
 
 function extractArchive(source, archivePath, destination, extractor) {
   fs.mkdirSync(destination, { recursive: true });
+  assertOfficialArchiveMembersSafe({
+    archivePath,
+    destination,
+    trusted7zPath: extractor,
+  });
   if (source.format === "tar.xz") {
     run("tar", ["-xJf", archivePath, "-C", destination]);
-    return;
+  } else {
+    run(extractor, ["x", "-y", `-o${destination}`, archivePath]);
   }
-  run(extractor, ["x", "-y", `-o${destination}`, archivePath]);
-}
-
-function findMember(rootDirectory, member) {
-  const directPath = path.join(rootDirectory, ...member.split("/"));
-  if (fs.existsSync(directPath) && fs.statSync(directPath).isFile()) {
-    return directPath;
-  }
-
-  const matches = [];
-  const pending = [rootDirectory];
-  while (pending.length > 0) {
-    const current = pending.pop();
-    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
-      const candidate = path.join(current, entry.name);
-      if (entry.isSymbolicLink()) continue;
-      if (entry.isDirectory()) {
-        pending.push(candidate);
-      } else if (entry.isFile() && entry.name === path.basename(member)) {
-        matches.push(candidate);
-      }
-    }
-  }
-  if (matches.length !== 1) {
-    throw new Error(
-      `Could not resolve unique ${member} in extracted ${rootDirectory}. Found ${matches.length}.`,
-    );
-  }
-  return matches[0];
+  assertExtractedTreeContained(destination);
 }
 
 function normalizeLicense(bytes, normalization) {
@@ -396,7 +379,7 @@ async function update(version) {
       const extracted = path.join(extractionDirectory, source.name);
       extractArchive(source, archivePath, extracted, extractor);
       for (const artifact of source.artifacts) {
-        const memberPath = findMember(extracted, artifact.member);
+        const memberPath = findExtractedRegularFile(extracted, artifact.member);
         const executable =
           artifact.asset.endsWith("/7zz") || artifact.asset.endsWith("/7zzs");
         writeStagedFile(
@@ -413,7 +396,10 @@ async function update(version) {
         stagedFiles.push(`assets/${relativeAsset}`);
       }
       if (source.license) {
-        const memberPath = findMember(extracted, source.license.member);
+        const memberPath = findExtractedRegularFile(
+          extracted,
+          source.license.member,
+        );
         const licenseBytes = normalizeLicense(
           fs.readFileSync(memberPath),
           source.license.normalization,

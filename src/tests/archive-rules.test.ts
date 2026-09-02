@@ -57,7 +57,10 @@ describe("validateExtraArgs", () => {
 
   it("rejects parent traversal inside switch payloads", () => {
     expect(() => validateExtraArgs(["-ir!../../secret"])).toThrow(
-      /parent-directory segment/,
+      /include or exclude lists/,
+    );
+    expect(() => validateExtraArgs(["-x!secret.txt"])).toThrow(
+      /include or exclude lists/,
     );
     expect(() => validateExtraArgs(["-w../../tmp"])).toThrow(
       /Unknown argument/,
@@ -83,6 +86,9 @@ describe("validateExtraArgs", () => {
       /compression method/,
     );
     expect(() => validateExtraArgs(["-m0="])).toThrow(/compression method/);
+    expect(() => validateExtraArgs(["-mx=../evil"])).toThrow(
+      /compression method/,
+    );
   });
 
   it("rejects open-ended method prefixes that only share a substring", () => {

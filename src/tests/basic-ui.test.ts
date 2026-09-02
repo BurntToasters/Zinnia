@@ -3,6 +3,7 @@ import { confirm, open, save } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { state } from "../state";
+import { decodeRun7zInvokePayload } from "./backend-ipc-test-utils";
 
 const uiMocks = vi.hoisted(() => {
   const runtime = {
@@ -181,6 +182,7 @@ import {
   updateBasicStatus,
 } from "../basic";
 import { isArchiveEncrypted } from "../basic/actions";
+import { setBasicBarDeterminate, resetBasicBar } from "../basic/progress";
 import { setSevenZipRunInFlight } from "../archive/runtime";
 
 const openMock = vi.mocked(open);
@@ -498,7 +500,10 @@ describe("basic-ui views and rendering", () => {
     expect(depMocks.validateArchivePaths).toHaveBeenCalledWith([archive], true);
     expect(state.browseArchiveInfoByPath.has(archive)).toBe(false);
     expect(state.browseArchiveIdentityByPath.has(archive)).toBe(false);
-    expect(invokeMock).toHaveBeenCalledWith("run_7z", {
+    const runCall = invokeMock.mock.calls.find(
+      ([command]) => command === "run_7z",
+    );
+    expect(decodeRun7zInvokePayload(runCall?.[1])).toEqual({
       args: ["l", "-slt", "-spd", "--", archive],
     });
   });
@@ -1691,5 +1696,19 @@ describe("basic-ui drag and init wiring", () => {
 
     expect(getBasicView()).toBe("compress");
     expect(uiMocks.runtime.mode).toBe("add");
+  });
+
+  it("writes aria-valuenow on the Basic progressbar track", () => {
+    const track = document.createElement("div");
+    track.setAttribute("role", "progressbar");
+    const fill = document.createElement("div");
+    fill.id = "basic-extract-bar";
+    track.appendChild(fill);
+    document.body.appendChild(track);
+
+    setBasicBarDeterminate("extract", 42);
+    expect(track.getAttribute("aria-valuenow")).toBe("42");
+    resetBasicBar("extract");
+    expect(track.getAttribute("aria-valuenow")).toBe("0");
   });
 });

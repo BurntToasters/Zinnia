@@ -21,6 +21,7 @@ import { withPassword } from "./args";
 import { basename } from "../path-display";
 import { formatEta, type ProgressUpdate } from "../progress-update";
 import { debugLog, isDebugEnabled } from "../debug-mode";
+import { invokeRun7z as invokeRun7zRequest } from "./backend-ipc";
 
 export const formatBatchEta = formatEta;
 
@@ -191,7 +192,7 @@ async function invokeRun7z(
 ): Promise<Run7zResult> {
   sevenZipRunInFlight = true;
   try {
-    return await invoke<Run7zResult>("run_7z", {
+    return await invokeRun7zRequest<Run7zResult>({
       args,
       ...(expectedArchiveIdentity ? { expectedArchiveIdentity } : {}),
     });

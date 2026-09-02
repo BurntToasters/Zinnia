@@ -8,3 +8,16 @@ assets/**/7z.exe binary
 assets/**/7z.dll binary
 assets/**/7zz binary
 assets/**/7zzs binary
+
+# Committed archive fixtures must keep exact bytes.
+zips/*.7z binary
+zips/*.zip binary
+zips/*.tar binary
+zips/*.gz binary
+zips/*.tgz binary
+zips/*.bz2 binary
+zips/*.tbz2 binary
+zips/*.xz binary
+zips/*.txz binary
+zips/*.rar binary
+zips/*.bin binary

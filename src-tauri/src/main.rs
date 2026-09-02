@@ -35,6 +35,22 @@ use launch::{emit_open_urls, first_extract_window, leave_extract_warm};
 use logging::LogFileLock;
 use process::RunningProcess;
 
+#[cfg(feature = "e2e")]
+fn e2e_session_active() -> bool {
+    std::env::var("ZINNIA_E2E").is_ok_and(|value| value == "1")
+}
+
+fn production_integrations_enabled() -> bool {
+    #[cfg(feature = "e2e")]
+    {
+        !e2e_session_active()
+    }
+    #[cfg(not(feature = "e2e"))]
+    {
+        true
+    }
+}
+
 fn defer_close_while_operation_finishes(
     app: &tauri::AppHandle,
     label: &str,
@@ -186,10 +202,17 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init());
 
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[cfg(feature = "e2e")]
     {
         builder = builder
-            .plugin(tauri_plugin_single_instance::init(|app, argv, _| {
+            .plugin(tauri_plugin_wdio::init())
+            .plugin(tauri_plugin_wdio_webdriver::init());
+    }
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        if production_integrations_enabled() {
+            builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _| {
                 // Invalidate extract warm-idle before the deferred main-thread
                 // dispatch so an in-flight idle-exit cannot destroy the window
                 // that this second-instance open is about to reuse.
@@ -203,8 +226,9 @@ fn main() {
                         emit_open_paths(&callback_handle, argv);
                     });
                 });
-            }))
-            .plugin(tauri_plugin_updater::Builder::new().build());
+            }));
+        }
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     }
 
     let app = builder
@@ -305,7 +329,9 @@ fn main() {
                 // pluginkit can take several seconds when Launch Services is
                 // unhealthy. Registration is best-effort, so keep it off the
                 // setup/main thread and show the first window without waiting.
-                std::thread::spawn(platform::register_macos_finder_sync);
+                if production_integrations_enabled() {
+                    std::thread::spawn(platform::register_macos_finder_sync);
+                }
             }
 
             // Recovery can traverse and sync directories. Keep it off the setup thread so the

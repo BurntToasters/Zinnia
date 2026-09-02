@@ -8,6 +8,7 @@ mod debug_console_window;
 mod extract_window;
 mod open_path;
 mod open_routing;
+mod webview_context_menu;
 
 pub static EXTRACT_ONLY_LAUNCH: AtomicBool = AtomicBool::new(false);
 pub static MAC_FALLBACK_MAIN_PENDING: AtomicBool = AtomicBool::new(false);

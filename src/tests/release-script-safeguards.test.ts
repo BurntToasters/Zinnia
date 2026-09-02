@@ -32,6 +32,9 @@ import {
 import { parseUpdate7zArgv } from "../../scripts/update-7z.js";
 import { isDirectExecution as isGitPruneDirectExecution } from "../../scripts/git-prune-local-branches.js";
 import {
+  assertArchiveMemberNameSafe,
+  assertExtractedTreeContained,
+  findExtractedRegularFile,
   officialArchiveExtractionCommand,
   validateTrusted7zPath,
 } from "../../scripts/prepare-7z-helpers.js";
@@ -47,6 +50,7 @@ const {
   assertReleaseTargetsCommit: assertReleaseTargetsCommitCjs,
   listAllGithubPages: listAllGithubPagesCjs,
   readChangelogReleaseBody,
+  singleDraftRelease,
   verifyReleaseSession,
 } = require("../../scripts/ensure-draft-release.cjs") as {
   assertReleaseTargetsCommit: (
@@ -56,7 +60,13 @@ const {
     log?: { warn: (message: string) => void },
   ) => unknown;
   listAllGithubPages: typeof listAllGithubPages;
-  readChangelogReleaseBody: (changelogPath?: string) => string;
+  readChangelogReleaseBody: (
+    changelogPath?: string,
+    version?: string,
+  ) => string;
+  singleDraftRelease: (
+    matching: Array<{ draft?: boolean; tag_name?: string; id?: number }>,
+  ) => { draft?: boolean; tag_name?: string; id?: number } | null;
   verifyReleaseSession: (run?: typeof spawnSync) => void;
 };
 const { assertStableReleaseOverridesAllowed, isStableReleaseVersion } =
@@ -299,10 +309,39 @@ describe("release script safeguards", () => {
     }
   });
 
-  it("reads CHANGELOG.md for Windows draft release notes", () => {
+  it("reads only the current CHANGELOG.md version section for Windows draft notes", () => {
+    const pkg = JSON.parse(fs.readFileSync("package.json", "utf8")) as {
+      version: string;
+    };
     const body = readChangelogReleaseBody();
-    expect(body).toContain("## Changes in `");
+    expect(body).toContain(`## Changes in \`v${pkg.version}:\``);
     expect(body.trim().length).toBeGreaterThan(0);
+    expect(body).not.toContain("## Changes in `v0.6.1-beta.6:`");
+
+    const mixed = path.join(
+      os.tmpdir(),
+      `zinnia-mixed-changelog-${Date.now()}.md`,
+    );
+    fs.writeFileSync(
+      mixed,
+      [
+        "## Changes in `v9.9.9:`",
+        "",
+        "- **Fix:** current notes only.",
+        "",
+        "## Changes in `v0.1.0:`",
+        "",
+        "- **Fix:** historical notes must not ship.",
+        "",
+      ].join("\n"),
+    );
+    try {
+      const extracted = readChangelogReleaseBody(mixed, "9.9.9");
+      expect(extracted).toContain("current notes only");
+      expect(extracted).not.toContain("historical notes must not ship");
+    } finally {
+      fs.rmSync(mixed, { force: true });
+    }
 
     const missing = path.join(
       os.tmpdir(),
@@ -327,9 +366,26 @@ describe("release script safeguards", () => {
 
     const source = fs.readFileSync("scripts/ensure-draft-release.cjs", "utf8");
     expect(source).toContain("readChangelogReleaseBody");
+    expect(source).toContain("singleDraftRelease");
     expect(source).toContain("syncReleaseNotesBody");
     expect(source).toContain("body,");
     expect(source).toContain("PATCH");
+    expect(source).not.toContain("or run it here once");
+  });
+
+  it("refuses duplicate drafts for the same tag", () => {
+    expect(singleDraftRelease([])).toBeNull();
+    expect(singleDraftRelease([{ draft: false }])).toBeNull();
+    expect(singleDraftRelease([{ draft: true, id: 1 }])).toEqual({
+      draft: true,
+      id: 1,
+    });
+    expect(() =>
+      singleDraftRelease([
+        { draft: true, id: 1 },
+        { draft: true, id: 2 },
+      ]),
+    ).toThrow(/Multiple draft releases/);
   });
 
   it("requires a release session before the draft script can contact GitHub", () => {
@@ -380,14 +436,17 @@ describe("release script safeguards", () => {
     },
   );
 
-  it("does not auto-sync beta manifests onto /releases/latest during draft signing", () => {
+  it("auto-syncs beta manifests onto /releases/latest during each sign upload", () => {
     const source = fs.readFileSync("scripts/gpg-sign.js", "utf8");
     const syncBlock = source.slice(
       source.indexOf("for (const f of everything)"),
       source.indexOf("Done: ${TAG} uploaded as"),
     );
-    expect(syncBlock).not.toContain("syncBetaManifestsToLatestStable");
-    expect(syncBlock).toContain("release:sync-beta-manifests");
+    expect(syncBlock).toContain("if (IS_PRERELEASE)");
+    expect(syncBlock).toContain(
+      "syncBetaManifestsToLatestStable(everything, release.id)",
+    );
+    expect(syncBlock).not.toContain("!release.draft");
   });
 
   it("refuses to create a GitHub release during signing", () => {
@@ -633,6 +692,17 @@ describe("release script safeguards", () => {
     }
   });
 
+  it("unlocks the signing keychain without putting the password on argv", () => {
+    const source = fs.readFileSync("scripts/mac-keychain-ssh.sh", "utf8");
+    expect(source).toContain("security -i");
+    expect(source).not.toMatch(
+      /unlock-keychain -p "\$\{?KEYCHAIN_PASSWORD\}?"/,
+    );
+    expect(source).not.toMatch(
+      /set-key-partition-list[^\n]*-k "\$\{?KEYCHAIN_PASSWORD\}?"/,
+    );
+  });
+
   it("uses system tar and only the trusted extractor for official archives", () => {
     expect(
       officialArchiveExtractionCommand({
@@ -671,6 +741,36 @@ describe("release script safeguards", () => {
       }),
     ).toThrow(/trusted 7-Zip extractor is required/);
   });
+
+  it("rejects archive members that would escape the extract destination", () => {
+    expect(() =>
+      assertArchiveMemberNameSafe("../secret", "/tmp/extracted"),
+    ).toThrow(/escapes/);
+    expect(() =>
+      assertArchiveMemberNameSafe("/etc/passwd", "/tmp/extracted"),
+    ).toThrow(/absolute/);
+    expect(() =>
+      assertArchiveMemberNameSafe("C:\\Windows\\system32", "/tmp/extracted"),
+    ).toThrow(/absolute/);
+    expect(() =>
+      assertArchiveMemberNameSafe("bin/7zz", "/tmp/extracted"),
+    ).not.toThrow();
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "refuses extracted symlinks when resolving 7-Zip members",
+    () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "zinnia-7z-member-"));
+      try {
+        fs.writeFileSync(path.join(root, "real"), "payload");
+        fs.symlinkSync("real", path.join(root, "7zz"));
+        expect(() => findExtractedRegularFile(root, "7zz")).toThrow(/symlink/);
+        expect(() => assertExtractedTreeContained(root)).toThrow(/symlink/);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("packages full Windows 7-Zip runtime and RAR integration", () => {
     const prepare = fs.readFileSync("scripts/prepare-7z.js", "utf8");
@@ -967,6 +1067,21 @@ describe("release script safeguards", () => {
         "0.6.1",
       ),
     ).toThrow(/SKIP_RELEASE_MIRROR/);
+    expect(() =>
+      assertStableReleaseOverridesAllowed({ SKIP_E2E: "1" }, "0.6.1"),
+    ).toThrow(/SKIP_E2E/);
+    expect(() =>
+      assertStableReleaseOverridesAllowed(
+        { SKIP_WIN_CONTEXT_MENU: "1" },
+        "0.6.1",
+      ),
+    ).toThrow(/SKIP_WIN_CONTEXT_MENU/);
+    expect(() =>
+      assertStableReleaseOverridesAllowed(
+        { SKIP_CARGO_INTEGRATION: "1" },
+        "0.6.1",
+      ),
+    ).toThrow(/SKIP_CARGO_INTEGRATION/);
     expect(() =>
       assertStableReleaseOverridesAllowed(
         { FORCE_UPLOAD: "1", SKIP_WIN_CODESIGN: "1" },

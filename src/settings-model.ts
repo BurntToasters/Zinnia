@@ -301,6 +301,15 @@ export function normalizeAutoCloseDelay(
 
 const MAX_CUSTOM_PRESETS = 50;
 
+function optionalPresetField<T extends string>(
+  value: unknown,
+  valid: Set<T>,
+  fallback: T,
+): T | null {
+  if (typeof value !== "string") return fallback;
+  return valid.has(value as T) ? (value as T) : null;
+}
+
 function asCustomPresets(
   value: unknown,
   fallback: CustomPreset[],
@@ -312,19 +321,48 @@ function asCustomPresets(
     const r = asRecord(item);
     const name = asString(r.name, "").trim();
     if (!name || seen.has(name)) continue;
+    const format = optionalPresetField(
+      r.format,
+      FORMATS,
+      SETTING_DEFAULTS.format,
+    );
+    const level = optionalPresetField(
+      r.level,
+      VALID_LEVELS,
+      SETTING_DEFAULTS.level,
+    );
+    const method = optionalPresetField(
+      r.method,
+      VALID_METHODS,
+      SETTING_DEFAULTS.method,
+    );
+    const dict = optionalPresetField(
+      r.dict,
+      VALID_DICTS,
+      SETTING_DEFAULTS.dict,
+    );
+    const wordSize = optionalPresetField(
+      r.wordSize,
+      VALID_WORD_SIZES,
+      SETTING_DEFAULTS.wordSize,
+    );
+    const solid = optionalPresetField(
+      r.solid,
+      VALID_SOLIDS,
+      SETTING_DEFAULTS.solid,
+    );
+    if (!format || !level || !method || !dict || !wordSize || !solid) {
+      continue;
+    }
     seen.add(name);
     presets.push({
       name,
-      format: asSetValue(r.format, FORMATS, SETTING_DEFAULTS.format),
-      level: asSetValue(r.level, VALID_LEVELS, SETTING_DEFAULTS.level),
-      method: asSetValue(r.method, VALID_METHODS, SETTING_DEFAULTS.method),
-      dict: asSetValue(r.dict, VALID_DICTS, SETTING_DEFAULTS.dict),
-      wordSize: asSetValue(
-        r.wordSize,
-        VALID_WORD_SIZES,
-        SETTING_DEFAULTS.wordSize,
-      ),
-      solid: asSetValue(r.solid, VALID_SOLIDS, SETTING_DEFAULTS.solid),
+      format,
+      level,
+      method,
+      dict,
+      wordSize,
+      solid,
     });
     if (presets.length >= MAX_CUSTOM_PRESETS) break;
   }
