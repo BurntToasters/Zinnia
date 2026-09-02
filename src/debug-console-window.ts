@@ -1,6 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import {
+  installNativeWebviewContextMenuGuard,
+  setNativeWebviewContextMenuAllowed,
+} from "./webview-context-menu";
 
 const MAX_LOG_LINES = 1000;
 
@@ -99,6 +103,8 @@ async function closeWindow(
 }
 
 async function run(): Promise<void> {
+  installNativeWebviewContextMenuGuard();
+  setNativeWebviewContextMenuAllowed(true);
   const appWindow = getCurrentWebviewWindow();
 
   void invoke<string>("get_platform_info")

@@ -97,6 +97,11 @@ export async function runAction() {
         return;
       }
       args = buildArgs();
+      const outputPath = $<HTMLInputElement>("output-path").value;
+      expectedArchiveIdentity = await invoke<string>(
+        "archive_output_selection_token",
+        { path: outputPath },
+      );
     }
 
     if (state.cancelRequested) {

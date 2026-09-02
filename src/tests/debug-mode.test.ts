@@ -17,6 +17,7 @@ import { promptAndToggleDebugMode } from "../power-events";
 import { state } from "../state";
 import { SETTING_DEFAULTS } from "../settings-model";
 import { logCommandResult } from "../archive/runtime";
+import { isNativeWebviewContextMenuAllowed } from "../webview-context-menu";
 
 beforeEach(() => {
   setDebugEnabled(false);
@@ -87,6 +88,14 @@ describe("setDebugEnabled", () => {
     expect(
       document.getElementById("debug-console-log")?.textContent ?? "",
     ).toBe("");
+  });
+
+  it("allows the native webview context menu only while enabled", () => {
+    expect(isNativeWebviewContextMenuAllowed()).toBe(false);
+    setDebugEnabled(true, { banner: false });
+    expect(isNativeWebviewContextMenuAllowed()).toBe(true);
+    setDebugEnabled(false);
+    expect(isNativeWebviewContextMenuAllowed()).toBe(false);
   });
 });
 

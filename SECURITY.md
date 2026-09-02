@@ -81,8 +81,9 @@ operations:
   stage root. Never raise to `-snld20`. The webview cannot omit or raise
   `-snld*`.
 - On Windows extract, Zinnia preserves the source archive's Mark-of-the-Web in
-  its private snapshot and injects 7-Zip `-snz` so `Zone.Identifier` propagates
-  onto extracted files (SmartScreen / Office Protected View). Backend-owned
+its private snapshot and injects 7-Zip `-snz` so `Zone.Identifier` propagates
+onto extracted files (SmartScreen / Office Protected View). A zip downloaded
+in Microsoft Edge should still show MOTW on extracted members. Backend-owned
   `-sns-` prevents archive members from replacing that stream. Zinnia does
   **not** strip MOTW.
 - Promotion resolves file/directory conflicts without overwriting unrelated
@@ -216,3 +217,10 @@ window spawn (derived from the archive path). They may only extract to that
 folder (`-o`) and may only `open_path` that same folder after registering it.
 This is defense in depth against a compromised webview writing or opening
 arbitrary folders.
+
+The main window `run_7z` destination (`-o`) is not dest-bound the way extract
+windows are. After path validation (no `..` segments, absolute paths only),
+extract-to-folder uses the same privilege as the signed app. A compromised main
+webview can therefore write to any allowlisted-shape destination the user could
+already reach. Extract-only windows remain pinned to the folder derived at
+window spawn.

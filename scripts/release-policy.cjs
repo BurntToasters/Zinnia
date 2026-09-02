@@ -8,6 +8,9 @@ const STABLE_FORBIDDEN_ENV = [
   "FORCE_UPLOAD",
   "SKIP_RELEASE_MIRROR",
   "ALLOW_ASSET_REPLACE",
+  "SKIP_E2E",
+  "SKIP_WIN_CONTEXT_MENU",
+  "SKIP_CARGO_INTEGRATION",
 ];
 
 function isExplicitTruthy(value) {

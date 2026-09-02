@@ -158,8 +158,12 @@ static HRESULT GetFolderPathFromSite(IUnknown* site, std::wstring* out) {
   return S_OK;
 }
 
-// DLL is usually next to zinnia.exe ($INSTDIR). If mapped under resources\,
-// fall back to the parent directory.
+// DLL is usually next to zinnia.exe ($INSTDIR). If mapped under a sparse
+// `shell-*` payload directory, only the parent install dir is trusted.
+static bool DirectoryNameStartsWithShellDash(const std::wstring& name) {
+  return name.size() >= 6 && _wcsnicmp(name.c_str(), L"shell-", 6) == 0;
+}
+
 static std::wstring GetZinniaExePath() {
   std::vector<wchar_t> buffer(512);
   DWORD length = 0;
@@ -167,7 +171,7 @@ static std::wstring GetZinniaExePath() {
     SetLastError(ERROR_SUCCESS);
     length = GetModuleFileNameW(g_hInst, buffer.data(),
                                 static_cast<DWORD>(buffer.size()));
-    if (length == 0) return L"zinnia.exe";
+    if (length == 0) return std::wstring();
     if (length < buffer.size()) break;
     buffer.resize(buffer.size() * 2);
   }
@@ -175,6 +179,14 @@ static std::wstring GetZinniaExePath() {
   const std::filesystem::path modulePath(
       std::wstring(buffer.data(), static_cast<size_t>(length)));
   const auto moduleDir = modulePath.parent_path();
+  if (DirectoryNameStartsWithShellDash(moduleDir.filename().wstring())) {
+    auto candidate = moduleDir.parent_path() / L"zinnia.exe";
+    if (GetFileAttributesW(candidate.c_str()) != INVALID_FILE_ATTRIBUTES) {
+      return candidate.wstring();
+    }
+    return std::wstring();
+  }
+
   auto candidate = moduleDir / L"zinnia.exe";
   if (GetFileAttributesW(candidate.c_str()) != INVALID_FILE_ATTRIBUTES) {
     return candidate.wstring();

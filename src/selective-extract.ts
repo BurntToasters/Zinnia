@@ -2,7 +2,7 @@ import type { BrowseEntry } from "./browse-model.ts";
 import { SAFE_EXTRACT_OVERWRITE_MODE } from "./extract-policy";
 
 export function normalizeSelectiveSearchQuery(query: string): string {
-  return query.trim().toLowerCase();
+  return query.trim().toLowerCase().normalize("NFC");
 }
 
 export function filterBrowseEntriesByQuery(
@@ -12,7 +12,7 @@ export function filterBrowseEntriesByQuery(
   const normalized = normalizeSelectiveSearchQuery(query);
   if (!normalized) return entries;
   return entries.filter((entry) =>
-    entry.path.toLowerCase().includes(normalized),
+    entry.path.toLowerCase().normalize("NFC").includes(normalized),
   );
 }
 

@@ -1,0 +1,113 @@
+{
+  "payloadFile": "hello.txt",
+  "payloadText": "zinnia fixture payload\n",
+  "password": "zinnia-test",
+  "create": ["7z", "zip", "tar", "gzip", "bzip2", "xz"],
+  "extract": [
+    {
+      "file": "hello.7z",
+      "family": "7z",
+      "members": ["hello.txt"]
+    },
+    {
+      "file": "hello.zip",
+      "family": "zip",
+      "members": ["hello.txt"]
+    },
+    {
+      "file": "hello.tar",
+      "family": "tar",
+      "members": ["hello.txt"]
+    },
+    {
+      "file": "hello.gz",
+      "family": "gzip",
+      "members": ["hello.txt"]
+    },
+    {
+      "file": "hello.bz2",
+      "family": "bzip2",
+      "members": ["hello.txt"]
+    },
+    {
+      "file": "hello.xz",
+      "family": "xz",
+      "members": ["hello.txt"]
+    },
+    {
+      "file": "hello.tar.gz",
+      "family": "gzip",
+      "compoundTar": true,
+      "members": ["hello.txt"]
+    },
+    {
+      "file": "hello.tgz",
+      "family": "gzip",
+      "compoundTar": true,
+      "members": ["hello.txt"]
+    },
+    {
+      "file": "hello.tar.bz2",
+      "family": "bzip2",
+      "compoundTar": true,
+      "members": ["hello.txt"]
+    },
+    {
+      "file": "hello.tbz2",
+      "family": "bzip2",
+      "compoundTar": true,
+      "members": ["hello.txt"]
+    },
+    {
+      "file": "hello.tar.xz",
+      "family": "xz",
+      "compoundTar": true,
+      "members": ["hello.txt"]
+    },
+    {
+      "file": "hello.txz",
+      "family": "xz",
+      "compoundTar": true,
+      "members": ["hello.txt"]
+    },
+    {
+      "file": "hello.rar",
+      "family": "rar",
+      "members": ["hello.txt"]
+    },
+    {
+      "file": "nested.zip",
+      "family": "zip",
+      "members": ["nested/hello.txt"]
+    },
+    {
+      "file": "unicode.zip",
+      "family": "zip",
+      "members": ["héllo.txt"]
+    },
+    {
+      "file": "encrypted.7z",
+      "family": "7z",
+      "password": true,
+      "members": ["hello.txt"]
+    },
+    {
+      "file": "encrypted-aes.zip",
+      "family": "zip",
+      "password": true,
+      "members": ["hello.txt"]
+    }
+  ],
+  "negative": [
+    {
+      "file": "not-an-archive.bin",
+      "detect": false,
+      "extract": false
+    },
+    {
+      "file": "truncated.zip",
+      "detect": true,
+      "extract": false
+    }
+  ]
+}

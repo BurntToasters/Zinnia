@@ -132,7 +132,11 @@
               hidden
             ></div>
           </div>
-          <button class="btn btn--ghost btn--sm" id="toggle-density">
+          <button
+            class="btn btn--ghost btn--sm"
+            id="toggle-density"
+            aria-pressed="false"
+          >
             Compact
           </button>
           <button
@@ -1742,7 +1746,14 @@
                 role="status"
                 aria-live="polite"
               >
-                <div class="basic-progress__bar-track">
+                <div
+                  class="basic-progress__bar-track"
+                  role="progressbar"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  aria-valuenow="0"
+                  aria-labelledby="basic-compress-status"
+                >
                   <div
                     class="basic-progress__bar-fill is-indeterminate"
                     id="basic-compress-bar"
@@ -1934,7 +1945,14 @@
                 role="status"
                 aria-live="polite"
               >
-                <div class="basic-progress__bar-track">
+                <div
+                  class="basic-progress__bar-track"
+                  role="progressbar"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  aria-valuenow="0"
+                  aria-labelledby="basic-extract-status"
+                >
                   <div
                     class="basic-progress__bar-fill is-indeterminate"
                     id="basic-extract-bar"

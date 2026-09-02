@@ -110,13 +110,24 @@ export function setBasicBarDeterminate(
 ): void {
   const bar = document.getElementById(`basic-${section}-bar`);
   if (!bar) return;
-  setProgressPercentClass(bar, percent);
+  const clamped = Math.max(0, Math.min(100, Math.round(percent)));
+  setProgressPercentClass(bar, clamped);
+  const progressbar =
+    (bar.closest('[role="progressbar"]') as HTMLElement | null) ?? bar;
+  progressbar.setAttribute("aria-valuenow", String(clamped));
+  progressbar.setAttribute("aria-valuemin", "0");
+  progressbar.setAttribute("aria-valuemax", "100");
 }
 
 export function resetBasicBar(section: "compress" | "extract"): void {
   const bar = document.getElementById(`basic-${section}-bar`);
   if (!bar) return;
   setProgressIndeterminateClass(bar);
+  const progressbar =
+    (bar.closest('[role="progressbar"]') as HTMLElement | null) ?? bar;
+  progressbar.setAttribute("aria-valuenow", "0");
+  progressbar.setAttribute("aria-valuemin", "0");
+  progressbar.setAttribute("aria-valuemax", "100");
 }
 
 const disabledBeforeBasicLock = new Map<HTMLButtonElement, boolean>();

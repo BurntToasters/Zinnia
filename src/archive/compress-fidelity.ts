@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCompressInputProbe } from "./backend-ipc";
 
 export interface CompressInputProbe {
   nestedSymlinks: number;
@@ -15,7 +15,7 @@ export function formatWeakForSymlinks(_format: string): boolean {
 export async function probeCompressInputs(
   paths: string[],
 ): Promise<CompressInputProbe> {
-  return invoke<CompressInputProbe>("probe_compress_inputs", { paths });
+  return invokeCompressInputProbe<CompressInputProbe>(paths);
 }
 
 /**

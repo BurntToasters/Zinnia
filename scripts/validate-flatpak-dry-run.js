@@ -78,6 +78,12 @@ if (fs.existsSync(manifest)) {
     console.error("flatpak-dry-run: Cargo build must enforce Cargo.lock");
     failed = true;
   }
+  if (!yaml.includes("Unsupported FLATPAK_ARCH")) {
+    console.error(
+      "flatpak-dry-run: 7z install must fail closed on unknown FLATPAK_ARCH",
+    );
+    failed = true;
+  }
 }
 
 const metainfo = path.join(root, "run.rosie.zinnia.metainfo.xml");

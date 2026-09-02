@@ -37,7 +37,8 @@ pub fn open_debug_console_window(app: tauri::AppHandle) -> Result<(), String> {
     .min_inner_size(420.0, 240.0)
     .resizable(true)
     .minimizable(true)
-    .maximizable(true);
+    .maximizable(true)
+    .initialization_script(super::webview_context_menu::NATIVE_CONTEXT_MENU_GUARD_SCRIPT);
 
     #[cfg(target_os = "macos")]
     {

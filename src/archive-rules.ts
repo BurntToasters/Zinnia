@@ -73,23 +73,28 @@ function switchContainsParentTraversal(arg: string): boolean {
 }
 
 /** Keep aligned with validation.rs is_allowed_method_switch. */
+function methodSwitchValueIsSafe(value: string): boolean {
+  return (
+    value.length > 0 &&
+    !value.includes("/") &&
+    !value.includes("\\") &&
+    !value.includes("..")
+  );
+}
+
 function isAllowedMethodSwitch(lower: string): boolean {
   for (const prefix of ALLOWED_METHOD_PREFIXES) {
     if (!lower.startsWith(prefix)) continue;
     const rest = lower.slice(prefix.length);
     if (prefix.endsWith("=")) {
-      return (
-        rest.length > 0 &&
-        !rest.includes("/") &&
-        !rest.includes("\\") &&
-        !rest.includes("..")
-      );
+      return methodSwitchValueIsSafe(rest);
     }
-    return (
-      rest.length === 0 ||
-      rest.startsWith("=") ||
-      (rest.charCodeAt(0) >= 48 && rest.charCodeAt(0) <= 57)
-    );
+    if (rest.length === 0) return true;
+    if (rest.startsWith("=")) return methodSwitchValueIsSafe(rest.slice(1));
+    if (rest.charCodeAt(0) >= 48 && rest.charCodeAt(0) <= 57) {
+      return methodSwitchValueIsSafe(rest);
+    }
+    return false;
   }
   return false;
 }
@@ -172,6 +177,14 @@ export function validateExtraArgs(args: string[]): void {
     }
 
     const lower = arg.toLowerCase();
+    if (
+      (lower.startsWith("-i") || lower.startsWith("-x")) &&
+      arg.includes("!")
+    ) {
+      throw new Error(
+        `"${arg}" is not allowed. Extra args cannot expand 7-Zip include or exclude lists.`,
+      );
+    }
     if (lower === "-aoa" || lower === "-aot") {
       throw new Error(
         `"${arg}" is not allowed. Zinnia only permits safe extract overwrite modes (-aou / -aos).`,

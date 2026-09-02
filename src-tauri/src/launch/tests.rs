@@ -8,7 +8,7 @@ use super::open_path::{derive_extract_destination_path, normalize_destination_pa
 use super::open_routing::{
     enqueue_pending_batch, looks_like_archive_path, parse_open_request_args,
     parse_open_request_args_ex, parse_shell_handoff_contents, record_shell_handoff_error,
-    should_use_extract_window, take_shell_handoff_error,
+    should_queue_extract_to_main, should_use_extract_window, take_shell_handoff_error,
 };
 use super::OpenPathsPayload;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -39,6 +39,15 @@ fn extract_session_init_script_escapes_js_line_separators() {
         "raw line separators must not appear in init script"
     );
     assert!(script.contains("__ZINNIA_EXTRACT__"));
+}
+
+#[test]
+fn native_context_menu_guard_script_blocks_until_debug_flag() {
+    let script = super::webview_context_menu::NATIVE_CONTEXT_MENU_GUARD_SCRIPT;
+    assert!(script.contains("__ZINNIA_ALLOW_NATIVE_CONTEXT_MENU__"));
+    assert!(script.contains("__ZINNIA_NATIVE_CONTEXT_MENU_GUARD__"));
+    assert!(script.contains("preventDefault"));
+    assert!(script.contains("contextmenu"));
 }
 
 #[test]
@@ -139,6 +148,14 @@ fn should_use_extract_window_rejects_multiple_paths_without_explicit_mode() {
     assert!(!should_use_extract_window(&paths, ""));
 
     let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
+fn should_queue_extract_to_main_when_slot_busy_or_extract_open() {
+    assert!(!should_queue_extract_to_main(false, false));
+    assert!(should_queue_extract_to_main(true, false));
+    assert!(should_queue_extract_to_main(false, true));
+    assert!(should_queue_extract_to_main(true, true));
 }
 
 #[test]
