@@ -2,6 +2,13 @@ export type ToastKind = "success" | "info" | "error";
 
 const DEFAULT_DURATION_MS = 3500;
 const REGION_ID = "toast-region";
+const MAX_TOAST_CHARS = 4000;
+
+function boundToastText(text: string): string {
+  if (text.length <= MAX_TOAST_CHARS) return text;
+  const omitted = text.length - MAX_TOAST_CHARS;
+  return `${text.slice(0, MAX_TOAST_CHARS)}\n\n[truncated ${omitted} chars]`;
+}
 
 function ensureRegion(): HTMLElement {
   let region = document.getElementById(REGION_ID);
@@ -26,7 +33,7 @@ export function showToast(
   const toast = document.createElement("div");
   toast.className = `toast toast--${kind}`;
   toast.setAttribute("role", kind === "error" ? "alert" : "status");
-  toast.textContent = text;
+  toast.textContent = boundToastText(text);
 
   const dismiss = () => {
     toast.classList.add("toast--leaving");

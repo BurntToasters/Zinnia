@@ -1,6 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { message } from "@tauri-apps/plugin-dialog";
 import { $, splitArgs } from "../utils";
 import { state } from "../state";
 import {
@@ -25,6 +24,7 @@ import type { ProgressUpdate } from "../progress-update";
 import {
   ensureRuntimeReady,
   formatBatchEta,
+  truncateForDialog,
   logCommandResult,
   logTruncationNotice,
   runWithPasswordRetry,
@@ -152,7 +152,7 @@ export async function runAction() {
       }
       setStatus("Error", 3000, result.stderr || "Operation failed.");
       hideProgress();
-      await showOperationError(result.code, result.stdout, result.stderr);
+      showOperationError(result.code, result.stdout, result.stderr);
     }
   } catch (err) {
     if (state.cancelRequested) {
@@ -169,7 +169,11 @@ export async function runAction() {
     hideProgress();
     // Basic mode already shows the in-app completion panel for failures.
     if (getWorkspaceMode() !== "basic") {
-      await message(messageText, { title: "Error", kind: "error" });
+      showToast(
+        `Operation failed: ${truncateForDialog(messageText, 1000)}`,
+        "error",
+        0,
+      );
     }
   } finally {
     clearPasswordFields();
@@ -320,8 +324,6 @@ export async function runBatchExtract() {
       setStatus("Cancelled", 3000);
       if (!basic) {
         // Completion feedback must not block the event loop or automation.
-        // Unexpected errors still use a dialog below because they need user
-        // attention.
         showToast("Batch extraction was cancelled.", "info", 5000);
       }
     } else if (failed === 0) {
@@ -349,7 +351,11 @@ export async function runBatchExtract() {
     setStatus("Error", 3000, msg);
     hideProgress();
     if (getWorkspaceMode() !== "basic") {
-      await message(msg, { title: "Extraction error", kind: "error" });
+      showToast(
+        `Batch extraction failed: ${truncateForDialog(msg, 1000)}`,
+        "error",
+        0,
+      );
     }
   } finally {
     if (unlistenProgress) unlistenProgress();

@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { message } from "@tauri-apps/plugin-dialog";
 import { $ } from "./utils";
+import { showToast } from "./toast";
 
 export interface OsIntegrationStatus {
   platform: string;
@@ -464,10 +464,7 @@ export async function openOsIntegrationSettings(): Promise<void> {
     await invoke("open_os_integration_settings");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    await message(msg, {
-      title: "Default app settings",
-      kind: "info",
-    });
+    showToast(msg, "error", 0);
   }
 }
 
@@ -480,20 +477,18 @@ export async function openFinderSyncSettings(): Promise<void> {
       await invoke("enable_finder_sync");
       await refreshOsIntegrationStatus();
       if (latestStatus?.finderSyncEnabled) {
-        await message(FINDER_SYNC_ENABLED_MESSAGE, {
-          title: "Finder context menu enabled",
-          kind: "info",
-        });
+        showToast(FINDER_SYNC_ENABLED_MESSAGE, "success", 0);
       } else {
         await invoke("open_finder_sync_settings");
-        await message(
+        showToast(
           [
             "System Settings will open to Login Items & Extensions.",
             "",
             "Find Zinnia Finder (or Zinnia) and turn it on.",
             "Return here and click Refresh when enabled.",
           ].join("\n"),
-          { title: "Enable Finder context menu", kind: "info" },
+          "info",
+          0,
         );
       }
       return;
@@ -501,10 +496,7 @@ export async function openFinderSyncSettings(): Promise<void> {
     await invoke("open_finder_sync_settings");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    await message(msg, {
-      title: "Finder context menu",
-      kind: "info",
-    });
+    showToast(msg, "error", 0);
   }
 }
 
@@ -515,27 +507,22 @@ export async function openFinderServicesSettings(): Promise<void> {
   try {
     if (needsEnable) {
       await invoke("open_finder_services_settings");
-      await message(
+      showToast(
         [
           "System Settings will open to Keyboard Shortcuts.",
           "",
           "Open Services → Files and Folders, then enable Extract with Zinnia and Compress with Zinnia.",
           "Return here and click Refresh when finished.",
         ].join("\n"),
-        {
-          title: "Enable Finder Services",
-          kind: "info",
-        },
+        "info",
+        0,
       );
       return;
     }
     await invoke("open_finder_services_settings");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    await message(msg, {
-      title: "Finder Services",
-      kind: "info",
-    });
+    showToast(msg, "error", 0);
   }
 }
 
@@ -557,17 +544,11 @@ export async function setZinniaDefaultArchiver(
     renderArchiveDefaults(result.results);
     await refreshOsIntegrationStatus();
     if (result.results.some((entry) => !entry.isDefault)) {
-      await message(result.message, {
-        title: "Default archive app",
-        kind: result.changed ? "info" : "warning",
-      });
+      showToast(result.message, result.changed ? "info" : "error", 0);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    await message(msg, {
-      title: "Default archive app",
-      kind: "warning",
-    });
+    showToast(msg, "error", 0);
   } finally {
     if (button) {
       button.disabled = false;
@@ -589,10 +570,7 @@ export async function runDefaultArchiverAction(
       status = await getOsIntegrationStatus();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      await message(msg, {
-        title: "Default archive app",
-        kind: "warning",
-      });
+      showToast(msg, "error", 0);
       return;
     }
   }
@@ -625,17 +603,11 @@ export async function resetPreferredArchiverToSystem(): Promise<void> {
       !result.changed ||
       result.results.some((entry) => entry.status !== "System");
     if (needsAttention) {
-      await message(result.message, {
-        title: "System archive app",
-        kind: result.changed ? "info" : "warning",
-      });
+      showToast(result.message, result.changed ? "info" : "error", 0);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    await message(msg, {
-      title: "System archive app",
-      kind: "warning",
-    });
+    showToast(msg, "error", 0);
   } finally {
     if (button) {
       button.textContent = previousLabel;

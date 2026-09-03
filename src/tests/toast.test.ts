@@ -51,4 +51,11 @@ describe("showToast", () => {
     vi.advanceTimersByTime(200);
     expect(document.querySelectorAll(".toast")).toHaveLength(0);
   });
+
+  it("bounds hostile or oversized feedback text", () => {
+    showToast("x".repeat(10_000), "error", 0);
+    const text = document.querySelector(".toast")?.textContent ?? "";
+    expect(text).toContain("[truncated");
+    expect(text.length).toBeLessThan(4_100);
+  });
 });

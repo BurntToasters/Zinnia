@@ -1,4 +1,4 @@
-import { ask, message } from "@tauri-apps/plugin-dialog";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
@@ -290,10 +290,7 @@ export async function init() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       // Don't abort app startup: Skip / finish should still leave a usable UI.
-      await message(`Setup wizard could not be completed.\n\n${msg}`, {
-        title: "Setup wizard error",
-        kind: "error",
-      });
+      showToast(`Setup wizard could not be completed. ${msg}`, "error", 0);
     }
   }
 
