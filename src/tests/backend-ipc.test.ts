@@ -1,13 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  compressInputProbeInvokeArgs,
-  encodeCompressInputProbe,
   encodeRun7zRequest,
-  invokeCompressInputProbe,
   invokeRun7z,
   run7zInvokeArgs,
 } from "../archive/backend-ipc";
+import {
+  compressInputProbeInvokeArgs,
+  encodeCompressInputProbe,
+  invokeCompressInputProbe,
+} from "../archive/compress-probe-ipc";
 
 const invokeMock = vi.mocked(invoke);
 

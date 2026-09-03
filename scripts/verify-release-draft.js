@@ -9,15 +9,22 @@
 
 import { execSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
+import {
+  normalizeUpdaterSignature,
+  verifyUpdaterSignatures,
+} from "./updater-signature-verifier.js";
+import { resolveUpdaterTargets } from "./gpg-sign.js";
 
 const require = createRequire(import.meta.url);
 const {
   githubApi,
   githubApiRaw,
   assertGitHubCliAuthenticated,
+  githubCliEnvironment,
 } = require("./github-cli.cjs");
 const { isExplicitTruthy } = require("./release-policy.cjs");
 
@@ -182,14 +189,107 @@ export function assertDraftReleaseShape({
 }
 
 export function selectDraftRelease(releases, tag) {
-  const match = (releases || []).find((release) => release?.tag_name === tag);
-  if (!match) {
-    return null;
+  const matches = (releases || []).filter(
+    (release) => release?.tag_name === tag,
+  );
+  const drafts = matches.filter((release) => release.draft);
+  if (drafts.length > 1) {
+    throw new Error(
+      `Multiple draft releases exist for ${tag}. Resolve duplicates before verifying.`,
+    );
   }
-  if (!match.draft) {
+  if (drafts.length === 1) {
+    return drafts[0];
+  }
+  if (matches.length > 0) {
     throw new Error(`Release ${tag} is already published.`);
   }
-  return match;
+  return null;
+}
+
+export function assertManifestAssetReferences(
+  manifest,
+  manifestName,
+  assetNames,
+  { repoOwner, repoName, tag } = {},
+) {
+  const present = new Set(assetNames);
+  const platforms = manifest?.platforms;
+  if (
+    !platforms ||
+    typeof platforms !== "object" ||
+    Object.keys(platforms).length === 0
+  ) {
+    throw new Error(`${manifestName} has no platform entries.`);
+  }
+  for (const [key, entry] of Object.entries(platforms)) {
+    const url = typeof entry?.url === "string" ? entry.url : "";
+    if (!url) {
+      throw new Error(`${manifestName} platform ${key} has no download url.`);
+    }
+    if (typeof entry?.signature !== "string" || entry.signature.length === 0) {
+      throw new Error(`${manifestName} platform ${key} has no signature.`);
+    }
+    let fileName;
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== "https:") {
+        throw new Error(`unsupported scheme in ${url}`);
+      }
+      if (repoOwner && repoName && tag) {
+        const expectedPrefix = `/${repoOwner}/${repoName}/releases/download/${tag}/`;
+        if (
+          parsed.hostname.toLowerCase() !== "github.com" ||
+          parsed.port !== "" ||
+          parsed.username ||
+          parsed.password ||
+          parsed.hash ||
+          !parsed.pathname
+            .toLowerCase()
+            .startsWith(expectedPrefix.toLowerCase())
+        ) {
+          throw new Error(`download URL is outside ${expectedPrefix}`);
+        }
+      }
+      fileName = decodeURIComponent(
+        parsed.pathname.split("/").filter(Boolean).pop() ?? "",
+      );
+    } catch (error) {
+      throw new Error(
+        `${manifestName} platform ${key} has an invalid url ${JSON.stringify(url)}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (!fileName) {
+      throw new Error(
+        `${manifestName} platform ${key} url has no file name: ${url}`,
+      );
+    }
+    if (
+      fileName !== path.posix.basename(fileName) ||
+      fileName !== path.win32.basename(fileName) ||
+      path.posix.isAbsolute(fileName) ||
+      path.win32.isAbsolute(fileName) ||
+      fileName.includes("/") ||
+      fileName.includes("\\") ||
+      fileName.includes(":") ||
+      fileName === "." ||
+      fileName === ".."
+    ) {
+      throw new Error(
+        `${manifestName} platform ${key} has an unsafe artifact filename: ${fileName}`,
+      );
+    }
+    if (!present.has(fileName)) {
+      throw new Error(
+        `${manifestName} platform ${key} points at ${fileName}, which is not a draft asset.`,
+      );
+    }
+    if (!present.has(`${fileName}.sig`)) {
+      throw new Error(
+        `${manifestName} platform ${key} points at ${fileName} without its updater signature asset ${fileName}.sig.`,
+      );
+    }
+  }
 }
 
 async function listAllGithubPages(fetchPage, { perPage = 100 } = {}) {
@@ -261,6 +361,131 @@ function currentHeadCommit() {
   return commit;
 }
 
+function githubAuthToken() {
+  return execSync("gh auth token --hostname github.com", {
+    cwd: root,
+    encoding: "utf8",
+    env: githubCliEnvironment(),
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+}
+
+async function downloadDraftAsset(
+  repoOwner,
+  repoName,
+  asset,
+  destination,
+  token,
+) {
+  if (typeof asset?.id !== "number") {
+    throw new Error(`Draft asset ${asset?.name || "(unknown)"} has no id.`);
+  }
+  const url = `https://api.github.com/repos/${repoOwner}/${repoName}/releases/assets/${asset.id}`;
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/octet-stream",
+      Authorization: `Bearer ${token}`,
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "Zinnia-Release",
+    },
+    redirect: "follow",
+  });
+  if (!response.ok) {
+    throw new Error(
+      `Download ${asset.name} failed with HTTP ${response.status}.`,
+    );
+  }
+  fs.writeFileSync(destination, Buffer.from(await response.arrayBuffer()), {
+    flag: "wx",
+  });
+}
+
+async function verifyDraftUpdaterArtifacts({
+  repoOwner,
+  repoName,
+  listedAssets,
+  manifests,
+}) {
+  const assetsByName = new Map(
+    listedAssets
+      .filter((asset) => asset && typeof asset.name === "string")
+      .map((asset) => [asset.name, asset]),
+  );
+  const records = new Map();
+  for (const { manifest, name: manifestName } of manifests) {
+    for (const [target, entry] of Object.entries(manifest.platforms || {})) {
+      const parsed = new URL(entry.url);
+      const artifactName = decodeURIComponent(
+        parsed.pathname.split("/").filter(Boolean).at(-1) || "",
+      );
+      const previous = records.get(artifactName);
+      if (previous && previous.signature !== entry.signature) {
+        throw new Error(
+          `${manifestName} platform ${target} disagrees on the updater signature for ${artifactName}.`,
+        );
+      }
+      records.set(artifactName, { signature: entry.signature });
+    }
+  }
+  if (records.size === 0) {
+    throw new Error("Draft manifests reference no updater artifacts.");
+  }
+
+  const token = githubAuthToken();
+  if (!token)
+    throw new Error("gh returned an empty GitHub authentication token.");
+  const temporaryDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "zinnia-draft-verify-"),
+  );
+  try {
+    const byName = new Map();
+    const signatureByBaseName = new Map();
+    for (const [name, record] of records) {
+      const asset = assetsByName.get(name);
+      if (!asset) {
+        throw new Error(`Draft manifests reference missing asset ${name}.`);
+      }
+      const artifactPath = path.join(temporaryDirectory, name);
+      await downloadDraftAsset(repoOwner, repoName, asset, artifactPath, token);
+      const signatureAsset = assetsByName.get(`${name}.sig`);
+      if (!signatureAsset) {
+        throw new Error(`Draft manifests reference missing asset ${name}.sig.`);
+      }
+      const signaturePath = `${artifactPath}.sig`;
+      await downloadDraftAsset(
+        repoOwner,
+        repoName,
+        signatureAsset,
+        signaturePath,
+        token,
+      );
+      const manifestSignaturePath = `${artifactPath}.manifest.sig`;
+      fs.writeFileSync(manifestSignaturePath, `${record.signature}\n`, {
+        flag: "wx",
+      });
+      if (
+        normalizeUpdaterSignature(signaturePath) !==
+        normalizeUpdaterSignature(manifestSignaturePath)
+      ) {
+        throw new Error(
+          `Draft asset ${name}.sig does not match updater signature in its manifest.`,
+        );
+      }
+      byName.set(name, artifactPath);
+      signatureByBaseName.set(name, signaturePath);
+    }
+    verifyUpdaterSignatures({
+      root,
+      releaseDir: temporaryDirectory,
+      byName,
+      signatureByBaseName,
+      resolveUpdaterTargets,
+    });
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   const version = readPackageVersion();
   const tag = `v${version}`;
@@ -288,6 +513,7 @@ async function main() {
   const manifestAssets = listedAssets.filter((asset) =>
     /^latest-[a-z0-9_-]+\.json$/i.test(asset?.name || ""),
   );
+  const manifests = [];
   for (const asset of manifestAssets) {
     if (typeof asset.id !== "number") {
       throw new Error(`Draft asset ${asset.name} is missing a GitHub id.`);
@@ -309,6 +535,20 @@ async function main() {
         `${asset.name} reports version ${JSON.stringify(manifest?.version)}, expected ${version}.`,
       );
     }
+    assertManifestAssetReferences(manifest, asset.name, assets, {
+      repoOwner,
+      repoName,
+      tag,
+    });
+    manifests.push({ manifest, name: asset.name });
+  }
+  if (process.argv.includes("--verify-artifacts")) {
+    await verifyDraftUpdaterArtifacts({
+      repoOwner,
+      repoName,
+      listedAssets,
+      manifests,
+    });
   }
   console.log(
     `verify-draft: ok (${tag}, draft, HEAD ${headCommit.slice(0, 12)}, ${assets.length} assets, prerelease=${isPrereleaseVersion(version)})`,

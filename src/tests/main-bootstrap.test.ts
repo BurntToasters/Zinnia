@@ -283,6 +283,11 @@ function ensureMainDomElements(): void {
   const recoveryBanner = ensureElement("startup-recovery-banner", "div");
   recoveryBanner.hidden = true;
   ensureElement("startup-recovery-banner-text", "span");
+  const recoveryAcknowledge = ensureElement(
+    "startup-recovery-banner-acknowledge",
+    "button",
+  );
+  recoveryAcknowledge.hidden = true;
   ensureElement("startup-recovery-banner-dismiss", "button");
   ensureElement("input-list", "div");
   ensureElement("log", "div");
@@ -1312,6 +1317,43 @@ describe("main bootstrap", () => {
 
     expect(mocks.setupWizard.showSetupWizard).toHaveBeenCalled();
     expect(mocks.ui.log).toHaveBeenCalledWith(warning, "error");
+  });
+
+  it("keeps preserved-recovery acknowledgement available when retry fails", async () => {
+    const recoveryMessage =
+      "Extraction stage is missing before its sibling publish was durably committed; the destination and recovery journal were preserved.";
+    setInvokeRouter((command) => {
+      if (command === "get_startup_recovery_status") return recoveryMessage;
+      if (command === "acknowledge_preserved_transaction") {
+        throw new Error("marker is locked");
+      }
+      if (command === "probe_7z") return undefined;
+      if (command === "get_cpu_count") return 8;
+      if (command === "get_log_dir") return "/tmp/logs";
+      if (command === "get_platform_info") return "linux";
+      if (command === "is_packaged") return true;
+      if (command === "is_flatpak") return false;
+      if (command === "get_initial_mode") return "";
+      if (command === "get_initial_paths") return [];
+      if (command === "drain_pending_paths") return [];
+      return undefined;
+    });
+    askMock.mockResolvedValue(true);
+
+    await loadMainModule();
+
+    const acknowledge = document.getElementById(
+      "startup-recovery-banner-acknowledge",
+    ) as HTMLButtonElement;
+    expect(acknowledge.hidden).toBe(false);
+
+    acknowledge.click();
+    await flushAsync();
+
+    expect(acknowledge.hidden).toBe(false);
+    expect(
+      document.getElementById("startup-recovery-banner-text")?.textContent,
+    ).toContain("Could not clear the recovery marker: marker is locked");
   });
 
   it("keeps Explorer handoff failures on the persistent banner", async () => {

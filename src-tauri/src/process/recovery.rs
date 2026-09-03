@@ -315,11 +315,85 @@ pub(crate) fn rollback_archive_journal(journal: &CleanupJournal) -> Result<(), S
     Ok(())
 }
 
+/// Ambiguous sibling-publish preserved state: in-progress, sibling, stage
+/// gone, no move plan, plain directory destination. Gates the ack escape.
+pub(crate) fn journal_is_preserved_ambiguous_publish(
+    journal: &CleanupJournal,
+) -> Result<bool, String> {
+    if journal.archive {
+        return Ok(false);
+    }
+    if !matches!(journal.extract_phase, Some(ExtractJournalPhase::InProgress)) {
+        return Ok(false);
+    }
+    if journal.extract_stage_placement != Some(super::journal::ExtractStagePlacement::Sibling) {
+        return Ok(false);
+    }
+    if extraction_move_plan_exists(journal)? {
+        return Ok(false);
+    }
+    match std::fs::symlink_metadata(&journal.stage) {
+        Ok(_) => return Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.to_string()),
+    }
+    let destination = match std::fs::symlink_metadata(&journal.destination) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(false);
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+    if crate::path_safety::is_link_or_reparse(&destination) || !destination.is_dir() {
+        return Ok(false);
+    }
+    // The original stage was created by this transaction. A same-name
+    // destination may have been installed by another process after the stage
+    // disappeared, so only offer acknowledgment when its stable identity is
+    // still the creation-bound one recorded in the journal.
+    let Some(expected_stage_identity) = journal.extract_stage_identity.as_ref() else {
+        return Ok(false);
+    };
+    let actual_destination_identity = super::journal::path_identity(&journal.destination)?;
+    if !super::journal::file_identities_match(&actual_destination_identity, expected_stage_identity)
+    {
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+/// Accept a preserved destination as-is and drop only the recovery journal.
+fn acknowledge_preserved_transaction_at(app: &tauri::AppHandle) -> Result<String, String> {
+    let _recovery_guard = RECOVERY_LOCK
+        .lock()
+        .map_err(|_| "Archive recovery lock is unavailable.".to_string())?;
+    let path = cleanup_journal_path(app)?;
+    let Some(journal) = read_cleanup_journal_at(&path)? else {
+        return Ok("No interrupted transaction requires acknowledgment.".to_string());
+    };
+    if !journal_is_preserved_ambiguous_publish(&journal)? {
+        return Err(
+            "The active recovery journal is not a preserved ambiguous publish; \
+             let normal recovery resolve it."
+                .to_string(),
+        );
+    }
+    clear_cleanup_journal(app)?;
+    set_startup_recovery_error(None);
+    Ok("Preserved extraction destination accepted; the recovery journal was cleared.".to_string())
+}
+
+#[tauri::command]
+pub async fn acknowledge_preserved_transaction(app: tauri::AppHandle) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || acknowledge_preserved_transaction_at(&app))
+        .await
+        .map_err(|error| format!("Acknowledgment task failed: {error}"))?
+}
+
 /// Mark the one-shot startup recovery pass complete (success or failure).
 pub fn mark_startup_recovery_done() {
     STARTUP_RECOVERY_DONE.store(true, std::sync::atomic::Ordering::Release);
 }
-
 pub fn set_startup_recovery_error(message: Option<String>) {
     if let Ok(mut guard) = STARTUP_RECOVERY_ERROR.lock() {
         *guard = message;

@@ -40,6 +40,8 @@ const SHELL_HANDOFF_SUFFIX: &str = ".tmp";
 /// boot the same way `get_startup_recovery_status` already is.
 #[cfg(any(windows, test))]
 static LAST_SHELL_HANDOFF_ERROR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+/// Serializes the busy-check + queue/spawn decision across concurrent opens.
+static OPEN_ROUTE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(any(windows, test))]
 pub(crate) fn record_shell_handoff_error(message: String) {
@@ -469,6 +471,11 @@ pub(crate) fn route_open_request(app: &tauri::AppHandle, paths: Vec<String>, mod
     }
 
     if should_use_extract_window(&paths, &mode) {
+        // Hold across the check-then-act below: two simultaneous Explorer/Finder
+        // opens must not both see an idle slot and spawn competing windows.
+        let _route_guard = OPEN_ROUTE_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         // The backend intentionally owns one 7z job at a time. Route additional
         // open requests into the main window's existing pending FIFO instead of
         // creating a second quick window that can only fail as busy.

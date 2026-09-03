@@ -121,3 +121,40 @@ test("main records quality-gate proof when all checks pass", () => {
   assert.ok(calls.includes("recordProof"));
   assert.equal(exitCode, 0);
 });
+
+test("main keeps generic test:all green when proof cannot be recorded", () => {
+  const exitCode = main({
+    root: repoRoot,
+    clearProof: () => {},
+    recordProof: () => ({ recorded: false, dirtyFiles: " M source.ts" }),
+    parseCoverage: (results) => {
+      results.coverage.status = "passed";
+    },
+    runner: (_name, _cmd, _args, _parser, results) => {
+      results[_name].status = "passed";
+      if (_name === "test") results.coverage.status = "passed";
+      return true;
+    },
+  });
+
+  assert.equal(exitCode, 0);
+});
+
+test("main fails release proof mode when proof cannot be recorded", () => {
+  const exitCode = main({
+    root: repoRoot,
+    clearProof: () => {},
+    recordProof: () => ({ recorded: false, dirtyFiles: " M source.ts" }),
+    requireCleanProof: true,
+    parseCoverage: (results) => {
+      results.coverage.status = "passed";
+    },
+    runner: (_name, _cmd, _args, _parser, results) => {
+      results[_name].status = "passed";
+      if (_name === "test") results.coverage.status = "passed";
+      return true;
+    },
+  });
+
+  assert.equal(exitCode, 1);
+});

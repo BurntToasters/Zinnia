@@ -39,8 +39,29 @@ async function setInputValue(selector, value) {
   await el.setValue(value);
 }
 
+async function waitForArchiveIdle() {
+  await browser.waitUntil(
+    async () =>
+      browser.execute(() => {
+        const button = document.getElementById("workspace-mode-power");
+        return Boolean(button && !button.disabled);
+      }),
+    {
+      timeout: 60_000,
+      timeoutMsg: "Archive operation stayed active after its output appeared",
+    },
+  );
+}
+
 async function extractArchiveTo(archive, dest, options = {}) {
   await $('[data-mode-btn="extract"]').waitForDisplayed({ timeout: 10_000 });
+  await waitForArchiveIdle();
+  // Each case is an independent extraction. Explicit extract handoffs append
+  // while the Power extract session is active so Finder/Explorer can deliver
+  // one multi-selection in several batches; clear the prior case first.
+  await browser.execute(() => {
+    document.getElementById("clear-inputs")?.click();
+  });
   await applyIncomingPaths([archive], "extract");
   if (options.password) {
     await setInputValue("#extract-password", options.password);
@@ -49,9 +70,31 @@ async function extractArchiveTo(archive, dest, options = {}) {
   await $("#extract-run").click();
 }
 
+async function switchToPowerWorkspace() {
+  await waitForArchiveIdle();
+  // Header controls can sit over native drag regions in WebKit; invoke the
+  // same DOM click handler used by a real user while avoiding missed hit tests.
+  await browser.execute(() => {
+    document.getElementById("workspace-mode-power")?.click();
+  });
+  await browser.waitUntil(
+    async () =>
+      browser.execute(
+        () => document.getElementById("app")?.dataset.workspaceMode === "power",
+      ),
+    {
+      timeout: 10_000,
+      timeoutMsg: "Power workspace did not activate",
+    },
+  );
+}
+
 describe("Zinnia main window", () => {
   before(async () => {
     await waitForMainWindow();
+    // The static HTML appears before app-init finishes wiring handlers.
+    // Wait for its E2E hook so the first interaction cannot race bootstrap.
+    await waitForE2eHook();
   });
 
   it("shows the Basic workspace after launch", async () => {
@@ -113,6 +156,7 @@ describe("Zinnia main window", () => {
   it("compresses hello.txt from Basic using a typed destination", async () => {
     const input = process.env.ZINNIA_E2E_HELLO_TXT;
     const output = path.join(process.env.ZINNIA_E2E_WORK, "basic-compress.7z");
+    await waitForArchiveIdle();
     await applyIncomingPaths([input], "compress");
     await setInputValue("#basic-output-path", output);
     await $("#basic-run-compress").click();
@@ -126,7 +170,7 @@ describe("Zinnia main window", () => {
     const archive = process.env.ZINNIA_E2E_HELLO_7Z;
     const dest = process.env.ZINNIA_E2E_EXTRACT_OUT;
     const payload = process.env.ZINNIA_E2E_PAYLOAD;
-    await $("#workspace-mode-power").click();
+    await switchToPowerWorkspace();
     await extractArchiveTo(archive, dest);
     const extracted = path.join(dest, "hello.txt");
     await browser.waitUntil(() => fs.existsSync(extracted), {
@@ -192,6 +236,7 @@ describe("Zinnia main window", () => {
 
   it("lists hello.txt when browsing hello.7z", async () => {
     const archive = process.env.ZINNIA_E2E_HELLO_7Z;
+    await waitForArchiveIdle();
     await applyIncomingPaths([archive], "");
     const tbody = await $("#browse-tbody");
     await tbody.waitForDisplayed({ timeout: 20_000 });
@@ -206,6 +251,7 @@ describe("Zinnia main window", () => {
 
   it("lists nested/hello.txt when browsing nested.zip", async () => {
     const archive = process.env.ZINNIA_E2E_NESTED_ZIP;
+    await waitForArchiveIdle();
     await applyIncomingPaths([archive], "");
     const tbody = await $("#browse-tbody");
     await tbody.waitForDisplayed({ timeout: 20_000 });

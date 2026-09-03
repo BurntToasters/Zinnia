@@ -25,7 +25,25 @@ export function assertDraftReleaseShape(options: {
   headCommit?: string;
   requireLinuxAarch64?: boolean;
 }): { tag: string; missing: string[] };
+export interface GitHubReleaseRef {
+  id?: number;
+  tag_name?: string;
+  draft?: boolean;
+  prerelease?: boolean;
+  target_commitish?: string;
+}
 export function selectDraftRelease(
-  releases: Array<{ tag_name?: string; draft?: boolean }>,
+  releases: GitHubReleaseRef[],
   tag: string,
-): { tag_name?: string; draft?: boolean } | null;
+): GitHubReleaseRef | null;
+export function assertManifestAssetReferences(
+  manifest: {
+    platforms?: Record<
+      string,
+      { url?: string; signature?: string } | undefined
+    >;
+  },
+  manifestName: string,
+  assetNames: string[],
+  options?: { repoOwner?: string; repoName?: string; tag?: string },
+): void;

@@ -1,49 +1,42 @@
+import fs from "node:fs";
 import { describe, expect, it } from "vitest";
-import {
-  ALLOWED_EXTRA_PREFIXES,
-  ALLOWED_METHOD_PREFIXES,
-  validateExtraArgs,
-} from "../archive-rules";
+import { ALLOWED_METHOD_PREFIXES, validateExtraArgs } from "../archive-rules";
 
 describe("custom argument allow-list", () => {
-  it("exposes narrowed method prefixes plus safe switch families", () => {
+  it("exposes narrowed method prefixes", () => {
     expect(ALLOWED_METHOD_PREFIXES).toContain("-mx");
     expect(ALLOWED_METHOD_PREFIXES).toContain("-mhe=");
-    expect(ALLOWED_EXTRA_PREFIXES).toEqual([
-      ...ALLOWED_METHOD_PREFIXES,
-      "-x",
-      "-i",
-      "-ao",
-      "-bb",
-      "-bt",
-      "-scs",
-      "-slt",
-      "-stl",
-      "-slp",
-      "-ssp",
-      "-sse",
-      "-y",
-      "-r",
-    ]);
+  });
+
+  it("keeps the UI list a subset of validation.rs is_allowed_switch", () => {
+    const rust = fs.readFileSync(
+      "src-tauri/src/validation.rs",
+      "utf8",
+    ) as string;
+    for (const literal of [
+      '"-bsp1"',
+      '"-y"',
+      '"-stl"',
+      '"-slp"',
+      '"-ssp"',
+      '"-sse"',
+      '"-slt"',
+      '"-bt"',
+    ]) {
+      expect(rust, `validation.rs must still recognize ${literal}`).toContain(
+        literal,
+      );
+    }
+    expect(rust).toContain('arg.eq_ignore_ascii_case("-bsp1")');
   });
 
   it("does not expose filesystem, stream, sfx, or -ssw controls via extras", () => {
-    expect(ALLOWED_EXTRA_PREFIXES).not.toEqual(
-      expect.arrayContaining([
-        "-w",
-        "-si",
-        "-so",
-        "-snl",
-        "-snh",
-        "-sfx",
-        "-ssw",
-        "-m",
-      ]),
-    );
-    expect(() => validateExtraArgs(["-ssw"])).toThrow();
-    expect(() => validateExtraArgs(["-snl"])).toThrow();
-    expect(() => validateExtraArgs(["-mfoo=1"])).toThrow();
-    expect(() => validateExtraArgs(["-mxyz"])).toThrow();
-    expect(() => validateExtraArgs(["-mx=9", "-mmt=on"])).not.toThrow();
+    for (const arg of ["-ssw", "-snl", "-snh", "-sfx7z", "-wtmp", "-o/tmp/x"]) {
+      expect(() => validateExtraArgs([arg], "extract")).toThrow();
+      expect(() => validateExtraArgs([arg], "compress")).toThrow();
+    }
+    expect(() =>
+      validateExtraArgs(["-mx=9", "-mmt=on"], "compress"),
+    ).not.toThrow();
   });
 });

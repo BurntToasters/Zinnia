@@ -6,6 +6,7 @@ import {
   UserSettings,
   SETTING_DEFAULTS,
   mergeSettingsPayload,
+  normalizeAutoCloseDelay,
   parseSettingsRaw,
 } from "./settings-model";
 import { getCompressionSecuritySupport } from "./compression-security";
@@ -182,9 +183,10 @@ export function readSettingsModal(): UserSettings {
       $<HTMLSelectElement>("s-quick-extract-warm-idle").value,
       SETTING_DEFAULTS.quickExtractWarmIdleMinutes,
     ),
-    extractAutoCloseSeconds: Number(
+    extractAutoCloseSeconds: normalizeAutoCloseDelay(
       $<HTMLSelectElement>("s-extract-auto-close").value,
-    ) as UserSettings["extractAutoCloseSeconds"],
+      state.currentSettings.extractAutoCloseSeconds,
+    ),
     basicWindowEffects: (() => {
       const el = document.getElementById(
         "s-basic-window-effects",

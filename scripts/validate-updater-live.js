@@ -224,6 +224,24 @@ export function collectManifestArtifactRefs(bodies) {
           `updater-live: artifact URL for ${target} has no filename`,
         );
       }
+      // The decoded URL component becomes a local filename below. Reject
+      // traversal, separators, drive prefixes, and control names before any
+      // filesystem operation can see it.
+      if (
+        name !== path.posix.basename(name) ||
+        name !== path.win32.basename(name) ||
+        path.posix.isAbsolute(name) ||
+        path.win32.isAbsolute(name) ||
+        name.includes("/") ||
+        name.includes("\\") ||
+        name.includes(":") ||
+        name === "." ||
+        name === ".."
+      ) {
+        throw new Error(
+          `updater-live: unsafe artifact filename for ${target}: ${entry.url}`,
+        );
+      }
       const previous = artifacts.get(name);
       if (previous && previous.url !== entry.url) {
         throw new Error(`updater-live: conflicting URLs for ${name}`);
@@ -261,7 +279,9 @@ async function downloadToFile(url, dest) {
   if (!response.ok) {
     throw new Error(`${url}: HTTP ${response.status}`);
   }
-  fs.writeFileSync(dest, Buffer.from(await response.arrayBuffer()));
+  fs.writeFileSync(dest, Buffer.from(await response.arrayBuffer()), {
+    flag: "wx",
+  });
 }
 
 async function verifyDownloadedArtifacts(manifestBodies) {
@@ -302,6 +322,11 @@ async function run() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "zinnia-updater-live-"));
   const files = [];
   const skipped = [];
+  // process.exit() would skip the finally cleanup; every early exit goes here.
+  const exitWith = (code) => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    process.exit(code);
+  };
 
   try {
     for (const target of selectedTargets) {
@@ -329,16 +354,16 @@ async function run() {
             `required targets ${requiredTargets.join(", ")}`,
         ].filter(Boolean);
         console.error(`${message} (${requirements.join("; ")})`);
-        process.exit(1);
+        exitWith(1);
       }
       console.warn(message);
-      process.exit(0);
+      exitWith(0);
     }
     if (requiredTargets.length > 0 && skipped.length > 0) {
       console.error(
         `updater-live: required manifest${skipped.length === 1 ? " is" : "s are"} missing: ${skipped.join(", ")}.`,
       );
-      process.exit(1);
+      exitWith(1);
     }
 
     // Soft CI smoke still shape-checks whatever /latest has. When no explicit
@@ -359,13 +384,13 @@ async function run() {
           console.error(
             `updater-live: ${base}.json is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
           );
-          process.exit(1);
+          exitWith(1);
         }
         if (manifest.version !== pkg) {
           console.error(
             `updater-live: ${base}.json reports version ${JSON.stringify(manifest.version)}, expected package.json ${pkg} (same-channel stale feed). Pass --expected-version=… to override.`,
           );
-          process.exit(1);
+          exitWith(1);
         }
       }
     }
@@ -376,7 +401,7 @@ async function run() {
     if (check.stdout) process.stdout.write(check.stdout);
     if (check.stderr) process.stderr.write(check.stderr);
     if (check.status !== 0) {
-      process.exit(check.status ?? 1);
+      exitWith(check.status ?? 1);
     }
     if (
       shouldVerifyLiveArtifacts({
