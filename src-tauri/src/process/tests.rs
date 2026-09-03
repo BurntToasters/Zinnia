@@ -4936,7 +4936,8 @@ fn archive_stage_identity_mismatch_is_preserved_during_cleanup() {
     let destination = root.join("out.7z");
     std::fs::create_dir_all(&stage).expect("created stage");
     let identity = super::journal::path_identity(&stage).expect("created identity");
-    std::fs::remove_dir(&stage).expect("remove created stage");
+    let retained = root.join("retained-created-stage");
+    std::fs::rename(&stage, &retained).expect("retain created stage");
     std::fs::create_dir(&stage).expect("replacement stage");
     std::fs::write(stage.join("user.txt"), b"replacement").expect("replacement content");
     let journal = CleanupJournal {
@@ -4960,6 +4961,10 @@ fn archive_stage_identity_mismatch_is_preserved_during_cleanup() {
     assert_eq!(
         std::fs::read(stage.join("user.txt")).expect("preserved replacement"),
         b"replacement"
+    );
+    assert!(
+        retained.is_dir(),
+        "creation-owned stage was retained separately"
     );
     let _ = std::fs::remove_dir_all(root);
 }

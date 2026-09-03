@@ -232,7 +232,9 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm audit signatures
       - name: npm audit
-        run: npm audit --audit-level=high
+        # Production graph only. E2E/WDIO advisories are ignored: those
+        # packages cannot be force-bumped under min-release-age=3.
+        run: npm audit --omit=dev --audit-level=high
       - name: Install cargo-audit
         run: cargo install cargo-audit --version ${{ env.CARGO_AUDIT_VERSION }} --locked
       - name: cargo audit
