@@ -1,4 +1,4 @@
-import { message, confirm } from "@tauri-apps/plugin-dialog";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import {
   $,
   escapeHtml,
@@ -40,6 +40,7 @@ import {
   runWithPasswordRetry,
   logCommandResult,
   logTruncationNotice,
+  truncateForDialog,
 } from "./runtime";
 
 let browseArchiveLoader: (() => Promise<ArchiveInfo | null>) | null = null;
@@ -713,9 +714,7 @@ async function openSelectiveExtractModalOnce(): Promise<void> {
     getMode() === mode &&
     !state.running;
   if (!archive) {
-    await message("Select an archive to browse first.", {
-      title: "No archive selected",
-    });
+    showToast("Select an archive to browse first.", "info");
     return;
   }
 
@@ -724,7 +723,7 @@ async function openSelectiveExtractModalOnce(): Promise<void> {
     if (!requestIsCurrent()) return;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    await message(msg, { title: "Invalid input", kind: "error" });
+    showToast(msg, "error", 0);
     return;
   }
 
@@ -746,16 +745,17 @@ async function openSelectiveExtractModalOnce(): Promise<void> {
 
   try {
     // Render while the overlay is still hidden. Hostile member depth/length
-    // limits become a controlled dialog error instead of a half-open modal and
+    // limits become a controlled toast error instead of a half-open modal and
     // an unhandled promise rejection.
     renderSelectiveExtractModal();
   } catch (err) {
     closeSelectiveExtractModal();
     const msg = err instanceof Error ? err.message : String(err);
-    await message(`This archive cannot be browsed safely: ${msg}`, {
-      title: "Archive browsing unavailable",
-      kind: "error",
-    });
+    showToast(
+      `This archive cannot be browsed safely: ${truncateForDialog(msg, 1000)}`,
+      "error",
+      0,
+    );
     return;
   }
 
@@ -787,9 +787,7 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
   try {
     const archive = state.selectiveActiveArchive ?? state.inputs[0] ?? null;
     if (!archive) {
-      await message("Select an archive to extract.", {
-        title: "No archive selected",
-      });
+      showToast("Select an archive to extract.", "info");
       return;
     }
 
@@ -906,7 +904,7 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
       }
       setStatus("Error", 3000, result.stderr || "Operation failed.");
       hideProgress();
-      await showOperationError(result.code, result.stdout, result.stderr);
+      showOperationError(result.code, result.stdout, result.stderr);
     } else {
       setStatus("Done", 2000);
       hideProgress();
@@ -934,7 +932,11 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
     if (isDebugEnabled()) debugLog(`Selective extract threw: ${msg}`);
     setStatus("Error", 3000, msg);
     hideProgress();
-    await message(msg, { title: "Error", kind: "error" });
+    showToast(
+      `Selective extraction failed: ${truncateForDialog(msg, 1000)}`,
+      "error",
+      0,
+    );
   } finally {
     clearPasswordFields();
     setRunning(false);

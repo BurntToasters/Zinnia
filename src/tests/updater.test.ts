@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ask, message } from "@tauri-apps/plugin-dialog";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { check } from "@tauri-apps/plugin-updater";
@@ -50,7 +50,6 @@ function defaultInvoke(command: string): Promise<unknown> {
 }
 
 const askMock = vi.mocked(ask);
-const messageMock = vi.mocked(message);
 const getVersionMock = vi.mocked(getVersion);
 const invokeMock = vi.mocked(invoke);
 const checkMock = vi.mocked(check);
@@ -64,7 +63,6 @@ beforeEach(() => {
   mockState.currentSettings.updateChannel = "stable";
 
   askMock.mockReset();
-  messageMock.mockReset();
   getVersionMock.mockReset();
   invokeMock.mockReset();
   checkMock.mockReset();
@@ -77,7 +75,7 @@ beforeEach(() => {
   setStatusMock.mockReset();
 
   askMock.mockResolvedValue(false);
-  messageMock.mockResolvedValue("Ok");
+  document.getElementById("toast-region")?.remove();
   getVersionMock.mockResolvedValue("0.4.1");
   invokeMock.mockImplementation((command) => defaultInvoke(String(command)));
   checkMock.mockResolvedValue(null);
@@ -130,9 +128,8 @@ describe("checkUpdates", () => {
 
     expect(checkMock).toHaveBeenCalledWith({ timeout: 30_000 });
     expect(devLogMock).toHaveBeenCalledWith("No updates available.");
-    expect(messageMock).toHaveBeenCalledWith(
+    expect(document.getElementById("toast-region")?.textContent).toContain(
       "You are running the latest version.",
-      { title: "No updates" },
     );
     expect(setStatusMock).toHaveBeenNthCalledWith(1, "Checking updates");
     expect(setStatusMock).toHaveBeenLastCalledWith("Idle");
@@ -147,9 +144,8 @@ describe("checkUpdates", () => {
     await checkUpdates();
 
     expect(checkMock).not.toHaveBeenCalled();
-    expect(messageMock).toHaveBeenCalledWith(
+    expect(document.getElementById("toast-region")?.textContent).toContain(
       "Flatpak builds update through Flathub or a reinstalled bundle, not the in-app updater.",
-      { title: "Updates unavailable" },
     );
   });
 
@@ -183,9 +179,8 @@ describe("checkUpdates", () => {
     await checkUpdates();
 
     expect(checkMock).toHaveBeenCalledTimes(2);
-    expect(messageMock).toHaveBeenCalledWith(
+    expect(document.getElementById("toast-region")?.textContent).toContain(
       "You are running the latest version.",
-      { title: "No updates" },
     );
   });
 
@@ -469,16 +464,15 @@ describe("checkUpdates", () => {
     expect(checkMock).toHaveBeenCalledOnce();
   });
 
-  it("shows update error dialog on failures", async () => {
+  it("shows update error toast on failures", async () => {
     checkMock.mockRejectedValue(new Error("network down"));
 
     await checkUpdates();
 
     expect(logMock).toHaveBeenCalledWith("Updater error: network down");
     expect(setStatusMock).toHaveBeenLastCalledWith("Idle");
-    expect(messageMock).toHaveBeenCalledWith(
-      "Failed to check for updates.\n\nnetwork down",
-      { title: "Update error", kind: "error" },
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Failed to check for updates. network down",
     );
   });
 });
@@ -526,6 +520,6 @@ describe("autoCheckUpdates", () => {
 
     expect(logMock).toHaveBeenCalledWith("Update check failed: timeout");
     expect(setStatusMock).toHaveBeenCalledWith("Idle");
-    expect(messageMock).not.toHaveBeenCalled();
+    expect(document.getElementById("toast-region")).toBeNull();
   });
 });

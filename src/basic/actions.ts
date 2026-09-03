@@ -1,4 +1,4 @@
-import { open, confirm, save, message } from "@tauri-apps/plugin-dialog";
+import { open, confirm, save } from "@tauri-apps/plugin-dialog";
 import { promptInput } from "../prompt-modal";
 import { invoke } from "@tauri-apps/api/core";
 import { clearBrowseCache, state } from "../state";
@@ -562,10 +562,7 @@ async function handleBasicExtractActionOnce(
         password = input;
         correctPassword = true;
       } else if (check === "wrong") {
-        await message("Incorrect password. Please try again.", {
-          title: "Error",
-          kind: "error",
-        });
+        showToast("Incorrect password. Please try again.", "error", 5000);
         if (!isBasicPreparationCurrent(preparation)) return;
       } else {
         showBasicCompletion(

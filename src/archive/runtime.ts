@@ -1,6 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { message } from "@tauri-apps/plugin-dialog";
 import { state } from "../state";
 import {
   getWorkspaceMode,
@@ -22,6 +21,7 @@ import { basename } from "../path-display";
 import { formatEta, type ProgressUpdate } from "../progress-update";
 import { debugLog, isDebugEnabled } from "../debug-mode";
 import { invokeRun7z as invokeRun7zRequest } from "./backend-ipc";
+import { showToast } from "../toast";
 
 export const formatBatchEta = formatEta;
 
@@ -44,37 +44,35 @@ export function truncateForDialog(text: string, maxChars = 4000): string {
   return `${text.slice(0, maxChars)}\n\n[truncated ${omitted} chars]`;
 }
 
-export async function showOperationError(
+/**
+ * Surface an operation failure without creating a native modal. Native error
+ * dialogs keep the process alive until a user clicks them, which is unsafe for
+ * close/unattended flows. Full stderr remains in the log and status detail;
+ * toast text is capped so hostile tool output cannot create an enormous DOM
+ * node.
+ */
+export function showOperationError(
   code: number,
   stdout: string,
   stderr: string,
-): Promise<void> {
+): void {
   if (isDebugEnabled()) {
     debugLog(
-      `Operation error dialog (exit ${code}): ${describe7zError(stdout, stderr) || "(no hint)"}${stderr.trim() ? `\nstderr: ${stderr.trim().slice(0, 2000)}` : ""}`,
+      `Operation error (exit ${code}): ${describe7zError(stdout, stderr) || "(no hint)"}${stderr.trim() ? `\nstderr: ${stderr.trim().slice(0, 2000)}` : ""}`,
     );
   }
   if (getWorkspaceMode() === "basic") return;
   const hint = describe7zError(stdout, stderr);
-  const detail = stderr.trim() ? `\n\n${truncateForDialog(stderr.trim())}` : "";
-  const hintLine = hint ? `\n\n${hint}` : "";
+  const hintLine = hint ? ` ${hint}` : "";
   if (code === 1) {
-    await message(
-      `7-Zip stopped with warnings (exit code 1). The operation is treated as failed and its output was not published.${hintLine}${detail}`,
-      {
-        title: "Operation failed with warnings",
-        kind: "warning",
-      },
+    showToast(
+      `7-Zip stopped with warnings (exit code 1). Output was not published.${hintLine}`,
+      "error",
+      0,
     );
     return;
   }
-  await message(
-    `Operation failed with exit code ${code}.${hintLine}${detail}`,
-    {
-      title: "Operation failed",
-      kind: "error",
-    },
-  );
+  showToast(`Operation failed with exit code ${code}.${hintLine}`, "error", 0);
 }
 
 // Paired with each field's Show/Hide toggle button id. Clearing `.value`
@@ -167,12 +165,18 @@ export async function ensureRuntimeReady(): Promise<boolean> {
     log(`7-Zip runtime check failed: ${msg}`, "error");
     setStatus("Missing runtime dependency", 3000);
     hideProgress();
-    await message(`The bundled 7-Zip runtime check failed.\n\n${msg}`, {
-      title: "Missing runtime dependency",
-      kind: "error",
-    });
+    showToast(
+      `Bundled 7-Zip runtime check failed. ${truncateForDialog(msg, 1000)}`,
+      "error",
+      0,
+    );
     return false;
   }
+}
+
+/** Clear cached runtime health when bundled runtime may have changed. */
+export function invalidateRuntimeProbe(): void {
+  runtimeProbePromise = null;
 }
 
 /** True only while a `run_7z` invoke is in flight (not during a password prompt). */

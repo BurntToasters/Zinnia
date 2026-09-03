@@ -1,4 +1,3 @@
-import { message } from "@tauri-apps/plugin-dialog";
 import { $ } from "../utils";
 import {
   state,
@@ -29,6 +28,7 @@ import {
 import { debugLog, debugLogCommand, isDebugEnabled } from "../debug-mode";
 import type { ArchiveInfo } from "../browse-model";
 import { invokeRun7z } from "./backend-ipc";
+import { showToast } from "../toast";
 
 export type ArchiveTestResult = "passed" | "failed" | "cancelled" | "error";
 
@@ -39,16 +39,14 @@ export async function testArchive(): Promise<ArchiveTestResult> {
   try {
     const archive = state.inputs[0];
     if (!archive) {
-      await message("Select an archive to test.", {
-        title: "No archive selected",
-      });
+      showToast("Select an archive to test.", "info");
       return "failed";
     }
     try {
       await ensureArchivePaths([archive], "test");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      await message(msg, { title: "Invalid input", kind: "error" });
+      showToast(msg, "error", 0);
       return "failed";
     }
 
@@ -73,9 +71,7 @@ export async function testArchive(): Promise<ArchiveTestResult> {
     if (result.code === 0) {
       setStatus("Integrity test passed", 3000);
       log("Archive integrity test: OK");
-      await message("Archive integrity test passed. No errors found.", {
-        title: "Test passed",
-      });
+      showToast("Archive integrity test passed. No errors found.", "success");
       clearPasswordFields();
       return "passed";
     }
@@ -83,11 +79,12 @@ export async function testArchive(): Promise<ArchiveTestResult> {
       setStatus("Integrity test failed with warnings", 3000);
       log("Archive integrity test: FAILED WITH WARNINGS (exit code 1)");
       const warningDetails = result.stderr
-        ? `\n\n${truncateForDialog(result.stderr.trim())}`
+        ? `\n\n${truncateForDialog(result.stderr.trim(), 1000)}`
         : "";
-      await message(
+      showToast(
         `Archive integrity test stopped with warnings (exit code 1) and is not considered a pass.${warningDetails}`,
-        { title: "Test failed with warnings", kind: "warning" },
+        "error",
+        0,
       );
       return "failed";
     }
@@ -95,14 +92,12 @@ export async function testArchive(): Promise<ArchiveTestResult> {
     setStatus("Integrity test failed", 3000);
     log(`Archive integrity test: FAILED (exit code ${result.code})`);
     const errorDetails = result.stderr
-      ? `\n\n${truncateForDialog(result.stderr.trim())}`
+      ? `\n\n${truncateForDialog(result.stderr.trim(), 1000)}`
       : "";
-    await message(
+    showToast(
       `Archive integrity test failed (exit code ${result.code}).${errorDetails}`,
-      {
-        title: "Test failed",
-        kind: "error",
-      },
+      "error",
+      0,
     );
     return "failed";
   } catch (err) {
@@ -110,7 +105,11 @@ export async function testArchive(): Promise<ArchiveTestResult> {
     log(`Test error: ${msg}`);
     setStatus("Error", 3000, msg);
     hideProgress();
-    await message(msg, { title: "Test error", kind: "error" });
+    showToast(
+      `Archive integrity test failed: ${truncateForDialog(msg, 1000)}`,
+      "error",
+      0,
+    );
     return "error";
   } finally {
     clearPasswordFields();
@@ -125,9 +124,7 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
   try {
     const archive = state.inputs[0];
     if (!archive) {
-      await message("Select an archive to browse.", {
-        title: "No archive selected",
-      });
+      showToast("Select an archive to browse.", "info");
       return null;
     }
     // Keep identity local until the listing succeeds so a failed browse does
@@ -146,7 +143,7 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
       listingIdentity = validation.identity;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      await message(msg, { title: "Invalid input", kind: "error" });
+      showToast(msg, "error", 0);
       return null;
     }
 
@@ -180,26 +177,22 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
         ? "\n\nThis archive appears to be encrypted. Enter the archive password and try again."
         : "";
       const errorDetails = result.stderr
-        ? `\n\n${truncateForDialog(result.stderr.trim())}`
+        ? `\n\n${truncateForDialog(result.stderr.trim(), 1000)}`
         : "";
-      await message(
+      showToast(
         `Failed to list archive contents (exit code ${result.code}).${passwordHint}${errorDetails}`,
-        {
-          title: "Browse failed",
-          kind: "error",
-        },
+        "error",
+        0,
       );
       return null;
     }
 
     if (result.stdout_truncated) {
       setStatus("Archive listing too large", 3000);
-      await message(
+      showToast(
         "The archive listing exceeded Zinnia's safe output limit, so it cannot be displayed completely.",
-        {
-          title: "Browse incomplete",
-          kind: "error",
-        },
+        "error",
+        0,
       );
       return null;
     }
@@ -238,7 +231,7 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
     log(`Browse error: ${msg}`);
     if (isDebugEnabled()) debugLog(`Browse error: ${msg}`);
     setStatus("Error", 3000, msg);
-    await message(msg, { title: "Browse error", kind: "error" });
+    showToast(`Browse failed: ${truncateForDialog(msg, 1000)}`, "error", 0);
     return null;
   } finally {
     setRunning(false);

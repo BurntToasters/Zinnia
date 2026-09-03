@@ -27,6 +27,7 @@ import { SAFE_EXTRACT_OVERWRITE_MODE } from "../extract-policy";
 import { MAX_ARCHIVE_TREE_DEPTH } from "../selective-extract";
 import { setMode } from "../ui";
 import { decodeRun7zInvokePayload } from "./backend-ipc-test-utils";
+import { invalidateRuntimeProbe } from "../archive/runtime";
 
 const invokeMock = vi.mocked(invoke);
 const messageMock = vi.mocked(message);
@@ -188,6 +189,7 @@ beforeEach(() => {
   saveMock.mockReset();
   saveMock.mockResolvedValue(null);
   invokeMock.mockReset();
+  invalidateRuntimeProbe();
 });
 
 describe("addFilesToArchive", () => {
@@ -333,9 +335,10 @@ describe("archive test/browse/selective flows", () => {
     const result = await testArchive();
 
     expect(result).toBe("failed");
-    expect(messageMock).toHaveBeenCalledWith("Select an archive to test.", {
-      title: "No archive selected",
-    });
+    expect(messageMock).not.toHaveBeenCalled();
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Select an archive to test.",
+    );
   });
 
   it("clears the Basic browse password after an archive test", async () => {
@@ -368,6 +371,10 @@ describe("archive test/browse/selective flows", () => {
     const result = await testArchive();
 
     expect(result).toBe("failed");
+    expect(messageMock).not.toHaveBeenCalled();
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Archive integrity test stopped with warnings",
+    );
     const runCall = invokeMock.mock.calls.find(([name]) => name === "run_7z");
     expect(decodeRun7zInvokePayload(runCall?.[1]).args).toEqual(
       expect.arrayContaining(["t", "/tmp/sample.7z"]),
@@ -393,6 +400,10 @@ describe("archive test/browse/selective flows", () => {
 
     const result = await testArchive();
     expect(result).toBe("passed");
+    expect(messageMock).not.toHaveBeenCalled();
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Archive integrity test passed. No errors found.",
+    );
     const runCall = invokeMock.mock.calls.find(([name]) => name === "run_7z");
     expect(decodeRun7zInvokePayload(runCall?.[1]).args).toEqual(
       expect.arrayContaining(["t", "-spd", "--", archive]),
@@ -453,16 +464,8 @@ describe("archive test/browse/selective flows", () => {
     const result = await browseArchive();
 
     expect(result).toBeNull();
-    const browseFailureCall = messageMock.mock.calls.find((call) => {
-      const options = call[1];
-      return (
-        options !== undefined &&
-        typeof options === "object" &&
-        "title" in options &&
-        options.title === "Browse failed"
-      );
-    });
-    expect((browseFailureCall?.[0] as string) ?? "").toContain(
+    expect(messageMock).not.toHaveBeenCalled();
+    expect(document.getElementById("toast-region")?.textContent).toContain(
       "appears to be encrypted",
     );
   });
@@ -618,9 +621,9 @@ describe("archive test/browse/selective flows", () => {
       (document.getElementById("selective-overlay") as HTMLElement).hidden,
     ).toBe(true);
     expect(state.selectiveActiveArchive).toBeNull();
-    expect(messageMock).toHaveBeenCalledWith(
-      expect.stringContaining("256-level browsing limit"),
-      { title: "Archive browsing unavailable", kind: "error" },
+    expect(messageMock).not.toHaveBeenCalled();
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "256-level browsing limit",
     );
   });
 
@@ -658,10 +661,10 @@ describe("archive test/browse/selective flows", () => {
 
     await runSelectiveExtractFromModal();
 
-    expect(messageMock).toHaveBeenCalledWith("Choose a destination folder.", {
-      title: "Error",
-      kind: "error",
-    });
+    expect(messageMock).not.toHaveBeenCalled();
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Selective extraction failed: Choose a destination folder.",
+    );
   });
 
   it("runs selective extraction for selected entries", async () => {
@@ -747,9 +750,9 @@ describe("archive test/browse/selective flows", () => {
     const result = await browseArchive();
 
     expect(result).toBeNull();
-    expect(messageMock).toHaveBeenCalledWith(
-      expect.stringContaining("Only supported archive files can be used"),
-      { title: "Invalid input", kind: "error" },
+    expect(messageMock).not.toHaveBeenCalled();
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Only supported archive files can be used",
     );
   });
 
@@ -1096,9 +1099,9 @@ describe("archive test/browse/selective flows", () => {
 
     await runSelectiveExtractFromModal();
 
-    expect(messageMock).toHaveBeenCalledWith(
-      "Browse archive contents first before selective extraction.",
-      { title: "Error", kind: "error" },
+    expect(messageMock).not.toHaveBeenCalled();
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Selective extraction failed: Browse archive contents first before selective extraction.",
     );
   });
 
@@ -1126,7 +1129,33 @@ describe("archive test/browse/selective flows", () => {
     expect(invokeMock.mock.calls.some(([name]) => name === "run_7z")).toBe(
       false,
     );
-    expect(messageMock).toHaveBeenCalled();
+    expect(messageMock).not.toHaveBeenCalled();
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Operation failed: Delete after compression is unavailable",
+    );
+  });
+
+  it("reports runtime probe failures without a blocking native dialog", async () => {
+    const app = document.getElementById("app") as HTMLElement;
+    app.dataset.mode = "add";
+    app.dataset.workspaceMode = "power";
+    state.inputs = ["/tmp/input.txt"];
+    (document.getElementById("output-path") as HTMLInputElement).value =
+      "/tmp/output.7z";
+    (document.getElementById("delete-after") as HTMLInputElement).checked =
+      false;
+    setInvokeRouter((command) => {
+      if (command === "probe_7z") throw new Error("missing sidecar");
+      return undefined;
+    });
+
+    await runAction();
+
+    expect(messageMock).not.toHaveBeenCalled();
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Bundled 7-Zip runtime check failed. missing sidecar",
+    );
+    expect(state.running).toBe(false);
   });
 
   it("treats add-mode warning exit code as failure", async () => {
@@ -1159,9 +1188,9 @@ describe("archive test/browse/selective flows", () => {
     const payload = decodeRun7zInvokePayload(runCall?.[1]);
     expect(payload.args[0]).toBe("a");
     expect(payload.expectedArchiveIdentity).toBe("absent");
-    expect(messageMock).toHaveBeenCalledWith(
-      expect.stringContaining("exit code 1"),
-      expect.objectContaining({ kind: "warning" }),
+    expect(messageMock).not.toHaveBeenCalled();
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "7-Zip stopped with warnings (exit code 1). Output was not published.",
     );
     expect(document.getElementById("status")?.textContent).toContain("Error");
   });
@@ -1383,7 +1412,7 @@ describe("archive test/browse/selective flows", () => {
     expect(invokeMock).toHaveBeenCalledWith("cancel_7z");
   });
 
-  it("shows missing-info preview dialog when command args cannot be built", async () => {
+  it("shows missing-info toast when command args cannot be built", async () => {
     const app = document.getElementById("app") as HTMLElement;
     app.dataset.mode = "add";
     state.inputs = [];
@@ -1391,9 +1420,10 @@ describe("archive test/browse/selective flows", () => {
 
     await previewCommand();
 
-    expect(messageMock).toHaveBeenCalledWith("Choose an output archive path.", {
-      title: "Missing info",
-    });
+    expect(messageMock).not.toHaveBeenCalled();
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Choose an output archive path.",
+    );
   });
 
   it("opens and closes command preview modal with trigger focus restoration", async () => {
@@ -1434,9 +1464,9 @@ describe("archive test/browse/selective flows", () => {
 
     await copyCommandPreview();
 
-    expect(messageMock).toHaveBeenCalledWith(
-      expect.stringContaining("Could not copy command."),
-      expect.objectContaining({ title: "Copy failed", kind: "error" }),
+    expect(messageMock).not.toHaveBeenCalled();
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Could not copy command. copy denied",
     );
   });
 
@@ -1466,9 +1496,9 @@ describe("convertArchive", () => {
   it("requires an open archive before converting", async () => {
     state.inputs = [];
     await convertArchive();
-    expect(messageMock).toHaveBeenCalledWith(
+    expect(messageMock).not.toHaveBeenCalled();
+    expect(document.getElementById("toast-region")?.textContent).toContain(
       "Open an archive first to convert it.",
-      expect.objectContaining({ title: "No archive", kind: "warning" }),
     );
     expect(saveMock).not.toHaveBeenCalled();
   });
@@ -1478,9 +1508,9 @@ describe("convertArchive", () => {
     (document.getElementById("format") as HTMLSelectElement).value = "gzip";
     saveMock.mockResolvedValueOnce("/tmp/hello.tar.gz");
     await convertArchive();
-    expect(messageMock).toHaveBeenCalledWith(
-      expect.stringMatching(/compound TAR/i),
-      expect.objectContaining({ title: "Invalid output filename" }),
+    expect(messageMock).not.toHaveBeenCalled();
+    expect(document.getElementById("toast-region")?.textContent).toMatch(
+      /compound TAR/i,
     );
     expect(invokeMock.mock.calls.some(([name]) => name === "run_7z")).toBe(
       false,
@@ -1592,9 +1622,9 @@ describe("convertArchive", () => {
         ([name]) => name === "list_managed_temp_children",
       ),
     ).toBe(false);
-    expect(messageMock).toHaveBeenCalledWith(
-      expect.stringContaining("exit code 1"),
-      expect.objectContaining({ kind: "warning" }),
+    expect(messageMock).not.toHaveBeenCalled();
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "7-Zip stopped with warnings (exit code 1). Output was not published.",
     );
   });
 
@@ -1626,9 +1656,9 @@ describe("convertArchive", () => {
     await convertArchive();
 
     expect(runArgs).toHaveLength(1);
-    expect(messageMock).toHaveBeenCalledWith(
+    expect(messageMock).not.toHaveBeenCalled();
+    expect(document.getElementById("toast-region")?.textContent).toContain(
       "Conversion extract produced no files to recompress.",
-      { title: "Conversion error", kind: "error" },
     );
     expect(invokeMock).toHaveBeenCalledWith("remove_managed_temp_dir", {
       path: "/tmp/zinnia-convert-empty",

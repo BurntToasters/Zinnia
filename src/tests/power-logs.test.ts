@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "./setup-dom";
-import { ask, message } from "@tauri-apps/plugin-dialog";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 
 const uiMocks = vi.hoisted(() => ({
@@ -16,9 +16,8 @@ describe("power-logs", () => {
     vi.clearAllMocks();
     vi.mocked(invoke).mockReset();
     vi.mocked(ask).mockReset();
-    vi.mocked(message).mockReset();
     vi.mocked(ask).mockResolvedValue(false);
-    vi.mocked(message).mockResolvedValue(true as never);
+    document.getElementById("toast-region")?.remove();
   });
 
   it("exports logs and shows success", async () => {
@@ -27,14 +26,16 @@ describe("power-logs", () => {
     await exportLocalLogs();
     expect(invoke).toHaveBeenCalledWith("export_logs");
     expect(uiMocks.log).toHaveBeenCalledWith("Logs exported successfully.");
-    expect(message).toHaveBeenCalled();
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Logs exported successfully.",
+    );
   });
 
   it("skips dialog when export is cancelled", async () => {
     vi.mocked(invoke).mockResolvedValue(false);
     const { exportLocalLogs } = await import("../power-logs");
     await exportLocalLogs();
-    expect(message).not.toHaveBeenCalled();
+    expect(document.getElementById("toast-region")).toBeNull();
   });
 
   it("opens the logs folder", async () => {
@@ -69,9 +70,8 @@ describe("power-logs", () => {
       expect.stringContaining("Failed to export logs"),
       "error",
     );
-    expect(message).toHaveBeenCalledWith(
-      expect.stringContaining("disk full"),
-      expect.objectContaining({ kind: "error" }),
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Failed to export logs. disk full",
     );
   });
 
@@ -83,9 +83,8 @@ describe("power-logs", () => {
       expect.stringContaining("folder unavailable"),
       "error",
     );
-    expect(message).toHaveBeenCalledWith(
-      expect.stringContaining("folder unavailable"),
-      expect.objectContaining({ kind: "error" }),
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Failed to open logs folder. folder unavailable",
     );
   });
 
@@ -98,9 +97,8 @@ describe("power-logs", () => {
       expect.stringContaining("Failed to clear logs"),
       "error",
     );
-    expect(message).toHaveBeenCalledWith(
-      expect.stringContaining("locked"),
-      expect.objectContaining({ kind: "error" }),
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Failed to clear logs. locked",
     );
   });
 });

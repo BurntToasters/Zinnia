@@ -1,7 +1,7 @@
-import { message } from "@tauri-apps/plugin-dialog";
 import { trapFocus, releaseFocusTrap } from "../utils";
 import { buildArgs } from "./args";
 import { buildCommandPreviewText } from "./command-sanitize";
+import { showToast } from "../toast";
 
 export {
   sanitizeCommandArgsForPreview,
@@ -70,10 +70,7 @@ export async function copyCommandPreview(): Promise<void> {
     resetCommandPreviewCopyStateSoon();
   } catch (err) {
     const messageText = err instanceof Error ? err.message : String(err);
-    await message(`Could not copy command.\n\n${messageText}`, {
-      title: "Copy failed",
-      kind: "error",
-    });
+    showToast(`Could not copy command. ${messageText}`, "error", 0);
   }
 }
 
@@ -88,7 +85,7 @@ export async function previewCommand(trigger?: HTMLElement) {
       "command-preview-text",
     ) as HTMLElement | null;
     if (!overlay || !preview) {
-      await message(previewText, { title: "Command preview" });
+      showToast(previewText, "info", 0);
       return;
     }
 
@@ -100,6 +97,6 @@ export async function previewCommand(trigger?: HTMLElement) {
     if (modal) trapFocus(modal);
   } catch (err) {
     const messageText = err instanceof Error ? err.message : String(err);
-    await message(messageText, { title: "Missing info" });
+    showToast(messageText, "error", 0);
   }
 }

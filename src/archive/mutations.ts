@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { message, open, save } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { $, parseThreads } from "../utils";
 import { SETTING_DEFAULTS, state } from "../state";
 import { devLog, getMode, log, setRunning, setStatus } from "../ui";
@@ -28,6 +28,7 @@ import {
   ensureRuntimeReady,
   logCommandResult,
   runWithPasswordRetry,
+  truncateForDialog,
   showOperationError,
   type Run7zResult,
 } from "./runtime";
@@ -85,16 +86,14 @@ export async function addFilesToArchive(): Promise<void> {
   if (state.running) return;
   const archive = state.inputs[0];
   if (!archive) {
-    await message("Open an archive first to add files to it.", {
-      title: "No archive",
-      kind: "warning",
-    });
+    showToast("Open an archive first to add files to it.", "info");
     return;
   }
   if (!/\.(?:7z|zip|tar)$/i.test(archive)) {
-    await message(
+    showToast(
       "This archive format cannot be updated in place. Convert it to 7z, ZIP, or TAR, or create a new archive.",
-      { title: "Update unavailable", kind: "warning" },
+      "info",
+      0,
     );
     return;
   }
@@ -178,7 +177,7 @@ export async function addFilesToArchive(): Promise<void> {
       if (isDebugEnabled()) {
         debugLog(`Add files failed with exit code ${result.code}.`);
       }
-      await showOperationError(result.code, result.stdout, result.stderr);
+      showOperationError(result.code, result.stdout, result.stderr);
       return;
     }
 
@@ -196,7 +195,11 @@ export async function addFilesToArchive(): Promise<void> {
     log(`Error: ${msg}`, "error");
     if (isDebugEnabled()) debugLog(`Add files threw: ${msg}`);
     setStatus("Error", 3000, msg);
-    await message(msg, { title: "Error", kind: "error" });
+    showToast(
+      `Add-files operation failed: ${truncateForDialog(msg, 1000)}`,
+      "error",
+      0,
+    );
   } finally {
     setRunning(false);
     if (!refreshAfterRun) clearPasswordFields();
@@ -209,10 +212,7 @@ export async function convertArchive(): Promise<void> {
   if (state.running) return;
   const archive = state.inputs[0];
   if (!archive) {
-    await message("Open an archive first to convert it.", {
-      title: "No archive",
-      kind: "warning",
-    });
+    showToast("Open an archive first to convert it.", "info");
     return;
   }
 
@@ -225,7 +225,7 @@ export async function convertArchive(): Promise<void> {
     rawEncryptHeaders,
   );
   if (securityError) {
-    await message(securityError, { title: "Invalid encryption options" });
+    showToast(securityError, "error", 0);
     return;
   }
   const { password: compressPassword, encryptHeaders } =
@@ -249,10 +249,7 @@ export async function convertArchive(): Promise<void> {
   const extensionError = validateArchiveOutputExtension(dest, format);
   if (extensionError) {
     picked.release();
-    await message(extensionError, {
-      title: "Invalid output filename",
-      kind: "warning",
-    });
+    showToast(extensionError, "error", 0);
     return;
   }
 
@@ -269,7 +266,11 @@ export async function convertArchive(): Promise<void> {
   } catch (err) {
     picked.release();
     const msg = err instanceof Error ? err.message : String(err);
-    await message(msg, { title: "Conversion error", kind: "error" });
+    showToast(
+      `Conversion setup failed: ${truncateForDialog(msg, 1000)}`,
+      "error",
+      0,
+    );
     return;
   }
 
@@ -326,7 +327,7 @@ export async function convertArchive(): Promise<void> {
       if (isDebugEnabled()) {
         debugLog(`Convert extract failed with exit code ${extract.code}.`);
       }
-      await showOperationError(extract.code, extract.stdout, extract.stderr);
+      showOperationError(extract.code, extract.stdout, extract.stderr);
       return;
     }
 
@@ -380,7 +381,7 @@ export async function convertArchive(): Promise<void> {
       if (isDebugEnabled()) {
         debugLog(`Convert failed with exit code ${result.code}.`);
       }
-      await showOperationError(result.code, result.stdout, result.stderr);
+      showOperationError(result.code, result.stdout, result.stderr);
       return;
     }
 
@@ -395,7 +396,7 @@ export async function convertArchive(): Promise<void> {
     log(`Error: ${msg}`, "error");
     if (isDebugEnabled()) debugLog(`Convert threw: ${msg}`);
     setStatus("Error", 3000, msg);
-    await message(msg, { title: "Conversion error", kind: "error" });
+    showToast(`Conversion failed: ${truncateForDialog(msg, 1000)}`, "error", 0);
   } finally {
     if (tempDir) {
       try {
