@@ -316,9 +316,12 @@ fn finalization_releases_only_after_cleanup_completes() {
     let error = settle_archive_finalization(&journal_owned, Ok(Ok(())), || {
         Err("journal retained".to_string())
     })
-    .expect_err("journal failure must retain ownership");
+    .expect_err("journal failure must still be reported");
     assert_eq!(error, "journal retained");
-    assert!(ensure_idle(&lock_process(&journal_owned).expect("journal state")).is_err());
+    // A completed finalization must not keep the shared slot wedged because a
+    // durable marker unlink failed; startup recovery treats committed
+    // journals as cleanup-safe.
+    assert!(ensure_idle(&lock_process(&journal_owned).expect("journal state")).is_ok());
 }
 
 #[test]
@@ -525,6 +528,72 @@ fn interpret_terminate_wait_treats_timeout_as_failure() {
     assert!(interpret_terminate_wait(Ok(None)).is_err());
 }
 
+fn spawn_linger_child() -> std::sync::Arc<shared_child::SharedChild> {
+    #[cfg(unix)]
+    let mut command = {
+        let mut command = std::process::Command::new("sh");
+        command.args(["-c", "sleep 30"]);
+        command
+    };
+    #[cfg(windows)]
+    let mut command = {
+        let mut command = std::process::Command::new("cmd");
+        command.args(["/C", "ping -n 30 127.0.0.1 >NUL"]);
+        command
+    };
+    std::sync::Arc::new(shared_child::SharedChild::spawn(&mut command).expect("spawn child"))
+}
+
+fn wedge_state(child: std::sync::Arc<shared_child::SharedChild>) -> ProcessState {
+    let mut process = ProcessState::idle();
+    process.child = Some(child);
+    process.operation_liveness = Some(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+        false,
+    )));
+    process.cancelling = true;
+    process.owner_label = Some("main".to_string());
+    process.abort_reason = Some("cancelled".to_string());
+    process
+}
+
+#[test]
+fn reaper_leaves_live_child_wedge_busy() {
+    let child = spawn_linger_child();
+    let mut state = wedge_state(child.clone());
+    state
+        .operation_liveness
+        .as_ref()
+        .unwrap()
+        .store(true, std::sync::atomic::Ordering::Release);
+    assert!(!state.reap_orphaned_child());
+    assert!(ensure_idle_mut(&mut state).is_err());
+    terminate_child(&child).expect("terminate linger child");
+}
+
+#[test]
+fn reaper_clears_slot_once_wedged_child_has_exited() {
+    let child = spawn_linger_child();
+    terminate_child(&child).expect("terminate before reap");
+    let mut state = wedge_state(child);
+    assert!(state.reap_orphaned_child());
+    assert!(state.child.is_none());
+    assert!(!state.cancelling);
+    assert_eq!(state.owner_label, None);
+    assert_eq!(state.abort_reason, None);
+    assert!(ensure_idle_mut(&mut state).is_ok());
+}
+
+#[test]
+fn reaper_clears_probe_slot_after_failed_termination() {
+    let child = spawn_linger_child();
+    terminate_child(&child).expect("terminate before reap");
+    let mut state = wedge_state(child);
+    state.preparing = true;
+    assert!(state.reap_orphaned_child());
+    assert!(!state.preparing);
+    assert!(ensure_idle_mut(&mut state).is_ok());
+}
+
 #[test]
 fn finalize_preparation_error_keeps_slot_when_child_is_still_running() {
     #[cfg(unix)]
@@ -600,6 +669,38 @@ fn stream_error_does_not_fake_child_exit() {
             "a stream error must not be treated as child death"
         );
         assert_eq!(collected.stream_error.as_deref(), Some("broken pipe"));
+    });
+}
+
+#[test]
+fn stream_error_keeps_collecting_until_termination() {
+    tauri::async_runtime::block_on(async {
+        let (tx, mut rx) =
+            tauri::async_runtime::channel::<tauri_plugin_shell::process::CommandEvent>(4);
+        tx.send(tauri_plugin_shell::process::CommandEvent::Error(
+            "broken pipe".to_string(),
+        ))
+        .await
+        .expect("send stream error");
+        tx.send(tauri_plugin_shell::process::CommandEvent::Stdout(
+            b"tail\n".to_vec(),
+        ))
+        .await
+        .expect("send trailing output");
+        tx.send(tauri_plugin_shell::process::CommandEvent::Terminated(
+            tauri_plugin_shell::process::TerminatedPayload {
+                code: Some(1),
+                signal: None,
+            },
+        ))
+        .await
+        .expect("send termination");
+        drop(tx);
+
+        let collected = collect_command_output(&mut rx, 1024, |_| {}).await;
+        assert_eq!(collected.stream_error.as_deref(), Some("broken pipe"));
+        assert_eq!(collected.exit_code(), 1);
+        assert_eq!(collected.stdout, "tail\n");
     });
 }
 
@@ -1786,6 +1887,48 @@ fn extraction_commit_point_precedes_stage_cleanup() {
     assert!(committed.get());
     assert!(!staged.exists());
     assert!(!move_plan_path(&staged).exists());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn sibling_extract_journal_validation_accepts_published_destination() {
+    let root = temp_root("zinnia-extract-journal-published-destination");
+    let stage = root.join(".zinnia-extract-0123456789abcdef0123456789abcdef");
+    let destination = root.join("destination");
+    std::fs::create_dir_all(&stage).expect("staged tree");
+    std::fs::write(stage.join("new.txt"), b"new").expect("staged file");
+    let stage_identity = super::journal::path_identity(&stage).expect("stage identity");
+    let journal = CleanupJournal {
+        stage: stage.clone(),
+        destination: destination.clone(),
+        archive: false,
+        extract_stage_placement: Some(ExtractStagePlacement::Sibling),
+        move_plan_sidecar: true,
+        move_plan_identity: None,
+        move_identity_log_identity: None,
+        previous_archive_family: Vec::new(),
+        previous_archive_identities: Vec::new(),
+        next_archive_family: Vec::new(),
+        next_archive_identities: Vec::new(),
+        extract_stage_identity: Some(stage_identity.clone()),
+        extract_phase: Some(ExtractJournalPhase::InProgress),
+        archive_phase: None,
+    };
+    let plan = CleanupPlan {
+        staged_extract: Some((stage.clone(), destination.clone())),
+        staged_archive: None,
+        expected_archive_family: Vec::new(),
+        staged_input_archive: None,
+        cache_dir: None,
+        stage_identities: vec![(stage.clone(), stage_identity)],
+        max_extract_bytes: None,
+        min_free_bytes: None,
+    };
+
+    std::fs::rename(&stage, &destination).expect("publish stage");
+    super::journal::validate_extract_journal_update(&journal, &plan)
+        .expect("published sibling destination should validate");
+
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -3819,6 +3962,77 @@ fn missing_new_destination_stage_preserves_ambiguous_destination() {
         std::fs::read(destination.join("new.txt")).expect("preserved destination"),
         b"new"
     );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn preserved_ack_predicate_only_accepts_ambiguous_sibling_publish() {
+    let root = temp_root("zinnia-preserved-ack-predicate");
+    std::fs::create_dir_all(&root).expect("test root");
+    let destination = root.join("destination");
+    let stage = root.join(".zinnia-extract-0123456789abcdef0123456789abcdef");
+    std::fs::create_dir(&destination).expect("destination");
+    let base = || CleanupJournal {
+        stage: stage.clone(),
+        destination: destination.clone(),
+        archive: false,
+        extract_stage_placement: Some(ExtractStagePlacement::Sibling),
+        move_plan_sidecar: true,
+        move_plan_identity: None,
+        move_identity_log_identity: None,
+        previous_archive_family: Vec::new(),
+        previous_archive_identities: Vec::new(),
+        next_archive_family: Vec::new(),
+        next_archive_identities: Vec::new(),
+        extract_stage_identity: Some(super::journal::path_identity(&destination).unwrap()),
+        extract_phase: Some(ExtractJournalPhase::InProgress),
+        archive_phase: None,
+    };
+    assert!(journal_is_preserved_ambiguous_publish(&base()).expect("predicate"));
+
+    let mut stage_present = base();
+    stage_present.stage = destination.clone();
+    assert!(
+        !journal_is_preserved_ambiguous_publish(&stage_present).expect("stage-present predicate")
+    );
+
+    let mut archive_journal = base();
+    archive_journal.archive = true;
+    assert!(!journal_is_preserved_ambiguous_publish(&archive_journal).expect("archive predicate"));
+
+    let mut committed = base();
+    committed.extract_phase = Some(ExtractJournalPhase::Committed);
+    assert!(!journal_is_preserved_ambiguous_publish(&committed).expect("committed predicate"));
+
+    let mut inside_placement = base();
+    inside_placement.extract_stage_placement = Some(ExtractStagePlacement::InsideDestination);
+    assert!(!journal_is_preserved_ambiguous_publish(&inside_placement).expect("inside predicate"));
+
+    let mut move_plan_journal = base();
+    move_plan_journal.stage = root.join(".zinnia-extract-fedcba9876543210fedcba9876543210");
+    std::fs::create_dir(&move_plan_journal.stage).expect("plan holder stage");
+    let plan_path = super::journal::move_plan_path(&move_plan_journal.stage);
+    std::fs::write(&plan_path, b"{}").expect("move plan");
+    move_plan_journal.move_plan_identity =
+        Some(super::journal::regular_file_identity_with_fingerprint(&plan_path).unwrap());
+    assert!(!journal_is_preserved_ambiguous_publish(&move_plan_journal).expect("plan predicate"));
+
+    let mut file_destination = base();
+    file_destination.destination = root.join("file-destination");
+    std::fs::write(&file_destination.destination, b"not a directory").expect("file destination");
+    assert!(
+        !journal_is_preserved_ambiguous_publish(&file_destination).expect("file-dest predicate")
+    );
+
+    let replaced_destination = base();
+    let replacement = root.join("replacement");
+    std::fs::rename(&replaced_destination.destination, &replacement).expect("move original");
+    std::fs::create_dir(&replaced_destination.destination).expect("replacement destination");
+    assert!(
+        !journal_is_preserved_ambiguous_publish(&replaced_destination)
+            .expect("identity mismatch predicate")
+    );
+
     let _ = std::fs::remove_dir_all(root);
 }
 

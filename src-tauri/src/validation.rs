@@ -10,8 +10,7 @@ const MAX_7Z_ARG_BYTES: usize = 8192;
 const ALLOWED_7Z_COMMANDS: &[&str] = &["a", "u", "x", "l", "t", "b"];
 // Store symbolic/hard links as links on create/update (-snl/-snh). Frontend
 // also passes them; run_7z injects as defense in depth. Keep them out of
-// BLOCKED so those switches validate; users cannot pass them via extra-args
-// (not in ALLOWED_EXTRA_PREFIXES).
+// BLOCKED so those switches validate; frontend extra-args does not expose them.
 const BLOCKED_7Z_ARGS: &[&str] = &["-si", "-so", "-sdel", "-sfx", "-w", "-sns", "-sni", "-spf2"];
 
 fn has_embedded_listfile(arg: &str) -> bool {
@@ -26,8 +25,8 @@ fn is_numbered_switch(arg: &str, prefix: &str, max: u8) -> bool {
 }
 
 fn is_stream_switch(arg: &str) -> bool {
-    let lower = arg.to_ascii_lowercase();
-    lower == "-bsp1" || lower == "-bsp2"
+    // -bsp2 would push progress into stderr and defeat the exit-1 classifier.
+    arg.eq_ignore_ascii_case("-bsp1")
 }
 
 fn archive_type_switches(args: &[String]) -> Vec<String> {
@@ -224,8 +223,8 @@ pub(crate) fn has_parent_dir_component(path: &str) -> bool {
     path.split(['/', '\\']).any(|component| component == "..")
 }
 
-/// True when an archive member path could escape an extract `-o` root
-/// (`..`, absolute POSIX, drive-letter, or UNC).
+/// True when a member path could escape an extract `-o` root. On Windows also
+/// rejects trailing-dot/space parents, NTFS streams, and device names.
 pub(crate) fn archive_member_path_is_unsafe(path: &str) -> bool {
     if path.is_empty() {
         return false;
@@ -249,7 +248,61 @@ pub(crate) fn archive_member_path_is_unsafe(path: &str) -> bool {
     if bytes.len() >= 2 && bytes[1] == b':' {
         return true;
     }
+    #[cfg(target_os = "windows")]
+    for component in path.split(['/', '\\']) {
+        if component.is_empty() {
+            continue;
+        }
+        // Win32 strips trailing dots/spaces, so `.. ` and `...` escape.
+        let normalized = component.trim_end_matches(|c| c == '.' || c == ' ');
+        if normalized == ".." || (normalized.is_empty() && !component.is_empty()) {
+            return true;
+        }
+        // Any other colon opens an NTFS alternate data stream.
+        if component.contains(':') {
+            return true;
+        }
+        if is_win32_reserved_device_name(normalized) {
+            return true;
+        }
+    }
     false
+}
+
+/// Win32 device-name check on the dot-stem, case-insensitive, any extension.
+#[cfg(target_os = "windows")]
+fn is_win32_reserved_device_name(normalized_component: &str) -> bool {
+    let stem = normalized_component
+        .split('.')
+        .next()
+        .unwrap_or(normalized_component)
+        .to_ascii_uppercase();
+    matches!(
+        stem.as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+            | "CLOCK$"
+    )
 }
 
 fn switch_contains_parent_traversal(arg: &str) -> bool {
@@ -1134,6 +1187,19 @@ mod tests {
         assert!(archive_member_path_is_unsafe(r"C:\Windows\evil.dll"));
         #[cfg(target_os = "windows")]
         assert!(archive_member_path_is_unsafe(r"\\server\share\file"));
+        #[cfg(target_os = "windows")]
+        {
+            assert!(archive_member_path_is_unsafe("sub/.. "));
+            assert!(archive_member_path_is_unsafe("sub/.. ."));
+            assert!(archive_member_path_is_unsafe("..."));
+            assert!(archive_member_path_is_unsafe("notes.txt:evil"));
+            assert!(archive_member_path_is_unsafe("folder/CON"));
+            assert!(archive_member_path_is_unsafe("folder/aux.c"));
+            assert!(archive_member_path_is_unsafe("COM1.txt"));
+            assert!(!archive_member_path_is_unsafe("folder/normal.txt"));
+            assert!(!archive_member_path_is_unsafe("name..bak.txt"));
+            assert!(!archive_member_path_is_unsafe("dots...and..spaces.txt"));
+        }
         #[cfg(not(target_os = "windows"))]
         {
             assert!(!archive_member_path_is_unsafe(r"a:b"));
@@ -1288,6 +1354,6 @@ mod tests {
             "--".to_string(),
             "in.zip".to_string(),
         ])
-        .expect("-bsp2 progress stream");
+        .expect_err("-bsp2 relocates progress to stderr and must be rejected");
     }
 }

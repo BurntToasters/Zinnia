@@ -34,6 +34,14 @@ use super::{
     release_prepare_slot_best_effort, CleanupPlan, RunResult, RunningProcess,
 };
 
+struct OperationLivenessGuard(Arc<std::sync::atomic::AtomicBool>);
+
+impl Drop for OperationLivenessGuard {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
 const MAX_RUN_7Z_REQUEST_BYTES: usize = 64 * 1024 * 1024;
 const MAX_COMPRESS_PROBE_REQUEST_BYTES: usize = 4 * 1024 * 1024;
 
@@ -227,6 +235,11 @@ fn prepare_managed_listfile(args: &mut Vec<String>) -> Result<Option<ManagedList
     }
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
     let mut file = options
         .open(&listfile.0)
         .map_err(|error| format!("Could not create a private 7-Zip list file: {error}"))?;
@@ -457,6 +470,31 @@ pub(crate) async fn complete_password_transport(
 /// When a password is required, it is returned as [`PendingPassword`] and must
 /// be completed with [`complete_password_transport`] only after the child is
 /// stored in `RunningProcess` so cancel can terminate a blocked stdin write.
+/// Mask attached `-p`/`-P` password tokens in a kept-alive arg vector. Overwrite
+/// bytes before truncating so the old password is not left in the String's
+/// allocation when a parent-side clone survives finalization.
+pub(crate) fn mask_password_arg_tokens(args: &mut [String]) {
+    let separator = args
+        .iter()
+        .position(|arg| arg == "--")
+        .unwrap_or(args.len());
+    for arg in args.iter_mut().take(separator) {
+        let lower = arg.to_ascii_lowercase();
+        if lower.starts_with("-p") && lower != "-p***" {
+            // `-p` is ASCII; replacing every remaining byte with `*` keeps the
+            // string valid UTF-8 even when the password contained multibyte
+            // characters. `as_bytes_mut` is safe here because only ASCII bytes
+            // are written.
+            let bytes = unsafe { arg.as_bytes_mut() };
+            for byte in bytes.iter_mut().skip(2) {
+                *byte = b'*';
+            }
+            arg.truncate(2);
+            arg.push_str("***");
+        }
+    }
+}
+
 pub(crate) fn spawn_7z_noninteractive(
     app: &tauri::AppHandle,
     mut args: Vec<String>,
@@ -839,7 +877,9 @@ where
     F: FnOnce() -> Result<(), String>,
 {
     let operation_result = finalize_result?;
-    clear_journal()?;
+    // Finalization completed; a transient unlink error must not wedge the slot.
+    // Startup recovery treats a committed journal as cleanup-safe.
+    let journal_result = clear_journal();
     {
         let mut process = state
             .0
@@ -848,6 +888,7 @@ where
         process.child = None;
         process.release_prepare_slot();
     }
+    journal_result?;
     operation_result
 }
 
@@ -912,14 +953,19 @@ pub(crate) fn extract_warning_is_metadata_only(stdout: &str, stderr: &str) -> bo
         return false;
     }
     // Some builds put warnings on stdout. Normal progress is allowed, but any
-    // unknown warning/error-labelled line makes exit 1 fail closed.
+    // unknown warning/error-labelled line makes exit 1 fail closed. 7-Zip's
+    // summary lines use "Errors:" / "System errors:" (plural), which neither
+    // `contains("warning")` nor `starts_with("error:")` catches.
     !stdout
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .any(|line| {
             let line = line.to_ascii_lowercase();
-            (line.contains("warning") || line.starts_with("error:"))
+            (line.contains("warning")
+                || line.starts_with("error:")
+                || line.starts_with("errors:")
+                || line.contains("system error"))
                 && !line.starts_with("warnings:")
                 && !allowed_markers.iter().any(|marker| line.contains(marker))
         })
@@ -1114,11 +1160,15 @@ pub async fn probe_compress_inputs(
 }
 
 /// Snapshot an archive create destination at selection time so a long extract
-/// (conversion) cannot treat a newly created file as intentional overwrite.
+/// cannot treat a new file as intentional overwrite. Hashes the family, so
+/// runs off the main thread.
 #[tauri::command]
-pub fn archive_output_selection_token(path: String) -> Result<String, String> {
-    let path = std::path::PathBuf::from(path);
-    super::staging::archive_output_family_token(&path)
+pub async fn archive_output_selection_token(path: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        super::staging::archive_output_family_token(&std::path::PathBuf::from(path))
+    })
+    .await
+    .map_err(|error| format!("Selection-token worker failed: {error}"))?
 }
 
 pub(crate) fn store_probed_7z_version(version: Option<String>) {
@@ -1260,8 +1310,14 @@ where
                     max_bytes,
                     &mut out.stderr_truncated,
                 );
-                out.stream_error = Some(error);
-                break;
+                // Keep receiving until Terminated. Reader threads send through
+                // the same bounded channel and the waiter emits Terminated
+                // only after both readers finish; stopping here can leave a
+                // sibling reader blocked forever on a full channel, wedging
+                // cancellation and window close.
+                if out.stream_error.is_none() {
+                    out.stream_error = Some(error);
+                }
             }
             _ => {}
         }
@@ -1291,12 +1347,15 @@ pub async fn run_7z(
     // Claim the slot before every potentially slow pre-spawn phase. Without
     // this, Cancel could report "idle" while a recursive input scan or startup
     // recovery wait continued toward a real archive publish.
+    let operation_liveness = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let _operation_liveness_guard = OperationLivenessGuard(operation_liveness.clone());
     {
         let mut process = lock_process(&state)?;
         ensure_idle_mut(&mut process)?;
         process.preparing = true;
         process.owner_label = Some(window.label().to_string());
         process.abort_reason = None;
+        process.operation_liveness = Some(operation_liveness);
     }
 
     let preflight_app = app.clone();
@@ -1386,7 +1445,7 @@ pub async fn run_7z(
     }
     abort_cancelled_preparation(&state)?;
 
-    let plan_args = args.clone();
+    let mut blocking_plan_args = args.clone();
     let plan_expected_identity = expected_archive_identity.clone();
     let plan_app = app.clone();
     let cache_dir = match app.path().app_cache_dir() {
@@ -1397,8 +1456,8 @@ pub async fn run_7z(
         }
     };
     let mut cleanup_plan = match tokio::task::spawn_blocking(move || {
-        prepare_cleanup_plan_with_cancel(
-            &plan_args,
+        let result = prepare_cleanup_plan_with_cancel(
+            &blocking_plan_args,
             cache_dir,
             plan_expected_identity.as_deref(),
             || {
@@ -1409,7 +1468,9 @@ pub async fn run_7z(
                     .map(|process| process.cancelling)
                     .unwrap_or(true)
             },
-        )
+        );
+        mask_password_arg_tokens(&mut blocking_plan_args);
+        result
     })
     .await
     {
@@ -1572,6 +1633,11 @@ pub async fn run_7z(
                     ));
                 }
             };
+
+        // The child's argv is already sanitized; drop the parent-side copies.
+        mask_password_arg_tokens(&mut args);
+        mask_password_arg_tokens(&mut execution_args);
+        mask_password_arg_tokens(&mut snapshot_args);
 
         // Scoped so the `MutexGuard` this binds is provably dropped (not just
         // logically unreachable after a `return`) before the `.await` below:
@@ -1867,13 +1933,18 @@ pub async fn probe_7z(
     state: tauri::State<'_, RunningProcess>,
 ) -> Result<String, String> {
     const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-    const PROBE_OUTPUT_LIMIT: usize = 4096;
+    // `7z i` prints the full codec table. Keep collection bounded, but leave
+    // headroom for bundled and future 7-Zip builds.
+    const PROBE_OUTPUT_LIMIT: usize = 64 * 1024;
+    let operation_liveness = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let _operation_liveness_guard = OperationLivenessGuard(operation_liveness.clone());
 
     {
         let mut process = lock_process(&state)?;
         ensure_idle_mut(&mut process)?;
         process.preparing = true;
         process.owner_label = Some(window.label().to_string());
+        process.operation_liveness = Some(operation_liveness);
     }
 
     let result = async {
@@ -1979,6 +2050,7 @@ pub fn cancel_7z(
                 process.cancelling = true;
                 (None, true)
             }
+            None if process.cancelling => (None, true),
             None => (None, false),
         }
     };
@@ -1997,6 +2069,9 @@ pub fn is_7z_running(
     state: tauri::State<'_, RunningProcess>,
 ) -> Result<bool, String> {
     let mut process = lock_process(&state)?;
+    // A cancelled child can exit after termination fails. Reap it on every
+    // status query so IPC callers do not keep seeing a permanently busy slot.
+    process.reap_orphaned_child();
     match mode.as_deref() {
         None | Some("check") => {
             process.expire_stale_update_reservation();
@@ -2009,7 +2084,7 @@ pub fn is_7z_running(
             }
             process.preparing = true;
             process.owner_label = Some(window.label().to_string());
-            process.abort_reason = Some("Installing application update".to_string());
+            process.abort_reason = Some(super::UPDATE_INSTALL_RESERVATION_REASON.to_string());
             process.update_reserved_at = Some(std::time::Instant::now());
             Ok(false)
         }
@@ -2019,6 +2094,10 @@ pub fn is_7z_running(
                 return Err("Cannot release update reservation while 7-Zip is running.".to_string());
             }
             if process.preparing {
+                if process.abort_reason.as_deref() != Some(super::UPDATE_INSTALL_RESERVATION_REASON)
+                {
+                    return Err("No update installation reservation is active.".to_string());
+                }
                 if process.owner_label.as_deref() != Some(window.label()) {
                     return Err(
                         "Only the window that reserved update installation may release it."
@@ -2035,6 +2114,26 @@ pub fn is_7z_running(
             Ok(true)
         }
         Some(_) => Err("Unknown archive-operation status mode.".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod password_scrub_tests {
+    use super::mask_password_arg_tokens;
+
+    #[test]
+    fn masks_attached_password_before_the_separator_only() {
+        let mut args = vec![
+            "a".to_string(),
+            "-psecret".to_string(),
+            "-mhe=on".to_string(),
+            "--".to_string(),
+            "-pending.zip".to_string(),
+        ];
+        mask_password_arg_tokens(&mut args);
+        assert_eq!(args[1], "-p***");
+        assert_eq!(args[2], "-mhe=on");
+        assert_eq!(args[4], "-pending.zip");
     }
 }
 

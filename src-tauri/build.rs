@@ -386,6 +386,7 @@ fn main() {
         "probe_compress_inputs",
         "archive_output_selection_token",
         "get_startup_recovery_status",
+        "acknowledge_preserved_transaction",
         "validate_archive_paths",
         "load_settings",
         "save_settings",

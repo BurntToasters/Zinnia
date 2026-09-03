@@ -359,22 +359,29 @@ async function handleBasicCompressActionOnce(
     }
   }
 
-  let output: string | null;
-  try {
-    output = await save({
-      title: "Choose output archive",
-      defaultPath,
-    });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log(`Could not open the save-archive dialog: ${msg}`, "error");
-    showBasicCompletion(
-      "compress",
-      false,
-      "Operation failed",
-      "Could not open the save dialog. Check the log and try again.",
-    );
-    return;
+  // Respect a destination already entered in Basic. Open the save dialog only
+  // when the field is empty; typed paths must work without native UI.
+  const basicOutputPath = document.getElementById(
+    "basic-output-path",
+  ) as HTMLInputElement | null;
+  let output: string | null = basicOutputPath?.value ?? null;
+  if (!output) {
+    try {
+      output = await save({
+        title: "Choose output archive",
+        defaultPath,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`Could not open the save-archive dialog: ${msg}`, "error");
+      showBasicCompletion(
+        "compress",
+        false,
+        "Operation failed",
+        "Could not open the save dialog. Check the log and try again.",
+      );
+      return;
+    }
   }
 
   if (
@@ -385,9 +392,6 @@ async function handleBasicCompressActionOnce(
     return;
   }
 
-  const basicOutputPath = document.getElementById(
-    "basic-output-path",
-  ) as HTMLInputElement | null;
   if (basicOutputPath) {
     basicOutputPath.value = output;
   }
@@ -575,31 +579,34 @@ async function handleBasicExtractActionOnce(
     }
   }
 
-  // 2. Open the folder picker before copying a password into the DOM. A
-  // cancelled picker must not leave a verified password resident in fields.
-  let output: string | string[] | null;
-  try {
-    output = await open({
-      title: "Choose destination folder",
-      directory: true,
-    });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log(`Could not open the destination-folder dialog: ${msg}`, "error");
-    showBasicCompletion(
-      "extract",
-      false,
-      "Operation failed",
-      "Could not open the folder dialog. Check the log and try again.",
-    );
-    return;
+  // 2. Respect a destination already entered in Basic. Open the picker only
+  // when the field is empty; typed paths must not unexpectedly trigger a
+  // native dialog that blocks automation and keyboard-only workflows.
+  const basicExtractPath = document.getElementById(
+    "basic-extract-path",
+  ) as HTMLInputElement | null;
+  let output: string | null = basicExtractPath?.value ?? null;
+  if (!output) {
+    try {
+      const selected = await open({
+        title: "Choose destination folder",
+        directory: true,
+      });
+      output = typeof selected === "string" ? selected : null;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`Could not open the destination-folder dialog: ${msg}`, "error");
+      showBasicCompletion(
+        "extract",
+        false,
+        "Operation failed",
+        "Could not open the folder dialog. Check the log and try again.",
+      );
+      return;
+    }
   }
 
-  if (
-    !output ||
-    typeof output !== "string" ||
-    !isBasicPreparationCurrent(preparation)
-  ) {
+  if (!output || !isBasicPreparationCurrent(preparation)) {
     return;
   }
 
@@ -618,9 +625,6 @@ async function handleBasicExtractActionOnce(
     powerPasswordInput.value = password;
   }
 
-  const basicExtractPath = document.getElementById(
-    "basic-extract-path",
-  ) as HTMLInputElement | null;
   if (basicExtractPath) {
     basicExtractPath.value = output;
   }

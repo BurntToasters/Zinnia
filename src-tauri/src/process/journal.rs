@@ -1287,7 +1287,7 @@ pub(crate) fn update_archive_journal(
     crate::settings_store::atomic_write_text(&journal_path, &json)
 }
 
-fn validate_extract_journal_update<'a>(
+pub(crate) fn validate_extract_journal_update<'a>(
     journal: &CleanupJournal,
     plan: &'a CleanupPlan,
 ) -> Result<(&'a std::path::Path, &'a std::path::Path, &'a FileIdentity), String> {
@@ -1298,6 +1298,10 @@ fn validate_extract_journal_update<'a>(
     let stage_identity = plan
         .stage_identity(stage)
         .ok_or_else(|| "Extraction plan has no creation-bound stage identity.".to_string())?;
+    let placement_matches = journal
+        .extract_stage_placement
+        .map(|placement| placement.matches_paths(stage, destination))
+        .unwrap_or_else(|| stage.parent() == destination.parent());
     if journal.archive
         || journal.stage != *stage
         || journal.destination != *destination
@@ -1306,14 +1310,29 @@ fn validate_extract_journal_update<'a>(
             .extract_stage_identity
             .as_ref()
             .is_some_and(|recorded| file_identities_match(recorded, stage_identity))
-        || !journal
-            .extract_stage_placement
-            .map(|placement| placement.matches_paths(stage, destination))
-            .unwrap_or_else(|| stage.parent() == destination.parent())
+        || !placement_matches
     {
         return Err("Extraction recovery journal changed during publication.".to_string());
     }
-    ensure_path_identity(stage, stage_identity)?;
+    // A sibling stage is renamed to the new destination before the commit
+    // marker is written. During that short window the original stage path is
+    // absent, but the destination carries the same creation-bound directory
+    // identity. Validate whichever owned location still exists; never accept
+    // a missing stage or an unrelated destination.
+    let identity_path = match std::fs::symlink_metadata(stage) {
+        Ok(_) => stage,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if journal.extract_stage_placement == Some(ExtractStagePlacement::Sibling) {
+                destination
+            } else {
+                return Err(
+                    "Extraction stage is missing before its commit marker was durable.".to_string(),
+                );
+            }
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+    ensure_path_identity(identity_path, stage_identity)?;
     Ok((stage, destination, stage_identity))
 }
 

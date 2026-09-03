@@ -12,6 +12,7 @@ import {
   checksumTargetKeysForArtifactName,
   expectedPublishedBetaManifestNames,
   isExplicitTruthy,
+  isGitHubConflict,
   isTransactionalStagingAssetName,
   listAllGithubPages,
   requiredPublishedBetaManifestNames,
@@ -21,6 +22,7 @@ import {
 } from "../../scripts/gpg-sign.js";
 import {
   assertDraftReleaseShape,
+  assertManifestAssetReferences,
   requiredDraftAssetNames,
   selectDraftRelease,
 } from "../../scripts/verify-release-draft.js";
@@ -386,6 +388,127 @@ describe("release script safeguards", () => {
         { draft: true, id: 2 },
       ]),
     ).toThrow(/Multiple draft releases/);
+  });
+
+  it("refuses duplicate drafts in gpg-sign and verify-draft selection too", () => {
+    const gpgSource = fs.readFileSync("scripts/gpg-sign.js", "utf8");
+    expect(gpgSource).toContain("Resolve duplicates before signing.");
+    expect(() =>
+      selectDraftRelease(
+        [
+          { tag_name: "v0.6.1", draft: true, id: 1 },
+          { tag_name: "v0.6.1", draft: true, id: 2 },
+        ],
+        "v0.6.1",
+      ),
+    ).toThrow(/Multiple draft releases/);
+  });
+
+  it("detects gh HTTP 422 conflict responses", () => {
+    expect(
+      isGitHubConflict(
+        Object.assign(
+          new Error("gh api failed:\ngh: Already_exists (HTTP 422)"),
+          { statusCode: 422 },
+        ),
+      ),
+    ).toBe(true);
+    expect(isGitHubConflict(new Error("gh: Already_exists (HTTP 422)"))).toBe(
+      true,
+    );
+    expect(isGitHubConflict(new Error("already exists (422)"))).toBe(true);
+    expect(isGitHubConflict(new Error('"status":"422"'))).toBe(true);
+    expect(
+      isGitHubConflict(
+        Object.assign(new Error("gh: Not Found (HTTP 404)"), {
+          statusCode: 404,
+        }),
+      ),
+    ).toBe(false);
+    expect(isGitHubConflict(new Error("socket hang up"))).toBe(false);
+    expect(isGitHubConflict(undefined)).toBe(false);
+  });
+
+  it("resolves draft manifest download urls against the asset set", () => {
+    const base =
+      "https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1";
+    const manifest = {
+      version: "0.6.1",
+      platforms: {
+        "darwin-aarch64": {
+          url: `${base}/Zinnia-macOS-universal.app.tar.gz`,
+          signature: "abc",
+        },
+      },
+    };
+    expect(() =>
+      assertManifestAssetReferences(manifest, "latest-darwin-aarch64.json", [
+        "latest-darwin-aarch64.json",
+      ]),
+    ).toThrow(/not a draft asset/);
+    expect(() =>
+      assertManifestAssetReferences(manifest, "latest-darwin-aarch64.json", [
+        "Zinnia-macOS-universal.app.tar.gz",
+      ]),
+    ).toThrow(/without its updater signature asset/);
+    expect(() =>
+      assertManifestAssetReferences(manifest, "latest-darwin-aarch64.json", [
+        "Zinnia-macOS-universal.app.tar.gz",
+        "Zinnia-macOS-universal.app.tar.gz.sig",
+      ]),
+    ).not.toThrow();
+    expect(() =>
+      assertManifestAssetReferences(
+        {
+          platforms: {
+            "windows-x86_64": {
+              url: "https://evil.example/Zinnia-Windows-x64.exe",
+              signature: "abc",
+            },
+          },
+        },
+        "latest-windows-x86_64.json",
+        ["Zinnia-Windows-x64.exe", "Zinnia-Windows-x64.exe.sig"],
+        { repoOwner: "BurntToasters", repoName: "zinnia", tag: "v0.6.1" },
+      ),
+    ).toThrow(/outside/);
+    expect(() =>
+      assertManifestAssetReferences(
+        {
+          platforms: {
+            "windows-x86_64": {
+              url: `${base}/%2e%2e%2fescape.exe`,
+              signature: "abc",
+            },
+          },
+        },
+        "latest-windows-x86_64.json",
+        ["../escape.exe", "../escape.exe.sig"],
+        { repoOwner: "BurntToasters", repoName: "zinnia", tag: "v0.6.1" },
+      ),
+    ).toThrow(/unsafe artifact filename/);
+    expect(() =>
+      assertManifestAssetReferences(
+        { platforms: { "linux-x86_64": { url: "", signature: "" } } },
+        "latest-linux-x86_64.json",
+        [],
+      ),
+    ).toThrow(/no download url/);
+    expect(() =>
+      assertManifestAssetReferences({ platforms: {} }, "latest-x.json", []),
+    ).toThrow(/no platform entries/);
+  });
+
+  it("reasserts the prerelease flag when a draft is reused", () => {
+    const draftSource = fs.readFileSync(
+      "scripts/ensure-draft-release.cjs",
+      "utf8",
+    );
+    const syncFn = draftSource.slice(
+      draftSource.indexOf("async function syncReleaseNotesBody"),
+      draftSource.indexOf("function verifyReleaseSession"),
+    );
+    expect(syncFn).toContain("prerelease: IS_PRERELEASE");
   });
 
   it("requires a release session before the draft script can contact GitHub", () => {
@@ -1084,6 +1207,50 @@ describe("release script safeguards", () => {
     ).toThrow(/SKIP_CARGO_INTEGRATION/);
     expect(() =>
       assertStableReleaseOverridesAllowed(
+        { ENFORCE_LINUX_X64_PACKAGE_SET: "0" },
+        "0.6.1",
+      ),
+    ).toThrow(/ENFORCE_LINUX_X64_PACKAGE_SET/);
+    expect(() =>
+      assertStableReleaseOverridesAllowed(
+        { ENFORCE_LINUX_X64_PACKAGE_SET: "1" },
+        "0.6.1",
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertStableReleaseOverridesAllowed(
+        { GH_REPO_OWNER: "evil-fork" },
+        "0.6.1",
+      ),
+    ).toThrow(/GH_REPO_OWNER/);
+    expect(() =>
+      assertStableReleaseOverridesAllowed(
+        {
+          RELEASE_DOWNLOAD_BASE_URL:
+            "https://github.com/evil-fork/zinnia/releases/download/v0.6.1",
+        },
+        "0.6.1",
+      ),
+    ).toThrow(/RELEASE_DOWNLOAD_BASE_URL/);
+    expect(() =>
+      assertStableReleaseOverridesAllowed(
+        {
+          GH_REPO_OWNER: "BurntToasters",
+          GH_REPO_NAME: "zinnia",
+          RELEASE_DOWNLOAD_BASE_URL:
+            "https://github.com/BurntToasters/zinnia/releases/download/v0.6.1",
+        },
+        "0.6.1",
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertStableReleaseOverridesAllowed(
+        { GH_REPO_OWNER: "evil-fork", ENFORCE_LINUX_X64_PACKAGE_SET: "0" },
+        "0.6.1-beta.6",
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertStableReleaseOverridesAllowed(
         { FORCE_UPLOAD: "1", SKIP_WIN_CODESIGN: "1" },
         "0.6.1-beta.6",
       ),
@@ -1099,6 +1266,14 @@ describe("release script safeguards", () => {
       "- **Fix:** notes\n",
     ].join("");
     expect(validateChangelogForVersion(betaOk, "0.6.1-beta.6")).toEqual([]);
+
+    const betaPlaceholder = betaOk.replace(
+      "- **Fix:** notes\n",
+      "- **Fix:** (add release notes)\n",
+    );
+    expect(
+      validateChangelogForVersion(betaPlaceholder, "0.6.1-beta.6"),
+    ).toEqual([expect.stringMatching(/placeholder notes/)]);
 
     const stableBad = [
       "> 🅱️ This is a Beta build.\n",
@@ -1158,6 +1333,18 @@ describe("release script safeguards", () => {
       url: "https://github.com/BurntToasters/zinnia/releases/download/v0.6.1-beta.6/Zinnia-Windows-x64.exe",
       signature: "sig",
     });
+    expect(() =>
+      collectManifestArtifactRefs([
+        JSON.stringify({
+          platforms: {
+            windows: {
+              url: "https://example.invalid/%2e%2e%2f%2e%2e%2fproof",
+              signature: "sig",
+            },
+          },
+        }),
+      ]),
+    ).toThrow(/unsafe artifact filename/);
   });
 
   it("requires an explicit 7z:update action and treats --help as non-mutating", () => {

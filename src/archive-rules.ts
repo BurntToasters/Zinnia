@@ -17,22 +17,12 @@ export const ALLOWED_METHOD_PREFIXES = [
   "-mcl=",
 ];
 
-export const ALLOWED_EXTRA_PREFIXES = [
-  ...ALLOWED_METHOD_PREFIXES,
-  "-x",
-  "-i",
-  "-ao",
-  "-bb",
-  "-bt",
-  "-scs",
-  "-slt",
-  "-stl",
-  "-slp",
-  "-ssp",
-  "-sse",
-  "-y",
-  "-r",
-];
+/** Mirrors validation.rs is_allowed_switch; shared by a/u and x. */
+const EXTRA_SHARED_RE = /^-(?:bt|bb[0-3]|slt|scs\S+|scc\S+|r|r-|r0)$/;
+const EXTRA_EXTRACT_ONLY = ["-y"];
+const EXTRA_COMPRESS_ONLY = ["-stl", "-slp", "-ssp", "-sse"];
+
+export type ExtraArgsContext = "compress" | "extract";
 
 export interface ArchivePathValidation {
   path: string;
@@ -168,7 +158,10 @@ export async function validateArchivePaths(
   });
 }
 
-export function validateExtraArgs(args: string[]): void {
+export function validateExtraArgs(
+  args: string[],
+  context: ExtraArgsContext,
+): void {
   const blocked = ["-sdel", "-p", "-mhe", "-o", "-si", "-so", "-t", "-ssw"];
 
   for (const arg of args) {
@@ -177,23 +170,20 @@ export function validateExtraArgs(args: string[]): void {
     }
 
     const lower = arg.toLowerCase();
-    if (
-      (lower.startsWith("-i") || lower.startsWith("-x")) &&
-      arg.includes("!")
-    ) {
+    if (lower.startsWith("-i") || lower.startsWith("-x")) {
       throw new Error(
         `"${arg}" is not allowed. Extra args cannot expand 7-Zip include or exclude lists.`,
       );
     }
-    if (lower === "-aoa" || lower === "-aot") {
+    if (lower.startsWith("-ao")) {
       throw new Error(
-        `"${arg}" is not allowed. Zinnia only permits safe extract overwrite modes (-aou / -aos).`,
+        `"${arg}" is not allowed. Zinnia sets the safe extract overwrite policy (-aou / -aos) automatically; -aoa and -aot overwrite existing files.`,
       );
     }
     if (lower.startsWith("-bs")) {
-      if (lower !== "-bsp1" && lower !== "-bsp2") {
+      if (lower !== "-bsp1") {
         throw new Error(
-          `"${arg}" is not allowed. Only -bsp1 / -bsp2 progress streams are permitted.`,
+          `"${arg}" is not allowed. Only -bsp1 progress output is permitted.`,
         );
       }
       continue;
@@ -212,12 +202,26 @@ export function validateExtraArgs(args: string[]): void {
     }
 
     if (lower.startsWith("-m")) {
+      if (context !== "compress") {
+        throw new Error(`"${arg}" is not allowed for ${context} arguments.`);
+      }
       if (!isAllowedMethodSwitch(lower)) {
         throw new Error(
           `"${arg}" is not an allowed compression method switch.`,
         );
       }
-    } else if (!ALLOWED_EXTRA_PREFIXES.some((p) => lower.startsWith(p))) {
+    } else if (
+      EXTRA_SHARED_RE.test(lower) ||
+      (context === "extract" && EXTRA_EXTRACT_ONLY.includes(lower)) ||
+      (context === "compress" && EXTRA_COMPRESS_ONLY.includes(lower))
+    ) {
+      // Allowed for this command by validation.rs.
+    } else if (
+      (context === "compress" && EXTRA_EXTRACT_ONLY.includes(lower)) ||
+      (context === "extract" && EXTRA_COMPRESS_ONLY.includes(lower))
+    ) {
+      throw new Error(`"${arg}" is not allowed for ${context} arguments.`);
+    } else {
       throw new Error(
         `Unknown argument "${arg}". Only recognized 7z switches are allowed.`,
       );

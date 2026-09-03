@@ -172,6 +172,17 @@ fn sweep_stale_7z_list_dirs() {
         if !is_older_than(&metadata, STALE_LAUNCH_TEMP_MAX_AGE) {
             continue;
         }
+        // Only remove our own leftover directories. On unix the shared temp
+        // dir has sticky-bit protection, but a same-user planted prefix must
+        // still not be walked/deleted by us.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let uid = unsafe { libc::geteuid() };
+            if metadata.uid() != uid || metadata.gid() != unsafe { libc::getegid() } {
+                continue;
+            }
+        }
         if let Err(error) = crate::fs_secure::remove_dir_all_for_cleanup(&path) {
             if error.kind() != std::io::ErrorKind::NotFound {
                 eprintln!(

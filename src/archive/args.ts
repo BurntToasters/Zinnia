@@ -41,7 +41,7 @@ export function buildExtractArgsFor(
   const extraArgs = splitArgs(
     $<HTMLInputElement>("extract-extra-args").value.trim(),
   );
-  if (extraArgs.length > 0) validateExtraArgs(extraArgs);
+  if (extraArgs.length > 0) validateExtraArgs(extraArgs, "extract");
 
   if (!dest) throw new Error("Choose a destination folder.");
 
@@ -164,7 +164,7 @@ export function buildArgs() {
   const extraArgs = splitArgs($<HTMLInputElement>("extra-args").value.trim());
 
   if (extraArgs.length > 0) {
-    validateExtraArgs(extraArgs);
+    validateExtraArgs(extraArgs, "compress");
   }
 
   const outputPath = $<HTMLInputElement>("output-path").value;
