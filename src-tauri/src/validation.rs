@@ -254,7 +254,7 @@ pub(crate) fn archive_member_path_is_unsafe(path: &str) -> bool {
             continue;
         }
         // Win32 strips trailing dots/spaces, so `.. ` and `...` escape.
-        let normalized = component.trim_end_matches(|c| c == '.' || c == ' ');
+        let normalized = component.trim_end_matches(['.', ' ']);
         if normalized == ".." || (normalized.is_empty() && !component.is_empty()) {
             return true;
         }

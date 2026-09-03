@@ -7,6 +7,11 @@ import {
   showSetupWizard,
 } from "../setup-wizard";
 
+const e2eEnv = vi.hoisted(() => ({
+  isE2eFrontend: vi.fn(() => false),
+}));
+vi.mock("../e2e-env", () => e2eEnv);
+
 const mockSaveSettings = vi.fn().mockResolvedValue(undefined);
 const mockApplyTheme = vi.fn();
 const mockRefreshDefaultArchiverActionButton = vi
@@ -38,11 +43,17 @@ beforeEach(() => {
   mockApplyTheme.mockClear();
   mockRefreshDefaultArchiverActionButton.mockClear();
   mockRunDefaultArchiverAction.mockClear();
+  e2eEnv.isE2eFrontend.mockReturnValue(false);
 });
 
 describe("setup wizard state", () => {
   it("shows wizard when setup is incomplete", () => {
     expect(shouldShowSetupWizard()).toBe(true);
+  });
+
+  it("never shows the wizard in unpackaged E2E builds", () => {
+    e2eEnv.isE2eFrontend.mockReturnValue(true);
+    expect(shouldShowSetupWizard()).toBe(false);
   });
 
   it("does not show wizard when setup is complete for current version", () => {

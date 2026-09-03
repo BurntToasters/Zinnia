@@ -1,3 +1,4 @@
+import { isE2eFrontend } from "./e2e-env";
 import { saveSettings, applyTheme } from "./settings";
 import { state } from "./state";
 import {
@@ -67,6 +68,7 @@ function showStep(step: number, visibleSteps: readonly number[]): void {
 }
 
 export function shouldShowSetupWizard(): boolean {
+  if (isE2eFrontend()) return false;
   const setupMarkedComplete =
     state.currentSettings.setupComplete === true ||
     state.settingsExtras._setupComplete === true;
