@@ -197,7 +197,6 @@ pub fn assert_no_nested_reparse_for_compress(paths: &[String]) -> Result<(), Str
 
 #[cfg(test)]
 mod tests {
-    #[cfg(unix)]
     use super::*;
 
     #[cfg(unix)]
@@ -218,13 +217,49 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    #[cfg(not(windows))]
     #[test]
-    fn backend_compress_guard_walks_non_windows_inputs() {
+    fn backend_compress_guard_walks_missing_inputs() {
+        let missing = std::env::temp_dir().join("zinnia-definitely-missing-compress-input");
+        let _ = std::fs::remove_dir_all(&missing);
         assert!(
-            assert_no_nested_reparse_for_compress(&["/definitely/missing".to_string()])
+            assert_no_nested_reparse_for_compress(&[missing.to_string_lossy().to_string()])
                 .expect_err("global traversal must validate every platform")
                 .contains("Unable to read compress input")
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn backend_compress_guard_rejects_nested_junction() {
+        let root = std::env::temp_dir().join(format!("zinnia-probe-junc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let real = root.join("real");
+        let nested = root.join("nested");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::create_dir_all(&nested).unwrap();
+        let junction = nested.join("cloud");
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&real)
+            .status();
+        match status {
+            Ok(code) if code.success() => {}
+            other => {
+                let _ = std::fs::remove_dir_all(&root);
+                eprintln!("skipping backend_compress_guard_rejects_nested_junction: {other:?}");
+                return;
+            }
+        }
+
+        let error = assert_no_nested_reparse_for_compress(&[root.to_string_lossy().to_string()])
+            .expect_err("nested junction must fail closed");
+        assert!(
+            error.contains("reparse point"),
+            "unexpected rejection: {error}"
+        );
+
+        let _ = std::fs::remove_dir(&junction);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -15,6 +15,7 @@ export default defineConfig({
       exclude: [
         "src/tests/**",
         "src/vite-env.d.ts",
+        "src/e2e-env.ts",
         "src/e2e-hook.ts",
         "src/e2e-wdio-plugin.ts",
       ],
