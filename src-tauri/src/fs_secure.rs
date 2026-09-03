@@ -385,8 +385,9 @@ pub fn apply_parent_directory_mode(path: &Path) -> io::Result<()> {
             ));
         }
         let parent_mode = parent_metadata.permissions().mode();
-        let current_mode = st.st_mode;
-        let mode = (parent_mode & 0o777) | (u32::from(current_mode) & 0o7000);
+        // mode_t is u16 on macOS; u32::from is a no-op on Linux.
+        #[allow(clippy::useless_conversion)]
+        let mode = (parent_mode & 0o777) | (u32::from(st.st_mode) & 0o7000);
         if unsafe { libc::fchmod(fd, mode as libc::mode_t) } != 0 {
             return Err(io::Error::last_os_error());
         }
@@ -513,7 +514,7 @@ fn rename_relative_no_replace(
         {
             return Ok(());
         }
-        return Err(io::Error::last_os_error());
+        Err(io::Error::last_os_error())
     }
 
     #[cfg(not(any(

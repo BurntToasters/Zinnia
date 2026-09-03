@@ -387,6 +387,12 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the acknowledge_preserved_transaction command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-acknowledge-preserved-transaction",
+          "markdownDescription": "Enables the acknowledge_preserved_transaction command without any pre-configured scope."
+        },
+        {
           "description": "Enables the append_local_log command without any pre-configured scope.",
           "type": "string",
           "const": "allow-append-local-log",
@@ -679,6 +685,12 @@
           "type": "string",
           "const": "allow-validate-archive-paths",
           "markdownDescription": "Enables the validate_archive_paths command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the acknowledge_preserved_transaction command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-acknowledge-preserved-transaction",
+          "markdownDescription": "Denies the acknowledge_preserved_transaction command without any pre-configured scope."
         },
         {
           "description": "Denies the append_local_log command without any pre-configured scope.",
