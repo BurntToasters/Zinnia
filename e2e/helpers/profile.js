@@ -62,12 +62,39 @@ export function settingsDirForProfile(profileDir, platform = process.platform) {
     );
   }
   if (platform === "win32") {
-    return path.join(profileDir, "AppData", "Roaming", APP_ID);
+    return path.join(profileDir, "home", "AppData", "Roaming", APP_ID);
   }
   return path.join(profileDir, "data", APP_ID);
 }
 
-export function createE2eProfile(repoRoot = REPO_ROOT) {
+/** Standard Windows layout: AppData lives under USERPROFILE, not beside it. */
+export function windowsProfilePaths(home) {
+  const roaming = path.join(home, "AppData", "Roaming");
+  const local = path.join(home, "AppData", "Local");
+  return {
+    roaming,
+    local,
+    settingsRoaming: path.join(roaming, APP_ID),
+    settingsLocal: path.join(local, APP_ID),
+    webview2: path.join(local, "ZinniaWebView2"),
+  };
+}
+
+export function windowsHomeDriveAndPath(homeAbs, pathImpl = path) {
+  const parsed = pathImpl.parse(homeAbs);
+  const drive = (parsed.root || "C:\\").replace(/[\\/]+$/, "") || "C:";
+  let rest = homeAbs.slice(parsed.root.length).replace(/[/\\]+/g, "\\");
+  if (rest.startsWith("\\")) rest = rest.slice(1);
+  return {
+    HOMEDRIVE: drive,
+    HOMEPATH: rest ? `\\${rest}` : "\\",
+  };
+}
+
+export function createE2eProfile(
+  repoRoot = REPO_ROOT,
+  platform = process.platform,
+) {
   const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), "zinnia-e2e-"));
   const home = path.join(profileDir, "home");
   const data = path.join(profileDir, "data");
@@ -77,9 +104,12 @@ export function createE2eProfile(repoRoot = REPO_ROOT) {
   fs.mkdirSync(data, { recursive: true });
   fs.mkdirSync(config, { recursive: true });
   fs.mkdirSync(work, { recursive: true });
-  seedE2eSettings(settingsDirForProfile(profileDir));
-  if (process.platform === "win32") {
-    seedE2eSettings(path.join(profileDir, "AppData", "Local", APP_ID));
+  seedE2eSettings(settingsDirForProfile(profileDir, platform));
+  let windowsPaths = null;
+  if (platform === "win32") {
+    windowsPaths = windowsProfilePaths(home);
+    fs.mkdirSync(windowsPaths.webview2, { recursive: true });
+    seedE2eSettings(windowsPaths.settingsLocal);
   }
   const manifest = loadArchiveManifest(repoRoot);
   const copies = {};
@@ -112,10 +142,20 @@ export function createE2eProfile(repoRoot = REPO_ROOT) {
     XDG_CONFIG_HOME: config,
     XDG_STATE_HOME: path.join(profileDir, "state"),
     XDG_CACHE_HOME: path.join(profileDir, "cache"),
-    APPDATA: path.join(profileDir, "AppData", "Roaming"),
-    LOCALAPPDATA: path.join(profileDir, "AppData", "Local"),
+    APPDATA: windowsPaths
+      ? windowsPaths.roaming
+      : path.join(profileDir, "AppData", "Roaming"),
+    LOCALAPPDATA: windowsPaths
+      ? windowsPaths.local
+      : path.join(profileDir, "AppData", "Local"),
   };
-  if (process.platform === "linux") {
+  if (windowsPaths) {
+    env.WEBVIEW2_USER_DATA_FOLDER = windowsPaths.webview2;
+    if (process.platform === "win32") {
+      Object.assign(env, windowsHomeDriveAndPath(home));
+    }
+  }
+  if (platform === "linux") {
     env.WEBKIT_DISABLE_COMPOSITING_MODE = "1";
   }
   return { profileDir, work, copies, env, manifest };

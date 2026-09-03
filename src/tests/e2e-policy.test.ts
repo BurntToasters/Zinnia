@@ -23,10 +23,19 @@ describe("unpackaged E2E must not ship in release builds", () => {
     expect(main).toContain("tauri_plugin_wdio::init()");
     expect(main).toContain("tauri_plugin_wdio_webdriver::init()");
     const hook = read("src/e2e-hook.ts");
-    expect(hook).toContain('import.meta.env.VITE_ZINNIA_E2E !== "1"');
-    expect(read("src/e2e-wdio-plugin.ts")).toContain(
-      'import.meta.env.VITE_ZINNIA_E2E !== "1"',
+    expect(read("src/e2e-env.ts")).toContain(
+      'import.meta.env.VITE_ZINNIA_E2E === "1"',
     );
+    expect(hook).toContain("isE2eFrontend");
+    expect(read("src/e2e-wdio-plugin.ts")).toContain("isE2eFrontend");
+    expect(read("src/setup-wizard.ts")).toContain("isE2eFrontend");
+    expect(read("src/ui/workspace.ts")).toContain("isE2eFrontend");
+    expect(read("src/window-fx.ts")).toContain("isE2eFrontend");
+    expect(read("src/app-init.ts")).toContain("isE2eFrontend");
+    expect(read("e2e/helpers/profile.js")).toContain(
+      "WEBVIEW2_USER_DATA_FOLDER",
+    );
+    expect(read("scripts/test-e2e.js")).toContain("e2e-feature-4");
     expect(main).toContain('#[cfg(feature = "e2e")]\nfn e2e_session_active()');
     expect(main).toContain('#[cfg(not(feature = "e2e"))]');
     expect(main).toContain("production_integrations_enabled()");

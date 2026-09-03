@@ -34,6 +34,7 @@ import { checkUpdates, autoCheckUpdates } from "./updater";
 import { openLicensesModal } from "./licenses";
 import { openExternalUrl } from "./external-links";
 import { refreshQuickActionRepeatState } from "./quick-actions";
+import { isE2eFrontend } from "./e2e-env";
 import { shouldShowSetupWizard } from "./setup-wizard";
 import { initBasicWorkspace, handleBasicDragDrop } from "./basic";
 import { refreshOsIntegrationStatus } from "./os-integration";
@@ -264,6 +265,13 @@ export async function init() {
   state.currentSettings = loadedSettings.settings;
   state.lastPersistedSettings = { ...loadedSettings.settings };
   state.settingsExtras = { ...loadedSettings.extras };
+  if (isE2eFrontend()) {
+    state.currentSettings.autoCheckUpdates = false;
+    state.currentSettings.basicWindowEffects = false;
+    state.currentSettings.setupComplete = true;
+    state.settingsExtras._setupComplete = true;
+    state.settingsExtras._setupWizardVersion = 3;
+  }
 
   let isFlatpak = false;
   try {
