@@ -117,11 +117,11 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
-    "@tauri-apps/plugin-dialog": "^2.6.0",
-    "@tauri-apps/plugin-notification": "^2.3.3",
+    "@tauri-apps/plugin-dialog": "^2.7.3",
+    "@tauri-apps/plugin-notification": "^2.4.0",
     "@tauri-apps/plugin-process": "^2.0.0",
-    "@tauri-apps/plugin-shell": "^2.3.5",
-    "@tauri-apps/plugin-updater": "^2.10.0",
+    "@tauri-apps/plugin-shell": "^2.3.6",
+    "@tauri-apps/plugin-updater": "^2.11.0",
     "lucide": "^1.17.0"
   },
   "devDependencies": {
