@@ -71,7 +71,12 @@ function reexecUnderXvfb() {
   }
   const result = spawnSync(
     "xvfb-run",
-    ["-a", process.execPath, __filename, ...process.argv.slice(2)],
+    [
+      "-a",
+      process.execPath,
+      fileURLToPath(import.meta.url),
+      ...process.argv.slice(2),
+    ],
     {
       cwd: REPO_ROOT,
       env: { ...process.env, ZINNIA_E2E_XVFB: "1" },
