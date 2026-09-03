@@ -256,7 +256,9 @@ function clearPreStagedUpdaterManifests() {
   if (!fs.existsSync(releaseDir)) return;
   const removed = [];
   for (const name of fs.readdirSync(releaseDir)) {
-    if (!isPerTargetManifest(name)) continue;
+    // `latest.json` matches artifact rules but no endpoint reads it; treat it
+    // like the discovery path, which deletes it outright.
+    if (!isPerTargetManifest(name) && name !== "latest.json") continue;
     const fullPath = path.join(releaseDir, name);
     let isFile = false;
     try {
@@ -915,6 +917,13 @@ function ghRequest(method, endpoint, body) {
   return Promise.resolve(githubApi(method, endpoint, body));
 }
 
+// gh reports "HTTP 422"; statusCode is parsed by github-cli.cjs.
+function isGitHubConflict(error) {
+  if (error?.statusCode === 422) return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return /\((?:HTTP )?422\)|"status"\s*:\s*"?422"?/.test(message);
+}
+
 /**
  * Walk GitHub list endpoints page-by-page until an empty page or a short page.
  * `fetchPage(page, perPage)` should return the parsed JSON body for that page.
@@ -949,9 +958,16 @@ async function getOrCreateRelease() {
         `/repos/${REPO_OWNER}/${REPO_NAME}/releases?per_page=${perPage}&page=${page}`,
       ),
     );
-    return releases.find(
-      (release) => release.draft && release.tag_name === TAG,
+    // Duplicate drafts are a known GitHub failure; match ensure-draft-release.
+    const drafts = releases.filter(
+      (release) => release?.draft && release.tag_name === TAG,
     );
+    if (drafts.length > 1) {
+      throw new Error(
+        `Multiple draft releases exist for ${TAG}. Resolve duplicates before signing.`,
+      );
+    }
+    return drafts[0] || null;
   };
 
   const existing = await findExisting();
@@ -979,8 +995,7 @@ async function uploadAsset(uploadUrl, filePath) {
       return await uploadAssetOnce(uploadUrl, filePath);
     } catch (error) {
       lastError = error;
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("(422)") || attempt === 3) throw error;
+      if (isGitHubConflict(error) || attempt === 3) throw error;
       await new Promise((resolve) => setTimeout(resolve, attempt * 1000));
     }
   }
@@ -1230,8 +1245,7 @@ async function withBetaManifestSyncLock(release, operation) {
         acquired = await uploadAsset(release.upload_url, lockPath);
         break;
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (!message.includes("(422)")) throw error;
+        if (!isGitHubConflict(error)) throw error;
         if (attempt === BETA_SYNC_LOCK_RETRIES) {
           const lock = await findBetaManifestSyncLock(release.id);
           const createdAt = lock?.created_at
@@ -1285,8 +1299,7 @@ async function uploadAssetWithReplace(
   try {
     await uploadAsset(release.upload_url, filePath);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (!message.includes("(422)")) throw err;
+    if (!isGitHubConflict(err)) throw err;
 
     const fileName = path.basename(filePath);
     const assets = await listReleaseAssets(release.id);
@@ -1433,11 +1446,30 @@ function validatePublishedBetaManifest({ name, contents, releaseAssetNames }) {
     if (
       url.protocol !== "https:" ||
       url.hostname.toLowerCase() !== "github.com" ||
+      url.port !== "" ||
+      url.username ||
+      url.password ||
+      url.hash ||
       !url.pathname.toLowerCase().startsWith(expectedPrefix.toLowerCase())
     ) {
       throw new Error(`${name} points outside the published ${TAG} release.`);
     }
     const artifactName = decodeURIComponent(url.pathname.split("/").at(-1));
+    if (
+      artifactName !== path.posix.basename(artifactName) ||
+      artifactName !== path.win32.basename(artifactName) ||
+      path.posix.isAbsolute(artifactName) ||
+      path.win32.isAbsolute(artifactName) ||
+      artifactName.includes("/") ||
+      artifactName.includes("\\") ||
+      artifactName.includes(":") ||
+      artifactName === "." ||
+      artifactName === ".."
+    ) {
+      throw new Error(
+        `${name} has an unsafe artifact filename ${artifactName}.`,
+      );
+    }
     if (!releaseAssetNames.has(artifactName)) {
       throw new Error(
         `${name} references missing release asset ${artifactName}.`,
@@ -1721,12 +1753,14 @@ export {
   isChecksumTextName,
   isDirectExecution,
   isExplicitTruthy,
+  isGitHubConflict,
   isTransactionalStagingAssetName,
   listAllGithubPages,
   rpmArtifactMatchesVersion,
   expectedPublishedBetaManifestNames,
-  requiredLinuxTargetKeys,
   requiredPublishedBetaManifestNames,
+  requiredLinuxTargetKeys,
+  resolveUpdaterTargets,
   validatePublishedBetaManifest,
   syncBetaManifestsToLatestStable,
   updaterChannelVariants,

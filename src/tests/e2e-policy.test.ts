@@ -133,22 +133,30 @@ describe("production archive IPC policy", () => {
     return files;
   }
 
-  it("centralizes bounded run_7z and probe envelopes in backend-ipc", () => {
+  it("centralizes bounded run_7z and probe envelopes in their IPC modules", () => {
     const backendPath = path.resolve(
       process.cwd(),
       "src/archive/backend-ipc.ts",
     );
+    const probePath = path.resolve(
+      process.cwd(),
+      "src/archive/compress-probe-ipc.ts",
+    );
     const backend = fs.readFileSync(backendPath, "utf8");
     expect(backend).not.toContain("import.meta.env.MODE");
     expect(backend).toContain('invoke<T>("run_7z", run7zInvokeArgs(request))');
-    expect(backend).toMatch(
+    expect(backend).not.toMatch(
+      /invoke(?:<[^>]+>)?\(\s*["']probe_compress_inputs["']/,
+    );
+    const probe = fs.readFileSync(probePath, "utf8");
+    expect(probe).toMatch(
       /invoke<T>\(\s*"probe_compress_inputs",\s*compressInputProbeInvokeArgs\(paths\),?\s*\)/,
     );
 
     for (const file of productionTypeScriptFiles(
       path.resolve(process.cwd(), "src"),
     )) {
-      if (file === backendPath) continue;
+      if (file === backendPath || file === probePath) continue;
       const source = fs.readFileSync(file, "utf8");
       expect(source, file).not.toMatch(
         /invoke(?:<[^>]+>)?\(\s*["'](?:run_7z|probe_compress_inputs)["']/,

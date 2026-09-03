@@ -1,4 +1,4 @@
-import { message } from "@tauri-apps/plugin-dialog";
+import { ask, message } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
@@ -60,21 +60,65 @@ import { installE2eHookIfEnabled } from "./e2e-hook";
 import { installNativeWebviewContextMenuGuard } from "./webview-context-menu";
 
 let persistentAlertDismissWired = false;
+let preservedRecoveryAcknowledgementAvailable = false;
 
 function showPersistentAlertBanner(message: string): void {
   const banner = document.getElementById("startup-recovery-banner");
   const text = document.getElementById("startup-recovery-banner-text");
   const dismiss = document.getElementById("startup-recovery-banner-dismiss");
+  const acknowledge = document.getElementById(
+    "startup-recovery-banner-acknowledge",
+  ) as HTMLButtonElement | null;
   if (!banner || !text) return;
   const existing = text.textContent?.trim() ?? "";
   text.textContent =
     existing && existing !== message ? `${existing} ${message}` : message;
   banner.hidden = false;
+  if (/was preserved|were preserved/i.test(message)) {
+    preservedRecoveryAcknowledgementAvailable = true;
+  }
+  if (acknowledge) {
+    if (preservedRecoveryAcknowledgementAvailable) {
+      acknowledge.hidden = false;
+      acknowledge.onclick ??= async () => {
+        const proceed = await ask(
+          "Zinnia cannot prove whether it wrote the kept extraction result " +
+            "itself. Accepting leaves the files exactly as they are and only " +
+            "clears the recovery marker so archive jobs can run again.",
+          {
+            title: "Accept kept extraction result",
+            kind: "warning",
+            okLabel: "Accept and continue",
+            cancelLabel: "Keep blocked",
+          },
+        );
+        if (!proceed) return;
+        try {
+          acknowledge.hidden = true;
+          text.textContent = "";
+          preservedRecoveryAcknowledgementAvailable = false;
+          showPersistentAlertBanner(
+            await invoke<string>("acknowledge_preserved_transaction"),
+          );
+        } catch (err) {
+          preservedRecoveryAcknowledgementAvailable = true;
+          acknowledge.hidden = false;
+          showPersistentAlertBanner(
+            `Could not clear the recovery marker: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      };
+    } else {
+      acknowledge.hidden = true;
+    }
+  }
   if (persistentAlertDismissWired) return;
   persistentAlertDismissWired = true;
   dismiss?.addEventListener("click", () => {
     banner.hidden = true;
     text.textContent = "";
+    preservedRecoveryAcknowledgementAvailable = false;
+    if (acknowledge) acknowledge.hidden = true;
     persistentAlertDismissWired = false;
   });
 }

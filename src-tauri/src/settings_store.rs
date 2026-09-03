@@ -275,6 +275,9 @@ pub fn load_settings(app: tauri::AppHandle) -> Result<String, String> {
                     std::fs::rename(&backup, &path).map_err(|e| {
                         format!("Settings backup exists but could not be restored: {e}")
                     })?;
+                    // Durably record the restore so a second crash cannot make
+                    // the primary disappear again behind the backup.
+                    let _ = sync_parent_directory(&path);
                     Ok(contents)
                 }
                 None => Ok("{}".to_string()),

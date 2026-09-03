@@ -247,12 +247,24 @@ fn trim_log_file_if_needed(path: &std::path::Path) -> Result<(), String> {
         return Ok(());
     }
 
-    let mut source = crate::path_safety::open_regular_file_nofollow(path)?;
-    let mut bytes = Vec::with_capacity(meta.len().min(usize::MAX as u64) as usize);
-    use std::io::Read as _;
-    source.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
-    let contents = String::from_utf8_lossy(&bytes).to_string();
+    // Read only the tail we intend to keep (plus margin for the newline
+    // snap), never the whole file: an externally grown zinnia.log must not
+    // make this allocate its full size.
     let keep_size = (MAX_LOG_FILE_BYTES / 2) as usize;
+    let read_span_u64 = (keep_size as u64 * 2).min(meta.len());
+    let read_start = meta.len() - read_span_u64;
+    let read_span = read_span_u64 as usize;
+    let mut source = crate::path_safety::open_regular_file_nofollow(path)?;
+    use std::io::{Read as _, Seek as _, SeekFrom};
+    source
+        .seek(SeekFrom::Start(read_start))
+        .map_err(|e| e.to_string())?;
+    let mut bytes = Vec::with_capacity(read_span);
+    source
+        .take(read_span_u64)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    let contents = String::from_utf8_lossy(&bytes).to_string();
     let mut start = contents.len().saturating_sub(keep_size);
     while start > 0 && !contents.is_char_boundary(start) {
         start -= 1;

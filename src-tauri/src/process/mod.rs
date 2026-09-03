@@ -30,8 +30,8 @@ pub use commands::{
 pub use journal::cleanup_orphan_stages;
 #[allow(unused_imports)]
 pub use recovery::{
-    get_startup_recovery_status, mark_startup_recovery_done, recover_interrupted_transaction,
-    set_startup_recovery_error,
+    acknowledge_preserved_transaction, get_startup_recovery_status, mark_startup_recovery_done,
+    recover_interrupted_transaction, set_startup_recovery_error,
 };
 
 // `#[tauri::command]` emits these beside each command; generate_handler looks them
@@ -46,7 +46,9 @@ pub use commands::{
 };
 #[doc(hidden)]
 pub use recovery::{
-    __cmd__get_startup_recovery_status, __tauri_command_name_get_startup_recovery_status,
+    __cmd__acknowledge_preserved_transaction, __cmd__get_startup_recovery_status,
+    __tauri_command_name_acknowledge_preserved_transaction,
+    __tauri_command_name_get_startup_recovery_status,
 };
 
 // Bridge helpers that `archive_snapshot` still calls via `super::`.
@@ -88,7 +90,8 @@ pub(crate) use quota::staged_tree_usage;
 #[cfg(test)]
 pub(crate) use recovery::{
     archive_journal_is_committed, cleanup_committed_archive_journal,
-    cleanup_extract_journal_artifacts, extract_journal_is_committed, recover_missing_extract_stage,
+    cleanup_extract_journal_artifacts, extract_journal_is_committed,
+    journal_is_preserved_ambiguous_publish, recover_missing_extract_stage,
     retract_scrub_archive_journal_at, rollback_archive_journal,
 };
 #[cfg(test)]
@@ -117,7 +120,11 @@ pub struct ProcessState {
     pub preparing: bool,
     pub cancelling: bool,
     pub owner_label: Option<String>,
-    pub(crate) abort_reason: Option<String>,
+    pub abort_reason: Option<String>,
+    /// Set while the owning `run_7z` future is alive. An exited child may only
+    /// be reaped after that owner has been dropped; otherwise its finalizer can
+    /// still mutate this shared state.
+    pub(crate) operation_liveness: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     /// When set, `preparing` was reserved for an app update install. Auto-clear
     /// if the webview dies without `release_update` (soft-lock watchdog).
     pub(crate) update_reserved_at: Option<std::time::Instant>,
@@ -167,10 +174,11 @@ pub(crate) struct ArchiveDestinationSnapshot {
     pub(crate) sha256: [u8; 32],
 }
 
-/// Crash-recovery only. Frontend heartbeats refresh `update_reserved_at` while
-/// native install is alive; this TTL must outlast expected auth prompts
-/// (pkexec / AppleScript) without unlocking a still-running installer.
+/// Rolling TTL; must outlast auth prompts (pkexec / AppleScript).
 pub(crate) const UPDATE_RESERVATION_TTL: std::time::Duration = std::time::Duration::from_secs(1800);
+
+/// Single identity so TTL, heartbeat, expiry, and Quit blocking cannot drift.
+pub(crate) const UPDATE_INSTALL_RESERVATION_REASON: &str = "Installing application update";
 
 impl ProcessState {
     pub fn idle() -> Self {
@@ -180,6 +188,7 @@ impl ProcessState {
             cancelling: false,
             owner_label: None,
             abort_reason: None,
+            operation_liveness: None,
             update_reserved_at: None,
             cleanup_plan: None,
         }
@@ -193,14 +202,47 @@ impl ProcessState {
         self.cancelling = false;
         self.owner_label = None;
         self.abort_reason = None;
+        self.operation_liveness = None;
         self.update_reserved_at = None;
         self.cleanup_plan = None;
     }
 
-    /// Refresh the update soft-lock clock while native installation is still
-    /// alive. Only the reserving window may touch.
+    /// Reap a wedged child (kill failed, process since exited) so the slot
+    /// recovers without restart. Only `cancelling` + live handle is touched;
+    /// orphaned staging falls to the startup pending-stage sweep.
+    pub(crate) fn reap_orphaned_child(&mut self) -> bool {
+        // `probe_7z` keeps `preparing` true for its whole lifetime. If its
+        // terminate/wait path fails after the child has already exited, it
+        // still needs this recovery path once its owner future is gone.
+        if !self.cancelling {
+            return false;
+        }
+        let Some(child) = self.child.as_ref() else {
+            return false;
+        };
+        let Some(liveness) = self.operation_liveness.as_ref() else {
+            return false;
+        };
+        if liveness.load(std::sync::atomic::Ordering::Acquire) {
+            return false;
+        }
+        if !matches!(child.try_wait(), Ok(Some(_))) {
+            return false;
+        }
+        self.child = None;
+        self.preparing = false;
+        self.cancelling = false;
+        self.owner_label = None;
+        self.abort_reason = None;
+        self.operation_liveness = None;
+        self.update_reserved_at = None;
+        self.cleanup_plan = None;
+        true
+    }
+
+    /// Refresh rolling clock. Owner window only.
     pub(crate) fn touch_update_reservation(&mut self, owner_label: &str) -> Result<(), String> {
-        if self.abort_reason.as_deref() != Some("Installing application update") {
+        if self.abort_reason.as_deref() != Some(UPDATE_INSTALL_RESERVATION_REASON) {
             return Err("No update installation reservation is active.".to_string());
         }
         if self.owner_label.as_deref() != Some(owner_label) {
@@ -212,9 +254,7 @@ impl ProcessState {
         Ok(())
     }
 
-    /// Drop a stale update reservation left behind when the webview crashes or
-    /// never reaches `release_update` after `reserve_update`. Heartbeats from a
-    /// live install reset the clock, so this only fires after the UI is gone.
+    /// Drop a reservation the webview never released. Heartbeats reset the TTL.
     pub(crate) fn expire_stale_update_reservation(&mut self) {
         let Some(reserved_at) = self.update_reserved_at else {
             return;
@@ -225,7 +265,7 @@ impl ProcessState {
         if self.child.is_some() {
             return;
         }
-        if self.abort_reason.as_deref() != Some("Installing application update") {
+        if self.abort_reason.as_deref() != Some(UPDATE_INSTALL_RESERVATION_REASON) {
             return;
         }
         self.release_prepare_slot();
@@ -235,7 +275,7 @@ impl ProcessState {
         self.child.is_none()
             && self.preparing
             && self.update_reserved_at.is_some()
-            && self.abort_reason.as_deref() == Some("Installing application update")
+            && self.abort_reason.as_deref() == Some(UPDATE_INSTALL_RESERVATION_REASON)
     }
 }
 
@@ -300,6 +340,7 @@ pub(crate) fn archive_slot_is_busy(state: &ProcessState) -> bool {
 pub(crate) fn running_process_is_busy(state: &RunningProcess) -> bool {
     match state.0.lock() {
         Ok(mut process) => {
+            process.reap_orphaned_child();
             process.expire_stale_update_reservation();
             archive_slot_is_busy(&process)
         }
@@ -308,6 +349,7 @@ pub(crate) fn running_process_is_busy(state: &RunningProcess) -> bool {
 }
 
 pub(crate) fn ensure_idle_mut(state: &mut ProcessState) -> Result<(), String> {
+    state.reap_orphaned_child();
     state.expire_stale_update_reservation();
     ensure_idle(state)
 }

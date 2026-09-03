@@ -293,6 +293,16 @@ pub(crate) fn create_private_stage_dir_open(
     }
     #[cfg(windows)]
     {
+        if name.is_empty()
+            || name == std::ffi::OsStr::new(".")
+            || name == std::ffi::OsStr::new("..")
+            || std::path::Path::new(name).components().count() != 1
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "not a single safe path component",
+            ));
+        }
         // The Windows helper creates one child relative to a held parent and
         // returns the handle from that same operation; ACL verification and
         // ownership identity never reopen the public child pathname.
@@ -341,14 +351,49 @@ pub fn apply_parent_directory_mode(path: &Path) -> io::Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no parent"))?;
-    // Copy standard permission bits from the parent. Keep any special bits
-    // already present on `path` (mkdir under a setgid parent inherits setgid;
-    // blindly chmod'ing 0o777 would clear it). Do not copy sticky/setuid/setgid
-    // from the parent onto rename-published 0o700 stages.
-    let parent_mode = std::fs::metadata(parent)?.permissions().mode();
-    let current_mode = std::fs::metadata(path)?.permissions().mode();
-    let mode = (parent_mode & 0o777) | (current_mode & 0o7000);
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+    // Re-open the publish target with O_NOFOLLOW and read its mode from that
+    // fd, so a symlink swap after the rename cannot redirect the chmod to an
+    // outside victim. Compare device/inode to reject a swapped path.
+    use std::os::unix::ffi::OsStrExt;
+    let c_path = std::ffi::CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path has interior NUL"))?;
+    let fd = unsafe {
+        libc::open(
+            c_path.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let result = (|| -> io::Result<()> {
+        let mut st = unsafe { std::mem::zeroed::<libc::stat>() };
+        if unsafe { libc::fstat(fd, &mut st) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if st.st_mode & libc::S_IFMT != libc::S_IFDIR {
+            return Err(io::Error::other("publish target is not a directory"));
+        }
+        let parent_metadata = std::fs::metadata(parent)?;
+        // Refuse if `path` and `parent` are the same inode (path == parent).
+        use std::os::unix::fs::MetadataExt;
+        if parent_metadata.dev() as u64 == st.st_dev as u64
+            && parent_metadata.ino() as u64 == st.st_ino as u64
+        {
+            return Err(io::Error::other(
+                "publish target and its parent are the same directory",
+            ));
+        }
+        let parent_mode = parent_metadata.permissions().mode();
+        let current_mode = st.st_mode;
+        let mode = (parent_mode & 0o777) | (u32::from(current_mode) & 0o7000);
+        if unsafe { libc::fchmod(fd, mode as libc::mode_t) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    })();
+    unsafe { libc::close(fd) };
+    result
 }
 
 #[cfg(not(unix))]
@@ -395,7 +440,19 @@ fn quarantine_component() -> io::Result<String> {
 #[cfg(unix)]
 fn unix_component(value: &std::ffi::OsStr) -> io::Result<std::ffi::CString> {
     use std::os::unix::ffi::OsStrExt as _;
-    std::ffi::CString::new(value.as_bytes())
+    let bytes = value.as_bytes();
+    // mkdirat accepts "a/b"; reject anything that is not one safe component.
+    if bytes.is_empty()
+        || bytes.contains(&b'/')
+        || value == std::ffi::OsStr::new(".")
+        || value == std::ffi::OsStr::new("..")
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "not a single safe path component",
+        ));
+    }
+    std::ffi::CString::new(bytes)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "file name contains NUL"))
 }
 
@@ -1313,14 +1370,26 @@ pub fn sync_directory(path: &Path) -> Result<(), String> {
             .read(true)
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
             .open(path);
-        match open_result.and_then(|directory| directory.sync_all()) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(()),
+        // Separate open failures from flush failures: an unopenable path is a
+        // real I/O error (only the volume-root NotFound is benign), whereas the
+        // tolerated codes below are per-filesystem FlushFileBuffers results.
+        let directory = match open_result {
+            Ok(directory) => directory,
             Err(error)
                 if error.kind() == std::io::ErrorKind::NotFound && path.parent().is_none() =>
             {
-                Ok(())
+                return Ok(());
             }
+            Err(error) => {
+                return Err(format!(
+                    "Could not open directory to sync {}: {error}",
+                    path.display()
+                ));
+            }
+        };
+        match directory.sync_all() {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(()),
             Err(error) if matches!(error.raw_os_error(), Some(1 | 6 | 50 | 87)) => Ok(()),
             Err(error) => Err(error.to_string()),
         }

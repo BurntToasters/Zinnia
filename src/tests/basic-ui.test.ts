@@ -675,6 +675,10 @@ describe("basic-ui state transitions", () => {
       (document.getElementById("basic-tab-extract") as HTMLButtonElement)
         .disabled,
     ).toBe(false);
+    expect(
+      (document.getElementById("workspace-mode-power") as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
   });
 
   it("clears progress busy semantics when an operation ends", () => {
@@ -929,6 +933,8 @@ describe("basic-ui state transitions", () => {
     uiMocks.runtime.workspaceMode = "basic";
     uiMocks.runtime.mode = "add";
     (document.getElementById("update-mode") as HTMLInputElement).checked = true;
+    (document.getElementById("store-timestamps") as HTMLInputElement).checked =
+      true;
     (document.getElementById("path-mode") as HTMLSelectElement).value =
       "absolute";
     (document.getElementById("extra-args") as HTMLInputElement).value = "-bb3";
@@ -939,6 +945,9 @@ describe("basic-ui state transitions", () => {
 
     expect(
       (document.getElementById("update-mode") as HTMLInputElement).checked,
+    ).toBe(false);
+    expect(
+      (document.getElementById("store-timestamps") as HTMLInputElement).checked,
     ).toBe(false);
     expect(
       (document.getElementById("path-mode") as HTMLSelectElement).value,
@@ -1508,6 +1517,49 @@ describe("basic-ui drag and init wiring", () => {
         .getElementById("basic-extract-completion")
         ?.classList.contains("is-active"),
     ).toBe(true);
+    expect(state.operationPreparing).toBe(false);
+  });
+
+  it("uses typed extraction destination without opening folder picker", async () => {
+    const archive = "/tmp/archive.7z";
+    state.inputs = [archive];
+    state.browseArchiveInfoByPath.set(archive, {
+      type: "7z",
+      physicalSize: 10,
+      method: "LZMA2",
+      solid: false,
+      encrypted: false,
+      entries: [],
+    });
+    state.browseArchiveIdentityByPath.set(archive, "identity:archive");
+    depMocks.validateArchivePaths.mockResolvedValueOnce([
+      { path: archive, valid: true, identity: "identity:archive" },
+    ]);
+    uiMocks.runtime.mode = "extract";
+    setBasicView("extract");
+    (document.getElementById("basic-extract-path") as HTMLInputElement).value =
+      "/tmp/typed-destination";
+    depMocks.runAction.mockResolvedValueOnce(undefined);
+
+    await handleBasicExtractAction();
+
+    expect(openMock).not.toHaveBeenCalled();
+    expect(depMocks.runAction).toHaveBeenCalled();
+    expect(state.operationPreparing).toBe(false);
+  });
+
+  it("uses typed compression destination without opening save dialog", async () => {
+    state.inputs = ["/tmp/input.txt"];
+    uiMocks.runtime.mode = "add";
+    setBasicView("compress");
+    (document.getElementById("basic-output-path") as HTMLInputElement).value =
+      "/tmp/typed-output.7z";
+    depMocks.runAction.mockResolvedValueOnce(undefined);
+
+    await handleBasicCompressAction();
+
+    expect(saveMock).not.toHaveBeenCalled();
+    expect(depMocks.runAction).toHaveBeenCalled();
     expect(state.operationPreparing).toBe(false);
   });
 

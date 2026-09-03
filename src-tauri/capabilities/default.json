@@ -73,6 +73,7 @@
     "allow-archive-output-selection-token",
     "allow-set-workspace-window-fx",
     "allow-supports-workspace-window-fx",
-    "allow-get-startup-recovery-status"
+    "allow-get-startup-recovery-status",
+    "allow-acknowledge-preserved-transaction"
   ]
 }

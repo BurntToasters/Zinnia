@@ -17,9 +17,8 @@ export function validateChangelogForVersion(changelog, version) {
   }
 
   const tag = `v${version}`;
-  const sectionOk =
-    changelog.includes(`## Changes in \`${tag}:\``) ||
-    changelog.includes(`## Changes in \`${version}:\``);
+  // Same exact heading the draft-notes extractor reads (ensure-draft-release).
+  const sectionOk = changelog.includes(`## Changes in \`${tag}:\``);
   const urlsOk = changelog.includes(`/download/${tag}/`);
 
   if (!sectionOk) {
@@ -32,15 +31,15 @@ export function validateChangelogForVersion(changelog, version) {
       `changelog-version: CHANGELOG.md download links should include /download/${tag}/`,
     );
   }
+  if (/\(add release notes\)/.test(changelog)) {
+    errors.push(
+      "changelog-version: CHANGELOG still has placeholder notes (auto-inserted by sync-version; write real notes before tagging)",
+    );
+  }
   if (isStableReleaseVersion(version)) {
     if (/This is a Beta build/.test(changelog)) {
       errors.push(
         "changelog-version: stable CHANGELOG must not include the Beta callout",
-      );
-    }
-    if (/\(add release notes\)/.test(changelog)) {
-      errors.push(
-        "changelog-version: stable CHANGELOG still has placeholder notes",
       );
     }
     if (/\/download\/v\d+\.\d+\.\d+-beta\./.test(changelog)) {
