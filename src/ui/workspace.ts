@@ -1,4 +1,5 @@
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { isE2eFrontend } from "../e2e-env";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { state, dom } from "../state";
 import {
@@ -79,6 +80,9 @@ export function getWorkspaceMode(): WorkspaceMode {
 export async function resizeWorkspaceWindow(
   mode: WorkspaceMode,
 ): Promise<void> {
+  const resizable = mode !== "basic";
+  syncBasicWindowChrome(resizable);
+  if (isE2eFrontend()) return;
   const generation = ++workspaceResizeGeneration;
   const size =
     mode === "basic"
@@ -88,8 +92,6 @@ export async function resizeWorkspaceWindow(
           state.currentSettings.powerWindowHeight,
         );
   // Same main window: Basic locks size; Power stays freely resizable.
-  const resizable = mode !== "basic";
-  syncBasicWindowChrome(resizable);
 
   const operation = workspaceResizeQueue
     .catch(() => undefined)

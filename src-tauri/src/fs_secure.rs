@@ -306,7 +306,7 @@ pub(crate) fn create_private_stage_dir_open(
         // The Windows helper creates one child relative to a held parent and
         // returns the handle from that same operation; ACL verification and
         // ownership identity never reopen the public child pathname.
-        return create_private_dir_windows(&parent.join(name));
+        create_private_dir_windows(&parent.join(name))
     }
     #[cfg(not(any(unix, windows)))]
     {
@@ -330,7 +330,7 @@ pub(crate) fn create_inheriting_stage_dir_open_in(
     }
     #[cfg(windows)]
     {
-        return create_inheriting_stage_dir_windows(&parent.join(name));
+        create_inheriting_stage_dir_windows(&parent.join(name))
     }
     #[cfg(not(any(unix, windows)))]
     {
@@ -731,7 +731,7 @@ where
         // detected mismatch is preserved and no restore may overwrite a name.
         let source = match crate::path_safety::open_regular_file_nofollow(path) {
             Ok(file) => file,
-            Err(error)
+            Err(_)
                 if std::fs::symlink_metadata(path).is_err_and(|metadata_error| {
                     metadata_error.kind() == io::ErrorKind::NotFound
                 }) =>
@@ -793,7 +793,7 @@ where
         }
         drop((named, quarantined));
         remove_file_for_cleanup(&quarantine)?;
-        return Ok(true);
+        Ok(true)
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -1286,7 +1286,7 @@ where
         drop(named);
         remove_directory_contents_relative(&source)?;
         mark_handle_deleted(&source)?;
-        return Ok(true);
+        Ok(true)
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -2017,7 +2017,7 @@ fn dacl_matches_expected(
     Ok(true)
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 fn open_directory_for_acl_verification(path: &Path) -> io::Result<std::fs::File> {
     use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
     use windows_sys::Win32::Storage::FileSystem::{

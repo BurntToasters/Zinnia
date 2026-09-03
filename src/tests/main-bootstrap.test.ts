@@ -107,6 +107,9 @@ const mocks = vi.hoisted(() => {
       showSetupWizard: vi.fn().mockResolvedValue(null),
       markSetupComplete: vi.fn().mockResolvedValue(undefined),
     },
+    e2eEnv: {
+      isE2eFrontend: vi.fn(() => false),
+    },
     osIntegration: {
       refreshOsIntegrationStatus: vi.fn().mockResolvedValue(undefined),
       wireOsIntegrationEvents: vi.fn(),
@@ -222,6 +225,10 @@ vi.mock("../setup-wizard", () => ({
   shouldShowSetupWizard: mocks.setupWizard.shouldShowSetupWizard,
   showSetupWizard: mocks.setupWizard.showSetupWizard,
   markSetupComplete: mocks.setupWizard.markSetupComplete,
+}));
+
+vi.mock("../e2e-env", () => ({
+  isE2eFrontend: mocks.e2eEnv.isE2eFrontend,
 }));
 
 vi.mock("../os-integration", () => ({
@@ -595,6 +602,9 @@ beforeEach(async () => {
   mocks.quickActions.wireQuickActionEvents.mockReset();
   mocks.quickActions.refreshQuickActionRepeatState.mockReset();
 
+  mocks.e2eEnv.isE2eFrontend.mockReset();
+  mocks.e2eEnv.isE2eFrontend.mockReturnValue(false);
+
   mocks.setupWizard.shouldShowSetupWizard.mockReset();
   mocks.setupWizard.shouldShowSetupWizard.mockReturnValue(false);
   mocks.setupWizard.showSetupWizard.mockReset();
@@ -689,6 +699,35 @@ describe("main bootstrap", () => {
       (document.getElementById("s-version-label") as HTMLElement).textContent,
     ).toBe("v1.2.3");
     expect(document.body.classList.contains("platform-linux")).toBe(true);
+  });
+
+  it("isolates unpackaged E2E from updater prompts and first-run glass", async () => {
+    mocks.e2eEnv.isE2eFrontend.mockReturnValue(true);
+    mocks.settings.loadSettingsWithMetadata.mockResolvedValue({
+      settings: {
+        ...SETTING_DEFAULTS,
+        autoCheckUpdates: true,
+        basicWindowEffects: true,
+        setupComplete: false,
+        workspaceMode: "basic" as const,
+        uiDensity: "comfortable" as const,
+        lastMode: "add" as const,
+        showActivityPanel: true,
+        theme: "system" as const,
+      },
+      extras: {},
+      malformed: false,
+    });
+
+    await loadMainModule();
+
+    const { state } = await import("../state");
+    expect(state.currentSettings.autoCheckUpdates).toBe(false);
+    expect(state.currentSettings.basicWindowEffects).toBe(false);
+    expect(state.currentSettings.setupComplete).toBe(true);
+    expect(state.settingsExtras._setupComplete).toBe(true);
+    expect(state.settingsExtras._setupWizardVersion).toBe(3);
+    expect(mocks.updater.autoCheckUpdates).not.toHaveBeenCalled();
   });
 
   it("opens the basic compress view for a --compress launch", async () => {
