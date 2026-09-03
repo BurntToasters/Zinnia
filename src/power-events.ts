@@ -1,4 +1,4 @@
-import { ask, message } from "@tauri-apps/plugin-dialog";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { $ } from "./utils";
@@ -338,10 +338,7 @@ export function wireEvents() {
         updateDeletePresetButton();
         const detail = err instanceof Error ? err.message : String(err);
         setStatus("Error", 3000, detail);
-        await message(`Could not save preset "${name}".\n\n${detail}`, {
-          title: "Preset not saved",
-          kind: "error",
-        });
+        showToast(`Could not save preset "${name}". ${detail}`, "error", 0);
       }
     })();
   });
@@ -369,10 +366,7 @@ export function wireEvents() {
         updateDeletePresetButton();
         const detail = err instanceof Error ? err.message : String(err);
         setStatus("Error", 3000, detail);
-        await message(`Could not delete preset "${name}".\n\n${detail}`, {
-          title: "Preset not deleted",
-          kind: "error",
-        });
+        showToast(`Could not delete preset "${name}". ${detail}`, "error", 0);
       }
     })();
   });
@@ -508,10 +502,7 @@ export function wireEvents() {
 
       const msg = err instanceof Error ? err.message : String(err);
       log(`Failed to save settings: ${msg}`, "error");
-      await message(`Failed to save settings.\n\n${msg}`, {
-        title: "Settings error",
-        kind: "error",
-      });
+      showToast(`Failed to save settings. ${msg}`, "error", 0);
     }
   });
   $("rerun-setup-wizard").addEventListener("click", async () => {
@@ -526,10 +517,7 @@ export function wireEvents() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log(`Setup wizard failed: ${msg}`, "error");
-      await message(`Failed to run setup wizard.\n\n${msg}`, {
-        title: "Setup wizard error",
-        kind: "error",
-      });
+      showToast(`Failed to run setup wizard. ${msg}`, "error", 0);
     }
   });
 
@@ -566,10 +554,7 @@ export function wireEvents() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log(`Failed to reset settings: ${msg}`, "error");
-      await message(`Failed to reset settings.\n\n${msg}`, {
-        title: "Reset settings error",
-        kind: "error",
-      });
+      showToast(`Failed to reset settings. ${msg}`, "error", 0);
     }
   });
 

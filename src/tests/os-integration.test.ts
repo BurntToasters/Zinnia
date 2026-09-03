@@ -11,14 +11,12 @@ import {
   setZinniaDefaultArchiver,
   wireOsIntegrationEvents,
 } from "../os-integration";
-import { message } from "@tauri-apps/plugin-dialog";
-
-const messageMock = vi.mocked(message);
 
 const invokeMock = vi.mocked(invoke);
 
 describe("OS integration UI", () => {
   beforeEach(() => {
+    document.getElementById("toast-region")?.remove();
     invokeMock.mockReset();
     invokeMock.mockResolvedValue("");
   });
@@ -355,14 +353,12 @@ describe("OS integration UI", () => {
   });
 
   it("surfaces reset failures and unchanged system results", async () => {
-    messageMock.mockClear();
     invokeMock.mockRejectedValueOnce(new Error("xdg-mime failed"));
 
     await resetPreferredArchiverToSystem();
 
-    expect(messageMock).toHaveBeenCalledWith(
+    expect(document.getElementById("toast-region")?.textContent).toContain(
       "xdg-mime failed",
-      expect.objectContaining({ title: "System archive app", kind: "warning" }),
     );
 
     invokeMock.mockResolvedValueOnce({
@@ -396,9 +392,8 @@ describe("OS integration UI", () => {
 
     await resetPreferredArchiverToSystem();
 
-    expect(messageMock).toHaveBeenCalledWith(
+    expect(document.getElementById("toast-region")?.textContent).toContain(
       "nothing changed",
-      expect.objectContaining({ kind: "warning" }),
     );
   });
 
@@ -451,7 +446,6 @@ describe("OS integration UI", () => {
       "Not enabled",
     );
 
-    messageMock.mockClear();
     invokeMock.mockReset();
     invokeMock.mockResolvedValueOnce("").mockResolvedValueOnce({
       platform: "macos",
@@ -471,9 +465,8 @@ describe("OS integration UI", () => {
     await openFinderSyncSettings();
     expect(invokeMock).toHaveBeenNthCalledWith(1, "enable_finder_sync");
     expect(invokeMock).toHaveBeenNthCalledWith(2, "get_os_integration_status");
-    expect(messageMock).toHaveBeenCalledWith(
-      expect.stringContaining("Finder extension is enabled"),
-      expect.objectContaining({ title: "Finder context menu enabled" }),
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Finder extension is enabled",
     );
     expect(document.getElementById("os-finder-sync-status")?.textContent).toBe(
       "Enabled",
@@ -520,9 +513,8 @@ describe("OS integration UI", () => {
     expect(invokeMock).toHaveBeenNthCalledWith(1, "enable_finder_sync");
     expect(invokeMock).toHaveBeenNthCalledWith(2, "get_os_integration_status");
     expect(invokeMock).toHaveBeenNthCalledWith(3, "open_finder_sync_settings");
-    expect(messageMock).toHaveBeenCalledWith(
-      expect.stringContaining("System Settings will open"),
-      expect.objectContaining({ title: "Enable Finder context menu" }),
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "System Settings will open",
     );
   });
 
@@ -580,14 +572,12 @@ describe("OS integration UI", () => {
         ?.classList.contains("status-pill--unknown"),
     ).toBe(true);
 
-    messageMock.mockClear();
     invokeMock.mockReset();
     invokeMock.mockResolvedValueOnce("");
     await openFinderServicesSettings();
     expect(invokeMock).toHaveBeenCalledWith("open_finder_services_settings");
-    expect(messageMock).toHaveBeenCalledWith(
-      expect.stringContaining("Services → Files and Folders"),
-      expect.objectContaining({ title: "Enable Finder Services" }),
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Services → Files and Folders",
     );
 
     renderOsIntegrationStatus({
@@ -601,12 +591,12 @@ describe("OS integration UI", () => {
       finderServicesEnabled: true,
       archiveDefaults: [],
     });
-    messageMock.mockClear();
+    document.getElementById("toast-region")?.remove();
     invokeMock.mockClear();
     invokeMock.mockResolvedValueOnce("");
     await openFinderServicesSettings();
     expect(invokeMock).toHaveBeenCalledWith("open_finder_services_settings");
-    expect(messageMock).not.toHaveBeenCalled();
+    expect(document.getElementById("toast-region")).toBeNull();
 
     renderOsIntegrationStatus({
       platform: "windows",

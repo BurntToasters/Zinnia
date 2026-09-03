@@ -485,6 +485,7 @@ async function loadMainModule(): Promise<void> {
 beforeEach(async () => {
   vi.resetModules();
   ensureMainDomElements();
+  document.getElementById("toast-region")?.remove();
 
   Object.defineProperty(window, "matchMedia", {
     writable: true,
@@ -929,9 +930,9 @@ describe("main bootstrap", () => {
 
     (document.getElementById("export-logs") as HTMLButtonElement).click();
     await flushAsync();
-    expect(messageMock).toHaveBeenCalledWith("Logs exported successfully.", {
-      title: "Logs exported",
-    });
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Logs exported successfully.",
+    );
 
     askMock.mockResolvedValueOnce(true);
     (document.getElementById("clear-logs") as HTMLButtonElement).click();
@@ -948,9 +949,8 @@ describe("main bootstrap", () => {
     (document.getElementById("open-logs-folder") as HTMLButtonElement).click();
     await flushAsync();
 
-    expect(messageMock).toHaveBeenCalledWith(
-      expect.stringContaining("Failed to open logs folder."),
-      expect.objectContaining({ title: "Open folder failed", kind: "error" }),
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Failed to open logs folder. permission denied",
     );
   });
 
@@ -1165,9 +1165,8 @@ describe("main bootstrap", () => {
     (document.getElementById("save-settings") as HTMLButtonElement).click();
     await flushAsync();
     expect(mocks.settings.populateSettingsModal).toHaveBeenCalled();
-    expect(messageMock).toHaveBeenCalledWith(
-      expect.stringContaining("Failed to save settings."),
-      expect.objectContaining({ title: "Settings error", kind: "error" }),
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Failed to save settings. disk full",
     );
   });
 
@@ -1273,9 +1272,12 @@ describe("main bootstrap", () => {
 
     await loadMainModule();
 
-    expect(messageMock).toHaveBeenCalledWith(
+    expect(messageMock).not.toHaveBeenCalledWith(
       expect.stringContaining("Setup wizard could not be completed."),
-      expect.objectContaining({ title: "Setup wizard error", kind: "error" }),
+      expect.anything(),
+    );
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Setup wizard could not be completed. wizard crash",
     );
     // Wizard failure must not abort app bootstrap.
     expect(document.body.textContent ?? "").not.toContain("Failed to start:");
