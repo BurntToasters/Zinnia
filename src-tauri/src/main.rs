@@ -58,6 +58,7 @@ fn defer_close_while_operation_finishes(
 ) -> bool {
     let state = app.state::<RunningProcess>();
     let owns_busy_operation = state.0.lock().map_or(true, |mut process| {
+        process.reap_orphaned_child();
         process.expire_stale_update_reservation();
         process.owner_label.as_deref() == Some(label)
             && (process.child.is_some()
@@ -148,6 +149,7 @@ fn defer_exit_while_operation_finishes(
             // user/system Quit during installation for the later updater
             // relaunch. The frontend releases this reservation immediately
             // before calling relaunch; until then, keep the process alive.
+            process.reap_orphaned_child();
             process.expire_stale_update_reservation();
             if process.blocks_quit_for_update_install() {
                 api.prevent_exit();
@@ -161,6 +163,7 @@ fn defer_exit_while_operation_finishes(
         }
         Err(poisoned) => {
             let mut process = poisoned.into_inner();
+            process.reap_orphaned_child();
             process.expire_stale_update_reservation();
             if process.blocks_quit_for_update_install() {
                 api.prevent_exit();
@@ -365,6 +368,7 @@ fn main() {
             process::probe_compress_inputs,
             process::archive_output_selection_token,
             process::get_startup_recovery_status,
+            process::acknowledge_preserved_transaction,
             archive_detect::validate_archive_paths,
             settings_store::load_settings,
             settings_store::save_settings,

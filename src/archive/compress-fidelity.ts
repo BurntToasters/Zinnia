@@ -1,4 +1,4 @@
-import { invokeCompressInputProbe } from "./backend-ipc";
+import { invokeCompressInputProbe } from "./compress-probe-ipc";
 
 export interface CompressInputProbe {
   nestedSymlinks: number;

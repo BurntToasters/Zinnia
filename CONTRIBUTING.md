@@ -64,6 +64,12 @@ branch:
 > **Require status checks to pass before merging** → select `quality-gate`
 > (and `rust-check`, `security-audit` as desired).
 
+## Cutting a stable release
+
+Stable versions (no `-beta.N`) have manual steps that automation cannot prove:
+the changelog banner removal, `licenses:cargo:strict`, draft verification, and
+the publish/verify ordering. Follow `docs/RELEASE-STABLE.md`.
+
 ## Conventions
 
 - Match the surrounding code's style; no framework: vanilla TS + DOM.

@@ -155,11 +155,18 @@ function setButtonInteractionLock(
 }
 
 function updateBasicInteractionLock(active: boolean): void {
+  // Workspace mode buttons have no independent disabled state. Keep their
+  // disabled property owned by this lock so a stale lock snapshot cannot leave
+  // Power inaccessible after a Basic operation finishes.
   document
-    .querySelectorAll<HTMLButtonElement>(
-      "#basic-workspace button, [data-workspace-mode-btn]",
-    )
+    .querySelectorAll<HTMLButtonElement>("[data-workspace-mode-btn]")
     .forEach((button) => {
+      button.disabled = active;
+    });
+  document
+    .querySelectorAll<HTMLButtonElement>("#basic-workspace button")
+    .forEach((button) => {
+      if (button.matches("[data-workspace-mode-btn]")) return;
       const keepCancelAvailable =
         active && state.running && basicCancelIds.has(button.id);
       setButtonInteractionLock(button, active && !keepCancelAvailable);

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-acknowledge-preserved-transaction"
+description = "Enables the acknowledge_preserved_transaction command without any pre-configured scope."
+commands.allow = ["acknowledge_preserved_transaction"]
+
+[[permission]]
+identifier = "deny-acknowledge-preserved-transaction"
+description = "Denies the acknowledge_preserved_transaction command without any pre-configured scope."
+commands.deny = ["acknowledge_preserved_transaction"]

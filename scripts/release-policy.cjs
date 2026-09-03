@@ -13,8 +13,23 @@ const STABLE_FORBIDDEN_ENV = [
   "SKIP_CARGO_INTEGRATION",
 ];
 
+// Stable must keep the Linux x64 deb/rpm/AppImage completeness assertion;
+// only explicit disabling (ENFORCE_*=0/false) is refused, opt-in is fine.
+const STABLE_FORBIDDEN_FALSY_ENV = ["ENFORCE_LINUX_X64_PACKAGE_SET"];
+
+// Stable uploads must target the canonical repository only; env retargeting
+// is a beta-fork recovery path and must not ship a stable feed elsewhere.
+const STABLE_CANONICAL_ENV = {
+  GH_REPO_OWNER: "BurntToasters",
+  GH_REPO_NAME: "zinnia",
+};
+
 function isExplicitTruthy(value) {
   return /^(1|true|yes|on)$/i.test(String(value || "").trim());
+}
+
+function isExplicitFalsy(value) {
+  return /^(0|false|no|off)$/i.test(String(value || "").trim());
 }
 
 function isStableReleaseVersion(version) {
@@ -38,10 +53,37 @@ function assertStableReleaseOverridesAllowed(
   const blocked = STABLE_FORBIDDEN_ENV.filter((name) =>
     isExplicitTruthy(env[name]),
   );
-  if (blocked.length === 0) return;
-  throw new Error(
-    `Stable release ${version} refuses ${blocked.join(", ")}. Those overrides are beta recovery paths only.`,
-  );
+  for (const name of STABLE_FORBIDDEN_FALSY_ENV) {
+    if (env[name] !== undefined && isExplicitFalsy(env[name])) {
+      blocked.push(name);
+    }
+  }
+  if (blocked.length > 0) {
+    throw new Error(
+      `Stable release ${version} refuses ${blocked.join(", ")}. Those overrides are beta recovery paths only.`,
+    );
+  }
+  const mismatches = [];
+  for (const [name, canonical] of Object.entries(STABLE_CANONICAL_ENV)) {
+    const value = String(env[name] || "").trim();
+    if (value && value !== canonical) {
+      mismatches.push(`${name}="${value}"`);
+    }
+  }
+  const downloadBaseUrl = String(env.RELEASE_DOWNLOAD_BASE_URL || "").trim();
+  if (downloadBaseUrl) {
+    const canonical =
+      `https://github.com/${STABLE_CANONICAL_ENV.GH_REPO_OWNER}/` +
+      `${STABLE_CANONICAL_ENV.GH_REPO_NAME}/releases/download/v${version}`;
+    if (downloadBaseUrl.replace(/\/+$/, "") !== canonical) {
+      mismatches.push(`RELEASE_DOWNLOAD_BASE_URL="${downloadBaseUrl}"`);
+    }
+  }
+  if (mismatches.length > 0) {
+    throw new Error(
+      `Stable release ${version} refuses non-canonical GitHub targets: ${mismatches.join(", ")}.`,
+    );
+  }
 }
 
 if (require.main === module) {
@@ -55,6 +97,8 @@ if (require.main === module) {
 
 module.exports = {
   STABLE_FORBIDDEN_ENV,
+  STABLE_FORBIDDEN_FALSY_ENV,
+  isExplicitFalsy,
   isExplicitTruthy,
   isStableReleaseVersion,
   readPackageVersion,

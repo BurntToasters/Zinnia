@@ -8,7 +8,11 @@ const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
 
-require("dotenv").config();
+try {
+  require("dotenv").config();
+} catch {
+  // dotenv-cli usually loads .env already; the module itself is optional.
+}
 const { assertGitHubCliAuthenticated, githubApi } = require("./github-cli.cjs");
 const { assertStableReleaseOverridesAllowed } = require("./release-policy.cjs");
 
@@ -122,10 +126,22 @@ async function syncReleaseNotesBody(release, body) {
   if (!release || typeof release.id !== "number") {
     throw new Error("Cannot sync release notes without a GitHub release id.");
   }
+  if (Boolean(release.prerelease) !== IS_PRERELEASE) {
+    // A wrong prerelease flag would hide stable from /releases/latest forever.
+    console.log(
+      "   Correcting draft prerelease flag " +
+        release.prerelease +
+        " -> " +
+        IS_PRERELEASE +
+        " for version " +
+        VERSION +
+        ".",
+    );
+  }
   const updated = await githubRequestWithRetry(
     "PATCH",
     "/repos/" + REPO_OWNER + "/" + REPO_NAME + "/releases/" + release.id,
-    { name: VERSION, body },
+    { name: VERSION, body, prerelease: IS_PRERELEASE },
   );
   console.log(
     "   Synced CHANGELOG.md into release notes (" +
@@ -386,7 +402,28 @@ async function waitForDraftRelease() {
   const commit = currentReleaseCommit();
   for (;;) {
     attempt += 1;
-    const matching = await findMatchingReleases();
+    let matching;
+    try {
+      matching = await findMatchingReleases();
+    } catch (error) {
+      // Authentication, permission, and configuration failures cannot improve
+      // while waiting. Only retry transport/transient GitHub failures.
+      if (!isRetryableGithubError(error)) {
+        throw error;
+      }
+      if (Date.now() >= deadline) {
+        throw error;
+      }
+      console.log(
+        "   Draft lookup failed (attempt " +
+          attempt +
+          "): " +
+          (error && error.message ? error.message : String(error)) +
+          "; retrying.",
+      );
+      await sleep(WAIT_POLL_INTERVAL_MS);
+      continue;
+    }
     const existing = singleDraftRelease(matching);
     if (existing) {
       assertReleaseTargetsCommit(existing, commit);

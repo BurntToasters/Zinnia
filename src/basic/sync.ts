@@ -469,11 +469,15 @@ export function updateBasicPasswordField(): void {
 export function syncBasicBeforeRun(): void {
   if (getWorkspaceMode() !== "basic") return;
   // Basic does not expose these Power-only controls. Clear them before every
-  // Basic run so a prior Power session cannot leak update mode or extra args.
+  // Basic run so a prior Power session cannot leak state into the args.
   const updateMode = document.getElementById(
     "update-mode",
   ) as HTMLInputElement | null;
   if (updateMode) updateMode.checked = false;
+  const storeTimestamps = document.getElementById(
+    "store-timestamps",
+  ) as HTMLInputElement | null;
+  if (storeTimestamps) storeTimestamps.checked = false;
   const pathMode = document.getElementById(
     "path-mode",
   ) as HTMLInputElement | null;

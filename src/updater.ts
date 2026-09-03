@@ -49,8 +49,9 @@ function clearPendingUpdate(closeResource: boolean): void {
   }
 }
 
-/** Discard a downloaded update when the user changes channel or resets settings. */
+/** Discard a downloaded update; no-op mid-install (close would race it). */
 export function discardPendingUpdate(): void {
+  if (installInFlight) return;
   updateGeneration += 1;
   clearPendingUpdate(true);
 }
@@ -67,6 +68,11 @@ async function archiveOperationIsRunning(
     // Failing closed is deliberate: an updater must never terminate an archive
     // operation merely because the status query is unavailable.
     log(`Unable to confirm archive idle state: ${text}`, "error");
+    if (mode === "reserve_update") {
+      // The response may be lost after the backend reserved; release is a
+      // owner-scoped no-op when unreserved.
+      void invoke("is_7z_running", { mode: "release_update" }).catch(() => {});
+    }
     return true;
   }
 }

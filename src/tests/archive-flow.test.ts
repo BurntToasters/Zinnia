@@ -1198,9 +1198,8 @@ describe("archive test/browse/selective flows", () => {
           decodeRun7zInvokePayload(payload).expectedArchiveIdentity,
       ),
     ).toEqual([`identity:${archiveA}`, `identity:${archiveB}`]);
-    expect(messageMock).toHaveBeenCalledWith(
+    expect(document.getElementById("toast-region")?.textContent).toContain(
       "Successfully extracted 2 archives.",
-      { title: "Batch extraction complete" },
     );
   });
 
@@ -1232,12 +1231,8 @@ describe("archive test/browse/selective flows", () => {
 
     await runBatchExtract();
 
-    expect(messageMock).toHaveBeenCalledWith(
+    expect(document.getElementById("toast-region")?.textContent).toContain(
       "1 succeeded, 1 failed (1 warning exit).",
-      {
-        title: "Batch extraction complete",
-        kind: "warning",
-      },
     );
   });
 

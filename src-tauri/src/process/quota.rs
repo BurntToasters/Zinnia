@@ -110,7 +110,14 @@ pub(crate) fn staged_tree_usage(
                     MAX_EXTRACT_PATH_BYTES / (1024 * 1024)
                 ));
             }
-            let metadata = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
+            // 7-Zip is actively writing while this walk runs, so an entry can
+            // vanish between readdir and stat. Skip a NotFound child instead of
+            // aborting a healthy long extraction; anything else stays fatal.
+            let metadata = match std::fs::symlink_metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error.to_string()),
+            };
             if metadata.file_type().is_symlink() {
                 crate::path_safety::assert_relative_symlink_during_write(root, &path)?;
                 files = files.saturating_add(1);

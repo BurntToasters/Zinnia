@@ -107,32 +107,36 @@ pub fn redact_sensitive_text(input: &str) -> String {
     redact_key_value_secrets(&with_args)
 }
 
-fn is_password_switch_token(token: &str) -> bool {
+fn is_password_token(token: &str) -> bool {
     let lower = token.to_ascii_lowercase();
-    // `-spd` is DisableWildcardMatching, not a password switch.
-    if lower == "-spd" || lower.starts_with("-spd") {
-        return false;
-    }
-    lower == "-p" || lower.starts_with("-p")
+    // Fail closed like utils.ts: 7-Zip passwords attach directly to `-p` and
+    // may contain spaces, so the rest of the line cannot be shown safely.
+    lower.starts_with("-p") && lower != "-p***"
 }
 
 fn redact_password_args(input: &str) -> String {
-    // Token-aware: redact whitespace-delimited `-p` / `-P` password args.
     let mut out = String::with_capacity(input.len());
-    for token in input.split_inclusive(char::is_whitespace) {
-        let trimmed = token.trim_start_matches(char::is_whitespace);
-        let leading = token.len() - trimmed.len();
-        if is_password_switch_token(trimmed) {
-            out.push_str(&token[..leading]);
-            out.push_str("-p***");
-            let non_ws_len = trimmed
-                .chars()
-                .take_while(|c| !c.is_whitespace())
-                .map(|c| c.len_utf8())
-                .sum::<usize>();
-            out.push_str(&trimmed[non_ws_len..]);
-        } else {
-            out.push_str(token);
+    for line in input.split_inclusive('\n') {
+        let body = line.strip_suffix('\n').unwrap_or(line);
+        let mut offset = 0usize;
+        let mut cut = None;
+        for token in body.split_whitespace() {
+            let start = offset + body[offset..].find(token).unwrap_or(0);
+            offset = start + token.len();
+            if is_password_token(token) {
+                cut = Some(start);
+                break;
+            }
+        }
+        match cut {
+            Some(start) => {
+                out.push_str(&body[..start]);
+                out.push_str("-p***");
+                if line.len() > body.len() {
+                    out.push('\n');
+                }
+            }
+            None => out.push_str(line),
         }
     }
     out
@@ -232,18 +236,25 @@ mod tests {
 
     #[test]
     fn redact_sensitive_text_masks_password_args() {
+        // Mirrors utils.ts ARG_PASSWORD_PATTERN: everything after an attached
+        // -p on the line is redacted, because a password could contain spaces.
         assert_eq!(
             redact_sensitive_text("7z a -pmySecret out.7z"),
-            "7z a -p*** out.7z"
+            "7z a -p***"
         );
         assert_eq!(
             redact_sensitive_text("7z a -PMySecret out.7z"),
-            "7z a -p*** out.7z"
+            "7z a -p***"
         );
         assert!(!sanitize_output("err -phunter2").contains("hunter2"));
         assert!(
             redact_sensitive_text("7z x -spd -aou archive.7z").contains("-spd"),
             "-spd must not be treated as a password switch"
+        );
+        // Already-redacted tokens do not force the rest of the line away.
+        assert_eq!(
+            redact_sensitive_text("7z a -p*** out.7z"),
+            "7z a -p*** out.7z"
         );
     }
 

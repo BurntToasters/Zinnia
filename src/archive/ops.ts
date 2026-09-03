@@ -207,7 +207,11 @@ export async function runBatchExtract() {
     const extraArgs = splitArgs(
       $<HTMLInputElement>("extract-extra-args").value.trim(),
     );
-    if (extraArgs.length > 0) validateExtraArgs(extraArgs);
+    if (extraArgs.length > 0) validateExtraArgs(extraArgs, "extract");
+    // Snapshot captured; freeze the fields so mid-batch edits cannot drift.
+    $<HTMLInputElement>("extract-path").disabled = true;
+    $<HTMLInputElement>("extract-password").disabled = true;
+    $<HTMLInputElement>("extract-extra-args").disabled = true;
 
     let succeeded = 0;
     let failed = 0;
@@ -315,16 +319,18 @@ export async function runBatchExtract() {
     if (state.batchCancelled || state.cancelRequested) {
       setStatus("Cancelled", 3000);
       if (!basic) {
-        await message("Batch extraction was cancelled.", {
-          title: "Cancelled",
-        });
+        // Completion feedback must not block the event loop or automation.
+        // Unexpected errors still use a dialog below because they need user
+        // attention.
+        showToast("Batch extraction was cancelled.", "info", 5000);
       }
     } else if (failed === 0) {
       setStatus("Done", 3000);
       if (!basic) {
-        await message(
+        showToast(
           `Successfully extracted ${succeeded} archive${succeeded !== 1 ? "s" : ""}.`,
-          { title: "Batch extraction complete" },
+          "success",
+          5000,
         );
       }
     } else {
@@ -334,10 +340,7 @@ export async function runBatchExtract() {
       const summary = `${succeeded} succeeded, ${failed} failed${warningDetail}.`;
       setStatus("Error", 4000, summary);
       if (!basic) {
-        await message(summary, {
-          title: "Batch extraction complete",
-          kind: "warning",
-        });
+        showToast(summary, "error", 7000);
       }
     }
   } catch (err) {
@@ -351,6 +354,9 @@ export async function runBatchExtract() {
   } finally {
     if (unlistenProgress) unlistenProgress();
     clearPasswordFields();
+    $<HTMLInputElement>("extract-path").disabled = false;
+    $<HTMLInputElement>("extract-password").disabled = false;
+    $<HTMLInputElement>("extract-extra-args").disabled = false;
     setRunning(false);
   }
 }

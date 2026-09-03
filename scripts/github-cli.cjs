@@ -57,7 +57,7 @@ function runGitHub(args, { input } = {}) {
   if (result.error) {
     if (result.error.code === "ENOENT") {
       throw new Error(
-        "GitHub CLI is required. Install gh and run `gh auth login` on this release VM.",
+        "GitHub CLI is required. Install gh and run `gh auth login` on this release VM. Token environment variables are intentionally ignored; gh must hold credentials in its keyring.",
       );
     }
     throw result.error;

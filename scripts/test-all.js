@@ -408,6 +408,7 @@ function main({
   recordProof = recordSuccessfulQualityGate,
   runner = runCommand,
   parseCoverage: parseCoverageResults = parseCoverage,
+  requireCleanProof = false,
 } = {}) {
   // A failed or interrupted run must invalidate any earlier release proof.
   clearProof(root);
@@ -551,13 +552,14 @@ function main({
     if (qualityGate.recorded) {
       console.log("Release quality-gate proof recorded for this clean commit.");
     } else {
-      console.log(
-        "Release quality-gate proof not recorded because the working tree is dirty.",
+      console.error(
+        `${colors.red}Release quality-gate proof NOT recorded because the working tree is dirty. Commit generated files (e.g. run.rosie.zinnia.metainfo.xml from workspace:bootstrap) and re-run test:all before any release step.${colors.reset}`,
       );
       if (qualityGate.dirtyFiles) {
         console.log("Dirty files:");
         console.log(qualityGate.dirtyFiles);
       }
+      if (requireCleanProof) return 1;
     }
   }
   return exitCode;
@@ -569,7 +571,9 @@ function isDirectExecution() {
 }
 
 if (isDirectExecution()) {
-  process.exit(main());
+  process.exit(
+    main({ requireCleanProof: process.argv.includes("--require-clean-proof") }),
+  );
 }
 
 export {
