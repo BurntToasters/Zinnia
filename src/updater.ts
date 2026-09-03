@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { message, ask } from "@tauri-apps/plugin-dialog";
+import { ask } from "@tauri-apps/plugin-dialog";
 import {
   isPermissionGranted,
   requestPermission,
@@ -11,6 +11,7 @@ import {
 import { log, devLog, setStatus } from "./ui";
 import { state } from "./state";
 import { debugLog, isDebugEnabled } from "./debug-mode";
+import { showToast } from "./toast";
 
 let pendingUpdate: Update | null = null;
 let pendingVersion: string | null = null;
@@ -155,9 +156,10 @@ async function promptInstallAndRestart(
   setStatus("Update ready");
   if (await archiveOperationIsRunning()) {
     if (generation !== updateGeneration) return;
-    await message(
+    showToast(
       `Version ${version} is downloaded. Zinnia will not install it while an archive operation is running. Use Check now after the operation finishes.`,
-      { title: "Update deferred", kind: "info" },
+      "info",
+      7000,
     );
     if (generation !== updateGeneration) return;
     setStatus("Update ready");
@@ -178,9 +180,10 @@ async function promptInstallAndRestart(
     if (generation !== updateGeneration) return;
     if (await archiveOperationIsRunning("reserve_update")) {
       if (generation !== updateGeneration) return;
-      await message(
+      showToast(
         "An archive operation started before the update could be installed. The update remains ready and can be installed after it finishes.",
-        { title: "Update deferred", kind: "info" },
+        "info",
+        7000,
       );
       setStatus("Update ready");
       return;
@@ -247,9 +250,10 @@ async function runUpdateCheck(interactive: boolean): Promise<void> {
     const isFlatpak = await invoke<boolean>("is_flatpak");
     if (isFlatpak) {
       if (interactive) {
-        await message(
+        showToast(
           "Flatpak builds update through Flathub or a reinstalled bundle, not the in-app updater.",
-          { title: "Updates unavailable" },
+          "info",
+          7000,
         );
       }
       return;
@@ -289,9 +293,7 @@ async function runUpdateCheck(interactive: boolean): Promise<void> {
       );
       if (isDebugEnabled()) debugLog("Update check: no updates available.");
       if (interactive) {
-        await message("You are running the latest version.", {
-          title: "No updates",
-        });
+        showToast("You are running the latest version.", "success");
         setStatus("Idle");
       }
       return;
@@ -333,10 +335,7 @@ async function runUpdateCheck(interactive: boolean): Promise<void> {
     if (isDebugEnabled()) debugLog(`Update check failed: ${messageText}`);
     setStatus("Idle");
     if (interactive) {
-      await message(`Failed to check for updates.\n\n${messageText}`, {
-        title: "Update error",
-        kind: "error",
-      });
+      showToast(`Failed to check for updates. ${messageText}`, "error", 0);
     }
   }
 }
@@ -345,10 +344,12 @@ function startUpdateCheck(interactive: boolean): Promise<void> {
   if (installInFlight) {
     if (interactive) {
       setStatus("Still installing update");
-      return message(
+      showToast(
         "An update installation is still running. Archive operations and another update attempt stay blocked until it finishes.",
-        { title: "Update in progress", kind: "info" },
-      ).then(() => undefined);
+        "info",
+        7000,
+      );
+      return Promise.resolve();
     }
     return Promise.resolve();
   }
