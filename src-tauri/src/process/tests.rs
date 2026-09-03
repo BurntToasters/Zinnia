@@ -2690,7 +2690,8 @@ fn directory_partial_publish_rollback_preserves_replacement_tree() {
     std::fs::create_dir_all(&target).expect("owned directory");
     std::fs::write(target.join("a.txt"), b"owned").expect("owned child");
     let identity = super::journal::path_identity(&target).expect("owned identity");
-    std::fs::remove_dir_all(&target).expect("remove owned directory");
+    let retained = root.join("retained-owned-directory");
+    std::fs::rename(&target, &retained).expect("retain owned directory");
     std::fs::create_dir_all(&target).expect("replacement directory");
     std::fs::write(target.join("victim.txt"), b"keep me").expect("replacement child");
     let plan = vec![MoveRecord {
@@ -2704,6 +2705,10 @@ fn directory_partial_publish_rollback_preserves_replacement_tree() {
     assert_eq!(
         std::fs::read(target.join("victim.txt")).expect("replacement survived"),
         b"keep me"
+    );
+    assert!(
+        retained.is_dir(),
+        "creation-owned directory was retained separately"
     );
     let _ = std::fs::remove_dir_all(root);
 }
