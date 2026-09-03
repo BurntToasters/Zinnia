@@ -35,6 +35,12 @@ describe("unpackaged E2E must not ship in release builds", () => {
     );
     expect(read("scripts/test-e2e.js")).toContain("usesWindowsCmdShell");
     expect(read("scripts/test-e2e.js")).toContain("SKIP_E2E=1 is not allowed");
+    expect(read("scripts/test-e2e.js")).toMatch(
+      /process\.execPath,\s*fileURLToPath\(import\.meta\.url\)/,
+    );
+    expect(read("scripts/test-e2e.js")).not.toMatch(
+      /process\.execPath,\s*__filename/,
+    );
     expect(read("scripts/test-all.js")).toContain(
       "SKIP_E2E=1 is not allowed for npm run test:all",
     );
@@ -115,6 +121,9 @@ describe("unpackaged E2E must not ship in release builds", () => {
     );
     expect(read(".github/workflows/ci.yml")).toContain("npm run test:e2e");
     expect(read(".github/workflows/ci.yml")).toContain("xvfb");
+    expect(read(".github/workflows/ci.yml")).toContain(
+      "npm audit --omit=dev --audit-level=high",
+    );
   });
 });
 
