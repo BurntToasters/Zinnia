@@ -18,7 +18,7 @@ const coverageSummaryPath = resolve(
 );
 const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
 const appVersion = packageJson.version ?? "unknown";
-const scriptVersion = "1.1.4";
+const scriptVersion = "1.1.5";
 const criticalCoverageThresholds = {
   // Directory keys (trailing `/`) aggregate all matching `src/<dir>/**/*.ts` files.
   "archive/": { lines: 80, branches: 62, functions: 88 },
@@ -409,6 +409,7 @@ function main({
   runner = runCommand,
   parseCoverage: parseCoverageResults = parseCoverage,
   requireCleanProof = false,
+  skipE2e = false,
 } = {}) {
   // A failed or interrupted run must invalidate any earlier release proof.
   clearProof(root);
@@ -532,9 +533,14 @@ function main({
       results,
       { timeout: rustTimeoutMs },
     );
-    runner("e2e", npm, ["run", "test:e2e"], null, results, {
-      timeout: e2eTimeoutMs,
-    });
+    if (skipE2e) {
+      results.e2e.status = "skipped";
+      console.log(`${colors.blue}Skipping E2E (--skip-e2e).${colors.reset}\n`);
+    } else {
+      runner("e2e", npm, ["run", "test:e2e"], null, results, {
+        timeout: e2eTimeoutMs,
+      });
+    }
   } else {
     results.clippy.status = "failed";
     results.rust.status = "failed";
@@ -572,7 +578,10 @@ function isDirectExecution() {
 
 if (isDirectExecution()) {
   process.exit(
-    main({ requireCleanProof: process.argv.includes("--require-clean-proof") }),
+    main({
+      requireCleanProof: process.argv.includes("--require-clean-proof"),
+      skipE2e: process.argv.includes("--skip-e2e"),
+    }),
   );
 }
 

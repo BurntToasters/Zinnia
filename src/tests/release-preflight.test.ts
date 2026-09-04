@@ -43,12 +43,21 @@ describe("release preflight policy", () => {
       expect(command).not.toContain("validate:updater");
     }
 
+    const releaseRunner = fs.readFileSync(
+      path.join(root, "scripts", "run-release.js"),
+      "utf8",
+    );
+    expect(releaseRunner).toContain("prerelease:prepare");
+    expect(releaseRunner).toContain("workspace:bootstrap");
+    expect(releaseRunner).toContain("test:all");
+    expect(releaseRunner).toContain("--require-clean-proof");
+    expect(releaseRunner).toContain("--skip-e2e");
+    expect(releaseRunner).toContain("dist:clean-release-artifacts");
     for (const platform of ["win", "mac"] as const) {
       const full = packageJson.scripts[`release:${platform}`];
       const resume = packageJson.scripts[`release:${platform}:resume`];
       const continuation = packageJson.scripts[`release:${platform}:continue`];
-      expect(full.match(/npm run release:prepare/g)).toHaveLength(1);
-      expect(full).toContain(`release:${platform}:continue`);
+      expect(full).toBe(`node scripts/run-release.js ${platform}`);
       expect(resume).toContain("prerelease:prepare");
       expect(resume).not.toContain("npm run release:prepare");
       expect(continuation).toContain("release:session:verify");
@@ -61,7 +70,7 @@ describe("release preflight policy", () => {
         packageJson.scripts[`release:linux:${architecture}:resume`];
       const continuation =
         packageJson.scripts[`release:linux:${architecture}:continue`];
-      expect(full.match(/npm run release:prepare/g)).toHaveLength(1);
+      expect(full).toBe(`node scripts/run-release.js linux:${architecture}`);
       expect(resume).not.toContain("npm run release:prepare");
       expect(continuation).toContain("release:session:verify");
       expect(continuation).toContain("npm run release:licenses");
@@ -77,7 +86,12 @@ describe("release preflight policy", () => {
     expect(packageJson.scripts.u2).not.toContain("release:prepare");
     expect(packageJson.scripts.u).not.toContain("release:preflight");
     expect(packageJson.scripts.u2).not.toContain("release:preflight");
-    expect(packageJson.scripts["release:win"]).toContain("prerelease:prepare");
+    expect(packageJson.scripts["release:win"]).toBe(
+      "node scripts/run-release.js win",
+    );
+    expect(packageJson.scripts["release:linux"]).toBe(
+      "node scripts/run-release.js linux",
+    );
     expect(packageJson.scripts["release:session:verify"]).toContain(
       "release-session.js",
     );

@@ -28,7 +28,7 @@ test("package.json scripts define cargo safe update test and policy check", () =
   const scripts = readPackageJsonScripts();
   assert.equal(
     scripts["test:cargo-safe-update"],
-    "node --test scripts/cargo-safe-update.test.mjs scripts/check-cargo-update-policy.test.mjs scripts/test-all.test.js scripts/github-cli.test.cjs",
+    "node --test scripts/cargo-safe-update.test.mjs scripts/check-cargo-update-policy.test.mjs scripts/test-all.test.js scripts/run-release.test.js scripts/github-cli.test.cjs",
   );
   assert.equal(
     scripts["check:cargo-update-policy"],
@@ -118,6 +118,35 @@ test("main records quality-gate proof when all checks pass", () => {
 
   assert.ok(calls.includes("run:archives"));
   assert.ok(calls.includes("run:e2e"));
+  assert.ok(calls.includes("recordProof"));
+  assert.equal(exitCode, 0);
+});
+
+test("main skips e2e and still records quality-gate proof for --skip-e2e", () => {
+  const calls = [];
+  const resultsSeen = [];
+  const exitCode = main({
+    root: repoRoot,
+    skipE2e: true,
+    clearProof: () => calls.push("clearProof"),
+    recordProof: () => {
+      calls.push("recordProof");
+      return { recorded: true };
+    },
+    parseCoverage: (results) => {
+      results.coverage.status = "passed";
+    },
+    runner: (name, _cmd, _args, _parser, results) => {
+      calls.push(`run:${name}`);
+      results[name].status = "passed";
+      if (name === "test") results.coverage.status = "passed";
+      resultsSeen.push(results);
+      return true;
+    },
+  });
+
+  assert.ok(!calls.includes("run:e2e"));
+  assert.equal(resultsSeen.at(-1)?.e2e.status, "skipped");
   assert.ok(calls.includes("recordProof"));
   assert.equal(exitCode, 0);
 });
