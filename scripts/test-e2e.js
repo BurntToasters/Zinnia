@@ -146,6 +146,21 @@ function runWdio(profile, spec, appArgs) {
   run(npxCommand(), ["wdio", "run", "e2e/wdio.conf.js"], { env });
 }
 
+function cleanupE2eProfile(profileDir) {
+  try {
+    fs.rmSync(profileDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 8,
+      retryDelay: 100,
+    });
+  } catch (error) {
+    console.warn(
+      `WARNING: Could not remove temporary E2E profile ${profileDir}; leaving it for OS cleanup: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 function main() {
   if (process.env.SKIP_E2E === "1") {
     throw new Error(
@@ -164,7 +179,7 @@ function main() {
       profile.copies["hello.7z"],
     ]);
   } finally {
-    fs.rmSync(profile.profileDir, { recursive: true, force: true });
+    cleanupE2eProfile(profile.profileDir);
   }
 }
 
