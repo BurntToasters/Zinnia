@@ -67,6 +67,8 @@ describe("unpackaged E2E must not ship in release builds", () => {
     expect(read("scripts/test-all.js")).toContain(
       "SKIP_E2E=1 is not allowed for npm run test:all",
     );
+    expect(read("scripts/test-all.js")).toContain("skipE2e");
+    expect(read("scripts/run-release.js")).toContain("--skip-e2e");
     expect(read("src/e2e-wdio-plugin.ts")).toContain(
       'await import("@wdio/tauri-plugin")',
     );
