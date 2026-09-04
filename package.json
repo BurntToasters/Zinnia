@@ -113,7 +113,7 @@
     "release:mac:continue": "npm run release:session:verify && npm run release:licenses && npm run release:wait-draft && npm run rust:targets:mac && npm run build:mac:universal:prepared && npm run build:mac:zip && npm run release:sign:gpg && npm run release:finalize",
     "release:mac:resume": "npm run prerelease:prepare && npm run release:mac:continue",
     "release:mac": "node scripts/run-release.js mac",
-    "release:mac:ssh": "npm run mac:ssh:keychain && npm run release:mac",
+    "release:mac:ssh": "npm run mac:ssh:keychain && node scripts/run-release.js mac",
     "release:mac:ssh:resume": "npm run mac:ssh:keychain && npm run release:mac:resume",
     "release:linux:continue": "npm run release:linux:x64:continue",
     "release:linux": "node scripts/run-release.js linux",
