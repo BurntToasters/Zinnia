@@ -108,6 +108,15 @@ architecture, Node/Rust toolchain, or sessions older than 24 hours. Do not run
 `release:prepare` manually and then use the non-resume entry point, because the
 normal entry point intentionally prepares and tests again.
 
+For a beta recovery where one platform already built the same version before
+the release branch advanced, pass `--skip-check` to bypass only the draft's
+exact target-commit check during draft reuse and signing. Example:
+`npm run release:mac -- --skip-check` or
+`npm run release:linux -- --skip-e2e --skip-check`. This uses the existing
+`FORCE_UPLOAD` recovery path for the continuation only; all preflight, tests,
+release-session, version, signing, and artifact checks still run. Stable
+releases reject this recovery override.
+
 The GPG staging script also verifies the session and rejects artifacts older
 than its marker, including versionless canonical installer names, so a stale
 bundle cannot be signed accidentally.

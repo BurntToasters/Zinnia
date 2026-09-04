@@ -485,7 +485,8 @@ async function flushAsync(): Promise<void> {
 }
 
 async function loadMainModule(): Promise<void> {
-  await import("../main");
+  const { startup } = await import("../main");
+  await startup;
   await flushAsync();
 }
 
