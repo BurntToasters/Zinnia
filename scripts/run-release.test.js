@@ -1,33 +1,53 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseReleaseArgs } from "./run-release.js";
+import { main, parseReleaseArgs } from "./run-release.js";
 
-test("parseReleaseArgs accepts platform and optional --skip-e2e", () => {
+test("parseReleaseArgs accepts platform and optional release flags", () => {
   assert.deepEqual(parseReleaseArgs(["win"]), {
     platform: "win",
     skipE2e: false,
+    skipCheck: false,
     continueScript: "release:win:continue",
   });
   assert.deepEqual(parseReleaseArgs(["mac", "--skip-e2e"]), {
     platform: "mac",
     skipE2e: true,
+    skipCheck: false,
     continueScript: "release:mac:continue",
   });
-  assert.deepEqual(parseReleaseArgs(["--skip-e2e", "linux:x64"]), {
-    platform: "linux:x64",
-    skipE2e: true,
-    continueScript: "release:linux:x64:continue",
-  });
+  assert.deepEqual(
+    parseReleaseArgs(["--skip-check", "--skip-e2e", "linux:x64"]),
+    {
+      platform: "linux:x64",
+      skipE2e: true,
+      skipCheck: true,
+      continueScript: "release:linux:x64:continue",
+    },
+  );
   assert.deepEqual(parseReleaseArgs(["linux"]), {
     platform: "linux",
     skipE2e: false,
+    skipCheck: false,
     continueScript: "release:linux:continue",
   });
-  assert.deepEqual(parseReleaseArgs(["linux:arm64", "--skip-e2e"]), {
+  assert.deepEqual(parseReleaseArgs(["linux:arm64", "--skip-check"]), {
     platform: "linux:arm64",
-    skipE2e: true,
+    skipE2e: false,
+    skipCheck: true,
     continueScript: "release:linux:arm64:continue",
   });
+});
+
+test("main scopes --skip-check to the release continuation", () => {
+  const calls = [];
+  main(["mac", "--skip-check"], (...args) => calls.push(args));
+
+  assert.deepEqual(calls.at(-1), [
+    "release:mac:continue",
+    [],
+    { FORCE_UPLOAD: "1" },
+  ]);
+  assert.ok(calls.slice(0, -1).every(([, , envOverrides]) => !envOverrides));
 });
 
 test("parseReleaseArgs rejects unknown flags and platforms", () => {
