@@ -45,6 +45,34 @@ pub fn is_extract_window_label(label: &str) -> bool {
     label.starts_with("extract-")
 }
 
+/// Unpackaged WebdriverIO sets `ZINNIA_E2E=1` on the launched binary.
+pub fn e2e_session_active() -> bool {
+    std::env::var("ZINNIA_E2E").is_ok_and(|value| value == "1")
+}
+
+/// WebView2 `ExecuteScript` completion is dropped on transparent/hidden HWNDs.
+#[cfg(windows)]
+pub(crate) const E2E_WEBVIEW2_BROWSER_ARGS: &str =
+    "--disable-gpu --disable-features=CalculateNativeWinOcclusion,RendererCodeIntegrity";
+
+pub(crate) fn apply_e2e_webview_overrides<'a, R, M>(
+    mut builder: tauri::WebviewWindowBuilder<'a, R, M>,
+) -> tauri::WebviewWindowBuilder<'a, R, M>
+where
+    R: tauri::Runtime,
+    M: tauri::Manager<R>,
+{
+    if !e2e_session_active() {
+        return builder;
+    }
+    builder = builder.transparent(false).visible(true);
+    #[cfg(windows)]
+    {
+        builder = builder.additional_browser_args(E2E_WEBVIEW2_BROWSER_ARGS);
+    }
+    builder
+}
+
 pub use debug_console_window::{
     close_debug_console_window, debug_console_window_open, open_debug_console_window,
     relay_debug_console_clear, relay_debug_console_line, relay_debug_console_seed,

@@ -257,9 +257,10 @@ pub fn ensure_main_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow
         .find(|config| config.label == "main")
         .ok_or_else(|| "Main window configuration is missing".to_string())?;
 
-    tauri::WebviewWindowBuilder::from_config(app, config)
+    let builder = tauri::WebviewWindowBuilder::from_config(app, config)
         .map_err(|e| e.to_string())?
-        .initialization_script(super::webview_context_menu::NATIVE_CONTEXT_MENU_GUARD_SCRIPT)
+        .initialization_script(super::webview_context_menu::NATIVE_CONTEXT_MENU_GUARD_SCRIPT);
+    super::apply_e2e_webview_overrides(builder)
         .build()
         .map_err(|e| e.to_string())
 }
@@ -267,6 +268,9 @@ pub fn ensure_main_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow
 pub fn show_main_window(app: &tauri::AppHandle) -> Result<(), String> {
     restore_foreground_activation(app);
     let window = ensure_main_window(app)?;
+    if super::e2e_session_active() {
+        let _ = window.set_background_color(Some(tauri::window::Color(0xf5, 0xf5, 0xf5, 0xff)));
+    }
 
     #[cfg(not(target_os = "macos"))]
     window.set_decorations(false).map_err(|e| e.to_string())?;
@@ -414,7 +418,9 @@ pub fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Resul
         builder = builder.decorations(false);
     }
 
-    let result = builder.build().map_err(|e| e.to_string());
+    let result = super::apply_e2e_webview_overrides(builder)
+        .build()
+        .map_err(|e| e.to_string());
 
     if result.is_err() {
         clear_extract_window_bindings(app, &label);

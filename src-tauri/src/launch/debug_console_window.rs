@@ -51,7 +51,9 @@ pub fn open_debug_console_window(app: tauri::AppHandle) -> Result<(), String> {
         builder = builder.decorations(false);
     }
 
-    let window = builder.build().map_err(|e| e.to_string())?;
+    let window = super::apply_e2e_webview_overrides(builder)
+        .build()
+        .map_err(|e| e.to_string())?;
     attach_destroy_notifier(&app, &window);
     Ok(())
 }

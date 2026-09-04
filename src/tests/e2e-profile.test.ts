@@ -3,6 +3,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   APP_ID,
+  E2E_WEBVIEW2_BROWSER_ARGS,
   createE2eProfile,
   settingsDirForProfile,
   windowsHomeDriveAndPath,
@@ -49,6 +50,9 @@ describe("Windows E2E profile isolation", () => {
     expect(profile.env.LOCALAPPDATA).toBe(paths.local);
     expect(profile.env.USERPROFILE).toBe(home);
     expect(profile.env.WEBVIEW2_USER_DATA_FOLDER).toBe(paths.webview2);
+    expect(profile.env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS).toBe(
+      E2E_WEBVIEW2_BROWSER_ARGS,
+    );
     expect(
       fs.existsSync(path.join(paths.settingsRoaming, "settings.json")),
     ).toBe(true);
