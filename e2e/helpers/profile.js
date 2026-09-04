@@ -7,6 +7,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = path.resolve(__dirname, "..", "..");
 export const ZIPS_DIR = path.join(REPO_ROOT, "zips");
 export const APP_ID = "run.rosie.zinnia";
+export const E2E_WEBVIEW2_BROWSER_ARGS =
+  "--disable-gpu --disable-features=CalculateNativeWinOcclusion,RendererCodeIntegrity";
 
 export function loadArchiveManifest(repoRoot = REPO_ROOT) {
   return JSON.parse(
@@ -151,6 +153,7 @@ export function createE2eProfile(
   };
   if (windowsPaths) {
     env.WEBVIEW2_USER_DATA_FOLDER = windowsPaths.webview2;
+    env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = E2E_WEBVIEW2_BROWSER_ARGS;
     if (process.platform === "win32") {
       Object.assign(env, windowsHomeDriveAndPath(home));
     }

@@ -91,7 +91,7 @@ function e2eBinaryIsFresh() {
   const binary = e2eBinaryPath();
   const stamp = e2eStampPath();
   if (!fs.existsSync(binary) || !fs.existsSync(stamp)) return false;
-  const expected = "e2e-feature-4\n";
+  const expected = "e2e-feature-5\n";
   if (fs.readFileSync(stamp, "utf8") !== expected) return false;
   // cargo test / clippy rebuild target/debug/zinnia without --features e2e.
   return fs.statSync(stamp).mtimeMs >= fs.statSync(binary).mtimeMs;
@@ -115,7 +115,7 @@ function buildE2eBinary() {
     throw new Error(`E2E binary missing after build: ${binary}`);
   }
   fs.mkdirSync(path.dirname(e2eStampPath()), { recursive: true });
-  fs.writeFileSync(e2eStampPath(), "e2e-feature-4\n");
+  fs.writeFileSync(e2eStampPath(), "e2e-feature-5\n");
 }
 
 function runWdio(profile, spec, appArgs) {
