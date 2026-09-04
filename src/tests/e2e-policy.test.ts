@@ -144,6 +144,8 @@ describe("unpackaged E2E must not ship in release builds", () => {
     );
     expect(read(".github/workflows/ci.yml")).toContain("npm run test:e2e");
     expect(read(".github/workflows/ci.yml")).toContain("xvfb");
+    expect(packageJson.scripts["setup:deb"]).toMatch(/\bxvfb\b/);
+    expect(read("scripts/test-e2e.js")).toContain("sudo apt install -y xvfb");
     expect(read(".github/workflows/ci.yml")).toContain(
       "npm audit --omit=dev --audit-level=high",
     );

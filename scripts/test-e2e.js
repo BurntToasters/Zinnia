@@ -66,7 +66,7 @@ function reexecUnderXvfb() {
   if (!needsXvfb()) return false;
   if (!which("xvfb-run")) {
     throw new Error(
-      "Linux E2E needs a display. Install xvfb and retry, or set DISPLAY.",
+      "Linux E2E needs a display. Install xvfb with `sudo apt install -y xvfb` (also in npm run setup:deb), or set DISPLAY.",
     );
   }
   const result = spawnSync(
