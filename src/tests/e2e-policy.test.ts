@@ -58,6 +58,8 @@ describe("unpackaged E2E must not ship in release builds", () => {
     );
     expect(read("scripts/test-e2e.js")).toContain("usesWindowsCmdShell");
     expect(read("scripts/test-e2e.js")).toContain("SKIP_E2E=1 is not allowed");
+    expect(read("scripts/test-e2e.js")).toContain("maxRetries: 8");
+    expect(read("scripts/test-e2e.js")).toContain("leaving it for OS cleanup");
     expect(read("scripts/test-e2e.js")).toMatch(
       /process\.execPath,\s*fileURLToPath\(import\.meta\.url\)/,
     );

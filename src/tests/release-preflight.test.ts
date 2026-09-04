@@ -52,6 +52,8 @@ describe("release preflight policy", () => {
     expect(releaseRunner).toContain("test:all");
     expect(releaseRunner).toContain("--require-clean-proof");
     expect(releaseRunner).toContain("--skip-e2e");
+    expect(releaseRunner).toContain("--skip-check");
+    expect(releaseRunner).toContain('FORCE_UPLOAD: "1"');
     expect(releaseRunner).toContain("dist:clean-release-artifacts");
     for (const platform of ["win", "mac"] as const) {
       const full = packageJson.scripts[`release:${platform}`];
