@@ -17,6 +17,14 @@ use tauri::Url;
 static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 #[test]
+fn e2e_session_active_defaults_off() {
+    if std::env::var("ZINNIA_E2E").ok().as_deref() == Some("1") {
+        return;
+    }
+    assert!(!super::e2e_session_active());
+}
+
+#[test]
 fn shell_handoff_error_is_consumed_once() {
     record_shell_handoff_error("bad handoff".to_string());
     assert_eq!(take_shell_handoff_error().as_deref(), Some("bad handoff"));

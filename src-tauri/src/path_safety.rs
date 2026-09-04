@@ -35,6 +35,65 @@ pub fn is_link_or_reparse(meta: &Metadata) -> bool {
     }
 }
 
+/// Junctions, mount points, and cloud placeholders. NTFS symlinks return false.
+///
+/// Rust's `FileType::is_symlink()` is also true for name-surrogate junctions.
+#[cfg(windows)]
+pub fn is_non_symlink_reparse(path: &Path, meta: &Metadata) -> bool {
+    if !is_link_or_reparse(meta) {
+        return false;
+    }
+    match windows_reparse_tag(path) {
+        Some(tag) => tag != windows_sys::Win32::System::SystemServices::IO_REPARSE_TAG_SYMLINK,
+        None => true,
+    }
+}
+
+#[cfg(windows)]
+fn windows_reparse_tag(path: &Path) -> Option<u32> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FindClose, FindFirstFileW, FILE_ATTRIBUTE_REPARSE_POINT, WIN32_FIND_DATAW,
+    };
+
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut data = WIN32_FIND_DATAW::default();
+    let handle = unsafe { FindFirstFileW(wide.as_ptr(), &mut data) };
+    if handle == INVALID_HANDLE_VALUE {
+        return None;
+    }
+    unsafe {
+        FindClose(handle);
+    }
+    if data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+        None
+    } else {
+        Some(data.dwReserved0)
+    }
+}
+
+#[cfg(all(windows, test))]
+pub(crate) fn try_create_directory_junction(link: &Path, target: &Path) -> Result<(), String> {
+    let command = format!("mklink /J \"{}\" \"{}\"", link.display(), target.display());
+    let output = std::process::Command::new("cmd")
+        .args(["/C", &command])
+        .output()
+        .map_err(|error| error.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "mklink /J failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+}
+
 /// Reject symlinks and Windows reparse points (junctions, cloud placeholders, etc.).
 pub fn reject_link_or_reparse(path: &Path, meta: &Metadata) -> Result<(), String> {
     if is_link_or_reparse(meta) {
@@ -575,6 +634,12 @@ mod tests {
         std::fs::write(&target, b"ok").expect("write");
         match symlink_file(&target, &link) {
             Ok(()) => {
+                let meta = std::fs::symlink_metadata(&link).expect("symlink meta");
+                assert!(is_link_or_reparse(&meta));
+                assert!(
+                    !is_non_symlink_reparse(&link, &meta),
+                    "NTFS file symlink must stay a symlink"
+                );
                 let err = open_regular_file_nofollow(&link).expect_err("symlink");
                 assert!(
                     err.contains("reparse")
@@ -586,6 +651,30 @@ mod tests {
                 // Symlink creation may require Developer Mode; skip quietly.
             }
         }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn directory_junction_is_non_symlink_reparse() {
+        let root = temp_root("win-junction");
+        let target = root.join("target");
+        let junction = root.join("junction");
+        std::fs::create_dir_all(&target).expect("target");
+        match try_create_directory_junction(&junction, &target) {
+            Ok(()) => {
+                let meta = std::fs::symlink_metadata(&junction).expect("junction meta");
+                assert!(is_link_or_reparse(&meta));
+                assert!(
+                    is_non_symlink_reparse(&junction, &meta),
+                    "directory junctions must not be classified as NTFS symbolic links"
+                );
+            }
+            Err(error) => {
+                eprintln!("skipping directory_junction_is_non_symlink_reparse: {error}");
+            }
+        }
+        let _ = std::fs::remove_dir(&junction);
         let _ = std::fs::remove_dir_all(root);
     }
 
