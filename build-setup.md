@@ -115,7 +115,8 @@ exact target-commit check during draft reuse and signing. Example:
 `npm run release:linux -- --skip-e2e --skip-check`. This uses the existing
 `FORCE_UPLOAD` recovery path for the continuation only; all preflight, tests,
 release-session, version, signing, and artifact checks still run. Stable
-releases reject this recovery override.
+releases reject this recovery override. The SSH-keychain entry point accepts
+the same flags: `npm run release:mac:ssh -- --skip-e2e --skip-check`.
 
 The GPG staging script also verifies the session and rejects artifacts older
 than its marker, including versionless canonical installer names, so a stale

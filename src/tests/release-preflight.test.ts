@@ -55,6 +55,9 @@ describe("release preflight policy", () => {
     expect(releaseRunner).toContain("--skip-check");
     expect(releaseRunner).toContain('FORCE_UPLOAD: "1"');
     expect(releaseRunner).toContain("dist:clean-release-artifacts");
+    expect(packageJson.scripts["release:mac:ssh"]).toBe(
+      "npm run mac:ssh:keychain && node scripts/run-release.js mac",
+    );
     for (const platform of ["win", "mac"] as const) {
       const full = packageJson.scripts[`release:${platform}`];
       const resume = packageJson.scripts[`release:${platform}:resume`];
