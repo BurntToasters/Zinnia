@@ -1,6 +1,7 @@
 export const REPO_ROOT: string;
 export const ZIPS_DIR: string;
 export const APP_ID: string;
+export const E2E_WEBVIEW2_BROWSER_ARGS: string;
 
 export function loadArchiveManifest(repoRoot?: string): {
   payloadFile: string;

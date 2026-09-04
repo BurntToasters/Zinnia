@@ -35,11 +35,25 @@ describe("unpackaged E2E must not ship in release builds", () => {
     expect(read("e2e/helpers/profile.js")).toContain(
       "WEBVIEW2_USER_DATA_FOLDER",
     );
-    expect(read("scripts/test-e2e.js")).toContain("e2e-feature-4");
-    expect(main).toContain('#[cfg(feature = "e2e")]\nfn e2e_session_active()');
+    expect(read("e2e/helpers/profile.js")).toContain(
+      "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+    );
+    expect(read("scripts/test-e2e.js")).toContain("e2e-feature-5");
+    expect(read("src-tauri/src/launch/mod.rs")).toContain(
+      "fn e2e_session_active()",
+    );
+    expect(read("src-tauri/src/launch/mod.rs")).toContain("transparent(false)");
+    expect(read("src-tauri/src/launch/mod.rs")).toContain(
+      "additional_browser_args",
+    );
+    expect(read("src-tauri/src/launch/mod.rs")).toContain(
+      "--disable-gpu --disable-features=CalculateNativeWinOcclusion,RendererCodeIntegrity",
+    );
+    expect(main).toContain('#[cfg(feature = "e2e")]');
     expect(main).toContain('#[cfg(not(feature = "e2e"))]');
     expect(main).toContain("production_integrations_enabled()");
-    expect(main).toContain(
+    expect(main).toContain("launch::e2e_session_active()");
+    expect(read("src-tauri/src/launch/mod.rs")).toContain(
       'std::env::var("ZINNIA_E2E").is_ok_and(|value| value == "1")',
     );
     expect(read("scripts/test-e2e.js")).toContain("usesWindowsCmdShell");

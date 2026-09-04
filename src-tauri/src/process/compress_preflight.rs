@@ -122,19 +122,23 @@ where
             )
         })?;
 
-        if meta.file_type().is_symlink() {
+        #[cfg(windows)]
+        if crate::path_safety::is_link_or_reparse(&meta) {
             if !is_root {
-                probe.nested_symlinks = probe.nested_symlinks.saturating_add(1);
+                if crate::path_safety::is_non_symlink_reparse(&path, &meta) {
+                    probe.nested_reparse_points = probe.nested_reparse_points.saturating_add(1);
+                } else {
+                    probe.nested_symlinks = probe.nested_symlinks.saturating_add(1);
+                }
                 push_example(probe, &path);
             }
             continue;
         }
 
-        #[cfg(windows)]
-        if crate::path_safety::is_link_or_reparse(&meta) {
-            // Non-symlink reparse (junctions, OneDrive placeholders, etc.).
+        #[cfg(not(windows))]
+        if meta.file_type().is_symlink() {
             if !is_root {
-                probe.nested_reparse_points = probe.nested_reparse_points.saturating_add(1);
+                probe.nested_symlinks = probe.nested_symlinks.saturating_add(1);
                 push_example(probe, &path);
             }
             continue;
@@ -231,26 +235,34 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn backend_compress_guard_rejects_nested_junction() {
-        let root = std::env::temp_dir().join(format!("zinnia-probe-junc-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "zinnia-probe-junc-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
         let _ = std::fs::remove_dir_all(&root);
         let real = root.join("real");
         let nested = root.join("nested");
         std::fs::create_dir_all(&real).unwrap();
         std::fs::create_dir_all(&nested).unwrap();
         let junction = nested.join("cloud");
-        let status = std::process::Command::new("cmd")
-            .args(["/C", "mklink", "/J"])
-            .arg(&junction)
-            .arg(&real)
-            .status();
-        match status {
-            Ok(code) if code.success() => {}
-            other => {
-                let _ = std::fs::remove_dir_all(&root);
-                eprintln!("skipping backend_compress_guard_rejects_nested_junction: {other:?}");
-                return;
-            }
+        if let Err(error) = crate::path_safety::try_create_directory_junction(&junction, &real) {
+            let _ = std::fs::remove_dir_all(&root);
+            eprintln!("skipping backend_compress_guard_rejects_nested_junction: {error}");
+            return;
         }
+        let meta = std::fs::symlink_metadata(&junction).expect("junction metadata");
+        assert!(
+            crate::path_safety::is_link_or_reparse(&meta),
+            "mklink /J must create a reparse point"
+        );
+        assert!(
+            crate::path_safety::is_non_symlink_reparse(&junction, &meta),
+            "directory junctions must not be classified as NTFS symbolic links"
+        );
 
         let error = assert_no_nested_reparse_for_compress(&[root.to_string_lossy().to_string()])
             .expect_err("nested junction must fail closed");

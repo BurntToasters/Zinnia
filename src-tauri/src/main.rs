@@ -35,15 +35,10 @@ use launch::{emit_open_urls, first_extract_window, leave_extract_warm};
 use logging::LogFileLock;
 use process::RunningProcess;
 
-#[cfg(feature = "e2e")]
-fn e2e_session_active() -> bool {
-    std::env::var("ZINNIA_E2E").is_ok_and(|value| value == "1")
-}
-
 fn production_integrations_enabled() -> bool {
     #[cfg(feature = "e2e")]
     {
-        !e2e_session_active()
+        !launch::e2e_session_active()
     }
     #[cfg(not(feature = "e2e"))]
     {
