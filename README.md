@@ -104,10 +104,13 @@ native build runs.
   beta-target endpoints that move final-beta installs onto stable.
   `REQUIRED_UPDATER_TARGETS` adds intentional optional targets such as Linux
   ARM64 to that required set.
-- Each full release command prepares and tests once. If `release:prepare` was
-  already run separately on the same VM, use the matching `release:*:resume`
-  command; its build session is bound to the exact commit, lockfiles, platform,
-  architecture, and Node/Rust toolchain and expires after 24 hours.
+- Each full release command prepares and runs every non-E2E quality gate once.
+  Native E2E is skipped for local release commands because CI runs it on Linux,
+  Windows, and macOS; a direct `npm run test:all` still includes E2E. If
+  `release:prepare` was already run separately on the same VM, use the matching
+  `release:*:resume` command; its build session is bound to the exact commit,
+  lockfiles, platform, architecture, and Node/Rust toolchain and expires after
+  24 hours.
 - After changing the package version, `release:prepare` / `workspace:bootstrap`
   write the AppStream release entry via `node scripts/update-metainfo.js`
   (commit the XML change with the version bump). `npm run u` / `u2` only update
