@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { parseArchiveListing } from "../archive";
 
 describe("parseArchiveListing", () => {
-  it("parses real 7-Zip 26.02 blank-line records and Attributes folders", () => {
+  it("parses real 7-Zip 26.03 blank-line records and Attributes folders", () => {
     const stdout = [
       "Listing archive: real.7z",
       "",

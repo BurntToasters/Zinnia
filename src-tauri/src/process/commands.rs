@@ -622,10 +622,13 @@ pub(crate) fn harden_7z_args(args: &mut Vec<String>) {
         args.insert(1, "-spd".to_string());
     }
     #[cfg(target_os = "windows")]
-    if matches!(command, Some("a" | "u" | "x" | "l" | "t"))
-        && !args.iter().any(|arg| arg.eq_ignore_ascii_case("-sccUTF-8"))
-    {
-        args.insert(1, "-sccUTF-8".to_string());
+    if matches!(command, Some("a" | "u" | "x" | "l" | "t")) {
+        args.retain(|arg| !arg.to_ascii_lowercase().starts_with("-scc"));
+        let insert_at = args
+            .iter()
+            .position(|arg| arg == "--")
+            .unwrap_or(args.len());
+        args.insert(insert_at, "-sccUTF-8".to_string());
     }
     #[cfg(not(target_os = "windows"))]
     if command == Some("x") && !args.iter().any(|arg| arg.eq_ignore_ascii_case("-spod")) {
@@ -638,6 +641,17 @@ pub(crate) fn harden_7z_args(args: &mut Vec<String>) {
             .position(|arg| arg == "--")
             .unwrap_or(args.len());
         args.insert(insert_at, "-mem=AES256".to_string());
+    }
+    if crate::validation::is_zip_create_or_update(args) {
+        args.retain(|arg| {
+            let lower = arg.to_ascii_lowercase();
+            !lower.starts_with("-mcu") && !lower.starts_with("-mcl")
+        });
+        let insert_at = args
+            .iter()
+            .position(|arg| arg == "--")
+            .unwrap_or(args.len());
+        args.insert(insert_at, "-mcu=on".to_string());
     }
 }
 
@@ -667,8 +681,9 @@ pub(crate) fn apply_backend_link_switches(args: &mut Vec<String>) {
     {
         args.insert(1, "-snz".to_string());
     }
-    // Disable archive-supplied NTFS streams. This blocks RAR5 stream-name
-    // collisions from replacing the Mark-of-the-Web propagated by `-snz`.
+    // Disable archive-supplied NTFS streams. 7-Zip 26.03 fixes CVE-2026-58052
+    // (RAR5 STM name collisions that wiped MotW). Keep `-sns-` as defense in
+    // depth so archive-supplied streams cannot replace the `-snz` marker.
     #[cfg(target_os = "windows")]
     if args.first().map(String::as_str) == Some("x") {
         args.retain(|arg| !arg.to_ascii_lowercase().starts_with("-sns"));
@@ -680,7 +695,8 @@ pub(crate) fn apply_backend_link_switches(args: &mut Vec<String>) {
     }
 }
 
-/// Parsed bundled 7-Zip version from the last successful `probe_7z` (e.g. "26.02").
+/// Parsed bundled 7-Zip version from the last successful `probe_7z` (e.g. "26.03").
+pub(crate) const BUNDLED_7Z_VERSION: &str = "26.03";
 static PROBED_7Z_VERSION: Mutex<Option<String>> = Mutex::new(None);
 
 /// Refuse symlink/reparse *user input paths* for create/update. Nested links
@@ -1188,11 +1204,20 @@ pub fn probed_7z_version() -> Option<String> {
         .and_then(|guard| guard.clone())
 }
 
-/// Parse a 7-Zip version token (e.g. "26.02") from `7z i` / banner output.
+fn assert_probed_version_matches_bundle(version: &str) -> Result<(), String> {
+    if version == BUNDLED_7Z_VERSION {
+        return Ok(());
+    }
+    Err(format!(
+        "Bundled 7-Zip reported {version}; Zinnia requires {BUNDLED_7Z_VERSION}."
+    ))
+}
+
+/// Parse a 7-Zip version token (e.g. "26.03") from `7z i` / banner output.
 pub fn parse_7z_version(output: &str) -> Option<String> {
     for line in output.lines() {
         let trimmed = line.trim();
-        // Examples: "7-Zip 26.02 (x64)", "7-Zip (z) 24.09"
+        // Examples: "7-Zip 26.03 (x64)", "7-Zip (z) 24.09"
         if let Some(rest) = trimmed.strip_prefix("7-Zip") {
             let rest = rest.trim_start();
             let rest = rest
@@ -1432,12 +1457,32 @@ pub async fn run_7z(
             release_prepare_slot_best_effort(&state);
             return Err(error);
         }
+        let archive = match args
+            .iter()
+            .position(|arg| arg == "--")
+            .and_then(|sep| args.get(sep + 1))
+        {
+            Some(archive) => std::path::PathBuf::from(archive),
+            None => {
+                release_prepare_slot_best_effort(&state);
+                return Err("Extraction command is missing an archive path.".to_string());
+            }
+        };
+        if let Err(error) =
+            crate::launch::assert_extract_bound_archive(&app, window.label(), &archive)
+        {
+            release_prepare_slot_best_effort(&state);
+            return Err(error);
+        }
     }
     abort_cancelled_preparation(&state)?;
 
     // Startup recovery may take time on a large interrupted transaction. The
     // operation already owns its prepare slot, so Cancel is meaningful here.
-    wait_for_startup_recovery().await;
+    if let Err(error) = wait_for_startup_recovery().await {
+        release_prepare_slot_best_effort(&state);
+        return Err(error);
+    }
     abort_cancelled_preparation(&state)?;
 
     if let Err(error) = recover_interrupted_transaction(&app) {
@@ -1489,9 +1534,8 @@ pub async fn run_7z(
             return Err(message);
         }
         Err(error) => {
-            return Err(format!(
-                "Archive preparation task failed and ownership is uncertain; the operation slot was not released: {error}"
-            ));
+            release_prepare_slot_best_effort(&state);
+            return Err(format!("Archive preparation task failed: {error}"));
         }
     };
     // Checkpoint ownership before any member preflight, compound child, journal
@@ -1817,7 +1861,8 @@ pub async fn run_7z(
     }
 
     let exit_code = collected.exit_code();
-    let warning_code = (cleanup_plan.staged_extract.is_some()
+    let listing_or_test = matches!(args.first().map(String::as_str), Some("l" | "t"));
+    let warning_code = ((cleanup_plan.staged_extract.is_some() || listing_or_test)
         && collected.accepts_exit_one_with(extract_warning_is_metadata_only))
     .then_some(exit_code);
 
@@ -1985,6 +2030,10 @@ pub async fn probe_7z(
                 })
             {
                 let version = parse_7z_version(&combined).unwrap_or_else(|| "unknown".to_string());
+                if let Err(error) = assert_probed_version_matches_bundle(&version) {
+                    store_probed_7z_version(None);
+                    return Err(error);
+                }
                 store_probed_7z_version(Some(version.clone()));
                 return Ok(version);
             }
@@ -2012,10 +2061,17 @@ pub async fn probe_7z(
     }
     .await;
 
-    if let Ok(mut process) = lock_process(&state) {
-        if process.owner_label.as_deref() == Some(window.label())
-            && (result.is_ok() || process.child.is_none())
-        {
+    match state.0.lock() {
+        Ok(mut process) => {
+            if process.owner_label.as_deref() == Some(window.label())
+                && (result.is_ok() || process.child.is_none())
+            {
+                process.child = None;
+                process.release_prepare_slot();
+            }
+        }
+        Err(poisoned) => {
+            let mut process = poisoned.into_inner();
             process.child = None;
             process.release_prepare_slot();
         }

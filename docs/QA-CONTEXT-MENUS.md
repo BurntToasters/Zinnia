@@ -6,16 +6,16 @@ Record the package hash, OS build, CPU architecture, install/upgrade/uninstall
 result, archive association result, and one successful compress/extract cycle
 for every applicable row:
 
-| Platform | Architecture | Required artifact/integration |
-| --- | --- | --- |
-| macOS 26+ | Apple silicon | Universal DMG and ZIP; Gatekeeper, notarization, Finder Services, updater |
-| macOS 26+ | Intel, while supported by macOS 26 | Universal DMG and ZIP; launch, Finder Services, updater |
-| Windows 11 | x64 | Signed NSIS, modern and classic Explorer menus, updater |
-| Windows 11 | ARM64 | Signed ARM64 NSIS, native shell DLL, modern and classic menus, updater |
-| Windows 10 | x64 | Signed NSIS, classic Explorer verbs, updater |
-| Ubuntu 24.04 | x64 | AppImage, DEB, sideload Flatpak; Wayland and X11 |
-| Debian 13 | x64 | Ubuntu-built AppImage and DEB |
-| Fedora 43 | x64 | RPM and AppImage |
+| Platform     | Architecture                       | Required artifact/integration                                             |
+| ------------ | ---------------------------------- | ------------------------------------------------------------------------- |
+| macOS 26+    | Apple silicon                      | Universal DMG and ZIP; Gatekeeper, notarization, Finder Services, updater |
+| macOS 26+    | Intel, while supported by macOS 26 | Universal DMG and ZIP; launch, Finder Services, updater                   |
+| Windows 11   | x64                                | Signed NSIS, modern and classic Explorer menus, updater                   |
+| Windows 11   | ARM64                              | Signed ARM64 NSIS, native shell DLL, modern and classic menus, updater    |
+| Windows 10   | x64                                | Signed NSIS, classic Explorer verbs, updater                              |
+| Ubuntu 24.04 | x64                                | AppImage, DEB, sideload Flatpak; Wayland and X11                          |
+| Debian 13    | x64                                | Ubuntu-built AppImage and DEB                                             |
+| Fedora 43    | x64                                | RPM and AppImage                                                          |
 
 The release scripts remain platform-local. This matrix is the packaged OS
 integration gate that compile smoke tests cannot replace.
@@ -34,10 +34,11 @@ below before publishing.
 3. Settings → **OS Integration** → **Finder context menu** → **Enable…**
    (or System Settings → General → Login Items & Extensions → enable **Zinnia Finder**).
 4. With Zinnia stopped, select an archive in Finder **on Desktop, Documents,
-   Downloads, Movies, Music, Pictures, or a mounted volume** → right-click →
+   Downloads, Movies, Music, Pictures, or a currently mounted volume** → right-click →
    **Extract with Zinnia**. Confirm quick extract receives the selected path (not
    merely an activated empty app window). Files outside those folders need
-   Finder Services instead.
+   Finder Services instead. Mounts are registered from `mountedVolumeURLs`, not
+   the `/Volumes` folder itself.
 5. Keep Zinnia running, select a file/folder **in a monitored folder** →
    **Compress with Zinnia** from the primary menu. Confirm the already-running
    app receives that new request.
@@ -65,6 +66,28 @@ below before publishing.
 7. Dev tip after Info.plist changes: `/System/Library/CoreServices/pbs -flush`
    Inspect registration: `/System/Library/CoreServices/pbs -dump_cache`
    Finder Sync election: `pluginkit -m -v -i run.rosie.zinnia.findersync`
+8. Split first volumes (`archive.7z.001` with a sibling `.002`): **Extract with
+   Zinnia** must appear under Services even when Finder Sync is unavailable.
+   Services now declares `run.rosie.zinnia.split-volume` for the `001`
+   filename extension. Open With still does not claim every `.001` file.
+
+### Tahoe: OS-dead vs Zinnia-misconfigured
+
+Classify a missing Finder menu on macOS 26 **on a clean VM that has never seen
+Zinnia**. A dirty developer Mac's Launch Services database is not evidence.
+
+| Observation | Class |
+| --- | --- |
+| Appex missing under `Contents/PlugIns/ZinniaFinderSync.appex` | Zinnia |
+| App / appex / `7z` Team IDs do not match, or App Group is not `<TeamID>.run.rosie.zinnia.findersync` | Zinnia |
+| `pluginkit -m -v -i run.rosie.zinnia.findersync` empty after a signed install + one launch | Zinnia |
+| `pluginkit` shows `!`, or `+` / Settings **Enabled** but no `FinderSyncExtensionHost`, and Services still work | OS residual |
+| Menus missing only outside Desktop/Documents/Downloads/Movies/Music/Pictures/mounted volumes | Expected; use Services |
+| Volume rename without remount leaves a stale Finder Sync root | Zinnia gap; remount or relaunch |
+
+`pluginkit -e use` is temporary. Real enablement is System Settings → Login
+Items & Extensions → **Zinnia Finder**. Settings **Enabled** means election, not
+"menus are visible."
 
 > **Release gate:** On a clean macOS 26+ machine, install the signed and
 > notarized universal artifact; verify Finder Sync primary-menu items, Finder Services,
@@ -125,19 +148,19 @@ Requires a **signed** NSIS install with full `AZURE_ARTIFACT_SIGNING_PUBLISHER_D
 
 ### Failure modes
 
-| Scenario                            | Expect                               |
-| ----------------------------------- | ------------------------------------ |
-| Unsigned / `SKIP_WIN_CODESIGN=1`    | Classic verbs only                   |
-| Stub MSIX (≤1 KiB)                  | Classic verbs only                   |
-| CN-only publisher DN                | Context-menu build fails             |
-| MSIX missing `AllowExternalContent` | Register log shows `0x80073D2E`      |
+| Scenario                            | Expect                                                              |
+| ----------------------------------- | ------------------------------------------------------------------- |
+| Unsigned / `SKIP_WIN_CODESIGN=1`    | Classic verbs only                                                  |
+| Stub MSIX (≤1 KiB)                  | Classic verbs only                                                  |
+| CN-only publisher DN                | Context-menu build fails                                            |
+| MSIX missing `AllowExternalContent` | Register log shows `0x80073D2E`                                     |
 | Reinstall / upgrade                 | Versioned shell directory + remove-before-add; no file-write prompt |
 
 ## Classic Windows verbs
 
 **Fallback only** when Win11 sparse-package registration fails (stubs, missing
 script, or `Add-AppxPackage` error). Do not leave these installed alongside a
-successful modern-menu registration  -  package verbs also appear under “Show
+successful modern-menu registration - package verbs also appear under “Show
 more options,” and stacking causes duplicate Extract/Compress entries.
 
 When the fallback path is active (HKCU):
@@ -168,7 +191,9 @@ Wayland and X11 where the desktop environment supports them.
    `flatpak info --show-permissions run.rosie.zinnia` for only the documented filesystem, display,
    IPC, and DRI permissions.
 5. Confirm the Ubuntu 24.04-built AppImage starts on Ubuntu 24.04; this catches
-   accidental glibc drift from a newer build host.
+   accidental glibc drift from a newer build host. If the AppImage fails with a
+   FUSE error, the host needs `fuse` / `libfuse2` (FUSE 2). That is an AppImage
+   runtime requirement, not a Zinnia packaging bug.
 
 > **Release gate:** Complete the package-specific matrix above before publishing
 > a stable Linux artifact. One distro is not a substitute for the others. GitHub

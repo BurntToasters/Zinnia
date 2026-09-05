@@ -103,14 +103,26 @@ fn force_exit_after_busy_teardown(app: tauri::AppHandle) {
             if let Some(child) = child {
                 if let Err(error) = process::terminate_child(&child) {
                     eprintln!("Could not stop archive process during forced exit: {error}");
-                    let mut process = match state.0.lock() {
-                        Ok(guard) => guard,
-                        Err(poisoned) => poisoned.into_inner(),
-                    };
-                    process.cancelling = true;
-                    if process.child.is_none() {
-                        process.child = Some(child);
+                    if let Err(retry_error) = process::terminate_child_with_timeout(
+                        &child,
+                        std::time::Duration::from_secs(5),
+                    ) {
+                        eprintln!(
+                            "Retry stop during forced exit also failed: {retry_error}. A leftover 7-Zip process may hold staging locks until the next recovery pass."
+                        );
                     }
+                    {
+                        let mut process = match state.0.lock() {
+                            Ok(guard) => guard,
+                            Err(poisoned) => poisoned.into_inner(),
+                        };
+                        process.cancelling = true;
+                        if process.child.is_none() {
+                            process.child = Some(child);
+                        }
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                    app.exit(0);
                     return;
                 }
             }
@@ -337,14 +349,22 @@ fn main() {
             // new operation, so a fast user action cannot race an interrupted transaction.
             let maintenance_handle = app.handle().clone();
             std::thread::spawn(move || {
-                if let Err(e) = process::recover_interrupted_transaction(&maintenance_handle) {
-                    eprintln!("Failed to recover an interrupted archive transaction: {e}");
-                    process::set_startup_recovery_error(Some(e));
-                } else {
-                    process::set_startup_recovery_error(None);
-                    if let Err(e) = process::cleanup_orphan_stages(&maintenance_handle) {
-                        eprintln!("Failed to clean orphan staging directories: {e}");
+                let recovered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    if let Err(e) = process::recover_interrupted_transaction(&maintenance_handle) {
+                        eprintln!("Failed to recover an interrupted archive transaction: {e}");
+                        process::set_startup_recovery_error(Some(e));
+                    } else {
+                        process::set_startup_recovery_error(None);
+                        if let Err(e) = process::cleanup_orphan_stages(&maintenance_handle) {
+                            eprintln!("Failed to clean orphan staging directories: {e}");
+                        }
                     }
+                }));
+                if recovered.is_err() {
+                    eprintln!("Startup recovery panicked; unblocking archive operations.");
+                    process::set_startup_recovery_error(Some(
+                        "Startup recovery failed unexpectedly.".to_string(),
+                    ));
                 }
                 // Unblock run_7z before temp cleanup; recovery is what must be serialized.
                 process::mark_startup_recovery_done();

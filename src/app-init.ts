@@ -116,11 +116,13 @@ function showPersistentAlertBanner(message: string): void {
   if (persistentAlertDismissWired) return;
   persistentAlertDismissWired = true;
   dismiss?.addEventListener("click", () => {
-    banner.hidden = true;
     text.textContent = "";
-    preservedRecoveryAcknowledgementAvailable = false;
-    if (acknowledge) acknowledge.hidden = true;
-    persistentAlertDismissWired = false;
+    if (acknowledge && preservedRecoveryAcknowledgementAvailable) {
+      acknowledge.hidden = false;
+      banner.hidden = false;
+    } else {
+      banner.hidden = true;
+    }
   });
 }
 

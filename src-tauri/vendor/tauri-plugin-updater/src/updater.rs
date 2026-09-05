@@ -394,7 +394,15 @@ impl Updater {
         #[cfg(target_os = "linux")]
         {
             if std::env::var_os("SSL_CERT_FILE").is_none() {
-                std::env::set_var("SSL_CERT_FILE", "/etc/ssl/certs/ca-certificates.crt");
+                for candidate in [
+                    "/etc/ssl/certs/ca-certificates.crt",
+                    "/etc/pki/tls/certs/ca-bundle.crt",
+                ] {
+                    if std::path::Path::new(candidate).is_file() {
+                        std::env::set_var("SSL_CERT_FILE", candidate);
+                        break;
+                    }
+                }
             }
             if std::env::var_os("SSL_CERT_DIR").is_none() {
                 std::env::set_var("SSL_CERT_DIR", "/etc/ssl/certs");
@@ -1121,11 +1129,10 @@ impl Update {
 
         // 1. First try using pkexec (graphical sudo prompt)
         if let Some(pkexec) = pkexec.as_ref() {
-            if let Ok(status) = linux_privileged_command(pkexec)
-                .arg(&installer)
-                .arg(install_arg)
-                .arg(pkg_path)
-                .status()
+            let mut command = linux_privileged_command(pkexec);
+            command.arg(&installer).arg(install_arg).arg(pkg_path);
+            if let Ok(status) =
+                linux_privileged_wait_status(command, std::time::Duration::from_secs(600))
             {
                 if status.success() {
                     log::debug!("installed {pkg_path:?} with pkexec");
@@ -1144,11 +1151,10 @@ impl Update {
             }
 
             // 3. Final fallback: terminal sudo
-            let status = linux_privileged_command(sudo)
-                .arg(&installer)
-                .arg(install_arg)
-                .arg(pkg_path)
-                .status()?;
+            let mut command = linux_privileged_command(sudo);
+            command.arg(&installer).arg(install_arg).arg(pkg_path);
+            let status =
+                linux_privileged_wait_status(command, std::time::Duration::from_secs(600))?;
 
             if status.success() {
                 log::debug!("installed {pkg_path:?} with sudo");
@@ -1229,10 +1235,25 @@ impl Update {
 }
 
 #[cfg(target_os = "linux")]
+fn linux_privileged_wait_status(
+    mut command: std::process::Command,
+    timeout: std::time::Duration,
+) -> std::io::Result<std::process::ExitStatus> {
+    use std::os::unix::process::CommandExt;
+    command.stdout(std::process::Stdio::piped());
+    command.stderr(std::process::Stdio::piped());
+    command.process_group(0);
+    let child = command.spawn()?;
+    let pid = child.id();
+    let output = wait_child_output_timeout(child, pid, timeout)?;
+    Ok(output.status)
+}
+
+#[cfg(target_os = "linux")]
 fn linux_privileged_command(program: &Path) -> std::process::Command {
     let mut command = std::process::Command::new(program);
     command.env_clear();
-    command.env("PATH", "/usr/bin:/bin");
+    command.env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin");
     command.env("LC_ALL", "C");
     command.env("LANG", "C");
     for key in crate::install_safety::LINUX_PRIVILEGED_ENV_ALLOWLIST {

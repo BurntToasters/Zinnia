@@ -17,8 +17,8 @@ export const ALLOWED_METHOD_PREFIXES = [
   "-mcl=",
 ];
 
-/** Mirrors validation.rs is_allowed_switch; shared by a/u and x. */
-const EXTRA_SHARED_RE = /^-(?:bt|bb[0-3]|slt|scs\S+|scc\S+|r|r-|r0)$/;
+/** Subset of validation.rs is_allowed_switch, plus extra rejects Zinnia owns. */
+const EXTRA_SHARED_RE = /^-(?:bt|bb[0-3]|slt)$/;
 const EXTRA_EXTRACT_ONLY = ["-y"];
 const EXTRA_COMPRESS_ONLY = ["-stl", "-slp", "-ssp", "-sse"];
 
@@ -189,9 +189,26 @@ export function validateExtraArgs(
       continue;
     }
     if (lower.startsWith("-mem=")) {
-      if (lower === "-mem=zipcrypto") {
+      if (lower !== "-mem=aes256") {
         throw new Error(
           `"${arg}" is not allowed. Password-protected ZIP archives must use AES-256.`,
+        );
+      }
+    }
+    if (lower === "-r" || lower.startsWith("-r-") || lower === "-r0") {
+      throw new Error(
+        `"${arg}" is not allowed. Extra args cannot recurse from the working directory; Zinnia already passes concrete paths.`,
+      );
+    }
+    if (lower.startsWith("-scs") || lower.startsWith("-scc")) {
+      throw new Error(
+        `"${arg}" is not allowed. Zinnia forces UTF-8 console charset.`,
+      );
+    }
+    if (lower.startsWith("-mcu=") || lower.startsWith("-mcl=")) {
+      if (lower.endsWith("=off")) {
+        throw new Error(
+          `"${arg}" is not allowed. Zinnia forces UTF-8 ZIP names (-mcu=on).`,
         );
       }
     }

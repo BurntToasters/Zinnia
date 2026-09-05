@@ -152,6 +152,14 @@ describe("Windows 11 context-menu manifest", () => {
     expect(hooks).toContain("SetOverwrite on");
     expect(hooks).toContain("!macro NSIS_HOOK_PREUNINSTALL");
     expect(hooks).toContain("zinnia_preuninstall_abort");
+    expect(hooks).toContain("/UPDATE");
+    expect(hooks).toContain("Get-AppxPackage");
+    expect(hooks).toContain(
+      '!insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".rar"',
+    );
+    expect(hooks).toContain(
+      '!insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".001"',
+    );
     expect(hooks).toContain(
       "Uninstall was cancelled so Explorer can still find the shell files",
     );
@@ -233,6 +241,10 @@ describe("Windows 11 context-menu manifest", () => {
     expect(registration).toContain(
       "Cleanup of stale shell payloads was deferred",
     );
+
+    const cmake = read("src-tauri/windows/shell/CMakeLists.txt");
+    expect(cmake).toContain("MSVC_RUNTIME_LIBRARY");
+    expect(cmake).toContain("MultiThreaded");
 
     const build = read("scripts/build-windows-context-menu.ps1");
     expect(build).toContain("windows-vs-toolchain.ps1");

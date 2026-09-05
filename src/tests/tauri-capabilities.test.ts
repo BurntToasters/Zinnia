@@ -214,7 +214,6 @@ describe("Tauri capability policy", () => {
         "core:window:allow-close",
         "core:window:allow-minimize",
         "core:window:allow-start-dragging",
-        "allow-probe-7z",
         "allow-load-settings",
         "allow-set-workspace-window-fx",
         "allow-supports-workspace-window-fx",

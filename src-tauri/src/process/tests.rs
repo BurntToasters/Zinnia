@@ -179,6 +179,51 @@ fn harden_7z_args_forces_aes256_on_password_zip() {
 }
 
 #[test]
+fn harden_7z_args_forces_zip_utf8_names_last_wins() {
+    let mut args = vec![
+        "u".to_string(),
+        "-mcu=off".to_string(),
+        "-mcl=off".to_string(),
+        "out.zip".to_string(),
+        "--".to_string(),
+        "in.txt".to_string(),
+    ];
+    super::commands::harden_7z_args(&mut args);
+    assert!(!args.iter().any(|arg| arg.eq_ignore_ascii_case("-mcu=off")));
+    assert!(!args.iter().any(|arg| arg.eq_ignore_ascii_case("-mcl=off")));
+    let separator = args.iter().position(|arg| arg == "--").expect("separator");
+    assert_eq!(args[separator - 1], "-mcu=on");
+    assert_eq!(
+        args.iter()
+            .filter(|arg| arg.to_ascii_lowercase().starts_with("-mcu"))
+            .count(),
+        1
+    );
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn harden_7z_args_strips_scc_and_inserts_utf8_before_separator() {
+    let mut args = vec![
+        "l".to_string(),
+        "-sccWIN".to_string(),
+        "-slt".to_string(),
+        "--".to_string(),
+        "a.zip".to_string(),
+    ];
+    super::commands::harden_7z_args(&mut args);
+    assert!(!args.iter().any(|arg| arg.eq_ignore_ascii_case("-sccWIN")));
+    let separator = args.iter().position(|arg| arg == "--").expect("separator");
+    assert_eq!(args[separator - 1], "-sccUTF-8");
+    assert_eq!(
+        args.iter()
+            .filter(|arg| arg.eq_ignore_ascii_case("-sccUTF-8"))
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn preparation_failure_release_clears_every_soft_lock_field() {
     let state = RunningProcess::new();
     {
@@ -3460,7 +3505,7 @@ fn extract_member_list_preserves_password_and_archive_type() {
         "/tmp/archive.custom",
     ];
     #[cfg(target_os = "windows")]
-    expected.insert(1, "-sccUTF-8");
+    expected.insert(expected.len() - 2, "-sccUTF-8");
     assert_eq!(
         extract_member_list_args(&args).expect("list args"),
         expected
@@ -4884,6 +4929,10 @@ fn explicit_archive_phase_controls_recovery_across_partial_backup_cleanup() {
 
 #[test]
 fn parse_7z_version_reads_common_banners() {
+    assert_eq!(
+        parse_7z_version("7-Zip 26.03 (x64)\n"),
+        Some("26.03".to_string())
+    );
     assert_eq!(
         parse_7z_version("7-Zip 26.02 (x64)\n"),
         Some("26.02".to_string())

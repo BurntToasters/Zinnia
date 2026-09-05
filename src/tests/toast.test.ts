@@ -17,6 +17,7 @@ describe("showToast", () => {
     expect(region).not.toBeNull();
     const toast = region?.querySelector(".toast");
     expect(toast?.textContent).toBe("Saved");
+    expect(region?.hasAttribute("aria-live")).toBe(false);
     expect(toast?.classList.contains("toast--success")).toBe(true);
   });
 
@@ -47,7 +48,16 @@ describe("showToast", () => {
   it("dismisses on click", () => {
     showToast("Tap", "info", 0);
     const toast = document.querySelector(".toast") as HTMLElement;
+    expect(toast.tabIndex).toBe(0);
     toast.click();
+    vi.advanceTimersByTime(200);
+    expect(document.querySelectorAll(".toast")).toHaveLength(0);
+  });
+
+  it("dismisses sticky toasts with Escape", () => {
+    showToast("Sticky", "error", 0);
+    const toast = document.querySelector(".toast") as HTMLElement;
+    toast.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     vi.advanceTimersByTime(200);
     expect(document.querySelectorAll(".toast")).toHaveLength(0);
   });

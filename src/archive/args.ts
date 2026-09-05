@@ -100,6 +100,7 @@ export function buildCompressionMethodSwitches(format: string): string[] {
     else switches.push(`-ms=${solid}`);
   }
   if (threads) switches.push(`-mmt=${threads}`);
+  if (normalizedFormat === "zip") switches.push("-mcu=on");
   return switches;
 }
 

@@ -334,12 +334,110 @@ fn copy_file_no_replace_with_created(
     })();
     drop(target_file);
     if let Err(error) = copy_result {
-        if let Err(cleanup_error) = remove_regular_file_if_matches(target, &target_identity) {
-            return Err(format!(
-                "{error}; partial destination cleanup failed: {cleanup_error}"
-            ));
+        return exclusive_copy_cleanup_error(target, &target_identity, error);
+    }
+    let stamp_result = {
+        #[cfg(windows)]
+        {
+            super::copy_windows_zone_identifier(source, target)
         }
-        return Err(error);
+        #[cfg(target_os = "macos")]
+        {
+            copy_macos_quarantine_xattr(source, target)
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
+        {
+            let _ = (source, target);
+            Ok(())
+        }
+    };
+    if let Err(error) = stamp_result {
+        return exclusive_copy_cleanup_error(target, &target_identity, error);
+    }
+    Ok(())
+}
+
+fn exclusive_copy_cleanup_error(
+    target: &std::path::Path,
+    target_identity: &FileIdentity,
+    error: String,
+) -> Result<(), String> {
+    if let Err(cleanup_error) = remove_regular_file_if_matches(target, target_identity) {
+        return Err(format!(
+            "{error}; partial destination cleanup failed: {cleanup_error}"
+        ));
+    }
+    Err(error)
+}
+
+#[cfg(target_os = "macos")]
+fn copy_macos_quarantine_xattr(
+    source: &std::path::Path,
+    target: &std::path::Path,
+) -> Result<(), String> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    fn c_path(path: &std::path::Path) -> Result<CString, String> {
+        CString::new(path.as_os_str().as_bytes())
+            .map_err(|_| "Path contains an interior NUL.".to_string())
+    }
+
+    let source_c = c_path(source)?;
+    let target_c = c_path(target)?;
+    let name = CString::new("com.apple.quarantine").expect("static xattr name");
+    let size = unsafe {
+        libc::getxattr(
+            source_c.as_ptr(),
+            name.as_ptr(),
+            std::ptr::null_mut(),
+            0,
+            0,
+            0,
+        )
+    };
+    if size < 0 {
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::ENOATTR) {
+            return Ok(());
+        }
+        eprintln!("Could not read com.apple.quarantine: {error}");
+        return Ok(());
+    }
+    let mut buffer = vec![0u8; size as usize];
+    let read = unsafe {
+        libc::getxattr(
+            source_c.as_ptr(),
+            name.as_ptr(),
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            0,
+            0,
+        )
+    };
+    if read < 0 {
+        eprintln!(
+            "Could not read com.apple.quarantine: {}",
+            std::io::Error::last_os_error()
+        );
+        return Ok(());
+    }
+    buffer.truncate(read as usize);
+    let written = unsafe {
+        libc::setxattr(
+            target_c.as_ptr(),
+            name.as_ptr(),
+            buffer.as_ptr().cast(),
+            buffer.len(),
+            0,
+            0,
+        )
+    };
+    if written != 0 {
+        return Err(format!(
+            "Could not preserve com.apple.quarantine: {}",
+            std::io::Error::last_os_error()
+        ));
     }
     Ok(())
 }

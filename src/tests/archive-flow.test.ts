@@ -290,7 +290,13 @@ describe("addFilesToArchive", () => {
     await addFilesToArchive();
 
     expect(runArgs[0]).toEqual(
-      expect.arrayContaining(["u", "-psecret", "-mem=AES256", archive]),
+      expect.arrayContaining([
+        "u",
+        "-psecret",
+        "-mem=AES256",
+        "-mcu=on",
+        archive,
+      ]),
     );
   });
 
@@ -410,6 +416,35 @@ describe("archive test/browse/selective flows", () => {
     const runCall = invokeMock.mock.calls.find(([name]) => name === "run_7z");
     expect(decodeRun7zInvokePayload(runCall?.[1]).args).toEqual(
       expect.arrayContaining(["t", "-spd", "--", archive]),
+    );
+  });
+
+  it("does not treat remapped metadata-only warnings as a clean integrity pass", async () => {
+    state.inputs = ["/tmp/sample.7z"];
+    setInvokeRouter((command, payload) => {
+      if (command === "validate_archive_paths") {
+        return pathsFromValidationPayload(payload).map((path) => ({
+          path,
+          valid: true,
+        }));
+      }
+      if (command === "probe_7z") return undefined;
+      if (command === "run_7z") {
+        return {
+          stdout: "",
+          stderr: "Open as [zip]: 1",
+          code: 0,
+          warning_code: 1,
+        };
+      }
+      return undefined;
+    });
+
+    const result = await testArchive();
+
+    expect(result).toBe("failed");
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "not considered a clean pass",
     );
   });
 

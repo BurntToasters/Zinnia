@@ -1,8 +1,8 @@
 //! Launch module unit tests.
 
 use super::extract_window::{
-    bump_extract_warm_idle_generation, extract_session_init_script, EXTRACT_WARM_IDLE_ACTIVE,
-    EXTRACT_WARM_IDLE_GENERATION,
+    bump_extract_warm_idle_generation, extract_session_init_script, warm_idle_timer_still_owns,
+    EXTRACT_WARM_IDLE_ACTIVE, EXTRACT_WARM_IDLE_GENERATION,
 };
 use super::open_path::{derive_extract_destination_path, normalize_destination_path};
 use super::open_routing::{
@@ -100,6 +100,22 @@ fn derive_extract_destination_matches_frontend_rules() {
     assert_eq!(
         derive_extract_destination_path("   "),
         Some(std::path::PathBuf::from("   _extracted"))
+    );
+    assert_eq!(
+        derive_extract_destination_path("/downloads/..zip"),
+        Some(std::path::PathBuf::from("/downloads/_extracted"))
+    );
+    assert_eq!(
+        derive_extract_destination_path("/downloads/...zip"),
+        Some(std::path::PathBuf::from("/downloads/_extracted"))
+    );
+    assert_eq!(
+        derive_extract_destination_path("/downloads/....zip"),
+        Some(std::path::PathBuf::from("/downloads/_extracted"))
+    );
+    assert_eq!(
+        derive_extract_destination_path("/downloads/notes. .zip"),
+        Some(std::path::PathBuf::from("/downloads/_extracted"))
     );
 }
 
@@ -485,5 +501,14 @@ fn warm_idle_generation_advances_when_bumped() {
     bump_extract_warm_idle_generation();
     let after = EXTRACT_WARM_IDLE_GENERATION.load(Ordering::SeqCst);
     assert!(after > before);
+    EXTRACT_WARM_IDLE_ACTIVE.store(false, Ordering::SeqCst);
+}
+
+#[test]
+fn warm_idle_timer_keeps_ownership_until_leave_bumps() {
+    let generation = EXTRACT_WARM_IDLE_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    assert!(warm_idle_timer_still_owns(generation));
+    bump_extract_warm_idle_generation();
+    assert!(!warm_idle_timer_still_owns(generation));
     EXTRACT_WARM_IDLE_ACTIVE.store(false, Ordering::SeqCst);
 }

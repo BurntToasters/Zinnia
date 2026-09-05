@@ -86,12 +86,39 @@ export function listingHasMember(stdout, memberPath) {
 export function hardenFixture7zArgs(args, platform = process.platform) {
   const next = [...args];
   const command = next[0];
-  if (
-    platform === "win32" &&
-    ["a", "u", "x", "l", "t"].includes(command) &&
-    !next.some((arg) => String(arg).toLowerCase() === "-sccutf-8")
-  ) {
-    next.splice(1, 0, "-sccUTF-8");
+  if (platform === "win32" && ["a", "u", "x", "l", "t"].includes(command)) {
+    for (let i = next.length - 1; i >= 0; i -= 1) {
+      if (String(next[i]).toLowerCase().startsWith("-scc")) {
+        next.splice(i, 1);
+      }
+    }
+    const insertAt = next.indexOf("--");
+    next.splice(insertAt === -1 ? next.length : insertAt, 0, "-sccUTF-8");
+  }
+  if (["a", "u"].includes(command)) {
+    const separator = next.indexOf("--");
+    const optionEnd = separator === -1 ? next.length : separator;
+    const zipTyped = next
+      .slice(1, optionEnd)
+      .some((arg) => String(arg).toLowerCase() === "-tzip");
+    const zipPath = [...next.slice(1, optionEnd)]
+      .reverse()
+      .find((arg) => !String(arg).startsWith("-"));
+    if (
+      zipTyped ||
+      String(zipPath || "")
+        .toLowerCase()
+        .endsWith(".zip")
+    ) {
+      for (let i = next.length - 1; i >= 0; i -= 1) {
+        const lower = String(next[i]).toLowerCase();
+        if (lower.startsWith("-mcu") || lower.startsWith("-mcl")) {
+          next.splice(i, 1);
+        }
+      }
+      const insertAt = next.indexOf("--");
+      next.splice(insertAt === -1 ? next.length : insertAt, 0, "-mcu=on");
+    }
   }
   return next;
 }

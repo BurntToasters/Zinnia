@@ -21,7 +21,7 @@ beforeEach(() => {
 describe("validateExtraArgs", () => {
   it("accepts valid known args", () => {
     expect(() =>
-      validateExtraArgs(["-mx=9", "-r", "-bb3"], "compress"),
+      validateExtraArgs(["-mx=9", "-bb3"], "compress"),
     ).not.toThrow();
   });
 
@@ -68,17 +68,28 @@ describe("validateExtraArgs", () => {
 
   it("accepts shared diagnostics for both commands", () => {
     expect(() =>
-      validateExtraArgs(
-        ["-bt", "-bb2", "-slt", "-scsUTF-8", "-sccUTF-8"],
-        "extract",
-      ),
+      validateExtraArgs(["-bt", "-bb2", "-slt"], "extract"),
     ).not.toThrow();
     expect(() =>
-      validateExtraArgs(
-        ["-bt", "-bb2", "-slt", "-scsUTF-8", "-sccUTF-8"],
-        "compress",
-      ),
+      validateExtraArgs(["-bt", "-bb2", "-slt"], "compress"),
     ).not.toThrow();
+  });
+
+  it("rejects recursion and charset switches that Zinnia owns", () => {
+    for (const arg of ["-r", "-r-", "-r0", "-scsUTF-8", "-sccUTF-8"]) {
+      expect(() => validateExtraArgs([arg], "extract")).toThrow();
+      expect(() => validateExtraArgs([arg], "compress")).toThrow();
+    }
+  });
+
+  it("rejects extra-args that turn off ZIP UTF-8 names", () => {
+    expect(() => validateExtraArgs(["-mcu=off"], "compress")).toThrow(
+      /-mcu=on/,
+    );
+    expect(() => validateExtraArgs(["-mcl=off"], "compress")).toThrow(
+      /-mcu=on/,
+    );
+    expect(() => validateExtraArgs(["-mcu=on"], "compress")).not.toThrow();
   });
 
   it("rejects malformed shared switches the backend rejects", () => {
@@ -155,7 +166,7 @@ describe("validateExtraArgs", () => {
       /compression method/,
     );
     expect(() => validateExtraArgs(["-mem=/tmp/x"], "compress")).toThrow(
-      /compression method/,
+      /AES-256|compression method/,
     );
     expect(() => validateExtraArgs(["-mtc=a\\b"], "compress")).toThrow(
       /compression method/,

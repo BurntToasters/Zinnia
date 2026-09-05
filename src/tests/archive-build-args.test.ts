@@ -287,6 +287,7 @@ describe("buildArgs (add mode)", () => {
     const args = buildArgs();
     expect(args).toContain("-tzip");
     expect(args).toContain("-m0=deflate");
+    expect(args).toContain("-mcu=on");
     expect(args).not.toContain("-md=64m");
     expect(args).toContain("-mfb=64");
   });

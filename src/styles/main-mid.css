@@ -769,7 +769,7 @@ body.platform-macos .btn--shortcut::after {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 100;
+  z-index: 10050;
   animation: overlay-in 150ms ease;
 }
 
@@ -909,7 +909,7 @@ body.platform-macos .btn--shortcut::after {
   position: fixed;
   bottom: 16px;
   right: 16px;
-  z-index: 2000;
+  z-index: 10070;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -928,6 +928,24 @@ body.platform-macos .btn--shortcut::after {
   font-size: 0.8125rem;
   box-shadow: var(--shadow);
   animation: toast-in 0.18s ease-out;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.toast-message {
+  flex: 1;
+  min-width: 0;
+}
+
+.toast-dismiss {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
 }
 
 .toast--leaving {
@@ -1012,7 +1030,7 @@ body.platform-macos .btn--shortcut::after {
 .setup-wizard-overlay {
   position: fixed;
   inset: 0;
-  z-index: 420;
+  z-index: 10050;
   display: flex;
   align-items: center;
   justify-content: center;

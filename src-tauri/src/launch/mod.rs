@@ -23,9 +23,14 @@ pub struct ExtractQueue(pub Mutex<HashMap<String, Vec<String>>>);
 pub struct PendingPaths(pub Mutex<Vec<OpenPathsPayload>>);
 /// Extract windows may only open directories they register here first.
 pub struct ExtractOpenAllowlist(pub Mutex<HashMap<String, std::path::PathBuf>>);
-/// Destination folder bound at extract-window spawn (E1/E2). Survives after
-/// `get_extract_paths` drains the queue so run_7z/-o and open_path stay pinned.
-pub struct ExtractBoundDestination(pub Mutex<HashMap<String, std::path::PathBuf>>);
+/// Destination folder and source archive bound at extract-window spawn.
+/// Survives after `get_extract_paths` drains the queue so run_7z/-o/-- stay pinned.
+#[derive(Clone)]
+pub struct ExtractBoundPaths {
+    pub destination: std::path::PathBuf,
+    pub archive: std::path::PathBuf,
+}
+pub struct ExtractBoundDestination(pub Mutex<HashMap<String, ExtractBoundPaths>>);
 /// Main window may only open directories produced by recent successful operations.
 pub struct OpenPathAllowlist(pub Mutex<VecDeque<std::path::PathBuf>>);
 
@@ -112,9 +117,9 @@ pub use extract_window::{
 };
 #[allow(unused_imports)]
 pub use open_path::{
-    assert_extract_bound_destination, derive_extract_destination_path, drain_pending_paths,
-    get_initial_mode, get_initial_paths, open_path, register_extract_open_path,
-    remember_openable_directory,
+    assert_extract_bound_archive, assert_extract_bound_destination,
+    derive_extract_destination_path, drain_pending_paths, get_initial_mode, get_initial_paths,
+    open_path, register_extract_open_path, remember_openable_directory,
 };
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 #[allow(unused_imports)]
