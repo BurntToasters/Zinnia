@@ -12,6 +12,29 @@ if (process.env.ZINNIA_E2E_APP_ARGS) {
   appArgs = JSON.parse(process.env.ZINNIA_E2E_APP_ARGS);
 }
 
+async function requestGracefulAppShutdown() {
+  const activeBrowser = globalThis.browser;
+  if (!activeBrowser?.sessionId) return;
+
+  const processApiAvailable = await activeBrowser.execute(
+    () => typeof window.__TAURI__?.core?.invoke === "function",
+  );
+  if (!processApiAvailable) {
+    throw new Error("Tauri process API is unavailable during E2E teardown");
+  }
+
+  // WDIO's embedded provider terminates only the top-level app process. On
+  // Windows that can orphan WebView2 children long enough to lock the isolated
+  // profile. Ask Tauri to exit first, after this WebDriver command responds.
+  await activeBrowser.execute(() => {
+    window.setTimeout(() => {
+      void window.__TAURI__.core
+        .invoke("plugin:process|exit", { code: 0 })
+        .catch(() => {});
+    }, 50);
+  });
+}
+
 export const config = {
   runner: "local",
   specs,
@@ -49,4 +72,5 @@ export const config = {
     ui: "bdd",
     timeout: 120_000,
   },
+  after: requestGracefulAppShutdown,
 };

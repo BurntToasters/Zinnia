@@ -13,9 +13,11 @@ import {
 import { verifyReleaseSession } from "./release-session.js";
 import githubCli from "./github-cli.cjs";
 import { assertStableReleaseOverridesAllowed } from "./release-policy.cjs";
+import draftMetadata from "./release-draft-metadata.cjs";
 
 const { assertGitHubCliAuthenticated, githubApi, uploadReleaseAsset } =
   githubCli;
+const { assertNoMisnamedVersionDrafts, assertReleaseTagName } = draftMetadata;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -958,6 +960,7 @@ async function getOrCreateRelease() {
         `/repos/${REPO_OWNER}/${REPO_NAME}/releases?per_page=${perPage}&page=${page}`,
       ),
     );
+    assertNoMisnamedVersionDrafts(releases, TAG, VERSION);
     // Duplicate drafts are a known GitHub failure; match ensure-draft-release.
     const drafts = releases.filter(
       (release) => release?.draft && release.tag_name === TAG,
@@ -971,7 +974,12 @@ async function getOrCreateRelease() {
   };
 
   const existing = await findExisting();
-  if (existing) return assertReleaseTargetsCommit(existing, commit);
+  if (existing) {
+    return assertReleaseTargetsCommit(
+      assertReleaseTagName(existing, TAG, "Signing release"),
+      commit,
+    );
+  }
 
   throw new Error(
     `No GitHub release exists for ${TAG}. Create the draft with npm run release:draft on Windows first; Mac/Linux wait for that draft.`,

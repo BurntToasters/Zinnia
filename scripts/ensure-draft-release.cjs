@@ -15,6 +15,10 @@ try {
 }
 const { assertGitHubCliAuthenticated, githubApi } = require("./github-cli.cjs");
 const { assertStableReleaseOverridesAllowed } = require("./release-policy.cjs");
+const {
+  assertNoMisnamedVersionDrafts,
+  assertReleaseTagName,
+} = require("./release-draft-metadata.cjs");
 
 const REPOSITORY_ROOT = path.resolve(__dirname, "..");
 const CHANGELOG_PATH = path.join(REPOSITORY_ROOT, "CHANGELOG.md");
@@ -143,6 +147,11 @@ async function syncReleaseNotesBody(release, body) {
     "/repos/" + REPO_OWNER + "/" + REPO_NAME + "/releases/" + release.id,
     { name: VERSION, body, prerelease: IS_PRERELEASE },
   );
+  const validated = assertReleaseTagName(
+    updated,
+    TAG_NAME,
+    "Updated draft release",
+  );
   console.log(
     "   Synced CHANGELOG.md into release notes (" +
       body.length +
@@ -150,7 +159,7 @@ async function syncReleaseNotesBody(release, body) {
       (release.name || TAG_NAME) +
       ".",
   );
-  return updated;
+  return validated;
 }
 
 function verifyReleaseSession(run = execFileSync) {
@@ -307,6 +316,7 @@ async function findMatchingReleases() {
         page,
     ),
   );
+  assertNoMisnamedVersionDrafts(releases, TAG_NAME, VERSION);
   return releases.filter((r) => r.tag_name === TAG_NAME);
 }
 
@@ -363,14 +373,19 @@ async function ensureDraftRelease() {
         prerelease: IS_PRERELEASE,
       },
     );
+    const validated = assertReleaseTagName(
+      release,
+      TAG_NAME,
+      "Created draft release",
+    );
     console.log(
       "   Created draft release: " +
-        (release.name || TAG_NAME) +
+        (validated.name || TAG_NAME) +
         " (id " +
-        release.id +
+        validated.id +
         ") with CHANGELOG.md release notes.",
     );
-    return assertReleaseTargetsCommit(release, commit);
+    return assertReleaseTargetsCommit(validated, commit);
   } catch (error) {
     // Another concurrent run may have created it (422 already_exists) - re-fetch.
     if (error.statusCode === 422) {
@@ -488,6 +503,8 @@ async function main() {
 }
 
 module.exports = {
+  assertNoMisnamedVersionDrafts,
+  assertReleaseTagName,
   assertReleaseTargetsCommit,
   currentReleaseCommit,
   listAllGithubPages,
