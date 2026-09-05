@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import { validateArchivePaths } from "./archive-rules";
 import { deriveExtractDestinationPath } from "./extract-path";
 import { describe7zError, looksLikePasswordRequiredError } from "./error-hints";
@@ -40,6 +41,7 @@ interface Run7zResult {
 interface InjectedExtractSession {
   archive: string;
   destination: string;
+  destinationExists?: boolean;
 }
 
 declare global {
@@ -587,6 +589,31 @@ async function run() {
     return;
   }
 
+  if (injected?.destinationExists) {
+    $("extract-status").textContent = "Waiting for confirmation...";
+    let proceed = false;
+    try {
+      proceed = await confirm(
+        "The destination folder already exists. Existing items will be kept, and extracted items with matching names will be renamed. Continue?",
+        {
+          title: "Destination already exists",
+          kind: "warning",
+          okLabel: "Extract safely",
+          cancelLabel: "Cancel",
+        },
+      );
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      showError(`Could not confirm the extraction destination: ${detail}`);
+      return;
+    }
+    if (!proceed || cancelRequested) {
+      finish("Cancelled", 0, false, false, true);
+      return;
+    }
+    $("extract-status").textContent = "Starting extraction...";
+  }
+
   try {
     await invoke<string>("probe_7z");
   } catch (err) {
@@ -627,8 +654,6 @@ async function run() {
   const startedAt = Date.now();
   let lastFile = "";
 
-  // Register progress listeners without awaiting confirmation before run_7z;
-  // backend prepare time usually dwarfs listener registration.
   const registerProgressListener = <T>(registration: Promise<T>) =>
     registration.catch((err) => {
       console.warn(
@@ -684,11 +709,14 @@ async function run() {
     }),
   );
 
+  // Listener registration is asynchronous in real Tauri webviews. Starting
+  // 7-Zip first can lose every percentage event from a fast extraction.
+  const [unlistenStructured, unlistenRaw] = await Promise.all([
+    structuredListen,
+    rawListen,
+  ]);
+
   async function removeProgressListeners() {
-    const [unlistenStructured, unlistenRaw] = await Promise.all([
-      structuredListen,
-      rawListen,
-    ]);
     for (const unlisten of [unlistenStructured, unlistenRaw]) {
       try {
         unlisten?.();
@@ -698,6 +726,12 @@ async function run() {
         );
       }
     }
+  }
+
+  if (cancelRequested) {
+    await removeProgressListeners();
+    finish("Cancelled", 0, false, false, true);
+    return;
   }
 
   $("extract-status").textContent = "Extracting...";

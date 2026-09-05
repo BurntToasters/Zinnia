@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import { isNativeWebviewContextMenuAllowed } from "../webview-context-menu";
 import { decodeRun7zInvokePayload } from "./backend-ipc-test-utils";
 
@@ -56,7 +57,11 @@ async function flushAsync(): Promise<void> {
 async function setupAndRun(
   invokeImpl?: AnyInvoke,
   options?: {
-    injected?: { archive: string; destination: string };
+    injected?: {
+      archive: string;
+      destination: string;
+      destinationExists?: boolean;
+    };
     listenerRegistrations?: Array<Promise<() => void>>;
     /** Leave false when run_7z is intentionally left pending (cancel tests). */
     waitForSettle?: boolean;
@@ -181,6 +186,7 @@ async function setupAndRun(
 
 beforeEach(() => {
   vi.useRealTimers();
+  vi.mocked(confirm).mockResolvedValue(true);
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     writable: true,
@@ -316,6 +322,91 @@ describe("extract-window", () => {
     });
 
     claim.resolve?.([]);
+    await flushAsync();
+  });
+
+  it("warns before quick extract merges into an existing destination", async () => {
+    vi.mocked(confirm).mockResolvedValue(false);
+
+    const { invokeMock } = await setupAndRun(undefined, {
+      injected: {
+        archive: "/Downloads/packed.7z",
+        destination: "/Downloads/packed",
+        destinationExists: true,
+      },
+    });
+
+    expect(confirm).toHaveBeenCalledWith(
+      expect.stringContaining("Existing items will be kept"),
+      expect.objectContaining({
+        title: "Destination already exists",
+        kind: "warning",
+      }),
+    );
+    expect(invokeMock.mock.calls.some(([name]) => name === "run_7z")).toBe(
+      false,
+    );
+    expect(document.getElementById("extract-status")?.textContent).toBe(
+      "Cancelled",
+    );
+  });
+
+  it("waits for progress listeners and then renders total extraction percent", async () => {
+    const deferred = {
+      resolveStructured: null as ((unlisten: () => void) => void) | null,
+      resolveRaw: null as ((unlisten: () => void) => void) | null,
+      resolveRun: null as ((result: unknown) => void) | null,
+    };
+    const structuredRegistration = new Promise<() => void>((resolve) => {
+      deferred.resolveStructured = resolve;
+    });
+    const rawRegistration = new Promise<() => void>((resolve) => {
+      deferred.resolveRaw = resolve;
+    });
+
+    const { invokeMock, progressListeners } = await setupAndRun(
+      async (cmd) => {
+        if (cmd === "get_extract_paths") return ["/tmp/archive.7z"];
+        if (cmd === "run_7z") {
+          return await new Promise((resolve) => {
+            deferred.resolveRun = resolve;
+          });
+        }
+        return undefined;
+      },
+      {
+        listenerRegistrations: [structuredRegistration, rawRegistration],
+        waitForSettle: false,
+      },
+    );
+
+    expect(invokeMock.mock.calls.some(([name]) => name === "run_7z")).toBe(
+      false,
+    );
+
+    deferred.resolveStructured?.(vi.fn());
+    deferred.resolveRaw?.(vi.fn());
+    await vi.waitFor(() => {
+      expect(invokeMock.mock.calls.some(([name]) => name === "run_7z")).toBe(
+        true,
+      );
+    });
+
+    progressListeners.get("7z-progress-structured")?.({
+      payload: { currentFile: "folder/file.bin", percent: 37 },
+    });
+    await flushAsync();
+    const fill = document.getElementById("progress-fill") as HTMLElement;
+    expect(fill.classList.contains("is-determinate")).toBe(true);
+    expect(fill.classList.contains("pct-37")).toBe(true);
+    expect(fill.classList.contains("is-indeterminate")).toBe(false);
+    expect(
+      document
+        .getElementById("extract-progress")
+        ?.getAttribute("aria-valuenow"),
+    ).toBe("37");
+
+    deferred.resolveRun?.({ stdout: "", stderr: "", code: 0 });
     await flushAsync();
   });
 
