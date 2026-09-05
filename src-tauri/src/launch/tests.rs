@@ -18,10 +18,20 @@ static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 #[test]
 fn e2e_session_active_defaults_off() {
-    if std::env::var("ZINNIA_E2E").ok().as_deref() == Some("1") {
-        return;
+    #[cfg(not(feature = "e2e"))]
+    {
+        assert!(
+            !super::e2e_session_active(),
+            "packaged/release builds must ignore ZINNIA_E2E"
+        );
     }
-    assert!(!super::e2e_session_active());
+    #[cfg(feature = "e2e")]
+    {
+        if std::env::var("ZINNIA_E2E").ok().as_deref() == Some("1") {
+            return;
+        }
+        assert!(!super::e2e_session_active());
+    }
 }
 
 #[test]

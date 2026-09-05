@@ -18,6 +18,7 @@ describe("unpackaged E2E must not ship in release builds", () => {
     expect(cargo).toMatch(
       /e2e = \["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"\]/,
     );
+    expect(cargo).toMatch(/\[features\]\s*default = \[\]/);
     const main = read("src-tauri/src/main.rs");
     expect(main).toContain('#[cfg(feature = "e2e")]');
     expect(main).toContain("tauri_plugin_wdio::init()");
@@ -27,7 +28,11 @@ describe("unpackaged E2E must not ship in release builds", () => {
       'import.meta.env.VITE_ZINNIA_E2E === "1"',
     );
     expect(hook).toContain("isE2eFrontend");
+    expect(hook).toContain('import.meta.env.VITE_ZINNIA_E2E !== "1"');
     expect(read("src/e2e-wdio-plugin.ts")).toContain("isE2eFrontend");
+    expect(read("src/e2e-wdio-plugin.ts")).toContain(
+      'import.meta.env.VITE_ZINNIA_E2E !== "1"',
+    );
     expect(read("src/setup-wizard.ts")).toContain("isE2eFrontend");
     expect(read("src/extract-destination.ts")).toContain("isE2eFrontend");
     expect(read("src/extract-destination.ts")).toContain("confirmChoice");
@@ -60,6 +65,12 @@ describe("unpackaged E2E must not ship in release builds", () => {
     expect(main).toContain("launch::e2e_session_active()");
     expect(read("src-tauri/src/launch/mod.rs")).toContain(
       'std::env::var("ZINNIA_E2E").is_ok_and(|value| value == "1")',
+    );
+    expect(read("src-tauri/src/launch/mod.rs")).toContain(
+      '#[cfg(not(feature = "e2e"))]',
+    );
+    expect(read("src-tauri/src/launch/mod.rs")).toMatch(
+      /#\[cfg\(not\(feature = "e2e"\)\)\]\s*\{\s*false\s*\}/,
     );
     expect(read("scripts/test-e2e.js")).toContain("usesWindowsCmdShell");
     expect(read("scripts/test-e2e.js")).toContain("SKIP_E2E=1 is not allowed");
