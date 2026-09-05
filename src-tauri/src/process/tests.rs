@@ -2035,6 +2035,29 @@ fn nested_extract_merge_does_not_double_remove_directories() {
 }
 
 #[test]
+fn extract_merge_renames_conflicts_and_preserves_existing_files() {
+    let root = temp_root("zinnia-extract-conflict-preserve");
+    let staged = root.join("staged");
+    let destination = root.join("destination");
+    std::fs::create_dir_all(staged.join("nested")).expect("staged tree");
+    std::fs::create_dir_all(destination.join("nested")).expect("destination tree");
+    std::fs::write(staged.join("nested/report.txt"), b"incoming").expect("staged file");
+    std::fs::write(destination.join("nested/report.txt"), b"existing").expect("existing file");
+
+    merge_staged_extract(&staged, &destination, MAX_EXTRACTED_BYTES).expect("conflict-safe merge");
+
+    assert_eq!(
+        std::fs::read(destination.join("nested/report.txt")).expect("existing file preserved"),
+        b"existing"
+    );
+    assert_eq!(
+        std::fs::read(destination.join("nested/report_1.txt")).expect("incoming file renamed"),
+        b"incoming"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn final_extract_scan_enforces_operation_specific_quota() {
     let root = temp_root("zinnia-final-quota-test");
     let staged = root.join("staged");

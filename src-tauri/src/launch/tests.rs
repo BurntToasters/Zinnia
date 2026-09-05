@@ -33,7 +33,7 @@ fn shell_handoff_error_is_consumed_once() {
 
 #[test]
 fn extract_session_init_script_escapes_js_line_separators() {
-    let script = extract_session_init_script("foo\u{2028}bar.zip", "a\u{2029}b");
+    let script = extract_session_init_script("foo\u{2028}bar.zip", "a\u{2029}b", true);
     assert!(
         script.contains("\\u2028"),
         "U+2028 must be escaped for JS embedding: {script}"
@@ -47,6 +47,7 @@ fn extract_session_init_script_escapes_js_line_separators() {
         "raw line separators must not appear in init script"
     );
     assert!(script.contains("__ZINNIA_EXTRACT__"));
+    assert!(script.contains("\"destinationExists\":true"));
 }
 
 #[test]

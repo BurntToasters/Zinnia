@@ -70,10 +70,15 @@ pub(crate) fn bump_extract_warm_idle_generation() {
 
 /// Embed archive/destination for the extract window. Escapes U+2028/U+2029 because
 /// serde_json leaves them unescaped and they break JavaScript string literals.
-pub(crate) fn extract_session_init_script(archive: &str, destination: &str) -> String {
+pub(crate) fn extract_session_init_script(
+    archive: &str,
+    destination: &str,
+    destination_exists: bool,
+) -> String {
     let payload = serde_json::json!({
         "archive": archive,
         "destination": destination,
+        "destinationExists": destination_exists,
     });
     let json = payload
         .to_string()
@@ -368,6 +373,13 @@ pub fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Resul
         .ok_or_else(|| "Extract window requires an archive path.".to_string())?;
     let destination = derive_extract_destination_path(&archive)
         .ok_or_else(|| "Could not derive an extract destination for this archive.".to_string())?;
+    // This is only a UX warning snapshot. Transactional extraction still uses
+    // no-replace publication and re-checks every final path during commit.
+    let destination_exists = match std::fs::symlink_metadata(&destination) {
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(_) => true,
+    };
 
     let label = format!(
         "extract-{}",
@@ -390,7 +402,11 @@ pub fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Resul
 
     // Inject archive + destination before the page script runs so the UI can paint
     // and start extract without waiting on get_extract_paths.
-    let init_script = extract_session_init_script(&archive, destination.to_string_lossy().as_ref());
+    let init_script = extract_session_init_script(
+        &archive,
+        destination.to_string_lossy().as_ref(),
+        destination_exists,
+    );
 
     restore_foreground_activation(app);
 
