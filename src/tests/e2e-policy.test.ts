@@ -38,7 +38,7 @@ describe("unpackaged E2E must not ship in release builds", () => {
     expect(read("e2e/helpers/profile.js")).toContain(
       "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
     );
-    expect(read("scripts/test-e2e.js")).toContain("e2e-feature-5");
+    expect(read("scripts/test-e2e.js")).toContain("e2e-feature-6");
     expect(read("src-tauri/src/launch/mod.rs")).toContain(
       "fn e2e_session_active()",
     );
@@ -58,7 +58,12 @@ describe("unpackaged E2E must not ship in release builds", () => {
     );
     expect(read("scripts/test-e2e.js")).toContain("usesWindowsCmdShell");
     expect(read("scripts/test-e2e.js")).toContain("SKIP_E2E=1 is not allowed");
-    expect(read("scripts/test-e2e.js")).toContain("maxRetries: 8");
+    expect(read("scripts/test-e2e.js")).toContain(
+      'maxRetries: process.platform === "win32" ? 20 : 8',
+    );
+    expect(read("scripts/test-e2e.js")).toContain(
+      "restoreGeneratedSchemas(schemaSnapshots)",
+    );
     expect(read("scripts/test-e2e.js")).toContain("leaving it for OS cleanup");
     expect(read("scripts/test-e2e.js")).toMatch(
       /process\.execPath,\s*fileURLToPath\(import\.meta\.url\)/,
@@ -95,8 +100,15 @@ describe("unpackaged E2E must not ship in release builds", () => {
       description:
         "WebDriver ACL for unpackaged E2E builds. Production tauri.conf.json does not enable this capability.",
       windows: ["main", "extract-*", "debug-console"],
-      permissions: ["wdio-webdriver:default", "wdio:default"],
+      permissions: [
+        "wdio-webdriver:default",
+        "wdio:default",
+        "process:allow-exit",
+      ],
     });
+    const wdioConfig = read("e2e/wdio.conf.js");
+    expect(wdioConfig).toContain("after: requestGracefulAppShutdown");
+    expect(wdioConfig).toContain('invoke("plugin:process|exit", { code: 0 })');
     expect(
       fs.existsSync(
         path.resolve(process.cwd(), "src-tauri", "capabilities", "e2e.json"),

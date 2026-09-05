@@ -13,7 +13,11 @@
           "identifier": "e2e",
           "description": "WebDriver ACL for unpackaged E2E builds. Production tauri.conf.json does not enable this capability.",
           "windows": ["main", "extract-*", "debug-console"],
-          "permissions": ["wdio-webdriver:default", "wdio:default"]
+          "permissions": [
+            "wdio-webdriver:default",
+            "wdio:default",
+            "process:allow-exit"
+          ]
         }
       ]
     }
