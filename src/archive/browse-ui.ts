@@ -19,6 +19,7 @@ import {
 import { ensureArchivePaths } from "../archive-rules";
 import type { ArchiveInfo, BrowseEntry } from "../browse-model";
 import { resolveExtractDestinationAutofill } from "../extract-path";
+import { confirmExtractDestination } from "../extract-destination";
 import { showToast } from "../toast";
 import {
   buildEntryTree,
@@ -856,6 +857,10 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
       if (!extractAll) return;
     }
     if (state.cancelRequested) {
+      setStatus("Cancelled", 2000);
+      return;
+    }
+    if (!(await confirmExtractDestination(destination))) {
       setStatus("Cancelled", 2000);
       return;
     }

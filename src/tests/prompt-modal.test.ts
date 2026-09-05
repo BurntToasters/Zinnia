@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { promptInput } from "../prompt-modal";
+import { confirmChoice, promptInput } from "../prompt-modal";
 
 describe("promptInput", () => {
   it("resolves with the entered value on confirm", async () => {
@@ -142,6 +142,87 @@ describe("promptInput", () => {
     const parent = field?.parentElement;
     field?.remove();
     expect(await promptInput({ title: "T", label: "L" })).toBeNull();
+    if (parent && field) parent.appendChild(field);
+  });
+});
+
+describe("confirmChoice", () => {
+  it("resolves true on confirm and restores the prompt field", async () => {
+    const field = document.getElementById(
+      "input-modal-field",
+    ) as HTMLInputElement;
+    const p = confirmChoice({
+      title: "Destination already exists",
+      message: "Existing items will be kept.",
+      confirmLabel: "Extract safely",
+      cancelLabel: "Cancel",
+    });
+    expect(document.getElementById("input-modal-overlay")?.hidden).toBe(false);
+    expect(field.hidden).toBe(true);
+    expect(document.getElementById("input-modal-confirm")?.textContent).toBe(
+      "Extract safely",
+    );
+    document
+      .getElementById("input-modal-confirm")
+      ?.dispatchEvent(new MouseEvent("click"));
+    expect(await p).toBe(true);
+    expect(document.getElementById("input-modal-overlay")?.hidden).toBe(true);
+    expect(field.hidden).toBe(false);
+  });
+
+  it("resolves false on cancel", async () => {
+    const p = confirmChoice({ title: "T", message: "M" });
+    document
+      .getElementById("input-modal-cancel")
+      ?.dispatchEvent(new MouseEvent("click"));
+    expect(await p).toBe(false);
+  });
+
+  it("confirms on Enter and cancels on Escape", async () => {
+    const p1 = confirmChoice({ title: "T", message: "M" });
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+    );
+    expect(await p1).toBe(true);
+
+    const p2 = confirmChoice({ title: "T", message: "M" });
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    );
+    expect(await p2).toBe(false);
+  });
+
+  it.each(["input-modal-cancel", "input-modal-cancel-x"])(
+    "cancels on Enter from %s",
+    async (id) => {
+      const p = confirmChoice({ title: "T", message: "M" });
+      const cancel = document.getElementById(id) as HTMLButtonElement;
+      cancel.focus();
+      cancel.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+      );
+      expect(await p).toBe(false);
+    },
+  );
+
+  it("rejects a concurrent confirm instead of sharing the open prompt", async () => {
+    const first = promptInput({ title: "First", label: "Password" });
+    const second = confirmChoice({ title: "Second", message: "Other" });
+    expect(await second).toBe(false);
+    expect(document.getElementById("input-modal-title")?.textContent).toBe(
+      "First",
+    );
+    document
+      .getElementById("input-modal-cancel")
+      ?.dispatchEvent(new MouseEvent("click"));
+    expect(await first).toBeNull();
+  });
+
+  it("returns false when required modal nodes are missing", async () => {
+    const field = document.getElementById("input-modal-field");
+    const parent = field?.parentElement;
+    field?.remove();
+    expect(await confirmChoice({ title: "T", message: "M" })).toBe(false);
     if (parent && field) parent.appendChild(field);
   });
 });

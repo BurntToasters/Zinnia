@@ -4,7 +4,9 @@ use super::archive_snapshot::{
     archive_file_identity, archive_input_family, assert_archive_identity_unchanged,
     stage_extract_input,
 };
-use super::commands::{settle_archive_finalization, settle_preparation_failure};
+use super::commands::{
+    read_command_stream, settle_archive_finalization, settle_preparation_failure,
+};
 use super::commit::copy_file_no_replace;
 use super::*;
 
@@ -726,6 +728,36 @@ fn truncated_output_never_authorizes_exit_one_acceptance() {
         let collected = collect_command_output(&mut rx, 4, |_| {}).await;
         assert!(collected.stdout_truncated);
         assert!(!collected.accepts_exit_one_with(|_, _| true));
+    });
+}
+
+#[test]
+fn read_command_stream_emits_carriage_return_progress_records() {
+    tauri::async_runtime::block_on(async {
+        let (tx, mut rx) =
+            tauri::async_runtime::channel::<tauri_plugin_shell::process::CommandEvent>(16);
+        let input = b"0%\rT hello.txt\r\n100%\rEverything is Ok\r\n";
+        std::thread::spawn(move || {
+            read_command_stream(
+                &input[..],
+                tx,
+                tauri_plugin_shell::process::CommandEvent::Stdout,
+            );
+        });
+        let mut records = Vec::new();
+        while let Some(event) = rx.recv().await {
+            if let tauri_plugin_shell::process::CommandEvent::Stdout(bytes) = event {
+                records.push(String::from_utf8(bytes).expect("utf8 progress record"));
+            }
+        }
+        let percents: Vec<u8> = records
+            .iter()
+            .filter_map(|record| crate::progress::parse_progress_line(record)?.percent)
+            .collect();
+        assert!(
+            percents.contains(&0) && percents.contains(&100),
+            "expected 0% and 100% after CR framing, got records={records:?} percents={percents:?}"
+        );
     });
 }
 

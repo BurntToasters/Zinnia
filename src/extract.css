@@ -235,6 +235,10 @@ html[data-window-fx="basic"] .extract-input-modal-overlay {
   background: rgb(0 0 0 / 28%);
 }
 
+.extract-input-modal-overlay[hidden] {
+  display: none;
+}
+
 .extract-input-modal-overlay {
   position: fixed;
   inset: 0;

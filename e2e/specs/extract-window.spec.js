@@ -16,6 +16,11 @@ describe("Zinnia extract window", () => {
         `extract window failed: ${await $("#error-detail").getText()}`,
       );
     }
+    assert.equal(
+      await $("#extract-progress").getAttribute("data-saw-structured-percent"),
+      "true",
+      "quick extract never received a native 7-Zip percentage update",
+    );
     const dest = path.join(path.dirname(archive), "hello", "hello.txt");
     await browser.waitUntil(() => fs.existsSync(dest), {
       timeout: 10_000,

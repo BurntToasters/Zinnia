@@ -1,8 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { confirm } from "@tauri-apps/plugin-dialog";
 import { validateArchivePaths } from "./archive-rules";
+import { confirmExtractDestination } from "./extract-destination";
 import { deriveExtractDestinationPath } from "./extract-path";
 import { describe7zError, looksLikePasswordRequiredError } from "./error-hints";
 import { SAFE_EXTRACT_OVERWRITE_MODE } from "./extract-policy";
@@ -41,7 +41,6 @@ interface Run7zResult {
 interface InjectedExtractSession {
   archive: string;
   destination: string;
-  destinationExists?: boolean;
 }
 
 declare global {
@@ -589,29 +588,17 @@ async function run() {
     return;
   }
 
-  if (injected?.destinationExists) {
-    $("extract-status").textContent = "Waiting for confirmation...";
-    let proceed = false;
-    try {
-      proceed = await confirm(
-        "The destination folder already exists. Existing items will be kept, and extracted items with matching names will be renamed. Continue?",
-        {
-          title: "Destination already exists",
-          kind: "warning",
-          okLabel: "Extract safely",
-          cancelLabel: "Cancel",
-        },
-      );
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      showError(`Could not confirm the extraction destination: ${detail}`);
-      return;
-    }
+  try {
+    const proceed = await confirmExtractDestination(destination);
     if (!proceed || cancelRequested) {
       finish("Cancelled", 0, false, false, true);
       return;
     }
     $("extract-status").textContent = "Starting extraction...";
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    showError(detail);
+    return;
   }
 
   try {
@@ -682,6 +669,8 @@ async function run() {
       let eta = "";
       if (typeof update?.percent === "number") {
         sawStructuredPercent = true;
+        const progressBar = document.getElementById("extract-progress");
+        if (progressBar) progressBar.dataset.sawStructuredPercent = "true";
         setDeterminateProgress(Math.min(99, update.percent));
         eta = formatSharedEta(Date.now() - startedAt, update.percent);
       }

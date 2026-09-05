@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { confirm } from "@tauri-apps/plugin-dialog";
 import { isNativeWebviewContextMenuAllowed } from "../webview-context-menu";
 import { decodeRun7zInvokePayload } from "./backend-ipc-test-utils";
 
@@ -60,7 +59,6 @@ async function setupAndRun(
     injected?: {
       archive: string;
       destination: string;
-      destinationExists?: boolean;
     };
     listenerRegistrations?: Array<Promise<() => void>>;
     /** Leave false when run_7z is intentionally left pending (cancel tests). */
@@ -145,6 +143,7 @@ async function setupAndRun(
     if (cmd === "run_7z") {
       return { stdout: "", stderr: "", code: 0 };
     }
+    if (cmd === "inspect_extract_destination") return "missing";
     if (cmd === "load_settings") {
       return JSON.stringify({ extractAutoCloseSeconds: 1.5 });
     }
@@ -186,7 +185,6 @@ async function setupAndRun(
 
 beforeEach(() => {
   vi.useRealTimers();
-  vi.mocked(confirm).mockResolvedValue(true);
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     writable: true,
@@ -326,28 +324,64 @@ describe("extract-window", () => {
   });
 
   it("warns before quick extract merges into an existing destination", async () => {
-    vi.mocked(confirm).mockResolvedValue(false);
-
-    const { invokeMock } = await setupAndRun(undefined, {
-      injected: {
-        archive: "/Downloads/packed.7z",
-        destination: "/Downloads/packed",
-        destinationExists: true,
+    const { invokeMock } = await setupAndRun(
+      async (cmd) => {
+        if (cmd === "inspect_extract_destination") return "directory";
+        return undefined;
       },
-    });
-
-    expect(confirm).toHaveBeenCalledWith(
-      expect.stringContaining("Existing items will be kept"),
-      expect.objectContaining({
-        title: "Destination already exists",
-        kind: "warning",
-      }),
+      {
+        injected: {
+          archive: "/Downloads/packed.7z",
+          destination: "/Downloads/packed",
+        },
+        waitForSettle: false,
+      },
     );
+
+    await vi.waitFor(() => {
+      expect(
+        (document.getElementById("input-modal-overlay") as HTMLElement).hidden,
+      ).toBe(false);
+    });
+    expect(document.getElementById("input-modal-title")?.textContent).toBe(
+      "Destination already exists",
+    );
+    (
+      document.getElementById("input-modal-cancel") as HTMLButtonElement
+    ).click();
+
+    await vi.waitFor(() => {
+      expect(document.getElementById("extract-status")?.textContent).toBe(
+        "Cancelled",
+      );
+    });
     expect(invokeMock.mock.calls.some(([name]) => name === "run_7z")).toBe(
       false,
     );
-    expect(document.getElementById("extract-status")?.textContent).toBe(
-      "Cancelled",
+  });
+
+  it("rejects a destination that is not a real directory", async () => {
+    const { invokeMock } = await setupAndRun(
+      async (cmd) => {
+        if (cmd === "inspect_extract_destination") return "invalid";
+        return undefined;
+      },
+      {
+        injected: {
+          archive: "/Downloads/packed.7z",
+          destination: "/Downloads/packed",
+        },
+      },
+    );
+
+    expect(
+      (document.getElementById("input-modal-overlay") as HTMLElement).hidden,
+    ).toBe(true);
+    expect(invokeMock.mock.calls.some(([name]) => name === "run_7z")).toBe(
+      false,
+    );
+    expect(document.getElementById("error-detail")?.textContent).toContain(
+      "not a file, symbolic link, or reparse point",
     );
   });
 
@@ -405,6 +439,11 @@ describe("extract-window", () => {
         .getElementById("extract-progress")
         ?.getAttribute("aria-valuenow"),
     ).toBe("37");
+    expect(
+      document
+        .getElementById("extract-progress")
+        ?.getAttribute("data-saw-structured-percent"),
+    ).toBe("true");
 
     deferred.resolveRun?.({ stdout: "", stderr: "", code: 0 });
     await flushAsync();

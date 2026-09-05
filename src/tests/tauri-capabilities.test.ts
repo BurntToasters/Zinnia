@@ -111,6 +111,7 @@ describe("Tauri capability policy", () => {
     expect(permissions).toEqual(
       expect.arrayContaining([
         "dialog:allow-message",
+        "dialog:allow-confirm",
         "dialog:allow-open",
         "dialog:allow-save",
         "shell:default",
@@ -220,6 +221,7 @@ describe("Tauri capability policy", () => {
       ]),
     );
     expect(permissions).not.toContain("core:default");
+    expect(permissions).not.toContain("dialog:allow-confirm");
   });
 
   it("keeps the debug console window to listen plus an allowlisted signal relay", () => {

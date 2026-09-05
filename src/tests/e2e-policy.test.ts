@@ -29,6 +29,11 @@ describe("unpackaged E2E must not ship in release builds", () => {
     expect(hook).toContain("isE2eFrontend");
     expect(read("src/e2e-wdio-plugin.ts")).toContain("isE2eFrontend");
     expect(read("src/setup-wizard.ts")).toContain("isE2eFrontend");
+    expect(read("src/extract-destination.ts")).toContain("isE2eFrontend");
+    expect(read("src/extract-destination.ts")).toContain("confirmChoice");
+    expect(read("src/extract-destination.ts")).not.toContain(
+      "@tauri-apps/plugin-dialog",
+    );
     expect(read("src/ui/workspace.ts")).toContain("isE2eFrontend");
     expect(read("src/window-fx.ts")).toContain("isE2eFrontend");
     expect(read("src/app-init.ts")).toContain("isE2eFrontend");
@@ -38,7 +43,7 @@ describe("unpackaged E2E must not ship in release builds", () => {
     expect(read("e2e/helpers/profile.js")).toContain(
       "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
     );
-    expect(read("scripts/test-e2e.js")).toContain("e2e-feature-6");
+    expect(read("scripts/test-e2e.js")).toContain("e2e-feature-8");
     expect(read("src-tauri/src/launch/mod.rs")).toContain(
       "fn e2e_session_active()",
     );

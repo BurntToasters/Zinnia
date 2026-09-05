@@ -15,6 +15,7 @@ import {
 import { ensureArchivePaths, validateExtraArgs } from "../archive-rules";
 import { showToast } from "../toast";
 import { SAFE_EXTRACT_OVERWRITE_MODE } from "../extract-policy";
+import { confirmExtractDestination } from "../extract-destination";
 import { debugLog, debugLogCommand, isDebugEnabled } from "../debug-mode";
 import { buildArgs, buildExtractArgsFor } from "./args";
 import { sanitizeCommandArgsForPreview } from "./preview";
@@ -88,6 +89,11 @@ export async function runAction() {
       }
       expectedArchiveIdentity = validation.identity;
       args = buildExtractArgsFor(state.inputs[0]);
+      const destination = $<HTMLInputElement>("extract-path").value;
+      if (!(await confirmExtractDestination(destination))) {
+        setStatus("Cancelled", 2000);
+        return;
+      }
     } else {
       const format = (
         document.getElementById("format") as HTMLSelectElement | null
@@ -207,6 +213,10 @@ export async function runBatchExtract() {
 
     const dest = $<HTMLInputElement>("extract-path").value;
     if (!dest) throw new Error("Choose a destination folder.");
+    if (!(await confirmExtractDestination(dest))) {
+      setStatus("Cancelled", 2000);
+      return;
+    }
     const password = $<HTMLInputElement>("extract-password").value;
     const extraArgs = splitArgs(
       $<HTMLInputElement>("extract-extra-args").value.trim(),
