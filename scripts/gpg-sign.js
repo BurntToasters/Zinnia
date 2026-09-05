@@ -17,7 +17,11 @@ import draftMetadata from "./release-draft-metadata.cjs";
 
 const { assertGitHubCliAuthenticated, githubApi, uploadReleaseAsset } =
   githubCli;
-const { assertNoMisnamedVersionDrafts, assertReleaseTagName } = draftMetadata;
+const {
+  assertExpectedRelease,
+  assertNoMisnamedVersionDrafts,
+  isExpectedRelease,
+} = draftMetadata;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -963,7 +967,7 @@ async function getOrCreateRelease() {
     assertNoMisnamedVersionDrafts(releases, TAG, VERSION);
     // Duplicate drafts are a known GitHub failure; match ensure-draft-release.
     const drafts = releases.filter(
-      (release) => release?.draft && release.tag_name === TAG,
+      (release) => release?.draft && isExpectedRelease(release, TAG, VERSION),
     );
     if (drafts.length > 1) {
       throw new Error(
@@ -976,7 +980,7 @@ async function getOrCreateRelease() {
   const existing = await findExisting();
   if (existing) {
     return assertReleaseTargetsCommit(
-      assertReleaseTagName(existing, TAG, "Signing release"),
+      assertExpectedRelease(existing, TAG, VERSION, "Signing release"),
       commit,
     );
   }
