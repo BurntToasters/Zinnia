@@ -21,7 +21,10 @@ describe("release preflight policy", () => {
       "release:licenses",
     );
     expect(packageJson.scripts["release:prepare"]).toContain(
-      "workspace:prepare",
+      "workspace:bootstrap",
+    );
+    expect(packageJson.scripts["release:prepare"]).toContain(
+      "test:all -- --require-clean-proof --skip-e2e",
     );
     expect(packageJson.scripts["release:prepare"]).toContain(
       "dist:clean-release-artifacts",
@@ -121,6 +124,7 @@ describe("release preflight policy", () => {
       /  smoke-build:[\s\S]*?(?=\n  [a-z][a-z-]+:)/,
     )?.[0];
     expect(qualityJob).toContain("npm run test:all");
+    expect(qualityJob).not.toContain("--skip-e2e");
     expect(qualityJob).not.toContain("cargo fmt --manifest-path");
     expect(smokeJob).toContain("npx tauri build --no-bundle");
     expect(smokeJob).not.toMatch(/- run: npm run build\s/);
