@@ -230,7 +230,7 @@ export function updateBasicRunningState(active: boolean): void {
           return;
         }
         const percent = event.payload?.percent;
-        if (typeof percent === "number") {
+        if (typeof percent === "number" && Number.isFinite(percent)) {
           setBasicBarDeterminate(section, Math.min(99, percent));
         }
       },

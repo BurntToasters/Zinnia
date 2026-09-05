@@ -153,8 +153,14 @@
   FileClose $R8
   Goto zinnia_win11_unregister_ok
   zinnia_unreg_no_script:
+  DetailPrint "WARNING: register-windows-context-menu.ps1 missing; probing AppX packages."
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -Command "if (Get-AppxPackage -Name run.rosie.zinnia.contextmenu) { exit 1 }; if (Get-AppxPackage -Name run.rosie.zinnia.extractmenu) { exit 1 }; exit 0"'
+  Pop $0
+  StrCmp $0 "error" zinnia_unreg_packages_remain 0
+  IntCmp $0 0 zinnia_win11_unregister_ok 0 0
+  zinnia_unreg_packages_remain:
   StrCpy $R5 "1"
-  DetailPrint "WARNING: register-windows-context-menu.ps1 missing; cannot unregister Win11 packages."
+  DetailPrint "WARNING: Win11 sparse packages still present; cannot unregister without the helper script."
   zinnia_win11_unregister_ok:
 !macroend
 
@@ -191,6 +197,11 @@
   !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".gz"
   !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".bz2"
   !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".xz"
+  !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".rar"
+  !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".tgz"
+  !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".tbz2"
+  !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".txz"
+  !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".001"
 !macroend
 
 !macro NSIS_HOOK_PREINSTALL
@@ -224,6 +235,11 @@
   !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".gz"
   !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".bz2"
   !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".xz"
+  !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".rar"
+  !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".tgz"
+  !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".tbz2"
+  !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".txz"
+  !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".001"
   !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".7z"
   !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".zip"
   !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".tar"
@@ -247,7 +263,20 @@
 !macro NSIS_HOOK_PREUNINSTALL
   ; Unregister sparse packages before Tauri deletes files. Explorer still
   ; resolves ExternalLocation against $INSTDIR at this point. Abort if either
-  ; package remains so we never delete a live COM server.
+  ; package remains so we never delete a live COM server. In-place updates pass
+  ; /UPDATE; never Abort there or a leftover AppX identity blocks the upgrade.
+  StrCpy $R4 $CMDLINE
+  StrCpy $R3 0
+  zinnia_preuninstall_scan_update:
+  StrCpy $R2 $R4 7 $R3
+  StrCmp $R2 "" zinnia_preuninstall_real
+  StrCmp $R2 "/UPDATE" zinnia_preuninstall_update
+  IntOp $R3 $R3 + 1
+  Goto zinnia_preuninstall_scan_update
+  zinnia_preuninstall_update:
+  !insertmacro ZINNIA_UNREGISTER_WIN11_CONTEXT_MENU
+  Goto zinnia_preuninstall_done
+  zinnia_preuninstall_real:
   !insertmacro ZINNIA_UNREGISTER_WIN11_CONTEXT_MENU
   IntCmp $R5 1 zinnia_preuninstall_abort 0 0
   Goto zinnia_preuninstall_done
@@ -270,6 +299,11 @@
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".gz"
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".bz2"
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".xz"
+  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".rar"
+  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".tgz"
+  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".tbz2"
+  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".txz"
+  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".001"
   DeleteRegKey HKCU "Software\Classes\Zinnia.Archive"
   RMDir /REBOOTOK "$INSTDIR"
 !macroend

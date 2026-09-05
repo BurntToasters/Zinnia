@@ -4,6 +4,26 @@
 <dict>
 	<key>CFBundleShortVersionString</key>
 	<string>0.6.1</string>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>run.rosie.zinnia.split-volume</string>
+			<key>UTTypeDescription</key>
+			<string>Split archive volume</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>001</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
 	<key>NSServices</key>
 	<array>
 		<dict>
@@ -36,6 +56,7 @@
 				<string>org.tukaani.xz-archive</string>
 				<string>com.pkware.zip-archive</string>
 				<string>com.rarlab.rar-archive</string>
+				<string>run.rosie.zinnia.split-volume</string>
 			</array>
 		</dict>
 		<dict>

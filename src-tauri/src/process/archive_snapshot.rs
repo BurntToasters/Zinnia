@@ -470,7 +470,7 @@ where
 }
 
 #[cfg(windows)]
-fn copy_windows_zone_identifier(
+pub(crate) fn copy_windows_zone_identifier(
     source: &std::path::Path,
     destination: &std::path::Path,
 ) -> Result<(), String> {
@@ -483,25 +483,64 @@ fn copy_windows_zone_identifier(
         value.into()
     }
 
+    fn zone_text_is_valid(text: &str) -> bool {
+        let trimmed = text.trim_start_matches('\u{feff}').trim_start();
+        trimmed.starts_with("[ZoneTransfer]")
+    }
+
+    fn decode_zone_identifier(contents: &[u8]) -> Option<Vec<u8>> {
+        if !contents.contains(&0) && zone_text_is_valid(std::str::from_utf8(contents).ok()?) {
+            return Some(contents.to_vec());
+        }
+        let utf16 = if contents.starts_with(&[0xFF, 0xFE]) {
+            let mut units = Vec::with_capacity(contents.len() / 2);
+            for chunk in contents[2..].as_chunks::<2>().0 {
+                units.push(u16::from_le_bytes([chunk[0], chunk[1]]));
+            }
+            String::from_utf16(&units).ok()?
+        } else if contents.len() >= 2 && contents.len().is_multiple_of(2) && contents.contains(&0) {
+            let mut units = Vec::with_capacity(contents.len() / 2);
+            for chunk in contents.as_chunks::<2>().0 {
+                units.push(u16::from_le_bytes([chunk[0], chunk[1]]));
+            }
+            String::from_utf16(&units).ok()?
+        } else {
+            return None;
+        };
+        if !zone_text_is_valid(&utf16) {
+            return None;
+        }
+        Some(utf16.into_bytes())
+    }
+
     let mut source_stream = match std::fs::File::open(stream_path(source)) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(format!("Could not read archive Mark-of-the-Web: {error}")),
+        Err(error) => {
+            eprintln!("Could not read archive Mark-of-the-Web: {error}");
+            return Ok(());
+        }
     };
-    let length = source_stream
-        .metadata()
-        .map_err(|error| format!("Could not inspect archive Mark-of-the-Web: {error}"))?
-        .len();
+    let length = match source_stream.metadata() {
+        Ok(metadata) => metadata.len(),
+        Err(error) => {
+            eprintln!("Could not inspect archive Mark-of-the-Web: {error}");
+            return Ok(());
+        }
+    };
     if length > MAX_ZONE_BYTES {
-        return Err("Archive Mark-of-the-Web is unexpectedly large.".to_string());
+        eprintln!("Archive Mark-of-the-Web is unexpectedly large; skipping copy.");
+        return Ok(());
     }
     let mut contents = Vec::with_capacity(length as usize);
-    source_stream
-        .read_to_end(&mut contents)
-        .map_err(|error| format!("Could not read archive Mark-of-the-Web: {error}"))?;
-    if contents.contains(&0) || !contents.starts_with(b"[ZoneTransfer]") {
-        return Err("Archive Mark-of-the-Web has an invalid format.".to_string());
+    if let Err(error) = source_stream.read_to_end(&mut contents) {
+        eprintln!("Could not read archive Mark-of-the-Web: {error}");
+        return Ok(());
     }
+    let Some(payload) = decode_zone_identifier(&contents) else {
+        eprintln!("Archive Mark-of-the-Web has an invalid format; skipping copy.");
+        return Ok(());
+    };
     let mut destination_stream = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -509,7 +548,7 @@ fn copy_windows_zone_identifier(
         .open(stream_path(destination))
         .map_err(|error| format!("Could not preserve archive Mark-of-the-Web: {error}"))?;
     destination_stream
-        .write_all(&contents)
+        .write_all(&payload)
         .and_then(|()| destination_stream.sync_all())
         .map_err(|error| format!("Could not preserve archive Mark-of-the-Web: {error}"))
 }

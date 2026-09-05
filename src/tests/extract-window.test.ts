@@ -271,16 +271,11 @@ describe("extract-window", () => {
     );
   });
 
-  it("uses injected archive/destination without waiting on get_extract_paths", async () => {
-    const claim = {
-      resolve: null as ((value: string[]) => void) | null,
-    };
+  it("uses injected archive/destination and still drains get_extract_paths", async () => {
     const { invokeMock } = await setupAndRun(
       async (cmd) => {
         if (cmd === "get_extract_paths") {
-          return await new Promise<string[]>((resolve) => {
-            claim.resolve = resolve;
-          });
+          return [];
         }
         if (cmd === "run_7z") {
           return { stdout: "", stderr: "", code: 0 };
@@ -318,9 +313,9 @@ describe("extract-window", () => {
       ],
       expectedArchiveIdentity: "identity:/Downloads/packed.7z",
     });
-
-    claim.resolve?.([]);
-    await flushAsync();
+    expect(
+      invokeMock.mock.calls.some(([name]) => name === "get_extract_paths"),
+    ).toBe(true);
   });
 
   it("warns before quick extract merges into an existing destination", async () => {
@@ -831,7 +826,7 @@ describe("extract-window", () => {
       invokeMock.mock.calls.filter(([name]) => name === "run_7z"),
     ).toHaveLength(1);
     expect(invokeMock.mock.calls.some(([name]) => name === "probe_7z")).toBe(
-      true,
+      false,
     );
   });
 

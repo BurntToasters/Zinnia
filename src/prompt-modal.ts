@@ -7,6 +7,7 @@ export interface PromptOptions {
   placeholder?: string;
   defaultValue?: string;
   confirmLabel?: string;
+  signal?: AbortSignal;
 }
 
 let promptOpen = false;
@@ -49,6 +50,7 @@ export function promptInput(options: PromptOptions): Promise<string | null> {
       cancelX?.removeEventListener("click", onCancel);
       document.removeEventListener("keydown", onKey);
       overlay.removeEventListener("click", onOverlayClick);
+      options.signal?.removeEventListener("abort", onAbort);
       if (modal) releaseFocusTrap(modal);
       // Passwords must not remain in a hidden DOM field after the prompt ends.
       field.value = "";
@@ -78,8 +80,16 @@ export function promptInput(options: PromptOptions): Promise<string | null> {
       }
     };
     const onOverlayClick = (e: MouseEvent) => {
+      if (options.password) return;
       if (e.target === overlay) finish(null);
     };
+
+    const onAbort = () => finish(null);
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    if (options.signal?.aborted) {
+      finish(null);
+      return;
+    }
 
     confirmBtn.addEventListener("click", onConfirm);
     cancelBtn.addEventListener("click", onCancel);

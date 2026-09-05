@@ -116,6 +116,32 @@ describe("promptInput", () => {
     expect(await p).toBeNull();
   });
 
+  it("does not dismiss a password prompt when the overlay backdrop is clicked", async () => {
+    const p = promptInput({ title: "T", label: "L", password: true });
+    const overlay = document.getElementById(
+      "input-modal-overlay",
+    ) as HTMLElement;
+    const event = new MouseEvent("click", { bubbles: true });
+    Object.defineProperty(event, "target", { value: overlay });
+    overlay.dispatchEvent(event);
+    expect(overlay.hidden).toBe(false);
+    document
+      .getElementById("input-modal-cancel")
+      ?.dispatchEvent(new MouseEvent("click"));
+    expect(await p).toBeNull();
+  });
+
+  it("cancels via AbortSignal", async () => {
+    const controller = new AbortController();
+    const p = promptInput({
+      title: "T",
+      label: "L",
+      signal: controller.signal,
+    });
+    controller.abort();
+    expect(await p).toBeNull();
+  });
+
   it("cancels via the X button when present", async () => {
     const p = promptInput({ title: "T", label: "L" });
     const cancelX = document.getElementById("input-modal-cancel-x");

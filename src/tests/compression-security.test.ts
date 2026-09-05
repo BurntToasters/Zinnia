@@ -69,6 +69,12 @@ describe("validateCompressionSecurityOptions", () => {
     expect(validateCompressionSecurityOptions("7z", "one\ntwo", false)).toBe(
       "Archive passwords cannot contain line breaks.",
     );
+    expect(
+      validateCompressionSecurityOptions("7z", "one\u2028two", false),
+    ).toBe("Archive passwords cannot contain line breaks.");
+    expect(
+      validateCompressionSecurityOptions("7z", "one\u0000two", false),
+    ).toBe("Archive passwords cannot contain line breaks.");
   });
 
   it("errors when encryptHeaders set without password on 7z", () => {

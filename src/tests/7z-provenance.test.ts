@@ -23,7 +23,7 @@ describe("bundled 7-Zip provenance", () => {
       artifacts: Record<string, { source: string; member: string }>;
     };
 
-    expect(provenance.version).toBe("26.02");
+    expect(provenance.version).toBe("26.03");
     expect(provenance.officialDownloadPage).toBe(
       "https://www.7-zip.org/download.html",
     );

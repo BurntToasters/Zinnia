@@ -438,9 +438,6 @@ export function wireEvents() {
         if (state.running || state.operationPreparing) return;
         const mode =
           btn.dataset.workspaceModeBtn === "power" ? "power" : "basic";
-        if (mode === "power") {
-          syncBasicBeforeRun();
-        }
         setWorkspaceMode(mode);
         if (mode === "basic") {
           syncBasicWorkspaceFromPower();
@@ -483,6 +480,9 @@ export function wireEvents() {
     applySettingsToForm();
     updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
     onCompressionOptionChange();
+    if (state.currentSettings.workspaceMode === "basic") {
+      syncBasicWorkspaceFromPower();
+    }
     try {
       await persistSettingsImmediately(
         state.currentSettings,
@@ -499,6 +499,9 @@ export function wireEvents() {
       populateSettingsModal();
       updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
       onCompressionOptionChange();
+      if (state.currentSettings.workspaceMode === "basic") {
+        syncBasicWorkspaceFromPower();
+      }
 
       const msg = err instanceof Error ? err.message : String(err);
       log(`Failed to save settings: ${msg}`, "error");

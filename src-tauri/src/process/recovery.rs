@@ -405,21 +405,33 @@ pub async fn get_startup_recovery_status() -> Option<String> {
     // A one-shot read during UI initialization used to race the maintenance
     // thread: a later recovery failure was recorded but never surfaced. Make
     // the command resolve only once the authoritative pass has finished.
-    wait_for_startup_recovery().await;
+    if let Err(error) = wait_for_startup_recovery().await {
+        return Some(error);
+    }
     STARTUP_RECOVERY_ERROR
         .lock()
         .ok()
         .and_then(|guard| guard.clone())
 }
 
-pub(crate) async fn wait_for_startup_recovery() {
-    // Back off instead of a 1ms spin. Do not force-complete on timeout; that let
-    // run_7z claim the slot then block on RECOVERY_LOCK with a misleading "busy" UI.
+const STARTUP_RECOVERY_WAIT: std::time::Duration = std::time::Duration::from_secs(120);
+
+pub(crate) async fn wait_for_startup_recovery() -> Result<(), String> {
+    // Back off instead of a 1ms spin. Do not mark recovery done on timeout;
+    // run_7z must fail closed instead of claiming the slot then blocking on
+    // RECOVERY_LOCK with a misleading "busy" UI.
+    let started = tokio::time::Instant::now();
     let mut delay_ms = 10u64;
     while !STARTUP_RECOVERY_DONE.load(std::sync::atomic::Ordering::Acquire) {
+        if started.elapsed() >= STARTUP_RECOVERY_WAIT {
+            return Err(
+                "Startup recovery is still running. Wait and try again.".to_string(),
+            );
+        }
         tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
         delay_ms = (delay_ms + 10).min(50);
     }
+    Ok(())
 }
 
 pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), String> {

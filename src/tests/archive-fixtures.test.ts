@@ -188,15 +188,24 @@ describe("archive fixture helpers match app 7-Zip switches", () => {
   it("injects Windows -sccUTF-8 the same way harden_7z_args does", () => {
     expect(
       hardenFixture7zArgs(["l", "-slt", "-spd", "--", "a.zip"], "win32"),
-    ).toEqual(["l", "-sccUTF-8", "-slt", "-spd", "--", "a.zip"]);
+    ).toEqual(["l", "-slt", "-spd", "-sccUTF-8", "--", "a.zip"]);
     expect(
       hardenFixture7zArgs(["l", "-sccUTF-8", "-slt", "-spd"], "win32"),
-    ).toEqual(["l", "-sccUTF-8", "-slt", "-spd"]);
+    ).toEqual(["l", "-slt", "-spd", "-sccUTF-8"]);
+    expect(
+      hardenFixture7zArgs(["l", "-sccWIN", "-slt", "--", "a.zip"], "win32"),
+    ).toEqual(["l", "-slt", "-sccUTF-8", "--", "a.zip"]);
     expect(hardenFixture7zArgs(["l", "-slt", "-spd"], "linux")).toEqual([
       "l",
       "-slt",
       "-spd",
     ]);
+    expect(
+      hardenFixture7zArgs(
+        ["u", "-mcu=off", "out.zip", "--", "in.txt"],
+        "linux",
+      ),
+    ).toEqual(["u", "out.zip", "-mcu=on", "--", "in.txt"]);
   });
 
   it("keeps test-archives covering list, add, selective extract, convert, and password denial", () => {

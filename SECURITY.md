@@ -3,9 +3,9 @@
 ## Reporting a vulnerability
 
 Report security issues privately via GitHub's **Report a vulnerability** advisory
-flow (Security tab) or by email to the maintainer. Please do not open public
-issues for undisclosed vulnerabilities. Include reproduction steps and affected
-version/platform.
+flow (Security tab) or by email to [code@rosie.run](mailto:code@rosie.run).
+Please do not open public issues for undisclosed vulnerabilities. Include
+reproduction steps and affected version/platform.
 
 ## Threat model
 
@@ -60,7 +60,7 @@ operations:
   folders (for example macOS app bundles) are stored as links rather than
   followed. The backend also injects these switches on create/update so they
   cannot be omitted by the webview. Selected compression inputs must still be
-  real files or directories, except for relative symlink *members* under a
+  real files or directories, except for relative symlink _members_ under a
   managed convert temp directory. Archive inputs may be filesystem symlinks;
   Zinnia canonicalizes them to a regular-file target before snapshotting.
   Nested Windows junctions / cloud placeholders inside a compress tree are
@@ -81,9 +81,9 @@ operations:
   stage root. Never raise to `-snld20`. The webview cannot omit or raise
   `-snld*`.
 - On Windows extract, Zinnia preserves the source archive's Mark-of-the-Web in
-its private snapshot and injects 7-Zip `-snz` so `Zone.Identifier` propagates
-onto extracted files (SmartScreen / Office Protected View). A zip downloaded
-in Microsoft Edge should still show MOTW on extracted members. Backend-owned
+  its private snapshot and injects 7-Zip `-snz` so `Zone.Identifier` propagates
+  onto extracted files (SmartScreen / Office Protected View). A zip downloaded
+  in Microsoft Edge should still show MOTW on extracted members. Backend-owned
   `-sns-` prevents archive members from replacing that stream. Zinnia does
   **not** strip MOTW.
 - Promotion resolves file/directory conflicts without overwriting unrelated

@@ -1,6 +1,6 @@
 [package]
 name = "zinnia"
-version = "0.6.1-beta.8"
+version = "0.6.1-beta.9"
 description = "Cross-platform 7z GUI built with Tauri."
 license = "MPL-2.0"
 authors = ["BurntToasters <code@rosie.run>"]

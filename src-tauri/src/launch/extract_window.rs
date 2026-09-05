@@ -7,8 +7,8 @@ use crate::process::{terminate_registered_child, RunningProcess};
 
 use super::open_path::derive_extract_destination_path;
 use super::{
-    ExtractBoundDestination, ExtractOpenAllowlist, ExtractQueue, EXTRACT_ONLY_LAUNCH,
-    MAC_FALLBACK_MAIN_PENDING,
+    ExtractBoundDestination, ExtractBoundPaths, ExtractOpenAllowlist, ExtractQueue,
+    EXTRACT_ONLY_LAUNCH, MAC_FALLBACK_MAIN_PENDING,
 };
 
 static EXTRACT_WINDOW_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -191,15 +191,23 @@ pub(crate) fn ensure_extract_warm_tray(app: &tauri::AppHandle) -> bool {
     }
 }
 
-/// Drop the resident extract-only tray and cancel the idle exit timer.
-pub fn leave_extract_warm(app: &tauri::AppHandle) {
+pub(crate) fn warm_idle_timer_still_owns(generation: u64) -> bool {
+    EXTRACT_WARM_IDLE_GENERATION.load(Ordering::SeqCst) == generation
+}
+
+fn clear_extract_warm_idle_ui(app: &tauri::AppHandle) {
     EXTRACT_WARM_IDLE_ACTIVE.store(false, Ordering::SeqCst);
-    bump_extract_warm_idle_generation();
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         let _ = app.remove_tray_by_id(EXTRACT_WARM_TRAY_ID);
     }
     restore_foreground_activation(app);
+}
+
+/// Drop the resident extract-only tray and cancel the idle exit timer.
+pub fn leave_extract_warm(app: &tauri::AppHandle) {
+    clear_extract_warm_idle_ui(app);
+    bump_extract_warm_idle_generation();
 }
 
 /// After the last quick-extract window closes, stay resident for the next open.
@@ -247,13 +255,21 @@ pub fn enter_extract_warm_idle(app: &tauri::AppHandle) -> bool {
         let exit_handle = handle.clone();
         if let Err(error) = handle.run_on_main_thread(move || {
             // Re-check on the main thread: a file-open may have raced the sleep wake.
-            if EXTRACT_WARM_IDLE_GENERATION.load(Ordering::SeqCst) != generation {
+            if !warm_idle_timer_still_owns(generation) {
                 return;
             }
             if !EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst) || has_extract_windows(&exit_handle) {
                 return;
             }
-            leave_extract_warm(&exit_handle);
+            // Do not bump here. leave_extract_warm() would invalidate this
+            // timer's own generation and skip exit(0), leaving a windowless process.
+            clear_extract_warm_idle_ui(&exit_handle);
+            if !warm_idle_timer_still_owns(generation) {
+                return;
+            }
+            if !EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst) || has_extract_windows(&exit_handle) {
+                return;
+            }
             EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);
             exit_handle.exit(0);
         }) {
@@ -281,9 +297,14 @@ pub fn ensure_main_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow
         .find(|config| config.label == "main")
         .ok_or_else(|| "Main window configuration is missing".to_string())?;
 
-    let builder = tauri::WebviewWindowBuilder::from_config(app, config)
+    #[allow(unused_mut)]
+    let mut builder = tauri::WebviewWindowBuilder::from_config(app, config)
         .map_err(|e| e.to_string())?
         .initialization_script(super::webview_context_menu::NATIVE_CONTEXT_MENU_GUARD_SCRIPT);
+    #[cfg(target_os = "linux")]
+    {
+        builder = builder.transparent(false);
+    }
     super::apply_e2e_webview_overrides(builder)
         .build()
         .map_err(|e| e.to_string())
@@ -292,6 +313,12 @@ pub fn ensure_main_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow
 pub fn show_main_window(app: &tauri::AppHandle) -> Result<(), String> {
     restore_foreground_activation(app);
     let window = ensure_main_window(app)?;
+    #[cfg(target_os = "linux")]
+    {
+        window
+            .set_background_color(Some(tauri::window::Color(0x20, 0x20, 0x24, 0xff)))
+            .map_err(|e| e.to_string())?;
+    }
     if super::e2e_session_active() {
         let _ = window.set_background_color(Some(tauri::window::Color(0xf5, 0xf5, 0xf5, 0xff)));
     }
@@ -416,7 +443,13 @@ pub fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Resul
     {
         let bound = app.state::<ExtractBoundDestination>();
         let mut map = bound.0.lock().map_err(|_| "Lock poisoned".to_string())?;
-        map.insert(label.clone(), destination.clone());
+        map.insert(
+            label.clone(),
+            ExtractBoundPaths {
+                destination: destination.clone(),
+                archive: std::path::PathBuf::from(&archive),
+            },
+        );
     }
 
     // Inject archive + destination before the page script runs so the UI can paint

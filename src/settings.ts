@@ -70,22 +70,67 @@ export function applySettingsToForm() {
   $<HTMLInputElement>("delete-after").checked = false;
 }
 
+function liveOrFallback(live: string | undefined, fallback: string): string {
+  return live && live.length > 0 ? live : fallback;
+}
+
 export function populateSettingsModal() {
+  const liveFormat = document.getElementById(
+    "format",
+  ) as HTMLSelectElement | null;
+  const liveLevel = document.getElementById(
+    "level",
+  ) as HTMLSelectElement | null;
+  const liveMethod = document.getElementById(
+    "method",
+  ) as HTMLSelectElement | null;
+  const liveDict = document.getElementById("dict") as HTMLSelectElement | null;
+  const liveWord = document.getElementById(
+    "word-size",
+  ) as HTMLSelectElement | null;
+  const liveSolid = document.getElementById(
+    "solid",
+  ) as HTMLSelectElement | null;
+  const liveThreads = document.getElementById(
+    "threads",
+  ) as HTMLInputElement | null;
+  const liveHeaders = document.getElementById(
+    "encrypt-headers",
+  ) as HTMLInputElement | null;
   $<HTMLSelectElement>("s-theme").value = state.currentSettings.theme;
-  $<HTMLSelectElement>("s-format").value = state.currentSettings.format;
-  $<HTMLSelectElement>("s-level").value = state.currentSettings.level;
-  $<HTMLSelectElement>("s-method").value = state.currentSettings.method;
-  $<HTMLSelectElement>("s-dict").value = state.currentSettings.dict;
-  $<HTMLSelectElement>("s-word-size").value = state.currentSettings.wordSize;
-  $<HTMLSelectElement>("s-solid").value = state.currentSettings.solid;
-  $<HTMLInputElement>("s-threads").value = String(
-    state.currentSettings.threads,
+  $<HTMLSelectElement>("s-format").value = liveOrFallback(
+    liveFormat?.value,
+    state.currentSettings.format,
+  );
+  $<HTMLSelectElement>("s-level").value = liveOrFallback(
+    liveLevel?.value,
+    state.currentSettings.level,
+  );
+  $<HTMLSelectElement>("s-method").value = liveOrFallback(
+    liveMethod?.value,
+    state.currentSettings.method,
+  );
+  $<HTMLSelectElement>("s-dict").value = liveOrFallback(
+    liveDict?.value,
+    state.currentSettings.dict,
+  );
+  $<HTMLSelectElement>("s-word-size").value = liveOrFallback(
+    liveWord?.value,
+    state.currentSettings.wordSize,
+  );
+  $<HTMLSelectElement>("s-solid").value = liveOrFallback(
+    liveSolid?.value,
+    state.currentSettings.solid,
+  );
+  $<HTMLInputElement>("s-threads").value = liveOrFallback(
+    liveThreads?.value,
+    String(state.currentSettings.threads),
   );
   $<HTMLInputElement>("s-path-mode").value = "relative";
   $<HTMLInputElement>("s-sfx").checked = false;
   $<HTMLInputElement>("s-sfx").disabled = true;
   $<HTMLInputElement>("s-encrypt-headers").checked =
-    state.currentSettings.encryptHeaders;
+    liveHeaders?.checked ?? state.currentSettings.encryptHeaders;
   $<HTMLInputElement>("s-delete-after").checked = false;
   $<HTMLInputElement>("s-auto-check-updates").checked =
     state.currentSettings.autoCheckUpdates;
@@ -115,7 +160,9 @@ export function populateSettingsModal() {
     basicFx.checked = state.currentSettings.basicWindowEffects;
   }
   syncQuickExtractWarmIdleControl();
-  syncSettingsSecurityControlsForFormat(state.currentSettings.format);
+  syncSettingsSecurityControlsForFormat(
+    $<HTMLSelectElement>("s-format").value as UserSettings["format"],
+  );
   void syncBasicWindowEffectsVisibility();
 
   const logDir = document.getElementById("s-log-dir");

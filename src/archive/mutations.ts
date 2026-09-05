@@ -26,14 +26,13 @@ import { sanitizeCommandArgsForPreview } from "./preview";
 import {
   clearPasswordFields,
   ensureRuntimeReady,
+  invokeGuardedRun7z,
   logCommandResult,
   runWithPasswordRetry,
   truncateForDialog,
   showOperationError,
-  type Run7zResult,
 } from "./runtime";
 import { confirmZipSymlinkRisk } from "./compress-fidelity";
-import { invokeRun7z } from "./backend-ipc";
 
 let mutationDialogOpen = false;
 
@@ -149,7 +148,14 @@ export async function addFilesToArchive(): Promise<void> {
     const archivePassword = $<HTMLInputElement>("browse-password").value;
     if (archivePassword) args.push(`-p${archivePassword}`);
     const zipDest = archive.toLowerCase().endsWith(".zip");
+    const cached = state.browseArchiveInfoByPath.get(archive);
+    if (zipDest && cached?.method?.toLowerCase().includes("zipcrypto")) {
+      throw new Error(
+        "This ZIP still has ZipCrypto members. Convert it to a new AES-256 ZIP instead of adding files in place.",
+      );
+    }
     if (archivePassword && zipDest) args.push("-mem=AES256");
+    if (zipDest) args.push("-mcu=on");
     if (threads) args.push(`-mmt=${threads}`);
     args.push(archive, "--", ...files);
     if (zipDest && !(await confirmZipSymlinkRisk("zip", files))) {
@@ -367,10 +373,7 @@ export async function convertArchive(): Promise<void> {
     compress.push(dest, "--", ...children);
 
     debugLogCommand(compress);
-    const result = await invokeRun7z<Run7zResult>({
-      args: compress,
-      expectedArchiveIdentity: outputSelectionToken,
-    });
+    const result = await invokeGuardedRun7z(compress, outputSelectionToken);
     if (state.cancelRequested && result.code !== 0) {
       setStatus("Cancelled", 2000);
       return;

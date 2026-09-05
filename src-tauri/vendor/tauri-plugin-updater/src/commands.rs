@@ -64,9 +64,7 @@ pub(crate) async fn check<R: Runtime>(
     if let Some(target) = target {
         builder = builder.target(target);
     }
-    if allow_downgrades.unwrap_or(false) {
-        builder = builder.version_comparator(|current, update| update.version != current);
-    }
+    let _ = allow_downgrades;
 
     let updater = builder.build()?;
     let update = updater.check().await?;

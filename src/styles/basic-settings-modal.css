@@ -6,7 +6,7 @@
   display: none;
   align-items: stretch;
   justify-content: stretch;
-  z-index: 1000;
+  z-index: 10050;
   width: 100vw;
   height: 100vh;
   position: fixed;
@@ -35,7 +35,7 @@ body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
 }
 
 #app[data-workspace-mode="basic"] #licenses-overlay {
-  z-index: 1001;
+  z-index: 10051;
 }
 
 #app[data-workspace-mode="basic"] .modal--settings {

@@ -1165,10 +1165,11 @@ describe("main bootstrap", () => {
     extractToggle.click();
     expect(extractPassword.type).toBe("password");
 
+    mocks.basicUi.syncBasicBeforeRun.mockClear();
     (
       document.getElementById("workspace-mode-power") as HTMLButtonElement
     ).click();
-    expect(mocks.basicUi.syncBasicBeforeRun).toHaveBeenCalled();
+    expect(mocks.basicUi.syncBasicBeforeRun).not.toHaveBeenCalled();
 
     (
       document.getElementById("workspace-mode-basic") as HTMLButtonElement
@@ -1189,11 +1190,16 @@ describe("main bootstrap", () => {
       theme: "dark" as const,
       uiDensity: "compact" as const,
     };
-    mocks.settings.readSettingsModal.mockReturnValueOnce(savedSettings);
+    mocks.settings.readSettingsModal.mockReturnValueOnce({
+      ...savedSettings,
+      workspaceMode: "basic",
+    });
+    mocks.basicUi.syncBasicWorkspaceFromPower.mockClear();
     (document.getElementById("save-settings") as HTMLButtonElement).click();
     await flushAsync();
     expect(mocks.ui.persistSettingsImmediately).toHaveBeenCalled();
     expect(mocks.settings.closeSettingsModal).toHaveBeenCalled();
+    expect(mocks.basicUi.syncBasicWorkspaceFromPower).toHaveBeenCalled();
 
     mocks.settings.readSettingsModal.mockReturnValueOnce({
       ...savedSettings,

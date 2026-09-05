@@ -59,7 +59,7 @@ export function validateCompressionSecurityOptions(
   encryptHeaders: boolean,
 ): string | null {
   const support = getCompressionSecuritySupport(format);
-  if (support.password && /[\r\n]/.test(password)) {
+  if (support.password && /[\r\n\u0000\u2028\u2029]/.test(password)) {
     return "Archive passwords cannot contain line breaks.";
   }
   if (!support.encryptHeaders) return null;

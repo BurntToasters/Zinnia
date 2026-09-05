@@ -16,8 +16,6 @@ function ensureRegion(): HTMLElement {
     region = document.createElement("div");
     region.id = REGION_ID;
     region.className = "toast-region";
-    region.setAttribute("aria-live", "polite");
-    region.setAttribute("aria-atomic", "false");
     document.body.appendChild(region);
   }
   return region;
@@ -33,7 +31,10 @@ export function showToast(
   const toast = document.createElement("div");
   toast.className = `toast toast--${kind}`;
   toast.setAttribute("role", kind === "error" ? "alert" : "status");
-  toast.textContent = boundToastText(text);
+  const message = document.createElement("span");
+  message.className = "toast-message";
+  message.textContent = boundToastText(text);
+  toast.appendChild(message);
 
   const dismiss = () => {
     toast.classList.add("toast--leaving");
@@ -41,6 +42,25 @@ export function showToast(
   };
 
   toast.addEventListener("click", dismiss);
+  if (durationMs <= 0) {
+    toast.tabIndex = 0;
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "toast-dismiss";
+    close.setAttribute("aria-label", "Dismiss");
+    close.textContent = "Dismiss";
+    close.addEventListener("click", (event) => {
+      event.stopPropagation();
+      dismiss();
+    });
+    toast.appendChild(close);
+    toast.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        dismiss();
+      }
+    });
+  }
   region.appendChild(toast);
 
   if (durationMs > 0) {

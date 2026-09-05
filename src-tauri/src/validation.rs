@@ -62,6 +62,19 @@ fn create_output_looks_like_zip(args: &[String]) -> bool {
         .is_some_and(|path| path.to_ascii_lowercase().ends_with(".zip"))
 }
 
+pub(crate) fn is_zip_create_or_update(args: &[String]) -> bool {
+    let Some(cmd) = args.first() else {
+        return false;
+    };
+    if !matches!(cmd.as_str(), "a" | "u") {
+        return false;
+    }
+    if args.iter().any(|arg| arg.eq_ignore_ascii_case("-tzip")) {
+        return true;
+    }
+    create_output_looks_like_zip(args)
+}
+
 /// Password-protected ZIP create/update must use AES-256, never ZipCrypto.
 pub(crate) fn is_password_protected_zip_create(args: &[String]) -> bool {
     let Some(cmd) = args.first() else {
@@ -123,8 +136,6 @@ fn is_common_diagnostic_switch(lower: &str) -> bool {
         || lower == "-slt"
         || is_numbered_switch(lower, "-bb", 3)
         || is_stream_switch(lower)
-        || (lower.starts_with("-scs") && lower.len() > 4)
-        || (lower.starts_with("-scc") && lower.len() > 4)
 }
 
 fn method_switch_value_is_safe(value: &str) -> bool {
@@ -171,9 +182,6 @@ fn is_allowed_switch(cmd: &str, arg: &str) -> bool {
             (lower.starts_with("-t") && lower.len() > 2)
                 || is_allowed_method_switch(&lower)
                 || (lower.starts_with("-p") && lower.len() > 2)
-                || lower == "-r"
-                || lower == "-r-"
-                || lower == "-r0"
                 || lower == "-stl"
                 || lower == "-slp"
                 || lower == "-ssp"
@@ -198,18 +206,12 @@ fn is_allowed_switch(cmd: &str, arg: &str) -> bool {
                 || lower == "-y"
                 || lower == "-spd"
                 || lower == "-spod"
-                || lower == "-r"
-                || lower == "-r-"
-                || lower == "-r0"
                 || (lower.starts_with("-t") && lower.len() > 2)
                 || is_include_or_exclude(arg)
         }
         "l" | "t" => {
             (lower.starts_with("-p") && lower.len() > 2)
                 || (lower.starts_with("-t") && lower.len() > 2)
-                || lower == "-r"
-                || lower == "-r-"
-                || lower == "-r0"
                 || lower == "-spd"
                 || is_include_or_exclude(arg)
         }
@@ -253,7 +255,11 @@ pub(crate) fn archive_member_path_is_unsafe(path: &str) -> bool {
         if component.is_empty() {
             continue;
         }
-        // Win32 strips trailing dots/spaces, so `.. ` and `...` escape.
+        // Win32 strips trailing dots/spaces, so `.. ` and `...` escape, and
+        // `notes.txt.` collides with `notes.txt`.
+        if component.ends_with('.') || component.ends_with(' ') {
+            return true;
+        }
         let normalized = component.trim_end_matches(['.', ' ']);
         if normalized == ".." || (normalized.is_empty() && !component.is_empty()) {
             return true;
@@ -262,7 +268,7 @@ pub(crate) fn archive_member_path_is_unsafe(path: &str) -> bool {
         if component.contains(':') {
             return true;
         }
-        if is_win32_reserved_device_name(normalized) {
+        if is_win32_reserved_device_name(component) {
             return true;
         }
     }
@@ -271,18 +277,28 @@ pub(crate) fn archive_member_path_is_unsafe(path: &str) -> bool {
 
 /// Win32 device-name check on the dot-stem, case-insensitive, any extension.
 #[cfg(target_os = "windows")]
-fn is_win32_reserved_device_name(normalized_component: &str) -> bool {
-    let stem = normalized_component
-        .split('.')
-        .next()
-        .unwrap_or(normalized_component)
-        .to_ascii_uppercase();
+fn is_win32_reserved_device_name(component: &str) -> bool {
+    let stem = component.split('.').next().unwrap_or(component);
+    let mut folded = String::with_capacity(stem.len());
+    for ch in stem.chars() {
+        match ch {
+            '¹' => folded.push('1'),
+            '²' => folded.push('2'),
+            '³' => folded.push('3'),
+            c if c.is_ascii() => folded.push(c.to_ascii_uppercase()),
+            c => folded.extend(c.to_uppercase()),
+        }
+    }
     matches!(
-        stem.as_str(),
+        folded.as_str(),
         "CON"
             | "PRN"
             | "AUX"
             | "NUL"
+            | "CONIN$"
+            | "CONOUT$"
+            | "CLOCK$"
+            | "COM0"
             | "COM1"
             | "COM2"
             | "COM3"
@@ -292,6 +308,7 @@ fn is_win32_reserved_device_name(normalized_component: &str) -> bool {
             | "COM7"
             | "COM8"
             | "COM9"
+            | "LPT0"
             | "LPT1"
             | "LPT2"
             | "LPT3"
@@ -301,7 +318,6 @@ fn is_win32_reserved_device_name(normalized_component: &str) -> bool {
             | "LPT7"
             | "LPT8"
             | "LPT9"
-            | "CLOCK$"
     )
 }
 
@@ -1196,6 +1212,11 @@ mod tests {
             assert!(archive_member_path_is_unsafe("folder/CON"));
             assert!(archive_member_path_is_unsafe("folder/aux.c"));
             assert!(archive_member_path_is_unsafe("COM1.txt"));
+            assert!(archive_member_path_is_unsafe("COM0.txt"));
+            assert!(archive_member_path_is_unsafe("conin$.dat"));
+            assert!(archive_member_path_is_unsafe("COM¹.txt"));
+            assert!(archive_member_path_is_unsafe("notes.txt."));
+            assert!(archive_member_path_is_unsafe("notes.txt "));
             assert!(!archive_member_path_is_unsafe("folder/normal.txt"));
             assert!(!archive_member_path_is_unsafe("name..bak.txt"));
             assert!(!archive_member_path_is_unsafe("dots...and..spaces.txt"));
@@ -1355,5 +1376,24 @@ mod tests {
             "in.zip".to_string(),
         ])
         .expect_err("-bsp2 relocates progress to stderr and must be rejected");
+    }
+
+    #[test]
+    fn validate_run_7z_args_rejects_caller_recursion_and_charset() {
+        for switch in ["-r", "-r-", "-r0", "-scsUTF-8", "-sccWIN"] {
+            let err = validate_run_7z_args(&[
+                "x".to_string(),
+                switch.to_string(),
+                "-aou".to_string(),
+                "-o/tmp/out".to_string(),
+                "--".to_string(),
+                "in.zip".to_string(),
+            ])
+            .expect_err(switch);
+            assert!(
+                err.contains("not permitted") || err.contains("not allowed"),
+                "{switch}: {err}"
+            );
+        }
     }
 }

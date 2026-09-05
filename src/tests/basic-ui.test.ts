@@ -488,7 +488,7 @@ describe("basic-ui views and rendering", () => {
       { path: archive, valid: true, identity: "new-identity" },
     ]);
     invokeMock.mockImplementation((command) => {
-      if (command === "probe_7z") return Promise.resolve("26.02");
+      if (command === "probe_7z") return Promise.resolve("26.03");
       if (command === "run_7z") {
         return Promise.resolve({ code: 0, stdout: "listing", stderr: "" });
       }

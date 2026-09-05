@@ -337,6 +337,11 @@ describe("focus trap helpers", () => {
     const settingsBtn = document.createElement("button");
     settingsBtn.id = "open-settings";
     header.appendChild(settingsBtn);
+    const extractApp = document.createElement("div");
+    extractApp.id = "extract-app";
+    const extractCancel = document.createElement("button");
+    extractCancel.id = "cancel-btn";
+    extractApp.appendChild(extractCancel);
     const overlay = document.createElement("div");
     overlay.id = "settings-overlay";
     const modal = document.createElement("div");
@@ -345,13 +350,20 @@ describe("focus trap helpers", () => {
     modal.appendChild(modalBtn);
     overlay.appendChild(modal);
     const main = document.createElement("main");
-    app.append(titlebar, header, overlay, main);
-    document.body.appendChild(app);
+    const toastRegion = document.createElement("div");
+    toastRegion.id = "toast-region";
+    const recoveryBanner = document.createElement("div");
+    recoveryBanner.id = "startup-recovery-banner";
+    app.append(titlebar, header, extractApp, overlay, main);
+    document.body.append(app, toastRegion, recoveryBanner);
     setVisibleForFocus(modalBtn, modal);
 
     trapFocus(modal);
     expect(Boolean(titlebar.inert)).toBe(false);
     expect(Boolean(header.inert)).toBe(false);
+    expect(Boolean(extractApp.inert)).toBe(false);
+    expect(Boolean(toastRegion.inert)).toBe(false);
+    expect(Boolean(recoveryBanner.inert)).toBe(false);
     expect(main.inert).toBe(true);
     expect(closeBtn.closest("[inert]")).toBeNull();
     expect(settingsBtn.closest("[inert]")).toBeNull();
@@ -359,6 +371,8 @@ describe("focus trap helpers", () => {
     releaseFocusTrap(modal);
     expect(main.inert).toBe(false);
     app.remove();
+    toastRegion.remove();
+    recoveryBanner.remove();
   });
 
   it("returns escaped focus to the modal on Tab", () => {
