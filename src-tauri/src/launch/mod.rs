@@ -46,15 +46,24 @@ pub fn is_extract_window_label(label: &str) -> bool {
 }
 
 /// Unpackaged WebdriverIO sets `ZINNIA_E2E=1` on the launched binary.
+/// Compiled out of packaged releases: the env var must not enable a harness.
 pub fn e2e_session_active() -> bool {
-    std::env::var("ZINNIA_E2E").is_ok_and(|value| value == "1")
+    #[cfg(feature = "e2e")]
+    {
+        std::env::var("ZINNIA_E2E").is_ok_and(|value| value == "1")
+    }
+    #[cfg(not(feature = "e2e"))]
+    {
+        false
+    }
 }
 
 /// WebView2 `ExecuteScript` completion is dropped on transparent/hidden HWNDs.
-#[cfg(windows)]
+#[cfg(all(feature = "e2e", windows))]
 pub(crate) const E2E_WEBVIEW2_BROWSER_ARGS: &str =
     "--disable-gpu --disable-features=CalculateNativeWinOcclusion,RendererCodeIntegrity";
 
+#[cfg(feature = "e2e")]
 pub(crate) fn apply_e2e_webview_overrides<'a, R, M>(
     mut builder: tauri::WebviewWindowBuilder<'a, R, M>,
 ) -> tauri::WebviewWindowBuilder<'a, R, M>
@@ -62,14 +71,24 @@ where
     R: tauri::Runtime,
     M: tauri::Manager<R>,
 {
-    if !e2e_session_active() {
-        return builder;
+    if e2e_session_active() {
+        builder = builder.transparent(false).visible(true);
+        #[cfg(windows)]
+        {
+            builder = builder.additional_browser_args(E2E_WEBVIEW2_BROWSER_ARGS);
+        }
     }
-    builder = builder.transparent(false).visible(true);
-    #[cfg(windows)]
-    {
-        builder = builder.additional_browser_args(E2E_WEBVIEW2_BROWSER_ARGS);
-    }
+    builder
+}
+
+#[cfg(not(feature = "e2e"))]
+pub(crate) fn apply_e2e_webview_overrides<'a, R, M>(
+    builder: tauri::WebviewWindowBuilder<'a, R, M>,
+) -> tauri::WebviewWindowBuilder<'a, R, M>
+where
+    R: tauri::Runtime,
+    M: tauri::Manager<R>,
+{
     builder
 }
 

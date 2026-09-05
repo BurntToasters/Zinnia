@@ -55,6 +55,7 @@ libc = "0.2"
 minisign-verify = "0.2.5"
 
 [features]
+default = []
 e2e = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
 
 # Patched: macOS transactional install, confined tar, Linux helper PATH, Windows ShellExecute.
