@@ -20,6 +20,7 @@ function npmCommand() {
 
 export function parseReleaseArgs(argv) {
   const flags = argv.filter((arg) => arg.startsWith("-"));
+  // Keep the former opt-in flag as a no-op so old operator commands still work.
   const knownFlags = new Set(["--skip-e2e", "--skip-check"]);
   const unknown = flags.filter((flag) => !knownFlags.has(flag));
   if (unknown.length > 0) {
@@ -28,12 +29,11 @@ export function parseReleaseArgs(argv) {
   const platforms = argv.filter((arg) => !arg.startsWith("-"));
   if (platforms.length !== 1 || !CONTINUE_SCRIPTS[platforms[0]]) {
     throw new Error(
-      `Usage: node scripts/run-release.js <${Object.keys(CONTINUE_SCRIPTS).join("|")}> [--skip-e2e] [--skip-check]`,
+      `Usage: node scripts/run-release.js <${Object.keys(CONTINUE_SCRIPTS).join("|")}> [--skip-check]`,
     );
   }
   return {
     platform: platforms[0],
-    skipE2e: flags.includes("--skip-e2e"),
     skipCheck: flags.includes("--skip-check"),
     continueScript: CONTINUE_SCRIPTS[platforms[0]],
   };
@@ -53,14 +53,10 @@ function runNpm(script, extraArgs = [], envOverrides = {}) {
 }
 
 export function main(argv = process.argv.slice(2), runner = runNpm) {
-  const { skipE2e, skipCheck, continueScript } = parseReleaseArgs(argv);
+  const { skipCheck, continueScript } = parseReleaseArgs(argv);
   runner("prerelease:prepare");
   runner("workspace:bootstrap");
-  runner("test:all", [
-    "--",
-    "--require-clean-proof",
-    ...(skipE2e ? ["--skip-e2e"] : []),
-  ]);
+  runner("test:all", ["--", "--require-clean-proof", "--skip-e2e"]);
   runner("dist:clean-release-artifacts");
   runner(continueScript, [], skipCheck ? { FORCE_UPLOAD: "1" } : {});
 }

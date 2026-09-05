@@ -5,13 +5,11 @@ import { main, parseReleaseArgs } from "./run-release.js";
 test("parseReleaseArgs accepts platform and optional release flags", () => {
   assert.deepEqual(parseReleaseArgs(["win"]), {
     platform: "win",
-    skipE2e: false,
     skipCheck: false,
     continueScript: "release:win:continue",
   });
   assert.deepEqual(parseReleaseArgs(["mac", "--skip-e2e"]), {
     platform: "mac",
-    skipE2e: true,
     skipCheck: false,
     continueScript: "release:mac:continue",
   });
@@ -19,20 +17,17 @@ test("parseReleaseArgs accepts platform and optional release flags", () => {
     parseReleaseArgs(["--skip-check", "--skip-e2e", "linux:x64"]),
     {
       platform: "linux:x64",
-      skipE2e: true,
       skipCheck: true,
       continueScript: "release:linux:x64:continue",
     },
   );
   assert.deepEqual(parseReleaseArgs(["linux"]), {
     platform: "linux",
-    skipE2e: false,
     skipCheck: false,
     continueScript: "release:linux:continue",
   });
   assert.deepEqual(parseReleaseArgs(["linux:arm64", "--skip-check"]), {
     platform: "linux:arm64",
-    skipE2e: false,
     skipCheck: true,
     continueScript: "release:linux:arm64:continue",
   });
@@ -48,6 +43,19 @@ test("main scopes --skip-check to the release continuation", () => {
     { FORCE_UPLOAD: "1" },
   ]);
   assert.ok(calls.slice(0, -1).every(([, , envOverrides]) => !envOverrides));
+});
+
+test("main always skips local e2e while keeping the other release gates", () => {
+  const calls = [];
+  main(["win"], (...args) => calls.push(args));
+
+  assert.deepEqual(calls, [
+    ["prerelease:prepare"],
+    ["workspace:bootstrap"],
+    ["test:all", ["--", "--require-clean-proof", "--skip-e2e"]],
+    ["dist:clean-release-artifacts"],
+    ["release:win:continue", [], {}],
+  ]);
 });
 
 test("parseReleaseArgs rejects unknown flags and platforms", () => {
