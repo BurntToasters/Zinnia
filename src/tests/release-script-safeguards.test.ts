@@ -49,14 +49,22 @@ import {
 
 const require = createRequire(import.meta.url);
 const {
+  assertExpectedRelease,
   assertNoMisnamedVersionDrafts,
   assertReleaseTagName: assertReleaseTagNameCjs,
   assertReleaseTargetsCommit: assertReleaseTargetsCommitCjs,
+  isExpectedRelease,
   listAllGithubPages: listAllGithubPagesCjs,
   readChangelogReleaseBody,
   singleDraftRelease,
   verifyReleaseSession,
 } = require("../../scripts/ensure-draft-release.cjs") as {
+  assertExpectedRelease: (
+    release: { id?: number; draft?: boolean; name?: string; tag_name?: string },
+    expectedTag: string,
+    expectedName?: string,
+    context?: string,
+  ) => unknown;
   assertNoMisnamedVersionDrafts: (
     releases: Array<{
       id?: number;
@@ -78,6 +86,11 @@ const {
     env?: NodeJS.ProcessEnv,
     log?: { warn: (message: string) => void },
   ) => unknown;
+  isExpectedRelease: (
+    release: { draft?: boolean; name?: string; tag_name?: string },
+    expectedTag: string,
+    expectedName?: string,
+  ) => boolean;
   listAllGithubPages: typeof listAllGithubPages;
   readChangelogReleaseBody: (
     changelogPath?: string,
@@ -407,7 +420,7 @@ describe("release script safeguards", () => {
     ).toThrow(/Multiple draft releases/);
   });
 
-  it("fails fast when a same-version draft has an untagged placeholder", () => {
+  it("accepts GitHub's untagged placeholder only for the exact draft name", () => {
     const release = {
       id: 383045361,
       draft: true,
@@ -415,15 +428,49 @@ describe("release script safeguards", () => {
       tag_name: "untagged-24c724f64b2e33a2a4a1",
     };
 
-    expect(() =>
+    expect(
       assertNoMisnamedVersionDrafts([release], "v0.6.1-beta.8", "0.6.1-beta.8"),
-    ).toThrow(/id 383045361.*untagged-24c724f64b2e33a2a4a1/);
+    ).toEqual([release]);
+    expect(isExpectedRelease(release, "v0.6.1-beta.8", "0.6.1-beta.8")).toBe(
+      true,
+    );
+    expect(
+      assertExpectedRelease(release, "v0.6.1-beta.8", "0.6.1-beta.8"),
+    ).toEqual(release);
     expect(() => assertReleaseTagNameCjs(release, "v0.6.1-beta.8")).toThrow(
       /Retag the existing draft/,
     );
-    expect(() => selectDraftRelease([release], "v0.6.1-beta.8")).toThrow(
-      /wrong tag_name/,
-    );
+    expect(selectDraftRelease([release], "v0.6.1-beta.8")).toEqual(release);
+
+    const wrongTag = { ...release, tag_name: "v0.6.1-beta.7" };
+    expect(() =>
+      assertNoMisnamedVersionDrafts(
+        [wrongTag],
+        "v0.6.1-beta.8",
+        "0.6.1-beta.8",
+      ),
+    ).toThrow(/id 383045361.*v0.6.1-beta.7/);
+    expect(
+      isExpectedRelease(
+        { ...release, name: "0.6.1-beta.7" },
+        "v0.6.1-beta.8",
+        "0.6.1-beta.8",
+      ),
+    ).toBe(false);
+    expect(
+      isExpectedRelease(
+        { ...release, draft: false },
+        "v0.6.1-beta.8",
+        "0.6.1-beta.8",
+      ),
+    ).toBe(false);
+    expect(
+      isExpectedRelease(
+        { ...release, tag_name: "untagged-not-a-github-id" },
+        "v0.6.1-beta.8",
+        "0.6.1-beta.8",
+      ),
+    ).toBe(false);
 
     for (const file of [
       "scripts/ensure-draft-release.cjs",
@@ -434,6 +481,19 @@ describe("release script safeguards", () => {
         "assertNoMisnamedVersionDrafts",
       );
     }
+
+    const draftSource = fs.readFileSync(
+      "scripts/ensure-draft-release.cjs",
+      "utf8",
+    );
+    expect(draftSource).toContain("tag_name: TAG_NAME");
+    const publishSource = fs.readFileSync(
+      "scripts/publish-release.cjs",
+      "utf8",
+    );
+    expect(publishSource).toMatch(
+      /tag_name: TAG_NAME,\s*target_commitish: commit,\s*draft: false/,
+    );
   });
 
   it("refuses duplicate drafts in gpg-sign and verify-draft selection too", () => {
