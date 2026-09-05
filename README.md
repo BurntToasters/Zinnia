@@ -104,6 +104,9 @@ native build runs.
   beta-target endpoints that move final-beta installs onto stable.
   `REQUIRED_UPDATER_TARGETS` adds intentional optional targets such as Linux
   ARM64 to that required set.
+- GitHub may temporarily expose an unpublished draft under an `untagged-*`
+  identifier. Release scripts accept it only when the draft name and target
+  commit match exactly, then set the intended `vX.Y.Z` tag during publication.
 - Each full release command prepares and runs every non-E2E quality gate once.
   Native E2E is skipped for local release commands because CI runs it on Linux,
   Windows, and macOS; a direct `npm run test:all` still includes E2E. If

@@ -28,8 +28,10 @@ const {
 } = require("./github-cli.cjs");
 const { isExplicitTruthy } = require("./release-policy.cjs");
 const {
+  assertExpectedRelease,
   assertNoMisnamedVersionDrafts,
   assertReleaseTagName,
+  isExpectedRelease,
 } = require("./release-draft-metadata.cjs");
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -194,8 +196,9 @@ export function assertDraftReleaseShape({
 
 export function selectDraftRelease(releases, tag) {
   assertNoMisnamedVersionDrafts(releases, tag);
-  const matches = (releases || []).filter(
-    (release) => release?.tag_name === tag,
+  const expectedName = String(tag || "").replace(/^v/, "");
+  const matches = (releases || []).filter((release) =>
+    isExpectedRelease(release, tag, expectedName),
   );
   const drafts = matches.filter((release) => release.draft);
   if (drafts.length > 1) {
@@ -204,7 +207,12 @@ export function selectDraftRelease(releases, tag) {
     );
   }
   if (drafts.length === 1) {
-    return assertReleaseTagName(drafts[0], tag, "Draft verification release");
+    return assertExpectedRelease(
+      drafts[0],
+      tag,
+      expectedName,
+      "Draft verification release",
+    );
   }
   if (matches.length > 0) {
     throw new Error(`Release ${tag} is already published.`);

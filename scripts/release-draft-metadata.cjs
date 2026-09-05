@@ -1,5 +1,38 @@
 "use strict";
 
+const GITHUB_UNTAGGED_DRAFT = /^untagged-[0-9a-f]{20}$/i;
+
+function expectedReleaseName(expectedTag) {
+  return String(expectedTag || "").replace(/^v/, "");
+}
+
+function isExpectedRelease(
+  release,
+  expectedTag,
+  expectedName = expectedReleaseName(expectedTag),
+) {
+  if (release?.tag_name === expectedTag) return true;
+  return Boolean(
+    release?.draft &&
+    release.name === expectedName &&
+    GITHUB_UNTAGGED_DRAFT.test(String(release.tag_name || "")),
+  );
+}
+
+function assertExpectedRelease(
+  release,
+  expectedTag,
+  expectedName = expectedReleaseName(expectedTag),
+  context = "Draft release",
+) {
+  if (isExpectedRelease(release, expectedTag, expectedName)) return release;
+  throw new Error(
+    `${context} ${release?.id ?? "with unknown id"} has tag_name ` +
+      `${JSON.stringify(release?.tag_name ?? null)}, expected ${JSON.stringify(expectedTag)} ` +
+      `or a GitHub untagged draft placeholder named ${JSON.stringify(expectedName)}.`,
+  );
+}
+
 function assertReleaseTagName(release, expectedTag, context = "Draft release") {
   if (release?.tag_name === expectedTag) return release;
   throw new Error(
@@ -18,7 +51,7 @@ function assertNoMisnamedVersionDrafts(
     (release) =>
       release?.draft &&
       release.name === expectedName &&
-      release.tag_name !== expectedTag,
+      !isExpectedRelease(release, expectedTag, expectedName),
   );
   if (misnamed.length === 0) return releases;
 
@@ -36,6 +69,8 @@ function assertNoMisnamedVersionDrafts(
 }
 
 module.exports = {
+  assertExpectedRelease,
   assertNoMisnamedVersionDrafts,
   assertReleaseTagName,
+  isExpectedRelease,
 };
