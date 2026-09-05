@@ -7,6 +7,11 @@ const { execFileSync, spawnSync } = require("child_process");
 
 const { assertGitHubCliAuthenticated, githubApi } = require("./github-cli.cjs");
 const { assertStableReleaseOverridesAllowed } = require("./release-policy.cjs");
+const {
+  assertExpectedRelease,
+  assertReleaseTagName,
+  isExpectedRelease,
+} = require("./release-draft-metadata.cjs");
 
 const REPO_OWNER = process.env.GH_REPO_OWNER || "BurntToasters";
 const REPO_NAME = process.env.GH_REPO_NAME || "zinnia";
@@ -57,7 +62,8 @@ async function main() {
     if (batch.length < 100) break;
   }
   const drafts = releases.filter(
-    (release) => release?.tag_name === TAG_NAME && release.draft,
+    (release) =>
+      release?.draft && isExpectedRelease(release, TAG_NAME, VERSION),
   );
   if (drafts.length > 1) {
     throw new Error(
@@ -67,7 +73,12 @@ async function main() {
   if (drafts.length === 0) {
     throw new Error(`No draft exists for ${TAG_NAME}.`);
   }
-  const draft = drafts[0];
+  const draft = assertExpectedRelease(
+    drafts[0],
+    TAG_NAME,
+    VERSION,
+    "Publishing draft",
+  );
   const expectedPrerelease = /-beta\.\d+$/.test(VERSION);
   if (Boolean(draft.prerelease) !== expectedPrerelease) {
     throw new Error(
@@ -83,9 +94,19 @@ async function main() {
   const published = githubApi(
     "PATCH",
     `/repos/${REPO_OWNER}/${REPO_NAME}/releases/${draft.id}`,
-    { draft: false },
+    {
+      tag_name: TAG_NAME,
+      target_commitish: commit,
+      draft: false,
+      prerelease: expectedPrerelease,
+    },
   );
-  console.log(`Published ${TAG_NAME}: ${published.html_url}`);
+  const validated = assertReleaseTagName(
+    published,
+    TAG_NAME,
+    "Published release",
+  );
+  console.log(`Published ${TAG_NAME}: ${validated.html_url}`);
   console.log(
     "Next: npm run release:verify:published (live updater feed + signature proof).",
   );

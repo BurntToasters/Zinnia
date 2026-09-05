@@ -16,8 +16,10 @@ try {
 const { assertGitHubCliAuthenticated, githubApi } = require("./github-cli.cjs");
 const { assertStableReleaseOverridesAllowed } = require("./release-policy.cjs");
 const {
+  assertExpectedRelease,
   assertNoMisnamedVersionDrafts,
   assertReleaseTagName,
+  isExpectedRelease,
 } = require("./release-draft-metadata.cjs");
 
 const REPOSITORY_ROOT = path.resolve(__dirname, "..");
@@ -145,13 +147,29 @@ async function syncReleaseNotesBody(release, body) {
   const updated = await githubRequestWithRetry(
     "PATCH",
     "/repos/" + REPO_OWNER + "/" + REPO_NAME + "/releases/" + release.id,
-    { name: VERSION, body, prerelease: IS_PRERELEASE },
+    {
+      tag_name: TAG_NAME,
+      target_commitish: release.target_commitish,
+      name: VERSION,
+      body,
+      prerelease: IS_PRERELEASE,
+    },
   );
-  const validated = assertReleaseTagName(
+  const validated = assertExpectedRelease(
     updated,
     TAG_NAME,
+    VERSION,
     "Updated draft release",
   );
+  if (validated.tag_name !== TAG_NAME) {
+    console.log(
+      "   GitHub kept temporary draft tag " +
+        validated.tag_name +
+        "; final publish will set " +
+        TAG_NAME +
+        ".",
+    );
+  }
   console.log(
     "   Synced CHANGELOG.md into release notes (" +
       body.length +
@@ -317,7 +335,9 @@ async function findMatchingReleases() {
     ),
   );
   assertNoMisnamedVersionDrafts(releases, TAG_NAME, VERSION);
-  return releases.filter((r) => r.tag_name === TAG_NAME);
+  return releases.filter((release) =>
+    isExpectedRelease(release, TAG_NAME, VERSION),
+  );
 }
 
 async function findExistingRelease() {
@@ -503,10 +523,12 @@ async function main() {
 }
 
 module.exports = {
+  assertExpectedRelease,
   assertNoMisnamedVersionDrafts,
   assertReleaseTagName,
   assertReleaseTargetsCommit,
   currentReleaseCommit,
+  isExpectedRelease,
   listAllGithubPages,
   readChangelogReleaseBody,
   singleDraftRelease,
