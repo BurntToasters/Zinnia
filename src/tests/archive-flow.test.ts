@@ -127,6 +127,9 @@ function setInvokeRouter(
 ): void {
   invokeMock.mockImplementation((command, payload) => {
     const result = handler(command, payload);
+    if (command === "inspect_extract_destination" && result === undefined) {
+      return Promise.resolve("missing");
+    }
     if (
       command === "validate_archive_paths" &&
       (payload as { includeIdentity?: boolean } | undefined)?.includeIdentity &&
@@ -1229,6 +1232,51 @@ describe("archive test/browse/selective flows", () => {
     ).toEqual([`identity:${archiveA}`, `identity:${archiveB}`]);
     expect(document.getElementById("toast-region")?.textContent).toContain(
       "Successfully extracted 2 archives.",
+    );
+  });
+
+  it("cancels extract when an existing destination is not confirmed", async () => {
+    const archive = uniqueArchivePath("existing-dest");
+    const app = document.getElementById("app") as HTMLElement;
+    app.dataset.mode = "extract";
+    app.dataset.workspaceMode = "power";
+    state.inputs = [archive];
+    (document.getElementById("extract-path") as HTMLInputElement).value =
+      "/tmp/out";
+
+    setInvokeRouter((command, payload) => {
+      if (command === "validate_archive_paths") {
+        const paths = pathsFromValidationPayload(payload);
+        return paths.map((path) => ({ path, valid: true }));
+      }
+      if (command === "inspect_extract_destination") return "directory";
+      if (command === "probe_7z") return undefined;
+      if (command === "run_7z") {
+        throw new Error("run_7z should not run after destination cancel");
+      }
+      return undefined;
+    });
+
+    const pending = runAction();
+    await vi.waitFor(() => {
+      expect(
+        (document.getElementById("input-modal-overlay") as HTMLElement).hidden,
+      ).toBe(false);
+    });
+    expect(document.getElementById("input-modal-title")?.textContent).toBe(
+      "Destination already exists",
+    );
+    (
+      document.getElementById("input-modal-cancel") as HTMLButtonElement
+    ).click();
+    await pending;
+
+    expect(confirmMock).not.toHaveBeenCalled();
+    expect(invokeMock.mock.calls.some(([name]) => name === "run_7z")).toBe(
+      false,
+    );
+    expect(document.getElementById("status")?.textContent).toContain(
+      "Cancelled",
     );
   });
 

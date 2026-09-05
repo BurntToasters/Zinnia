@@ -14,6 +14,7 @@
     "allow-probe-7z",
     "allow-validate-archive-paths",
     "allow-get-extract-paths",
+    "allow-inspect-extract-destination",
     "allow-close-extract-window",
     "allow-open-path",
     "allow-register-extract-open-path",

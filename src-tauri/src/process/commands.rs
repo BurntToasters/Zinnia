@@ -106,7 +106,7 @@ fn parse_compress_probe_request(request_json: &str) -> Result<Vec<String>, Strin
     Ok(paths)
 }
 
-fn read_command_stream<R, F>(reader: R, tx: Sender<CommandEvent>, wrap: F)
+pub(crate) fn read_command_stream<R, F>(reader: R, tx: Sender<CommandEvent>, wrap: F)
 where
     R: std::io::Read,
     F: Fn(Vec<u8>) -> CommandEvent + Copy,
@@ -121,7 +121,10 @@ where
             Ok(read) => {
                 for byte in &buffer[..read] {
                     pending.push(*byte);
-                    if *byte == b'\n' || pending.len() == MAX_STREAM_RECORD_BYTES {
+                    // 7-Zip refreshes progress with carriage returns. Emit at
+                    // either line boundary so a later status segment cannot
+                    // hide the percentage that preceded it in the same record.
+                    if matches!(*byte, b'\r' | b'\n') || pending.len() == MAX_STREAM_RECORD_BYTES {
                         let bytes = std::mem::replace(
                             &mut pending,
                             Vec::with_capacity(MAX_STREAM_RECORD_BYTES),

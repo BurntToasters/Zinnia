@@ -757,6 +757,10 @@ body.platform-macos .btn--shortcut::after {
   flex: 1;
 }
 
+.modal-overlay[hidden] {
+  display: none;
+}
+
 .modal-overlay {
   position: fixed;
   inset: 0;

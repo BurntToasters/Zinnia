@@ -380,6 +380,7 @@ fn main() {
             launch::get_shell_handoff_error,
             launch::drain_pending_paths,
             launch::get_extract_paths,
+            launch::inspect_extract_destination,
             launch::close_extract_window,
             launch::open_debug_console_window,
             launch::close_debug_console_window,

@@ -37,6 +37,25 @@ pub fn clear_extract_window_bindings(app: &tauri::AppHandle, label: &str) {
     }
 }
 #[tauri::command]
+pub fn inspect_extract_destination(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    path: String,
+) -> Result<crate::path_safety::ExtractDestinationStatus, String> {
+    if path.is_empty() {
+        return Err("Choose a destination folder.".to_string());
+    }
+    if path.len() > 8192 || path.contains('\0') {
+        return Err("A destination path is invalid or exceeds its byte limit.".to_string());
+    }
+    let requested = std::path::PathBuf::from(&path);
+    if super::is_extract_window_label(window.label()) {
+        super::open_path::assert_extract_bound_destination(&app, window.label(), &requested)?;
+    }
+    crate::path_safety::classify_extract_destination(&requested)
+}
+
+#[tauri::command]
 pub fn get_extract_paths(
     window: tauri::Window,
     state: tauri::State<'_, ExtractQueue>,

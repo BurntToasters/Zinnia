@@ -87,9 +87,9 @@ pub use extract_window::first_extract_window;
 #[allow(unused_imports)]
 pub use extract_window::{
     cancel_owner_and_wait, clear_extract_window_bindings, close_extract_window, ensure_main_window,
-    enter_extract_warm_idle, get_extract_paths, has_extract_windows, leave_extract_warm,
-    mark_main_window_ready, restore_foreground_activation, should_keep_extract_warm,
-    show_main_window, spawn_extract_window,
+    enter_extract_warm_idle, get_extract_paths, has_extract_windows, inspect_extract_destination,
+    leave_extract_warm, mark_main_window_ready, restore_foreground_activation,
+    should_keep_extract_warm, show_main_window, spawn_extract_window,
 };
 #[allow(unused_imports)]
 pub use open_path::{
@@ -118,8 +118,9 @@ pub use debug_console_window::{
 };
 #[doc(hidden)]
 pub use extract_window::{
-    __cmd__close_extract_window, __cmd__get_extract_paths, __cmd__mark_main_window_ready,
-    __tauri_command_name_close_extract_window, __tauri_command_name_get_extract_paths,
+    __cmd__close_extract_window, __cmd__get_extract_paths, __cmd__inspect_extract_destination,
+    __cmd__mark_main_window_ready, __tauri_command_name_close_extract_window,
+    __tauri_command_name_get_extract_paths, __tauri_command_name_inspect_extract_destination,
     __tauri_command_name_mark_main_window_ready,
 };
 #[doc(hidden)]

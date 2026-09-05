@@ -178,6 +178,17 @@ mod tests {
     }
 
     #[test]
+    fn parses_percent_after_carriage_return_framing() {
+        assert_eq!(parse_progress_line("0%\r").and_then(|u| u.percent), Some(0));
+        assert!(parse_progress_line("T hello.txt\r").is_none());
+        assert_eq!(
+            parse_progress_line("100%\r").and_then(|u| u.percent),
+            Some(100)
+        );
+        assert!(parse_progress_line("Everything is Ok\r\n").is_none());
+    }
+
+    #[test]
     fn ignores_non_progress_lines() {
         assert!(parse_progress_line("7-Zip 26.01 (arm64)").is_none());
         assert!(parse_progress_line("Everything is Ok").is_none());

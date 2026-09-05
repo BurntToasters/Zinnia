@@ -335,6 +335,32 @@ pub fn resolve_regular_file_input(path: &Path) -> Result<std::path::PathBuf, Str
     Ok(resolved)
 }
 
+/// UX classification for extract destinations. Transactional publish still
+/// re-checks every final path; this must not be treated as a capability grant.
+#[derive(serde::Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ExtractDestinationStatus {
+    Missing,
+    Directory,
+    Invalid,
+}
+
+pub fn classify_extract_destination(path: &Path) -> Result<ExtractDestinationStatus, String> {
+    match std::fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(ExtractDestinationStatus::Missing)
+        }
+        Err(error) => Err(error.to_string()),
+        Ok(meta) => {
+            if is_link_or_reparse(&meta) || !meta.is_dir() {
+                Ok(ExtractDestinationStatus::Invalid)
+            } else {
+                Ok(ExtractDestinationStatus::Directory)
+            }
+        }
+    }
+}
+
 pub fn assert_real_directory(path: &Path) -> Result<(), String> {
     let meta = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
     reject_link_or_reparse(path, &meta)?;
@@ -517,6 +543,32 @@ mod tests {
         let root = temp_root("dir");
         std::fs::create_dir_all(&root).expect("dir");
         assert_real_directory(&root).expect("plain directory");
+        assert_eq!(
+            classify_extract_destination(&root).expect("classify dir"),
+            ExtractDestinationStatus::Directory
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn classify_extract_destination_distinguishes_missing_file_and_dir() {
+        let root = temp_root("extract-dest");
+        std::fs::create_dir_all(&root).expect("dir");
+        let missing = root.join("new-folder");
+        let file = root.join("already.txt");
+        std::fs::write(&file, b"keep").expect("write");
+        assert_eq!(
+            classify_extract_destination(&missing).expect("missing"),
+            ExtractDestinationStatus::Missing
+        );
+        assert_eq!(
+            classify_extract_destination(&file).expect("file"),
+            ExtractDestinationStatus::Invalid
+        );
+        assert_eq!(
+            classify_extract_destination(&root).expect("dir"),
+            ExtractDestinationStatus::Directory
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -573,6 +625,14 @@ mod tests {
 
         let dir_err = assert_real_directory(&link_dir).expect_err("symlink dir");
         assert!(dir_err.contains("symbolic link") || dir_err.contains("reparse"));
+        assert_eq!(
+            classify_extract_destination(&link_dir).expect("classify symlink dir"),
+            ExtractDestinationStatus::Invalid
+        );
+        assert_eq!(
+            classify_extract_destination(&link_file).expect("classify symlink file"),
+            ExtractDestinationStatus::Invalid
+        );
         let file_err = assert_real_file(&link_file).expect_err("symlink file");
         assert!(file_err.contains("symbolic link") || file_err.contains("reparse"));
 

@@ -403,6 +403,7 @@ fn main() {
         "get_shell_handoff_error",
         "drain_pending_paths",
         "get_extract_paths",
+        "inspect_extract_destination",
         "close_extract_window",
         "open_debug_console_window",
         "close_debug_console_window",
