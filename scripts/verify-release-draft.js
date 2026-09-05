@@ -27,6 +27,10 @@ const {
   githubCliEnvironment,
 } = require("./github-cli.cjs");
 const { isExplicitTruthy } = require("./release-policy.cjs");
+const {
+  assertNoMisnamedVersionDrafts,
+  assertReleaseTagName,
+} = require("./release-draft-metadata.cjs");
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -189,6 +193,7 @@ export function assertDraftReleaseShape({
 }
 
 export function selectDraftRelease(releases, tag) {
+  assertNoMisnamedVersionDrafts(releases, tag);
   const matches = (releases || []).filter(
     (release) => release?.tag_name === tag,
   );
@@ -199,7 +204,7 @@ export function selectDraftRelease(releases, tag) {
     );
   }
   if (drafts.length === 1) {
-    return drafts[0];
+    return assertReleaseTagName(drafts[0], tag, "Draft verification release");
   }
   if (matches.length > 0) {
     throw new Error(`Release ${tag} is already published.`);
@@ -320,7 +325,7 @@ async function loadDraftRelease(repoOwner, repoName, tag) {
   }
   if (tagged) {
     if (tagged.draft) {
-      return tagged;
+      return assertReleaseTagName(tagged, tag, "Draft verification release");
     }
     throw new Error(`Release ${tag} is already published.`);
   }
