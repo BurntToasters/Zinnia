@@ -18,10 +18,18 @@ test("reviewed RustSec ignores pass before the review deadline", () => {
 
 test("new RustSec ignores fail closed", () => {
   const errors = evaluateIgnorePolicy(
-    `${reviewedConfig}\n# RUSTSEC-2099-9999\n`,
+    reviewedConfig.replace(/\]\n$/, '  "RUSTSEC-2099-9999",\n]\n'),
     new Date("2026-09-05T00:00:00Z"),
   );
   assert.match(errors.join("\n"), /unreviewed ignore RUSTSEC-2099-9999/);
+});
+
+test("RustSec IDs in comments do not count as ignored advisories", () => {
+  const errors = evaluateIgnorePolicy(
+    `${reviewedConfig}\n# RUSTSEC-2099-9999\n`,
+    new Date("2026-09-05T00:00:00Z"),
+  );
+  assert.doesNotMatch(errors.join("\n"), /unreviewed ignore RUSTSEC-2099-9999/);
 });
 
 test("reviewed RustSec debt expires", () => {

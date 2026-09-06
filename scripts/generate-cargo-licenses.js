@@ -27,6 +27,59 @@ const unresolvedOutputPath = join(
 const requireComplete = process.argv.includes("--require-complete");
 const sourceCheckouts = new Map();
 
+// Some crates are published from a workspace that excludes `.cargo_vcs_info`
+// and its root license files. Keep only exact, independently verifiable
+// release revisions here; never infer a moving branch or a latest tag.
+const SOURCE_REVISION_OVERRIDES = new Map([
+  [
+    "libappindicator-sys@0.9.0",
+    {
+      repository: "https://github.com/tauri-apps/libappindicator-rs",
+      revision: "eafd1e3682a1247f595410266091e9684021cb6f",
+      pathInRepository: "sys",
+    },
+  ],
+  [
+    "rustls-platform-verifier-android@0.1.1",
+    {
+      repository: "https://github.com/rustls/rustls-platform-verifier",
+      revision: "28e5e5218cdf64daa6a43ec8d0ae36c4bab82d31",
+      pathInRepository: ".",
+    },
+  ],
+  [
+    "winapi-i686-pc-windows-gnu@0.4.0",
+    {
+      repository: "https://github.com/retep998/winapi-rs",
+      revision: "796a8e6c2971dc2ff1bcff166e6671284f9b5b6b",
+      pathInRepository: "i686",
+    },
+  ],
+  [
+    "winapi-x86_64-pc-windows-gnu@0.4.0",
+    {
+      repository: "https://github.com/retep998/winapi-rs",
+      revision: "796a8e6c2971dc2ff1bcff166e6671284f9b5b6b",
+      pathInRepository: "x86_64",
+    },
+  ],
+]);
+
+// These exact published packages and source revisions contain no license file
+// or license header beyond the SPDX declaration in Cargo.toml. Preserve the
+// omission visibly in the generated notice instead of fabricating a generic
+// license blob. The UI still exposes the declared SPDX references.
+const REVIEWED_SOURCE_OMISSIONS = new Map([
+  [
+    "selectors@0.36.1",
+    "The crates.io package and its pinned upstream source revision contain no license text beyond the MPL-2.0 declaration in Cargo.toml.",
+  ],
+  [
+    "sigchld@0.2.4",
+    "The crates.io package and its pinned upstream source revision contain no license text beyond the MIT declaration in Cargo.toml.",
+  ],
+]);
+
 function runCargoMetadata() {
   const args = [
     "metadata",
@@ -96,7 +149,7 @@ function isWithin(root, candidate) {
 function readLicenseTextsFromDirectory(packageDir, licenseFile = null) {
   const names = new Set(
     readdirSync(packageDir).filter((name) =>
-      /^(license|copying|notice|authors|copyright)(?:[._-].*)?$/i.test(name),
+      /^(licen[cs]e|copying|notice|authors|copyright)(?:[._-].*)?$/i.test(name),
     ),
   );
   if (typeof licenseFile === "string" && licenseFile.trim()) {
@@ -214,11 +267,18 @@ function findSourceLicenseInCheckout(pkg, vcs, checkoutRoot, repository) {
     if (!isWithin(checkoutRoot, parent) || parent === current) break;
     current = parent;
   }
-  return null;
+  return {
+    noLicenseText: true,
+    repository,
+    revision: vcs.revision,
+    directory: relative(checkoutRoot, packageDir) || ".",
+  };
 }
 
 function readSourceRevisionLicenseTexts(pkg, vcs) {
-  const repository = normalizedRepositoryUrl(pkg.repository);
+  const repository =
+    normalizedRepositoryUrl(vcs?.repository) ||
+    normalizedRepositoryUrl(pkg.repository);
   if (!repository || !vcs) return null;
 
   try {
@@ -254,6 +314,7 @@ function spdxReferences(licenses) {
 }
 
 function readPackagedVcsInfo(pkg) {
+  if (typeof pkg?.manifest_path !== "string") return null;
   const infoPath = join(dirname(pkg.manifest_path), ".cargo_vcs_info.json");
   if (!existsSync(infoPath)) return null;
   try {
@@ -272,6 +333,20 @@ function readPackagedVcsInfo(pkg) {
   }
 }
 
+function sourceRevisionForPackage(pkg) {
+  const packaged = readPackagedVcsInfo(pkg);
+  const override = SOURCE_REVISION_OVERRIDES.get(`${pkg.name}@${pkg.version}`);
+  if (!packaged) return override || null;
+  if (!override?.repository || normalizedRepositoryUrl(pkg.repository)) {
+    return packaged;
+  }
+  return { ...packaged, repository: override.repository };
+}
+
+function reviewedSourceOmissionForPackage(pkg) {
+  return REVIEWED_SOURCE_OMISSIONS.get(`${pkg.name}@${pkg.version}`) || null;
+}
+
 function toLicenseEntry(pkg) {
   const licenses =
     typeof pkg.license === "string" && pkg.license.trim()
@@ -284,12 +359,20 @@ function toLicenseEntry(pkg) {
   }
 
   const bundledText = readLicenseTexts(pkg);
-  const vcs = bundledText ? null : readPackagedVcsInfo(pkg);
-  const sourceText =
+  const vcs = bundledText ? null : sourceRevisionForPackage(pkg);
+  const sourceRevisionResult =
     requireComplete && !bundledText && vcs
       ? readSourceRevisionLicenseTexts(pkg, vcs)
       : null;
-  const licenseText = bundledText || sourceText?.text || null;
+  const reviewedOmission = reviewedSourceOmissionForPackage(pkg);
+  const sourceOmission =
+    !bundledText &&
+    !sourceRevisionResult?.text &&
+    reviewedOmission &&
+    (!requireComplete || sourceRevisionResult?.noLicenseText === true)
+      ? reviewedOmission
+      : null;
+  const licenseText = bundledText || sourceRevisionResult?.text || null;
   const entry = {
     licenses,
     repository:
@@ -303,9 +386,11 @@ function toLicenseEntry(pkg) {
     licenseText,
     licenseTextStatus: bundledText
       ? "bundled"
-      : sourceText
+      : sourceRevisionResult?.text
         ? "source-revision"
-        : "not-packaged",
+        : sourceOmission
+          ? "reviewed-omission"
+          : "not-packaged",
     licenseReferences: licenseText ? [] : spdxReferences(licenses),
   };
 
@@ -325,11 +410,19 @@ function toLicenseEntry(pkg) {
     entry.sourceRevision = vcs.revision;
     entry.sourcePath = vcs.pathInRepository;
   }
-  if (sourceText) {
+  if (sourceRevisionResult?.text) {
     entry.licenseTextSource = {
-      repository: sourceText.repository,
-      revision: sourceText.revision,
-      directory: sourceText.directory,
+      repository: sourceRevisionResult.repository,
+      revision: sourceRevisionResult.revision,
+      directory: sourceRevisionResult.directory,
+    };
+  }
+  if (sourceOmission) {
+    entry.licenseTextReview = {
+      status: "source-omission-reviewed",
+      reason: sourceOmission,
+      repository: vcs?.repository || normalizedRepositoryUrl(pkg.repository),
+      revision: vcs?.revision || null,
     };
   }
 
@@ -410,7 +503,11 @@ if (isDirectExecution()) {
 }
 
 export {
+  REVIEWED_SOURCE_OMISSIONS,
+  SOURCE_REVISION_OVERRIDES,
   findSourceLicenseInCheckout,
   normalizedRepositoryUrl,
   readLicenseTextsFromDirectory,
+  reviewedSourceOmissionForPackage,
+  sourceRevisionForPackage,
 };
