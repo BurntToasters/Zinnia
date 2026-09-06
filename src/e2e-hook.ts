@@ -1,4 +1,7 @@
-import { applyIncomingPaths } from "./incoming-paths";
+import {
+  applyIncomingPaths,
+  waitUntilIncomingPathIdle,
+} from "./incoming-paths";
 import { isE2eFrontend } from "./e2e-env";
 import { installWdioGuestPluginIfEnabled } from "./e2e-wdio-plugin";
 
@@ -16,6 +19,9 @@ export async function installE2eHookIfEnabled(): Promise<void> {
   if (import.meta.env.VITE_ZINNIA_E2E !== "1" || !isE2eFrontend()) return;
   await installWdioGuestPluginIfEnabled();
   window.__ZINNIA_E2E__ = {
-    applyIncomingPaths: (paths, mode) => applyIncomingPaths(paths, mode, "e2e"),
+    applyIncomingPaths: async (paths, mode) => {
+      await applyIncomingPaths(paths, mode, "e2e");
+      await waitUntilIncomingPathIdle();
+    },
   };
 }

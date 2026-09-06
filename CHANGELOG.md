@@ -23,6 +23,8 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
 ## Changes in `v0.6.1-beta.9:`
 
+- **Fix:** Extract-window E2E now derives its expected destination from the copied archive that is actually launched, and the E2E handoff waits for incoming-path browsing to become idle before WebdriverIO continues. This closes the Windows path mismatch and removes the Linux nested-ZIP browse race from release proof.
+- **Release:** Stable Cargo notices may recover workspace-root license text only from the crate's exact Cargo VCS revision. Release preflight now requires protected `beta`/`main` branches with strict `quality-gate`, CI reviews the complete npm audit instead of silently omitting dev advisories, and the RustSec ignore list is exact and time-bounded. Basic extraction wiring also has a file-specific coverage floor.
 - **7-Zip:** Bundled sidecar is **26.03**. Probe refuses any other banner. 26.03 closes CVE-2026-58052 (RAR5 STM MotW wipe); Zinnia still forces `-snz` and `-sns-` on Windows extract.
 - **Security:** Windows MotW `Zone.Identifier` copy accepts UTF-8 and UTF-16 LE and skips malformed ads instead of failing the snapshot. macOS copies `com.apple.quarantine` onto the published tree. Member paths reject trailing-dot/space components and extra device names (`COM0`, `LPT0`, `CONIN$`, `CONOUT$`, COM¹-³). Extra args reject `-r`/`-scs`/`-scc` and non-AES `-mem=`. ZIP create emits `-mcu=on`. ZIP add refuses ZipCrypto members. List/test metadata-only exit 1 is classified like extract.
 - **Fix:** Forced Windows UTF-8 console charset is last-wins: strip every `-scc*` and insert `-sccUTF-8` immediately before `--`.

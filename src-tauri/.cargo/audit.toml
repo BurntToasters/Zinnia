@@ -4,6 +4,8 @@
 # Tauri v2 / wry / webkit2gtk. They are not directly controllable from this
 # crate and are resolved upstream as Tauri migrates off the GTK3 stack.
 # Plain `cargo audit` still fails on any new advisory in any other crate.
+# scripts/check-rustsec-ignore-policy.mjs makes this exact reviewed set expire
+# on 2026-12-01 so transitive debt cannot become a permanent silent allowlist.
 ignore = [
     # gtk-rs GTK3 bindings - no longer maintained (Tauri Linux webview stack)
     "RUSTSEC-2024-0411",

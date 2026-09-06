@@ -23,6 +23,7 @@ const criticalCoverageThresholds = {
   // Directory keys (trailing `/`) aggregate all matching `src/<dir>/**/*.ts` files.
   "archive/": { lines: 80, branches: 62, functions: 88 },
   "basic/": { lines: 60, branches: 44, functions: 44 },
+  "basic/extract-events.ts": { lines: 70, branches: 50, functions: 70 },
   "extract-window.ts": { lines: 72, branches: 53, functions: 66 },
   "app-init.ts": { lines: 70, branches: 50, functions: 52 },
   "updater.ts": { lines: 76, branches: 62, functions: 68 },

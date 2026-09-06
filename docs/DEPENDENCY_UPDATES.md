@@ -17,3 +17,24 @@ Review both lockfile diffs before committing. Push the update branch and let Git
 Do not run `npm run workspace:prepare`, `npm run test:all`, Cargo checks, builds, or tests on a workstation immediately after updating locks. Those commands execute dependency code. If local validation is necessary, use a disposable VM with no credentials, mounted home directory, SSH agent, signing keys, cloud metadata access, or persistent package caches.
 
 The three-day delay reduces exposure to newly published supply-chain attacks; it cannot prove that an older package is benign. Emergency young-crate and Git overrides must name one exact version or revision and include a written reason.
+
+## Reviewed development-only advisories
+
+CI audits the production dependency graph separately and also runs
+`npm run audit:dev-reviewed`. The latter does not ignore the development graph:
+it parses the full npm audit report, proves every affected installed node is
+marked dev-only in `package-lock.json`, and permits only the exact GHSA entries
+listed in `scripts/npm-dev-audit.cjs` until that review expires.
+
+This temporary review exists because the current WebdriverIO/Puppeteer test
+chain still pulls advisory-bearing versions for which a compatible patched
+upgrade is not available. Any new advisory, a reviewed advisory becoming
+production-reachable, or the review expiration makes CI fail. Re-evaluate the
+allowlist as soon as upstream releases a compatible dependency chain; do not
+extend the date without checking the current advisories and running the full
+E2E suite.
+
+Cargo audit's reviewed transitive warning set is also fail-closed. The exact
+`src-tauri/.cargo/audit.toml` ignore IDs are checked by
+`npm run check:rustsec-ignore-policy`, and the review date expires so the GTK3
+and other transitive debt must be re-evaluated rather than silently growing.

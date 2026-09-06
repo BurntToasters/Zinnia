@@ -424,9 +424,7 @@ pub(crate) async fn wait_for_startup_recovery() -> Result<(), String> {
     let mut delay_ms = 10u64;
     while !STARTUP_RECOVERY_DONE.load(std::sync::atomic::Ordering::Acquire) {
         if started.elapsed() >= STARTUP_RECOVERY_WAIT {
-            return Err(
-                "Startup recovery is still running. Wait and try again.".to_string(),
-            );
+            return Err("Startup recovery is still running. Wait and try again.".to_string());
         }
         tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
         delay_ms = (delay_ms + 10).min(50);
