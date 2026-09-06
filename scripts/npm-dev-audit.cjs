@@ -16,7 +16,13 @@ const REVIEWED_ADVISORIES = new Map([
 function advisoryId(via) {
   if (!via || typeof via !== "object") return null;
   const text = `${via.url || ""} ${via.title || ""}`;
-  return text.match(/GHSA-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}/i)?.[0]?.toUpperCase() || null;
+  return (
+    text
+      .match(
+        /GHSA-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}/i,
+      )?.[0]
+      ?.toUpperCase() || null
+  );
 }
 
 function collectAdvisories(name, vulnerabilities, seen = new Set()) {
@@ -44,10 +50,13 @@ function evaluateAudit(report, lock, now = new Date()) {
   const vulnerabilities = report?.vulnerabilities || {};
   const errors = [];
   const reviewed = new Map();
-  const reviewExpired = now.getTime() >= Date.parse(`${REVIEW_EXPIRES}T00:00:00Z`);
+  const reviewExpired =
+    now.getTime() >= Date.parse(`${REVIEW_EXPIRES}T00:00:00Z`);
 
   for (const [name, vulnerability] of Object.entries(vulnerabilities)) {
-    const nodes = Array.isArray(vulnerability?.nodes) ? vulnerability.nodes : [];
+    const nodes = Array.isArray(vulnerability?.nodes)
+      ? vulnerability.nodes
+      : [];
     if (nodes.length === 0) {
       errors.push(`${name}: npm audit did not report affected install nodes`);
     }
@@ -68,7 +77,9 @@ function evaluateAudit(report, lock, now = new Date()) {
         continue;
       }
       const expectedPackage = REVIEWED_ADVISORIES.get(item.id);
-      const actualPackage = String(item.advisory?.name || item.packageName || "");
+      const actualPackage = String(
+        item.advisory?.name || item.packageName || "",
+      );
       if (!expectedPackage) {
         errors.push(`${name}: unreviewed advisory ${item.id}`);
         continue;
@@ -120,10 +131,13 @@ function runAudit(root) {
 function main() {
   const root = path.join(__dirname, "..");
   const report = runAudit(root);
-  const lock = JSON.parse(fs.readFileSync(path.join(root, "package-lock.json"), "utf8"));
+  const lock = JSON.parse(
+    fs.readFileSync(path.join(root, "package-lock.json"), "utf8"),
+  );
   const { errors, reviewed } = evaluateAudit(report, lock);
   if (errors.length > 0) {
-    for (const error of errors) console.error(`[npm-dev-audit] FAILED: ${error}`);
+    for (const error of errors)
+      console.error(`[npm-dev-audit] FAILED: ${error}`);
     process.exitCode = 1;
     return;
   }

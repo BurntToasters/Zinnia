@@ -66,9 +66,12 @@ test("configure applies the same fail-closed policy to beta and main", () => {
   };
   configureReleaseBranchProtection({ api, env: {} });
   assert.equal(writes.length, 2);
-  assert.deepEqual(writes.map((entry) => entry[0]), [
-    "/repos/BurntToasters/zinnia/branches/beta/protection",
-    "/repos/BurntToasters/zinnia/branches/main/protection",
-  ]);
+  assert.deepEqual(
+    writes.map((entry) => entry[0]),
+    [
+      "/repos/BurntToasters/zinnia/branches/beta/protection",
+      "/repos/BurntToasters/zinnia/branches/main/protection",
+    ],
+  );
   assert.deepEqual(writes[0][1], desiredProtection());
 });

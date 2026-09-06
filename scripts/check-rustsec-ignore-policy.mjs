@@ -26,7 +26,23 @@ const EXPECTED_IGNORES = new Set([
 ]);
 
 function ignoredAdvisories(text) {
-  return new Set(text.match(/RUSTSEC-\d{4}-\d{4}/g) || []);
+  const section = text.match(
+    /(?:^|\r?\n)\s*\[advisories\]\s*\r?\n([\s\S]*?)(?=\r?\n\s*\[|$)/,
+  )?.[1];
+  const ignoreArray = section?.match(
+    /(?:^|\r?\n)\s*ignore\s*=\s*\[([\s\S]*?)\]/,
+  )?.[1];
+  if (!ignoreArray) return new Set();
+
+  // Only quoted values in the actual ignore array count. IDs in comments or
+  // another TOML table must not satisfy the policy.
+  const uncommented = ignoreArray
+    .split(/\r?\n/)
+    .map((line) => line.replace(/(^|[^\\])#.*/, "$1"))
+    .join("\n");
+  return new Set(
+    [...uncommented.matchAll(/"(RUSTSEC-\d{4}-\d{4})"/g)].map(([, id]) => id),
+  );
 }
 
 function evaluateIgnorePolicy(text, now = new Date()) {
@@ -36,7 +52,8 @@ function evaluateIgnorePolicy(text, now = new Date()) {
     if (!EXPECTED_IGNORES.has(id)) errors.push(`unreviewed ignore ${id}`);
   }
   for (const id of EXPECTED_IGNORES) {
-    if (!actual.has(id)) errors.push(`expected reviewed ignore ${id} is missing`);
+    if (!actual.has(id))
+      errors.push(`expected reviewed ignore ${id} is missing`);
   }
   if (
     actual.size > 0 &&
@@ -72,4 +89,9 @@ function isDirectExecution() {
 
 if (isDirectExecution()) main();
 
-export { EXPECTED_IGNORES, REVIEW_EXPIRES, evaluateIgnorePolicy, ignoredAdvisories };
+export {
+  EXPECTED_IGNORES,
+  REVIEW_EXPIRES,
+  evaluateIgnorePolicy,
+  ignoredAdvisories,
+};

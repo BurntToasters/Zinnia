@@ -23,14 +23,16 @@ function branchProtectionEndpoint(branch, env = process.env) {
 function requiredStatusCheckNames(protection) {
   const checks = protection?.required_status_checks?.checks;
   const contexts = protection?.required_status_checks?.contexts;
-  return new Set([
-    ...(Array.isArray(checks)
-      ? checks.map((check) => String(check?.context || "").trim())
-      : []),
-    ...(Array.isArray(contexts)
-      ? contexts.map((context) => String(context || "").trim())
-      : []),
-  ].filter(Boolean));
+  return new Set(
+    [
+      ...(Array.isArray(checks)
+        ? checks.map((check) => String(check?.context || "").trim())
+        : []),
+      ...(Array.isArray(contexts)
+        ? contexts.map((context) => String(context || "").trim())
+        : []),
+    ].filter(Boolean),
+  );
 }
 
 function assertProtectionResponse(branch, protection) {
@@ -86,15 +88,12 @@ function desiredProtection() {
   };
 }
 
-function configureReleaseBranchProtection(
-  { api = githubApi, env = process.env } = {},
-) {
+function configureReleaseBranchProtection({
+  api = githubApi,
+  env = process.env,
+} = {}) {
   for (const branch of RELEASE_BRANCHES) {
-    api(
-      "PUT",
-      branchProtectionEndpoint(branch, env),
-      desiredProtection(),
-    );
+    api("PUT", branchProtectionEndpoint(branch, env), desiredProtection());
     assertReleaseBranchProtection(branch, { api, env });
     console.log(
       `release-branch-protection: protected ${repositoryTarget(env).owner}/${repositoryTarget(env).repo}:${branch} with required ${REQUIRED_CHECK}`,

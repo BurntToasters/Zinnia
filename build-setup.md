@@ -53,8 +53,10 @@ exact unresolved-package report. Before a stable release, run
 license notice. For crates that omit a workspace-root notice from the published
 package, strict mode may fetch the exact HTTPS repository and immutable commit
 recorded in `.cargo_vcs_info.json`, then recover the nearest upstream license
-text. If that proof is unavailable, the package remains unresolved. Do not
-replace missing notices with generic SPDX templates.
+text. If the exact source revision also contains no license text, a
+package-version-scoped source-omission review records that fact and keeps the
+declared SPDX references visible. Do not replace missing notices with generic
+SPDX templates or moving-branch content.
 
 ## Updating bundled 7-Zip
 

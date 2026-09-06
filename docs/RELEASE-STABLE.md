@@ -81,8 +81,10 @@ npm run release:preflight
 
 The strict Cargo license step may fetch the exact immutable VCS revisions
 recorded by crates.io when a published crate omitted a workspace-root license.
-It accepts only HTTPS repositories and exact recorded commit hashes. Any text
-that still cannot be recovered keeps the gate red.
+It accepts only HTTPS repositories and exact recorded commit hashes. If the
+exact source revision also contains no license text, only an explicit
+package-version-scoped source-omission review may satisfy the gate; generic
+SPDX templates and moving-branch content are never accepted.
 
 Also confirm:
 

@@ -52,11 +52,7 @@ test("a reviewed advisory fails if npm can reach a production node", () => {
     },
   };
   const lock = { packages: { "node_modules/extract-zip": { dev: false } } };
-  const result = evaluateAudit(
-    report,
-    lock,
-    new Date("2026-09-05T00:00:00Z"),
-  );
+  const result = evaluateAudit(report, lock, new Date("2026-09-05T00:00:00Z"));
   assert.match(result.errors.join("\n"), /not proven dev-only/);
 });
 
