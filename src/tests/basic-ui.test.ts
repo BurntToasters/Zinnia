@@ -275,6 +275,7 @@ function mountBasicDom(): void {
   addEl(root, "button", "basic-toggle-password");
   addEl(root, "button", "basic-compress-open-dest");
   addEl(root, "button", "basic-compress-again");
+  addEl(root, "button", "basic-compress-home");
 
   addEl(root, "button", "basic-choose-extract");
   addEl(root, "button", "basic-run-extract");
@@ -283,11 +284,23 @@ function mountBasicDom(): void {
   addEl(root, "button", "basic-toggle-extract-password");
   addEl(root, "button", "basic-extract-open-dest");
   addEl(root, "button", "basic-extract-another");
+  addEl(root, "button", "basic-extract-completion-close");
+  addEl(root, "button", "basic-extract-home");
 
   addEl(root, "button", "basic-browse-extract-all");
   addEl(root, "button", "basic-browse-test");
 
   addSelect(root, "basic-preset", ["balanced", "ultra"]);
+  for (const preset of ["balanced", "ultra"] as const) {
+    const pill = addEl<HTMLButtonElement>(
+      root,
+      "button",
+      `basic-preset-${preset}`,
+    );
+    pill.className = "basic-preset-pill";
+    pill.dataset.basicPreset = preset;
+    pill.setAttribute("aria-pressed", "false");
+  }
   addSelect(root, "basic-format", ["7z", "zip", "tar", "gzip", "bzip2", "xz"]);
   addSelect(root, "basic-split-size", [
     "",
@@ -312,7 +325,12 @@ function mountBasicDom(): void {
   encryptHeaders.type = "checkbox";
   addEl(root, "label", "basic-encrypt-headers-row");
   addEl(root, "input", "basic-extract-path");
-  addEl(root, "input", "basic-extract-password");
+  const basicExtractPassword = addEl<HTMLInputElement>(
+    root,
+    "input",
+    "basic-extract-password",
+  );
+  basicExtractPassword.type = "password";
   const browseArchiveInfo = addEl(root, "div", "basic-browse-archive-info");
   browseArchiveInfo.setAttribute("role", "button");
   browseArchiveInfo.tabIndex = 0;
@@ -1661,6 +1679,136 @@ describe("basic-ui drag and init wiring", () => {
 
     expect(uiMocks.runtime.mode).toBe("extract");
     expect(getBasicView()).toBe("extract");
+  });
+
+  it("wires Basic extraction controls and completion actions", async () => {
+    initBasicWorkspace();
+
+    depMocks.chooseExtractIfCurrent.mockImplementationOnce(
+      async (isCurrent) => {
+        expect(isCurrent()).toBe(true);
+        (document.getElementById("extract-path") as HTMLInputElement).value =
+          "/tmp/chosen-output";
+      },
+    );
+    (
+      document.getElementById("basic-choose-extract") as HTMLButtonElement
+    ).click();
+    await flushAsync();
+    expect(
+      (document.getElementById("basic-extract-path") as HTMLInputElement).value,
+    ).toBe("/tmp/chosen-output");
+
+    (
+      document.getElementById("basic-extract-cancel") as HTMLButtonElement
+    ).click();
+    expect(depMocks.cancelAction).toHaveBeenCalledOnce();
+
+    state.inputs = ["/tmp/archive.7z"];
+    (
+      document.getElementById("basic-browse-contents") as HTMLButtonElement
+    ).click();
+    await flushAsync();
+    expect(uiMocks.runtime.mode).toBe("browse");
+    expect(getBasicView()).toBe("browse");
+    expect(depMocks.browseArchive).toHaveBeenCalledTimes(1);
+
+    const browsePassword = document.getElementById(
+      "basic-browse-password",
+    ) as HTMLInputElement;
+    browsePassword.value = "browse-secret";
+    browsePassword.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(
+      (document.getElementById("browse-password") as HTMLInputElement).value,
+    ).toBe("browse-secret");
+    browsePassword.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+    );
+    await flushAsync();
+    expect(depMocks.browseArchive).toHaveBeenCalledTimes(2);
+
+    const browseToggle = document.getElementById(
+      "basic-toggle-browse-password",
+    ) as HTMLButtonElement;
+    browseToggle.click();
+    expect(browsePassword.type).toBe("text");
+    expect(browseToggle.getAttribute("aria-label")).toBe("Hide password");
+
+    const extractPassword = document.getElementById(
+      "basic-extract-password",
+    ) as HTMLInputElement;
+    const extractToggle = document.getElementById(
+      "basic-toggle-extract-password",
+    ) as HTMLButtonElement;
+    extractToggle.click();
+    expect(extractPassword.type).toBe("text");
+    expect(extractToggle.textContent).toBe("Hide");
+
+    (document.getElementById("basic-extract-path") as HTMLInputElement).value =
+      "/tmp/destination";
+    (
+      document.getElementById("basic-extract-open-dest") as HTMLButtonElement
+    ).click();
+    await flushAsync();
+    expect(invokeMock).toHaveBeenCalledWith("open_path", {
+      path: "/tmp/destination",
+    });
+
+    const ultraPill = document.getElementById(
+      "basic-preset-ultra",
+    ) as HTMLButtonElement;
+    ultraPill.click();
+    expect(ultraPill.classList.contains("is-active")).toBe(true);
+    expect(ultraPill.getAttribute("aria-pressed")).toBe("true");
+    expect(
+      (document.getElementById("basic-preset") as HTMLSelectElement).value,
+    ).toBe("ultra");
+    expect(depMocks.applyPreset).toHaveBeenCalledWith("ultra");
+
+    state.inputs = ["/tmp/input.txt"];
+    state.lastAutoOutputPath = "/tmp/output.7z";
+    (
+      document.getElementById("basic-compress-home") as HTMLButtonElement
+    ).click();
+    expect(state.inputs).toEqual([]);
+    expect(state.lastAutoOutputPath).toBeNull();
+    expect(getBasicView()).toBe("home");
+
+    const extractCompletion = document.getElementById(
+      "basic-extract-completion",
+    ) as HTMLElement;
+    const extractAgain = document.getElementById(
+      "basic-extract-another",
+    ) as HTMLButtonElement;
+    extractCompletion.classList.add("is-active");
+    extractAgain.textContent = "Close";
+    extractAgain.click();
+    expect(extractCompletion.classList.contains("is-active")).toBe(false);
+
+    state.inputs = ["/tmp/archive.7z"];
+    state.lastAutoExtractDestination = "/tmp/extracted";
+    extractCompletion.classList.add("is-active");
+    extractAgain.textContent = "Extract another";
+    extractAgain.click();
+    expect(state.inputs).toEqual([]);
+    expect(state.lastAutoExtractDestination).toBeNull();
+    expect(getBasicView()).toBe("home");
+
+    extractCompletion.classList.add("is-active");
+    (
+      document.getElementById(
+        "basic-extract-completion-close",
+      ) as HTMLButtonElement
+    ).click();
+    expect(extractCompletion.classList.contains("is-active")).toBe(false);
+
+    state.inputs = ["/tmp/archive.7z"];
+    state.lastAutoExtractDestination = "/tmp/extracted";
+    (
+      document.getElementById("basic-extract-home") as HTMLButtonElement
+    ).click();
+    expect(state.inputs).toEqual([]);
+    expect(state.lastAutoExtractDestination).toBeNull();
   });
 
   it("includes RAR files in Windows Basic archive pickers", async () => {

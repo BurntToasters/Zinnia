@@ -67,6 +67,12 @@ jobs:
             xvfb
       - run: npm ci --ignore-scripts
       - run: npm audit signatures
+      - name: npm audit - production
+        run: npm audit --omit=dev --audit-level=high
+      - name: npm audit - reviewed dev toolchain
+        run: npm run audit:dev-reviewed
+      - name: RustSec ignore review policy
+        run: npm run check:rustsec-ignore-policy
       - name: Quality gate
         env:
           WEBKIT_DISABLE_COMPOSITING_MODE: "1"
@@ -231,10 +237,14 @@ jobs:
             patchelf
       - run: npm ci --ignore-scripts
       - run: npm audit signatures
-      - name: npm audit
-        # Production graph only. E2E/WDIO advisories are ignored: those
-        # packages cannot be force-bumped under min-release-age=3.
+      - name: npm audit - production
         run: npm audit --omit=dev --audit-level=high
+      - name: npm audit - reviewed dev toolchain
+        # Fail on any new advisory, production reachability, or an expired
+        # exception while upstream WDIO/Puppeteer fixes are unavailable.
+        run: npm run audit:dev-reviewed
+      - name: RustSec ignore review policy
+        run: npm run check:rustsec-ignore-policy
       - name: Install cargo-audit
         run: cargo install cargo-audit --version ${{ env.CARGO_AUDIT_VERSION }} --locked
       - name: cargo audit

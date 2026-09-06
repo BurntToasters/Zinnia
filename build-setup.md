@@ -50,7 +50,11 @@ npm run rust:update
 `npm run licenses:cargo` writes both the packaged Cargo license data and an
 exact unresolved-package report. Before a stable release, run
 `npm run licenses:cargo:strict`; it fails until every dependency has a verified
-license notice. Do not replace missing notices with generic SPDX templates.
+license notice. For crates that omit a workspace-root notice from the published
+package, strict mode may fetch the exact HTTPS repository and immutable commit
+recorded in `.cargo_vcs_info.json`, then recover the nearest upstream license
+text. If that proof is unavailable, the package remains unresolved. Do not
+replace missing notices with generic SPDX templates.
 
 ## Updating bundled 7-Zip
 
@@ -93,10 +97,12 @@ notarization, updater behavior, or desktop-environment MIME integration.
 ## Release artifact freshness
 
 The normal `npm run release:win`, `release:mac`, and `release:linux` entry points
-run `release:prepare` themselves. Preparation installs locked dependencies,
-runs the complete quality gate once, removes old bundles, and creates a
-commit- and environment-bound build session. Release builds reuse the generated
-versions, licenses, and sidecars instead of preparing them again.
+prepare locked dependencies, run the release-VM gate with GUI E2E skipped,
+remove old bundles, and create a commit- and environment-bound build session.
+The exact release commit must already have passed the complete `test:all` gate
+with E2E enabled in protected CI or in a clean proving checkout. Release builds
+reuse the generated versions, licenses, and sidecars instead of preparing them
+again.
 
 If `npm run release:prepare` was run separately and completed successfully, use
 the matching `release:win:resume`, `release:mac:resume`, or

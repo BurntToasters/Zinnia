@@ -3,13 +3,17 @@
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, join, relative, resolve, sep } from "node:path";
+import { tmpdir } from "node:os";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = dirname(scriptDir);
@@ -21,6 +25,7 @@ const unresolvedOutputPath = join(
   "licenses-cargo-unresolved.json",
 );
 const requireComplete = process.argv.includes("--require-complete");
+const sourceCheckouts = new Map();
 
 function runCargoMetadata() {
   const args = [
@@ -77,40 +82,161 @@ function computeReachablePackageIds(metadata) {
   return { reachable, workspaceMembers };
 }
 
-function readLicenseTexts(pkg) {
-  const packageDir = dirname(pkg.manifest_path);
+function hasLicenseTerms(text) {
+  return /permission is hereby granted|licensed under|gnu (?:lesser )?general public license|mozilla public license|redistribution and use/i.test(
+    text,
+  );
+}
+
+function isWithin(root, candidate) {
+  const rel = relative(root, candidate);
+  return rel === "" || (!rel.startsWith("..") && !rel.includes(`..${sep}`));
+}
+
+function readLicenseTextsFromDirectory(packageDir, licenseFile = null) {
   const names = new Set(
     readdirSync(packageDir).filter((name) =>
       /^(license|copying|notice|authors|copyright)(?:[._-].*)?$/i.test(name),
     ),
   );
-  if (typeof pkg.license_file === "string" && pkg.license_file.trim()) {
-    const filePath = resolve(packageDir, pkg.license_file);
-    const rel = relative(packageDir, filePath);
-    if (
-      !rel.startsWith("..") &&
-      !rel.includes("../") &&
-      !rel.includes("..\\") &&
-      existsSync(filePath)
-    ) {
-      names.add(rel);
+  if (typeof licenseFile === "string" && licenseFile.trim()) {
+    const filePath = resolve(packageDir, licenseFile);
+    if (isWithin(packageDir, filePath) && existsSync(filePath)) {
+      names.add(relative(packageDir, filePath));
     }
   }
+
   const sections = [];
   for (const name of [...names].sort()) {
-    const text = readFileSync(join(packageDir, name), "utf8").trim();
-    // AUTHORS/COPYRIGHT files are useful only when they also carry the
-    // package's license terms. Do not surface an unrelated contributor list.
+    const filePath = resolve(packageDir, name);
+    if (!isWithin(packageDir, filePath) || !existsSync(filePath)) continue;
+    const stat = lstatSync(filePath);
+    if (!stat.isFile() || stat.isSymbolicLink()) continue;
+    const text = readFileSync(filePath, "utf8").trim();
     const attributionOnly = /^(authors|copyright)(?:[._-].*)?$/i.test(name);
-    const hasLicenseTerms =
-      /permission is hereby granted|licensed under|gnu (?:lesser )?general public license|mozilla public license|redistribution and use/i.test(
-        text,
-      );
-    if (text && (!attributionOnly || hasLicenseTerms)) {
+    if (text && (!attributionOnly || hasLicenseTerms(text))) {
       sections.push(`--- ${name} ---\n${text}`);
     }
   }
   return sections.length > 0 ? sections.join("\n\n") : null;
+}
+
+function readLicenseTexts(pkg) {
+  return readLicenseTextsFromDirectory(
+    dirname(pkg.manifest_path),
+    pkg.license_file,
+  );
+}
+
+function normalizedRepositoryUrl(repository) {
+  if (typeof repository !== "string" || !repository.trim()) return null;
+  const raw = repository.trim().replace(/^git\+/, "");
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    !url.hostname
+  ) {
+    return null;
+  }
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
+function runGit(args, cwd) {
+  const result = spawnSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    maxBuffer: 8 * 1024 * 1024,
+  });
+  if (result.error) {
+    throw new Error(`git ${args[0]} failed: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    throw new Error(
+      `git ${args[0]} failed with exit code ${result.status}: ${(result.stderr || result.stdout).trim()}`,
+    );
+  }
+}
+
+function checkoutSourceRevision(repository, revision) {
+  const key = `${repository}@${revision}`;
+  const cached = sourceCheckouts.get(key);
+  if (cached) return cached;
+
+  const checkoutDir = mkdtempSync(join(tmpdir(), "zinnia-cargo-license-"));
+  try {
+    runGit(["init", "--quiet"], checkoutDir);
+    runGit(["remote", "add", "origin", repository], checkoutDir);
+    runGit(["fetch", "--quiet", "--depth=1", "origin", revision], checkoutDir);
+    runGit(["checkout", "--quiet", "--detach", "FETCH_HEAD"], checkoutDir);
+  } catch (error) {
+    rmSync(checkoutDir, { recursive: true, force: true });
+    throw error;
+  }
+  sourceCheckouts.set(key, checkoutDir);
+  return checkoutDir;
+}
+
+function findSourceLicenseInCheckout(pkg, vcs, checkoutRoot, repository) {
+  const sourcePath = vcs.pathInRepository || ".";
+  const packageDir = resolve(checkoutRoot, sourcePath);
+  if (!isWithin(checkoutRoot, packageDir) || !existsSync(packageDir)) {
+    return null;
+  }
+  const packageStat = lstatSync(packageDir);
+  if (!packageStat.isDirectory() || packageStat.isSymbolicLink()) return null;
+
+  let current = packageDir;
+  for (;;) {
+    const text = readLicenseTextsFromDirectory(
+      current,
+      current === packageDir ? pkg.license_file : null,
+    );
+    if (text) {
+      return {
+        text,
+        repository,
+        revision: vcs.revision,
+        directory: relative(checkoutRoot, current) || ".",
+      };
+    }
+    if (current === checkoutRoot) break;
+    const parent = dirname(current);
+    if (!isWithin(checkoutRoot, parent) || parent === current) break;
+    current = parent;
+  }
+  return null;
+}
+
+function readSourceRevisionLicenseTexts(pkg, vcs) {
+  const repository = normalizedRepositoryUrl(pkg.repository);
+  if (!repository || !vcs) return null;
+
+  try {
+    const checkoutRoot = checkoutSourceRevision(repository, vcs.revision);
+    return findSourceLicenseInCheckout(pkg, vcs, checkoutRoot, repository);
+  } catch (error) {
+    console.warn(
+      `[licenses:cargo] Could not recover immutable source license for ${pkg.name}@${pkg.version}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  return null;
+}
+
+function cleanupSourceCheckouts() {
+  for (const checkoutDir of sourceCheckouts.values()) {
+    rmSync(checkoutDir, { recursive: true, force: true });
+  }
+  sourceCheckouts.clear();
 }
 
 function spdxReferences(licenses) {
@@ -158,6 +284,12 @@ function toLicenseEntry(pkg) {
   }
 
   const bundledText = readLicenseTexts(pkg);
+  const vcs = bundledText ? null : readPackagedVcsInfo(pkg);
+  const sourceText =
+    requireComplete && !bundledText && vcs
+      ? readSourceRevisionLicenseTexts(pkg, vcs)
+      : null;
+  const licenseText = bundledText || sourceText?.text || null;
   const entry = {
     licenses,
     repository:
@@ -165,13 +297,16 @@ function toLicenseEntry(pkg) {
         ? pkg.repository.trim()
         : null,
     packageManager: "cargo",
-    // Never borrow a license blob from another crate: copyright notices and
-    // SPDX AND/OR expressions are package-specific. If a published crate does
-    // not include its own text, preserve that fact and link to the declared
-    // SPDX identifiers instead of fabricating attribution.
-    licenseText: bundledText,
-    licenseTextStatus: bundledText ? "bundled" : "not-packaged",
-    licenseReferences: bundledText ? [] : spdxReferences(licenses),
+    // Stable builds may recover a workspace-root license only from the exact
+    // immutable revision recorded by crates.io. Generic SPDX links remain
+    // informational and never satisfy the fail-closed notice gate.
+    licenseText,
+    licenseTextStatus: bundledText
+      ? "bundled"
+      : sourceText
+        ? "source-revision"
+        : "not-packaged",
+    licenseReferences: licenseText ? [] : spdxReferences(licenses),
   };
 
   if (Array.isArray(pkg.authors) && pkg.authors.length > 0) {
@@ -186,13 +321,16 @@ function toLicenseEntry(pkg) {
   if (typeof pkg.source === "string" && pkg.source.trim()) {
     entry.source = pkg.source.trim();
   }
-  const vcs = bundledText ? null : readPackagedVcsInfo(pkg);
   if (vcs) {
-    // crates.io records the exact source commit even when a workspace-root
-    // LICENSE was omitted from the package. Keep it in the unresolved report
-    // so a future override can be reviewed against immutable upstream text.
     entry.sourceRevision = vcs.revision;
     entry.sourcePath = vcs.pathInRepository;
+  }
+  if (sourceText) {
+    entry.licenseTextSource = {
+      repository: sourceText.repository,
+      revision: sourceText.revision,
+      directory: sourceText.directory,
+    };
   }
 
   return entry;
@@ -244,7 +382,7 @@ function main() {
   );
   if (missingText > 0) {
     const message =
-      `${missingText} package license text(s) are unavailable in their crates.io packages. ` +
+      `${missingText} package license text(s) could not be recovered from their crates.io packages or immutable upstream source revisions. ` +
       `Exact unresolved report: ${unresolvedOutputPath}. Generic SPDX references are informational, not a substitute for required binary notices.`;
     if (requireComplete) {
       console.error(`[licenses:cargo] FAILED: ${message}`);
@@ -258,4 +396,21 @@ function main() {
   }
 }
 
-main();
+function isDirectExecution() {
+  if (!process.argv[1]) return false;
+  return pathToFileURL(resolve(process.argv[1])).href === import.meta.url;
+}
+
+if (isDirectExecution()) {
+  try {
+    main();
+  } finally {
+    cleanupSourceCheckouts();
+  }
+}
+
+export {
+  findSourceLicenseInCheckout,
+  normalizedRepositoryUrl,
+  readLicenseTextsFromDirectory,
+};

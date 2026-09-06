@@ -142,7 +142,7 @@ function buildE2eBinary() {
   fs.writeFileSync(e2eStampPath(), "e2e-feature-8\n");
 }
 
-function runWdio(profile, spec, appArgs) {
+function runWdio(profile, spec, appArgs, envOverrides = {}) {
   const env = {
     ...process.env,
     ...profile.env,
@@ -163,6 +163,7 @@ function runWdio(profile, spec, appArgs) {
     ZINNIA_E2E_COMPRESS_OUT: profile.copies.compressOut,
     ZINNIA_E2E_PAYLOAD: profile.manifest.payloadText,
     ZINNIA_E2E_PASSWORD: profile.manifest.password,
+    ...envOverrides,
   };
   if (spec.includes("extract-window")) {
     env.ZINNIA_E2E_WINDOW_LABEL = "extract-0";
@@ -204,10 +205,12 @@ function main() {
     fs.mkdirSync(extractWindowDir, { recursive: true });
     const extractWindowArchive = path.join(extractWindowDir, "hello.7z");
     fs.copyFileSync(profile.copies["hello.7z"], extractWindowArchive);
-    runWdio(profile, "./specs/extract-window.spec.js", [
-      "--extract",
-      extractWindowArchive,
-    ]);
+    runWdio(
+      profile,
+      "./specs/extract-window.spec.js",
+      ["--extract", extractWindowArchive],
+      { ZINNIA_E2E_HELLO_7Z: extractWindowArchive },
+    );
   } finally {
     cleanupE2eProfile(profile.profileDir);
   }

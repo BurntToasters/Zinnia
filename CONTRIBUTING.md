@@ -56,13 +56,18 @@ every push (all branches) and on PRs to `main` and `beta`, plus Rust checks on
 Windows/macOS and a security audit (`npm audit`, `cargo audit`,
 `cargo clippy -D warnings`).
 
-CI runs do not block merges by default. To make the quality gate a hard
-requirement, a maintainer must enable branch protection on each protected
-branch:
+Release branches must require the `quality-gate` check. A repository admin can
+apply the project policy to both `main` and `beta` with:
 
-> Settings → Branches → Add rule → Branch name `main` or `beta` →
-> **Require status checks to pass before merging** → select `quality-gate`
-> (and `rust-check`, `security-audit` as desired).
+```sh
+npm run repo:protect-release-branches
+```
+
+The command requires strict status checks, applies enforcement to admins, and
+disables force pushes and branch deletion. Release preflight verifies the
+active release branch and fails closed if this protection is missing or
+weakened. Additional checks such as `rust-check` and `security-audit` may also
+be required in repository settings.
 
 ## Cutting a stable release
 
