@@ -267,17 +267,18 @@
   ; /UPDATE; never Abort there or a leftover AppX identity blocks the upgrade.
   StrCpy $R4 $CMDLINE
   StrCpy $R3 0
+  StrCpy $R1 "0"
   zinnia_preuninstall_scan_update:
   StrCpy $R2 $R4 7 $R3
-  StrCmp $R2 "" zinnia_preuninstall_real
+  StrCmp $R2 "" zinnia_preuninstall_unregister
   StrCmp $R2 "/UPDATE" zinnia_preuninstall_update
   IntOp $R3 $R3 + 1
   Goto zinnia_preuninstall_scan_update
   zinnia_preuninstall_update:
+  StrCpy $R1 "1"
+  zinnia_preuninstall_unregister:
   !insertmacro ZINNIA_UNREGISTER_WIN11_CONTEXT_MENU
-  Goto zinnia_preuninstall_done
-  zinnia_preuninstall_real:
-  !insertmacro ZINNIA_UNREGISTER_WIN11_CONTEXT_MENU
+  StrCmp $R1 "1" zinnia_preuninstall_done
   IntCmp $R5 1 zinnia_preuninstall_abort 0 0
   Goto zinnia_preuninstall_done
   zinnia_preuninstall_abort:
