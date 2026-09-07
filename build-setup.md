@@ -48,15 +48,15 @@ npm run rust:update
 ## License notice audit
 
 `npm run licenses:cargo` writes both the packaged Cargo license data and an
-exact unresolved-package report. Before a stable release, run
-`npm run licenses:cargo:strict`; it fails until every dependency has a verified
-license notice. For crates that omit a workspace-root notice from the published
-package, strict mode may fetch the exact HTTPS repository and immutable commit
-recorded in `.cargo_vcs_info.json`, then recover the nearest upstream license
-text. If the exact source revision also contains no license text, a
-package-version-scoped source-omission review records that fact and keeps the
-declared SPDX references visible. Do not replace missing notices with generic
-SPDX templates or moving-branch content.
+exact unresolved-package report. Every prerelease and stable release runs
+`npm run release:licenses`, which uses `licenses:cargo:strict` and fails until
+every dependency has a verified license notice. For crates that omit a
+workspace-root notice from the published package, strict mode may fetch the
+exact HTTPS repository and immutable commit recorded in `.cargo_vcs_info.json`,
+then recover the nearest upstream license text. If the exact source revision
+also contains no license text, a package-version-scoped source-omission review
+records that fact and keeps the declared SPDX references visible. Do not
+replace missing notices with generic SPDX templates or moving-branch content.
 
 ## Updating bundled 7-Zip
 

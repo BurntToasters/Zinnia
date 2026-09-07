@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -52,6 +58,55 @@ test("strict Cargo license recovery distinguishes a verified omission from a mis
         root,
         "https://example.com/repository.git",
       ),
+      null,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("strict Cargo license recovery rejects an intermediate link outside the checkout", () => {
+  const root = mkdtempSync(join(tmpdir(), "zinnia-license-link-test-"));
+  const checkout = join(root, "checkout");
+  const outside = join(root, "outside");
+  try {
+    mkdirSync(checkout);
+    mkdirSync(join(outside, "pkg"), { recursive: true });
+    writeFileSync(join(outside, "LICENSE"), "outside checkout license\n");
+    symlinkSync(
+      outside,
+      join(checkout, "linked"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    assert.equal(
+      findSourceLicenseInCheckout(
+        { license_file: null },
+        { revision: "a".repeat(40), pathInRepository: "linked/pkg" },
+        checkout,
+        "https://example.com/repository.git",
+      ),
+      null,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("declared license files cannot escape through an intermediate link", () => {
+  const root = mkdtempSync(join(tmpdir(), "zinnia-license-file-link-test-"));
+  const packageDir = join(root, "package");
+  const outside = join(root, "outside");
+  try {
+    mkdirSync(packageDir);
+    mkdirSync(outside);
+    writeFileSync(join(outside, "LICENSE"), "outside package license\n");
+    symlinkSync(
+      outside,
+      join(packageDir, "linked"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    assert.equal(
+      readLicenseTextsFromDirectory(packageDir, "linked/LICENSE"),
       null,
     );
   } finally {
