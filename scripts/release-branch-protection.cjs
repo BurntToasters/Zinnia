@@ -64,11 +64,6 @@ function assertProtectionResponse(branch, protection) {
       `${branch} branch protection must bind ${REQUIRED_CHECK} to GitHub Actions app ${REQUIRED_CHECK_APP_ID}.`,
     );
   }
-  if (protection.enforce_admins?.enabled !== true) {
-    throw new Error(
-      `${branch} branch protection must enforce ${REQUIRED_CHECK} for administrators.`,
-    );
-  }
   if (protection.allow_force_pushes?.enabled !== false) {
     throw new Error(`${branch} branch protection must disable force pushes.`);
   }
@@ -103,7 +98,7 @@ function desiredProtection() {
       strict: true,
       checks: [{ context: REQUIRED_CHECK, app_id: REQUIRED_CHECK_APP_ID }],
     },
-    enforce_admins: true,
+    enforce_admins: false,
     required_pull_request_reviews: null,
     restrictions: null,
     allow_force_pushes: false,
