@@ -193,6 +193,12 @@ describe("Windows 11 context-menu manifest", () => {
       hooks.indexOf("!macro NSIS_HOOK_POSTUNINSTALL"),
     );
     expect(preUninstall).toContain("ZINNIA_UNREGISTER_WIN11_CONTEXT_MENU");
+    expect(
+      preUninstall.match(/!insertmacro ZINNIA_UNREGISTER_WIN11_CONTEXT_MENU/g),
+    ).toHaveLength(1);
+    expect(preUninstall).toContain('StrCpy $R1 "0"');
+    expect(preUninstall).toContain('StrCpy $R1 "1"');
+    expect(preUninstall).toContain('StrCmp $R1 "1" zinnia_preuninstall_done');
     expect(preUninstall).toMatch(/^\s*Abort\s*$/m);
     expect(preUninstall).toContain("IntCmp $R5 1 zinnia_preuninstall_abort");
     expect(hooks).toContain(
