@@ -16,7 +16,7 @@ function protectedResponse(overrides = {}) {
       strict: true,
       checks: [{ context: "ci-gate", app_id: REQUIRED_CHECK_APP_ID }],
     },
-    enforce_admins: { enabled: true },
+    enforce_admins: { enabled: false },
     allow_force_pushes: { enabled: false },
     allow_deletions: { enabled: false },
     ...overrides,
@@ -49,7 +49,6 @@ test("release branch protection requires a strict source-bound ci-gate", () => {
 
 test("release branch protection rejects weakened safety controls", () => {
   const responses = [
-    protectedResponse({ enforce_admins: { enabled: false } }),
     protectedResponse({ allow_force_pushes: { enabled: true } }),
     protectedResponse({ allow_deletions: { enabled: true } }),
     protectedResponse({
@@ -67,6 +66,16 @@ test("release branch protection rejects weakened safety controls", () => {
       }),
     );
   }
+});
+
+test("release branch protection permits the intentional administrator bypass", () => {
+  assert.doesNotThrow(() =>
+    assertReleaseBranchProtection("beta", {
+      api: () => protectedResponse({ enforce_admins: { enabled: false } }),
+      env: {},
+    }),
+  );
+  assert.equal(desiredProtection().enforce_admins, false);
 });
 
 test("unprotected release branches fail closed", () => {
