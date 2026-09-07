@@ -959,13 +959,13 @@ body.platform-macos .btn--shortcut::after {
 .toast--success {
   border-color: var(--success-border);
   color: var(--success);
-  background: var(--success-bg);
+  background-image: linear-gradient(var(--success-bg), var(--success-bg));
 }
 
 .toast--error {
   border-color: var(--danger-border);
   color: var(--danger-fg);
-  background: var(--danger-bg);
+  background-image: linear-gradient(var(--danger-bg), var(--danger-bg));
 }
 
 @keyframes toast-in {

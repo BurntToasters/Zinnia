@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { showToast } from "../toast";
 
@@ -67,5 +69,22 @@ describe("showToast", () => {
     const text = document.querySelector(".toast")?.textContent ?? "";
     expect(text).toContain("[truncated");
     expect(text.length).toBeLessThan(4_100);
+  });
+
+  it("keeps success and error tints over the opaque toast surface", () => {
+    const css = fs.readFileSync(
+      path.resolve(process.cwd(), "src/styles/main-mid.css"),
+      "utf8",
+    );
+    expect(css.match(/\.toast\s*{([\s\S]*?)}/)?.[1]).toContain(
+      "background: var(--surface)",
+    );
+    for (const kind of ["success", "error"]) {
+      const rule = css.match(
+        new RegExp(`\\.toast--${kind}\\s*{([\\s\\S]*?)}`),
+      )?.[1];
+      expect(rule).toContain("background-image: linear-gradient(");
+      expect(rule).not.toMatch(/(^|\n)\s*background:/);
+    }
   });
 });

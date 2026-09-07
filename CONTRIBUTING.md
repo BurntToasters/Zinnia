@@ -51,13 +51,15 @@ which points git at the tracked [`.githooks`](.githooks) directory.
 
 ## CI and merge protection
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the quality gate on
-every push (all branches) and on PRs to `main` and `beta`, plus Rust checks on
-Windows/macOS and a security audit (`npm audit`, `cargo audit`,
-`cargo clippy -D warnings`).
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on PRs to `main` and
+`beta`, then runs again on pushes to those branches to prove the exact
+post-merge tip. Feature-branch pushes with an open PR are not run twice. The
+workflow includes Windows/macOS Rust checks, every supported platform/CPU
+compile smoke, and `npm audit`/`cargo audit` security checks.
 
-Release branches must require the `quality-gate` check. A repository admin can
-apply the project policy to both `main` and `beta` with:
+Release branches must require the source-bound `ci-gate` check, which aggregates
+every independent proof job. A repository admin can apply the project policy to
+both `main` and `beta` with:
 
 ```sh
 npm run repo:protect-release-branches

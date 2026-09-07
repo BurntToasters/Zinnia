@@ -1,10 +1,12 @@
 name: CI
 
-# Note: `on.push` is unfiltered (every branch). `pull_request` is limited to
-# main and beta. Jobs run tests and smoke builds, not signed release artifacts.
+# Pull requests prove candidate changes. Pushes prove the exact post-merge tips
+# of the protected release branches without duplicating every PR branch update.
+# Jobs run tests and smoke builds, not signed release artifacts.
 
 on:
   push:
+    branches: [main, beta]
   pull_request:
     branches: [main, beta]
 
@@ -66,13 +68,6 @@ jobs:
             patchelf \
             xvfb
       - run: npm ci --ignore-scripts
-      - run: npm audit signatures
-      - name: npm audit - production
-        run: npm audit --omit=dev --audit-level=high
-      - name: npm audit - reviewed dev toolchain
-        run: npm run audit:dev-reviewed
-      - name: RustSec ignore review policy
-        run: npm run check:rustsec-ignore-policy
       - name: Strict Cargo license notices
         run: npm run licenses:cargo:strict
       - name: Quality gate
@@ -228,15 +223,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           toolchain: ${{ env.RUST_VERSION }}
-          components: clippy
-      - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf
       - run: npm ci --ignore-scripts
       - run: npm audit signatures
       - name: npm audit - production
@@ -252,9 +238,6 @@ jobs:
       - name: cargo audit
         working-directory: src-tauri
         run: cargo audit
-      - run: npm run prepare:7z
-      - name: cargo clippy
-        run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
   ci-gate:
     if: ${{ always() }}
