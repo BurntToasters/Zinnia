@@ -1,29 +1,29 @@
 {
   "schemaVersion": 1,
   "product": "7-Zip",
-  "version": "26.02",
-  "recordedOn": "2026-08-05",
+  "version": "26.03",
+  "recordedOn": "2026-09-05",
   "officialDownloadPage": "https://www.7-zip.org/download.html",
   "sourceArchives": {
     "linux-arm64": {
-      "url": "https://www.7-zip.org/a/7z2602-linux-arm64.tar.xz",
-      "sha256": "70ea6cc737ae1495ea2d7eb20ef3120fe579bd3f1a83a9d2362b62ec5bde2bba"
+      "url": "https://www.7-zip.org/a/7z2603-linux-arm64.tar.xz",
+      "sha256": "2389ba20e4d8295e8709c20b6263b69bd1ec4972fe38a04ad7a1badbf595b996"
     },
     "linux-x64": {
-      "url": "https://www.7-zip.org/a/7z2602-linux-x64.tar.xz",
-      "sha256": "41aaba7b1235304ab5aa0624530c67ae829496cd29e875925271efdccc28c03e"
+      "url": "https://www.7-zip.org/a/7z2603-linux-x64.tar.xz",
+      "sha256": "dc99eff5008f1ab79bd7084c68513701547a808a89502bf4133683535ab3c695"
     },
     "mac": {
-      "url": "https://www.7-zip.org/a/7z2602-mac.tar.xz",
-      "sha256": "1cf6760579502f87e591ff5c73a005ec50b3e4d6f507e8b038382d563c3175b9"
+      "url": "https://www.7-zip.org/a/7z2603-mac.tar.xz",
+      "sha256": "5ca87677072c59f5602e5c49baa27d4694bacd2259b4e507f0094249d4281480"
     },
     "windows-arm64-installer": {
-      "url": "https://github.com/ip7z/7zip/releases/download/26.02/7z2602-arm64.exe",
-      "sha256": "7c6fde79ed5e11b81c7bb6573b7962d3b6322aa5fce69c33ed19f672b55173ab"
+      "url": "https://github.com/ip7z/7zip/releases/download/26.03/7z2603-arm64.exe",
+      "sha256": "e22ce71c11dcf503c448fe51e56f41830eb4e1344fa5c7731ae63bce533a8e8e"
     },
     "windows-x64-installer": {
-      "url": "https://github.com/ip7z/7zip/releases/download/26.02/7z2602-x64.exe",
-      "sha256": "6745fa76dc2ea031596d8678f6f6b99c3c1b435b4164a63485adbbc7b8d82ef0"
+      "url": "https://github.com/ip7z/7zip/releases/download/26.03/7z2603-x64.exe",
+      "sha256": "0859c524b8a63551848f0c246abddcb1d0b7b656b0fbfe879f8d85e61a9e6edd"
     }
   },
   "licenseNotices": {

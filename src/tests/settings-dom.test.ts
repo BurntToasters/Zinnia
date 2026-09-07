@@ -43,6 +43,14 @@ beforeEach(() => {
   state.running = false;
   state.operationPreparing = false;
   state.incomingPathsApplying = false;
+  setSelectValue("format", SETTING_DEFAULTS.format);
+  setSelectValue("level", SETTING_DEFAULTS.level);
+  setSelectValue("method", SETTING_DEFAULTS.method);
+  setSelectValue("dict", SETTING_DEFAULTS.dict);
+  setSelectValue("word-size", SETTING_DEFAULTS.wordSize);
+  setSelectValue("solid", SETTING_DEFAULTS.solid);
+  setInputValue("threads", String(SETTING_DEFAULTS.threads));
+  setChecked("encrypt-headers", SETTING_DEFAULTS.encryptHeaders);
 });
 
 describe("applyTheme", () => {
@@ -141,6 +149,13 @@ describe("populateSettingsModal", () => {
       logVerbosity: "debug",
     };
     state.logDirectory = "/var/log/zinnia";
+    setSelectValue("format", "zip");
+    setSelectValue("level", "7");
+    setSelectValue("method", "deflate");
+    setSelectValue("dict", "32m");
+    setSelectValue("word-size", "32");
+    setSelectValue("solid", "4g");
+    setInputValue("threads", "8");
 
     populateSettingsModal();
 
@@ -275,6 +290,14 @@ describe("readSettingsModal", () => {
       logVerbosity: "info" as const,
     };
     state.currentSettings = { ...original };
+    setSelectValue("format", original.format);
+    setSelectValue("level", original.level);
+    setSelectValue("method", original.method);
+    setSelectValue("dict", original.dict);
+    setSelectValue("word-size", original.wordSize);
+    setSelectValue("solid", original.solid);
+    setInputValue("threads", String(original.threads));
+    setChecked("encrypt-headers", original.encryptHeaders);
     populateSettingsModal();
     const result = readSettingsModal();
 

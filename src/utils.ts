@@ -43,7 +43,13 @@ const isolationState = new Map<
 
 /** Window chrome that stays clickable above modal sheets (gear, Support, close). */
 function keepInteractiveDuringModal(element: HTMLElement): boolean {
-  return element.id === "titlebar" || element.classList.contains("header");
+  return (
+    element.id === "titlebar" ||
+    element.classList.contains("header") ||
+    element.id === "extract-app" ||
+    element.id === "toast-region" ||
+    element.id === "startup-recovery-banner"
+  );
 }
 
 function isolateModalBackground(container: HTMLElement): void {

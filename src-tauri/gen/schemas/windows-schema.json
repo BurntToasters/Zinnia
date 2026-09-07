@@ -519,6 +519,12 @@
           "markdownDescription": "Enables the get_startup_recovery_status command without any pre-configured scope."
         },
         {
+          "description": "Enables the inspect_extract_destination command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-inspect-extract-destination",
+          "markdownDescription": "Enables the inspect_extract_destination command without any pre-configured scope."
+        },
+        {
           "description": "Enables the is_7z_running command without any pre-configured scope.",
           "type": "string",
           "const": "allow-is-7z-running",
@@ -817,6 +823,12 @@
           "type": "string",
           "const": "deny-get-startup-recovery-status",
           "markdownDescription": "Denies the get_startup_recovery_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the inspect_extract_destination command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-inspect-extract-destination",
+          "markdownDescription": "Denies the inspect_extract_destination command without any pre-configured scope."
         },
         {
           "description": "Denies the is_7z_running command without any pre-configured scope.",

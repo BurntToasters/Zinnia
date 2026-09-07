@@ -34,7 +34,7 @@
 
 .startup-recovery-banner {
   position: relative;
-  z-index: 10001;
+  z-index: 10060;
   display: flex;
   flex: 0 0 auto;
   min-width: 0;
@@ -46,7 +46,6 @@
   color: var(--text);
   border-bottom: 1px solid var(--danger, #c44738);
   font-size: 0.8125rem;
-  z-index: 10001;
 }
 
 .startup-recovery-banner > span {

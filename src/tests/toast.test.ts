@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { showToast } from "../toast";
 
@@ -17,6 +19,7 @@ describe("showToast", () => {
     expect(region).not.toBeNull();
     const toast = region?.querySelector(".toast");
     expect(toast?.textContent).toBe("Saved");
+    expect(region?.hasAttribute("aria-live")).toBe(false);
     expect(toast?.classList.contains("toast--success")).toBe(true);
   });
 
@@ -47,7 +50,16 @@ describe("showToast", () => {
   it("dismisses on click", () => {
     showToast("Tap", "info", 0);
     const toast = document.querySelector(".toast") as HTMLElement;
+    expect(toast.tabIndex).toBe(0);
     toast.click();
+    vi.advanceTimersByTime(200);
+    expect(document.querySelectorAll(".toast")).toHaveLength(0);
+  });
+
+  it("dismisses sticky toasts with Escape", () => {
+    showToast("Sticky", "error", 0);
+    const toast = document.querySelector(".toast") as HTMLElement;
+    toast.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     vi.advanceTimersByTime(200);
     expect(document.querySelectorAll(".toast")).toHaveLength(0);
   });
@@ -57,5 +69,22 @@ describe("showToast", () => {
     const text = document.querySelector(".toast")?.textContent ?? "";
     expect(text).toContain("[truncated");
     expect(text.length).toBeLessThan(4_100);
+  });
+
+  it("keeps success and error tints over the opaque toast surface", () => {
+    const css = fs.readFileSync(
+      path.resolve(process.cwd(), "src/styles/main-mid.css"),
+      "utf8",
+    );
+    expect(css.match(/\.toast\s*{([\s\S]*?)}/)?.[1]).toContain(
+      "background: var(--surface)",
+    );
+    for (const kind of ["success", "error"]) {
+      const rule = css.match(
+        new RegExp(`\\.toast--${kind}\\s*{([\\s\\S]*?)}`),
+      )?.[1];
+      expect(rule).toContain("background-image: linear-gradient(");
+      expect(rule).not.toMatch(/(^|\n)\s*background:/);
+    }
   });
 });

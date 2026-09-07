@@ -880,18 +880,18 @@ fn remove_directory_contents_relative(directory: &std::fs::File) -> io::Result<(
 fn open_directory_for_quarantine(path: &Path) -> io::Result<std::fs::File> {
     use std::os::windows::fs::{MetadataExt as _, OpenOptionsExt as _};
     use windows_sys::Win32::Storage::FileSystem::{
-        DELETE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_DELETE_CHILD,
-        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_LIST_DIRECTORY,
-        FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        FILE_WRITE_ATTRIBUTES, SYNCHRONIZE,
+        DELETE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS,
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES, SYNCHRONIZE,
     };
+    // Children are deleted through their own DELETE handles. Asking for
+    // FILE_DELETE_CHILD here rejects ordinary Windows Modify-only ACLs.
     let directory = std::fs::OpenOptions::new()
         .access_mode(
             DELETE
                 | FILE_LIST_DIRECTORY
                 | FILE_READ_ATTRIBUTES
                 | FILE_WRITE_ATTRIBUTES
-                | FILE_DELETE_CHILD
                 | SYNCHRONIZE,
         )
         .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
@@ -914,9 +914,8 @@ fn open_relative_for_cleanup(
     use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle};
     use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::Storage::FileSystem::{
-        DELETE, FILE_ATTRIBUTE_NORMAL, FILE_DELETE_CHILD, FILE_LIST_DIRECTORY,
-        FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        FILE_WRITE_ATTRIBUTES, SYNCHRONIZE,
+        DELETE, FILE_ATTRIBUTE_NORMAL, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES,
+        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES, SYNCHRONIZE,
     };
 
     const OBJ_CASE_INSENSITIVE: u32 = 0x0000_0040;
@@ -961,6 +960,8 @@ fn open_relative_for_cleanup(
         information: 0,
     };
     let mut handle: HANDLE = std::ptr::null_mut();
+    // Keep the same minimal access as the root cleanup handle; recursion opens
+    // every descendant separately with DELETE authority.
     let status = unsafe {
         NtCreateFile(
             &mut handle,
@@ -968,7 +969,6 @@ fn open_relative_for_cleanup(
                 | FILE_LIST_DIRECTORY
                 | FILE_READ_ATTRIBUTES
                 | FILE_WRITE_ATTRIBUTES
-                | FILE_DELETE_CHILD
                 | SYNCHRONIZE,
             &mut attributes,
             &mut io_status,

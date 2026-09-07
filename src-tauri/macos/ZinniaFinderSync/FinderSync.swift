@@ -32,6 +32,43 @@ final class FinderSync: FIFinderSync {
     // Finder Sync is designed for explicit monitored folders. Never register
     // `/`: that keeps this long-lived extension hot for the entire filesystem.
     // Finder Services remains the all-location fallback.
+    refreshMonitoredDirectories()
+
+    let workspaceCenter = NSWorkspace.shared.notificationCenter
+    workspaceCenter.addObserver(
+      forName: NSWorkspace.didMountNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      self?.refreshMonitoredDirectories()
+    }
+    workspaceCenter.addObserver(
+      forName: NSWorkspace.didUnmountNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      self?.refreshMonitoredDirectories()
+    }
+  }
+
+  private func refreshMountedVolumes(into roots: inout Set<URL>) {
+    let manager = FileManager.default
+    guard let mounted = manager.mountedVolumeURLs(
+      includingResourceValuesForKeys: [.volumeIsRootFileSystemKey],
+      options: [.skipHiddenVolumes]
+    ) else {
+      return
+    }
+    for url in mounted {
+      let values = try? url.resourceValues(forKeys: [.volumeIsRootFileSystemKey])
+      if values?.volumeIsRootFileSystem == true {
+        continue
+      }
+      roots.insert(url.standardizedFileURL)
+    }
+  }
+
+  private func refreshMonitoredDirectories() {
     let manager = FileManager.default
     var roots: Set<URL> = []
     for directory in [
@@ -46,10 +83,7 @@ final class FinderSync: FIFinderSync {
         roots.insert(url.standardizedFileURL)
       }
     }
-    let volumes = URL(fileURLWithPath: "/Volumes", isDirectory: true)
-    if manager.fileExists(atPath: volumes.path) {
-      roots.insert(volumes)
-    }
+    refreshMountedVolumes(into: &roots)
     FIFinderSyncController.default().directoryURLs = roots
   }
 

@@ -15,12 +15,14 @@ import { MAX_ARCHIVE_PATHS, validateArchivePaths } from "../archive-rules";
 import {
   runAction,
   browseArchive,
-  Run7zResult,
   looksLikePasswordRequiredError,
   parseArchiveListing,
 } from "../archive";
-import { clearPasswordFields, ensureRuntimeReady } from "../archive/runtime";
-import { invokeRun7z } from "../archive/backend-ipc";
+import {
+  clearPasswordFields,
+  ensureRuntimeReady,
+  invokeGuardedRun7z,
+} from "../archive/runtime";
 import {
   archiveExtensionForFormat,
   isPreferredCompressParent,
@@ -445,7 +447,7 @@ export async function testArchivePassword(
       args.push(`-p${password}`);
     }
     args.push("--", archive);
-    const result = await invokeRun7z<Run7zResult>({ args });
+    const result = await invokeGuardedRun7z(args);
     if (result.code > 1) {
       return looksLikePasswordRequiredError(result.stdout, result.stderr)
         ? "wrong"
@@ -490,7 +492,7 @@ export async function isArchiveEncrypted(
   if (!(await ensureRuntimeReady())) return null;
   try {
     const args = ["l", "-slt", "-spd", "--", archivePath];
-    const result = await invokeRun7z<Run7zResult>({ args });
+    const result = await invokeGuardedRun7z(args);
     if (result.code > 1) {
       // Fail closed: only return false when the listing is clearly unencrypted.
       // Unknown failures must not skip the password prompt.

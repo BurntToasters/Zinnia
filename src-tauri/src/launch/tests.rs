@@ -1,8 +1,8 @@
 //! Launch module unit tests.
 
 use super::extract_window::{
-    bump_extract_warm_idle_generation, extract_session_init_script, EXTRACT_WARM_IDLE_ACTIVE,
-    EXTRACT_WARM_IDLE_GENERATION,
+    bump_extract_warm_idle_generation, extract_session_init_script, warm_idle_timer_still_owns,
+    EXTRACT_WARM_IDLE_ACTIVE, EXTRACT_WARM_IDLE_GENERATION,
 };
 use super::open_path::{derive_extract_destination_path, normalize_destination_path};
 use super::open_routing::{
@@ -18,10 +18,20 @@ static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 #[test]
 fn e2e_session_active_defaults_off() {
-    if std::env::var("ZINNIA_E2E").ok().as_deref() == Some("1") {
-        return;
+    #[cfg(not(feature = "e2e"))]
+    {
+        assert!(
+            !super::e2e_session_active(),
+            "packaged/release builds must ignore ZINNIA_E2E"
+        );
     }
-    assert!(!super::e2e_session_active());
+    #[cfg(feature = "e2e")]
+    {
+        if std::env::var("ZINNIA_E2E").ok().as_deref() == Some("1") {
+            return;
+        }
+        assert!(!super::e2e_session_active());
+    }
 }
 
 #[test]
@@ -33,7 +43,7 @@ fn shell_handoff_error_is_consumed_once() {
 
 #[test]
 fn extract_session_init_script_escapes_js_line_separators() {
-    let script = extract_session_init_script("foo\u{2028}bar.zip", "a\u{2029}b");
+    let script = extract_session_init_script("foo\u{2028}bar.zip", "a\u{2029}b", true);
     assert!(
         script.contains("\\u2028"),
         "U+2028 must be escaped for JS embedding: {script}"
@@ -47,6 +57,7 @@ fn extract_session_init_script_escapes_js_line_separators() {
         "raw line separators must not appear in init script"
     );
     assert!(script.contains("__ZINNIA_EXTRACT__"));
+    assert!(script.contains("\"destinationExists\":true"));
 }
 
 #[test]
@@ -89,6 +100,22 @@ fn derive_extract_destination_matches_frontend_rules() {
     assert_eq!(
         derive_extract_destination_path("   "),
         Some(std::path::PathBuf::from("   _extracted"))
+    );
+    assert_eq!(
+        derive_extract_destination_path("/downloads/..zip"),
+        Some(std::path::PathBuf::from("/downloads/_extracted"))
+    );
+    assert_eq!(
+        derive_extract_destination_path("/downloads/...zip"),
+        Some(std::path::PathBuf::from("/downloads/_extracted"))
+    );
+    assert_eq!(
+        derive_extract_destination_path("/downloads/....zip"),
+        Some(std::path::PathBuf::from("/downloads/_extracted"))
+    );
+    assert_eq!(
+        derive_extract_destination_path("/downloads/notes. .zip"),
+        Some(std::path::PathBuf::from("/downloads/_extracted"))
     );
 }
 
@@ -474,5 +501,14 @@ fn warm_idle_generation_advances_when_bumped() {
     bump_extract_warm_idle_generation();
     let after = EXTRACT_WARM_IDLE_GENERATION.load(Ordering::SeqCst);
     assert!(after > before);
+    EXTRACT_WARM_IDLE_ACTIVE.store(false, Ordering::SeqCst);
+}
+
+#[test]
+fn warm_idle_timer_keeps_ownership_until_leave_bumps() {
+    let generation = EXTRACT_WARM_IDLE_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    assert!(warm_idle_timer_still_owns(generation));
+    bump_extract_warm_idle_generation();
+    assert!(!warm_idle_timer_still_owns(generation));
     EXTRACT_WARM_IDLE_ACTIVE.store(false, Ordering::SeqCst);
 }

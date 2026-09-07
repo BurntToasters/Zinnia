@@ -33,6 +33,9 @@ describe("macOS compatibility", () => {
     expect(infoPlist).toContain(
       `<string>${macMarketingVersionFromSemver(config.version ?? "")}</string>`,
     );
+    expect(infoPlist).toContain("run.rosie.zinnia.split-volume");
+    expect(infoPlist).toContain("<string>001</string>");
+    expect(infoPlist).toContain("Extract with Zinnia");
   });
 
   it.runIf(process.platform === "darwin")(
@@ -131,7 +134,11 @@ describe("macOS compatibility", () => {
     expect(finderSync).toContain("createdAtMs");
     expect(finderSync).toContain("1,000-item safety limit");
     expect(finderSync).toContain("supports selections of up to 1,000 items");
-    expect(finderSync).toContain('fileURLWithPath: "/Volumes"');
+    expect(finderSync).toContain("mountedVolumeURLs");
+    expect(finderSync).toContain("didMountNotification");
+    expect(finderSync).toContain("didUnmountNotification");
+    expect(finderSync).toContain("volumeIsRootFileSystem");
+    expect(finderSync).not.toContain('fileURLWithPath: "/Volumes"');
     expect(finderSync).toContain("embeddedExtension");
     expect(finderSync).toContain(
       "archiveExtensions.contains(embeddedExtension)",

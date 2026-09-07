@@ -55,11 +55,15 @@ pub use recovery::{
 #[cfg(test)]
 pub(crate) use archive_snapshot::archive_identity_token;
 pub(crate) use archive_snapshot::archive_identity_token_from_open_file;
+#[cfg(windows)]
+pub(crate) use archive_snapshot::copy_windows_zone_identifier;
 pub(crate) use journal::unregister_pending_stage;
 pub(crate) use quota::available_space_for_path;
 pub(crate) use staging::create_private_stage_dir;
 
-pub(crate) use commands::{terminate_child, terminate_registered_child};
+pub(crate) use commands::{
+    terminate_child, terminate_child_with_timeout, terminate_registered_child,
+};
 
 #[cfg(test)]
 pub(crate) use commands::{

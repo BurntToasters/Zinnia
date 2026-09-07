@@ -56,7 +56,10 @@ async function flushAsync(): Promise<void> {
 async function setupAndRun(
   invokeImpl?: AnyInvoke,
   options?: {
-    injected?: { archive: string; destination: string };
+    injected?: {
+      archive: string;
+      destination: string;
+    };
     listenerRegistrations?: Array<Promise<() => void>>;
     /** Leave false when run_7z is intentionally left pending (cancel tests). */
     waitForSettle?: boolean;
@@ -140,6 +143,7 @@ async function setupAndRun(
     if (cmd === "run_7z") {
       return { stdout: "", stderr: "", code: 0 };
     }
+    if (cmd === "inspect_extract_destination") return "missing";
     if (cmd === "load_settings") {
       return JSON.stringify({ extractAutoCloseSeconds: 1.5 });
     }
@@ -267,16 +271,11 @@ describe("extract-window", () => {
     );
   });
 
-  it("uses injected archive/destination without waiting on get_extract_paths", async () => {
-    const claim = {
-      resolve: null as ((value: string[]) => void) | null,
-    };
+  it("uses injected archive/destination and still drains get_extract_paths", async () => {
     const { invokeMock } = await setupAndRun(
       async (cmd) => {
         if (cmd === "get_extract_paths") {
-          return await new Promise<string[]>((resolve) => {
-            claim.resolve = resolve;
-          });
+          return [];
         }
         if (cmd === "run_7z") {
           return { stdout: "", stderr: "", code: 0 };
@@ -314,8 +313,134 @@ describe("extract-window", () => {
       ],
       expectedArchiveIdentity: "identity:/Downloads/packed.7z",
     });
+    expect(
+      invokeMock.mock.calls.some(([name]) => name === "get_extract_paths"),
+    ).toBe(true);
+  });
 
-    claim.resolve?.([]);
+  it("warns before quick extract merges into an existing destination", async () => {
+    const { invokeMock } = await setupAndRun(
+      async (cmd) => {
+        if (cmd === "inspect_extract_destination") return "directory";
+        return undefined;
+      },
+      {
+        injected: {
+          archive: "/Downloads/packed.7z",
+          destination: "/Downloads/packed",
+        },
+        waitForSettle: false,
+      },
+    );
+
+    await vi.waitFor(() => {
+      expect(
+        (document.getElementById("input-modal-overlay") as HTMLElement).hidden,
+      ).toBe(false);
+    });
+    expect(document.getElementById("input-modal-title")?.textContent).toBe(
+      "Destination already exists",
+    );
+    (
+      document.getElementById("input-modal-cancel") as HTMLButtonElement
+    ).click();
+
+    await vi.waitFor(() => {
+      expect(document.getElementById("extract-status")?.textContent).toBe(
+        "Cancelled",
+      );
+    });
+    expect(invokeMock.mock.calls.some(([name]) => name === "run_7z")).toBe(
+      false,
+    );
+  });
+
+  it("rejects a destination that is not a real directory", async () => {
+    const { invokeMock } = await setupAndRun(
+      async (cmd) => {
+        if (cmd === "inspect_extract_destination") return "invalid";
+        return undefined;
+      },
+      {
+        injected: {
+          archive: "/Downloads/packed.7z",
+          destination: "/Downloads/packed",
+        },
+      },
+    );
+
+    expect(
+      (document.getElementById("input-modal-overlay") as HTMLElement).hidden,
+    ).toBe(true);
+    expect(invokeMock.mock.calls.some(([name]) => name === "run_7z")).toBe(
+      false,
+    );
+    expect(document.getElementById("error-detail")?.textContent).toContain(
+      "not a file, symbolic link, or reparse point",
+    );
+  });
+
+  it("waits for progress listeners and then renders total extraction percent", async () => {
+    const deferred = {
+      resolveStructured: null as ((unlisten: () => void) => void) | null,
+      resolveRaw: null as ((unlisten: () => void) => void) | null,
+      resolveRun: null as ((result: unknown) => void) | null,
+    };
+    const structuredRegistration = new Promise<() => void>((resolve) => {
+      deferred.resolveStructured = resolve;
+    });
+    const rawRegistration = new Promise<() => void>((resolve) => {
+      deferred.resolveRaw = resolve;
+    });
+
+    const { invokeMock, progressListeners } = await setupAndRun(
+      async (cmd) => {
+        if (cmd === "get_extract_paths") return ["/tmp/archive.7z"];
+        if (cmd === "run_7z") {
+          return await new Promise((resolve) => {
+            deferred.resolveRun = resolve;
+          });
+        }
+        return undefined;
+      },
+      {
+        listenerRegistrations: [structuredRegistration, rawRegistration],
+        waitForSettle: false,
+      },
+    );
+
+    expect(invokeMock.mock.calls.some(([name]) => name === "run_7z")).toBe(
+      false,
+    );
+
+    deferred.resolveStructured?.(vi.fn());
+    deferred.resolveRaw?.(vi.fn());
+    await vi.waitFor(() => {
+      expect(invokeMock.mock.calls.some(([name]) => name === "run_7z")).toBe(
+        true,
+      );
+    });
+
+    progressListeners.get("7z-progress-structured")?.({
+      payload: { currentFile: "folder/file.bin", percent: 37 },
+    });
+    await flushAsync();
+    const fill = document.getElementById("progress-fill") as HTMLElement;
+    expect(fill.classList.contains("is-determinate")).toBe(true);
+    expect(fill.classList.contains("pct-37")).toBe(true);
+    expect(fill.classList.contains("is-indeterminate")).toBe(false);
+    expect(
+      document
+        .getElementById("extract-progress")
+        ?.getAttribute("aria-valuenow"),
+    ).toBe("37");
+    expect(
+      document
+        .getElementById("extract-progress")
+        ?.getAttribute("data-saw-structured-percent"),
+    ).toBe("true");
+
+    deferred.resolveRun?.({ stdout: "", stderr: "", code: 0 });
     await flushAsync();
   });
 
@@ -701,7 +826,7 @@ describe("extract-window", () => {
       invokeMock.mock.calls.filter(([name]) => name === "run_7z"),
     ).toHaveLength(1);
     expect(invokeMock.mock.calls.some(([name]) => name === "probe_7z")).toBe(
-      true,
+      false,
     );
   });
 

@@ -4,7 +4,9 @@ use super::archive_snapshot::{
     archive_file_identity, archive_input_family, assert_archive_identity_unchanged,
     stage_extract_input,
 };
-use super::commands::{settle_archive_finalization, settle_preparation_failure};
+use super::commands::{
+    read_command_stream, settle_archive_finalization, settle_preparation_failure,
+};
 use super::commit::copy_file_no_replace;
 use super::*;
 
@@ -174,6 +176,51 @@ fn harden_7z_args_forces_aes256_on_password_zip() {
     assert!(!args
         .iter()
         .any(|arg| arg.eq_ignore_ascii_case("-mem=zipcrypto")));
+}
+
+#[test]
+fn harden_7z_args_forces_zip_utf8_names_last_wins() {
+    let mut args = vec![
+        "u".to_string(),
+        "-mcu=off".to_string(),
+        "-mcl=off".to_string(),
+        "out.zip".to_string(),
+        "--".to_string(),
+        "in.txt".to_string(),
+    ];
+    super::commands::harden_7z_args(&mut args);
+    assert!(!args.iter().any(|arg| arg.eq_ignore_ascii_case("-mcu=off")));
+    assert!(!args.iter().any(|arg| arg.eq_ignore_ascii_case("-mcl=off")));
+    let separator = args.iter().position(|arg| arg == "--").expect("separator");
+    assert_eq!(args[separator - 1], "-mcu=on");
+    assert_eq!(
+        args.iter()
+            .filter(|arg| arg.to_ascii_lowercase().starts_with("-mcu"))
+            .count(),
+        1
+    );
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn harden_7z_args_strips_scc_and_inserts_utf8_before_separator() {
+    let mut args = vec![
+        "l".to_string(),
+        "-sccWIN".to_string(),
+        "-slt".to_string(),
+        "--".to_string(),
+        "a.zip".to_string(),
+    ];
+    super::commands::harden_7z_args(&mut args);
+    assert!(!args.iter().any(|arg| arg.eq_ignore_ascii_case("-sccWIN")));
+    let separator = args.iter().position(|arg| arg == "--").expect("separator");
+    assert_eq!(args[separator - 1], "-sccUTF-8");
+    assert_eq!(
+        args.iter()
+            .filter(|arg| arg.eq_ignore_ascii_case("-sccUTF-8"))
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -726,6 +773,36 @@ fn truncated_output_never_authorizes_exit_one_acceptance() {
         let collected = collect_command_output(&mut rx, 4, |_| {}).await;
         assert!(collected.stdout_truncated);
         assert!(!collected.accepts_exit_one_with(|_, _| true));
+    });
+}
+
+#[test]
+fn read_command_stream_emits_carriage_return_progress_records() {
+    tauri::async_runtime::block_on(async {
+        let (tx, mut rx) =
+            tauri::async_runtime::channel::<tauri_plugin_shell::process::CommandEvent>(16);
+        let input = b"0%\rT hello.txt\r\n100%\rEverything is Ok\r\n";
+        std::thread::spawn(move || {
+            read_command_stream(
+                &input[..],
+                tx,
+                tauri_plugin_shell::process::CommandEvent::Stdout,
+            );
+        });
+        let mut records = Vec::new();
+        while let Some(event) = rx.recv().await {
+            if let tauri_plugin_shell::process::CommandEvent::Stdout(bytes) = event {
+                records.push(String::from_utf8(bytes).expect("utf8 progress record"));
+            }
+        }
+        let percents: Vec<u8> = records
+            .iter()
+            .filter_map(|record| crate::progress::parse_progress_line(record)?.percent)
+            .collect();
+        assert!(
+            percents.contains(&0) && percents.contains(&100),
+            "expected 0% and 100% after CR framing, got records={records:?} percents={percents:?}"
+        );
     });
 }
 
@@ -2031,6 +2108,29 @@ fn nested_extract_merge_does_not_double_remove_directories() {
         b"new"
     );
     assert!(!staged.exists());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn extract_merge_renames_conflicts_and_preserves_existing_files() {
+    let root = temp_root("zinnia-extract-conflict-preserve");
+    let staged = root.join("staged");
+    let destination = root.join("destination");
+    std::fs::create_dir_all(staged.join("nested")).expect("staged tree");
+    std::fs::create_dir_all(destination.join("nested")).expect("destination tree");
+    std::fs::write(staged.join("nested/report.txt"), b"incoming").expect("staged file");
+    std::fs::write(destination.join("nested/report.txt"), b"existing").expect("existing file");
+
+    merge_staged_extract(&staged, &destination, MAX_EXTRACTED_BYTES).expect("conflict-safe merge");
+
+    assert_eq!(
+        std::fs::read(destination.join("nested/report.txt")).expect("existing file preserved"),
+        b"existing"
+    );
+    assert_eq!(
+        std::fs::read(destination.join("nested/report_1.txt")).expect("incoming file renamed"),
+        b"incoming"
+    );
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -3405,7 +3505,7 @@ fn extract_member_list_preserves_password_and_archive_type() {
         "/tmp/archive.custom",
     ];
     #[cfg(target_os = "windows")]
-    expected.insert(1, "-sccUTF-8");
+    expected.insert(expected.len() - 2, "-sccUTF-8");
     assert_eq!(
         extract_member_list_args(&args).expect("list args"),
         expected
@@ -4829,6 +4929,10 @@ fn explicit_archive_phase_controls_recovery_across_partial_backup_cleanup() {
 
 #[test]
 fn parse_7z_version_reads_common_banners() {
+    assert_eq!(
+        parse_7z_version("7-Zip 26.03 (x64)\n"),
+        Some("26.03".to_string())
+    );
     assert_eq!(
         parse_7z_version("7-Zip 26.02 (x64)\n"),
         Some("26.02".to_string())

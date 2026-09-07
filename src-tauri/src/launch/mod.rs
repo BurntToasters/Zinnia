@@ -23,9 +23,14 @@ pub struct ExtractQueue(pub Mutex<HashMap<String, Vec<String>>>);
 pub struct PendingPaths(pub Mutex<Vec<OpenPathsPayload>>);
 /// Extract windows may only open directories they register here first.
 pub struct ExtractOpenAllowlist(pub Mutex<HashMap<String, std::path::PathBuf>>);
-/// Destination folder bound at extract-window spawn (E1/E2). Survives after
-/// `get_extract_paths` drains the queue so run_7z/-o and open_path stay pinned.
-pub struct ExtractBoundDestination(pub Mutex<HashMap<String, std::path::PathBuf>>);
+/// Destination folder and source archive bound at extract-window spawn.
+/// Survives after `get_extract_paths` drains the queue so run_7z/-o/-- stay pinned.
+#[derive(Clone)]
+pub struct ExtractBoundPaths {
+    pub destination: std::path::PathBuf,
+    pub archive: std::path::PathBuf,
+}
+pub struct ExtractBoundDestination(pub Mutex<HashMap<String, ExtractBoundPaths>>);
 /// Main window may only open directories produced by recent successful operations.
 pub struct OpenPathAllowlist(pub Mutex<VecDeque<std::path::PathBuf>>);
 
@@ -46,15 +51,24 @@ pub fn is_extract_window_label(label: &str) -> bool {
 }
 
 /// Unpackaged WebdriverIO sets `ZINNIA_E2E=1` on the launched binary.
+/// Compiled out of packaged releases: the env var must not enable a harness.
 pub fn e2e_session_active() -> bool {
-    std::env::var("ZINNIA_E2E").is_ok_and(|value| value == "1")
+    #[cfg(feature = "e2e")]
+    {
+        std::env::var("ZINNIA_E2E").is_ok_and(|value| value == "1")
+    }
+    #[cfg(not(feature = "e2e"))]
+    {
+        false
+    }
 }
 
 /// WebView2 `ExecuteScript` completion is dropped on transparent/hidden HWNDs.
-#[cfg(windows)]
+#[cfg(all(feature = "e2e", windows))]
 pub(crate) const E2E_WEBVIEW2_BROWSER_ARGS: &str =
     "--disable-gpu --disable-features=CalculateNativeWinOcclusion,RendererCodeIntegrity";
 
+#[cfg(feature = "e2e")]
 pub(crate) fn apply_e2e_webview_overrides<'a, R, M>(
     mut builder: tauri::WebviewWindowBuilder<'a, R, M>,
 ) -> tauri::WebviewWindowBuilder<'a, R, M>
@@ -62,14 +76,24 @@ where
     R: tauri::Runtime,
     M: tauri::Manager<R>,
 {
-    if !e2e_session_active() {
-        return builder;
+    if e2e_session_active() {
+        builder = builder.transparent(false).visible(true);
+        #[cfg(windows)]
+        {
+            builder = builder.additional_browser_args(E2E_WEBVIEW2_BROWSER_ARGS);
+        }
     }
-    builder = builder.transparent(false).visible(true);
-    #[cfg(windows)]
-    {
-        builder = builder.additional_browser_args(E2E_WEBVIEW2_BROWSER_ARGS);
-    }
+    builder
+}
+
+#[cfg(not(feature = "e2e"))]
+pub(crate) fn apply_e2e_webview_overrides<'a, R, M>(
+    builder: tauri::WebviewWindowBuilder<'a, R, M>,
+) -> tauri::WebviewWindowBuilder<'a, R, M>
+where
+    R: tauri::Runtime,
+    M: tauri::Manager<R>,
+{
     builder
 }
 
@@ -87,15 +111,15 @@ pub use extract_window::first_extract_window;
 #[allow(unused_imports)]
 pub use extract_window::{
     cancel_owner_and_wait, clear_extract_window_bindings, close_extract_window, ensure_main_window,
-    enter_extract_warm_idle, get_extract_paths, has_extract_windows, leave_extract_warm,
-    mark_main_window_ready, restore_foreground_activation, should_keep_extract_warm,
-    show_main_window, spawn_extract_window,
+    enter_extract_warm_idle, get_extract_paths, has_extract_windows, inspect_extract_destination,
+    leave_extract_warm, mark_main_window_ready, restore_foreground_activation,
+    should_keep_extract_warm, show_main_window, spawn_extract_window,
 };
 #[allow(unused_imports)]
 pub use open_path::{
-    assert_extract_bound_destination, derive_extract_destination_path, drain_pending_paths,
-    get_initial_mode, get_initial_paths, open_path, register_extract_open_path,
-    remember_openable_directory,
+    assert_extract_bound_archive, assert_extract_bound_destination,
+    derive_extract_destination_path, drain_pending_paths, get_initial_mode, get_initial_paths,
+    open_path, register_extract_open_path, remember_openable_directory,
 };
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 #[allow(unused_imports)]
@@ -118,8 +142,9 @@ pub use debug_console_window::{
 };
 #[doc(hidden)]
 pub use extract_window::{
-    __cmd__close_extract_window, __cmd__get_extract_paths, __cmd__mark_main_window_ready,
-    __tauri_command_name_close_extract_window, __tauri_command_name_get_extract_paths,
+    __cmd__close_extract_window, __cmd__get_extract_paths, __cmd__inspect_extract_destination,
+    __cmd__mark_main_window_ready, __tauri_command_name_close_extract_window,
+    __tauri_command_name_get_extract_paths, __tauri_command_name_inspect_extract_destination,
     __tauri_command_name_mark_main_window_ready,
 };
 #[doc(hidden)]

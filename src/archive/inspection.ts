@@ -23,11 +23,10 @@ import {
   logCommandResult,
   logTruncationNotice,
   truncateForDialog,
-  type Run7zResult,
+  invokeGuardedRun7z,
 } from "./runtime";
 import { debugLog, debugLogCommand, isDebugEnabled } from "../debug-mode";
 import type { ArchiveInfo } from "../browse-model";
-import { invokeRun7z } from "./backend-ipc";
 import { showToast } from "../toast";
 
 export type ArchiveTestResult = "passed" | "failed" | "cancelled" | "error";
@@ -60,7 +59,7 @@ export async function testArchive(): Promise<ArchiveTestResult> {
     if (!(await ensureRuntimeReady())) return "error";
     setStatus("Testing archive integrity");
     debugLogCommand(args);
-    const result = await invokeRun7z<Run7zResult>({ args });
+    const result = await invokeGuardedRun7z(args);
     if (state.cancelRequested) {
       setStatus("Cancelled", 2000);
       return "cancelled";
@@ -68,6 +67,18 @@ export async function testArchive(): Promise<ArchiveTestResult> {
     logCommandResult(result.stdout, result.stderr, result.code);
     logTruncationNotice(result);
 
+    if (result.code === 0 && result.warning_code) {
+      setStatus("Integrity test passed with warnings", 3000);
+      log(
+        `Archive integrity test: PASSED WITH WARNINGS (warning_code ${result.warning_code})`,
+      );
+      showToast(
+        `Archive integrity test reported warnings (exit code ${result.warning_code}) and is not considered a clean pass.`,
+        "error",
+        0,
+      );
+      return "failed";
+    }
     if (result.code === 0) {
       setStatus("Integrity test passed", 3000);
       log("Archive integrity test: OK");
@@ -156,7 +167,7 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
     setStatus("Listing archive contents");
     if (isDebugEnabled()) debugLog(`Listing archive: ${archive}`);
     debugLogCommand(args);
-    const result = await invokeRun7z<Run7zResult>({ args });
+    const result = await invokeGuardedRun7z(args);
     if (state.cancelRequested) {
       setStatus("Cancelled", 2000);
       return null;

@@ -132,10 +132,6 @@ export function createE2eProfile(
   copies.extractOutNested = path.join(work, "extract-out-nested");
   copies.extractOutEncrypted = path.join(work, "extract-out-encrypted");
   copies.compressOut = path.join(work, `hello-e2e.7z`);
-  fs.mkdirSync(copies.extractOut, { recursive: true });
-  fs.mkdirSync(copies.extractOutZip, { recursive: true });
-  fs.mkdirSync(copies.extractOutNested, { recursive: true });
-  fs.mkdirSync(copies.extractOutEncrypted, { recursive: true });
   const env = {
     ZINNIA_E2E: "1",
     HOME: home,

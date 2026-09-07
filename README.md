@@ -65,7 +65,7 @@ native build runs.
   builds also expose Finder Sync context-menu items and Finder Services:
   **Extract with Zinnia** and **Compress with Zinnia**. Finder Sync only
   monitors Desktop, Documents, Downloads, Movies, Music, Pictures, and
-  `/Volumes`. Use Finder Services for files in other folders.
+  currently mounted volumes. Use Finder Services for files in other folders.
 
 ## Builds
 

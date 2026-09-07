@@ -73,14 +73,20 @@ function stripKnownArchiveSuffix(fileName: string): string {
   return "";
 }
 
+function sanitizeExtractFolderName(folder: string): string {
+  if (folder === "." || folder === "..") return "_extracted";
+  if (folder.length > 0 && /^[.]+$/.test(folder)) return "_extracted";
+  if (folder.endsWith(".") || folder.endsWith(" ")) return "_extracted";
+  return folder;
+}
+
 export function deriveExtractFolderName(archiveName: string): string {
   const cleanedName = archiveName;
   if (!cleanedName) return "";
 
   const stripped = stripKnownArchiveSuffix(cleanedName);
-  if (stripped) return stripped;
-
-  return `${cleanedName}_extracted`;
+  const folder = stripped || `${cleanedName}_extracted`;
+  return sanitizeExtractFolderName(folder);
 }
 
 export function deriveExtractDestinationPath(archivePath: string): string {

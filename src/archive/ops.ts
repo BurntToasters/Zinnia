@@ -15,6 +15,7 @@ import {
 import { ensureArchivePaths, validateExtraArgs } from "../archive-rules";
 import { showToast } from "../toast";
 import { SAFE_EXTRACT_OVERWRITE_MODE } from "../extract-policy";
+import { confirmExtractDestination } from "../extract-destination";
 import { debugLog, debugLogCommand, isDebugEnabled } from "../debug-mode";
 import { buildArgs, buildExtractArgsFor } from "./args";
 import { sanitizeCommandArgsForPreview } from "./preview";
@@ -31,6 +32,7 @@ import {
   withLiveProgress,
   clearPasswordFields,
   showOperationError,
+  isSevenZipRunInFlight,
 } from "./runtime";
 
 export {
@@ -88,6 +90,11 @@ export async function runAction() {
       }
       expectedArchiveIdentity = validation.identity;
       args = buildExtractArgsFor(state.inputs[0]);
+      const destination = $<HTMLInputElement>("extract-path").value;
+      if (!(await confirmExtractDestination(destination))) {
+        setStatus("Cancelled", 2000);
+        return;
+      }
     } else {
       const format = (
         document.getElementById("format") as HTMLSelectElement | null
@@ -207,6 +214,10 @@ export async function runBatchExtract() {
 
     const dest = $<HTMLInputElement>("extract-path").value;
     if (!dest) throw new Error("Choose a destination folder.");
+    if (!(await confirmExtractDestination(dest))) {
+      setStatus("Cancelled", 2000);
+      return;
+    }
     const password = $<HTMLInputElement>("extract-password").value;
     const extraArgs = splitArgs(
       $<HTMLInputElement>("extract-extra-args").value.trim(),
@@ -216,6 +227,14 @@ export async function runBatchExtract() {
     $<HTMLInputElement>("extract-path").disabled = true;
     $<HTMLInputElement>("extract-password").disabled = true;
     $<HTMLInputElement>("extract-extra-args").disabled = true;
+    const basicExtractPath = document.getElementById(
+      "basic-extract-path",
+    ) as HTMLInputElement | null;
+    const basicExtractPassword = document.getElementById(
+      "basic-extract-password",
+    ) as HTMLInputElement | null;
+    if (basicExtractPath) basicExtractPath.disabled = true;
+    if (basicExtractPassword) basicExtractPassword.disabled = true;
 
     let succeeded = 0;
     let failed = 0;
@@ -230,13 +249,15 @@ export async function runBatchExtract() {
     unlistenProgress = await listen<ProgressUpdate>(
       "7z-progress-structured",
       (event) => {
+        if (!isSevenZipRunInFlight()) return;
         const u = event.payload;
         const counter = `(${current}/${archives.length})`;
         if (u?.currentFile === "Working…") {
           if (!sawPercent) setProgress(`Still working… ${counter}`);
           return;
         }
-        if (typeof u?.percent !== "number") return;
+        if (typeof u?.percent !== "number" || !Number.isFinite(u.percent))
+          return;
         if (u.currentFile === "Finalizing…") {
           setProgress(`Finalizing… ${counter}`);
           return;
@@ -363,6 +384,14 @@ export async function runBatchExtract() {
     $<HTMLInputElement>("extract-path").disabled = false;
     $<HTMLInputElement>("extract-password").disabled = false;
     $<HTMLInputElement>("extract-extra-args").disabled = false;
+    const basicExtractPath = document.getElementById(
+      "basic-extract-path",
+    ) as HTMLInputElement | null;
+    const basicExtractPassword = document.getElementById(
+      "basic-extract-password",
+    ) as HTMLInputElement | null;
+    if (basicExtractPath) basicExtractPath.disabled = false;
+    if (basicExtractPassword) basicExtractPassword.disabled = false;
     setRunning(false);
   }
 }

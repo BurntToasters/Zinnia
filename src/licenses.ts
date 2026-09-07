@@ -6,7 +6,7 @@ export interface LicenseEntry {
   licenseUrl?: string;
   parents?: string;
   licenseText?: string | null;
-  licenseTextStatus?: "bundled" | "not-packaged";
+  licenseTextStatus?: "bundled" | "not-packaged" | "reviewed-omission";
   licenseReferences?: Array<{ identifier: string; url: string }>;
 }
 
@@ -88,10 +88,15 @@ async function renderLicenses() {
         pre.className = "license-card__text";
         pre.textContent = entry.licenseText;
         card.querySelector(".license-card__body")?.appendChild(pre);
-      } else if (entry.licenseTextStatus === "not-packaged") {
+      } else if (
+        entry.licenseTextStatus === "not-packaged" ||
+        entry.licenseTextStatus === "reviewed-omission"
+      ) {
         const note = document.createElement("p");
         note.textContent =
-          "This crate package did not include license text. Declared SPDX terms: ";
+          entry.licenseTextStatus === "reviewed-omission"
+            ? "This crate package and its exact reviewed source revision did not include license text. Declared SPDX terms: "
+            : "This crate package did not include license text. Declared SPDX terms: ";
         const body = card.querySelector(".license-card__body");
         for (const [index, reference] of (
           entry.licenseReferences ?? []

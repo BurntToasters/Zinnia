@@ -22,6 +22,7 @@ import { formatEta, type ProgressUpdate } from "../progress-update";
 import { debugLog, isDebugEnabled } from "../debug-mode";
 import { invokeRun7z as invokeRun7zRequest } from "./backend-ipc";
 import { showToast } from "../toast";
+import { assertRunResult } from "../utils";
 
 export const formatBatchEta = formatEta;
 
@@ -190,16 +191,18 @@ export function setSevenZipRunInFlight(active: boolean): void {
   sevenZipRunInFlight = active;
 }
 
-async function invokeRun7z(
+export async function invokeGuardedRun7z(
   args: string[],
   expectedArchiveIdentity?: string,
 ): Promise<Run7zResult> {
   sevenZipRunInFlight = true;
   try {
-    return await invokeRun7zRequest<Run7zResult>({
+    const result = await invokeRun7zRequest<unknown>({
       args,
       ...(expectedArchiveIdentity ? { expectedArchiveIdentity } : {}),
     });
+    assertRunResult(result);
+    return result;
   } finally {
     sevenZipRunInFlight = false;
   }
@@ -218,7 +221,11 @@ export async function withLiveProgress<T>(fn: () => Promise<T>): Promise<T> {
         if (!sawPercent) setProgress("Still working…");
         return;
       }
-      if (typeof update?.percent !== "number") return;
+      if (
+        typeof update?.percent !== "number" ||
+        !Number.isFinite(update.percent)
+      )
+        return;
       if (update.currentFile === "Finalizing…") {
         setCancelAvailable(false);
         setProgress("Finalizing…");
@@ -262,7 +269,7 @@ export async function runWithPasswordRetry(
       : args;
   let result: Run7zResult;
   try {
-    result = await invokeRun7z(effectiveArgs, expectedArchiveIdentity);
+    result = await invokeGuardedRun7z(effectiveArgs, expectedArchiveIdentity);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     // Header-encrypted archives can fail backend member-safety listing before
@@ -285,19 +292,34 @@ export async function runWithPasswordRetry(
       return result;
     }
     setCancelAvailable(true);
-    const password = await promptInput({
-      title: "Password required",
-      label: "This archive is encrypted. Enter password:",
-      password: true,
-      confirmLabel,
-    });
-    if (state.cancelRequested) {
-      return result;
+    const abort = new AbortController();
+    const cancelBtn = document.getElementById("cancel-action");
+    const onCancel = () => abort.abort();
+    cancelBtn?.addEventListener("click", onCancel);
+    let password: string | null;
+    try {
+      password = await promptInput({
+        title: "Password required",
+        label: "This archive is encrypted. Enter password:",
+        password: true,
+        confirmLabel,
+        signal: abort.signal,
+      });
+    } finally {
+      cancelBtn?.removeEventListener("click", onCancel);
+    }
+    if (state.cancelRequested || !password) {
+      state.cancelRequested = true;
+      return {
+        stdout: "",
+        stderr: "Operation cancelled by user",
+        code: -1,
+      };
     }
     if (password) {
       if (passwordCarry) passwordCarry.value = password;
       setStatus("Retrying with password");
-      result = await invokeRun7z(
+      result = await invokeGuardedRun7z(
         withPassword(effectiveArgs, password),
         expectedArchiveIdentity,
       );

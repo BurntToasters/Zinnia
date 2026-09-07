@@ -18,6 +18,7 @@ import {
   withLiveProgress,
 } from "../archive/runtime";
 import { decodeRun7zInvokePayload } from "./backend-ipc-test-utils";
+import { state } from "../state";
 
 vi.mock("../prompt-modal", () => ({
   promptInput: vi.fn().mockResolvedValue(null),
@@ -349,6 +350,7 @@ describe("runWithPasswordRetry", () => {
     cancel.disabled = true;
     document.getElementById("progress")!.textContent = "Extracting";
 
+    state.cancelRequested = false;
     const result = withLiveProgress(() =>
       runWithPasswordRetry(["x", "-o/tmp/out", "--", "/tmp/headers.7z"], true),
     );
@@ -367,7 +369,9 @@ describe("runWithPasswordRetry", () => {
     );
 
     resolvePrompt?.(null);
-    await result;
+    const cancelled = await result;
+    expect(cancelled.code).toBe(-1);
+    expect(state.cancelRequested).toBe(true);
   });
 });
 

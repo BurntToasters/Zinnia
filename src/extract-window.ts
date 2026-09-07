@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { validateArchivePaths } from "./archive-rules";
+import { confirmExtractDestination } from "./extract-destination";
 import { deriveExtractDestinationPath } from "./extract-path";
 import { describe7zError, looksLikePasswordRequiredError } from "./error-hints";
 import { SAFE_EXTRACT_OVERWRITE_MODE } from "./extract-policy";
@@ -17,7 +18,7 @@ import {
   formatEta as formatSharedEta,
   type ProgressUpdate,
 } from "./progress-update";
-import { redactSensitiveText } from "./utils";
+import { redactSensitiveText, assertRunResult } from "./utils";
 import { sanitizeCommandArgsForPreview } from "./archive/command-sanitize";
 import { invokeRun7z, type Run7zRequest } from "./archive/backend-ipc";
 import { formatCommandOutputForLogs } from "./output-logging";
@@ -94,16 +95,21 @@ let extractRunInFlight = false;
 async function invokeExtractRun(args: Run7zRequest): Promise<Run7zResult> {
   extractRunInFlight = true;
   try {
-    return await invokeRun7z<Run7zResult>(args);
+    const result = await invokeRun7z<unknown>(args);
+    assertRunResult(result);
+    return result;
   } finally {
     extractRunInFlight = false;
   }
 }
 
+const EXTRACT_PASSWORD_PROMPT_CANCELLED = "EXTRACT_PASSWORD_PROMPT_CANCELLED";
+
 async function runWithPasswordRetry(
   args: string[],
   shouldAbort: () => boolean,
   expectedArchiveIdentity?: string,
+  signal?: AbortSignal,
 ): Promise<Run7zResult> {
   const invokeArgs = {
     args,
@@ -119,36 +125,37 @@ async function runWithPasswordRetry(
     if (!looksLikePasswordRequiredError("", detail)) throw error;
     result = { stdout: "", stderr: detail, code: 255 };
   }
-  if (shouldAbort()) {
+  if (shouldAbort() || signal?.aborted) {
     return result;
   }
   if (
     result.code > 1 &&
     looksLikePasswordRequiredError(result.stdout ?? "", result.stderr ?? "")
   ) {
-    if (shouldAbort()) {
+    if (shouldAbort() || signal?.aborted) {
       return result;
     }
     const cancelBtn = document.getElementById(
       "cancel-btn",
     ) as HTMLButtonElement | null;
     if (cancelBtn) cancelBtn.disabled = false;
+    stopProgressAt(0, false);
     const { promptInput } = await import("./prompt-modal");
     const password = await promptInput({
       title: "Password required",
       label: "This archive is encrypted. Enter password:",
       password: true,
       confirmLabel: "Extract",
+      signal,
     });
-    if (shouldAbort()) {
-      return result;
+    if (shouldAbort() || signal?.aborted || !password) {
+      throw new Error(EXTRACT_PASSWORD_PROMPT_CANCELLED);
     }
-    if (password) {
-      result = await invokeExtractRun({
-        args: withPassword(args, password),
-        ...(expectedArchiveIdentity ? { expectedArchiveIdentity } : {}),
-      });
-    }
+    startIndeterminateProgress();
+    result = await invokeExtractRun({
+      args: withPassword(args, password),
+      ...(expectedArchiveIdentity ? { expectedArchiveIdentity } : {}),
+    });
   }
   return result;
 }
@@ -301,12 +308,14 @@ async function run() {
   const openDestinationBtn = $("open-destination-btn") as HTMLButtonElement;
   const closeBtn = $("close-btn") as HTMLButtonElement;
   let cancelRequested = false;
+  const extractAbort = new AbortController();
 
   if (closeTitlebarBtn) {
     closeTitlebarBtn.addEventListener("click", () => {
       // Arm local abort before teardown so an in-flight password prompt cannot
       // start another run_7z after the window is dismissed.
       cancelRequested = true;
+      extractAbort.abort();
       void closeWindowSafely();
     });
   }
@@ -476,6 +485,7 @@ async function run() {
     if (operationFinished) return;
     // Record abort intent even when 7z is idle (password-prompt gap).
     cancelRequested = true;
+    extractAbort.abort();
     cancelBtn.disabled = true;
     openDestinationBtn.disabled = true;
     closeBtn.disabled = true;
@@ -527,7 +537,6 @@ async function run() {
     }
   });
 
-  startIndeterminateProgress();
   setButtons(true, false, false);
 
   const injected = readInjectedExtractSession();
@@ -553,12 +562,13 @@ async function run() {
     $("extract-dest").title = destination;
     $("extract-status").textContent = "Starting extraction...";
     $("extract-error").hidden = true;
-    // Claim is only needed to drain queue ownership; do not block extract start.
-    void claimPaths.catch((err) => {
+    try {
+      await claimPaths;
+    } catch (err) {
       console.warn(
         `Could not drain quick-extract launch queue: ${String(err)}`,
       );
-    });
+    }
   } else {
     const paths = await claimPaths;
     archivePath = paths[0] ?? "";
@@ -588,12 +598,19 @@ async function run() {
   }
 
   try {
-    await invoke<string>("probe_7z");
+    const proceed = await confirmExtractDestination(destination);
+    if (!proceed || cancelRequested) {
+      finish("Cancelled", 0, false, false, true);
+      return;
+    }
+    $("extract-status").textContent = "Starting extraction...";
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    showError(`Could not prepare 7-Zip: ${detail}`);
+    showError(detail);
     return;
   }
+
+  startIndeterminateProgress();
   if (cancelRequested) {
     finish("Cancelled", 100, false, false, true);
     return;
@@ -627,8 +644,6 @@ async function run() {
   const startedAt = Date.now();
   let lastFile = "";
 
-  // Register progress listeners without awaiting confirmation before run_7z;
-  // backend prepare time usually dwarfs listener registration.
   const registerProgressListener = <T>(registration: Promise<T>) =>
     registration.catch((err) => {
       console.warn(
@@ -655,8 +670,13 @@ async function run() {
         return;
       }
       let eta = "";
-      if (typeof update?.percent === "number") {
+      if (
+        typeof update?.percent === "number" &&
+        Number.isFinite(update.percent)
+      ) {
         sawStructuredPercent = true;
+        const progressBar = document.getElementById("extract-progress");
+        if (progressBar) progressBar.dataset.sawStructuredPercent = "true";
         setDeterminateProgress(Math.min(99, update.percent));
         eta = formatSharedEta(Date.now() - startedAt, update.percent);
       }
@@ -684,11 +704,14 @@ async function run() {
     }),
   );
 
+  // Listener registration is asynchronous in real Tauri webviews. Starting
+  // 7-Zip first can lose every percentage event from a fast extraction.
+  const [unlistenStructured, unlistenRaw] = await Promise.all([
+    structuredListen,
+    rawListen,
+  ]);
+
   async function removeProgressListeners() {
-    const [unlistenStructured, unlistenRaw] = await Promise.all([
-      structuredListen,
-      rawListen,
-    ]);
     for (const unlisten of [unlistenStructured, unlistenRaw]) {
       try {
         unlisten?.();
@@ -698,6 +721,12 @@ async function run() {
         );
       }
     }
+  }
+
+  if (cancelRequested) {
+    await removeProgressListeners();
+    finish("Cancelled", 0, false, false, true);
+    return;
   }
 
   $("extract-status").textContent = "Extracting...";
@@ -717,6 +746,7 @@ async function run() {
       args,
       () => cancelRequested,
       expectedArchiveIdentity,
+      extractAbort.signal,
     );
     await removeProgressListeners();
 
@@ -743,6 +773,10 @@ async function run() {
       return;
     }
     const messageText = err instanceof Error ? err.message : String(err);
+    if (cancelRequested || messageText === EXTRACT_PASSWORD_PROMPT_CANCELLED) {
+      finish("Cancelled", 100, false, false, true);
+      return;
+    }
     showError(messageText, {
       args,
       extra: `throw: ${messageText}`,
