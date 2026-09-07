@@ -11,10 +11,14 @@ use super::open_routing::{
     should_queue_extract_to_main, should_use_extract_window, take_shell_handoff_error,
 };
 use super::OpenPathsPayload;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Mutex,
+};
 use tauri::Url;
 
 static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
+static WARM_IDLE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn e2e_session_active_defaults_off() {
@@ -497,6 +501,7 @@ fn looks_like_split_volume_accepts_sibling_volumes() {
 
 #[test]
 fn warm_idle_generation_advances_when_bumped() {
+    let _lock = WARM_IDLE_TEST_LOCK.lock().expect("warm idle test lock");
     let before = EXTRACT_WARM_IDLE_GENERATION.load(Ordering::SeqCst);
     bump_extract_warm_idle_generation();
     let after = EXTRACT_WARM_IDLE_GENERATION.load(Ordering::SeqCst);
@@ -506,6 +511,7 @@ fn warm_idle_generation_advances_when_bumped() {
 
 #[test]
 fn warm_idle_timer_keeps_ownership_until_leave_bumps() {
+    let _lock = WARM_IDLE_TEST_LOCK.lock().expect("warm idle test lock");
     let generation = EXTRACT_WARM_IDLE_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
     assert!(warm_idle_timer_still_owns(generation));
     bump_extract_warm_idle_generation();
