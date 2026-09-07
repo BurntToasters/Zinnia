@@ -25,7 +25,7 @@
     "test:archives:generate": "node scripts/generate-test-archives.js",
     "test:e2e": "node scripts/test-e2e.js",
     "test:all": "node scripts/test-all.js",
-    "test:cargo-safe-update": "node --test scripts/cargo-safe-update.test.mjs scripts/check-cargo-update-policy.test.mjs scripts/test-all.test.js scripts/run-release.test.js scripts/github-cli.test.cjs scripts/release-branch-protection.test.cjs scripts/npm-dev-audit.test.cjs scripts/generate-cargo-licenses.test.mjs scripts/check-rustsec-ignore-policy.test.mjs",
+    "test:cargo-safe-update": "node --test scripts/cargo-safe-update.test.mjs scripts/check-cargo-update-policy.test.mjs scripts/test-all.test.js scripts/run-release.test.js scripts/github-cli.test.cjs scripts/release-branch-protection.test.cjs scripts/release-licenses.test.mjs scripts/npm-dev-audit.test.cjs scripts/generate-cargo-licenses.test.mjs scripts/check-rustsec-ignore-policy.test.mjs",
     "check:cargo-update-policy": "node scripts/check-cargo-update-policy.mjs",
     "audit:dev-reviewed": "node scripts/npm-dev-audit.cjs",
     "check:rustsec-ignore-policy": "node scripts/check-rustsec-ignore-policy.mjs",

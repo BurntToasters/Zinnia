@@ -73,6 +73,8 @@ jobs:
         run: npm run audit:dev-reviewed
       - name: RustSec ignore review policy
         run: npm run check:rustsec-ignore-policy
+      - name: Strict Cargo license notices
+        run: npm run licenses:cargo:strict
       - name: Quality gate
         env:
           WEBKIT_DISABLE_COMPOSITING_MODE: "1"
@@ -253,3 +255,36 @@ jobs:
       - run: npm run prepare:7z
       - name: cargo clippy
         run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+  ci-gate:
+    if: ${{ always() }}
+    needs:
+      - commit-message-policy
+      - quality-gate
+      - rust-check
+      - updater-manifest
+      - smoke-build
+      - security-audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every release check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          COMMIT_MESSAGE_POLICY: ${{ needs.commit-message-policy.result }}
+          QUALITY_GATE: ${{ needs.quality-gate.result }}
+          RUST_CHECK: ${{ needs.rust-check.result }}
+          UPDATER_MANIFEST: ${{ needs.updater-manifest.result }}
+          SMOKE_BUILD: ${{ needs.smoke-build.result }}
+          SECURITY_AUDIT: ${{ needs.security-audit.result }}
+        run: |
+          set -euo pipefail
+          test "$QUALITY_GATE" = success
+          test "$RUST_CHECK" = success
+          test "$UPDATER_MANIFEST" = success
+          test "$SMOKE_BUILD" = success
+          test "$SECURITY_AUDIT" = success
+          if [ "$EVENT_NAME" = pull_request ]; then
+            test "$COMMIT_MESSAGE_POLICY" = success
+          else
+            test "$COMMIT_MESSAGE_POLICY" = skipped
+          fi

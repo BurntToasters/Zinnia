@@ -5,7 +5,8 @@ const { githubApi, assertGitHubCliAuthenticated } = require("./github-cli.cjs");
 
 const DEFAULT_OWNER = "BurntToasters";
 const DEFAULT_REPO = "zinnia";
-const REQUIRED_CHECK = "quality-gate";
+const REQUIRED_CHECK = "ci-gate";
+const REQUIRED_CHECK_APP_ID = 15368;
 const RELEASE_BRANCHES = ["beta", "main"];
 
 function repositoryTarget(env = process.env) {
@@ -52,6 +53,28 @@ function assertProtectionResponse(branch, protection) {
       `${branch} branch protection does not require ${REQUIRED_CHECK}.`,
     );
   }
+  const checks = protection.required_status_checks.checks;
+  const requiredCheck = Array.isArray(checks)
+    ? checks.find(
+        (check) => String(check?.context || "").trim() === REQUIRED_CHECK,
+      )
+    : null;
+  if (requiredCheck?.app_id !== REQUIRED_CHECK_APP_ID) {
+    throw new Error(
+      `${branch} branch protection must bind ${REQUIRED_CHECK} to GitHub Actions app ${REQUIRED_CHECK_APP_ID}.`,
+    );
+  }
+  if (protection.enforce_admins?.enabled !== true) {
+    throw new Error(
+      `${branch} branch protection must enforce ${REQUIRED_CHECK} for administrators.`,
+    );
+  }
+  if (protection.allow_force_pushes?.enabled !== false) {
+    throw new Error(`${branch} branch protection must disable force pushes.`);
+  }
+  if (protection.allow_deletions?.enabled !== false) {
+    throw new Error(`${branch} branch protection must disable deletion.`);
+  }
   return protection;
 }
 
@@ -78,7 +101,7 @@ function desiredProtection() {
   return {
     required_status_checks: {
       strict: true,
-      checks: [{ context: REQUIRED_CHECK }],
+      checks: [{ context: REQUIRED_CHECK, app_id: REQUIRED_CHECK_APP_ID }],
     },
     enforce_admins: true,
     required_pull_request_reviews: null,
@@ -123,6 +146,7 @@ module.exports = {
   DEFAULT_REPO,
   RELEASE_BRANCHES,
   REQUIRED_CHECK,
+  REQUIRED_CHECK_APP_ID,
   assertProtectionResponse,
   assertReleaseBranchProtection,
   branchProtectionEndpoint,

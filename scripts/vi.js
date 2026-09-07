@@ -1,12 +1,22 @@
 #!/usr/bin/env node
 import { spawnSync, execSync } from "child_process";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const { npmInvocation } = require("./npm-cli.cjs");
 
 function run(cmd, args) {
   console.log(`> ${cmd} ${args.join(" ")}`);
-  const res = spawnSync(cmd, args, {
-    stdio: "inherit",
-    shell: process.platform === "win32",
-  });
+  const invocation =
+    cmd === "npm" ? npmInvocation() : { command: cmd, prefixArgs: [] };
+  const res = spawnSync(
+    invocation.command,
+    [...invocation.prefixArgs, ...args],
+    {
+      stdio: "inherit",
+      shell: false,
+    },
+  );
   if (res.status !== 0) {
     console.error(`Command failed: ${cmd} ${args.join(" ")}`);
     process.exit(res.status || 1);

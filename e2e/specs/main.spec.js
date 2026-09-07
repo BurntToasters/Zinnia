@@ -256,10 +256,14 @@ describe("Zinnia main window", () => {
     const tbody = await $("#browse-tbody");
     await tbody.waitForDisplayed({ timeout: 20_000 });
     await browser.waitUntil(
-      async () => (await tbody.getText()).includes("hello.txt"),
+      async () =>
+        (await tbody.getText())
+          .replaceAll("\\", "/")
+          .includes("nested/hello.txt"),
       {
         timeout: 20_000,
-        timeoutMsg: "nested zip browse listing did not include hello.txt",
+        timeoutMsg:
+          "nested zip browse listing did not include nested/hello.txt",
       },
     );
   });

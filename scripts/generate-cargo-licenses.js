@@ -8,6 +8,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -146,7 +147,16 @@ function isWithin(root, candidate) {
   return rel === "" || (!rel.startsWith("..") && !rel.includes(`..${sep}`));
 }
 
+function isRealPathWithin(root, candidate) {
+  try {
+    return isWithin(realpathSync(root), realpathSync(candidate));
+  } catch {
+    return false;
+  }
+}
+
 function readLicenseTextsFromDirectory(packageDir, licenseFile = null) {
+  const realPackageDir = realpathSync(packageDir);
   const names = new Set(
     readdirSync(packageDir).filter((name) =>
       /^(licen[cs]e|copying|notice|authors|copyright)(?:[._-].*)?$/i.test(name),
@@ -154,7 +164,11 @@ function readLicenseTextsFromDirectory(packageDir, licenseFile = null) {
   );
   if (typeof licenseFile === "string" && licenseFile.trim()) {
     const filePath = resolve(packageDir, licenseFile);
-    if (isWithin(packageDir, filePath) && existsSync(filePath)) {
+    if (
+      isWithin(packageDir, filePath) &&
+      existsSync(filePath) &&
+      isRealPathWithin(realPackageDir, filePath)
+    ) {
       names.add(relative(packageDir, filePath));
     }
   }
@@ -162,7 +176,13 @@ function readLicenseTextsFromDirectory(packageDir, licenseFile = null) {
   const sections = [];
   for (const name of [...names].sort()) {
     const filePath = resolve(packageDir, name);
-    if (!isWithin(packageDir, filePath) || !existsSync(filePath)) continue;
+    if (
+      !isWithin(packageDir, filePath) ||
+      !existsSync(filePath) ||
+      !isRealPathWithin(realPackageDir, filePath)
+    ) {
+      continue;
+    }
     const stat = lstatSync(filePath);
     if (!stat.isFile() || stat.isSymbolicLink()) continue;
     const text = readFileSync(filePath, "utf8").trim();
@@ -242,7 +262,11 @@ function checkoutSourceRevision(repository, revision) {
 function findSourceLicenseInCheckout(pkg, vcs, checkoutRoot, repository) {
   const sourcePath = vcs.pathInRepository || ".";
   const packageDir = resolve(checkoutRoot, sourcePath);
-  if (!isWithin(checkoutRoot, packageDir) || !existsSync(packageDir)) {
+  if (
+    !isWithin(checkoutRoot, packageDir) ||
+    !existsSync(packageDir) ||
+    !isRealPathWithin(checkoutRoot, packageDir)
+  ) {
     return null;
   }
   const packageStat = lstatSync(packageDir);
@@ -250,6 +274,7 @@ function findSourceLicenseInCheckout(pkg, vcs, checkoutRoot, repository) {
 
   let current = packageDir;
   for (;;) {
+    if (!isRealPathWithin(checkoutRoot, current)) return null;
     const text = readLicenseTextsFromDirectory(
       current,
       current === packageDir ? pkg.license_file : null,

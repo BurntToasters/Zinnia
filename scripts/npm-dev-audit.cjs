@@ -3,6 +3,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { npmInvocation } = require("./npm-cli.cjs");
 const { spawnSync } = require("node:child_process");
 
 const REVIEW_EXPIRES = "2026-12-01";
@@ -104,13 +105,17 @@ function evaluateAudit(report, lock, now = new Date()) {
 }
 
 function runAudit(root) {
-  const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-  const result = spawnSync(npm, ["audit", "--json", "--audit-level=moderate"], {
-    cwd: root,
-    encoding: "utf8",
-    shell: process.platform === "win32",
-    maxBuffer: 32 * 1024 * 1024,
-  });
+  const npm = npmInvocation();
+  const result = spawnSync(
+    npm.command,
+    [...npm.prefixArgs, "audit", "--json", "--audit-level=moderate"],
+    {
+      cwd: root,
+      encoding: "utf8",
+      shell: false,
+      maxBuffer: 32 * 1024 * 1024,
+    },
+  );
   if (result.error) throw result.error;
   let report;
   try {

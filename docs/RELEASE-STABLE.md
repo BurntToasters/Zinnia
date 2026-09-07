@@ -13,11 +13,13 @@ With a GitHub CLI account that has repository administration permission, run:
 npm run repo:protect-release-branches
 ```
 
-The command protects both `beta` and `main`, requires the `quality-gate` status
-check, requires the branch to be up to date, applies the rule to administrators,
-and disables force pushes and branch deletion. `release:preflight` verifies the
-active release branch on every release VM and fails if this protection is
-missing or weakened.
+The command protects both `beta` and `main`, requires the source-bound `ci-gate`
+status check that aggregates every CI proof job, requires the branch to be up
+to date, applies the rule to administrators, and disables force pushes and
+branch deletion. CI remains limited to tests, audits, validation, and unsigned
+compile smoke; all release building, signing, and publishing stays on the
+manually operated release VMs. `release:preflight` verifies the active release
+branch on every release VM and fails if any protection is missing or weakened.
 
 Confirm the repository Settings page shows the rule before continuing.
 
