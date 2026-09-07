@@ -15,11 +15,11 @@ npm run repo:protect-release-branches
 
 The command protects both `beta` and `main`, requires the source-bound `ci-gate`
 status check that aggregates every CI proof job, requires the branch to be up
-to date, applies the rule to administrators, and disables force pushes and
-branch deletion. CI remains limited to tests, audits, validation, and unsigned
-compile smoke; all release building, signing, and publishing stays on the
-manually operated release VMs. `release:preflight` verifies the active release
-branch on every release VM and fails if any protection is missing or weakened.
+to date, allows the intentional administrator bypass, and disables force pushes
+and branch deletion. CI remains limited to tests, audits, validation, and
+unsigned compile smoke; all release building, signing, and publishing stays on
+the manually operated release VMs. `release:preflight` verifies the active
+release branch on every release VM while allowing the administrator bypass.
 
 Confirm the repository Settings page shows the rule before continuing.
 

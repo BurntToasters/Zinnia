@@ -65,11 +65,11 @@ both `main` and `beta` with:
 npm run repo:protect-release-branches
 ```
 
-The command requires strict status checks, applies enforcement to admins, and
-disables force pushes and branch deletion. Release preflight verifies the
-active release branch and fails closed if this protection is missing or
-weakened. Additional checks such as `rust-check` and `security-audit` may also
-be required in repository settings.
+The command requires strict status checks, keeps the intentional administrator
+bypass enabled, and disables force pushes and branch deletion. Release
+preflight verifies the required protection while allowing that bypass.
+Additional checks such as `rust-check` and `security-audit` may also be required
+in repository settings.
 
 ## Cutting a stable release
 
