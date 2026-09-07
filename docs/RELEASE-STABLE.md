@@ -73,13 +73,12 @@ git pull --ff-only origin main
 git switch -c release/X.Y.Z
 ```
 
-Change only the release metadata needed for stable `X.Y.Z`. Set the package
-version and synchronize every platform version field:
+Change only the release metadata needed for stable `X.Y.Z`. Edit `package.json`
+`version` to `X.Y.Z`, then let `npm run u` copy that value across the repo and
+refresh lockfiles:
 
 ```sh
-npm pkg set version=X.Y.Z
-npm run sync-version
-node scripts/update-metainfo.js
+npm run u
 ```
 
 Edit `CHANGELOG.md` so the current section is the final stable `X.Y.Z` entry and

@@ -114,10 +114,11 @@ native build runs.
   `release:*:resume` command; its build session is bound to the exact commit,
   lockfiles, platform, architecture, and Node/Rust toolchain and expires after
   24 hours.
-- After changing the package version, `release:prepare` / `workspace:bootstrap`
-  write the AppStream release entry via `node scripts/update-metainfo.js`
-  (commit the XML change with the version bump). `npm run u` / `u2` only update
-  lockfiles; they do not write AppStream. You can also run the metainfo script
-  alone. `--check` remains available if you only want validation.
+- After editing `package.json` `version`, run `npm run u` / `u2`. They copy
+  that version through native manifests, changelog download URLs, and
+  AppStream, then refresh lockfiles. They still do not install packages or
+  execute dependency code. `release:prepare` / `workspace:bootstrap` also write
+  AppStream. You can run `sync-version` and the metainfo script alone.
+  `--check` remains available if you only want validation.
 - Do not push a release tag until every platform artifact is present and its
   updater signature and checksum have been verified.

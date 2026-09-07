@@ -213,9 +213,7 @@ test("stable runbook promotes the next branch directly to main", () => {
     /\bv?\d+\.\d+\.\d+(?:-beta\.\d+)?\b/,
     "the reusable runbook must not encode a concrete release version",
   );
-  assert.doesNotMatch(
-    runbook,
-    /src-tauri\/src\/launch\/tests\.rs/,
-    "the reusable runbook must not encode a one-release exception",
-  );
+  assert.match(runbook, /npm run u/);
+  assert.match(runbook, /Edit `package\.json`/);
+  assert.doesNotMatch(runbook, /npm run sync-version/);
 });

@@ -780,11 +780,13 @@ test("25. dependency update entry points use guarded Cargo resolution", () => {
     assert.doesNotMatch(command, /\bcargo update\b/);
     assert.match(command, /cargo-safe-update/);
   }
-  assert.match(packageJson.scripts.u, /npm-safe-update/);
-  assert.doesNotMatch(
-    packageJson.scripts.u,
-    /workspace:bootstrap|format|test:all/,
-  );
+  for (const name of ["u", "u2"]) {
+    const command = packageJson.scripts[name];
+    assert.match(command, /npm-safe-update/);
+    assert.match(command, /sync-version\.js/);
+    assert.match(command, /update-metainfo\.js/);
+    assert.doesNotMatch(command, /workspace:bootstrap|format|test:all/);
+  }
 });
 
 test("26. unit: no-lock workspace generates candidate in temp, leaves real lock untouched, installs on approval", () => {
