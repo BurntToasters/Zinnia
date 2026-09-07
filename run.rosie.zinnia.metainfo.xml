@@ -36,15 +36,7 @@
   </provides>
   <content_rating type="oars-1.1" />
   <releases>
-    <release version="0.6.1-beta.9" date="2026-09-05"/>
-    <release version="0.6.1-beta.8" date="2026-08-29"/>
-    <release version="0.6.1-beta.7" date="2026-08-27"/>
-    <release version="0.6.1-beta.6" date="2026-08-12"/>
-    <release version="0.6.1-beta.5" date="2026-08-07"/>
-    <release version="0.6.1-beta.4" date="2026-08-07"/>
-    <release version="0.6.1-beta.3" date="2026-08-03"/>
-    <release version="0.6.1-beta.2" date="2026-07-29"/>
-    <release version="0.6.1-beta.1" date="2026-07-27"/>
+    <release version="0.6.1" date="2026-09-07"/>
     <release version="0.6.0" date="2026-07-25"/>
     <release version="0.5.4-beta.3" date="2026-07-17"/>
     <release version="0.5.4-beta.2" date="2026-07-17"/>

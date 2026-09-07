@@ -1,5 +1,5 @@
 # GitHub Copilot Instructions
-Spec version: 1.0.0 
+Spec version: 1.0.0
 - (This is an identifier for the user maintaining these specialized instructions)
 
 ## Commit messages
