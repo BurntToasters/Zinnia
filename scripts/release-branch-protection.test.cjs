@@ -127,6 +127,46 @@ test("CI gate aggregates every independent proof check", () => {
   }
 });
 
+test("CI avoids duplicate PR branch runs and duplicate Ubuntu checks", () => {
+  const workflow = require("node:fs").readFileSync(
+    require("node:path").join(
+      __dirname,
+      "..",
+      ".github",
+      "workflows",
+      "ci.yml",
+    ),
+    "utf8",
+  );
+  assert.match(
+    workflow,
+    /^on:\r?\n  push:\r?\n    branches: \[main, beta\]\r?\n  pull_request:\r?\n    branches: \[main, beta\]$/m,
+  );
+
+  const qualityJob = workflow.match(
+    /^  quality-gate:\r?\n[\s\S]*?(?=^  [a-z][a-z-]+:\r?$)/m,
+  )?.[0];
+  const securityJob = workflow.match(
+    /^  security-audit:\r?\n[\s\S]*?(?=^  [a-z][a-z-]+:\r?$)/m,
+  )?.[0];
+  assert.ok(qualityJob);
+  assert.ok(securityJob);
+  for (const duplicate of [
+    "npm audit signatures",
+    "npm audit --omit=dev --audit-level=high",
+    "npm run audit:dev-reviewed",
+    "npm run check:rustsec-ignore-policy",
+  ]) {
+    assert.doesNotMatch(
+      qualityJob,
+      new RegExp(duplicate.replaceAll(":", "\\:")),
+    );
+    assert.match(securityJob, new RegExp(duplicate.replaceAll(":", "\\:")));
+  }
+  assert.match(qualityJob, /npm run test:all/);
+  assert.doesNotMatch(securityJob, /cargo clippy/);
+});
+
 test("CI is limited to tests, audits, validation, and unsigned smoke builds", () => {
   const workflow = require("node:fs").readFileSync(
     require("node:path").join(
