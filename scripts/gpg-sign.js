@@ -1691,7 +1691,7 @@ async function main() {
   // manifests onto the latest *stable* release during every beta sign upload,
   // including while this tag is still a draft. That is intentional: each
   // release:*:continue VM should publish its platform feed as soon as it
-  // signs, same automatic behavior as 0.6.0 / 0.6.1-beta.4.
+  // signs, preserving the established automatic beta-feed behavior.
   // Keep release:sync-beta-manifests for recovery/re-sync only.
   if (IS_PRERELEASE) {
     await syncBetaManifestsToLatestStable(everything, release.id);

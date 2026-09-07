@@ -1,8 +1,10 @@
-# Stable 0.6.1 release runbook
+# Stable release runbook
 
-This runbook covers the final transition from `v0.6.1-beta.9` to stable
-`v0.6.1`. Do not use it to bypass a failed beta gate. Every command below is
-expected to run from a clean checkout of the canonical repository.
+This runbook covers the final transition from an accepted beta to its stable
+release. In commands below, replace `X.Y.Z` with the stable version and `N`
+with the accepted beta number. Do not use it to bypass a failed candidate or
+`main` gate. Every command below is expected to run from a clean checkout of
+the canonical repository.
 
 ## 1. One-time release branch enforcement
 
@@ -23,50 +25,68 @@ release branch on every release VM while allowing the administrator bypass.
 
 Confirm the repository Settings page shows the rule before continuing.
 
-## 2. Freeze and prove beta.9
+## 2. Freeze and prove the stable candidate
 
-Do not promote a different commit than the beta.9 candidate users tested.
-On `beta`, verify the pushed commit and run the complete gate, including E2E:
+The stable candidate is `next-X.Y.Z`, which is promoted directly to `main`.
+The published `beta` branch is not an intermediate merge target and does not
+need to contain post-beta test-only fixes.
+
+The production source must remain the accepted beta source users tested.
+Review every post-beta difference and prove that any accepted difference is
+limited to tests or documentation and cannot enter release binaries. No
+production, packaging, updater, installer, or release-tooling path may change
+without another beta. Then run the complete gate, including E2E:
 
 ```sh
-git switch beta
-git pull --ff-only origin beta
+git switch next-X.Y.Z
+git pull --ff-only origin next-X.Y.Z
+git diff --name-status vX.Y.Z-beta.N..HEAD
+git diff --check vX.Y.Z-beta.N..HEAD
 npm ci --ignore-scripts
 npm run workspace:bootstrap
 npm run test:all -- --require-clean-proof
-npm run release:preflight
 ```
 
-All GitHub Actions jobs for that exact commit must be green on every supported
-runner before promotion. Do not treat a platform-local release build as a
-replacement for cross-platform CI.
+Do not run `release:preflight` on `next-X.Y.Z`; it deliberately accepts only an
+actual release branch (`beta` for beta versions and `main` for stable versions).
+Open the promotion pull request from `next-X.Y.Z` directly to `main`. All GitHub
+Actions jobs for that exact pull-request head must be green on every supported
+runner before merge. Do not treat a platform-local release build as a
+replacement for cross-platform CI. If the production-tree comparison above
+finds a runtime change, stop: that runtime must be beta-tested before stable
+promotion.
 
-If beta.9 still needs to be published, use the normal beta release flow first
-and complete beta smoke testing before the stable version change.
+If the accepted beta still needs to be published, use the normal beta release
+flow first and complete beta smoke testing before the stable version change.
 
 ## 3. Promote the tested source to main
 
-Merge the exact accepted `beta` tip into protected `main` through the normal
-GitHub merge flow. Do not force push either release branch. Then start from the
-pushed `main` tip:
+Merge the exact accepted `next-X.Y.Z` pull-request head into protected `main`
+through the normal GitHub merge flow. Do not merge it through `beta` first and
+do not force push either release branch. Require the post-merge `main` CI run to
+pass, then start a short-lived stable-metadata branch from that pushed `main`
+tip:
 
 ```sh
 git switch main
 git pull --ff-only origin main
+git switch -c release/X.Y.Z
 ```
 
-Change only the release metadata needed for stable 0.6.1. Set the package
+Change only the release metadata needed for stable `X.Y.Z`. Set the package
 version and synchronize every platform version field:
 
 ```sh
-npm pkg set version=0.6.1
+npm pkg set version=X.Y.Z
 npm run sync-version
 node scripts/update-metainfo.js
 ```
 
-Edit `CHANGELOG.md` so the current section is the final stable 0.6.1 entry and
+Edit `CHANGELOG.md` so the current section is the final stable `X.Y.Z` entry and
 remove beta-only release wording. Review the resulting diff carefully, then
-commit and push it to protected `main` through the normal merge flow.
+commit it and merge the stable-metadata branch to protected `main` through the
+normal pull-request flow. Require every pull-request and post-merge `main` CI
+job to pass.
 
 ## 4. Prove the stable source
 
@@ -95,7 +115,7 @@ Also confirm:
 - `npm audit --omit=dev --audit-level=high` passes.
 - `npm run audit:dev-reviewed` passes without a new or expired exception.
 - `cargo audit` reports no unignored vulnerability.
-- The stable version is `0.6.1` everywhere and contains no `-beta.N` suffix.
+- The stable version is `X.Y.Z` everywhere and contains no `-beta.N` suffix.
 
 ## 5. Build and sign on isolated platform VMs
 
@@ -154,13 +174,13 @@ npm run release:publish
 npm run release:verify:published
 ```
 
-The second command must prove the live updater feed and signatures for 0.6.1.
-Verify GitHub shows `v0.6.1` as the latest non-prerelease release and that the
+The second command must prove the live updater feed and signatures for `X.Y.Z`.
+Verify GitHub shows `vX.Y.Z` as the latest non-prerelease release and that the
 tag resolves to the exact stable `main` commit.
 
 ## 9. Post-release checks
 
-Install or update to 0.6.1 through each supported distribution path and perform
+Install or update to `X.Y.Z` through each supported distribution path and perform
 a short smoke test of compress, extract, browse, updater, and platform shell
 integration. Keep `main` and `beta` protection enabled for the next cycle.
 

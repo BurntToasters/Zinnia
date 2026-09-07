@@ -194,3 +194,28 @@ test("CI is limited to tests, audits, validation, and unsigned smoke builds", ()
     }
   }
 });
+
+test("stable runbook promotes the next branch directly to main", () => {
+  const runbook = require("node:fs").readFileSync(
+    require("node:path").join(__dirname, "..", "docs", "RELEASE-STABLE.md"),
+    "utf8",
+  );
+  assert.match(runbook, /git switch next-X\.Y\.Z/);
+  assert.match(
+    runbook,
+    /promotion pull request from `next-X\.Y\.Z` directly to `main`/,
+  );
+  assert.match(runbook, /Do not merge it through `beta` first/);
+  assert.doesNotMatch(runbook, /git switch beta/);
+  assert.doesNotMatch(runbook, /accepted `beta` tip/);
+  assert.doesNotMatch(
+    runbook,
+    /\bv?\d+\.\d+\.\d+(?:-beta\.\d+)?\b/,
+    "the reusable runbook must not encode a concrete release version",
+  );
+  assert.doesNotMatch(
+    runbook,
+    /src-tauri\/src\/launch\/tests\.rs/,
+    "the reusable runbook must not encode a one-release exception",
+  );
+});

@@ -131,15 +131,15 @@ describe("release preflight policy", () => {
   });
 
   it("routes betas to beta, stable releases to main, and rejects other stages", () => {
-    expect(expectedReleaseBranch("0.6.0-beta.10")).toBe("beta");
-    expect(expectedReleaseBranch("0.6.0")).toBe("main");
-    expect(() => expectedReleaseBranch("0.6.0-alpha.2")).toThrow(
+    expect(expectedReleaseBranch("12.34.56-beta.789")).toBe("beta");
+    expect(expectedReleaseBranch("12.34.56")).toBe("main");
+    expect(() => expectedReleaseBranch("12.34.56-alpha.2")).toThrow(
       /beta or stable only/,
     );
-    expect(() => expectedReleaseBranch("0.6.0-rc.2")).toThrow(
+    expect(() => expectedReleaseBranch("12.34.56-rc.2")).toThrow(
       /beta or stable only/,
     );
-    expect(() => expectedReleaseBranch("0.6.0-beta.02")).toThrow(
+    expect(() => expectedReleaseBranch("12.34.56-beta.02")).toThrow(
       /beta or stable only/,
     );
   });
