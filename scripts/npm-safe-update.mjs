@@ -16,12 +16,18 @@ import {
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+import npmCli from "./npm-cli.cjs";
+
+const { npmInvocation } = npmCli;
+const npmDevAuditScript = fileURLToPath(
+  new URL("./npm-dev-audit.cjs", import.meta.url),
+);
 
 export const MINIMUM_NPM_VERSION = "12.0.1";
 export const SUPPORTED_NODE_VERSIONS = "^22.22.2 || ^24.15.0 || >=26.0.0";
 export const STABLE_RUST_CHANNEL = "stable";
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 
 export function parseVersion(value) {
   const match = String(value)
@@ -64,9 +70,104 @@ export function npmUpdateArguments(cachePath) {
     "update",
     "--package-lock-only",
     "--ignore-scripts",
+    "--no-audit",
     "--min-release-age=3",
     `--cache=${cachePath}`,
   ];
+}
+
+export function assertVendoredUpdaterParity(root, lockBytes) {
+  const packageJson = JSON.parse(
+    readFileSync(path.join(root, "package.json"), "utf8"),
+  );
+  const declared = packageJson.dependencies?.["@tauri-apps/plugin-updater"];
+  const vendorManifestPath = path.join(
+    root,
+    "src-tauri",
+    "vendor",
+    "tauri-plugin-updater",
+    "Cargo.toml",
+  );
+  if (!declared && !existsSync(vendorManifestPath)) return;
+  const vendorManifest = readFileSync(vendorManifestPath, "utf8");
+  const packageStart = vendorManifest.indexOf("[package]");
+  const packageEnd = vendorManifest.indexOf("\n[", packageStart + 1);
+  const packageSection = vendorManifest.slice(
+    packageStart,
+    packageEnd === -1 ? undefined : packageEnd,
+  );
+  const vendored = packageSection.match(/^version\s*=\s*"([^"]+)"\s*$/mu)?.[1];
+  const lock = JSON.parse(lockBytes.toString("utf8"));
+  const locked =
+    lock.packages?.["node_modules/@tauri-apps/plugin-updater"]?.version;
+
+  if (!vendored) {
+    throw new Error("Cannot read the vendored tauri-plugin-updater version");
+  }
+  if (declared !== vendored) {
+    throw new Error(
+      `@tauri-apps/plugin-updater must be pinned exactly to vendored Rust version ${vendored}; found ${declared || "missing"}`,
+    );
+  }
+  if (locked !== vendored) {
+    throw new Error(
+      `Updated package-lock resolved @tauri-apps/plugin-updater ${locked || "missing"}; vendored Rust version is ${vendored}`,
+    );
+  }
+}
+
+export function npmAuditPlan(root, cachePath, npm) {
+  return [
+    {
+      command: npm.command,
+      args: [
+        ...npm.prefixArgs,
+        "audit",
+        "--omit=dev",
+        "--audit-level=high",
+        "--ignore-scripts",
+        `--cache=${cachePath}`,
+      ],
+    },
+    {
+      command: process.execPath,
+      args: [npmDevAuditScript, "--root", root],
+    },
+  ];
+}
+
+export function npmUpdateInvocation(options = {}) {
+  try {
+    return npmInvocation(options);
+  } catch (error) {
+    const platform = options.platform ?? process.platform;
+    if (
+      platform === "win32" &&
+      /npm_execpath is unavailable/u.test(String(error?.message || error))
+    ) {
+      const env = options.env ?? process.env;
+      const execPath = options.execPath ?? process.execPath;
+      const prefixes = [
+        String(env.npm_config_prefix || "").trim(),
+        env.APPDATA ? path.join(env.APPDATA, "npm") : "",
+        path.dirname(execPath),
+      ].filter(Boolean);
+      for (const prefix of prefixes) {
+        const cliPath = path.join(
+          prefix,
+          "node_modules",
+          "npm",
+          "bin",
+          "npm-cli.js",
+        );
+        if (existsSync(cliPath)) {
+          return { command: execPath, prefixArgs: [cliPath] };
+        }
+      }
+      return { command: "npm.cmd", prefixArgs: [] };
+    }
+    throw error;
+  }
 }
 
 export function usesWindowsCmdShell(command) {
@@ -171,7 +272,10 @@ export function assertUpdateEnvironment() {
     );
   }
 
-  const npmVersion = run(npmCommand, ["--version"], { capture: true });
+  const npm = npmUpdateInvocation();
+  const npmVersion = run(npm.command, [...npm.prefixArgs, "--version"], {
+    capture: true,
+  });
   if (!isVersionAtLeast(npmVersion, MINIMUM_NPM_VERSION)) {
     throw new Error(
       `npm ${MINIMUM_NPM_VERSION}+ required; found ${npmVersion}`,
@@ -191,6 +295,7 @@ export function assertUpdateEnvironment() {
 function main() {
   assertUpdateEnvironment();
   const root = process.cwd();
+  const npm = npmUpdateInvocation();
   const packageLock = path.join(root, "package-lock.json");
   const releaseUpdateLock = acquireUpdateLock(root);
   let tempRoot;
@@ -205,9 +310,19 @@ function main() {
       npm_config_ignore_scripts: "true",
       npm_config_min_release_age: "3",
     };
+    if (
+      process.platform === "win32" &&
+      npm.command === process.execPath &&
+      npm.prefixArgs[0]
+    ) {
+      env.npm_execpath = npm.prefixArgs[0];
+    }
 
     try {
-      run(npmCommand, npmUpdateArguments(cachePath), { cwd: root, env });
+      run(npm.command, [...npm.prefixArgs, ...npmUpdateArguments(cachePath)], {
+        cwd: root,
+        env,
+      });
     } catch (error) {
       restoreSnapshot(packageLock, snapshot);
       throw error;
@@ -216,16 +331,10 @@ function main() {
     const candidate = readSnapshot(packageLock);
     let auditError;
     try {
-      run(
-        npmCommand,
-        [
-          "audit",
-          "--audit-level=high",
-          "--ignore-scripts",
-          "--cache=" + cachePath,
-        ],
-        { cwd: root, env },
-      );
+      assertVendoredUpdaterParity(root, candidate.bytes);
+      for (const step of npmAuditPlan(root, cachePath, npm)) {
+        run(step.command, step.args, { cwd: root, env });
+      }
     } catch (error) {
       auditError = error;
     }

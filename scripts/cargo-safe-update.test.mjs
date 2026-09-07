@@ -35,10 +35,13 @@ import {
 import {
   MINIMUM_NPM_VERSION,
   STABLE_RUST_CHANNEL,
+  assertVendoredUpdaterParity,
   hasStableRustToolchain,
   isSupportedNodeVersion,
   isVersionAtLeast,
+  npmAuditPlan,
   npmUpdateArguments,
+  npmUpdateInvocation,
   parseVersion,
   restoreSnapshot,
   usesWindowsCmdShell,
@@ -1591,8 +1594,38 @@ test("46. npm lock update cannot install packages or run lifecycle scripts", () 
     "update",
     "--package-lock-only",
     "--ignore-scripts",
+    "--no-audit",
     "--min-release-age=3",
     "--cache=/isolated/npm-cache",
+  ]);
+});
+
+test("46a. npm update audits production strictly and dev tools through review policy", () => {
+  const root = path.join("isolated", "workspace");
+  const plan = npmAuditPlan(root, "/isolated/npm-cache", {
+    command: process.execPath,
+    prefixArgs: ["/npm/cli.js"],
+  });
+  assert.deepEqual(plan, [
+    {
+      command: process.execPath,
+      args: [
+        "/npm/cli.js",
+        "audit",
+        "--omit=dev",
+        "--audit-level=high",
+        "--ignore-scripts",
+        "--cache=/isolated/npm-cache",
+      ],
+    },
+    {
+      command: process.execPath,
+      args: [
+        fileURLToPath(new URL("./npm-dev-audit.cjs", import.meta.url)),
+        "--root",
+        root,
+      ],
+    },
   ]);
 });
 
@@ -1601,6 +1634,87 @@ test("46b. Windows npm.cmd spawn uses a shell; other commands stay shell-less", 
   assert.equal(usesWindowsCmdShell("cargo"), false);
   assert.equal(usesWindowsCmdShell("npm.cmd"), process.platform === "win32");
   assert.equal(usesWindowsCmdShell("NPM.CMD"), process.platform === "win32");
+});
+
+test("46c. npm scripts use the shell-free Windows CLI invocation", () => {
+  assert.deepEqual(
+    npmUpdateInvocation({
+      env: { npm_execpath: "C:\\npm\\cli.js" },
+      platform: "win32",
+      execPath: "C:\\node.exe",
+    }),
+    { command: "C:\\node.exe", prefixArgs: ["C:\\npm\\cli.js"] },
+  );
+  assert.deepEqual(
+    npmUpdateInvocation({
+      env: {},
+      platform: "win32",
+      execPath: "C:\\node.exe",
+    }),
+    { command: "npm.cmd", prefixArgs: [] },
+  );
+});
+
+test("46d. npm update keeps JavaScript updater pinned to the vendored Rust version", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "npm-updater-parity-"));
+  try {
+    const vendor = path.join(
+      root,
+      "src-tauri",
+      "vendor",
+      "tauri-plugin-updater",
+    );
+    mkdirSync(vendor, { recursive: true });
+    writeFileSync(
+      path.join(root, "package.json"),
+      JSON.stringify({
+        dependencies: { "@tauri-apps/plugin-updater": "2.10.1" },
+      }),
+    );
+    writeFileSync(
+      path.join(vendor, "Cargo.toml"),
+      '[package]\nname = "tauri-plugin-updater"\nversion = "2.10.1"\n\n[dependencies]\n',
+    );
+    const lock = Buffer.from(
+      JSON.stringify({
+        packages: {
+          "node_modules/@tauri-apps/plugin-updater": { version: "2.10.1" },
+        },
+      }),
+    );
+    assert.doesNotThrow(() => assertVendoredUpdaterParity(root, lock));
+
+    writeFileSync(
+      path.join(root, "package.json"),
+      JSON.stringify({
+        dependencies: { "@tauri-apps/plugin-updater": "^2.10.0" },
+      }),
+    );
+    assert.throws(
+      () => assertVendoredUpdaterParity(root, lock),
+      /must be pinned exactly/,
+    );
+
+    const mismatchedLock = Buffer.from(
+      JSON.stringify({
+        packages: {
+          "node_modules/@tauri-apps/plugin-updater": { version: "2.11.0" },
+        },
+      }),
+    );
+    writeFileSync(
+      path.join(root, "package.json"),
+      JSON.stringify({
+        dependencies: { "@tauri-apps/plugin-updater": "2.10.1" },
+      }),
+    );
+    assert.throws(
+      () => assertVendoredUpdaterParity(root, mismatchedLock),
+      /vendored Rust version is 2\.10\.1/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("47. concurrent Cargo dependency updates are rejected", () => {

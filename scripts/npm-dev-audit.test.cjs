@@ -2,7 +2,7 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { evaluateAudit } = require("./npm-dev-audit.cjs");
+const { evaluateAudit, resolveAuditRoot } = require("./npm-dev-audit.cjs");
 
 function lockFor(...nodes) {
   return {
@@ -98,4 +98,16 @@ test("reviewed exceptions expire", () => {
     new Date("2026-12-01T00:00:00Z"),
   );
   assert.match(result.errors.join("\n"), /review expired/);
+});
+
+test("an explicit audit root selects the candidate workspace", () => {
+  assert.equal(
+    resolveAuditRoot(["--root", "candidate"], "default"),
+    require("node:path").resolve("candidate"),
+  );
+  assert.equal(resolveAuditRoot([], "default"), "default");
+  assert.throws(
+    () => resolveAuditRoot(["candidate"], "default"),
+    /Usage: npm-dev-audit/,
+  );
 });

@@ -79,6 +79,10 @@ const REVIEWED_SOURCE_OMISSIONS = new Map([
     "sigchld@0.2.4",
     "The crates.io package and its pinned upstream source revision contain no license text beyond the MIT declaration in Cargo.toml.",
   ],
+  [
+    "sigchld@0.2.5",
+    "The crates.io package and its pinned upstream source revision contain no license text beyond the MIT declaration in Cargo.toml.",
+  ],
 ]);
 
 function runCargoMetadata() {

@@ -133,8 +133,19 @@ function runAudit(root) {
   return report;
 }
 
+function resolveAuditRoot(
+  args = process.argv.slice(2),
+  defaultRoot = path.join(__dirname, ".."),
+) {
+  if (args.length === 0) return defaultRoot;
+  if (args.length === 2 && args[0] === "--root" && args[1]) {
+    return path.resolve(args[1]);
+  }
+  throw new Error("Usage: npm-dev-audit.cjs [--root <workspace>]");
+}
+
 function main() {
-  const root = path.join(__dirname, "..");
+  const root = resolveAuditRoot();
   const report = runAudit(root);
   const lock = JSON.parse(
     fs.readFileSync(path.join(root, "package-lock.json"), "utf8"),
@@ -173,4 +184,5 @@ module.exports = {
   collectAdvisories,
   evaluateAudit,
   isDevOnlyNode,
+  resolveAuditRoot,
 };

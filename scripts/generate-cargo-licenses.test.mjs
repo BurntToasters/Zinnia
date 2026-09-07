@@ -168,4 +168,12 @@ test("source-only license omissions are explicit and package-version scoped", ()
     reviewedSourceOmissionForPackage({ name: "selectors", version: "0.36.2" }),
     null,
   );
+  assert.equal(
+    reviewedSourceOmissionForPackage({ name: "sigchld", version: "0.2.5" }),
+    REVIEWED_SOURCE_OMISSIONS.get("sigchld@0.2.5"),
+  );
+  assert.equal(
+    reviewedSourceOmissionForPackage({ name: "sigchld", version: "0.2.6" }),
+    null,
+  );
 });
