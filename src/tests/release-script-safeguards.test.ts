@@ -341,38 +341,73 @@ describe("release script safeguards", () => {
     }
   });
 
-  it("reads only the current CHANGELOG.md version section for Windows draft notes", () => {
+  it("reads the full CHANGELOG.md for Windows draft release notes", () => {
     const pkg = JSON.parse(fs.readFileSync("package.json", "utf8")) as {
       version: string;
     };
+    const changelog = fs.readFileSync("CHANGELOG.md", "utf8");
     const body = readChangelogReleaseBody();
+    expect(body).toBe(changelog);
+    expect(body).toContain("# ⬇️ Downloads");
     expect(body).toContain(`## Changes in \`v${pkg.version}:\``);
-    expect(body.trim().length).toBeGreaterThan(0);
-    expect(body).not.toContain("## Changes in `v0.6.1-beta.6:`");
+    expect(body).toContain("## ℹ️ Release Info");
 
     const mixed = path.join(
       os.tmpdir(),
       `zinnia-mixed-changelog-${Date.now()}.md`,
     );
-    fs.writeFileSync(
-      mixed,
-      [
-        "## Changes in `v9.9.9:`",
-        "",
-        "- **Fix:** current notes only.",
-        "",
-        "## Changes in `v0.1.0:`",
-        "",
-        "- **Fix:** historical notes must not ship.",
-        "",
-      ].join("\n"),
-    );
+    const mixedContents = [
+      "# Downloads",
+      "",
+      "## Changes in `v9.9.9:`",
+      "",
+      "- **Fix:** current notes.",
+      "",
+      "## Changes in `v0.1.0:`",
+      "",
+      "- **Fix:** historical notes still ship.",
+      "",
+      "## Release Info",
+      "",
+    ].join("\n");
+    fs.writeFileSync(mixed, mixedContents);
     try {
       const extracted = readChangelogReleaseBody(mixed, "9.9.9");
-      expect(extracted).toContain("current notes only");
-      expect(extracted).not.toContain("historical notes must not ship");
+      expect(extracted).toBe(mixedContents);
+      expect(extracted).toContain("current notes");
+      expect(extracted).toContain("historical notes still ship");
+      expect(extracted).toContain("# Downloads");
     } finally {
       fs.rmSync(mixed, { force: true });
+    }
+
+    const missingHeading = path.join(
+      os.tmpdir(),
+      `zinnia-missing-heading-${Date.now()}.md`,
+    );
+    fs.writeFileSync(missingHeading, "# Downloads\n\n## Release Info\n");
+    try {
+      expect(() => readChangelogReleaseBody(missingHeading, "9.9.9")).toThrow(
+        /has no ## Changes in `v9\.9\.9:` section/,
+      );
+    } finally {
+      fs.rmSync(missingHeading, { force: true });
+    }
+
+    const emptySection = path.join(
+      os.tmpdir(),
+      `zinnia-empty-section-${Date.now()}.md`,
+    );
+    fs.writeFileSync(
+      emptySection,
+      "## Changes in `v9.9.9:`\n\n## Changes in `v0.1.0:`\n\n- old\n",
+    );
+    try {
+      expect(() => readChangelogReleaseBody(emptySection, "9.9.9")).toThrow(
+        /section for ## Changes in `v9\.9\.9:` is empty/,
+      );
+    } finally {
+      fs.rmSync(emptySection, { force: true });
     }
 
     const missing = path.join(

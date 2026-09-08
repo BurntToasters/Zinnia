@@ -111,7 +111,9 @@ function readChangelogReleaseBody(
   if (!section.slice(heading.length).trim()) {
     throw new Error("CHANGELOG.md section for " + heading + " is empty.");
   }
-  return section + "\n";
+  // GitHub notes are the full CHANGELOG.md (downloads, prior versions,
+  // release info). Slice above only proves this version's section has notes.
+  return body;
 }
 
 function singleDraftRelease(matching) {
