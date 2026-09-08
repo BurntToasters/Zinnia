@@ -191,5 +191,11 @@ describe("macOS compatibility", () => {
     expect(installInner).toContain("MACOS_PRIVILEGED_INSTALL_SCRIPT");
     const productionInstall = installInner.split("#[cfg(test)]")[0];
     expect(productionInstall).not.toMatch(/rm -rf .*quoted form of srcPath/);
+    expect(productionInstall).not.toContain("script.compile().expect");
+    expect(productionInstall).not.toContain("rx.recv().unwrap");
+    expect(productionInstall).not.toContain("tx.send(r).unwrap");
+    expect(productionInstall).toContain(
+      "Privileged macOS update callback did not complete",
+    );
   });
 });

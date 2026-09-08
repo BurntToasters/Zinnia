@@ -78,7 +78,10 @@
   ; release therefore gets a new directory so an update never overwrites a DLL
   ; that Explorer/dllhost still has open. ${VERSION} is defined by Tauri's NSIS
   ; template before this macro is expanded.
-  ; $R6 = 1 when packages registered successfully (caller skips classic verbs).
+  ; $R6 = 1 when current packages registered, 2 when registration was
+  ; deferred because Explorer still has a DLL open, 3 when a prior payload was
+  ; restored. Deferred/restored states retain every payload directory; only 1
+  ; permits stale-payload cleanup.
   StrCpy $R6 "0"
   IfFileExists "$INSTDIR\shell-${VERSION}\ZinniaContextMenu.msix" 0 zinnia_skip_win11_menu
   StrCpy $R9 "$INSTDIR\shell-${VERSION}"
@@ -110,12 +113,22 @@
   Pop $0
   StrCmp $0 "error" zinnia_menu_exec_failed 0
   IntCmp $0 0 zinnia_menu_registered 0 0
+  IntCmp $0 2 zinnia_menu_registration_deferred 0 0
+  IntCmp $0 3 zinnia_menu_previous_restored 0 0
   zinnia_menu_exec_failed:
   DetailPrint "WARNING: Win11 context menu registration failed (exit $0). Classic verbs still work. See $INSTDIR\zinnia-context-menu-register.log"
   Goto zinnia_skip_win11_menu
   zinnia_menu_registered:
   DetailPrint "Win11 context menu package registered."
   StrCpy $R6 "1"
+  Goto zinnia_skip_win11_menu
+  zinnia_menu_registration_deferred:
+  DetailPrint "Win11 context menu registration deferred until Explorer releases the previous shell payload."
+  StrCpy $R6 "2"
+  Goto zinnia_skip_win11_menu
+  zinnia_menu_previous_restored:
+  DetailPrint "Previous Win11 context menu payload restored; retaining rollback payloads."
+  StrCpy $R6 "3"
   Goto zinnia_skip_win11_menu
   zinnia_menu_no_script:
   DetailPrint "WARNING: register-windows-context-menu.ps1 missing; skipping Win11 modern menu. Classic verbs still work."
@@ -249,6 +262,7 @@
   !insertmacro ZINNIA_REGISTER_COMPRESS_VERBS
   !insertmacro ZINNIA_REGISTER_WIN11_CONTEXT_MENU
   IntCmp $R6 1 zinnia_postinstall_win11_ok 0 0
+  IntCmp $R6 3 zinnia_postinstall_win11_restored 0 0
   DetailPrint "Keeping classic Extract/Compress verbs (Win11 menu unavailable)."
   !insertmacro ZINNIA_POSTINSTALL_CLASSIC_EXTRACT_FALLBACK
   Goto zinnia_postinstall_verbs_done
@@ -258,6 +272,13 @@
   !insertmacro ZINNIA_CLEAN_LEGACY_SHELL_PAYLOAD
   !insertmacro ZINNIA_CLEAN_SHELL_PAYLOADS "shell-${VERSION}" zinnia_update_shell_cleanup
   zinnia_postinstall_verbs_done:
+  Goto zinnia_postinstall_done
+  zinnia_postinstall_win11_restored:
+  DetailPrint "Removing classic Extract/Compress verbs; restored Win11 packages cover legacy menu too."
+  !insertmacro ZINNIA_UNREGISTER_COMPRESS_VERBS
+  ; The restored package may still be loaded from an older shell-* directory.
+  ; Leave all payloads intact until a later successful registration.
+  zinnia_postinstall_done:
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL

@@ -746,9 +746,49 @@ fn stream_error_keeps_collecting_until_termination() {
 
         let collected = collect_command_output(&mut rx, 1024, |_| {}).await;
         assert_eq!(collected.stream_error.as_deref(), Some("broken pipe"));
-        assert_eq!(collected.exit_code(), 1);
+        assert_eq!(
+            collected.exit_code(),
+            -1,
+            "a stream failure must invalidate an otherwise successful child exit"
+        );
         assert_eq!(collected.stdout, "tail\n");
     });
+}
+
+#[test]
+fn cancelled_output_cannot_report_success_after_finalizer_rolls_back() {
+    let output = super::commands::CollectedOutput {
+        stdout: "Everything is Ok\n".to_string(),
+        stderr: String::new(),
+        stdout_truncated: false,
+        stderr_truncated: false,
+        exit: Some(tauri_plugin_shell::process::TerminatedPayload {
+            code: Some(0),
+            signal: None,
+        }),
+        stream_error: None,
+    };
+    let result = output.into_run_result(true, None);
+    assert_eq!(result.code, -1);
+    assert_eq!(result.warning_code, None);
+}
+
+#[test]
+fn cancelled_metadata_warning_is_not_reclassified_as_success() {
+    let output = super::commands::CollectedOutput {
+        stdout: "WARNING: Cannot set ACL\n".to_string(),
+        stderr: String::new(),
+        stdout_truncated: false,
+        stderr_truncated: false,
+        exit: Some(tauri_plugin_shell::process::TerminatedPayload {
+            code: Some(1),
+            signal: None,
+        }),
+        stream_error: None,
+    };
+    let result = output.into_run_result(true, Some(1));
+    assert_eq!(result.code, -1);
+    assert_eq!(result.warning_code, None);
 }
 
 #[test]

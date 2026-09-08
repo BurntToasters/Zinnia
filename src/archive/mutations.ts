@@ -114,6 +114,7 @@ export async function addFilesToArchive(): Promise<void> {
 
   let refreshAfterRun = false;
   state.cancelRequested = false;
+  state.batchCancelled = false;
   setRunning(true);
   picked.release();
   try {
@@ -281,6 +282,7 @@ export async function convertArchive(): Promise<void> {
   }
 
   state.cancelRequested = false;
+  state.batchCancelled = false;
   setRunning(true);
   picked.release();
   let tempDir: string | null = null;
@@ -358,6 +360,10 @@ export async function convertArchive(): Promise<void> {
     const children = await invoke<string[]>("list_managed_temp_children", {
       path: tempDir,
     });
+    if (state.cancelRequested || state.batchCancelled) {
+      setStatus("Cancelled", 2000);
+      return;
+    }
     if (children.length === 0) {
       throw new Error("Conversion extract produced no files to recompress.");
     }
@@ -367,6 +373,10 @@ export async function convertArchive(): Promise<void> {
       );
     }
     if (!(await confirmZipSymlinkRisk(format, children))) {
+      setStatus("Cancelled", 2000);
+      return;
+    }
+    if (state.cancelRequested || state.batchCancelled) {
       setStatus("Cancelled", 2000);
       return;
     }

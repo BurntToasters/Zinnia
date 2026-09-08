@@ -35,6 +35,7 @@ export async function testArchive(): Promise<ArchiveTestResult> {
   if (state.running) return "cancelled";
   setRunning(true);
   state.cancelRequested = false;
+  state.batchCancelled = false;
   try {
     const archive = state.inputs[0];
     if (!archive) {
@@ -132,6 +133,7 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
   if (state.running) return null;
   setRunning(true);
   state.cancelRequested = false;
+  state.batchCancelled = false;
   try {
     const archive = state.inputs[0];
     if (!archive) {

@@ -1398,20 +1398,34 @@ impl Update {
                         osakit::Language::AppleScript,
                         MACOS_PRIVILEGED_INSTALL_SCRIPT,
                     );
-                    script.compile().expect("invalid AppleScript");
-                    let r = script.execute_function(
-                        "installUpdate",
-                        [
-                            osakit::Value::String(src),
-                            osakit::Value::String(new),
-                            osakit::Value::String(backup),
-                        ],
-                    );
-                    tx.send(r).unwrap();
+                    let r = match script.compile() {
+                        Ok(()) => script.execute_function(
+                            "installUpdate",
+                            [
+                                osakit::Value::String(src),
+                                osakit::Value::String(new),
+                                osakit::Value::String(backup),
+                            ],
+                        ),
+                        Err(error) => Err(error),
+                    };
+                    // The main-thread callback can be torn down during app
+                    // shutdown. Sending best-effort keeps that teardown from
+                    // turning an update failure into a process panic.
+                    let _ = tx.send(r);
                 }));
-                let result = rx.recv().unwrap();
+                if let Err(error) = res {
+                    return Err(Error::Io(std::io::Error::other(format!(
+                        "Failed to schedule the privileged macOS update: {error}"
+                    ))));
+                }
+                let result = rx.recv().map_err(|_| {
+                    Error::Io(std::io::Error::other(
+                        "Privileged macOS update callback did not complete",
+                    ))
+                })?;
 
-                if res.is_err() || result.is_err() {
+                if result.is_err() {
                     return Err(Error::Io(std::io::Error::new(
                         std::io::ErrorKind::PermissionDenied,
                         "Failed to move the new app into place",

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { $, splitArgs } from "../utils";
 import { state } from "../state";
@@ -7,6 +8,7 @@ import {
   devLog,
   setStatus,
   setProgress,
+  setCancelAvailable,
   hideProgress,
   setRunning,
   getMode,
@@ -109,6 +111,25 @@ export async function runAction() {
         "archive_output_selection_token",
         { path: outputPath },
       );
+      if (
+        typeof expectedArchiveIdentity === "string" &&
+        expectedArchiveIdentity.length > 0 &&
+        expectedArchiveIdentity !== "absent"
+      ) {
+        const replace = await confirm(
+          `An archive already exists at ${outputPath}. Replace its contents?`,
+          {
+            title: "Replace archive",
+            kind: "warning",
+            okLabel: "Replace",
+            cancelLabel: "Cancel",
+          },
+        );
+        if (!replace) {
+          setStatus("Cancelled", 2000);
+          return;
+        }
+      }
     }
 
     if (state.cancelRequested) {
@@ -276,6 +297,7 @@ export async function runBatchExtract() {
       current = i + 1;
       archiveStartedAt = Date.now();
       sawPercent = false;
+      setCancelAvailable(true);
       setStatus(`Extracting ${i + 1} of ${archives.length}`);
 
       try {

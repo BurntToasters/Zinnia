@@ -1173,6 +1173,41 @@ describe("archive test/browse/selective flows", () => {
     );
   });
 
+  it("asks before replacing an existing archive in create mode", async () => {
+    const app = document.getElementById("app") as HTMLElement;
+    app.dataset.mode = "add";
+    app.dataset.workspaceMode = "power";
+    state.inputs = ["/tmp/input.txt"];
+    (document.getElementById("output-path") as HTMLInputElement).value =
+      "/tmp/existing.7z";
+    (document.getElementById("delete-after") as HTMLInputElement).checked =
+      false;
+    (document.getElementById("format") as HTMLSelectElement).value = "7z";
+    confirmMock.mockResolvedValueOnce(false);
+
+    setInvokeRouter((command) => {
+      if (command === "probe_7z") return undefined;
+      if (command === "archive_output_selection_token") return "a".repeat(64);
+      if (command === "run_7z") {
+        throw new Error("create must not run after replacement is declined");
+      }
+      return undefined;
+    });
+
+    await runAction();
+
+    expect(confirmMock).toHaveBeenCalledWith(
+      "An archive already exists at /tmp/existing.7z. Replace its contents?",
+      expect.objectContaining({ okLabel: "Replace" }),
+    );
+    expect(invokeMock.mock.calls.some(([name]) => name === "run_7z")).toBe(
+      false,
+    );
+    expect(document.getElementById("status")?.textContent).toContain(
+      "Cancelled",
+    );
+  });
+
   it("reports runtime probe failures without a blocking native dialog", async () => {
     const app = document.getElementById("app") as HTMLElement;
     app.dataset.mode = "add";
@@ -1708,6 +1743,49 @@ describe("convertArchive", () => {
     expect(messageMock).not.toHaveBeenCalled();
     expect(document.getElementById("toast-region")?.textContent).toContain(
       "7-Zip stopped with warnings (exit code 1). Output was not published.",
+    );
+  });
+
+  it("does not start recompression when cancellation arrives during child listing", async () => {
+    const archive = uniqueArchivePath("convert-cancel-listing");
+    state.inputs = [archive];
+    saveMock.mockResolvedValueOnce("/tmp/converted.7z");
+
+    setInvokeRouter((command, payload) => {
+      if (command === "validate_archive_paths") {
+        return pathsFromValidationPayload(payload).map((path) => ({
+          path,
+          valid: true,
+        }));
+      }
+      if (command === "probe_7z") return undefined;
+      if (command === "create_temp_extract_dir")
+        return "/tmp/convert-cancel-listing";
+      if (command === "list_managed_temp_children") {
+        state.cancelRequested = true;
+        return ["/tmp/convert-cancel-listing/document.txt"];
+      }
+      if (command === "remove_managed_temp_dir") return undefined;
+      if (command === "run_7z") {
+        const args = decodeRun7zInvokePayload(payload).args;
+        return args[0] === "x"
+          ? { stdout: "", stderr: "", code: 0 }
+          : (() => {
+              throw new Error(
+                "recompression must not start after cancellation",
+              );
+            })();
+      }
+      return undefined;
+    });
+
+    await convertArchive();
+
+    expect(
+      invokeMock.mock.calls.filter(([name]) => name === "run_7z"),
+    ).toHaveLength(1);
+    expect(document.getElementById("status")?.textContent).toContain(
+      "Cancelled",
     );
   });
 

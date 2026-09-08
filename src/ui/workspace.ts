@@ -56,6 +56,20 @@ export async function persistSettingsImmediately(
   await enqueueSettingsPersist({ ...snapshot }, { ...extras }, generation);
 }
 
+/**
+ * Stop debounced settings writes and wait for any write already in flight.
+ * Reset-settings uses this barrier before deleting backend settings so a stale
+ * frontend snapshot cannot be written back after the reset completes.
+ */
+export async function flushPendingSettingsPersistence(): Promise<void> {
+  if (workingContextPersistTimer !== undefined) {
+    clearTimeout(workingContextPersistTimer);
+    workingContextPersistTimer = undefined;
+  }
+  settingsPersistGeneration += 1;
+  await settingsPersistQueue.catch(() => undefined);
+}
+
 export function queuePersistWorkingContext(): void {
   if (workingContextPersistTimer !== undefined) {
     clearTimeout(workingContextPersistTimer);

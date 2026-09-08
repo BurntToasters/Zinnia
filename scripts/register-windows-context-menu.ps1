@@ -84,9 +84,10 @@ function Add-ZinniaShellPackage(
   [string]$PackageName,
   [string]$ExternalLocation
 ) {
+  $deferred = $false
   try {
     Add-AppxPackage -ForceUpdateFromAnyVersion -Path $Path -ExternalLocation $ExternalLocation -ErrorAction Stop
-    return
+    return 'registered'
   }
   catch {
     # Windows reports an already-registered exact package version as
@@ -103,7 +104,7 @@ function Add-ZinniaShellPackage(
       # Let Windows stage the update and register it when the host releases it.
       Write-Log "Package resources are in use; retrying $PackageName with deferred registration."
       Add-AppxPackage -ForceUpdateFromAnyVersion -DeferRegistrationWhenPackagesAreInUse -Path $Path -ExternalLocation $ExternalLocation -ErrorAction Stop
-      return
+      return 'deferred'
     }
     if ($hresult -ne [int32]0x80073CFB) {
       throw
@@ -117,7 +118,19 @@ function Add-ZinniaShellPackage(
     else {
       Write-Log "No registered package $PackageName found; retrying registration."
     }
-    Add-AppxPackage -ForceUpdateFromAnyVersion -Path $Path -ExternalLocation $ExternalLocation -ErrorAction Stop
+    try {
+      Add-AppxPackage -ForceUpdateFromAnyVersion -Path $Path -ExternalLocation $ExternalLocation -ErrorAction Stop
+      return 'registered'
+    }
+    catch {
+      $retryHresult = $_.Exception.HResult
+      if ($retryHresult -eq [int32]0x80073D02) {
+        Write-Log "Package resources are still in use after the exact-version retry; deferring $PackageName."
+        Add-AppxPackage -ForceUpdateFromAnyVersion -DeferRegistrationWhenPackagesAreInUse -Path $Path -ExternalLocation $ExternalLocation -ErrorAction Stop
+        return 'deferred'
+      }
+      throw
+    }
   }
 }
 
@@ -137,8 +150,20 @@ function Restore-PreviousShellPackages(
   # Recovery must not remove a still-working prior identity. If it is already
   # registered, the direct add may report 0x80073CFB; leave that package in
   # place and let the caller keep the classic fallback available.
-  Add-AppxPackage -ForceUpdateFromAnyVersion -Path $PreviousPayload.RootMsix -ExternalLocation $ExternalLocation -ErrorAction Stop
-  Add-AppxPackage -ForceUpdateFromAnyVersion -Path $PreviousPayload.ExtractMsix -ExternalLocation $ExternalLocation -ErrorAction Stop
+  try {
+    Add-AppxPackage -ForceUpdateFromAnyVersion -Path $PreviousPayload.RootMsix -ExternalLocation $ExternalLocation -ErrorAction Stop
+  }
+  catch {
+    if ($_.Exception.HResult -ne [int32]0x80073CFB) { throw }
+    Write-Log 'Previous root package is already registered; keeping it in place.'
+  }
+  try {
+    Add-AppxPackage -ForceUpdateFromAnyVersion -Path $PreviousPayload.ExtractMsix -ExternalLocation $ExternalLocation -ErrorAction Stop
+  }
+  catch {
+    if ($_.Exception.HResult -ne [int32]0x80073CFB) { throw }
+    Write-Log 'Previous extract package is already registered; keeping it in place.'
+  }
   Write-Log 'OK: Restored previous Win11 context menu packages.'
   return $true
 }
@@ -283,9 +308,16 @@ try {
   )
 
   Write-Log "Add-AppxPackage -ForceUpdateFromAnyVersion -Path $MsixPath -ExternalLocation $ExternalLocation"
-  Add-ZinniaShellPackage -Path $MsixPath -PackageName 'run.rosie.zinnia.contextmenu' -ExternalLocation $ExternalLocation
+  $rootRegistration = Add-ZinniaShellPackage -Path $MsixPath -PackageName 'run.rosie.zinnia.contextmenu' -ExternalLocation $ExternalLocation
   Write-Log "Add-AppxPackage -ForceUpdateFromAnyVersion -Path $ExtractMsixPath -ExternalLocation $ExternalLocation"
-  Add-ZinniaShellPackage -Path $ExtractMsixPath -PackageName 'run.rosie.zinnia.extractmenu' -ExternalLocation $ExternalLocation
+  $extractRegistration = Add-ZinniaShellPackage -Path $ExtractMsixPath -PackageName 'run.rosie.zinnia.extractmenu' -ExternalLocation $ExternalLocation
+  if ($rootRegistration -eq 'deferred' -or $extractRegistration -eq 'deferred') {
+    # DeferRegistrationWhenPackagesAreInUse only stages the package. The old
+    # payload must remain available until Explorer releases its DLL, and the
+    # classic fallback must remain installed while the modern menu is pending.
+    Write-Log 'WARNING: Win11 context menu registration is staged for a later Explorer restart; retaining old payloads and classic fallback.'
+    exit 2
+  }
   Write-Log 'OK: Win11 context menu packages registered.'
   try {
     Remove-StaleShellPayloads -CurrentLocation $ShellPayloadLocation
@@ -317,8 +349,10 @@ catch {
   Write-Host "See log: $LogPath"
   if ($restored) {
     Write-Host 'Previous Win11 context-menu packages were restored.'
-    # Zero so NSIS does not also install classic verbs on top of a working modern menu.
-    exit 0
+    # Distinguish restored prior payloads from the current package. NSIS keeps
+    # every shell-* directory and removes classic fallback verbs only for this
+    # known-good modern state.
+    exit 3
   }
   # Non-zero so NSIS can DetailPrint a warning; install still continues.
   exit 1

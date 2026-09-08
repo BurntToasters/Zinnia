@@ -9,6 +9,7 @@ export { buildLogFragments, shouldPersistLevel, log, devLog } from "./log";
 
 export {
   persistSettingsImmediately,
+  flushPendingSettingsPersistence,
   getWorkspaceMode,
   resizeWorkspaceWindow,
   setWorkspaceMode,

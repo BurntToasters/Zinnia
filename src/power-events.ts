@@ -22,6 +22,7 @@ import {
   setUiDensity,
   getMode,
   persistSettingsImmediately,
+  flushPendingSettingsPersistence,
   setStatus,
   resizeWorkspaceWindow,
 } from "./ui";
@@ -538,6 +539,7 @@ export function wireEvents() {
 
     try {
       discardPendingUpdate();
+      await flushPendingSettingsPersistence();
       await invoke("reset_settings");
       await invoke("clear_logs").catch((err) => {
         const msg = err instanceof Error ? err.message : String(err);

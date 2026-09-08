@@ -333,6 +333,10 @@ describe("Windows 11 context-menu manifest", () => {
     // Extract/Compress are fallback-only when package registration fails.
     expect(hooks).toContain('StrCpy $R6 "0"');
     expect(hooks).toContain('StrCpy $R6 "1"');
+    expect(hooks).toContain('StrCpy $R6 "2"');
+    expect(hooks).toContain('StrCpy $R6 "3"');
+    expect(hooks).toContain("zinnia_menu_registration_deferred");
+    expect(hooks).toContain("zinnia_menu_previous_restored");
     expect(hooks).toContain("zinnia_postinstall_win11_ok");
     expect(hooks).toContain("ZINNIA_POSTINSTALL_CLASSIC_EXTRACT_FALLBACK");
     const postInstall = hooks.slice(
