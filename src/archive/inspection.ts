@@ -1,7 +1,10 @@
-import { invoke } from "@tauri-apps/api/core";
-import { message } from "@tauri-apps/plugin-dialog";
 import { $ } from "../utils";
-import { state, cacheBrowseInfo } from "../state";
+import {
+  state,
+  cacheBrowseInfo,
+  cacheBrowseIdentity,
+  clearBrowseCache,
+} from "../state";
 import {
   getMode,
   hideProgress,
@@ -20,12 +23,13 @@ import {
   logCommandResult,
   logTruncationNotice,
   truncateForDialog,
-  type Run7zResult,
+  invokeGuardedRun7z,
 } from "./runtime";
+import { debugLog, debugLogCommand, isDebugEnabled } from "../debug-mode";
 import type { ArchiveInfo } from "../browse-model";
+import { showToast } from "../toast";
 
-export type ArchiveTestResult =
-  "passed" | "passed_with_warnings" | "failed" | "cancelled" | "error";
+export type ArchiveTestResult = "passed" | "failed" | "cancelled" | "error";
 
 export async function testArchive(): Promise<ArchiveTestResult> {
   if (state.running) return "cancelled";
@@ -34,16 +38,14 @@ export async function testArchive(): Promise<ArchiveTestResult> {
   try {
     const archive = state.inputs[0];
     if (!archive) {
-      await message("Select an archive to test.", {
-        title: "No archive selected",
-      });
+      showToast("Select an archive to test.", "info");
       return "failed";
     }
     try {
       await ensureArchivePaths([archive], "test");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      await message(msg, { title: "Invalid input", kind: "error" });
+      showToast(msg, "error", 0);
       return "failed";
     }
 
@@ -56,45 +58,57 @@ export async function testArchive(): Promise<ArchiveTestResult> {
 
     if (!(await ensureRuntimeReady())) return "error";
     setStatus("Testing archive integrity");
-    const result = await invoke<Run7zResult>("run_7z", { args });
+    debugLogCommand(args);
+    const result = await invokeGuardedRun7z(args);
     if (state.cancelRequested) {
       setStatus("Cancelled", 2000);
       return "cancelled";
     }
-    logCommandResult(result.stdout, result.stderr);
+    logCommandResult(result.stdout, result.stderr, result.code);
     logTruncationNotice(result);
 
+    if (result.code === 0 && result.warning_code) {
+      setStatus("Integrity test passed with warnings", 3000);
+      log(
+        `Archive integrity test: PASSED WITH WARNINGS (warning_code ${result.warning_code})`,
+      );
+      showToast(
+        `Archive integrity test reported warnings (exit code ${result.warning_code}) and is not considered a clean pass.`,
+        "error",
+        0,
+      );
+      return "failed";
+    }
     if (result.code === 0) {
       setStatus("Integrity test passed", 3000);
       log("Archive integrity test: OK");
-      await message("Archive integrity test passed. No errors found.", {
-        title: "Test passed",
-      });
+      showToast("Archive integrity test passed. No errors found.", "success");
       clearPasswordFields();
       return "passed";
     }
     if (result.code === 1) {
-      setStatus("Integrity test passed with warnings", 3000);
-      log("Archive integrity test: OK (with warnings)");
-      await message(
-        "Archive integrity test passed with warnings. Check the log for details.",
-        { title: "Test passed" },
+      setStatus("Integrity test failed with warnings", 3000);
+      log("Archive integrity test: FAILED WITH WARNINGS (exit code 1)");
+      const warningDetails = result.stderr
+        ? `\n\n${truncateForDialog(result.stderr.trim(), 1000)}`
+        : "";
+      showToast(
+        `Archive integrity test stopped with warnings (exit code 1) and is not considered a pass.${warningDetails}`,
+        "error",
+        0,
       );
-      clearPasswordFields();
-      return "passed_with_warnings";
+      return "failed";
     }
 
     setStatus("Integrity test failed", 3000);
     log(`Archive integrity test: FAILED (exit code ${result.code})`);
     const errorDetails = result.stderr
-      ? `\n\n${truncateForDialog(result.stderr.trim())}`
+      ? `\n\n${truncateForDialog(result.stderr.trim(), 1000)}`
       : "";
-    await message(
+    showToast(
       `Archive integrity test failed (exit code ${result.code}).${errorDetails}`,
-      {
-        title: "Test failed",
-        kind: "error",
-      },
+      "error",
+      0,
     );
     return "failed";
   } catch (err) {
@@ -102,7 +116,11 @@ export async function testArchive(): Promise<ArchiveTestResult> {
     log(`Test error: ${msg}`);
     setStatus("Error", 3000, msg);
     hideProgress();
-    await message(msg, { title: "Test error", kind: "error" });
+    showToast(
+      `Archive integrity test failed: ${truncateForDialog(msg, 1000)}`,
+      "error",
+      0,
+    );
     return "error";
   } finally {
     clearPasswordFields();
@@ -117,16 +135,26 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
   try {
     const archive = state.inputs[0];
     if (!archive) {
-      await message("Select an archive to browse.", {
-        title: "No archive selected",
-      });
+      showToast("Select an archive to browse.", "info");
       return null;
     }
+    // Keep identity local until the listing succeeds so a failed browse does
+    // not leave an orphan identity cache entry without archive info.
+    let listingIdentity = "";
     try {
-      await ensureArchivePaths([archive], "browse");
+      const [validation] = await ensureArchivePaths(
+        [archive],
+        "browse",
+        undefined,
+        true,
+      );
+      if (!validation?.identity) {
+        throw new Error("Could not capture a stable archive identity.");
+      }
+      listingIdentity = validation.identity;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      await message(msg, { title: "Invalid input", kind: "error" });
+      showToast(msg, "error", 0);
       return null;
     }
 
@@ -137,7 +165,9 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
 
     if (!(await ensureRuntimeReady())) return null;
     setStatus("Listing archive contents");
-    const result = await invoke<Run7zResult>("run_7z", { args });
+    if (isDebugEnabled()) debugLog(`Listing archive: ${archive}`);
+    debugLogCommand(args);
+    const result = await invokeGuardedRun7z(args);
     if (state.cancelRequested) {
       setStatus("Cancelled", 2000);
       return null;
@@ -150,7 +180,7 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
         result.stderr,
       );
       setBrowsePasswordFieldVisible(needsPassword);
-      logCommandResult(result.stdout, result.stderr);
+      logCommandResult(result.stdout, result.stderr, result.code);
       setStatus("Failed to list archive", 3000);
       if (needsPassword)
         log("Archive appears to be encrypted. Enter a password and try again.");
@@ -158,41 +188,61 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
         ? "\n\nThis archive appears to be encrypted. Enter the archive password and try again."
         : "";
       const errorDetails = result.stderr
-        ? `\n\n${truncateForDialog(result.stderr.trim())}`
+        ? `\n\n${truncateForDialog(result.stderr.trim(), 1000)}`
         : "";
-      await message(
+      showToast(
         `Failed to list archive contents (exit code ${result.code}).${passwordHint}${errorDetails}`,
-        {
-          title: "Browse failed",
-          kind: "error",
-        },
+        "error",
+        0,
       );
       return null;
     }
 
     if (result.stdout_truncated) {
       setStatus("Archive listing too large", 3000);
-      await message(
+      showToast(
         "The archive listing exceeded Zinnia's safe output limit, so it cannot be displayed completely.",
-        {
-          title: "Browse incomplete",
-          kind: "error",
-        },
+        "error",
+        0,
       );
       return null;
     }
 
+    const [afterListing] = await ensureArchivePaths(
+      [archive],
+      "browse",
+      undefined,
+      true,
+    );
+    if (
+      !afterListing?.identity ||
+      !listingIdentity ||
+      afterListing.identity !== listingIdentity
+    ) {
+      clearBrowseCache(archive);
+      throw new Error(
+        "Archive changed while its contents were being listed. Browse it again.",
+      );
+    }
     const info = parseArchiveListing(result.stdout);
+    clearBrowseCache(archive);
     cacheBrowseInfo(archive, info);
+    cacheBrowseIdentity(archive, afterListing.identity);
     setBrowsePasswordFieldVisible(info.encrypted);
     renderBrowseTable(info);
     setStatus(`${info.entries.length} entries listed`, 3000);
+    if (isDebugEnabled()) {
+      debugLog(
+        `Browse finished: ${info.entries.length} entries (encrypted=${info.encrypted}).`,
+      );
+    }
     return info;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Browse error: ${msg}`);
+    if (isDebugEnabled()) debugLog(`Browse error: ${msg}`);
     setStatus("Error", 3000, msg);
-    await message(msg, { title: "Browse error", kind: "error" });
+    showToast(`Browse failed: ${truncateForDialog(msg, 1000)}`, "error", 0);
     return null;
   } finally {
     setRunning(false);

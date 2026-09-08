@@ -3,12 +3,12 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::Manager;
 
-use crate::process::RunningProcess;
+use crate::process::{terminate_registered_child, RunningProcess};
 
 use super::open_path::derive_extract_destination_path;
 use super::{
-    ExtractBoundDestination, ExtractOpenAllowlist, ExtractQueue, EXTRACT_ONLY_LAUNCH,
-    MAC_FALLBACK_MAIN_PENDING,
+    ExtractBoundDestination, ExtractBoundPaths, ExtractOpenAllowlist, ExtractQueue,
+    EXTRACT_ONLY_LAUNCH, MAC_FALLBACK_MAIN_PENDING,
 };
 
 static EXTRACT_WINDOW_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -36,6 +36,25 @@ pub fn clear_extract_window_bindings(app: &tauri::AppHandle, label: &str) {
         }
     }
 }
+#[tauri::command]
+pub fn inspect_extract_destination(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    path: String,
+) -> Result<crate::path_safety::ExtractDestinationStatus, String> {
+    if path.is_empty() {
+        return Err("Choose a destination folder.".to_string());
+    }
+    if path.len() > 8192 || path.contains('\0') {
+        return Err("A destination path is invalid or exceeds its byte limit.".to_string());
+    }
+    let requested = std::path::PathBuf::from(&path);
+    if super::is_extract_window_label(window.label()) {
+        super::open_path::assert_extract_bound_destination(&app, window.label(), &requested)?;
+    }
+    crate::path_safety::classify_extract_destination(&requested)
+}
+
 #[tauri::command]
 pub fn get_extract_paths(
     window: tauri::Window,
@@ -70,10 +89,15 @@ pub(crate) fn bump_extract_warm_idle_generation() {
 
 /// Embed archive/destination for the extract window. Escapes U+2028/U+2029 because
 /// serde_json leaves them unescaped and they break JavaScript string literals.
-pub(crate) fn extract_session_init_script(archive: &str, destination: &str) -> String {
+pub(crate) fn extract_session_init_script(
+    archive: &str,
+    destination: &str,
+    destination_exists: bool,
+) -> String {
     let payload = serde_json::json!({
         "archive": archive,
         "destination": destination,
+        "destinationExists": destination_exists,
     });
     let json = payload
         .to_string()
@@ -167,15 +191,23 @@ pub(crate) fn ensure_extract_warm_tray(app: &tauri::AppHandle) -> bool {
     }
 }
 
-/// Drop the resident extract-only tray and cancel the idle exit timer.
-pub fn leave_extract_warm(app: &tauri::AppHandle) {
+pub(crate) fn warm_idle_timer_still_owns(generation: u64) -> bool {
+    EXTRACT_WARM_IDLE_GENERATION.load(Ordering::SeqCst) == generation
+}
+
+fn clear_extract_warm_idle_ui(app: &tauri::AppHandle) {
     EXTRACT_WARM_IDLE_ACTIVE.store(false, Ordering::SeqCst);
-    bump_extract_warm_idle_generation();
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         let _ = app.remove_tray_by_id(EXTRACT_WARM_TRAY_ID);
     }
     restore_foreground_activation(app);
+}
+
+/// Drop the resident extract-only tray and cancel the idle exit timer.
+pub fn leave_extract_warm(app: &tauri::AppHandle) {
+    clear_extract_warm_idle_ui(app);
+    bump_extract_warm_idle_generation();
 }
 
 /// After the last quick-extract window closes, stay resident for the next open.
@@ -223,13 +255,21 @@ pub fn enter_extract_warm_idle(app: &tauri::AppHandle) -> bool {
         let exit_handle = handle.clone();
         if let Err(error) = handle.run_on_main_thread(move || {
             // Re-check on the main thread: a file-open may have raced the sleep wake.
-            if EXTRACT_WARM_IDLE_GENERATION.load(Ordering::SeqCst) != generation {
+            if !warm_idle_timer_still_owns(generation) {
                 return;
             }
             if !EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst) || has_extract_windows(&exit_handle) {
                 return;
             }
-            leave_extract_warm(&exit_handle);
+            // Do not bump here. leave_extract_warm() would invalidate this
+            // timer's own generation and skip exit(0), leaving a windowless process.
+            clear_extract_warm_idle_ui(&exit_handle);
+            if !warm_idle_timer_still_owns(generation) {
+                return;
+            }
+            if !EXTRACT_ONLY_LAUNCH.load(Ordering::SeqCst) || has_extract_windows(&exit_handle) {
+                return;
+            }
             EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);
             exit_handle.exit(0);
         }) {
@@ -257,8 +297,15 @@ pub fn ensure_main_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow
         .find(|config| config.label == "main")
         .ok_or_else(|| "Main window configuration is missing".to_string())?;
 
-    tauri::WebviewWindowBuilder::from_config(app, config)
+    #[allow(unused_mut)]
+    let mut builder = tauri::WebviewWindowBuilder::from_config(app, config)
         .map_err(|e| e.to_string())?
+        .initialization_script(super::webview_context_menu::NATIVE_CONTEXT_MENU_GUARD_SCRIPT);
+    #[cfg(target_os = "linux")]
+    {
+        builder = builder.transparent(false);
+    }
+    super::apply_e2e_webview_overrides(builder)
         .build()
         .map_err(|e| e.to_string())
 }
@@ -266,6 +313,15 @@ pub fn ensure_main_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow
 pub fn show_main_window(app: &tauri::AppHandle) -> Result<(), String> {
     restore_foreground_activation(app);
     let window = ensure_main_window(app)?;
+    #[cfg(target_os = "linux")]
+    {
+        window
+            .set_background_color(Some(tauri::window::Color(0x20, 0x20, 0x24, 0xff)))
+            .map_err(|e| e.to_string())?;
+    }
+    if super::e2e_session_active() {
+        let _ = window.set_background_color(Some(tauri::window::Color(0xf5, 0xf5, 0xf5, 0xff)));
+    }
 
     #[cfg(not(target_os = "macos"))]
     window.set_decorations(false).map_err(|e| e.to_string())?;
@@ -277,8 +333,11 @@ pub fn show_main_window(app: &tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn mark_main_window_ready() {
+pub fn mark_main_window_ready(app: tauri::AppHandle) {
     MAC_FALLBACK_MAIN_PENDING.store(false, Ordering::SeqCst);
+    super::MAIN_WINDOW_READY.store(true, Ordering::SeqCst);
+    super::open_routing::emit_pending_shell_handoff_error(&app);
+    crate::app_menu::flush_pending_menu_actions(&app);
 }
 
 #[tauri::command]
@@ -314,7 +373,7 @@ pub async fn cancel_owner_and_wait(
         if let Some(owner) = &process.owner_label {
             if owner == owner_label {
                 process.cancelling = true;
-                process.child.take()
+                process.child.as_ref().map(std::sync::Arc::clone)
             } else {
                 None
             }
@@ -323,11 +382,9 @@ pub async fn cancel_owner_and_wait(
         }
     };
     if let Some(child) = child {
-        if let Err(e) = child.kill() {
-            return Err(format!(
-                "Could not stop the archive operation before closing this window: {e}"
-            ));
-        }
+        terminate_registered_child(&state, &child).map_err(|error| {
+            format!("Could not stop the archive operation before closing this window: {error}")
+        })?;
     }
 
     // `run_7z` owns termination collection and filesystem finalization.
@@ -362,6 +419,13 @@ pub fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Resul
         .ok_or_else(|| "Extract window requires an archive path.".to_string())?;
     let destination = derive_extract_destination_path(&archive)
         .ok_or_else(|| "Could not derive an extract destination for this archive.".to_string())?;
+    // This is only a UX warning snapshot. Transactional extraction still uses
+    // no-replace publication and re-checks every final path during commit.
+    let destination_exists = match std::fs::symlink_metadata(&destination) {
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(_) => true,
+    };
 
     let label = format!(
         "extract-{}",
@@ -379,12 +443,22 @@ pub fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Resul
     {
         let bound = app.state::<ExtractBoundDestination>();
         let mut map = bound.0.lock().map_err(|_| "Lock poisoned".to_string())?;
-        map.insert(label.clone(), destination.clone());
+        map.insert(
+            label.clone(),
+            ExtractBoundPaths {
+                destination: destination.clone(),
+                archive: std::path::PathBuf::from(&archive),
+            },
+        );
     }
 
     // Inject archive + destination before the page script runs so the UI can paint
     // and start extract without waiting on get_extract_paths.
-    let init_script = extract_session_init_script(&archive, destination.to_string_lossy().as_ref());
+    let init_script = extract_session_init_script(
+        &archive,
+        destination.to_string_lossy().as_ref(),
+        destination_exists,
+    );
 
     restore_foreground_activation(app);
 
@@ -398,7 +472,8 @@ pub fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Resul
     .resizable(false)
     .minimizable(true)
     .maximizable(false)
-    .initialization_script(init_script);
+    .initialization_script(init_script)
+    .initialization_script(super::webview_context_menu::NATIVE_CONTEXT_MENU_GUARD_SCRIPT);
 
     #[cfg(target_os = "macos")]
     {
@@ -411,7 +486,9 @@ pub fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Resul
         builder = builder.decorations(false);
     }
 
-    let result = builder.build().map_err(|e| e.to_string());
+    let result = super::apply_e2e_webview_overrides(builder)
+        .build()
+        .map_err(|e| e.to_string());
 
     if result.is_err() {
         clear_extract_window_bindings(app, &label);

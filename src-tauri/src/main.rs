@@ -35,15 +35,31 @@ use launch::{emit_open_urls, first_extract_window, leave_extract_warm};
 use logging::LogFileLock;
 use process::RunningProcess;
 
+fn production_integrations_enabled() -> bool {
+    #[cfg(feature = "e2e")]
+    {
+        !launch::e2e_session_active()
+    }
+    #[cfg(not(feature = "e2e"))]
+    {
+        true
+    }
+}
+
 fn defer_close_while_operation_finishes(
     app: &tauri::AppHandle,
     label: &str,
     api: &tauri::CloseRequestApi,
 ) -> bool {
     let state = app.state::<RunningProcess>();
-    let owns_busy_operation = state.0.lock().map_or(true, |process| {
+    let owns_busy_operation = state.0.lock().map_or(true, |mut process| {
+        process.reap_orphaned_child();
+        process.expire_stale_update_reservation();
         process.owner_label.as_deref() == Some(label)
-            && (process.child.is_some() || process.preparing || process.cancelling)
+            && (process.child.is_some()
+                || process.preparing
+                || process.cancelling
+                || process.blocks_quit_for_update_install())
     });
     if !owns_busy_operation {
         if launch::is_extract_window_label(label) {
@@ -77,15 +93,44 @@ fn force_exit_after_busy_teardown(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let state = app.state::<RunningProcess>();
         let owner = {
+            let child = {
+                let process = match state.0.lock() {
+                    Ok(guard) => guard,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                process.child.clone()
+            };
+            if let Some(child) = child {
+                if let Err(error) = process::terminate_child(&child) {
+                    eprintln!("Could not stop archive process during forced exit: {error}");
+                    if let Err(retry_error) = process::terminate_child_with_timeout(
+                        &child,
+                        std::time::Duration::from_secs(5),
+                    ) {
+                        eprintln!(
+                            "Retry stop during forced exit also failed: {retry_error}. A leftover 7-Zip process may hold staging locks until the next recovery pass."
+                        );
+                    }
+                    {
+                        let mut process = match state.0.lock() {
+                            Ok(guard) => guard,
+                            Err(poisoned) => poisoned.into_inner(),
+                        };
+                        process.cancelling = true;
+                        if process.child.is_none() {
+                            process.child = Some(child);
+                        }
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                    app.exit(0);
+                    return;
+                }
+            }
             let mut process = match state.0.lock() {
                 Ok(guard) => guard,
                 Err(poisoned) => poisoned.into_inner(),
             };
-            if let Some(child) = process.child.take() {
-                if let Err(error) = child.kill() {
-                    eprintln!("Could not stop archive process during forced exit: {error}");
-                }
-            }
+            process.child = None;
             process.cancelling = true;
             process.owner_label.clone()
         };
@@ -106,12 +151,31 @@ fn defer_exit_while_operation_finishes(
 ) -> bool {
     let state = app.state::<RunningProcess>();
     let owner = match state.0.lock() {
-        Ok(process) if process.child.is_some() || process.preparing || process.cancelling => {
-            process.owner_label.clone()
+        Ok(mut process) => {
+            // An update reservation has no child to cancel. Do not mistake a
+            // user/system Quit during installation for the later updater
+            // relaunch. The frontend releases this reservation immediately
+            // before calling relaunch; until then, keep the process alive.
+            process.reap_orphaned_child();
+            process.expire_stale_update_reservation();
+            if process.blocks_quit_for_update_install() {
+                api.prevent_exit();
+                return true;
+            }
+            if process.child.is_some() || process.preparing || process.cancelling {
+                process.owner_label.clone()
+            } else {
+                return false;
+            }
         }
-        Ok(_) => return false,
         Err(poisoned) => {
-            let process = poisoned.into_inner();
+            let mut process = poisoned.into_inner();
+            process.reap_orphaned_child();
+            process.expire_stale_update_reservation();
+            if process.blocks_quit_for_update_install() {
+                api.prevent_exit();
+                return true;
+            }
             if process.child.is_some() || process.preparing || process.cancelling {
                 process.owner_label.clone()
             } else {
@@ -148,10 +212,21 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init());
 
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[cfg(feature = "e2e")]
     {
         builder = builder
-            .plugin(tauri_plugin_single_instance::init(|app, argv, _| {
+            .plugin(tauri_plugin_wdio::init())
+            .plugin(tauri_plugin_wdio_webdriver::init());
+    }
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        if production_integrations_enabled() {
+            builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _| {
+                // Invalidate extract warm-idle before the deferred main-thread
+                // dispatch so an in-flight idle-exit cannot destroy the window
+                // that this second-instance open is about to reuse.
+                launch::bump_extract_warm_idle_generation();
                 // Window creation from the single-instance callback can deadlock
                 // WebView2 on Windows. Dispatch after the callback returns.
                 let dispatch_handle = app.clone();
@@ -161,8 +236,9 @@ fn main() {
                         emit_open_paths(&callback_handle, argv);
                     });
                 });
-            }))
-            .plugin(tauri_plugin_updater::Builder::new().build());
+            }));
+        }
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     }
 
     let app = builder
@@ -239,6 +315,9 @@ fn main() {
                             }
                             MAC_FALLBACK_MAIN_PENDING.store(true, Ordering::SeqCst);
                             if let Err(e) = show_main_window(&main_thread_handle) {
+                                // Do not leave PENDING stuck: a later Extract would
+                                // treat any surviving main as disposable fallback.
+                                MAC_FALLBACK_MAIN_PENDING.store(false, Ordering::SeqCst);
                                 eprintln!("Failed to open main window: {e}");
                             }
                         });
@@ -256,8 +335,13 @@ fn main() {
             #[cfg(target_os = "macos")]
             {
                 macos_services::install_macos_services(app.handle());
-                platform::register_macos_finder_sync();
                 finder_sync_requests::start_request_monitor(app.handle().clone());
+                // pluginkit can take several seconds when Launch Services is
+                // unhealthy. Registration is best-effort, so keep it off the
+                // setup/main thread and show the first window without waiting.
+                if production_integrations_enabled() {
+                    std::thread::spawn(platform::register_macos_finder_sync);
+                }
             }
 
             // Recovery can traverse and sync directories. Keep it off the setup thread so the
@@ -265,14 +349,22 @@ fn main() {
             // new operation, so a fast user action cannot race an interrupted transaction.
             let maintenance_handle = app.handle().clone();
             std::thread::spawn(move || {
-                if let Err(e) = process::recover_interrupted_transaction(&maintenance_handle) {
-                    eprintln!("Failed to recover an interrupted archive transaction: {e}");
-                    process::set_startup_recovery_error(Some(e));
-                } else {
-                    process::set_startup_recovery_error(None);
-                    if let Err(e) = process::cleanup_orphan_stages(&maintenance_handle) {
-                        eprintln!("Failed to clean orphan staging directories: {e}");
+                let recovered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    if let Err(e) = process::recover_interrupted_transaction(&maintenance_handle) {
+                        eprintln!("Failed to recover an interrupted archive transaction: {e}");
+                        process::set_startup_recovery_error(Some(e));
+                    } else {
+                        process::set_startup_recovery_error(None);
+                        if let Err(e) = process::cleanup_orphan_stages(&maintenance_handle) {
+                            eprintln!("Failed to clean orphan staging directories: {e}");
+                        }
                     }
+                }));
+                if recovered.is_err() {
+                    eprintln!("Startup recovery panicked; unblocking archive operations.");
+                    process::set_startup_recovery_error(Some(
+                        "Startup recovery failed unexpectedly.".to_string(),
+                    ));
                 }
                 // Unblock run_7z before temp cleanup; recovery is what must be serialized.
                 process::mark_startup_recovery_done();
@@ -289,7 +381,9 @@ fn main() {
             process::is_7z_running,
             process::probe_7z,
             process::probe_compress_inputs,
+            process::archive_output_selection_token,
             process::get_startup_recovery_status,
+            process::acknowledge_preserved_transaction,
             archive_detect::validate_archive_paths,
             settings_store::load_settings,
             settings_store::save_settings,
@@ -306,7 +400,15 @@ fn main() {
             launch::get_shell_handoff_error,
             launch::drain_pending_paths,
             launch::get_extract_paths,
+            launch::inspect_extract_destination,
             launch::close_extract_window,
+            launch::open_debug_console_window,
+            launch::close_debug_console_window,
+            launch::relay_debug_console_line,
+            launch::relay_debug_console_seed,
+            launch::relay_debug_console_clear,
+            launch::relay_debug_console_signal,
+            launch::debug_console_window_open,
             launch::mark_main_window_ready,
             platform::get_platform_info,
             platform::get_beta_updater_target,
@@ -385,6 +487,10 @@ fn main() {
             event: tauri::WindowEvent::Destroyed,
             ..
         } => {
+            if label == "main" {
+                MAC_FALLBACK_MAIN_PENDING.store(false, Ordering::SeqCst);
+                launch::MAIN_WINDOW_READY.store(false, Ordering::SeqCst);
+            }
             if launch::is_extract_window_label(&label) {
                 launch::clear_extract_window_bindings(app_handle, &label);
             }
@@ -425,6 +531,10 @@ fn main() {
             ..
         } = &event
         {
+            if label == "main" {
+                MAC_FALLBACK_MAIN_PENDING.store(false, Ordering::SeqCst);
+                launch::MAIN_WINDOW_READY.store(false, Ordering::SeqCst);
+            }
             if launch::is_extract_window_label(label) {
                 launch::clear_extract_window_bindings(app_handle, label);
             }

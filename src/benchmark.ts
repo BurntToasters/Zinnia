@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invokeRun7z } from "./archive/backend-ipc";
 import { $ } from "./utils";
 
 // Pull the overall rating from 7z benchmark output (the trailing "Tot:" line,
@@ -23,7 +23,7 @@ export async function runBenchmark() {
   button.disabled = true;
   result.textContent = "Running benchmark…";
   try {
-    const res = await invoke<{ stdout: string; code: number }>("run_7z", {
+    const res = await invokeRun7z<{ stdout: string; code: number }>({
       args: ["b"],
     });
     const summary = parseBenchmarkSummary(res.stdout);

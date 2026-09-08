@@ -11,14 +11,14 @@
   **Desktop development with C++** includes **C++ CMake tools for Windows** (updates can drop
   optional components; an old VS 2022 `cmake` on PATH stops working when 2022 is removed).
 - **Windows SDK** (`makeappx.exe`) for Win11 sparse context-menu packages
-- Node.js 22.12 through 24.x
+- Node.js `^22.22.2 || ^24.15.0 || >=26` (`engines.node` in package.json)
 - Rust (rustup) + Visual Studio Build Tools (clang: x64 and arm64)
 
 ## macOS
 
 - macOS 26 or later
 - Xcode Command Line Tools
-- Node.js 22.12 through 24.x
+- Node.js `^22.22.2 || ^24.15.0 || >=26` (`engines.node` in package.json)
 - Rust (rustup)
 
 ## Linux
@@ -30,7 +30,7 @@
 - Build and test RPM artifacts on Fedora 43. Test the DEB/AppImage on Debian
   13 and the RPM on Fedora 43; these distributions are runtime targets, not
   interchangeable AppImage build baselines.
-- Node.js 22.12 through 24.x
+- Node.js `^22.22.2 || ^24.15.0 || >=26` (`engines.node` in package.json)
 - Rust (rustup)
 - Build essentials (gcc, g++, make)
 - AppImage, rpm, deb tooling if building those bundles
@@ -44,6 +44,40 @@ not pin a Rust release. Install or refresh it before building:
 ```sh
 npm run rust:update
 ```
+
+## License notice audit
+
+`npm run licenses:cargo` writes both the packaged Cargo license data and an
+exact unresolved-package report. Every prerelease and stable release runs
+`npm run release:licenses`, which uses `licenses:cargo:strict` and fails until
+every dependency has a verified license notice. For crates that omit a
+workspace-root notice from the published package, strict mode may fetch the
+exact HTTPS repository and immutable commit recorded in `.cargo_vcs_info.json`,
+then recover the nearest upstream license text. If the exact source revision
+also contains no license text, a package-version-scoped source-omission review
+records that fact and keeps the declared SPDX references visible. Do not
+replace missing notices with generic SPDX templates or moving-branch content.
+
+## Updating bundled 7-Zip
+
+Check the official GitHub release tag and update status:
+
+```sh
+npm run 7z:update:check
+```
+
+Download the latest official Linux, macOS, and Windows archives, extract only
+the runtime binaries and notices, verify their hashes, remove obsolete assets,
+and regenerate prepared sidecars:
+
+```sh
+npm run 7z:update
+```
+
+The updater requires an external trusted extractor. Pass `--trusted-7z <path>`
+or set `ZINNIA_TRUSTED_7Z`. The in-tree 7-Zip sidecar is not trusted for this
+update. Use `--force` to refresh assets when the official version has not
+changed.
 
 ## Verify the toolchain
 
@@ -65,18 +99,32 @@ notarization, updater behavior, or desktop-environment MIME integration.
 ## Release artifact freshness
 
 The normal `npm run release:win`, `release:mac`, and `release:linux` entry points
-run `release:prepare` themselves. Preparation installs locked dependencies,
-runs the complete quality gate once, removes old bundles, and creates a
-commit- and environment-bound build session. Release builds reuse the generated
-versions, licenses, and sidecars instead of preparing them again.
+prepare locked dependencies, run the release-VM gate with GUI E2E skipped,
+remove old bundles, and create a commit- and environment-bound build session.
+The exact release commit must already have passed the complete `test:all` gate
+with E2E enabled in protected CI or in a clean proving checkout. Release builds
+reuse the generated versions, licenses, and sidecars instead of preparing them
+again.
 
 If `npm run release:prepare` was run separately and completed successfully, use
 the matching `release:win:resume`, `release:mac:resume`, or
-`release:linux:x64:resume` command. Resume still runs branch/upstream preflight
+`release:linux:x64:resume` command. `release:linux` is the x64 release alias;
+run `release:linux:arm64` only on native ARM64 hardware or an explicitly
+configured emulator. Resume still runs branch/upstream preflight
 and refuses sessions from a different commit, version, lockfile, platform,
 architecture, Node/Rust toolchain, or sessions older than 24 hours. Do not run
 `release:prepare` manually and then use the non-resume entry point, because the
 normal entry point intentionally prepares and tests again.
+
+For a beta recovery where one platform already built the same version before
+the release branch advanced, pass `--skip-check` to bypass only the draft's
+exact target-commit check during draft reuse and signing. Example:
+`npm run release:mac -- --skip-check` or
+`npm run release:linux -- --skip-e2e --skip-check`. This uses the existing
+`FORCE_UPLOAD` recovery path for the continuation only; all preflight, tests,
+release-session, version, signing, and artifact checks still run. Stable
+releases reject this recovery override. The SSH-keychain entry point accepts
+the same flags: `npm run release:mac:ssh -- --skip-e2e --skip-check`.
 
 The GPG staging script also verifies the session and rejects artifacts older
 than its marker, including versionless canonical installer names, so a stale
@@ -97,7 +145,18 @@ verify that the draft contains the expected Windows x64/ARM64 NSIS installers,
 universal macOS DMG/ZIP, Linux x64 AppImage/DEB/RPM/Flatpak, updater
 manifests/signatures, SHA-256 lists, and GPG detached signatures. Include Linux
 ARM64 AppImage/DEB/RPM only when intentionally running `release:linux:arm64`;
-the normal public release currently ships Linux x64 only.
+the normal public release currently ships Linux x64 only. Flatpak remains
+x64-only (`flatpak:bundle` / `release:linux:x64`); `release:linux:arm64` does
+not build a Flatpak.
+
+AppImage desktop entries reuse the Debian data layout, including
+`bundle.linux.deb.desktopTemplate` (`linux/desktop-template.hbs`). Keep that
+template (and compound TAR MIME associations) correct for AppImage as well as
+DEB/RPM.
+
+CI `tauri build --no-bundle` is compile smoke only. Before publishing, run the
+Linux package matrix in `docs/QA-CONTEXT-MENUS.md` on build VMs (AppImage/DEB/
+RPM/Flatpak launchers, MIME handlers, and desktop actions).
 
 The Tauri plugins are already declared in `package.json` and
 `src-tauri/Cargo.toml`; do not re-add them during normal setup.

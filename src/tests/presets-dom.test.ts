@@ -206,19 +206,19 @@ describe("custom presets", () => {
 });
 
 describe("updateCompressionOptionsForFormat", () => {
-  it("populates 7z methods: lzma2, lzma, ppmd, bzip2", () => {
+  it("populates supported 7z methods", () => {
     updateCompressionOptionsForFormat("7z");
     const methodSelect = document.getElementById("method") as HTMLSelectElement;
     const options = Array.from(methodSelect.options).map((o) => o.value);
-    expect(options).toEqual(["lzma2", "lzma", "ppmd", "bzip2"]);
+    expect(options).toEqual(["lzma2", "lzma"]);
     expect(methodSelect.disabled).toBe(false);
   });
 
-  it("populates zip methods: deflate, bzip2, lzma", () => {
+  it("populates supported zip methods", () => {
     updateCompressionOptionsForFormat("zip");
     const methodSelect = document.getElementById("method") as HTMLSelectElement;
     const options = Array.from(methodSelect.options).map((o) => o.value);
-    expect(options).toEqual(["deflate", "bzip2", "lzma"]);
+    expect(options).toEqual(["deflate", "lzma"]);
     expect(methodSelect.disabled).toBe(false);
   });
 
@@ -250,9 +250,9 @@ describe("updateCompressionOptionsForFormat", () => {
   it("preserves current method value if still valid after format change", () => {
     updateCompressionOptionsForFormat("7z");
     const methodSelect = document.getElementById("method") as HTMLSelectElement;
-    methodSelect.value = "ppmd";
+    methodSelect.value = "lzma";
     updateCompressionOptionsForFormat("7z");
-    expect(getSelectValue("method")).toBe("ppmd");
+    expect(getSelectValue("method")).toBe("lzma");
   });
 
   it("bumps level from 0 to 5 for tar-family formats", () => {

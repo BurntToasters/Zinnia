@@ -17,32 +17,23 @@ export const ALLOWED_METHOD_PREFIXES = [
   "-mcl=",
 ];
 
-export const ALLOWED_EXTRA_PREFIXES = [
-  ...ALLOWED_METHOD_PREFIXES,
-  "-x",
-  "-i",
-  "-ao",
-  "-bb",
-  "-bs",
-  "-bt",
-  "-scs",
-  "-slt",
-  "-stl",
-  "-slp",
-  "-ssp",
-  "-sse",
-  "-y",
-  "-r",
-];
+/** Subset of validation.rs is_allowed_switch, plus extra rejects Zinnia owns. */
+const EXTRA_SHARED_RE = /^-(?:bt|bb[0-3]|slt)$/;
+const EXTRA_EXTRACT_ONLY = ["-y"];
+const EXTRA_COMPRESS_ONLY = ["-stl", "-slp", "-ssp", "-sse"];
+
+export type ExtraArgsContext = "compress" | "extract";
 
 export interface ArchivePathValidation {
   path: string;
   valid: boolean;
   reason?: string;
+  identity?: string;
 }
 
 export type ProbeArchivePaths = (
   paths: string[],
+  includeIdentity?: boolean,
 ) => Promise<ArchivePathValidation[]>;
 
 const SWITCH_PATH_PREFIXES = ["-i", "-x", "-w", "-o"];
@@ -72,29 +63,35 @@ function switchContainsParentTraversal(arg: string): boolean {
 }
 
 /** Keep aligned with validation.rs is_allowed_method_switch. */
+function methodSwitchValueIsSafe(value: string): boolean {
+  return (
+    value.length > 0 &&
+    !value.includes("/") &&
+    !value.includes("\\") &&
+    !value.includes("..")
+  );
+}
+
 function isAllowedMethodSwitch(lower: string): boolean {
   for (const prefix of ALLOWED_METHOD_PREFIXES) {
     if (!lower.startsWith(prefix)) continue;
     const rest = lower.slice(prefix.length);
     if (prefix.endsWith("=")) {
-      return (
-        rest.length > 0 &&
-        !rest.includes("/") &&
-        !rest.includes("\\") &&
-        !rest.includes("..")
-      );
+      return methodSwitchValueIsSafe(rest);
     }
-    return (
-      rest.length === 0 ||
-      rest.startsWith("=") ||
-      (rest.charCodeAt(0) >= 48 && rest.charCodeAt(0) <= 57)
-    );
+    if (rest.length === 0) return true;
+    if (rest.startsWith("=")) return methodSwitchValueIsSafe(rest.slice(1));
+    if (rest.charCodeAt(0) >= 48 && rest.charCodeAt(0) <= 57) {
+      return methodSwitchValueIsSafe(rest);
+    }
+    return false;
   }
   return false;
 }
 
 export async function validateArchivePaths(
   paths: string[],
+  includeIdentity = false,
 ): Promise<ArchivePathValidation[]> {
   const normalized = paths.map(normalizePath);
   if (normalized.length > MAX_ARCHIVE_PATHS) {
@@ -130,7 +127,7 @@ export async function validateArchivePaths(
     }
     const probed = await invoke<ArchivePathValidation[]>(
       "validate_archive_paths",
-      { pathsJson },
+      { pathsJson, ...(includeIdentity ? { includeIdentity: true } : {}) },
     );
     for (const result of probed) {
       const normalizedPath = normalizePath(result.path);
@@ -138,6 +135,7 @@ export async function validateArchivePaths(
         path: normalizedPath,
         valid: result.valid,
         reason: result.reason,
+        identity: result.identity,
       };
       byPath.set(normalizedPath, normalizedResult);
     }
@@ -160,7 +158,10 @@ export async function validateArchivePaths(
   });
 }
 
-export function validateExtraArgs(args: string[]): void {
+export function validateExtraArgs(
+  args: string[],
+  context: ExtraArgsContext,
+): void {
   const blocked = ["-sdel", "-p", "-mhe", "-o", "-si", "-so", "-t", "-ssw"];
 
   for (const arg of args) {
@@ -169,10 +170,47 @@ export function validateExtraArgs(args: string[]): void {
     }
 
     const lower = arg.toLowerCase();
-    if (lower === "-aoa" || lower === "-aot") {
+    if (lower.startsWith("-i") || lower.startsWith("-x")) {
       throw new Error(
-        `"${arg}" is not allowed. Zinnia only permits safe extract overwrite modes (-aou / -aos).`,
+        `"${arg}" is not allowed. Extra args cannot expand 7-Zip include or exclude lists.`,
       );
+    }
+    if (lower.startsWith("-ao")) {
+      throw new Error(
+        `"${arg}" is not allowed. Zinnia sets the safe extract overwrite policy (-aou / -aos) automatically; -aoa and -aot overwrite existing files.`,
+      );
+    }
+    if (lower.startsWith("-bs")) {
+      if (lower !== "-bsp1") {
+        throw new Error(
+          `"${arg}" is not allowed. Only -bsp1 progress output is permitted.`,
+        );
+      }
+      continue;
+    }
+    if (lower.startsWith("-mem=")) {
+      if (lower !== "-mem=aes256") {
+        throw new Error(
+          `"${arg}" is not allowed. Password-protected ZIP archives must use AES-256.`,
+        );
+      }
+    }
+    if (lower === "-r" || lower.startsWith("-r-") || lower === "-r0") {
+      throw new Error(
+        `"${arg}" is not allowed. Extra args cannot recurse from the working directory; Zinnia already passes concrete paths.`,
+      );
+    }
+    if (lower.startsWith("-scs") || lower.startsWith("-scc")) {
+      throw new Error(
+        `"${arg}" is not allowed. Zinnia forces UTF-8 console charset.`,
+      );
+    }
+    if (lower.startsWith("-mcu=") || lower.startsWith("-mcl=")) {
+      if (lower.endsWith("=off")) {
+        throw new Error(
+          `"${arg}" is not allowed. Zinnia forces UTF-8 ZIP names (-mcu=on).`,
+        );
+      }
     }
     if (blocked.some((b) => lower.startsWith(b))) {
       throw new Error(
@@ -181,12 +219,26 @@ export function validateExtraArgs(args: string[]): void {
     }
 
     if (lower.startsWith("-m")) {
+      if (context !== "compress") {
+        throw new Error(`"${arg}" is not allowed for ${context} arguments.`);
+      }
       if (!isAllowedMethodSwitch(lower)) {
         throw new Error(
           `"${arg}" is not an allowed compression method switch.`,
         );
       }
-    } else if (!ALLOWED_EXTRA_PREFIXES.some((p) => lower.startsWith(p))) {
+    } else if (
+      EXTRA_SHARED_RE.test(lower) ||
+      (context === "extract" && EXTRA_EXTRACT_ONLY.includes(lower)) ||
+      (context === "compress" && EXTRA_COMPRESS_ONLY.includes(lower))
+    ) {
+      // Allowed for this command by validation.rs.
+    } else if (
+      (context === "compress" && EXTRA_EXTRACT_ONLY.includes(lower)) ||
+      (context === "extract" && EXTRA_COMPRESS_ONLY.includes(lower))
+    ) {
+      throw new Error(`"${arg}" is not allowed for ${context} arguments.`);
+    } else {
       throw new Error(
         `Unknown argument "${arg}". Only recognized 7z switches are allowed.`,
       );
@@ -204,20 +256,22 @@ export async function ensureArchivePaths(
   paths: string[],
   context: "browse" | "extract" | "test",
   probe: ProbeArchivePaths = validateArchivePaths,
-): Promise<void> {
+  includeIdentity = false,
+): Promise<ArchivePathValidation[]> {
   const normalized = paths.map(normalizePath).filter((path) => path.length > 0);
-  if (normalized.length === 0) return;
+  if (normalized.length === 0) return [];
 
-  let invalid: ArchivePathValidation[];
+  let results: ArchivePathValidation[];
   try {
-    invalid = (await probe(normalized)).filter((result) => !result.valid);
+    results = await probe(normalized, includeIdentity);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(
       `Unable to validate selected inputs for ${context}: ${msg}`,
     );
   }
-  if (invalid.length === 0) return;
+  const invalid = results.filter((result) => !result.valid);
+  if (invalid.length === 0) return results;
 
   const sample = invalid
     .slice(0, 3)

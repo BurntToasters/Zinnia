@@ -34,7 +34,7 @@ export const PRESETS: Record<string, PresetConfig> = {
     format: "zip",
     level: "0",
     method: "deflate",
-    dict: "16m",
+    dict: "",
     wordSize: "16",
     solid: "off",
   },
@@ -42,7 +42,7 @@ export const PRESETS: Record<string, PresetConfig> = {
     format: "zip",
     level: "1",
     method: "deflate",
-    dict: "16m",
+    dict: "",
     wordSize: "32",
     solid: "off",
   },
@@ -122,8 +122,11 @@ export function updateCompressionOptionsForFormat(format: string) {
   const currentLevel = levelSelect.value;
 
   const validMethods: Record<string, string[]> = {
-    "7z": ["lzma2", "lzma", "ppmd", "bzip2"],
-    zip: ["deflate", "bzip2", "lzma"],
+    // PPMd/BZip2 need different memory/order controls than this form exposes.
+    // Offering them with generic dictionary/word-size fields generated invalid
+    // native commands, so keep only methods this UI can configure correctly.
+    "7z": ["lzma2", "lzma"],
+    zip: ["deflate", "lzma"],
     tar: [],
     gzip: [],
     bzip2: [],
@@ -165,12 +168,24 @@ export function updateCompressionOptionsForFormat(format: string) {
     methodSelect.disabled = true;
   }
 
-  if (currentDict) {
+  const dictionarySupported =
+    format === "7z" ||
+    format === "xz" ||
+    (format === "zip" && methodSelect.value === "lzma");
+  dictSelect.disabled = !dictionarySupported;
+  if (dictionarySupported && currentDict) {
     dictSelect.value = currentDict;
+  } else if (!dictionarySupported) {
+    dictSelect.value = "";
   }
 
-  if (currentWordSize) {
+  const wordSizeSupported =
+    format === "7z" || format === "xz" || format === "gzip" || format === "zip";
+  wordSizeSelect.disabled = !wordSizeSupported;
+  if (wordSizeSupported && currentWordSize) {
     wordSizeSelect.value = currentWordSize;
+  } else if (!wordSizeSupported) {
+    wordSizeSelect.value = "";
   }
 
   if (currentSolid) {

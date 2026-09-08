@@ -116,7 +116,13 @@ fn macos_read_pbs_plist_json() -> Option<serde_json::Value> {
     }
 
     let output = command_output_with_timeout(
-        Command::new("plutil").args(["-convert", "json", "-o", "-", &path.to_string_lossy()]),
+        Command::new("/usr/bin/plutil").args([
+            "-convert",
+            "json",
+            "-o",
+            "-",
+            &path.to_string_lossy(),
+        ]),
         std::time::Duration::from_secs(5),
     )
     .ok()?;
@@ -168,7 +174,7 @@ fn macos_finder_services_info() -> FinderServicesInfo {
                 .to_string()
         }
         (_, Some(true)) => {
-            "Services are registered but not enabled yet. Click Enable… — Keyboard Shortcuts checkboxes alone may not update this status on current macOS."
+            "Services are registered but not enabled yet. Click Enable…  -  Keyboard Shortcuts checkboxes alone may not update this status on current macOS."
                 .to_string()
         }
         (_, Some(false)) => {
@@ -241,7 +247,7 @@ fn windows_modern_menu_registered() -> Option<bool> {
 /// Win11 packages register successfully (they also appear under Show more
 /// options). Treat ProgId open + (classic compress OR modern menu) as Ready.
 #[cfg(target_os = "windows")]
-fn windows_classic_verbs_registered() -> Option<bool> {
+fn windows_classic_verbs_registered(modern_registered: Option<bool>) -> Option<bool> {
     use std::os::windows::process::CommandExt;
 
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -281,7 +287,7 @@ fn windows_classic_verbs_registered() -> Option<bool> {
         return Some(true);
     }
 
-    windows_modern_menu_registered()
+    modern_registered
 }
 
 fn win11_modern_menu_status_for(platform: &str, packaged: bool) -> Win11ModernMenuInfo {
@@ -312,7 +318,7 @@ fn win11_modern_menu_status_for(platform: &str, packaged: bool) -> Win11ModernMe
             available: true,
             known: true,
             registered: true,
-            help: "Win11 modern menu package is registered (sparse identity only; Zinnia remains a normal NSIS install). Confirm Extract/Compress actually launch from the primary menu; classic verbs remain under Show more options.".to_string(),
+            help: "Win11 modern menu package is registered (sparse identity only; Zinnia remains a normal NSIS install). Confirm Extract/Compress launch from the primary menu. Classic HKCU Extract/Compress verbs are removed on success so they do not stack under Show more options; they return only if package registration fails.".to_string(),
         },
         Some(false) => Win11ModernMenuInfo {
             available: true,
@@ -403,7 +409,7 @@ pub(crate) fn macos_finder_sync_enabled() -> Option<bool> {
         return None;
     }
     if !text.contains(MACOS_FINDER_SYNC_BUNDLE_ID) {
-        // Not discovered yet — still treat as known+disabled when the appex exists.
+        // Not discovered yet  -  still treat as known+disabled when the appex exists.
         return Some(false);
     }
     Some(text.lines().any(|line| {
@@ -445,7 +451,7 @@ fn finder_sync_status_for(platform: &str, packaged: bool) -> FinderSyncInfo {
                 available: true,
                 known: true,
                 enabled: true,
-                help: "Finder Sync is enabled. Extract / Compress with Zinnia appear in Finder's primary right-click menu.".to_string(),
+                help: "Finder Sync is enabled. Extract / Compress with Zinnia appear in Finder's primary right-click menu on Desktop, Documents, Downloads, Movies, Music, Pictures, and mounted volumes. Use Finder Services elsewhere.".to_string(),
             },
             Some(false) => FinderSyncInfo {
                 available: true,
@@ -520,12 +526,12 @@ pub fn os_integration_status_for(platform: &str, packaged: bool) -> OsIntegratio
     let context_actions_known = if platform == "macos" {
         packaged && ((finder_sync.known && finder_sync.enabled) || (finder.known && finder.enabled))
     } else {
-        packaged && matches!(platform, "windows")
+        false
     };
     OsIntegrationStatus {
         platform: platform.to_string(),
         packaged,
-        file_associations_known: packaged && matches!(platform, "macos" | "windows"),
+        file_associations_known: packaged && matches!(platform, "macos"),
         context_actions_known,
         default_app_help_available,
         default_archiver_action_available: action_available,
@@ -571,12 +577,6 @@ fn get_os_integration_status_blocking() -> OsIntegrationStatus {
         }
     }
     if platform == "windows" {
-        let win11 = win11_modern_menu_status_for(platform, packaged);
-        status.win11_modern_menu_available = win11.available;
-        status.win11_modern_menu_known = win11.known;
-        status.win11_modern_menu_registered = win11.registered;
-        status.win11_modern_menu_help = win11.help;
-
         // Live ProgId query succeeded for at least one format.
         if packaged
             && status
@@ -589,7 +589,10 @@ fn get_os_integration_status_blocking() -> OsIntegrationStatus {
 
         #[cfg(target_os = "windows")]
         {
-            match windows_classic_verbs_registered() {
+            let modern_registered = status
+                .win11_modern_menu_known
+                .then_some(status.win11_modern_menu_registered);
+            match windows_classic_verbs_registered(modern_registered) {
                 Some(true) => {
                     status.context_actions_known = true;
                 }
@@ -597,7 +600,7 @@ fn get_os_integration_status_blocking() -> OsIntegrationStatus {
                     status.context_actions_known = false;
                 }
                 None => {
-                    // Keep packaged assumption from os_integration_status_for.
+                    status.context_actions_known = false;
                 }
             }
         }
@@ -634,16 +637,16 @@ mod tests {
     #[test]
     fn os_integration_status_reflects_packaged_support() {
         let packaged = os_integration_status_for("windows", true);
-        assert!(packaged.file_associations_known);
-        assert!(packaged.context_actions_known);
+        assert!(!packaged.file_associations_known);
+        assert!(!packaged.context_actions_known);
         assert!(packaged.default_app_help_available);
         assert!(!packaged.finder_services_available);
         assert!(packaged.win11_modern_menu_available);
         assert_eq!(
             packaged.archive_defaults.len(),
-            ARCHIVE_DEFAULT_TARGETS.len() - 1
+            ARCHIVE_DEFAULT_TARGETS.len()
         );
-        assert!(!packaged
+        assert!(packaged
             .archive_defaults
             .iter()
             .any(|entry| entry.key == "rar"));

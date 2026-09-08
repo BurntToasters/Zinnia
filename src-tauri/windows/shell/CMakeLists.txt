@@ -31,6 +31,10 @@ set_target_properties(zinnia_extract_shell PROPERTIES
 )
 
 if(MSVC)
+  set_property(TARGET zinnia_shell PROPERTY
+    MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+  set_property(TARGET zinnia_extract_shell PROPERTY
+    MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   target_link_options(zinnia_shell PRIVATE "/DEF:${CMAKE_CURRENT_SOURCE_DIR}/zinnia_shell.def")
   target_link_options(zinnia_extract_shell PRIVATE "/DEF:${CMAKE_CURRENT_SOURCE_DIR}/zinnia_extract_shell.def")
 endif()

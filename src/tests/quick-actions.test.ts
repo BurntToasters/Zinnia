@@ -153,14 +153,14 @@ describe("executeQuickAction", () => {
     expect(feedback?.textContent).toContain("did not pass");
   });
 
-  it("runs extract-after-test when integrity test passes with warnings", async () => {
+  it("skips extract-after-test when integrity test reports warnings", async () => {
     const app = document.getElementById("app") as HTMLElement;
     app.dataset.mode = "extract";
-    mocks.testArchive.mockResolvedValueOnce("passed_with_warnings");
+    mocks.testArchive.mockResolvedValueOnce("failed");
 
     await executeQuickAction("extract-test-then-extract");
 
-    expect(mocks.runAction).toHaveBeenCalled();
+    expect(mocks.runAction).not.toHaveBeenCalled();
   });
 
   it("preserves an extract password only between test and extract", async () => {

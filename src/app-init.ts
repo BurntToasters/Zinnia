@@ -1,4 +1,4 @@
-import { message } from "@tauri-apps/plugin-dialog";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
@@ -34,10 +34,16 @@ import { checkUpdates, autoCheckUpdates } from "./updater";
 import { openLicensesModal } from "./licenses";
 import { openExternalUrl } from "./external-links";
 import { refreshQuickActionRepeatState } from "./quick-actions";
+import { isE2eFrontend } from "./e2e-env";
 import { shouldShowSetupWizard } from "./setup-wizard";
 import { initBasicWorkspace, handleBasicDragDrop } from "./basic";
 import { refreshOsIntegrationStatus } from "./os-integration";
 import { refreshIcons } from "./icons";
+import {
+  setDebugEnabled,
+  debugLog,
+  restoreDebugConsolePopOutIfNeeded,
+} from "./debug-mode";
 import {
   allPathsAreArchives,
   applyIncomingPaths,
@@ -50,6 +56,75 @@ import {
   openShortcutsModal,
   runSetupWizardFlow,
 } from "./power-events";
+import { MAX_ARCHIVE_PATHS } from "./archive-rules";
+import { installE2eHookIfEnabled } from "./e2e-hook";
+import { installNativeWebviewContextMenuGuard } from "./webview-context-menu";
+
+let persistentAlertDismissWired = false;
+let preservedRecoveryAcknowledgementAvailable = false;
+
+function showPersistentAlertBanner(message: string): void {
+  const banner = document.getElementById("startup-recovery-banner");
+  const text = document.getElementById("startup-recovery-banner-text");
+  const dismiss = document.getElementById("startup-recovery-banner-dismiss");
+  const acknowledge = document.getElementById(
+    "startup-recovery-banner-acknowledge",
+  ) as HTMLButtonElement | null;
+  if (!banner || !text) return;
+  const existing = text.textContent?.trim() ?? "";
+  text.textContent =
+    existing && existing !== message ? `${existing} ${message}` : message;
+  banner.hidden = false;
+  if (/was preserved|were preserved/i.test(message)) {
+    preservedRecoveryAcknowledgementAvailable = true;
+  }
+  if (acknowledge) {
+    if (preservedRecoveryAcknowledgementAvailable) {
+      acknowledge.hidden = false;
+      acknowledge.onclick ??= async () => {
+        const proceed = await ask(
+          "Zinnia cannot prove whether it wrote the kept extraction result " +
+            "itself. Accepting leaves the files exactly as they are and only " +
+            "clears the recovery marker so archive jobs can run again.",
+          {
+            title: "Accept kept extraction result",
+            kind: "warning",
+            okLabel: "Accept and continue",
+            cancelLabel: "Keep blocked",
+          },
+        );
+        if (!proceed) return;
+        try {
+          acknowledge.hidden = true;
+          text.textContent = "";
+          preservedRecoveryAcknowledgementAvailable = false;
+          showPersistentAlertBanner(
+            await invoke<string>("acknowledge_preserved_transaction"),
+          );
+        } catch (err) {
+          preservedRecoveryAcknowledgementAvailable = true;
+          acknowledge.hidden = false;
+          showPersistentAlertBanner(
+            `Could not clear the recovery marker: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      };
+    } else {
+      acknowledge.hidden = true;
+    }
+  }
+  if (persistentAlertDismissWired) return;
+  persistentAlertDismissWired = true;
+  dismiss?.addEventListener("click", () => {
+    text.textContent = "";
+    if (acknowledge && preservedRecoveryAcknowledgementAvailable) {
+      acknowledge.hidden = false;
+      banner.hidden = false;
+    } else {
+      banner.hidden = true;
+    }
+  });
+}
 
 function wireTitlebar(): void {
   const appWindow = getCurrentWebviewWindow();
@@ -82,6 +157,8 @@ function wireTitlebar(): void {
 }
 
 export async function init() {
+  installNativeWebviewContextMenuGuard();
+  await installE2eHookIfEnabled();
   let uiReadyForOpenPaths = false;
   let openPathsQueue = Promise.resolve();
 
@@ -150,7 +227,7 @@ export async function init() {
         typeof event.payload === "string" && event.payload.trim()
           ? event.payload
           : "Zinnia could not accept another open request right now.";
-      showToast(detail, "error", 5000);
+      showPersistentAlertBanner(detail);
       log(detail, "error");
     });
   } catch (err) {
@@ -173,6 +250,9 @@ export async function init() {
   } else if (platform === "linux") {
     document.body.classList.add("platform-linux");
   }
+  // Basic archive pickers need platform capability policy during their setup,
+  // before the later version/package probes complete.
+  state.platformName = platform;
   wireTitlebar();
 
   try {
@@ -187,6 +267,13 @@ export async function init() {
   state.currentSettings = loadedSettings.settings;
   state.lastPersistedSettings = { ...loadedSettings.settings };
   state.settingsExtras = { ...loadedSettings.extras };
+  if (isE2eFrontend()) {
+    state.currentSettings.autoCheckUpdates = false;
+    state.currentSettings.basicWindowEffects = false;
+    state.currentSettings.setupComplete = true;
+    state.settingsExtras._setupComplete = true;
+    state.settingsExtras._setupWizardVersion = 3;
+  }
 
   let isFlatpak = false;
   try {
@@ -199,16 +286,21 @@ export async function init() {
     devLog(`Unable to detect Flatpak context: ${msg}`);
   }
 
+  if (loadedSettings.malformed && loadedSettings.warning) {
+    showPersistentAlertBanner(loadedSettings.warning);
+    log(loadedSettings.warning, "error");
+    if (state.currentSettings.debug) {
+      debugLog(`Settings load warning: ${loadedSettings.warning}`);
+    }
+  }
+
   if (shouldShowSetupWizard()) {
     try {
       await runSetupWizardFlow({ skipUpdates: isFlatpak });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       // Don't abort app startup: Skip / finish should still leave a usable UI.
-      await message(`Setup wizard could not be completed.\n\n${msg}`, {
-        title: "Setup wizard error",
-        kind: "error",
-      });
+      showToast(`Setup wizard could not be completed. ${msg}`, "error", 0);
     }
   }
 
@@ -240,32 +332,27 @@ export async function init() {
   setActivityPanelVisible(state.currentSettings.showActivityPanel, {
     persist: false,
   });
+  setDebugEnabled(state.currentSettings.debug);
+  if (state.currentSettings.debug) {
+    debugLog(
+      `Debug mode restored (v${dom.versionLabel.textContent || "?"}, ${dom.platformLabel.textContent || state.platformName || "?"}).`,
+    );
+    void restoreDebugConsolePopOutIfNeeded();
+  }
   renderInputs();
   wireEvents();
   initBasicWorkspace();
   uiReadyForOpenPaths = true;
   refreshQuickActionRepeatState();
-  if (loadedSettings.malformed && loadedSettings.warning) {
-    log(loadedSettings.warning, "error");
-  }
 
-  void invoke<string | null>("get_startup_recovery_status")
+  const startupRecoveryStatus = invoke<string | null>(
+    "get_startup_recovery_status",
+  );
+  void startupRecoveryStatus
     .then((message) => {
       if (!message) return;
-      const banner = document.getElementById("startup-recovery-banner");
-      const text = document.getElementById("startup-recovery-banner-text");
-      const dismiss = document.getElementById(
-        "startup-recovery-banner-dismiss",
-      );
-      if (!banner || !text) return;
-      text.textContent = `Could not finish recovering an interrupted archive job: ${message}`;
-      banner.hidden = false;
-      dismiss?.addEventListener(
-        "click",
-        () => {
-          banner.hidden = true;
-        },
-        { once: true },
+      showPersistentAlertBanner(
+        `Could not finish recovering an interrupted archive job: ${message}`,
       );
     })
     .catch((err) => {
@@ -276,15 +363,13 @@ export async function init() {
   // A cold launch resolves a Windows shell handoff (Explorer's "Extract
   // with Zinnia" / "Compress with Zinnia") during Rust setup(), before any
   // window or event listener exists to receive an emitted failure. Poll it
-  // once here instead, same as the startup recovery status above, and reuse
-  // the toast already wired for the "open-paths-dropped" event so a rejected
-  // or unreadable handoff is visible instead of silently opening with no
-  // paths.
-  void invoke<string | null>("get_shell_handoff_error")
+  // once here instead, same as the startup recovery status above, so a
+  // rejected or unreadable handoff stays visible instead of a 5s toast.
+  const shellHandoffError = invoke<string | null>("get_shell_handoff_error")
     .then((message) => {
       if (!message) return;
       const detail = `Could not read the file selection from Explorer: ${message}`;
-      showToast(detail, "error", 5000);
+      showPersistentAlertBanner(detail);
       log(detail, "error");
     })
     .catch((err) => {
@@ -292,7 +377,6 @@ export async function init() {
       devLog(`Unable to read shell handoff status: ${msg}`);
     });
 
-  state.platformName = platform;
   const [versionResult, packagedResult] = await Promise.allSettled([
     getVersion(),
     invoke<boolean>("is_packaged"),
@@ -329,7 +413,10 @@ export async function init() {
   // Flatpak has no in-app updater; skip auto-check using the flag resolved
   // before the setup wizard so we do not race a second is_flatpak probe.
   if (!isFlatpak && state.currentSettings.autoCheckUpdates) {
-    void autoCheckUpdates();
+    // Recovery can still be repairing a previous archive transaction. Avoid
+    // offering an install/restart until its eventual success or failure is
+    // known; the status promise is deliberately non-blocking for the UI.
+    void startupRecoveryStatus.catch(() => null).then(() => autoCheckUpdates());
   }
 
   let initialMode = "";
@@ -356,7 +443,11 @@ export async function init() {
 
   // Drain any paths that queued up while we were initializing
   await drainPendingPaths();
-  await invoke("mark_main_window_ready").catch(() => {});
+  await shellHandoffError;
+  await invoke("mark_main_window_ready").catch((err) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Failed to mark main window ready: ${msg}`, "error");
+  });
 
   const appWindow = getCurrentWebviewWindow();
   await appWindow.onDragDropEvent(async (event) => {
@@ -386,11 +477,16 @@ export async function init() {
         await acquireIncomingPathLock();
         try {
           const previousPrimary = state.inputs[0] ?? null;
-          const maxIncoming = 4096;
+          const known = new Set(state.inputs);
+          let rejected = 0;
           for (const path of paths) {
-            if (state.inputs.includes(path)) continue;
-            if (state.inputs.length >= maxIncoming) break;
+            if (known.has(path)) continue;
+            if (state.inputs.length >= MAX_ARCHIVE_PATHS) {
+              rejected += 1;
+              continue;
+            }
             state.inputs.push(path);
+            known.add(path);
           }
           if (
             getMode() === "browse" &&
@@ -399,12 +495,17 @@ export async function init() {
             setBrowsePasswordFieldVisible(false);
           }
           renderInputs();
+          if (rejected > 0) {
+            const detail = `Added the first ${MAX_ARCHIVE_PATHS} unique items; ${rejected} more were not added.`;
+            showToast(detail, "error", 5000);
+            log(detail, "error");
+          }
           if (getMode() === "browse" && state.inputs.length > 0) {
             // Snapshot before the async archive probe so a concurrent mode or
             // input change cannot browse a different primary after await.
             const primary = state.inputs[0];
             if (
-              (await allPathsAreArchives([primary])) &&
+              (await allPathsAreArchives([primary])) === true &&
               getMode() === "browse" &&
               state.inputs[0] === primary
             ) {

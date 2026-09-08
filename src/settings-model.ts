@@ -42,6 +42,10 @@ export interface UserSettings {
   updateChannel: UpdateChannel;
   localLoggingEnabled: boolean;
   logVerbosity: LogVerbosity;
+  /** Hidden About-logo debug mode; off by default, no console work when false. */
+  debug: boolean;
+  /** Remember Debug Console pop-out across launches when debug stays on. */
+  debugConsolePoppedOut: boolean;
   lastMode: WorkingMode;
   showActivityPanel: boolean;
   workspaceMode: WorkspaceMode;
@@ -87,6 +91,8 @@ export const SETTING_DEFAULTS: UserSettings = {
   updateChannel: "auto",
   localLoggingEnabled: false,
   logVerbosity: "info",
+  debug: false,
+  debugConsolePoppedOut: false,
   lastMode: "add",
   showActivityPanel: false,
   workspaceMode: "basic",
@@ -236,6 +242,8 @@ const USER_SETTING_KEYS = new Set<keyof UserSettings>([
   "updateChannel",
   "localLoggingEnabled",
   "logVerbosity",
+  "debug",
+  "debugConsolePoppedOut",
   "lastMode",
   "showActivityPanel",
   "workspaceMode",
@@ -283,7 +291,24 @@ function asAutoCloseDelay(
     : fallback;
 }
 
+/** Clamp raw settings / IPC values to the supported auto-close delays. */
+export function normalizeAutoCloseDelay(
+  value: unknown,
+  fallback: AutoCloseDelay = 1.5,
+): AutoCloseDelay {
+  return asAutoCloseDelay(value, fallback);
+}
+
 const MAX_CUSTOM_PRESETS = 50;
+
+function optionalPresetField<T extends string>(
+  value: unknown,
+  valid: Set<T>,
+  fallback: T,
+): T | null {
+  if (typeof value !== "string") return fallback;
+  return valid.has(value as T) ? (value as T) : null;
+}
 
 function asCustomPresets(
   value: unknown,
@@ -296,15 +321,48 @@ function asCustomPresets(
     const r = asRecord(item);
     const name = asString(r.name, "").trim();
     if (!name || seen.has(name)) continue;
+    const format = optionalPresetField(
+      r.format,
+      FORMATS,
+      SETTING_DEFAULTS.format,
+    );
+    const level = optionalPresetField(
+      r.level,
+      VALID_LEVELS,
+      SETTING_DEFAULTS.level,
+    );
+    const method = optionalPresetField(
+      r.method,
+      VALID_METHODS,
+      SETTING_DEFAULTS.method,
+    );
+    const dict = optionalPresetField(
+      r.dict,
+      VALID_DICTS,
+      SETTING_DEFAULTS.dict,
+    );
+    const wordSize = optionalPresetField(
+      r.wordSize,
+      VALID_WORD_SIZES,
+      SETTING_DEFAULTS.wordSize,
+    );
+    const solid = optionalPresetField(
+      r.solid,
+      VALID_SOLIDS,
+      SETTING_DEFAULTS.solid,
+    );
+    if (!format || !level || !method || !dict || !wordSize || !solid) {
+      continue;
+    }
     seen.add(name);
     presets.push({
       name,
-      format: asString(r.format, SETTING_DEFAULTS.format),
-      level: asString(r.level, SETTING_DEFAULTS.level),
-      method: asString(r.method, SETTING_DEFAULTS.method),
-      dict: asString(r.dict, SETTING_DEFAULTS.dict),
-      wordSize: asString(r.wordSize, SETTING_DEFAULTS.wordSize),
-      solid: asString(r.solid, SETTING_DEFAULTS.solid),
+      format,
+      level,
+      method,
+      dict,
+      wordSize,
+      solid,
     });
     if (presets.length >= MAX_CUSTOM_PRESETS) break;
   }
@@ -382,6 +440,11 @@ export function normalizeUserSettings(
       settings.logVerbosity,
       LOG_VERBOSITY,
       fallback.logVerbosity,
+    ),
+    debug: asBoolean(settings.debug, fallback.debug),
+    debugConsolePoppedOut: asBoolean(
+      settings.debugConsolePoppedOut,
+      fallback.debugConsolePoppedOut,
     ),
     lastMode: asSetValue(settings.lastMode, WORKING_MODES, fallback.lastMode),
     showActivityPanel: asBoolean(

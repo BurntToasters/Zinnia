@@ -3,9 +3,11 @@ import { $ } from "../utils";
 import { state } from "../state";
 import {
   setMode,
+  log,
   renderInputs,
   registerBasicHooks,
   clearBrowsePasswordFields,
+  setStatus,
 } from "../ui";
 import { cancelAction } from "../archive";
 import {
@@ -39,15 +41,48 @@ import {
   finishBasicPreparation,
   isBasicInteractionLocked,
   isBasicPreparationCurrent,
+  replaceBasicInputs,
 } from "./actions";
 import { refreshRecentArchives, setRecentArchiveHandler } from "./recent";
 import { wireBasicBrowseEvents } from "./browse-events";
 import { wireBasicKeyboardEvents } from "./keyboard-events";
 import { wireBasicExtractEvents } from "./extract-events";
+import { showToast } from "../toast";
 
 export { wireBasicBrowseEvents } from "./browse-events";
 export { wireBasicKeyboardEvents } from "./keyboard-events";
 export { wireBasicExtractEvents } from "./extract-events";
+
+async function openBasicDialog(
+  options: Parameters<typeof open>[0],
+): Promise<string | string[] | null> {
+  try {
+    return await open(options);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Could not open Basic file dialog: ${msg}`, "error");
+    setStatus("Could not open the file dialog", 3000);
+    return null;
+  }
+}
+
+const BASIC_ARCHIVE_EXTENSIONS = [
+  "7z",
+  "zip",
+  "tar",
+  "gz",
+  "tgz",
+  "bz2",
+  "tbz2",
+  "xz",
+  "txz",
+  "rar",
+  "001",
+];
+
+function basicArchiveDialogExtensions(): string[] {
+  return [...BASIC_ARCHIVE_EXTENSIONS];
+}
 
 export function initBasicWorkspace(): void {
   setRecentArchiveHandler((path) => {
@@ -64,7 +99,7 @@ export function initBasicWorkspace(): void {
       if (!preparation) return;
       let paths: string[] = [];
       try {
-        const selection = await open({
+        const selection = await openBasicDialog({
           title: "Select files or archives",
           multiple: true,
         });
@@ -101,24 +136,13 @@ export function initBasicWorkspace(): void {
       if (!preparation) return;
       let selection: string | string[] | null = null;
       try {
-        selection = await open({
+        selection = await openBasicDialog({
           title: "Open archive",
           multiple: true,
           filters: [
             {
               name: "Archives",
-              extensions: [
-                "7z",
-                "zip",
-                "tar",
-                "gz",
-                "tgz",
-                "bz2",
-                "tbz2",
-                "xz",
-                "txz",
-                "rar",
-              ],
+              extensions: basicArchiveDialogExtensions(),
             },
           ],
         });
@@ -128,11 +152,15 @@ export function initBasicWorkspace(): void {
       }
       const paths = Array.isArray(selection) ? selection : [selection];
       if (paths.length > 0) {
-        state.inputs.length = 0;
-        for (const p of paths) {
-          if (!state.inputs.includes(p)) state.inputs.push(p);
+        const overLimit = replaceBasicInputs(paths);
+        if (overLimit > 0) {
+          showToast(
+            `Selected the first 4,096 items; ${overLimit} more were not added.`,
+            "error",
+            5000,
+          );
         }
-        if (paths.length === 1) {
+        if (state.inputs.length === 1) {
           setMode("browse");
           setBasicBrowsePasswordVisible(false);
           renderInputs();
@@ -151,29 +179,18 @@ export function initBasicWorkspace(): void {
     "basic-extract-archive-info",
   );
   if (extractArchiveInfo) {
-    extractArchiveInfo.addEventListener("click", async () => {
+    const chooseExtractArchive = async () => {
       const preparation = beginBasicPreparation();
       if (!preparation) return;
       let selection: string | string[] | null = null;
       try {
-        selection = await open({
+        selection = await openBasicDialog({
           title: "Open archive",
           multiple: false,
           filters: [
             {
               name: "Archives",
-              extensions: [
-                "7z",
-                "zip",
-                "tar",
-                "gz",
-                "tgz",
-                "bz2",
-                "tbz2",
-                "xz",
-                "txz",
-                "rar",
-              ],
+              extensions: basicArchiveDialogExtensions(),
             },
           ],
         });
@@ -186,6 +203,12 @@ export function initBasicWorkspace(): void {
         state.inputs = [path];
         renderInputs();
       }
+    };
+    extractArchiveInfo.addEventListener("click", chooseExtractArchive);
+    extractArchiveInfo.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      void chooseExtractArchive();
     });
   }
 
@@ -193,29 +216,18 @@ export function initBasicWorkspace(): void {
     "basic-browse-archive-info",
   );
   if (browseArchiveInfo) {
-    browseArchiveInfo.addEventListener("click", async () => {
+    const chooseBrowseArchive = async () => {
       const preparation = beginBasicPreparation();
       if (!preparation) return;
       let selection: string | string[] | null = null;
       try {
-        selection = await open({
+        selection = await openBasicDialog({
           title: "Open archive",
           multiple: false,
           filters: [
             {
               name: "Archives",
-              extensions: [
-                "7z",
-                "zip",
-                "tar",
-                "gz",
-                "tgz",
-                "bz2",
-                "tbz2",
-                "xz",
-                "txz",
-                "rar",
-              ],
+              extensions: basicArchiveDialogExtensions(),
             },
           ],
         });
@@ -231,6 +243,12 @@ export function initBasicWorkspace(): void {
         renderInputs();
         void runBasicBrowseArchive();
       }
+    };
+    browseArchiveInfo.addEventListener("click", chooseBrowseArchive);
+    browseArchiveInfo.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      void chooseBrowseArchive();
     });
   }
 

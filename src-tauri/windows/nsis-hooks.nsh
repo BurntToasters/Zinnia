@@ -1,6 +1,10 @@
+; Keep aligned with $ZinniaMinRealShellArtifactBytes in
+; scripts/verify-windows-authenticode.ps1. Generated CI stubs are empty.
+!define ZINNIA_MIN_REAL_SHELL_ARTIFACT_BYTES 1024
+
 !macro ZINNIA_REGISTER_PROGID_OPEN EXT
   ; Enhance Tauri's default ProgId open verb. Do not write a parallel
-  ; SystemFileAssociations\ZinniaOpen — that doubles "Open with Zinnia" under
+  ; SystemFileAssociations\ZinniaOpen  -  that doubles "Open with Zinnia" under
   ; Show more options when the ProgId is already the default association.
   WriteRegStr HKCU "Software\Classes\run.rosie.zinnia${EXT}\shell\open" "MUIVerb" "Open with Zinnia"
   WriteRegStr HKCU "Software\Classes\run.rosie.zinnia${EXT}\shell\open" "Icon" "$INSTDIR\zinnia.exe"
@@ -85,11 +89,11 @@
   FileOpen $R8 "$R9\ZinniaContextMenu.msix" r
   FileSeek $R8 0 END $R7
   FileClose $R8
-  IntCmp $R7 1024 zinnia_skip_win11_menu zinnia_skip_win11_menu 0
+  IntCmp $R7 ${ZINNIA_MIN_REAL_SHELL_ARTIFACT_BYTES} zinnia_skip_win11_menu zinnia_skip_win11_menu 0
   FileOpen $R8 "$R9\ZinniaExtractContextMenu.msix" r
   FileSeek $R8 0 END $R7
   FileClose $R8
-  IntCmp $R7 1024 zinnia_skip_win11_menu zinnia_skip_win11_menu 0
+  IntCmp $R7 ${ZINNIA_MIN_REAL_SHELL_ARTIFACT_BYTES} zinnia_skip_win11_menu zinnia_skip_win11_menu 0
 
   ; The script and sparse packages ship beside the DLLs. ExternalLocation stays
   ; at $INSTDIR because AppxManifest references both root zinnia.exe and the
@@ -101,13 +105,12 @@
   StrCpy $R8 "$INSTDIR\register-windows-context-menu.ps1"
   IfFileExists "$R8" 0 zinnia_menu_no_script
   zinnia_menu_run_script:
-  DetailPrint "Registering Win11 context menu package…"
-  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$R8" -MsixPath "$R9\ZinniaContextMenu.msix" -ExtractMsixPath "$R9\ZinniaExtractContextMenu.msix" -ExternalLocation "$INSTDIR" -ShellPayloadLocation "$R9" -LogPath "$INSTDIR\zinnia-context-menu-register.log"'
+  DetailPrint "Registering Win11 context menu package... (this may take a moment)"
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$R8" -MsixPath "$R9\ZinniaContextMenu.msix" -ExtractMsixPath "$R9\ZinniaExtractContextMenu.msix" -ExternalLocation "$INSTDIR" -ShellPayloadLocation "$R9" -LogPath "$INSTDIR\zinnia-context-menu-register.log"'
   Pop $0
-  ; The registration script removed the old sparse identities, so their
-  ; unversioned beta payload is no longer live registration state.
-  !insertmacro ZINNIA_CLEAN_LEGACY_SHELL_PAYLOAD
+  StrCmp $0 "error" zinnia_menu_exec_failed 0
   IntCmp $0 0 zinnia_menu_registered 0 0
+  zinnia_menu_exec_failed:
   DetailPrint "WARNING: Win11 context menu registration failed (exit $0). Classic verbs still work. See $INSTDIR\zinnia-context-menu-register.log"
   Goto zinnia_skip_win11_menu
   zinnia_menu_registered:
@@ -124,17 +127,40 @@
 
 !macro ZINNIA_UNREGISTER_WIN11_CONTEXT_MENU
   ; Retry once, then fail the PowerShell step if either sparse package remains.
-  ; Leaving packages registered against a deleted ExternalLocation breaks modern
-  ; menus after uninstall; surface that instead of claiming cleanup succeeded.
+  ; PREUNINSTALL uses this before Tauri deletes files. Abort uninstall when
+  ; packages remain so Explorer never keeps a registration against a missing
+  ; ExternalLocation.
+  ; $R5 = 1 when unregister failed so PREUNINSTALL can Abort.
+  StrCpy $R5 "0"
   DetailPrint "Unregistering Win11 sparse context-menu packages…"
-  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference=\"Stop\"; $names=@(\"run.rosie.zinnia.contextmenu\",\"run.rosie.zinnia.extractmenu\"); for($attempt=0;$attempt -lt 2;$attempt++){ foreach($name in $names){ Get-AppxPackage -Name $name -ErrorAction SilentlyContinue | Remove-AppxPackage -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 400 }; $left=@(); foreach($name in $names){ $left += @(Get-AppxPackage -Name $name -ErrorAction SilentlyContinue) }; if($left.Count -gt 0){ $joined=(($left | ForEach-Object Name) -join \", \"); Write-Error \"Zinnia AppX packages still registered after uninstall: $joined\"; exit 1 }"'
+  StrCpy $R8 "$INSTDIR\shell-${VERSION}\register-windows-context-menu.ps1"
+  IfFileExists "$R8" 0 zinnia_unreg_script_instdir
+  Goto zinnia_unreg_run
+  zinnia_unreg_script_instdir:
+  StrCpy $R8 "$INSTDIR\register-windows-context-menu.ps1"
+  IfFileExists "$R8" 0 zinnia_unreg_no_script
+  zinnia_unreg_run:
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$R8" -Unregister -LogPath "$INSTDIR\zinnia-context-menu-register.log"'
   Pop $0
+  StrCmp $0 "error" zinnia_win11_unregister_fail 0
   IntCmp $0 0 zinnia_win11_unregister_ok 0 0
-  DetailPrint "WARNING: Could not fully unregister Win11 sparse context-menu packages (exit $0). Remove run.rosie.zinnia.contextmenu / extractmenu manually if menus misbehave."
+  zinnia_win11_unregister_fail:
+  StrCpy $R5 "1"
+  DetailPrint "WARNING: Could not fully unregister Win11 sparse context-menu packages (exit $0)."
   FileOpen $R8 "$INSTDIR\zinnia-context-menu-register.log" a
   FileSeek $R8 0 END
   FileWrite $R8 "WARNING: Win11 sparse package unregister incomplete during uninstall (exit $0)$\r$\n"
   FileClose $R8
+  Goto zinnia_win11_unregister_ok
+  zinnia_unreg_no_script:
+  DetailPrint "WARNING: register-windows-context-menu.ps1 missing; probing AppX packages."
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -Command "if (Get-AppxPackage -Name run.rosie.zinnia.contextmenu) { exit 1 }; if (Get-AppxPackage -Name run.rosie.zinnia.extractmenu) { exit 1 }; exit 0"'
+  Pop $0
+  StrCmp $0 "error" zinnia_unreg_packages_remain 0
+  IntCmp $0 0 zinnia_win11_unregister_ok 0 0
+  zinnia_unreg_packages_remain:
+  StrCpy $R5 "1"
+  DetailPrint "WARNING: Win11 sparse packages still present; cannot unregister without the helper script."
   zinnia_win11_unregister_ok:
 !macroend
 
@@ -169,11 +195,13 @@
   !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".zip"
   !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".tar"
   !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".gz"
-  !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".tgz"
   !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".bz2"
-  !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".tbz2"
   !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".xz"
+  !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".rar"
+  !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".tgz"
+  !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".tbz2"
   !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".txz"
+  !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".001"
 !macroend
 
 !macro NSIS_HOOK_PREINSTALL
@@ -205,20 +233,19 @@
   !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".zip"
   !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".tar"
   !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".gz"
-  !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".tgz"
   !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".bz2"
-  !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".tbz2"
   !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".xz"
+  !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".rar"
+  !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".tgz"
+  !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".tbz2"
   !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".txz"
+  !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".001"
   !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".7z"
   !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".zip"
   !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".tar"
   !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".gz"
-  !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".tgz"
   !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".bz2"
-  !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".tbz2"
   !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".xz"
-  !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".txz"
   !insertmacro ZINNIA_REGISTER_COMPRESS_VERBS
   !insertmacro ZINNIA_REGISTER_WIN11_CONTEXT_MENU
   IntCmp $R6 1 zinnia_postinstall_win11_ok 0 0
@@ -228,16 +255,41 @@
   zinnia_postinstall_win11_ok:
   DetailPrint "Removing classic Extract/Compress verbs; Win11 packages cover legacy menu too."
   !insertmacro ZINNIA_UNREGISTER_COMPRESS_VERBS
-  zinnia_postinstall_verbs_done:
+  !insertmacro ZINNIA_CLEAN_LEGACY_SHELL_PAYLOAD
   !insertmacro ZINNIA_CLEAN_SHELL_PAYLOADS "shell-${VERSION}" zinnia_update_shell_cleanup
+  zinnia_postinstall_verbs_done:
+!macroend
+
+!macro NSIS_HOOK_PREUNINSTALL
+  ; Unregister sparse packages before Tauri deletes files. Explorer still
+  ; resolves ExternalLocation against $INSTDIR at this point. Abort if either
+  ; package remains so we never delete a live COM server. In-place updates pass
+  ; /UPDATE; never Abort there or a leftover AppX identity blocks the upgrade.
+  StrCpy $R4 $CMDLINE
+  StrCpy $R3 0
+  StrCpy $R1 "0"
+  zinnia_preuninstall_scan_update:
+  StrCpy $R2 $R4 7 $R3
+  StrCmp $R2 "" zinnia_preuninstall_unregister
+  StrCmp $R2 "/UPDATE" zinnia_preuninstall_update
+  IntOp $R3 $R3 + 1
+  Goto zinnia_preuninstall_scan_update
+  zinnia_preuninstall_update:
+  StrCpy $R1 "1"
+  zinnia_preuninstall_unregister:
+  !insertmacro ZINNIA_UNREGISTER_WIN11_CONTEXT_MENU
+  StrCmp $R1 "1" zinnia_preuninstall_done
+  IntCmp $R5 1 zinnia_preuninstall_abort 0 0
+  Goto zinnia_preuninstall_done
+  zinnia_preuninstall_abort:
+  MessageBox MB_ICONSTOP|MB_OK "Zinnia could not unregister the Win11 context-menu packages. Uninstall was cancelled so Explorer can still find the shell files. Remove run.rosie.zinnia.contextmenu and run.rosie.zinnia.extractmenu from Apps, then uninstall again."
+  Abort
+  zinnia_preuninstall_done:
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
-  ; Tauri checks for a running app before reaching this hook, so canceling that
-  ; prompt cannot partially unregister an otherwise installed app. Its normal
-  ; resource deletes run first; this then unregisters the packages and schedules
-  ; any DLLs still mapped by a shell host for deletion after reboot.
-  !insertmacro ZINNIA_UNREGISTER_WIN11_CONTEXT_MENU
+  ; PREUNINSTALL already unregistered packages (or aborted). Clean payloads and
+  ; classic verbs now that no AppX identity still points at $INSTDIR.
   !insertmacro ZINNIA_CLEAN_SHELL_PAYLOADS "" zinnia_uninstall_shell_cleanup
   !insertmacro ZINNIA_CLEAN_LEGACY_SHELL_PAYLOAD
   Delete /REBOOTOK "$INSTDIR\zinnia-context-menu-register.log"
@@ -246,11 +298,13 @@
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".zip"
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".tar"
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".gz"
-  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".tgz"
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".bz2"
-  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".tbz2"
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".xz"
+  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".rar"
+  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".tgz"
+  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".tbz2"
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".txz"
+  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".001"
   DeleteRegKey HKCU "Software\Classes\Zinnia.Archive"
   RMDir /REBOOTOK "$INSTDIR"
 !macroend

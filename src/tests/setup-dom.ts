@@ -18,6 +18,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 }));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn().mockResolvedValue(() => {}),
+  emit: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@tauri-apps/api/app", () => ({
   getVersion: vi.fn().mockResolvedValue("0.0.0-test"),
@@ -30,6 +31,9 @@ vi.mock("@tauri-apps/api/webviewWindow", () => ({
     setMaximizable: vi.fn().mockResolvedValue(undefined),
     isMaximized: vi.fn().mockResolvedValue(false),
     unmaximize: vi.fn().mockResolvedValue(undefined),
+    maximize: vi.fn().mockResolvedValue(undefined),
+    minimize: vi.fn().mockResolvedValue(undefined),
+    destroy: vi.fn().mockResolvedValue(undefined),
   }),
 }));
 vi.mock("@tauri-apps/plugin-updater", () => ({
@@ -82,6 +86,17 @@ addEl("div", "status");
 addEl("div", "progress");
 addEl("div", "version-label");
 addEl("div", "platform-label");
+
+const debugConsole = addEl("aside", "debug-console");
+debugConsole.hidden = true;
+debugConsole.className = "debug-console";
+addEl("button", "debug-console-popout");
+addEl("button", "debug-console-clear");
+addEl("button", "debug-console-copy");
+addEl("button", "debug-console-close");
+addEl("pre", "debug-console-log");
+const aboutDebugToggle = addEl("img", "about-debug-toggle");
+aboutDebugToggle.className = "about-icon";
 
 const grid = document.createElement("div");
 grid.className = "grid";
@@ -254,7 +269,7 @@ basicFxRow.hidden = true;
 addEl("div", "s-log-dir");
 addEl("button", "run-benchmark");
 addEl("div", "benchmark-result");
-addEl("div", "os-integration-help");
+addEl("div", "os-integration-help").setAttribute("aria-live", "polite");
 addEl("div", "os-platform-label");
 addEl("div", "os-package-label");
 addEl("div", "os-file-assoc-status");
@@ -340,6 +355,12 @@ for (const step of ["0", "1", "2", "3", "4"]) {
   section.className = "setup-wizard-step";
   section.dataset.step = step;
   section.hidden = step !== "0";
+  const title = document.createElement("h2");
+  title.className = "setup-wizard-step__title";
+  title.id = `setup-wizard-title-${step}`;
+  title.tabIndex = -1;
+  title.textContent = `Setup step ${step}`;
+  section.appendChild(title);
   setupCard.appendChild(section);
 }
 

@@ -1,4 +1,5 @@
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { isE2eFrontend } from "../e2e-env";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { state, dom } from "../state";
 import {
@@ -18,6 +19,8 @@ const BASIC_WINDOW_HEIGHT = 650;
 let workingContextPersistTimer: number | undefined;
 let settingsPersistQueue: Promise<void> = Promise.resolve();
 let settingsPersistGeneration = 0;
+let workspaceResizeQueue: Promise<void> = Promise.resolve();
+let workspaceResizeGeneration = 0;
 
 export interface ContextPersistOptions {
   persist?: boolean;
@@ -77,9 +80,10 @@ export function getWorkspaceMode(): WorkspaceMode {
 export async function resizeWorkspaceWindow(
   mode: WorkspaceMode,
 ): Promise<void> {
-  const appWindow = getCurrentWebviewWindow();
-  if (!appWindow || typeof appWindow.setSize !== "function") return;
-
+  const resizable = mode !== "basic";
+  syncBasicWindowChrome(resizable);
+  if (isE2eFrontend()) return;
+  const generation = ++workspaceResizeGeneration;
   const size =
     mode === "basic"
       ? { width: BASIC_WINDOW_WIDTH, height: BASIC_WINDOW_HEIGHT }
@@ -88,37 +92,48 @@ export async function resizeWorkspaceWindow(
           state.currentSettings.powerWindowHeight,
         );
   // Same main window: Basic locks size; Power stays freely resizable.
-  const resizable = mode !== "basic";
-  syncBasicWindowChrome(resizable);
 
-  try {
-    if (!resizable) {
+  const operation = workspaceResizeQueue
+    .catch(() => undefined)
+    .then(async () => {
+      if (generation !== workspaceResizeGeneration) return;
+      const appWindow = getCurrentWebviewWindow();
+      if (!appWindow || typeof appWindow.setSize !== "function") return;
+
       try {
-        if (
-          typeof appWindow.isMaximized === "function" &&
-          (await appWindow.isMaximized())
-        ) {
-          await appWindow.unmaximize();
+        if (!resizable) {
+          try {
+            if (
+              typeof appWindow.isMaximized === "function" &&
+              (await appWindow.isMaximized())
+            ) {
+              await appWindow.unmaximize();
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            devLog(`Unable to unmaximize before locking basic window: ${msg}`);
+          }
         }
+
+        if (generation !== workspaceResizeGeneration) return;
+        const pending: Promise<unknown>[] = [];
+        if (typeof appWindow.setResizable === "function") {
+          pending.push(appWindow.setResizable(resizable));
+        }
+        if (typeof appWindow.setMaximizable === "function") {
+          pending.push(appWindow.setMaximizable(resizable));
+        }
+        pending.push(
+          appWindow.setSize(new LogicalSize(size.width, size.height)),
+        );
+        await Promise.all(pending);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        devLog(`Unable to unmaximize before locking basic window: ${msg}`);
+        devLog(`Unable to resize ${mode} workspace window: ${msg}`);
       }
-    }
-
-    const pending: Promise<unknown>[] = [];
-    if (typeof appWindow.setResizable === "function") {
-      pending.push(appWindow.setResizable(resizable));
-    }
-    if (typeof appWindow.setMaximizable === "function") {
-      pending.push(appWindow.setMaximizable(resizable));
-    }
-    pending.push(appWindow.setSize(new LogicalSize(size.width, size.height)));
-    await Promise.all(pending);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    devLog(`Unable to resize ${mode} workspace window: ${msg}`);
-  }
+    });
+  workspaceResizeQueue = operation;
+  await operation;
 }
 
 function syncBasicWindowChrome(resizable: boolean): void {
@@ -152,6 +167,10 @@ export function setWorkspaceMode(
     el.setAttribute("aria-pressed", String(isActive));
   });
   state.currentSettings.workspaceMode = mode;
+  const workspaceSelect = document.getElementById(
+    "s-workspace-mode",
+  ) as HTMLSelectElement | null;
+  if (workspaceSelect) workspaceSelect.value = mode;
   if (options.persist !== false && previousMode !== mode) {
     queuePersistWorkingContext();
   }
@@ -181,6 +200,10 @@ export function setUiDensity(
     toggle.textContent = compactEnabled ? "Comfortable" : "Compact";
   }
   state.currentSettings.uiDensity = density;
+  const densitySelect = document.getElementById(
+    "s-ui-density",
+  ) as HTMLSelectElement | null;
+  if (densitySelect) densitySelect.value = density;
   if (options.persist !== false && previousDensity !== density) {
     queuePersistWorkingContext();
   }

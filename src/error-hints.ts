@@ -33,7 +33,11 @@ export function describe7zError(stdout: string, stderr: string): string {
   ) {
     return "The file is not a supported archive or is corrupted. Try testing the archive first.";
   }
-  if (text.includes("unsupported method") || text.includes("unsupported")) {
+  if (
+    text.includes("unsupported method") ||
+    text.includes("unsupported compression") ||
+    text.includes("method is not supported")
+  ) {
     return "This archive uses a compression method 7-Zip can't decode here.";
   }
   if (

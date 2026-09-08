@@ -19,15 +19,13 @@ import {
 } from "../extract-path";
 import { getCompressionSecuritySupport } from "../compression-security";
 import { hideBasicCompletion, hideBasicProgress } from "./progress";
+import { basename } from "../path-display";
+
+export { basename } from "../path-display";
 
 export type BasicView = "home" | "compress" | "extract" | "browse";
 
 let currentBasicView: BasicView = "home";
-
-export function basename(path: string): string {
-  const sep = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  return sep >= 0 ? path.slice(sep + 1) : path;
-}
 
 export function extension(path: string): string {
   const name = basename(path);
@@ -377,6 +375,7 @@ export function renderBasicInputs(): void {
     removeBtn.className = "basic-file-item__remove";
     removeBtn.textContent = "\u00d7";
     removeBtn.title = "Remove";
+    removeBtn.setAttribute("aria-label", `Remove ${basename(path)}`);
     removeBtn.disabled =
       state.running || state.operationPreparing || state.incomingPathsApplying;
     const index = i;
@@ -469,19 +468,31 @@ export function updateBasicPasswordField(): void {
 
 export function syncBasicBeforeRun(): void {
   if (getWorkspaceMode() !== "basic") return;
+  // Basic does not expose these Power-only controls. Clear them before every
+  // Basic run so a prior Power session cannot leak state into the args.
+  const updateMode = document.getElementById(
+    "update-mode",
+  ) as HTMLInputElement | null;
+  if (updateMode) updateMode.checked = false;
+  const storeTimestamps = document.getElementById(
+    "store-timestamps",
+  ) as HTMLInputElement | null;
+  if (storeTimestamps) storeTimestamps.checked = false;
+  const pathMode = document.getElementById(
+    "path-mode",
+  ) as HTMLInputElement | null;
+  if (pathMode) pathMode.value = "relative";
+  const extraArgs = document.getElementById(
+    "extra-args",
+  ) as HTMLInputElement | null;
+  if (extraArgs) extraArgs.value = "";
+  const extractExtraArgs = document.getElementById(
+    "extract-extra-args",
+  ) as HTMLInputElement | null;
+  if (extractExtraArgs) extractExtraArgs.value = "";
   const mode = getMode();
   if (mode === "add") {
     syncBasicToPower();
-    // Basic mode does not expose these Power-only controls; force safe defaults
-    // so a prior Power session cannot leak update behavior into Basic runs.
-    const updateMode = document.getElementById(
-      "update-mode",
-    ) as HTMLInputElement | null;
-    if (updateMode) updateMode.checked = false;
-    const pathMode = document.getElementById(
-      "path-mode",
-    ) as HTMLInputElement | null;
-    if (pathMode) pathMode.value = "relative";
   } else if (mode === "extract") {
     syncBasicExtractToPower();
   } else if (mode === "browse") {

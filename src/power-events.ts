@@ -1,4 +1,4 @@
-import { ask, message } from "@tauri-apps/plugin-dialog";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { $ } from "./utils";
@@ -76,6 +76,14 @@ import {
 } from "./basic";
 import { wireOsIntegrationEvents } from "./os-integration";
 import { runBenchmark } from "./benchmark";
+import { showToast } from "./toast";
+import {
+  isDebugEnabled,
+  setDebugEnabled,
+  setDebugConsoleVisible,
+  wireDebugConsoleControls,
+  restoreDebugConsolePopOutIfNeeded,
+} from "./debug-mode";
 import {
   isEditableTarget,
   resetRuntimeStateForFirstRun,
@@ -89,6 +97,43 @@ import {
 import { exportLocalLogs, openLogsFolder, clearLocalLogs } from "./power-logs";
 
 export { openShortcutsModal } from "./power-shortcuts";
+
+export async function promptAndToggleDebugMode(): Promise<void> {
+  const enabling = !isDebugEnabled();
+  const confirmed = await ask(
+    enabling
+      ? "Enable debug mode? This shows a Debug Console with verbose process output."
+      : "Disable debug mode and hide the Debug Console?",
+    {
+      title: enabling ? "Enable debug mode" : "Disable debug mode",
+      kind: "info",
+      okLabel: enabling ? "Enable" : "Disable",
+      cancelLabel: "Cancel",
+    },
+  );
+  if (!confirmed) return;
+
+  const previousSettings = state.currentSettings;
+  const nextSettings = { ...previousSettings, debug: enabling };
+  try {
+    await persistSettingsImmediately(nextSettings, state.settingsExtras);
+  } catch (err) {
+    state.currentSettings = previousSettings;
+    const msg = err instanceof Error ? err.message : String(err);
+    showToast(`Could not save debug setting: ${msg}`, "error");
+    return;
+  }
+
+  state.currentSettings = nextSettings;
+  setDebugEnabled(enabling);
+  if (enabling) {
+    setDebugConsoleVisible(true);
+    showToast("Debug mode enabled.", "info");
+    void restoreDebugConsolePopOutIfNeeded();
+  } else {
+    showToast("Debug mode disabled.", "info");
+  }
+}
 
 const BASIC_RECENT_ARCHIVES_KEY = "zinnia.basic.recentArchives";
 
@@ -229,7 +274,10 @@ export function wireEvents() {
   $("close-selective").addEventListener("click", closeSelectiveExtractModal);
   $("selective-cancel").addEventListener("click", closeSelectiveExtractModal);
   $("selective-search").addEventListener("input", () => {
-    setSelectiveExtractSearch($<HTMLInputElement>("selective-search").value);
+    setSelectiveExtractSearch(
+      $<HTMLInputElement>("selective-search").value,
+      true,
+    );
   });
   $("selective-select-all").addEventListener("click", selectAllVisibleInPicker);
   $("selective-clear").addEventListener("click", clearPickerSelection);
@@ -272,37 +320,55 @@ export function wireEvents() {
       });
       const name = raw?.trim();
       if (!name) return;
+      const previousPresets = state.currentSettings.customPresets.map(
+        (preset) => ({ ...preset }),
+      );
       try {
         saveCustomPreset(name);
         refreshPresetDropdown(`custom:${name}`);
         updateDeletePresetButton();
-        void persistSettingsImmediately(
+        await persistSettingsImmediately(
           state.currentSettings,
           state.settingsExtras,
         );
         setStatus(`Preset "${name}" saved`, 2000);
       } catch (err) {
-        setStatus(
-          "Error",
-          3000,
-          err instanceof Error ? err.message : String(err),
-        );
+        state.currentSettings.customPresets = previousPresets;
+        refreshPresetDropdown("custom");
+        updateDeletePresetButton();
+        const detail = err instanceof Error ? err.message : String(err);
+        setStatus("Error", 3000, detail);
+        showToast(`Could not save preset "${name}". ${detail}`, "error", 0);
       }
     })();
   });
 
   $("delete-preset").addEventListener("click", () => {
-    const value = $<HTMLSelectElement>("preset").value;
-    if (!value.startsWith("custom:")) return;
-    const name = value.slice("custom:".length);
-    deleteCustomPreset(name);
-    refreshPresetDropdown("custom");
-    updateDeletePresetButton();
-    void persistSettingsImmediately(
-      state.currentSettings,
-      state.settingsExtras,
-    );
-    setStatus(`Preset "${name}" deleted`, 2000);
+    void (async () => {
+      const value = $<HTMLSelectElement>("preset").value;
+      if (!value.startsWith("custom:")) return;
+      const name = value.slice("custom:".length);
+      const previousPresets = state.currentSettings.customPresets.map(
+        (preset) => ({ ...preset }),
+      );
+      try {
+        deleteCustomPreset(name);
+        refreshPresetDropdown("custom");
+        updateDeletePresetButton();
+        await persistSettingsImmediately(
+          state.currentSettings,
+          state.settingsExtras,
+        );
+        setStatus(`Preset "${name}" deleted`, 2000);
+      } catch (err) {
+        state.currentSettings.customPresets = previousPresets;
+        refreshPresetDropdown(value);
+        updateDeletePresetButton();
+        const detail = err instanceof Error ? err.message : String(err);
+        setStatus("Error", 3000, detail);
+        showToast(`Could not delete preset "${name}". ${detail}`, "error", 0);
+      }
+    })();
   });
 
   $<HTMLSelectElement>("s-format").addEventListener("change", () => {
@@ -339,7 +405,12 @@ export function wireEvents() {
   });
 
   for (const id of ["level", "method", "dict", "word-size", "solid"]) {
-    $(id).addEventListener("change", onCompressionOptionChange);
+    $(id).addEventListener("change", () => {
+      if (id === "method") {
+        updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
+      }
+      onCompressionOptionChange();
+    });
   }
 
   $<HTMLSelectElement>("split-size").addEventListener("change", () => {
@@ -367,9 +438,6 @@ export function wireEvents() {
         if (state.running || state.operationPreparing) return;
         const mode =
           btn.dataset.workspaceModeBtn === "power" ? "power" : "basic";
-        if (mode === "power") {
-          syncBasicBeforeRun();
-        }
         setWorkspaceMode(mode);
         if (mode === "basic") {
           syncBasicWorkspaceFromPower();
@@ -412,6 +480,9 @@ export function wireEvents() {
     applySettingsToForm();
     updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
     onCompressionOptionChange();
+    if (state.currentSettings.workspaceMode === "basic") {
+      syncBasicWorkspaceFromPower();
+    }
     try {
       await persistSettingsImmediately(
         state.currentSettings,
@@ -428,13 +499,13 @@ export function wireEvents() {
       populateSettingsModal();
       updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
       onCompressionOptionChange();
+      if (state.currentSettings.workspaceMode === "basic") {
+        syncBasicWorkspaceFromPower();
+      }
 
       const msg = err instanceof Error ? err.message : String(err);
       log(`Failed to save settings: ${msg}`, "error");
-      await message(`Failed to save settings.\n\n${msg}`, {
-        title: "Settings error",
-        kind: "error",
-      });
+      showToast(`Failed to save settings. ${msg}`, "error", 0);
     }
   });
   $("rerun-setup-wizard").addEventListener("click", async () => {
@@ -449,10 +520,7 @@ export function wireEvents() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log(`Setup wizard failed: ${msg}`, "error");
-      await message(`Failed to run setup wizard.\n\n${msg}`, {
-        title: "Setup wizard error",
-        kind: "error",
-      });
+      showToast(`Failed to run setup wizard. ${msg}`, "error", 0);
     }
   });
 
@@ -489,10 +557,7 @@ export function wireEvents() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log(`Failed to reset settings: ${msg}`, "error");
-      await message(`Failed to reset settings.\n\n${msg}`, {
-        title: "Reset settings error",
-        kind: "error",
-      });
+      showToast(`Failed to reset settings. ${msg}`, "error", 0);
     }
   });
 
@@ -548,6 +613,16 @@ export function wireEvents() {
   $("about-show-licenses").addEventListener("click", (e) =>
     openLicensesModal(e.currentTarget as HTMLElement),
   );
+  const aboutDebugToggle = $("about-debug-toggle");
+  aboutDebugToggle.addEventListener("click", () => {
+    void promptAndToggleDebugMode();
+  });
+  aboutDebugToggle.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    void promptAndToggleDebugMode();
+  });
+  wireDebugConsoleControls();
   wireOsIntegrationEvents();
 
   $("close-licenses").addEventListener("click", closeLicensesModal);
@@ -588,10 +663,19 @@ export function wireEvents() {
     }
     if (e.key === "," && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
+      // Licenses can be stacked above Settings. Do not toggle the lower sheet
+      // while the topmost modal owns focus.
+      if (!$("licenses-overlay").hidden) return;
       toggleSettingsModal();
       return;
     }
     if (e.key === "Escape") {
+      // Licenses may be nested over Settings in Basic mode; always dismiss the
+      // visually topmost sheet first.
+      if (!$("licenses-overlay").hidden) {
+        closeLicensesModal();
+        return;
+      }
       if (!$("settings-overlay").hidden) {
         closeSettingsModal();
         return;
@@ -602,10 +686,6 @@ export function wireEvents() {
       }
       if (!$("command-preview-overlay").hidden) {
         closeCommandPreviewModal();
-        return;
-      }
-      if (!$("licenses-overlay").hidden) {
-        closeLicensesModal();
         return;
       }
       if (!$("shortcuts-overlay").hidden) {

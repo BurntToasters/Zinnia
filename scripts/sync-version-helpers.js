@@ -76,6 +76,19 @@ export function updateWindowsResourceVersion(resource, version) {
   return updated;
 }
 
+/** Synchronize an isolated COM assembly identity with the package version. */
+export function updateWindowsAssemblyIdentityVersion(manifest, version) {
+  const packageVersion = windowsPackageVersionFromSemver(version);
+  const pattern = /(<assemblyIdentity\b[^>]*\bversion=")[^"]+("\s*\/?>)/s;
+  const matches = manifest.match(new RegExp(pattern.source, "gs"));
+  if (matches?.length !== 1) {
+    throw new Error(
+      `Windows assembly identity version must appear exactly once; found ${matches?.length ?? 0}`,
+    );
+  }
+  return manifest.replace(pattern, `$1${packageVersion}$2`);
+}
+
 const WINDOWS_SHELL_RESOURCES = Object.freeze({
   "windows/shell/out/zinnia_shell.dll": "zinnia_shell.dll",
   "windows/shell/out/zinnia_extract_shell.dll": "zinnia_extract_shell.dll",
@@ -157,16 +170,19 @@ export function windowsPackageVersionFromSemver(version) {
  */
 export function macBundleVersionFromSemver(version) {
   const parsed = parseReleaseSemver(version, "macOS bundle");
-  if (parsed.prereleaseNumber !== null && parsed.prereleaseNumber > 29) {
+  if (parsed.prereleaseNumber !== null && parsed.prereleaseNumber > 6998) {
     throw new Error(
-      `macOS bundle prerelease sequence must be 0-29: ${version}`,
+      `macOS bundle prerelease sequence must be 0-6998: ${version}`,
     );
   }
-  let build = parsed.patch * 100;
+  // 0-2999 stay reserved for future prerelease stages. Beta occupies
+  // 3000-9998 and stable occupies 9999. The 10,000-wide patch block keeps
+  // beta -> stable -> next-patch-beta strictly monotonic.
+  let build = parsed.patch * 10_000;
   if (!parsed.stage) {
-    build += 99;
+    build += 9999;
   } else {
-    build += 30 + parsed.prereleaseNumber;
+    build += 3000 + parsed.prereleaseNumber;
   }
 
   return `${parsed.major}.${parsed.minor}.${build}`;
@@ -183,4 +199,82 @@ export function macMarketingVersionFromSemver(version) {
     );
   }
   return `${match[1]}.${match[2]}.${match[3]}`;
+}
+
+/** Replace exactly one string-valued plist key, failing closed on drift. */
+export function updatePlistStringValue(plist, key, value) {
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(
+    `(<key>${escapedKey}</key>\\s*<string>)[^<]*(</string>)`,
+    "g",
+  );
+  const matches = plist.match(pattern);
+  if (matches?.length !== 1) {
+    throw new Error(
+      `plist key ${key} must have exactly one string value; found ${matches?.length ?? 0}`,
+    );
+  }
+  return plist.replace(pattern, `$1${value}$2`);
+}
+
+const CHANGELOG_INTRO_ANCHOR =
+  "Zinnia! A cross platform 7Z gui frontend built on Tauri V2!\n\n";
+
+/** Align CHANGELOG download URLs and section heading with package.json version. */
+export function syncChangelogForVersion(changelog, version) {
+  const tag = `v${version}`;
+  const sectionHeading = `## Changes in \`${tag}:\``;
+
+  const tableStart = changelog.indexOf("# ⬇️ Downloads");
+  const tableEnd = changelog.indexOf("\n> macOS");
+  if (tableStart === -1 || tableEnd === -1 || tableEnd <= tableStart) {
+    throw new Error("CHANGELOG.md download table markers not found");
+  }
+
+  const before = changelog.slice(0, tableStart);
+  const table = changelog.slice(tableStart, tableEnd);
+  const after = changelog.slice(tableEnd);
+  const syncedTable = table.replace(
+    /\/releases\/download\/v[^/]+\//g,
+    `/releases/download/${tag}/`,
+  );
+  let updated = before + syncedTable + after;
+
+  if (!updated.includes(sectionHeading)) {
+    if (!updated.includes(CHANGELOG_INTRO_ANCHOR)) {
+      throw new Error("CHANGELOG.md intro anchor not found");
+    }
+    updated = updated.replace(
+      CHANGELOG_INTRO_ANCHOR,
+      `${CHANGELOG_INTRO_ANCHOR}${sectionHeading}\n\n- **Fix:** (add release notes)\n\n`,
+    );
+  }
+
+  return updated;
+}
+
+export function syncNpmLockfileVersion(lockText, version) {
+  let parsed;
+  try {
+    parsed = JSON.parse(lockText);
+  } catch (error) {
+    throw new Error(
+      `package-lock.json is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("package-lock.json root must be an object");
+  }
+  if (!parsed.packages || typeof parsed.packages !== "object") {
+    throw new Error("package-lock.json is missing packages");
+  }
+  if (!parsed.packages[""] || typeof parsed.packages[""] !== "object") {
+    throw new Error('package-lock.json is missing packages[""]');
+  }
+  if (parsed.version === version && parsed.packages[""].version === version) {
+    return lockText;
+  }
+  parsed.version = version;
+  parsed.packages[""].version = version;
+  return `${JSON.stringify(parsed, null, 2)}\n`;
 }

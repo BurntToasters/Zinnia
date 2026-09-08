@@ -6,6 +6,9 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$ZinniaMinRealShellArtifactBytes = 1024 # Keep aligned with nsis-hooks.nsh.
+& node (Join-Path $PSScriptRoot 'release-policy.cjs')
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 if ($env:SKIP_WIN_CODESIGN -eq '1') { Write-Host 'SKIP_WIN_CODESIGN=1; skipping Authenticode verification.'; exit 0 }
 if ($env:OS -ne 'Windows_NT') { throw 'Authenticode verification must run on Windows.' }
 if ([string]::IsNullOrWhiteSpace($env:AZURE_ARTIFACT_SIGNING_PUBLISHER)) { throw 'AZURE_ARTIFACT_SIGNING_PUBLISHER is required for Authenticode verification.' }
@@ -33,7 +36,7 @@ foreach ($candidate in $shellCandidates) {
   if (Test-Path -LiteralPath $candidate) {
     $item = Get-Item -LiteralPath $candidate
     # Skip empty CI stubs (<= 1 KiB).
-    if ($item.Length -gt 1024) { $files += $item }
+    if ($item.Length -gt $ZinniaMinRealShellArtifactBytes) { $files += $item }
   }
 }
 foreach ($extra in $ExtraFiles) {

@@ -18,11 +18,12 @@ const coverageSummaryPath = resolve(
 );
 const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
 const appVersion = packageJson.version ?? "unknown";
-const scriptVersion = "1.1.2";
+const scriptVersion = "1.1.5";
 const criticalCoverageThresholds = {
   // Directory keys (trailing `/`) aggregate all matching `src/<dir>/**/*.ts` files.
   "archive/": { lines: 80, branches: 62, functions: 88 },
   "basic/": { lines: 60, branches: 44, functions: 44 },
+  "basic/extract-events.ts": { lines: 70, branches: 50, functions: 70 },
   "extract-window.ts": { lines: 72, branches: 53, functions: 66 },
   "app-init.ts": { lines: 70, branches: 50, functions: 52 },
   "updater.ts": { lines: 76, branches: 62, functions: 68 },
@@ -41,15 +42,19 @@ const colors = {
 };
 const defaultTimeoutMs = 300_000;
 const rustTimeoutMs = process.platform === "win32" ? 1_200_000 : 600_000;
+const e2eTimeoutMs = process.platform === "win32" ? 1_200_000 : 900_000;
 
 function createInitialResults() {
   return {
     typecheck: { status: "pending" },
     lint: { status: "pending" },
     format: { status: "pending" },
+    noEmDash: { status: "pending" },
     changelog: { status: "pending" },
     updater: { status: "pending" },
     flatpak: { status: "pending" },
+    cargoSafeUpdate: { status: "pending" },
+    cargoUpdatePolicy: { status: "pending" },
     test: { status: "pending", passed: null, failed: null, files: null },
     coverage: {
       status: "pending",
@@ -60,8 +65,11 @@ function createInitialResults() {
     },
     rustfmt: { status: "pending" },
     rustprep: { status: "pending" },
+    archives: { status: "pending" },
+    e2e: { status: "pending" },
     clippy: { status: "pending" },
     rust: { status: "pending" },
+    vendorUpdater: { status: "pending" },
   };
 }
 
@@ -200,6 +208,7 @@ function runCommand(name, command, args, parser, results, options = {}) {
     shell: useShell,
     windowsHide: true,
     timeout,
+    env: options.env ? { ...process.env, ...options.env } : process.env,
   });
 
   const stdout = run.stdout || "";
@@ -244,7 +253,7 @@ function printSummary(results) {
 ${colors.reset}`);
 
   const allPassed = Object.values(results).every(
-    (result) => result.status === "passed",
+    (result) => result.status === "passed" || result.status === "skipped",
   );
 
   console.log(
@@ -269,6 +278,13 @@ ${colors.reset}`);
     }${colors.reset}`,
   );
   console.log(
+    `${colors.bold}No em dash:${colors.reset} ${
+      results.noEmDash.status === "passed"
+        ? `${colors.green}✓ PASS`
+        : `${colors.red}✗ FAIL`
+    }${colors.reset}`,
+  );
+  console.log(
     `${colors.bold}Changelog:${colors.reset}  ${
       results.changelog.status === "passed"
         ? `${colors.green}✓ PASS`
@@ -285,6 +301,20 @@ ${colors.reset}`);
   console.log(
     `${colors.bold}Flatpak:${colors.reset}    ${
       results.flatpak.status === "passed"
+        ? `${colors.green}✓ PASS`
+        : `${colors.red}✗ FAIL`
+    }${colors.reset}`,
+  );
+  console.log(
+    `${colors.bold}Cargo Safe Update:${colors.reset} ${
+      results.cargoSafeUpdate?.status === "passed"
+        ? `${colors.green}✓ PASS`
+        : `${colors.red}✗ FAIL`
+    }${colors.reset}`,
+  );
+  console.log(
+    `${colors.bold}Cargo Policy:${colors.reset}      ${
+      results.cargoUpdatePolicy?.status === "passed"
         ? `${colors.green}✓ PASS`
         : `${colors.red}✗ FAIL`
     }${colors.reset}`,
@@ -322,6 +352,13 @@ ${colors.reset}`);
     }${colors.reset}`,
   );
   console.log(
+    `${colors.bold}Archives:${colors.reset}   ${
+      results.archives?.status === "passed"
+        ? `${colors.green}✓ PASS`
+        : `${colors.red}✗ FAIL`
+    }${colors.reset}`,
+  );
+  console.log(
     `${colors.bold}Clippy:${colors.reset}      ${
       results.clippy.status === "passed"
         ? `${colors.green}✓ PASS`
@@ -333,6 +370,22 @@ ${colors.reset}`);
       results.rust.status === "passed"
         ? `${colors.green}✓ PASS`
         : `${colors.red}✗ FAIL`
+    }${colors.reset}`,
+  );
+  console.log(
+    `${colors.bold}Vendor Updater:${colors.reset} ${
+      results.vendorUpdater?.status === "passed"
+        ? `${colors.green}✓ PASS`
+        : `${colors.red}✗ FAIL`
+    }${colors.reset}`,
+  );
+  console.log(
+    `${colors.bold}E2E:${colors.reset}        ${
+      results.e2e?.status === "passed"
+        ? `${colors.green}✓ PASS`
+        : results.e2e?.status === "skipped"
+          ? `${colors.blue}SKIP`
+          : `${colors.red}✗ FAIL`
     }${colors.reset}`,
   );
 
@@ -350,20 +403,49 @@ ${colors.reset}`);
   return 1;
 }
 
-function main() {
+function main({
+  root = resolve(__dirname, ".."),
+  clearProof = clearQualityGateProof,
+  recordProof = recordSuccessfulQualityGate,
+  runner = runCommand,
+  parseCoverage: parseCoverageResults = parseCoverage,
+  requireCleanProof = false,
+  skipE2e = false,
+} = {}) {
   // A failed or interrupted run must invalidate any earlier release proof.
-  clearQualityGateProof(resolve(__dirname, ".."));
+  clearProof(root);
   const results = createInitialResults();
   const npm = getNpmCommand();
+  if (process.env.SKIP_E2E === "1") {
+    console.error(
+      `${colors.red}SKIP_E2E=1 is not allowed for npm run test:all. Unset it so the unpackaged WebdriverIO suite runs.${colors.reset}`,
+    );
+    return 1;
+  }
   printBanner();
 
-  runCommand("typecheck", npm, ["run", "typecheck"], null, results);
-  runCommand("lint", npm, ["run", "lint"], null, results);
-  runCommand("format", npm, ["run", "format:check"], null, results);
-  runCommand("changelog", npm, ["run", "validate:changelog"], null, results);
-  runCommand("updater", npm, ["run", "validate:updater"], null, results);
-  runCommand("flatpak", npm, ["run", "validate:flatpak"], null, results);
-  const testPassed = runCommand(
+  runner("typecheck", npm, ["run", "typecheck"], null, results);
+  runner("lint", npm, ["run", "lint"], null, results);
+  runner("format", npm, ["run", "format:check"], null, results);
+  runner("noEmDash", npm, ["run", "validate:no-em-dash"], null, results);
+  runner("changelog", npm, ["run", "validate:changelog"], null, results);
+  runner("updater", npm, ["run", "validate:updater"], null, results);
+  runner("flatpak", npm, ["run", "validate:flatpak"], null, results);
+  runner(
+    "cargoSafeUpdate",
+    npm,
+    ["run", "test:cargo-safe-update"],
+    null,
+    results,
+  );
+  runner(
+    "cargoUpdatePolicy",
+    npm,
+    ["run", "check:cargo-update-policy"],
+    null,
+    results,
+  );
+  const testPassed = runner(
     "test",
     npm,
     ["run", "test:cov"],
@@ -371,11 +453,11 @@ function main() {
     results,
   );
   if (testPassed) {
-    parseCoverage(results);
+    parseCoverageResults(results);
   } else {
     results.coverage.status = "failed";
   }
-  runCommand(
+  runner(
     "rustfmt",
     "cargo",
     [
@@ -390,7 +472,7 @@ function main() {
     results,
     { timeout: rustTimeoutMs },
   );
-  const rustPrepared = runCommand(
+  const rustPrepared = runner(
     "rustprep",
     npm,
     ["run", "prepare:rust-tests"],
@@ -399,11 +481,15 @@ function main() {
     { timeout: rustTimeoutMs },
   );
   if (rustPrepared) {
-    runCommand(
+    runner("archives", npm, ["run", "test:archives"], null, results, {
+      timeout: rustTimeoutMs,
+    });
+    runner(
       "clippy",
       "cargo",
       [
         "clippy",
+        "--locked",
         "--manifest-path",
         "src-tauri/Cargo.toml",
         "--all-targets",
@@ -415,17 +501,53 @@ function main() {
       results,
       { timeout: rustTimeoutMs },
     );
-    runCommand(
+    runner(
       "rust",
       "cargo",
-      ["test", "--manifest-path", "src-tauri/Cargo.toml", "--all-targets"],
+      [
+        "test",
+        "--locked",
+        "--manifest-path",
+        "src-tauri/Cargo.toml",
+        "--all-targets",
+      ],
+      null,
+      results,
+      {
+        timeout: rustTimeoutMs,
+        env: { ZINNIA_REQUIRE_7Z: "1" },
+      },
+    );
+    runner(
+      "vendorUpdater",
+      "cargo",
+      [
+        "test",
+        "--locked",
+        "--manifest-path",
+        "src-tauri/vendor/tauri-plugin-updater/Cargo.toml",
+        // Upstream doctests need a concrete Tauri Runtime; unit tests cover the
+        // Zinnia install-safety patches.
+        "--lib",
+      ],
       null,
       results,
       { timeout: rustTimeoutMs },
     );
+    if (skipE2e) {
+      results.e2e.status = "skipped";
+      console.log(`${colors.blue}Skipping E2E (--skip-e2e).${colors.reset}\n`);
+    } else {
+      runner("e2e", npm, ["run", "test:e2e"], null, results, {
+        timeout: e2eTimeoutMs,
+      });
+    }
   } else {
     results.clippy.status = "failed";
     results.rust.status = "failed";
+    results.vendorUpdater.status = "failed";
+    results.archives.status = "failed";
+    results.e2e.status = "failed";
     console.log(
       `${colors.red}Skipping clippy and Rust tests because Rust test assets could not be prepared.${colors.reset}\n`,
     );
@@ -433,20 +555,43 @@ function main() {
 
   const exitCode = printSummary(results);
   if (exitCode === 0) {
-    const qualityGate = recordSuccessfulQualityGate(resolve(__dirname, ".."));
+    const qualityGate = recordProof(root);
     if (qualityGate.recorded) {
       console.log("Release quality-gate proof recorded for this clean commit.");
     } else {
-      console.log(
-        "Release quality-gate proof not recorded because the working tree is dirty.",
+      console.error(
+        `${colors.red}Release quality-gate proof NOT recorded because the working tree is dirty. Commit generated files (e.g. run.rosie.zinnia.metainfo.xml from workspace:bootstrap) and re-run test:all before any release step.${colors.reset}`,
       );
       if (qualityGate.dirtyFiles) {
         console.log("Dirty files:");
         console.log(qualityGate.dirtyFiles);
       }
+      if (requireCleanProof) return 1;
     }
   }
   return exitCode;
 }
 
-process.exit(main());
+function isDirectExecution() {
+  if (!process.argv[1]) return false;
+  return fileURLToPath(import.meta.url) === resolve(process.argv[1]);
+}
+
+if (isDirectExecution()) {
+  process.exit(
+    main({
+      requireCleanProof: process.argv.includes("--require-clean-proof"),
+      skipE2e: process.argv.includes("--skip-e2e"),
+    }),
+  );
+}
+
+export {
+  createInitialResults,
+  getNpmCommand,
+  main,
+  parseCoverage,
+  parseTest,
+  printSummary,
+  runCommand,
+};

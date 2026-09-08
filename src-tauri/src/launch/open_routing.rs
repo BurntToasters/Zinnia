@@ -14,6 +14,7 @@ use super::{
     OpenPathsPayload, PendingPaths, EXTRACT_ONLY_LAUNCH, FILE_OPEN_SIGNAL,
     MAC_FALLBACK_MAIN_PENDING,
 };
+use crate::process::{running_process_is_busy, RunningProcess};
 
 // Finder caps one request at 1,000 paths and Explorer may split one selection
 // across several 1,000-path launches. Keep the aggregate aligned with archive
@@ -37,25 +38,46 @@ const SHELL_HANDOFF_SUFFIX: &str = ".tmp";
 /// event listener exists, so `app.emit(...)` at that point would be silently
 /// dropped. Expose it as a pollable command instead, read once at frontend
 /// boot the same way `get_startup_recovery_status` already is.
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 static LAST_SHELL_HANDOFF_ERROR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+/// Serializes the busy-check + queue/spawn decision across concurrent opens.
+static OPEN_ROUTE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-#[cfg(windows)]
-fn record_shell_handoff_error(message: String) {
+#[cfg(any(windows, test))]
+pub(crate) fn record_shell_handoff_error(message: String) {
     if let Ok(mut guard) = LAST_SHELL_HANDOFF_ERROR.lock() {
         *guard = Some(message);
     }
 }
 
+#[cfg(any(windows, test))]
+pub(crate) fn take_shell_handoff_error() -> Option<String> {
+    LAST_SHELL_HANDOFF_ERROR
+        .lock()
+        .ok()
+        .and_then(|mut guard| guard.take())
+}
+
 /// A later, already-running-window open request (secondary instance argv
-/// forwarding, Reopen) can still emit live, since a window/listener exists by
-/// then; use the same channel already used for queue-capacity drops.
+/// forwarding, Reopen) can emit live because a listener exists. Consume error
+/// once so a later valid Explorer request cannot replay a stale warning.
+///
+/// When no webview is listening (extract warm-idle / pre-main), leave the
+/// error in place for `get_shell_handoff_error` after main opens.
 #[cfg(windows)]
 pub(crate) fn emit_pending_shell_handoff_error(app: &tauri::AppHandle) {
-    let message = match LAST_SHELL_HANDOFF_ERROR.lock() {
-        Ok(mut guard) => guard.take(),
-        Err(_) => None,
-    };
+    // Only the main window listens for `open-paths-dropped`. Extract windows
+    // do not  -  taking the error while only an extract window exists emits into
+    // the void and clears the cold-poll buffer.
+    if app.get_webview_window("main").is_none() {
+        return;
+    }
+    // Cold start creates the main webview before JS listeners and before
+    // `mark_main_window_ready`. Taking here would drop the error into the void.
+    if !super::MAIN_WINDOW_READY.load(Ordering::SeqCst) {
+        return;
+    }
+    let message = take_shell_handoff_error();
     if let Some(message) = message {
         let _ = app.emit(
             "open-paths-dropped",
@@ -73,10 +95,7 @@ pub(crate) fn emit_pending_shell_handoff_error(_app: &tauri::AppHandle) {}
 pub fn get_shell_handoff_error() -> Option<String> {
     #[cfg(windows)]
     {
-        LAST_SHELL_HANDOFF_ERROR
-            .lock()
-            .ok()
-            .and_then(|mut guard| guard.take())
+        take_shell_handoff_error()
     }
     #[cfg(not(windows))]
     {
@@ -134,18 +153,19 @@ pub(crate) fn should_use_extract_window(paths: &[String], mode: &str) -> bool {
     looks_like_archive_path(&paths[0])
 }
 
+/// Queue Explorer/Finder extracts onto main when another extract window is
+/// open or the shared 7-Zip slot is already held (compress/extract on main).
+pub(crate) fn should_queue_extract_to_main(
+    has_extract_windows: bool,
+    archive_slot_busy: bool,
+) -> bool {
+    has_extract_windows || archive_slot_busy
+}
+
 pub(crate) fn looks_like_archive_extension(lower: &str) -> bool {
-    // Windows: omit .rar so file-open routing does not land on the temporary
-    // RAR extract block (CVE-2026-58052). macOS/Linux still treat RAR as archives.
-    let extensions: &[&str] = if cfg!(windows) {
-        &[
-            ".7z", ".zip", ".tar", ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz",
-        ]
-    } else {
-        &[
-            ".7z", ".zip", ".rar", ".tar", ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz",
-        ]
-    };
+    let extensions: &[&str] = &[
+        ".7z", ".zip", ".rar", ".tar", ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz",
+    ];
     extensions
         .iter()
         .any(|extension| lower.ends_with(extension))
@@ -451,10 +471,16 @@ pub(crate) fn route_open_request(app: &tauri::AppHandle, paths: Vec<String>, mod
     }
 
     if should_use_extract_window(&paths, &mode) {
+        // Hold across the check-then-act below: two simultaneous Explorer/Finder
+        // opens must not both see an idle slot and spawn competing windows.
+        let _route_guard = OPEN_ROUTE_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         // The backend intentionally owns one 7z job at a time. Route additional
         // open requests into the main window's existing pending FIFO instead of
         // creating a second quick window that can only fail as busy.
-        if has_extract_windows(app) {
+        let archive_slot_busy = running_process_is_busy(&app.state::<RunningProcess>());
+        if should_queue_extract_to_main(has_extract_windows(app), archive_slot_busy) {
             EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);
             leave_extract_warm(app);
             let pending = app.state::<PendingPaths>();
@@ -561,15 +587,24 @@ pub fn emit_open_paths(app: &tauri::AppHandle, argv: Vec<String>) -> bool {
     route_open_request(app, paths, mode)
 }
 
+fn cli_args_lossy() -> impl Iterator<Item = String> {
+    // `std::env::args()` panics on non-UTF-8 argv. Unix filenames may contain
+    // arbitrary bytes; lossy conversion keeps startup alive and still opens
+    // the vast majority of real paths.
+    std::env::args_os()
+        .skip(1)
+        .map(|arg| arg.to_string_lossy().into_owned())
+}
+
 pub fn collect_cli_context() -> (Vec<String>, String) {
     // Do not consume shell handoffs here. A secondary single-instance process
     // would delete the file before the primary receives forwarded argv.
-    parse_open_request_args_ex(std::env::args().skip(1), false)
+    parse_open_request_args_ex(cli_args_lossy(), false)
 }
 
 /// Resolve launch argv including Windows shell handoffs. Call only from the
 /// primary instance (app setup / open routing), never from a process that may
 /// exit as a single-instance secondary.
 pub fn resolve_cli_context_with_handoffs() -> (Vec<String>, String) {
-    parse_open_request_args_ex(std::env::args().skip(1), true)
+    parse_open_request_args_ex(cli_args_lossy(), true)
 }

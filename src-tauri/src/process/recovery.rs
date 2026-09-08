@@ -1,13 +1,11 @@
 //! Startup recovery for interrupted archive transactions.
 
-use super::commit::{
-    archive_backup_path, archive_family, rename_file_no_replace, rollback_persisted_move_plan,
-};
+use super::commit::{archive_backup_path, archive_family, rollback_persisted_move_plan};
 use super::journal::{
-    cleanup_journal_path, clear_cleanup_journal, ensure_regular_file_identity,
-    is_safe_stage_dir_name, move_plan_path, remove_move_plan_sidecars,
-    remove_regular_file_if_matches, sync_directory, ArchiveJournalPhase, CleanupJournal,
-    ExtractJournalPhase, FileIdentity,
+    cleanup_journal_path, clear_cleanup_journal, ensure_path_identity,
+    ensure_recovery_path_unchanged, is_safe_stage_dir_name, move_plan_path,
+    read_cleanup_journal_at, remove_recovery_regular_file_if_matches, ArchiveJournalPhase,
+    CleanupJournal, ExtractJournalPhase, FileIdentity,
 };
 
 static RECOVERY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -56,53 +54,49 @@ pub(crate) fn extract_journal_is_committed(journal: &CleanupJournal) -> bool {
 }
 
 pub(crate) fn cleanup_extract_journal_artifacts(journal: &CleanupJournal) -> Result<(), String> {
-    // Remove the durable rollback description before deleting the source stage.
-    // If sidecar cleanup fails, leaving the stage intact lets the next recovery
-    // pass repeat safely instead of seeing a missing stage with a stale plan.
-    remove_move_plan_sidecars(&journal.stage)?;
-    match crate::fs_secure::remove_dir_all_for_cleanup(&journal.stage) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.to_string()),
-    }
-    if let Some(parent) = journal.stage.parent() {
-        sync_directory(parent)?;
-    }
-    Ok(())
+    let expected = journal.extract_stage_identity.as_ref().ok_or_else(|| {
+        "Refusing extraction cleanup because the journal has no stage identity.".to_string()
+    })?;
+    super::journal::cleanup_transaction_artifacts(
+        &journal.stage,
+        Some(expected),
+        journal.move_plan_identity.as_ref(),
+        journal.move_identity_log_identity.as_ref(),
+        &[],
+    )
 }
 
 fn extraction_move_plan_exists(journal: &CleanupJournal) -> Result<bool, String> {
-    let mut candidates = vec![move_plan_path(&journal.stage)];
-    if !journal.move_plan_sidecar {
-        candidates.push(
-            journal
-                .stage
-                .join(super::journal::LEGACY_MOVE_PLAN_FILE_NAME),
-        );
-    }
-    for path in candidates {
-        match std::fs::symlink_metadata(&path) {
-            Ok(metadata)
-                if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_file() =>
-            {
-                return Err(format!(
-                    "Refusing unexpected extraction recovery sidecar {}.",
+    let path = move_plan_path(&journal.stage);
+    match std::fs::symlink_metadata(&path) {
+        Ok(_) => {
+            let expected = journal.move_plan_identity.as_ref().ok_or_else(|| {
+                format!(
+                    "Refusing present extraction move plan {} without its recorded identity.",
                     path.display()
-                ));
-            }
-            Ok(_) => return Ok(true),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.to_string()),
+                )
+            })?;
+            super::journal::read_bounded_nofollow_bytes_if_matches(
+                &path,
+                super::journal::MAX_MOVE_PLAN_BYTES,
+                expected,
+            )?;
+            Ok(true)
         }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.to_string()),
     }
-    Ok(false)
 }
 
 pub(crate) fn recover_missing_extract_stage(journal: &CleanupJournal) -> Result<(), String> {
-    if extract_journal_is_committed(journal) || journal.extract_phase.is_none() {
-        // Committed outputs must be preserved. Legacy journals had no explicit
-        // phase and historically treated a missing stage as completion.
-        return remove_move_plan_sidecars(&journal.stage);
+    let _stage_identity = journal.extract_stage_identity.as_ref().ok_or_else(|| {
+        "Refusing extraction recovery because the journal has no stage identity.".to_string()
+    })?;
+    if journal.extract_phase.is_none() {
+        return Err(
+            "Refusing destructive recovery of a legacy extraction journal without an explicit phase."
+                .to_string(),
+        );
     }
 
     if extraction_move_plan_exists(journal)? {
@@ -110,6 +104,8 @@ pub(crate) fn recover_missing_extract_stage(journal: &CleanupJournal) -> Result<
             &journal.stage,
             &journal.destination,
             !journal.move_plan_sidecar,
+            journal.move_plan_identity.as_ref(),
+            journal.move_identity_log_identity.as_ref(),
         )?;
         return cleanup_extract_journal_artifacts(journal);
     }
@@ -117,7 +113,10 @@ pub(crate) fn recover_missing_extract_stage(journal: &CleanupJournal) -> Result<
     let destination_metadata = match std::fs::symlink_metadata(&journal.destination) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return remove_move_plan_sidecars(&journal.stage);
+            return Err(
+                "Extraction stage and destination are both missing; preserving the recovery journal."
+                    .to_string(),
+            );
         }
         Err(error) => return Err(error.to_string()),
     };
@@ -132,29 +131,32 @@ pub(crate) fn recover_missing_extract_stage(journal: &CleanupJournal) -> Result<
 
     match journal.extract_stage_placement {
         Some(super::journal::ExtractStagePlacement::InsideDestination) => {
-            // No move plan means publication never started. The destination
-            // predated the transaction, so preserve it and clear only sidecars.
-            remove_move_plan_sidecars(&journal.stage)
-        }
-        Some(super::journal::ExtractStagePlacement::Sibling) => {
-            // A brand-new destination is published by renaming the whole sibling
-            // stage. A crash can therefore make the stage disappear before the
-            // committed phase reaches disk. Roll it back only when the object is
-            // still the exact stage identity captured before extraction.
-            let expected = journal.extract_stage_identity.as_ref().ok_or_else(|| {
-                format!(
-                    "Extraction stage disappeared before commit and {} cannot be identified safely. Preserve the destination and retry recovery manually.",
-                    journal.destination.display()
-                )
-            })?;
-            super::journal::ensure_path_identity(&journal.destination, expected)?;
-            rename_file_no_replace(&journal.destination, &journal.stage)?;
-            if let Some(parent) = journal.destination.parent() {
-                sync_directory(parent)?;
+            if !extract_journal_is_committed(journal) {
+                // No move plan means publication never started. The destination
+                // predated the transaction, so preserve it and clear only sidecars.
             }
             cleanup_extract_journal_artifacts(journal)
         }
-        None => remove_move_plan_sidecars(&journal.stage),
+        Some(super::journal::ExtractStagePlacement::Sibling) => {
+            if !extract_journal_is_committed(journal) {
+                // The rename and committed-marker write cannot be one durable
+                // operation. Once an in-progress sibling stage is missing, no
+                // destination identity or content fingerprint can prove that
+                // Zinnia published the live name rather than another actor
+                // installing a replacement. Preserve both it and the journal.
+                return Err(
+                    "Extraction stage is missing before its sibling publish was durably committed; the destination and recovery journal were preserved."
+                        .to_string(),
+                );
+            }
+            // A durable commit marker authorizes cleanup of Zinnia's sidecars,
+            // but never removal, movement, or ownership claims for destination.
+            cleanup_extract_journal_artifacts(journal)
+        }
+        None => Err(
+            "Refusing recovery of a legacy extraction journal without recorded stage placement."
+                .to_string(),
+        ),
     }
 }
 
@@ -191,50 +193,34 @@ fn validate_archive_backup(
         ));
     }
     let identity = archive_backup_identity(journal, index)?;
-    ensure_regular_file_identity(backup, identity)?;
+    // Content fingerprint is required: inode/file-id alone cannot detect an
+    // in-place rewrite of the stage backup before crash recovery runs.
+    ensure_recovery_path_unchanged(backup, identity)?;
     Ok(true)
 }
 
 pub(crate) fn cleanup_committed_archive_journal(journal: &CleanupJournal) -> Result<(), String> {
-    for (index, _) in journal.previous_archive_family.iter().enumerate() {
-        let backup = archive_backup_path(&journal.stage, index);
-        if !validate_archive_backup(journal, index, &backup)? {
-            continue;
-        }
-        let identity = archive_backup_identity(journal, index)?;
-        remove_regular_file_if_matches(&backup, identity)?;
-    }
-    match crate::fs_secure::remove_dir_all_for_cleanup(&journal.stage) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.to_string()),
-    }
-    if let Some(parent) = journal.stage.parent() {
-        sync_directory(parent)?;
-    }
-    Ok(())
+    let stage_identity = journal.extract_stage_identity.as_ref().ok_or_else(|| {
+        "Refusing archive cleanup because the journal has no stage identity.".to_string()
+    })?;
+    super::journal::cleanup_transaction_artifacts(
+        &journal.stage,
+        Some(stage_identity),
+        journal.move_plan_identity.as_ref(),
+        journal.move_identity_log_identity.as_ref(),
+        &journal.previous_archive_identities,
+    )
 }
 
 /// Fail closed when a scrub must retract partial archive output recorded in the
 /// recovery journal path. Missing journals are fine; corrupt ones must not be
 /// cleared silently by the caller.
 pub(crate) fn retract_scrub_archive_journal_at(path: &std::path::Path) -> Result<(), String> {
-    let metadata = match std::fs::symlink_metadata(path) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => {
-            return Err(format!(
-                "Could not inspect recovery journal for scrub: {error}"
-            ));
-        }
-        Ok(metadata) => metadata,
+    let Some(journal) = read_cleanup_journal_at(path)
+        .map_err(|error| format!("Could not read recovery journal for scrub: {error}"))?
+    else {
+        return Ok(());
     };
-    if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_file() {
-        return Err("Recovery journal is not a regular file.".to_string());
-    }
-    let json = std::fs::read_to_string(path)
-        .map_err(|error| format!("Could not read recovery journal for scrub: {error}"))?;
-    let journal = serde_json::from_str::<CleanupJournal>(&json)
-        .map_err(|error| format!("Could not parse recovery journal for scrub: {error}"))?;
     if journal.archive && !archive_journal_is_committed(&journal) {
         rollback_archive_journal(&journal)?;
     }
@@ -248,14 +234,22 @@ pub(crate) fn retract_scrub_archive_journal_or_fail(app: &tauri::AppHandle) -> R
 }
 
 pub(crate) fn rollback_archive_journal(journal: &CleanupJournal) -> Result<(), String> {
-    // Validate every recovery backup before deleting any partially published
-    // output. If a shared-folder race replaced a backup, preserve all paths and
-    // fail closed rather than restoring an unrelated file as the user's archive.
-    let mut backup_presence = Vec::with_capacity(journal.previous_archive_family.len());
-    for (index, _) in journal.previous_archive_family.iter().enumerate() {
-        let backup = archive_backup_path(&journal.stage, index);
-        backup_presence.push(validate_archive_backup(journal, index, &backup)?);
+    let stage_identity = journal.extract_stage_identity.as_ref().ok_or_else(|| {
+        "Refusing archive rollback because the journal has no stage identity.".to_string()
+    })?;
+    if journal.previous_archive_identities.len() != journal.previous_archive_family.len() {
+        return Err("Archive recovery journal has invalid backup identity records.".to_string());
     }
+    let validated = super::journal::validate_transaction_artifacts(
+        &journal.stage,
+        Some(stage_identity),
+        journal.move_plan_identity.as_ref(),
+        journal.move_identity_log_identity.as_ref(),
+        &journal.previous_archive_identities,
+    )?;
+    // Validate every recovery backup and every other sibling before deleting
+    // any partially published output.
+    let backup_presence = validated.archive_backups_present;
 
     let candidates = if journal.next_archive_family.is_empty() {
         archive_family(&journal.destination)?
@@ -306,7 +300,7 @@ pub(crate) fn rollback_archive_journal(journal: &CleanupJournal) -> Result<(), S
                     current.display()
                 ));
             };
-            remove_regular_file_if_matches(&current, identity)?;
+            remove_recovery_regular_file_if_matches(&current, identity)?;
         }
     }
     for (index, target) in journal.previous_archive_family.iter().enumerate() {
@@ -316,16 +310,90 @@ pub(crate) fn rollback_archive_journal(journal: &CleanupJournal) -> Result<(), S
         }
         super::commit::rename_file_no_replace(&backup, target)?;
         let identity = archive_backup_identity(journal, index)?;
-        ensure_regular_file_identity(target, identity)?;
+        ensure_recovery_path_unchanged(target, identity)?;
     }
     Ok(())
+}
+
+/// Ambiguous sibling-publish preserved state: in-progress, sibling, stage
+/// gone, no move plan, plain directory destination. Gates the ack escape.
+pub(crate) fn journal_is_preserved_ambiguous_publish(
+    journal: &CleanupJournal,
+) -> Result<bool, String> {
+    if journal.archive {
+        return Ok(false);
+    }
+    if !matches!(journal.extract_phase, Some(ExtractJournalPhase::InProgress)) {
+        return Ok(false);
+    }
+    if journal.extract_stage_placement != Some(super::journal::ExtractStagePlacement::Sibling) {
+        return Ok(false);
+    }
+    if extraction_move_plan_exists(journal)? {
+        return Ok(false);
+    }
+    match std::fs::symlink_metadata(&journal.stage) {
+        Ok(_) => return Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.to_string()),
+    }
+    let destination = match std::fs::symlink_metadata(&journal.destination) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(false);
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+    if crate::path_safety::is_link_or_reparse(&destination) || !destination.is_dir() {
+        return Ok(false);
+    }
+    // The original stage was created by this transaction. A same-name
+    // destination may have been installed by another process after the stage
+    // disappeared, so only offer acknowledgment when its stable identity is
+    // still the creation-bound one recorded in the journal.
+    let Some(expected_stage_identity) = journal.extract_stage_identity.as_ref() else {
+        return Ok(false);
+    };
+    let actual_destination_identity = super::journal::path_identity(&journal.destination)?;
+    if !super::journal::file_identities_match(&actual_destination_identity, expected_stage_identity)
+    {
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+/// Accept a preserved destination as-is and drop only the recovery journal.
+fn acknowledge_preserved_transaction_at(app: &tauri::AppHandle) -> Result<String, String> {
+    let _recovery_guard = RECOVERY_LOCK
+        .lock()
+        .map_err(|_| "Archive recovery lock is unavailable.".to_string())?;
+    let path = cleanup_journal_path(app)?;
+    let Some(journal) = read_cleanup_journal_at(&path)? else {
+        return Ok("No interrupted transaction requires acknowledgment.".to_string());
+    };
+    if !journal_is_preserved_ambiguous_publish(&journal)? {
+        return Err(
+            "The active recovery journal is not a preserved ambiguous publish; \
+             let normal recovery resolve it."
+                .to_string(),
+        );
+    }
+    clear_cleanup_journal(app)?;
+    set_startup_recovery_error(None);
+    Ok("Preserved extraction destination accepted; the recovery journal was cleared.".to_string())
+}
+
+#[tauri::command]
+pub async fn acknowledge_preserved_transaction(app: tauri::AppHandle) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || acknowledge_preserved_transaction_at(&app))
+        .await
+        .map_err(|error| format!("Acknowledgment task failed: {error}"))?
 }
 
 /// Mark the one-shot startup recovery pass complete (success or failure).
 pub fn mark_startup_recovery_done() {
     STARTUP_RECOVERY_DONE.store(true, std::sync::atomic::Ordering::Release);
 }
-
 pub fn set_startup_recovery_error(message: Option<String>) {
     if let Ok(mut guard) = STARTUP_RECOVERY_ERROR.lock() {
         *guard = message;
@@ -333,40 +401,45 @@ pub fn set_startup_recovery_error(message: Option<String>) {
 }
 
 #[tauri::command]
-pub fn get_startup_recovery_status() -> Option<String> {
+pub async fn get_startup_recovery_status() -> Option<String> {
+    // A one-shot read during UI initialization used to race the maintenance
+    // thread: a later recovery failure was recorded but never surfaced. Make
+    // the command resolve only once the authoritative pass has finished.
+    if let Err(error) = wait_for_startup_recovery().await {
+        return Some(error);
+    }
     STARTUP_RECOVERY_ERROR
         .lock()
         .ok()
         .and_then(|guard| guard.clone())
 }
 
-pub(crate) async fn wait_for_startup_recovery() {
-    // Back off instead of a 1ms spin. Do not force-complete on timeout; that let
-    // run_7z claim the slot then block on RECOVERY_LOCK with a misleading "busy" UI.
+const STARTUP_RECOVERY_WAIT: std::time::Duration = std::time::Duration::from_secs(120);
+
+pub(crate) async fn wait_for_startup_recovery() -> Result<(), String> {
+    // Back off instead of a 1ms spin. Do not mark recovery done on timeout;
+    // run_7z must fail closed instead of claiming the slot then blocking on
+    // RECOVERY_LOCK with a misleading "busy" UI.
+    let started = tokio::time::Instant::now();
     let mut delay_ms = 10u64;
     while !STARTUP_RECOVERY_DONE.load(std::sync::atomic::Ordering::Acquire) {
+        if started.elapsed() >= STARTUP_RECOVERY_WAIT {
+            return Err("Startup recovery is still running. Wait and try again.".to_string());
+        }
         tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
         delay_ms = (delay_ms + 10).min(50);
     }
+    Ok(())
 }
 
 pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), String> {
     let path = cleanup_journal_path(app)?;
-    // Fast path: with no journal there is nothing to recover. Skip the lock so a
-    // concurrent startup maintenance pass cannot delay the first extract.
-    if !path.exists() {
-        return Ok(());
-    }
     let _recovery_guard = RECOVERY_LOCK
         .lock()
         .map_err(|_| "Archive recovery lock is unavailable.".to_string())?;
-    // Re-check under the lock; another thread may have cleared it.
-    let json = match std::fs::read_to_string(&path) {
-        Ok(json) => json,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error.to_string()),
+    let Some(journal) = read_cleanup_journal_at(&path)? else {
+        return Ok(());
     };
-    let journal: CleanupJournal = serde_json::from_str(&json).map_err(|e| e.to_string())?;
     let stage_name = journal
         .stage
         .file_name()
@@ -386,6 +459,10 @@ pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), Str
     if !placement_is_valid || !is_safe_stage_dir_name(stage_name) {
         return Err("Refusing unsafe interrupted-transaction recovery path.".to_string());
     }
+    let stage_identity = journal.extract_stage_identity.as_ref().ok_or_else(|| {
+        "Refusing interrupted-transaction recovery because the journal has no mandatory stage identity."
+            .to_string()
+    })?;
     let metadata = match std::fs::symlink_metadata(&journal.stage) {
         Ok(metadata) => metadata,
         Err(error)
@@ -411,6 +488,7 @@ pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), Str
     if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_dir() {
         return Err("Refusing unsafe interrupted-transaction staging directory.".to_string());
     }
+    ensure_path_identity(&journal.stage, stage_identity)?;
 
     if journal.archive {
         if archive_journal_is_committed(&journal) {
@@ -430,18 +508,18 @@ pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), Str
             &journal.stage,
             &journal.destination,
             !journal.move_plan_sidecar,
+            journal.move_plan_identity.as_ref(),
+            journal.move_identity_log_identity.as_ref(),
         )?;
     }
     if journal.archive {
-        crate::fs_secure::remove_dir_all_for_cleanup(&journal.stage).map_err(|e| e.to_string())?;
-        match std::fs::remove_file(move_plan_path(&journal.stage)) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.to_string()),
-        }
-        if let Some(parent) = journal.stage.parent() {
-            sync_directory(parent)?;
-        }
+        super::journal::cleanup_transaction_artifacts(
+            &journal.stage,
+            Some(stage_identity),
+            journal.move_plan_identity.as_ref(),
+            journal.move_identity_log_identity.as_ref(),
+            &journal.previous_archive_identities,
+        )?;
     } else {
         cleanup_extract_journal_artifacts(&journal)?;
     }

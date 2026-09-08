@@ -9,14 +9,13 @@ import {
   setBrowsePasswordFieldVisible,
 } from "./ui";
 import { browseArchive } from "./archive";
-import { validateArchivePaths } from "./archive-rules";
+import { MAX_ARCHIVE_PATHS, validateArchivePaths } from "./archive-rules";
 import { setBasicView } from "./basic";
+import { showToast } from "./toast";
 
-// Keep in sync with archive-rules.ts MAX_ARCHIVE_PATHS. This local constant
-// keeps OS handoff handling independent of archive-probe test doubles.
-const MAX_INCOMING_PATHS = 4096;
-
-export async function allPathsAreArchives(paths: string[]): Promise<boolean> {
+export async function allPathsAreArchives(
+  paths: string[],
+): Promise<boolean | null> {
   if (paths.length === 0) return false;
   try {
     const results = await validateArchivePaths(paths);
@@ -26,7 +25,8 @@ export async function allPathsAreArchives(paths: string[]): Promise<boolean> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     devLog(`Archive probe failed for auto-detect: ${msg}`);
-    return false;
+    // Fail closed: unknown must not route archives into Compress.
+    return null;
   }
 }
 
@@ -39,15 +39,17 @@ function mergeIncomingPaths(paths: string[]): {
   accepted: number;
   rejected: number;
 } {
+  const known = new Set(state.inputs);
   let accepted = 0;
   let rejected = 0;
   for (const path of paths) {
-    if (state.inputs.includes(path)) continue;
-    if (state.inputs.length >= MAX_INCOMING_PATHS) {
+    if (known.has(path)) continue;
+    if (state.inputs.length >= MAX_ARCHIVE_PATHS) {
       rejected += 1;
       continue;
     }
     state.inputs.push(path);
+    known.add(path);
     accepted += 1;
   }
   return { accepted, rejected };
@@ -56,7 +58,7 @@ function mergeIncomingPaths(paths: string[]): {
 function logIncomingPathLimit(source: string, rejected: number): void {
   if (rejected === 0) return;
   log(
-    `Received paths from ${source}, but kept only the first ${MAX_INCOMING_PATHS} unique inputs; ${rejected} excess path(s) were not added.`,
+    `Received paths from ${source}, but kept only the first ${MAX_ARCHIVE_PATHS} unique inputs; ${rejected} excess path(s) were not added.`,
   );
 }
 
@@ -83,7 +85,7 @@ function refreshIncomingPathMutationControls(): void {
 
 /**
  * Wait for jobs/prep and any other mutator to finish, then take the applying
- * lock. No await between the free check and the set — JS is single-threaded, so
+ * lock. No await between the free check and the set  -  JS is single-threaded, so
  * Power drops and OS handoffs cannot both hold the lock.
  */
 export async function acquireIncomingPathLock(): Promise<void> {
@@ -164,21 +166,34 @@ async function applyIncomingPathsUnlocked(
     return;
   }
 
-  let allArchives: boolean;
+  let allArchives: boolean | null;
   // Archive detection crosses the IPC boundary. An operation or Basic
   // preparation may start while that await is pending, so re-check and retry
-  // before touching shared input. Wait only on job/prep — we already hold
+  // before touching shared input. Wait only on job/prep  -  we already hold
   // incomingPathsApplying and must not deadlock on ourselves.
   for (;;) {
     allArchives = await allPathsAreArchives(paths);
     if (!isIncomingPathMutationBlocked()) break;
     await waitUntilJobOrPrepAllowsMutation();
   }
+  if (allArchives === null) {
+    log(
+      `Could not detect whether paths from ${source} are archives; left inputs unchanged.`,
+      "error",
+    );
+    showToast(
+      "Could not detect archive types for the dropped files. Try again.",
+      "error",
+      5000,
+    );
+    return;
+  }
   const shouldAutoBrowse =
     mode !== "extract" && paths.length === 1 && allArchives;
   const shouldAutoExtract =
     mode === "extract" ||
     (mode !== "extract" && paths.length > 1 && allArchives);
+  const shouldAutoCompress = !shouldAutoExtract && !shouldAutoBrowse;
   if (shouldAutoExtract) {
     // Explicit extract handoffs may arrive as multiple Explorer/Finder batches.
     // Append only when the UI is already in extract; otherwise clear leftovers
@@ -193,6 +208,13 @@ async function applyIncomingPathsUnlocked(
   } else if (shouldAutoBrowse) {
     setMode("browse");
     state.inputs.length = 0;
+  } else if (shouldAutoCompress) {
+    // An implicit non-archive handoff starts/continues a compression session.
+    // Never append it to stale extract/browse inputs.
+    if (getMode() !== "add") {
+      state.inputs.length = 0;
+    }
+    setMode("add");
   }
 
   const { rejected } = mergeIncomingPaths(paths);

@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { promptInput } from "../prompt-modal";
 import {
   isEncryptedFlag,
   methodLooksEncrypted,
@@ -9,7 +11,18 @@ import {
   withPassword,
   formatBatchEta,
 } from "../archive";
-import { withLiveProgress } from "../archive/runtime";
+import {
+  isSevenZipRunInFlight,
+  runWithPasswordRetry,
+  setSevenZipRunInFlight,
+  withLiveProgress,
+} from "../archive/runtime";
+import { decodeRun7zInvokePayload } from "./backend-ipc-test-utils";
+import { state } from "../state";
+
+vi.mock("../prompt-modal", () => ({
+  promptInput: vi.fn().mockResolvedValue(null),
+}));
 
 describe("isEncryptedFlag", () => {
   it('returns true for "+"', () => {
@@ -240,12 +253,125 @@ describe("withPassword", () => {
     ]);
   });
 
+  it("replaces an uppercase -P switch without duplicating the password", () => {
+    const args = ["x", "-Pold", "-spd", "--", "archive.7z"];
+    expect(withPassword(args, "new")).toEqual([
+      "x",
+      "-spd",
+      "-pnew",
+      "--",
+      "archive.7z",
+    ]);
+  });
+
   it("appends -p when there is no separator", () => {
     expect(withPassword(["l", "archive.7z"], "pw")).toEqual([
       "l",
       "archive.7z",
       "-ppw",
     ]);
+  });
+});
+
+describe("runWithPasswordRetry", () => {
+  it("retries a header-encrypted safety-list rejection with a password", async () => {
+    const invokeMock = vi.mocked(invoke);
+    const promptMock = vi.mocked(promptInput);
+    invokeMock.mockReset();
+    promptMock.mockReset();
+    invokeMock
+      .mockRejectedValueOnce(
+        new Error(
+          "Could not list archive members for path safety: Enter password:",
+        ),
+      )
+      .mockResolvedValueOnce({
+        stdout: "Everything is Ok",
+        stderr: "",
+        code: 0,
+      });
+    promptMock.mockResolvedValueOnce("secret");
+
+    const result = await runWithPasswordRetry(
+      ["x", "-o/tmp/out", "--", "/tmp/headers.7z"],
+      true,
+      "Extract",
+      "archive-identity",
+    );
+
+    expect(result.code).toBe(0);
+    expect(invokeMock.mock.calls[1]?.[0]).toBe("run_7z");
+    expect(decodeRun7zInvokePayload(invokeMock.mock.calls[1]?.[1])).toEqual({
+      args: ["x", "-o/tmp/out", "-psecret", "--", "/tmp/headers.7z"],
+      expectedArchiveIdentity: "archive-identity",
+    });
+  });
+
+  it("does not convert unrelated backend failures into password prompts", async () => {
+    const invokeMock = vi.mocked(invoke);
+    const promptMock = vi.mocked(promptInput);
+    invokeMock.mockReset();
+    promptMock.mockReset();
+    const failure = new Error("Archive snapshot disk unavailable");
+    invokeMock.mockRejectedValueOnce(failure);
+
+    await expect(
+      runWithPasswordRetry(["x", "-o/tmp/out", "--", "/tmp/archive.7z"], true),
+    ).rejects.toBe(failure);
+    expect(promptMock).not.toHaveBeenCalled();
+  });
+
+  it("re-enables Cancel and ignores Finalizing while the password prompt is open", async () => {
+    const invokeMock = vi.mocked(invoke);
+    const promptMock = vi.mocked(promptInput);
+    invokeMock.mockReset();
+    promptMock.mockReset();
+    let handler: ((event: { payload: unknown }) => void) | undefined;
+    vi.mocked(listen).mockImplementation(async (_eventName, callback) => {
+      handler = callback as (event: { payload: unknown }) => void;
+      return () => {};
+    });
+    invokeMock.mockRejectedValueOnce(
+      new Error(
+        "Could not list archive members for path safety: Enter password:",
+      ),
+    );
+    let resolvePrompt: ((value: string | null) => void) | undefined;
+    promptMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvePrompt = resolve;
+        }),
+    );
+    const cancel = document.getElementById(
+      "cancel-action",
+    ) as HTMLButtonElement;
+    cancel.hidden = false;
+    cancel.disabled = true;
+    document.getElementById("progress")!.textContent = "Extracting";
+
+    state.cancelRequested = false;
+    const result = withLiveProgress(() =>
+      runWithPasswordRetry(["x", "-o/tmp/out", "--", "/tmp/headers.7z"], true),
+    );
+    await vi.waitFor(() => {
+      expect(promptMock).toHaveBeenCalledOnce();
+    });
+    expect(isSevenZipRunInFlight()).toBe(false);
+    expect(cancel.disabled).toBe(false);
+
+    handler?.({
+      payload: { currentFile: "Finalizing…", percent: 100 },
+    });
+    expect(cancel.disabled).toBe(false);
+    expect(document.getElementById("progress")?.textContent).not.toBe(
+      "Finalizing…",
+    );
+
+    resolvePrompt?.(null);
+    const cancelled = await result;
+    expect(cancelled.code).toBe(-1);
+    expect(state.cancelRequested).toBe(true);
   });
 });
 
@@ -276,6 +402,7 @@ describe("withLiveProgress", () => {
     });
     const result = withLiveProgress(() => action);
     await Promise.resolve();
+    setSevenZipRunInFlight(true);
 
     handler?.({
       payload: { percent: 50, currentFile: "/tmp/nested/archive.7z" },
@@ -287,5 +414,66 @@ describe("withLiveProgress", () => {
     complete?.("done");
     await expect(result).resolves.toBe("done");
     expect(unlisten).toHaveBeenCalledOnce();
+    setSevenZipRunInFlight(false);
+  });
+
+  it("shows Still working… before percent, then keeps percent on heartbeats", async () => {
+    let handler: ((event: { payload: unknown }) => void) | undefined;
+    const unlisten = vi.fn(() => {});
+    vi.mocked(listen).mockImplementation(async (_eventName, callback) => {
+      handler = callback as (event: { payload: unknown }) => void;
+      return unlisten;
+    });
+
+    let complete: ((value: string) => void) | undefined;
+    const action = new Promise<string>((resolve) => {
+      complete = resolve;
+    });
+    const result = withLiveProgress(() => action);
+    await Promise.resolve();
+    setSevenZipRunInFlight(true);
+
+    handler?.({ payload: { currentFile: "Working…" } });
+    expect(document.getElementById("progress")?.textContent).toBe(
+      "Still working…",
+    );
+
+    handler?.({
+      payload: { percent: 40, currentFile: "/tmp/nested/report.pdf" },
+    });
+    const withPercent = document.getElementById("progress")?.textContent ?? "";
+    expect(withPercent).toContain("40%");
+    expect(withPercent).toContain("report.pdf");
+
+    handler?.({ payload: { currentFile: "Working…" } });
+    expect(document.getElementById("progress")?.textContent).toBe(withPercent);
+
+    complete?.("done");
+    await expect(result).resolves.toBe("done");
+    setSevenZipRunInFlight(false);
+  });
+
+  it("ignores Finalizing while run_7z is not in flight", async () => {
+    let handler: ((event: { payload: unknown }) => void) | undefined;
+    vi.mocked(listen).mockImplementation(async (_eventName, callback) => {
+      handler = callback as (event: { payload: unknown }) => void;
+      return () => {};
+    });
+    const cancel = document.getElementById(
+      "cancel-action",
+    ) as HTMLButtonElement;
+    cancel.hidden = false;
+    cancel.disabled = false;
+    document.getElementById("progress")!.textContent = "Waiting";
+    setSevenZipRunInFlight(false);
+
+    const result = withLiveProgress(() => Promise.resolve("ok"));
+    await Promise.resolve();
+    handler?.({
+      payload: { currentFile: "Finalizing…", percent: 100 },
+    });
+    expect(cancel.disabled).toBe(false);
+    expect(document.getElementById("progress")?.textContent).toBe("Waiting");
+    await expect(result).resolves.toBe("ok");
   });
 });

@@ -6,6 +6,7 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const REPOSITORY_ROOT = path.join(__dirname, "..");
 const RELEASE_DIR = path.join(__dirname, "..", "release");
 
 const BUILD_ONLY_DIRECTORIES = [
@@ -69,6 +70,27 @@ function getAfterPackLocation(env = process.env) {
   return value.trim();
 }
 
+function isBetaReleaseVersion(version) {
+  const numeric = "(?:0|[1-9]\\d*)";
+  return new RegExp(
+    `^${numeric}\\.${numeric}\\.${numeric}-beta\\.${numeric}$`,
+  ).test(String(version ?? ""));
+}
+
+function readPackageVersion(repositoryRoot = REPOSITORY_ROOT) {
+  const packageJson = JSON.parse(
+    fs.readFileSync(path.join(repositoryRoot, "package.json"), "utf8"),
+  );
+  return typeof packageJson.version === "string" ? packageJson.version : "";
+}
+
+function shouldSkipBetaMirror(env = process.env, version) {
+  if (!isBetaReleaseVersion(version)) {
+    return false;
+  }
+  return String(env.OVERRIDE_BETA_MIRROR_SKIP ?? "").trim() !== "1";
+}
+
 function pathsEqual(left, right, platform = process.platform) {
   const resolvedLeft = path.resolve(left);
   const resolvedRight = path.resolve(right);
@@ -76,6 +98,19 @@ function pathsEqual(left, right, platform = process.platform) {
     return resolvedLeft.toLowerCase() === resolvedRight.toLowerCase();
   }
   return resolvedLeft === resolvedRight;
+}
+
+function pathIsSameOrInside(candidate, parent, platform = process.platform) {
+  const resolvedCandidate = path.resolve(candidate);
+  const resolvedParent = path.resolve(parent);
+  const normalize = (value) =>
+    platform === "win32" ? value.toLowerCase() : value;
+  const candidateForComparison = normalize(resolvedCandidate);
+  const parentForComparison = normalize(resolvedParent);
+  return (
+    candidateForComparison === parentForComparison ||
+    candidateForComparison.startsWith(`${parentForComparison}${path.sep}`)
+  );
 }
 
 function isDirectExecution(argv = process.argv, platform = process.platform) {
@@ -192,24 +227,99 @@ function copyPathRecursive(sourcePath, destinationPath) {
   copyFileForMirror(sourcePath, destinationPath);
 }
 
-function copyReleaseAssets(
-  releaseDir = RELEASE_DIR,
-  destination,
-  { logger = console } = {},
-) {
+function uniqueMirrorSibling(destinationPath, label) {
+  const dir = path.dirname(destinationPath);
+  const base = path.basename(destinationPath);
+  return path.join(
+    dir,
+    `.zinnia-mirror-${label}-${process.pid}-${crypto.randomBytes(6).toString("hex")}-${base}`,
+  );
+}
+
+function copyReleaseEntryToMirror(sourcePath, destinationPath) {
+  const stagingPath = uniqueMirrorSibling(destinationPath, "new");
+  const rollbackPath = uniqueMirrorSibling(destinationPath, "old");
+  removePath(stagingPath);
+  copyPathRecursive(sourcePath, stagingPath);
+  try {
+    verifyCopiedPath(sourcePath, stagingPath);
+  } catch (error) {
+    removePath(stagingPath);
+    throw error;
+  }
+
+  const hadPrevious = fs.existsSync(destinationPath);
+  if (hadPrevious) {
+    removePath(rollbackPath);
+    fs.renameSync(destinationPath, rollbackPath);
+  }
+  try {
+    fs.renameSync(stagingPath, destinationPath);
+  } catch (error) {
+    if (hadPrevious && fs.existsSync(rollbackPath)) {
+      try {
+        fs.renameSync(rollbackPath, destinationPath);
+      } catch {
+        // Leave rollback beside dest for manual recovery.
+      }
+    }
+    removePath(stagingPath);
+    throw error;
+  }
+  verifyCopiedPath(sourcePath, destinationPath);
+  if (hadPrevious) {
+    removePath(rollbackPath);
+  }
+}
+
+function resolveMirrorPaths(releaseDir = RELEASE_DIR, destination) {
   if (!destination) {
     throw new Error("AFTER_PACK_LOC is empty");
   }
+  if (!path.isAbsolute(destination)) {
+    throw new Error(
+      `AFTER_PACK_LOC must be an absolute path on this platform: ${destination}`,
+    );
+  }
 
-  const resolvedReleaseDir = path.resolve(releaseDir);
-  const resolvedDestination = path.resolve(destination);
-  progress(
-    logger,
-    `copy resolve: src=${resolvedReleaseDir} dest=${resolvedDestination}`,
+  const requestedReleaseDir = path.resolve(releaseDir);
+  if (
+    !fs.existsSync(requestedReleaseDir) ||
+    !fs.statSync(requestedReleaseDir).isDirectory()
+  ) {
+    throw new Error(`release directory does not exist: ${requestedReleaseDir}`);
+  }
+  const resolvedReleaseDir = fs.realpathSync.native(requestedReleaseDir);
+  const requestedDestination = path.resolve(destination);
+  if (
+    fs.existsSync(requestedDestination) &&
+    fs.lstatSync(requestedDestination).isSymbolicLink()
+  ) {
+    throw new Error(
+      `AFTER_PACK_LOC must not be a symbolic link: ${requestedDestination}`,
+    );
+  }
+  const missingSegments = [];
+  let existingAncestor = requestedDestination;
+  while (!fs.existsSync(existingAncestor)) {
+    missingSegments.unshift(path.basename(existingAncestor));
+    const parent = path.dirname(existingAncestor);
+    if (parent === existingAncestor) break;
+    existingAncestor = parent;
+  }
+  const resolvedDestination = path.join(
+    fs.realpathSync.native(existingAncestor),
+    ...missingSegments,
   );
-
   if (pathsEqual(resolvedDestination, resolvedReleaseDir)) {
     throw new Error("AFTER_PACK_LOC cannot be the release directory");
+  }
+
+  const resolvedRepositoryRoot = fs.realpathSync.native(REPOSITORY_ROOT);
+  if (pathIsSameOrInside(resolvedDestination, resolvedRepositoryRoot)) {
+    throw new Error(
+      `AFTER_PACK_LOC must be outside the repository: ${resolvedRepositoryRoot}`,
+    );
   }
 
   const releasePrefix = `${resolvedReleaseDir}${path.sep}`;
@@ -223,26 +333,34 @@ function copyReleaseAssets(
     throw new Error("AFTER_PACK_LOC cannot be inside the release directory");
   }
 
-  progress(logger, `mkdir ${resolvedDestination}`);
-  fs.mkdirSync(resolvedDestination, { recursive: true });
-  // Prove the destination is actually writable before copying big artifacts.
-  const probePath = path.join(
-    resolvedDestination,
-    `.zinnia-mirror-probe-${process.pid}`,
+  return { resolvedReleaseDir, resolvedDestination };
+}
+
+function copyReleaseAssets(
+  releaseDir = RELEASE_DIR,
+  destination,
+  { logger = console } = {},
+) {
+  const { resolvedReleaseDir, resolvedDestination } = resolveMirrorPaths(
+    releaseDir,
+    destination,
   );
-  fs.writeFileSync(probePath, "ok");
-  fs.rmSync(probePath, { force: true });
-  progress(logger, "destination writable");
+  progress(
+    logger,
+    `copy resolve: src=${resolvedReleaseDir} dest=${resolvedDestination}`,
+  );
 
   const entries = getReleaseEntries(resolvedReleaseDir);
-  progress(logger, `copying ${entries.length} entries`);
-
+  fs.mkdirSync(resolvedDestination, { recursive: true });
+  progress(
+    logger,
+    `copying ${entries.length} entries to shared mirror (overwrite same names only)`,
+  );
   for (const entry of entries) {
     const sourcePath = path.join(resolvedReleaseDir, entry);
     const destinationPath = path.join(resolvedDestination, entry);
     progress(logger, `copy ${entry}`);
-    copyPathRecursive(sourcePath, destinationPath);
-    verifyCopiedPath(sourcePath, destinationPath);
+    copyReleaseEntryToMirror(sourcePath, destinationPath);
     progress(logger, `verified ${entry}`);
   }
 
@@ -253,23 +371,47 @@ function run({
   releaseDir = RELEASE_DIR,
   env = process.env,
   logger = console,
+  version = readPackageVersion(),
 } = {}) {
-  const destination = getAfterPackLocation(env);
-  if (!destination) {
-    throw new Error(
-      "AFTER_PACK_LOC is empty; refusing to clean release assets before a verified mirror.",
+  let destination = getAfterPackLocation(env);
+  let skippedBetaMirror = false;
+  if (destination && shouldSkipBetaMirror(env, version)) {
+    skippedBetaMirror = true;
+    progress(
+      logger,
+      `beta version ${version}; skipping AFTER_PACK_LOC mirror (set OVERRIDE_BETA_MIRROR_SKIP=1 to force).`,
     );
+    destination = "";
+  } else if (!destination) {
+    progress(
+      logger,
+      "AFTER_PACK_LOC is not set; skipping the verified mirror (clean only).",
+    );
+  } else {
+    // Resolve every boundary before removing build-only files. A malformed,
+    // repository-local, or symlinked destination must leave `release/` intact.
+    resolveMirrorPaths(releaseDir, destination);
   }
 
   progress(logger, "cleaning build-only release artifacts");
   cleanReleaseArtifacts(releaseDir);
   progress(logger, "clean complete");
 
+  if (!destination) {
+    return {
+      mirrored: false,
+      destination: "",
+      copiedEntries: 0,
+      skippedBetaMirror,
+    };
+  }
+
   const copiedEntries = copyReleaseAssets(releaseDir, destination, { logger });
   return {
     mirrored: true,
     destination: path.resolve(destination),
     copiedEntries,
+    skippedBetaMirror: false,
   };
 }
 
@@ -277,8 +419,21 @@ function finalizeReleaseAssets({
   releaseDir = RELEASE_DIR,
   env = process.env,
   logger = console,
+  version = readPackageVersion(),
 } = {}) {
-  const result = run({ releaseDir, env, logger });
+  const result = run({ releaseDir, env, logger, version });
+  if (!result.mirrored) {
+    if (result.skippedBetaMirror) {
+      logger.log(
+        `Cleaned release assets without mirroring (beta version ${version}; set OVERRIDE_BETA_MIRROR_SKIP=1 to force).`,
+      );
+    } else {
+      logger.log(
+        "Cleaned release assets without mirroring (AFTER_PACK_LOC unset).",
+      );
+    }
+    return result;
+  }
   logger.log(
     `Mirrored and verified ${result.copiedEntries} cleaned release entries to: ${result.destination}`,
   );
@@ -312,17 +467,24 @@ function main() {
 if (isDirectExecution()) main();
 
 export {
+  REPOSITORY_ROOT,
   RELEASE_DIR,
   BUILD_ONLY_DIRECTORIES,
   BUILD_ONLY_FILES,
   CLI_FLAG,
   cleanReleaseArtifacts,
   getAfterPackLocation,
+  isBetaReleaseVersion,
+  readPackageVersion,
+  shouldSkipBetaMirror,
   pathsEqual,
+  pathIsSameOrInside,
   isDirectExecution,
   isMirrorableReleaseEntry,
   getReleaseEntries,
+  resolveMirrorPaths,
   verifyCopiedPath,
+  copyReleaseEntryToMirror,
   copyReleaseAssets,
   run,
   finalizeReleaseAssets,

@@ -16,3 +16,21 @@ export function officialArchiveExtractionCommand(options: {
   command: string;
   args: string[];
 };
+
+export function assertArchiveMemberNameSafe(
+  member: string,
+  destination: string,
+): void;
+
+export function assertOfficialArchiveMembersSafe(options: {
+  archivePath: string;
+  destination: string;
+  trusted7zPath?: string;
+}): void;
+
+export function assertExtractedTreeContained(rootDirectory: string): void;
+
+export function findExtractedRegularFile(
+  rootDirectory: string,
+  member: string,
+): string;

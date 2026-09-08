@@ -43,7 +43,13 @@ const isolationState = new Map<
 
 /** Window chrome that stays clickable above modal sheets (gear, Support, close). */
 function keepInteractiveDuringModal(element: HTMLElement): boolean {
-  return element.id === "titlebar" || element.classList.contains("header");
+  return (
+    element.id === "titlebar" ||
+    element.classList.contains("header") ||
+    element.id === "extract-app" ||
+    element.id === "toast-region" ||
+    element.id === "startup-recovery-banner"
+  );
 }
 
 function isolateModalBackground(container: HTMLElement): void {
@@ -112,13 +118,22 @@ export function trapFocus(container: HTMLElement): void {
       (e.shiftKey ? last : first).focus();
       return;
     }
+    const activeElement = document.activeElement;
+    // A dialog can intentionally focus a programmatic-only element such as a
+    // heading. It is inside the modal but absent from the sequential focus
+    // list, so it must enter the same wrap path as focus outside the modal.
+    if (!focusable.includes(activeElement as HTMLElement)) {
+      e.preventDefault();
+      (e.shiftKey ? last : first).focus();
+      return;
+    }
     if (e.shiftKey) {
-      if (document.activeElement === first) {
+      if (activeElement === first) {
         e.preventDefault();
         last.focus();
       }
     } else {
-      if (document.activeElement === last) {
+      if (activeElement === last) {
         e.preventDefault();
         first.focus();
       }
@@ -179,14 +194,19 @@ const JWT_LIKE_PATTERN =
 const OPENAI_KEY_PATTERN = /\bsk-[A-Za-z0-9]{20,}\b/g;
 const KEY_VALUE_SECRET_PATTERN =
   /\b(password|passphrase|token|private[_-]?key)\s*([:=])\s*\S+/gi;
-const ARG_PASSWORD_PATTERN = /-p\S*/gi;
+// 7-Zip accepts the password directly after `-p` / `-P`. A rendered command
+// cannot distinguish a password containing spaces from following arguments,
+// so fail closed and redact the rest of that log line. Already-sanitized
+// `-p***` tokens are left intact so later args remain visible. `-spd` is
+// preserved because the password switch must start at a token boundary.
+const ARG_PASSWORD_PATTERN = /(^|[^\S\r\n])-p(?!\*\*\*(?:\s|$))[^\r\n]*/gim;
 
 export function redactSensitiveText(input: string): string {
   return input
     .replace(BEARER_TOKEN_PATTERN, "Bearer ***")
     .replace(JWT_LIKE_PATTERN, "***")
     .replace(OPENAI_KEY_PATTERN, "***")
-    .replace(ARG_PASSWORD_PATTERN, "-p***")
+    .replace(ARG_PASSWORD_PATTERN, "$1-p***")
     .replace(
       KEY_VALUE_SECRET_PATTERN,
       (_match, key: string, sep: string) => `${key}${sep}***`,
@@ -230,6 +250,7 @@ export function assertRunResult(value: unknown): asserts value is {
   stdout: string;
   stderr: string;
   code: number;
+  warning_code?: number;
   stdout_truncated?: boolean;
   stderr_truncated?: boolean;
 } {

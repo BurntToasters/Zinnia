@@ -7,6 +7,11 @@ import {
   showSetupWizard,
 } from "../setup-wizard";
 
+const e2eEnv = vi.hoisted(() => ({
+  isE2eFrontend: vi.fn(() => false),
+}));
+vi.mock("../e2e-env", () => e2eEnv);
+
 const mockSaveSettings = vi.fn().mockResolvedValue(undefined);
 const mockApplyTheme = vi.fn();
 const mockRefreshDefaultArchiverActionButton = vi
@@ -38,11 +43,17 @@ beforeEach(() => {
   mockApplyTheme.mockClear();
   mockRefreshDefaultArchiverActionButton.mockClear();
   mockRunDefaultArchiverAction.mockClear();
+  e2eEnv.isE2eFrontend.mockReturnValue(false);
 });
 
 describe("setup wizard state", () => {
   it("shows wizard when setup is incomplete", () => {
     expect(shouldShowSetupWizard()).toBe(true);
+  });
+
+  it("never shows the wizard in unpackaged E2E builds", () => {
+    e2eEnv.isE2eFrontend.mockReturnValue(true);
+    expect(shouldShowSetupWizard()).toBe(false);
   });
 
   it("does not show wizard when setup is complete for current version", () => {
@@ -76,7 +87,46 @@ describe("setup wizard state", () => {
 });
 
 describe("showSetupWizard", () => {
+  it("moves focus and dialog context to each visible step", async () => {
+    const promise = showSetupWizard();
+    const overlay = document.getElementById(
+      "setup-wizard-overlay",
+    ) as HTMLElement;
+    const title0 = document.getElementById("setup-wizard-title-0");
+    const title1 = document.getElementById("setup-wizard-title-1");
+    const progress = document.getElementById("setup-wizard-progress-bar");
+
+    expect(document.activeElement).toBe(title0);
+    expect(overlay.getAttribute("aria-labelledby")).toBe(
+      "setup-wizard-title-0",
+    );
+    expect(progress?.getAttribute("aria-valuenow")).toBe("0");
+    expect(progress?.getAttribute("aria-valuetext")).toBe("Step 1 of 5");
+
+    (
+      document.getElementById("setup-welcome-next") as HTMLButtonElement
+    ).click();
+
+    expect(document.activeElement).toBe(title1);
+    expect(overlay.getAttribute("aria-labelledby")).toBe(
+      "setup-wizard-title-1",
+    );
+    expect(progress?.getAttribute("aria-valuenow")).toBe("25");
+    expect(progress?.getAttribute("aria-valuetext")).toBe("Step 2 of 5");
+
+    (
+      document.getElementById("setup-workspace-back") as HTMLButtonElement
+    ).click();
+    (
+      document.getElementById("setup-welcome-skip") as HTMLButtonElement
+    ).click();
+    await promise;
+  });
+
   it("supports skipping setup from welcome", async () => {
+    const trigger = document.createElement("button");
+    document.body.appendChild(trigger);
+    trigger.focus();
     const promise = showSetupWizard();
     (
       document.getElementById("setup-welcome-skip") as HTMLButtonElement
@@ -87,6 +137,8 @@ describe("showSetupWizard", () => {
     expect(
       (document.getElementById("setup-wizard-overlay") as HTMLElement).hidden,
     ).toBe(true);
+    expect(document.activeElement).toBe(trigger);
+    trigger.remove();
   });
 
   it("returns selected preferences when completed", async () => {
@@ -201,6 +253,11 @@ describe("showSetupWizard", () => {
     );
     expect(updatesStep?.hidden).toBe(true);
     expect(osStep?.hidden).toBe(false);
+    expect(
+      document
+        .getElementById("setup-wizard-progress-bar")
+        ?.getAttribute("aria-valuetext"),
+    ).toBe("Step 4 of 4");
 
     (document.getElementById("setup-os-back") as HTMLButtonElement).click();
     expect(osStep?.hidden).toBe(true);

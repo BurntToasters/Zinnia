@@ -195,31 +195,32 @@ pub fn open_finder_sync_settings(app: tauri::AppHandle) -> Result<(), String> {
 /// (`-e use`). The frontend refreshes status and opens Apple's management UI
 /// once if explicit user approval is still required.
 #[tauri::command]
-pub fn enable_finder_sync(app: tauri::AppHandle) -> Result<(), String> {
+pub async fn enable_finder_sync() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         use super::integration_status::{register_macos_finder_sync, MACOS_FINDER_SYNC_BUNDLE_ID};
         use super::os_command::command_output_with_timeout;
         use std::process::Command;
 
-        register_macos_finder_sync();
-        let _ = command_output_with_timeout(
-            Command::new("/usr/bin/pluginkit").args([
-                "-e",
-                "use",
-                "-i",
-                MACOS_FINDER_SYNC_BUNDLE_ID,
-            ]),
-            std::time::Duration::from_secs(8),
-        );
-
-        let _ = app;
+        tokio::task::spawn_blocking(|| {
+            register_macos_finder_sync();
+            let _ = command_output_with_timeout(
+                Command::new("/usr/bin/pluginkit").args([
+                    "-e",
+                    "use",
+                    "-i",
+                    MACOS_FINDER_SYNC_BUNDLE_ID,
+                ]),
+                std::time::Duration::from_secs(8),
+            );
+        })
+        .await
+        .map_err(|error| format!("Finder Sync enable worker failed: {error}"))?;
         Ok(())
     }
 
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = app;
         Err("Finder Sync can only be enabled on macOS.".to_string())
     }
 }

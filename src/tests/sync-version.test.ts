@@ -3,9 +3,13 @@ import { describe, expect, it } from "vitest";
 import {
   macBundleVersionFromSemver,
   macMarketingVersionFromSemver,
+  syncChangelogForVersion,
+  syncNpmLockfileVersion,
+  updatePlistStringValue,
   updateCargoLockPackageVersion,
   updateWindowsResourceFlags,
   updateWindowsResourceVersion,
+  updateWindowsAssemblyIdentityVersion,
   updateWindowsShellResourceDestinations,
   windowsPackageVersionFromSemver,
 } from "../../scripts/sync-version-helpers.js";
@@ -102,6 +106,25 @@ ${resource}
   });
 });
 
+describe("Windows assembly identity version", () => {
+  const manifest = `<assembly><assemblyIdentity name="zinnia" version="0.6.0.0"/></assembly>`;
+
+  it("uses the ordered Windows package version", () => {
+    expect(updateWindowsAssemblyIdentityVersion(manifest, "0.6.1-beta.2")).toBe(
+      `<assembly><assemblyIdentity name="zinnia" version="0.6.1.2"/></assembly>`,
+    );
+  });
+
+  it("fails closed when the identity version is missing or duplicated", () => {
+    expect(() =>
+      updateWindowsAssemblyIdentityVersion("<assembly/>", "0.6.1"),
+    ).toThrow(/found 0/);
+    expect(() =>
+      updateWindowsAssemblyIdentityVersion(`${manifest}${manifest}`, "0.6.1"),
+    ).toThrow(/found 2/);
+  });
+});
+
 describe("Windows package version", () => {
   it("keeps beta, stable, and the next patch monotonically ordered", () => {
     const versions = [
@@ -193,9 +216,10 @@ describe("Windows shell resource destinations", () => {
 
 describe("macOS bundle version", () => {
   it("converts prerelease and stable SemVer versions into ordered numeric builds", () => {
-    expect(macBundleVersionFromSemver("0.6.0-beta.4")).toBe("0.6.34");
-    expect(macBundleVersionFromSemver("0.6.0")).toBe("0.6.99");
-    expect(macBundleVersionFromSemver("0.6.1-beta.1")).toBe("0.6.131");
+    expect(macBundleVersionFromSemver("0.6.0-beta.4")).toBe("0.6.3004");
+    expect(macBundleVersionFromSemver("0.6.0-beta.30")).toBe("0.6.3030");
+    expect(macBundleVersionFromSemver("0.6.0")).toBe("0.6.9999");
+    expect(macBundleVersionFromSemver("0.6.1-beta.1")).toBe("0.6.13001");
   });
 
   it("rejects unsupported prerelease version forms", () => {
@@ -211,7 +235,9 @@ describe("macOS bundle version", () => {
     expect(() => macBundleVersionFromSemver("0.6.0-beta.04")).toThrow(
       /cannot be represented/,
     );
-    expect(() => macBundleVersionFromSemver("0.6.0-beta.30")).toThrow(/0-29/);
+    expect(() => macBundleVersionFromSemver("0.6.0-beta.6999")).toThrow(
+      /0-6998/,
+    );
   });
 });
 
@@ -228,5 +254,94 @@ describe("macOS marketing version", () => {
     expect(() => macMarketingVersionFromSemver("1.2.3-preview.1")).toThrow(
       /cannot be represented/,
     );
+  });
+});
+
+describe("plist version synchronization", () => {
+  it("updates exactly one string-valued key", () => {
+    const plist = "<dict><key>CFBundleVersion</key><string>1</string></dict>";
+    expect(updatePlistStringValue(plist, "CFBundleVersion", "0.6.131")).toBe(
+      "<dict><key>CFBundleVersion</key><string>0.6.131</string></dict>",
+    );
+  });
+
+  it("fails closed when a key is missing or duplicated", () => {
+    expect(() =>
+      updatePlistStringValue("<dict/>", "CFBundleVersion", "1"),
+    ).toThrow(/found 0/);
+    expect(() =>
+      updatePlistStringValue(
+        "<key>Build</key><string>1</string><key>Build</key><string>2</string>",
+        "Build",
+        "3",
+      ),
+    ).toThrow(/found 2/);
+  });
+});
+
+describe("CHANGELOG version synchronization", () => {
+  const intro =
+    "Zinnia! A cross platform 7Z gui frontend built on Tauri V2!\n\n";
+  const downloadBlock = `# ⬇️ Downloads
+
+| win |
+| [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.1-beta.1/app.exe) |
+`;
+  const tail = `\n> macOS note\n\n${intro}## Changes in \`v0.6.1-beta.1:\`\n\n- old\n`;
+
+  it("rewrites download URLs to the current tag", () => {
+    const synced = syncChangelogForVersion(
+      downloadBlock + tail,
+      "0.6.1-beta.2",
+    );
+    expect(synced).toContain("/download/v0.6.1-beta.2/app.exe");
+    expect(synced).not.toContain("/download/v0.6.1-beta.1/app.exe");
+  });
+
+  it("inserts a new changes section when the version is new", () => {
+    const synced = syncChangelogForVersion(
+      downloadBlock + tail,
+      "0.6.1-beta.2",
+    );
+    expect(synced).toContain("## Changes in `v0.6.1-beta.2:`");
+    expect(synced).toContain("## Changes in `v0.6.1-beta.1:`");
+  });
+});
+
+describe("package-lock.json version", () => {
+  const lockfile = `{
+  "name": "zinnia",
+  "version": "0.6.1-beta.5",
+  "lockfileVersion": 3,
+  "packages": {
+    "": {
+      "name": "zinnia",
+      "version": "0.6.1-beta.5"
+    },
+    "node_modules/left-pad": {
+      "version": "1.3.0"
+    }
+  }
+}
+`;
+
+  it("rewrites only the root and packages empty-key version fields", () => {
+    const updated = JSON.parse(
+      syncNpmLockfileVersion(lockfile, "0.6.1-beta.6"),
+    );
+    expect(updated.version).toBe("0.6.1-beta.6");
+    expect(updated.packages[""].version).toBe("0.6.1-beta.6");
+    expect(updated.packages["node_modules/left-pad"].version).toBe("1.3.0");
+  });
+
+  it("returns the original text when versions already match", () => {
+    const current = lockfile.replaceAll("0.6.1-beta.5", "0.6.1-beta.6");
+    expect(syncNpmLockfileVersion(current, "0.6.1-beta.6")).toBe(current);
+  });
+
+  it("fails closed when the lockfile packages empty key is missing", () => {
+    expect(() =>
+      syncNpmLockfileVersion(`{"name":"zinnia","version":"1.0.0"}`, "1.0.0"),
+    ).toThrow(/packages/);
   });
 });

@@ -387,10 +387,22 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the acknowledge_preserved_transaction command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-acknowledge-preserved-transaction",
+          "markdownDescription": "Enables the acknowledge_preserved_transaction command without any pre-configured scope."
+        },
+        {
           "description": "Enables the append_local_log command without any pre-configured scope.",
           "type": "string",
           "const": "allow-append-local-log",
           "markdownDescription": "Enables the append_local_log command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the archive_output_selection_token command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-archive-output-selection-token",
+          "markdownDescription": "Enables the archive_output_selection_token command without any pre-configured scope."
         },
         {
           "description": "Enables the cancel_7z command without any pre-configured scope.",
@@ -405,6 +417,12 @@
           "markdownDescription": "Enables the clear_logs command without any pre-configured scope."
         },
         {
+          "description": "Enables the close_debug_console_window command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-close-debug-console-window",
+          "markdownDescription": "Enables the close_debug_console_window command without any pre-configured scope."
+        },
+        {
           "description": "Enables the close_extract_window command without any pre-configured scope.",
           "type": "string",
           "const": "allow-close-extract-window",
@@ -415,6 +433,12 @@
           "type": "string",
           "const": "allow-create-temp-extract-dir",
           "markdownDescription": "Enables the create_temp_extract_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the debug_console_window_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-debug-console-window-open",
+          "markdownDescription": "Enables the debug_console_window_open command without any pre-configured scope."
         },
         {
           "description": "Enables the drain_pending_paths command without any pre-configured scope.",
@@ -495,6 +519,12 @@
           "markdownDescription": "Enables the get_startup_recovery_status command without any pre-configured scope."
         },
         {
+          "description": "Enables the inspect_extract_destination command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-inspect-extract-destination",
+          "markdownDescription": "Enables the inspect_extract_destination command without any pre-configured scope."
+        },
+        {
           "description": "Enables the is_7z_running command without any pre-configured scope.",
           "type": "string",
           "const": "allow-is-7z-running",
@@ -529,6 +559,12 @@
           "type": "string",
           "const": "allow-mark-main-window-ready",
           "markdownDescription": "Enables the mark_main_window_ready command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_debug_console_window command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-debug-console-window",
+          "markdownDescription": "Enables the open_debug_console_window command without any pre-configured scope."
         },
         {
           "description": "Enables the open_finder_services_settings command without any pre-configured scope.",
@@ -577,6 +613,30 @@
           "type": "string",
           "const": "allow-register-extract-open-path",
           "markdownDescription": "Enables the register_extract_open_path command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the relay_debug_console_clear command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-relay-debug-console-clear",
+          "markdownDescription": "Enables the relay_debug_console_clear command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the relay_debug_console_line command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-relay-debug-console-line",
+          "markdownDescription": "Enables the relay_debug_console_line command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the relay_debug_console_seed command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-relay-debug-console-seed",
+          "markdownDescription": "Enables the relay_debug_console_seed command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the relay_debug_console_signal command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-relay-debug-console-signal",
+          "markdownDescription": "Enables the relay_debug_console_signal command without any pre-configured scope."
         },
         {
           "description": "Enables the remove_managed_temp_dir command without any pre-configured scope.",
@@ -633,10 +693,22 @@
           "markdownDescription": "Enables the validate_archive_paths command without any pre-configured scope."
         },
         {
+          "description": "Denies the acknowledge_preserved_transaction command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-acknowledge-preserved-transaction",
+          "markdownDescription": "Denies the acknowledge_preserved_transaction command without any pre-configured scope."
+        },
+        {
           "description": "Denies the append_local_log command without any pre-configured scope.",
           "type": "string",
           "const": "deny-append-local-log",
           "markdownDescription": "Denies the append_local_log command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the archive_output_selection_token command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-archive-output-selection-token",
+          "markdownDescription": "Denies the archive_output_selection_token command without any pre-configured scope."
         },
         {
           "description": "Denies the cancel_7z command without any pre-configured scope.",
@@ -651,6 +723,12 @@
           "markdownDescription": "Denies the clear_logs command without any pre-configured scope."
         },
         {
+          "description": "Denies the close_debug_console_window command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-close-debug-console-window",
+          "markdownDescription": "Denies the close_debug_console_window command without any pre-configured scope."
+        },
+        {
           "description": "Denies the close_extract_window command without any pre-configured scope.",
           "type": "string",
           "const": "deny-close-extract-window",
@@ -661,6 +739,12 @@
           "type": "string",
           "const": "deny-create-temp-extract-dir",
           "markdownDescription": "Denies the create_temp_extract_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the debug_console_window_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-debug-console-window-open",
+          "markdownDescription": "Denies the debug_console_window_open command without any pre-configured scope."
         },
         {
           "description": "Denies the drain_pending_paths command without any pre-configured scope.",
@@ -741,6 +825,12 @@
           "markdownDescription": "Denies the get_startup_recovery_status command without any pre-configured scope."
         },
         {
+          "description": "Denies the inspect_extract_destination command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-inspect-extract-destination",
+          "markdownDescription": "Denies the inspect_extract_destination command without any pre-configured scope."
+        },
+        {
           "description": "Denies the is_7z_running command without any pre-configured scope.",
           "type": "string",
           "const": "deny-is-7z-running",
@@ -775,6 +865,12 @@
           "type": "string",
           "const": "deny-mark-main-window-ready",
           "markdownDescription": "Denies the mark_main_window_ready command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_debug_console_window command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-debug-console-window",
+          "markdownDescription": "Denies the open_debug_console_window command without any pre-configured scope."
         },
         {
           "description": "Denies the open_finder_services_settings command without any pre-configured scope.",
@@ -823,6 +919,30 @@
           "type": "string",
           "const": "deny-register-extract-open-path",
           "markdownDescription": "Denies the register_extract_open_path command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the relay_debug_console_clear command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-relay-debug-console-clear",
+          "markdownDescription": "Denies the relay_debug_console_clear command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the relay_debug_console_line command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-relay-debug-console-line",
+          "markdownDescription": "Denies the relay_debug_console_line command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the relay_debug_console_seed command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-relay-debug-console-seed",
+          "markdownDescription": "Denies the relay_debug_console_seed command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the relay_debug_console_signal command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-relay-debug-console-signal",
+          "markdownDescription": "Denies the relay_debug_console_signal command without any pre-configured scope."
         },
         {
           "description": "Denies the remove_managed_temp_dir command without any pre-configured scope.",

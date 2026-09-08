@@ -3,9 +3,9 @@
 ## Reporting a vulnerability
 
 Report security issues privately via GitHub's **Report a vulnerability** advisory
-flow (Security tab) or by email to the maintainer. Please do not open public
-issues for undisclosed vulnerabilities. Include reproduction steps and affected
-version/platform.
+flow (Security tab) or by email to [code@rosie.run](mailto:code@rosie.run).
+Please do not open public issues for undisclosed vulnerabilities. Include
+reproduction steps and affected version/platform.
 
 ## Threat model
 
@@ -39,41 +39,53 @@ operations:
 
 - Create/update writes to a sibling staging basename. Only a successful process
   promotes the complete output family, including split volumes.
-- Extraction writes to a contained staging directory. Before extraction, Zinnia
-  copies the complete input volume family into a private, recovery-tracked
-  snapshot. Member listing and extraction both use that same snapshot, so an
-  ordinary source-file replacement cannot change what is extracted after
-  preflight. Zinnia lists members (`7z l -slt`) and rejects paths with `..` or absolute
-  forms that could escape the `-o` root into an existing sibling folder. Before
-  promotion, Zinnia also snapshots sibling names in the stage parent (new names
-  outside the stage fail closed), walks the staged tree, rejects absolute or
-  escaping symbolic links and Windows reparse points (relative in-tree links
-  used by macOS `.app` / `.framework` bundles are allowed), rejects unsupported
-  file types, and applies entry-count and expanded-size ceilings.
+- Extraction writes to a sibling staging directory beside the destination
+  (never inside the live user folder). Before extraction, Zinnia copies the
+  complete input volume family into a private, recovery-tracked snapshot.
+  Member listing and extraction both use that same snapshot, so an ordinary
+  source-file replacement cannot change what is extracted after preflight.
+  Zinnia lists members (`7z l -slt`) and rejects unsafe `Path =`,
+  `Symbolic Link =`, and `Hard Link =` fields. Parent-relative symbolic links
+  are resolved against their member directory so contained links remain valid.
+  Before promotion, Zinnia
+  also snapshots sibling names in the stage parent (new names outside the stage
+  fail closed), walks the staged tree, rejects absolute or escaping symbolic
+  links and Windows reparse points (relative in-tree links used by macOS
+  `.app` / `.framework` bundles are allowed), rejects hard links that alias
+  inodes outside the stage, rejects unsupported file types, and applies
+  entry-count and expanded-size ceilings. Windows existing-destination merges
+  use target-local publication for ACL inheritance; Unix published directories
+  receive their destination parent's mode.
 - Create/update passes `-snl` / `-snh` so symbolic and hard links inside selected
   folders (for example macOS app bundles) are stored as links rather than
   followed. The backend also injects these switches on create/update so they
-  cannot be omitted by the webview. The selected input path itself must still be
-  a real file or directory (symlink/reparse inputs are rejected), except for
-  relative symlink *members* under a managed convert temp directory (so Convert
-  can round-trip top-level links). Nested Windows junctions / cloud placeholders
-  inside a compress tree are rejected (fail closed); ZIP still cannot faithfully
-  round-trip many symlink trees, so the UI warns when ZIP is chosen for inputs
-  that contain symlinks or `.app` bundles—prefer `7z` or `tar`.
-- `-sns` (NTFS alternate streams) and `-sni` (NT security descriptors) remain
-  blocked: packing ADS / ACLs is a known hiding and privilege footgun.
-- On macOS, after a successful extract promote, Zinnia clears
-  `com.apple.quarantine` on `.app` bundles under the destination (so Gatekeeper
-  does not treat a user-initiated app extract like an untrusted download) and
-  reports how many bundles were cleared. Quarantine is **not** stripped from the
-  whole tree—broad clearing is a known Gatekeeper-bypass pattern. Clearing
-  quarantine does not make untrusted software safe to run.
-- On Windows extract, Zinnia injects 7-Zip `-snz` so Mark-of-the-Web
-  (`Zone.Identifier`) propagates from a downloaded archive onto extracted files
-  (SmartScreen / Office Protected View). Zinnia does **not** strip MOTW.
-- On Unix, after extract, Zinnia may restore the execute bit on files that look
-  like binaries or scripts (ELF / Mach-O / shebang / common extensions) when the
-  archive format omitted Unix modes (common with ZIP).
+  cannot be omitted by the webview. Selected compression inputs must still be
+  real files or directories, except for relative symlink _members_ under a
+  managed convert temp directory. Archive inputs may be filesystem symlinks;
+  Zinnia canonicalizes them to a regular-file target before snapshotting.
+  Nested Windows junctions / cloud placeholders inside a compress tree are
+  rejected (fail closed). ZIP, 7z, and TAR link trees are covered by real
+  bundled-sidecar round-trip tests.
+- Caller-supplied `-sns` (NTFS alternate streams) and `-sni` (NT security
+  descriptors) remain blocked: packing ADS / ACLs is a known hiding and
+  privilege footgun. Windows extraction injects `-sns-` to explicitly disable
+  archive-supplied streams.
+- On extract, Zinnia injects 7-Zip `-snld10` so macOS `.app` / `.framework`
+  nested relative symlinks (`Libraries -> Versions/Current/Libraries`) are
+  restored. Default 7-Zip (25.01+) rejects those as "Dangerous link via another
+  link". Important: level 10 can also materialize some escaping relative
+  symlink targets that default level would ignore, so Zinnia's staged-tree
+  validation is mandatory before publish. It accepts contained relative links,
+  including intentional dangling links, while rejecting absolute and
+  OS-resolved escaping symlinks, plus hard links that alias inodes outside the
+  stage root. Never raise to `-snld20`. The webview cannot omit or raise
+  `-snld*`.
+- On Windows extract, Zinnia preserves the source archive's Mark-of-the-Web in
+  its private snapshot and injects 7-Zip `-snz` so `Zone.Identifier` propagates
+  onto extracted files (SmartScreen / Office Protected View). A zip downloaded
+  in Microsoft Edge should still show MOTW on extracted members. Backend-owned
+  `-sns-` prevents archive members from replacing that stream. Zinnia does
+  **not** strip MOTW.
 - Promotion resolves file/directory conflicts without overwriting unrelated
   destination content. A durable move plan and transaction journal allow an
   interrupted merge or split-archive promotion to be rolled back on restart.
@@ -119,37 +131,34 @@ new Zinnia release; there is no OS-level automatic update mechanism.
 
 **Action:** watch the [7-Zip release page](https://www.7-zip.org/history.txt)
 and [NVD vendor page](https://nvd.nist.gov/vuln/search/results?form_type=Basic&results_type=overview&query=7-zip&search_type=all)
-for new advisories. When a new 7-Zip version addresses a security issue, update
-`assets/` with the new binaries, run
-`assets/7z-provenance.json` with the exact official archive URLs, archive
-SHA-256 values, and extracted member mapping, then run
+for new advisories. When a new 7-Zip version addresses a security issue, run
+`npm run 7z:update:check` to compare the pinned version with
+`https://github.com/ip7z/7zip/releases/latest`, then run `npm run 7z:update`
+(or `npm run 7z:update -- --force` after review when refreshing the same
+version). Confirm `assets/7z-provenance.json` records the exact official
+archive URLs, archive SHA-256 values, extracted member mapping, and license
+notice hashes before cutting a Zinnia release. The updater downloads only the
+five official source archives, extracts the seven runtime artifacts, rewrites
+checksums/provenance/licenses, removes obsolete assets, and regenerates
+prepared sidecars. Prefer an independently installed extractor via
+`--trusted-7z <path>` or `ZINNIA_TRUSTED_7Z` outside this repository's
+candidate `assets/` and generated `src-tauri/binaries/` roots; when none is
+available the updater may use the currently checksum-verified bundled sidecar
+only to unpack official Windows self-extracting `.exe` packages. Official
+`.tar.xz` sources use the system `tar`. For a fully offline reviewed refresh,
 `node scripts/prepare-7z.js --update-checksums --all --version <verified-version> --verify-downloads <download-directory> --trusted-7z <independently-trusted-7z-path>`
-and cut a Zinnia release. The update command refuses to run when its explicit
-version does not match the reviewed provenance manifest or the downloaded
-archives and extracted members do not match that manifest. The trusted
-extractor must be an independently installed file outside this repository's
-candidate `assets/` and generated `src-tauri/binaries/` roots; it is used only
-to unpack the official Windows `.7z`, while official `.tar.xz` sources use the
-system `tar`.
+still refuses to run when the explicit version, downloaded archives, or
+extracted members do not match the reviewed provenance manifest.
 
-#### Temporary Windows RAR restriction
+#### Windows RAR support
 
-The published data for CVE-2026-58052 is currently inconsistent: the NVD/CNA
-affected range was revised to end at 26.01, while the NVD analysis and upstream
-7-Zip ticket still describe 26.02 as affected. Until the exact bundled Windows
-runtime is conclusively verified against the published reproducer, Zinnia
-conservatively rejects RAR **extraction** on Windows at the `run_7z` spawn
-boundary (command `x`) when the attested `probe_7z` version is `26.02` or
-older (or unknown). RAR browse (`l`) and test (`t`) remain available so
-archives can be inspected without writing members to disk. Base
-`tauri.conf.json` omits RAR file associations; macOS/Linux platform configs
-re-add them. Windows packages continue to omit RAR associations and Explorer
-verbs. RAR browsing, testing, conversion, and extraction remain available on
-macOS and Linux.
-
-When a fixed 7-Zip ships and `probe_7z` attests a version newer than `26.02`,
-the Windows RAR extract gate lifts automatically. Keep the bundled sidecar and
-checksums updated in the same release.
+Windows packages full `7z.exe` with its architecture-matched `7z.dll`, enabling
+RAR browse, test, conversion, and extraction. The binaries and DLLs are pinned
+to official installers in `assets/7z-provenance.json` and verified before
+packaging. Extraction forces `-sns-` to reject archive-supplied NTFS alternate
+streams, while the private input snapshot preserves the source archive's
+`Zone.Identifier` for backend-owned `-snz` propagation. This prevents a RAR5
+stream-name collision from replacing Mark-of-the-Web data.
 
 ### Translucent Basic window (macOS / Windows)
 
@@ -193,10 +202,12 @@ validation checks remain mandatory defense in depth.
 
 On Unix, promote opens use `O_NOFOLLOW` for the final path component. On
 Windows, `open_regular_file_nofollow` opens with `FILE_FLAG_OPEN_REPARSE_POINT`
-and rejects reparse tags on the opened handle. Archive publish prefers
-`hard_link` while that handle is held and falls back to copying from the same
-handle (no path re-open). Residual same-user TOCTOU remains for the hard_link
-path name lookup itself.
+and rejects reparse tags on the opened handle. Archive publish syncs the
+source through that nofollow handle, then uses exclusive path `rename` /
+`hard_link` (same residual TOCTOU as above). When neither is available, the
+fallback exclusive-create copy re-opens the source with nofollow and copies
+from that held handle. Residual same-user TOCTOU remains for the rename /
+hard_link path-name lookup itself.
 
 ### Open-folder allowlist
 
@@ -206,3 +217,10 @@ window spawn (derived from the archive path). They may only extract to that
 folder (`-o`) and may only `open_path` that same folder after registering it.
 This is defense in depth against a compromised webview writing or opening
 arbitrary folders.
+
+The main window `run_7z` destination (`-o`) is not dest-bound the way extract
+windows are. After path validation (no `..` segments, absolute paths only),
+extract-to-folder uses the same privilege as the signed app. A compromised main
+webview can therefore write to any allowlisted-shape destination the user could
+already reach. Extract-only windows remain pinned to the folder derived at
+window spawn.

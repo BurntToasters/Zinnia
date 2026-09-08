@@ -41,7 +41,17 @@ describe("splitArgs", () => {
 
 describe("redactSensitiveText", () => {
   it("redacts -p password args", () => {
-    expect(redactSensitiveText("run -pmySecret")).toContain("-p***");
+    expect(redactSensitiveText("run -pmySecret archive.7z")).toBe("run -p***");
+    expect(redactSensitiveText("run -PMySecret archive.7z")).toBe("run -p***");
+    expect(redactSensitiveText("run -pd archive.7z")).toBe("run -p***");
+    expect(redactSensitiveText("run -pd=secret archive.7z")).toBe("run -p***");
+    expect(redactSensitiveText('run -p"space secret" archive.7z')).toBe(
+      "run -p***",
+    );
+    expect(redactSensitiveText("7z x -spd archive.7z")).toContain("-spd");
+    expect(redactSensitiveText("7z x -p*** -- a.zip")).toBe(
+      "7z x -p*** -- a.zip",
+    );
   });
 
   it("redacts key=value passwords", () => {
@@ -79,6 +89,9 @@ describe("isArchiveFile", () => {
   it("recognises known archive extensions", () => {
     expect(isArchiveFile("C:/tmp/file.7z")).toBe(true);
     expect(isArchiveFile("C:/tmp/file.tar.gz")).toBe(true);
+    expect(isArchiveFile("C:/tmp/file.tgz")).toBe(true);
+    expect(isArchiveFile("C:/tmp/file.tbz2")).toBe(true);
+    expect(isArchiveFile("C:/tmp/file.txz")).toBe(true);
     expect(isArchiveFile("/home/user/file.zip")).toBe(true);
     expect(isArchiveFile("file.rar")).toBe(true);
     expect(isArchiveFile("file.xz")).toBe(true);
@@ -246,6 +259,33 @@ describe("focus trap helpers", () => {
     container.remove();
   });
 
+  it("contains Tab from a programmatically focused modal heading", () => {
+    const container = document.createElement("div");
+    const title = document.createElement("h2");
+    title.tabIndex = -1;
+    const first = document.createElement("button");
+    const last = document.createElement("button");
+    container.append(title, first, last);
+    document.body.appendChild(container);
+
+    setVisibleForFocus(first, container);
+    setVisibleForFocus(last, container);
+    trapFocus(container);
+
+    title.focus();
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Tab", shiftKey: true }),
+    );
+    expect(document.activeElement).toBe(last);
+
+    title.focus();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab" }));
+    expect(document.activeElement).toBe(first);
+
+    releaseFocusTrap(container);
+    container.remove();
+  });
+
   it("supports re-trapping same container without throwing", () => {
     const container = document.createElement("div");
     const button = document.createElement("button");
@@ -297,6 +337,11 @@ describe("focus trap helpers", () => {
     const settingsBtn = document.createElement("button");
     settingsBtn.id = "open-settings";
     header.appendChild(settingsBtn);
+    const extractApp = document.createElement("div");
+    extractApp.id = "extract-app";
+    const extractCancel = document.createElement("button");
+    extractCancel.id = "cancel-btn";
+    extractApp.appendChild(extractCancel);
     const overlay = document.createElement("div");
     overlay.id = "settings-overlay";
     const modal = document.createElement("div");
@@ -305,13 +350,20 @@ describe("focus trap helpers", () => {
     modal.appendChild(modalBtn);
     overlay.appendChild(modal);
     const main = document.createElement("main");
-    app.append(titlebar, header, overlay, main);
-    document.body.appendChild(app);
+    const toastRegion = document.createElement("div");
+    toastRegion.id = "toast-region";
+    const recoveryBanner = document.createElement("div");
+    recoveryBanner.id = "startup-recovery-banner";
+    app.append(titlebar, header, extractApp, overlay, main);
+    document.body.append(app, toastRegion, recoveryBanner);
     setVisibleForFocus(modalBtn, modal);
 
     trapFocus(modal);
     expect(Boolean(titlebar.inert)).toBe(false);
     expect(Boolean(header.inert)).toBe(false);
+    expect(Boolean(extractApp.inert)).toBe(false);
+    expect(Boolean(toastRegion.inert)).toBe(false);
+    expect(Boolean(recoveryBanner.inert)).toBe(false);
     expect(main.inert).toBe(true);
     expect(closeBtn.closest("[inert]")).toBeNull();
     expect(settingsBtn.closest("[inert]")).toBeNull();
@@ -319,6 +371,8 @@ describe("focus trap helpers", () => {
     releaseFocusTrap(modal);
     expect(main.inert).toBe(false);
     app.remove();
+    toastRegion.remove();
+    recoveryBanner.remove();
   });
 
   it("returns escaped focus to the modal on Tab", () => {

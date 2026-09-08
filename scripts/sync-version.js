@@ -6,10 +6,14 @@ import { fileURLToPath } from "url";
 import {
   macBundleVersionFromSemver,
   macMarketingVersionFromSemver,
+  syncChangelogForVersion,
   updateCargoLockPackageVersion,
+  updatePlistStringValue,
+  updateWindowsAssemblyIdentityVersion,
   updateWindowsResourceVersion,
   updateWindowsShellResourceDestinations,
   windowsPackageVersionFromSemver,
+  syncNpmLockfileVersion,
 } from "./sync-version-helpers.js";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -65,19 +69,50 @@ if (JSON.stringify(updatedWindowsConf) !== JSON.stringify(windowsConf)) {
 
 const macInfoPath = path.join(root, "src-tauri", "Info.plist");
 const macInfo = fs.readFileSync(macInfoPath, "utf8");
-const marketingVersionPattern =
-  /(<key>CFBundleShortVersionString<\/key>\s*<string>)[^<]*(<\/string>)/;
-if (!marketingVersionPattern.test(macInfo)) {
-  console.error("src-tauri/Info.plist is missing CFBundleShortVersionString");
+let updatedMacInfo;
+try {
+  updatedMacInfo = updatePlistStringValue(
+    macInfo,
+    "CFBundleShortVersionString",
+    macMarketingVersion,
+  );
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
 }
-const updatedMacInfo = macInfo.replace(
-  marketingVersionPattern,
-  `$1${macMarketingVersion}$2`,
-);
 if (updatedMacInfo !== macInfo) {
   fs.writeFileSync(macInfoPath, updatedMacInfo);
   console.log(`Info.plist       → ${macMarketingVersion}`);
+}
+
+const finderInfoPath = path.join(
+  root,
+  "src-tauri",
+  "macos",
+  "ZinniaFinderSync",
+  "Info.plist",
+);
+const finderInfo = fs.readFileSync(finderInfoPath, "utf8");
+let updatedFinderInfo;
+try {
+  updatedFinderInfo = updatePlistStringValue(
+    updatePlistStringValue(
+      finderInfo,
+      "CFBundleShortVersionString",
+      macMarketingVersion,
+    ),
+    "CFBundleVersion",
+    macBundleVersion,
+  );
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
+if (updatedFinderInfo !== finderInfo) {
+  fs.writeFileSync(finderInfoPath, updatedFinderInfo);
+  console.log(
+    `Finder Info.plist → ${macMarketingVersion} (${macBundleVersion})`,
+  );
 }
 
 const cargoPath = path.join(root, "src-tauri", "Cargo.toml");
@@ -140,4 +175,69 @@ for (const rcName of ["zinnia_shell.rc", "zinnia_extract_shell.rc"]) {
     fs.writeFileSync(rcPath, updatedRc);
     console.log(`${rcName} → ${version}`);
   }
+}
+
+for (const manifestName of [
+  "msix_identity.manifest.in",
+  "msix_extract_identity.manifest.in",
+]) {
+  const manifestPath = path.join(
+    root,
+    "src-tauri",
+    "windows",
+    "shell",
+    manifestName,
+  );
+  const manifest = fs.readFileSync(manifestPath, "utf8");
+  let updatedManifest;
+  try {
+    updatedManifest = updateWindowsAssemblyIdentityVersion(manifest, version);
+  } catch (error) {
+    console.error(
+      `${manifestName}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    process.exit(1);
+  }
+  if (updatedManifest !== manifest) {
+    fs.writeFileSync(manifestPath, updatedManifest);
+    console.log(
+      `${manifestName} → ${windowsPackageVersionFromSemver(version)}`,
+    );
+  }
+}
+
+const changelogPath = path.join(root, "CHANGELOG.md");
+const changelog = fs.readFileSync(changelogPath, "utf8");
+let syncedChangelog;
+try {
+  syncedChangelog = syncChangelogForVersion(changelog, version);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
+if (syncedChangelog !== changelog) {
+  fs.writeFileSync(changelogPath, syncedChangelog);
+  console.log(`CHANGELOG.md    → ${version} (download URLs + section)`);
+}
+
+const npmLockPath = path.join(root, "package-lock.json");
+const npmLock = fs.readFileSync(npmLockPath, "utf8");
+let updatedNpmLock;
+try {
+  updatedNpmLock = syncNpmLockfileVersion(npmLock, version);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
+if (updatedNpmLock !== npmLock) {
+  fs.writeFileSync(npmLockPath, updatedNpmLock);
+  const lockVerify = JSON.parse(fs.readFileSync(npmLockPath, "utf8"));
+  if (
+    lockVerify.version !== version ||
+    lockVerify.packages?.[""]?.version !== version
+  ) {
+    console.error("package-lock.json write verification failed");
+    process.exit(1);
+  }
+  console.log(`package-lock.json → ${version}`);
 }

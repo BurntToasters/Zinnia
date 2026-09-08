@@ -47,6 +47,7 @@ export {
   finishBasicPreparation,
   isBasicInteractionLocked,
   isBasicPreparationCurrent,
+  replaceBasicInputs,
   type BasicPreparation,
 } from "./actions";
 

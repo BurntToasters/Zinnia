@@ -107,6 +107,9 @@ const mocks = vi.hoisted(() => {
       showSetupWizard: vi.fn().mockResolvedValue(null),
       markSetupComplete: vi.fn().mockResolvedValue(undefined),
     },
+    e2eEnv: {
+      isE2eFrontend: vi.fn(() => false),
+    },
     osIntegration: {
       refreshOsIntegrationStatus: vi.fn().mockResolvedValue(undefined),
       wireOsIntegrationEvents: vi.fn(),
@@ -180,6 +183,7 @@ vi.mock("../archive", () => ({
 }));
 
 vi.mock("../archive-rules", () => ({
+  MAX_ARCHIVE_PATHS: 4096,
   validateArchivePaths: mocks.archiveRules.validateArchivePaths,
 }));
 
@@ -221,6 +225,10 @@ vi.mock("../setup-wizard", () => ({
   shouldShowSetupWizard: mocks.setupWizard.shouldShowSetupWizard,
   showSetupWizard: mocks.setupWizard.showSetupWizard,
   markSetupComplete: mocks.setupWizard.markSetupComplete,
+}));
+
+vi.mock("../e2e-env", () => ({
+  isE2eFrontend: mocks.e2eEnv.isE2eFrontend,
 }));
 
 vi.mock("../os-integration", () => ({
@@ -279,6 +287,15 @@ function ensureSelect(id: string, options: string[] = []): HTMLSelectElement {
 function ensureMainDomElements(): void {
   const app = ensureElement("app", "div");
   app.setAttribute("data-mode", app.getAttribute("data-mode") ?? "add");
+  const recoveryBanner = ensureElement("startup-recovery-banner", "div");
+  recoveryBanner.hidden = true;
+  ensureElement("startup-recovery-banner-text", "span");
+  const recoveryAcknowledge = ensureElement(
+    "startup-recovery-banner-acknowledge",
+    "button",
+  );
+  recoveryAcknowledge.hidden = true;
+  ensureElement("startup-recovery-banner-dismiss", "button");
   ensureElement("input-list", "div");
   ensureElement("log", "div");
   ensureElement("status", "div");
@@ -341,9 +358,19 @@ function ensureMainDomElements(): void {
     "close-licenses",
     "rerun-setup-wizard",
     "reset-settings",
+    "debug-console-popout",
+    "debug-console-clear",
+    "debug-console-copy",
+    "debug-console-close",
   ]) {
     ensureElement(id, "button");
   }
+
+  const aboutDebugToggle = ensureElement("about-debug-toggle", "img");
+  aboutDebugToggle.className = "about-icon";
+  const debugConsole = ensureElement("debug-console", "aside");
+  debugConsole.hidden = true;
+  ensureElement("debug-console-log", "pre");
 
   const workspaceBasic = ensureElement("workspace-mode-basic", "button");
   workspaceBasic.setAttribute("data-workspace-mode-btn", "basic");
@@ -458,13 +485,15 @@ async function flushAsync(): Promise<void> {
 }
 
 async function loadMainModule(): Promise<void> {
-  await import("../main");
+  const { startup } = await import("../main");
+  await startup;
   await flushAsync();
 }
 
 beforeEach(async () => {
   vi.resetModules();
   ensureMainDomElements();
+  document.getElementById("toast-region")?.remove();
 
   Object.defineProperty(window, "matchMedia", {
     writable: true,
@@ -574,6 +603,9 @@ beforeEach(async () => {
   mocks.quickActions.wireQuickActionEvents.mockReset();
   mocks.quickActions.refreshQuickActionRepeatState.mockReset();
 
+  mocks.e2eEnv.isE2eFrontend.mockReset();
+  mocks.e2eEnv.isE2eFrontend.mockReturnValue(false);
+
   mocks.setupWizard.shouldShowSetupWizard.mockReset();
   mocks.setupWizard.shouldShowSetupWizard.mockReturnValue(false);
   mocks.setupWizard.showSetupWizard.mockReset();
@@ -668,6 +700,35 @@ describe("main bootstrap", () => {
       (document.getElementById("s-version-label") as HTMLElement).textContent,
     ).toBe("v1.2.3");
     expect(document.body.classList.contains("platform-linux")).toBe(true);
+  });
+
+  it("isolates unpackaged E2E from updater prompts and first-run glass", async () => {
+    mocks.e2eEnv.isE2eFrontend.mockReturnValue(true);
+    mocks.settings.loadSettingsWithMetadata.mockResolvedValue({
+      settings: {
+        ...SETTING_DEFAULTS,
+        autoCheckUpdates: true,
+        basicWindowEffects: true,
+        setupComplete: false,
+        workspaceMode: "basic" as const,
+        uiDensity: "comfortable" as const,
+        lastMode: "add" as const,
+        showActivityPanel: true,
+        theme: "system" as const,
+      },
+      extras: {},
+      malformed: false,
+    });
+
+    await loadMainModule();
+
+    const { state } = await import("../state");
+    expect(state.currentSettings.autoCheckUpdates).toBe(false);
+    expect(state.currentSettings.basicWindowEffects).toBe(false);
+    expect(state.currentSettings.setupComplete).toBe(true);
+    expect(state.settingsExtras._setupComplete).toBe(true);
+    expect(state.settingsExtras._setupWizardVersion).toBe(3);
+    expect(mocks.updater.autoCheckUpdates).not.toHaveBeenCalled();
   });
 
   it("opens the basic compress view for a --compress launch", async () => {
@@ -819,6 +880,20 @@ describe("main bootstrap", () => {
     licensesOverlay.hidden = false;
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect(mocks.licenses.closeLicensesModal).toHaveBeenCalled();
+
+    settingsOverlay.hidden = false;
+    licensesOverlay.hidden = false;
+    mocks.licenses.closeLicensesModal.mockClear();
+    mocks.settings.closeSettingsModal.mockClear();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(mocks.licenses.closeLicensesModal).toHaveBeenCalled();
+    expect(mocks.settings.closeSettingsModal).not.toHaveBeenCalled();
+
+    mocks.settings.toggleSettingsModal.mockClear();
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: ",", ctrlKey: true }),
+    );
+    expect(mocks.settings.toggleSettingsModal).not.toHaveBeenCalled();
   });
 
   it("routes drag-drop events in both basic and power workspace modes", async () => {
@@ -866,14 +941,38 @@ describe("main bootstrap", () => {
     expect(mocks.archive.browseArchive).toHaveBeenCalled();
   });
 
+  it("reports Power drag-drop paths omitted by the input cap", async () => {
+    await loadMainModule();
+    mocks.runtime.workspaceMode = "power";
+    mocks.runtime.mode = "add";
+    const { state } = await import("../state");
+    state.inputs = [];
+    const paths = Array.from(
+      { length: 4_097 },
+      (_, index) => `/tmp/drop-${index}.txt`,
+    );
+
+    await dragDropHandler?.({ payload: { type: "drop", paths } });
+
+    expect(state.inputs).toHaveLength(4_096);
+    expect(state.inputs.at(-1)).toBe("/tmp/drop-4095.txt");
+    expect(document.querySelector(".toast")?.textContent).toContain(
+      "1 more were not added",
+    );
+    expect(mocks.ui.log).toHaveBeenCalledWith(
+      expect.stringContaining("1 more were not added"),
+      "error",
+    );
+  });
+
   it("executes diagnostics toolbar actions and reports errors", async () => {
     await loadMainModule();
 
     (document.getElementById("export-logs") as HTMLButtonElement).click();
     await flushAsync();
-    expect(messageMock).toHaveBeenCalledWith("Logs exported successfully.", {
-      title: "Logs exported",
-    });
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Logs exported successfully.",
+    );
 
     askMock.mockResolvedValueOnce(true);
     (document.getElementById("clear-logs") as HTMLButtonElement).click();
@@ -890,9 +989,8 @@ describe("main bootstrap", () => {
     (document.getElementById("open-logs-folder") as HTMLButtonElement).click();
     await flushAsync();
 
-    expect(messageMock).toHaveBeenCalledWith(
-      expect.stringContaining("Failed to open logs folder."),
-      expect.objectContaining({ title: "Open folder failed", kind: "error" }),
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Failed to open logs folder. permission denied",
     );
   });
 
@@ -938,6 +1036,7 @@ describe("main bootstrap", () => {
     selectiveSearch.dispatchEvent(new Event("input", { bubbles: true }));
     expect(mocks.archive.setSelectiveExtractSearch).toHaveBeenCalledWith(
       "docs",
+      true,
     );
 
     (document.getElementById("selective-confirm") as HTMLButtonElement).click();
@@ -1066,10 +1165,11 @@ describe("main bootstrap", () => {
     extractToggle.click();
     expect(extractPassword.type).toBe("password");
 
+    mocks.basicUi.syncBasicBeforeRun.mockClear();
     (
       document.getElementById("workspace-mode-power") as HTMLButtonElement
     ).click();
-    expect(mocks.basicUi.syncBasicBeforeRun).toHaveBeenCalled();
+    expect(mocks.basicUi.syncBasicBeforeRun).not.toHaveBeenCalled();
 
     (
       document.getElementById("workspace-mode-basic") as HTMLButtonElement
@@ -1090,11 +1190,16 @@ describe("main bootstrap", () => {
       theme: "dark" as const,
       uiDensity: "compact" as const,
     };
-    mocks.settings.readSettingsModal.mockReturnValueOnce(savedSettings);
+    mocks.settings.readSettingsModal.mockReturnValueOnce({
+      ...savedSettings,
+      workspaceMode: "basic",
+    });
+    mocks.basicUi.syncBasicWorkspaceFromPower.mockClear();
     (document.getElementById("save-settings") as HTMLButtonElement).click();
     await flushAsync();
     expect(mocks.ui.persistSettingsImmediately).toHaveBeenCalled();
     expect(mocks.settings.closeSettingsModal).toHaveBeenCalled();
+    expect(mocks.basicUi.syncBasicWorkspaceFromPower).toHaveBeenCalled();
 
     mocks.settings.readSettingsModal.mockReturnValueOnce({
       ...savedSettings,
@@ -1106,9 +1211,8 @@ describe("main bootstrap", () => {
     (document.getElementById("save-settings") as HTMLButtonElement).click();
     await flushAsync();
     expect(mocks.settings.populateSettingsModal).toHaveBeenCalled();
-    expect(messageMock).toHaveBeenCalledWith(
-      expect.stringContaining("Failed to save settings."),
-      expect.objectContaining({ title: "Settings error", kind: "error" }),
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Failed to save settings. disk full",
     );
   });
 
@@ -1214,12 +1318,146 @@ describe("main bootstrap", () => {
 
     await loadMainModule();
 
-    expect(messageMock).toHaveBeenCalledWith(
+    expect(messageMock).not.toHaveBeenCalledWith(
       expect.stringContaining("Setup wizard could not be completed."),
-      expect.objectContaining({ title: "Setup wizard error", kind: "error" }),
+      expect.anything(),
+    );
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Setup wizard could not be completed. wizard crash",
     );
     // Wizard failure must not abort app bootstrap.
     expect(document.body.textContent ?? "").not.toContain("Failed to start:");
+  });
+
+  it("shows a persistent malformed-settings banner before the setup wizard", async () => {
+    const warning =
+      "Settings file is malformed (Unexpected token). Defaults were loaded.";
+    mocks.settings.loadSettingsWithMetadata.mockResolvedValue({
+      settings: {
+        ...SETTING_DEFAULTS,
+        workspaceMode: "basic",
+        uiDensity: "comfortable",
+        autoCheckUpdates: true,
+        lastMode: "add",
+        showActivityPanel: true,
+        theme: "system",
+      },
+      extras: {},
+      malformed: true,
+      warning,
+    });
+    mocks.setupWizard.shouldShowSetupWizard.mockReturnValue(true);
+    mocks.setupWizard.showSetupWizard.mockImplementation(async () => {
+      const banner = document.getElementById("startup-recovery-banner");
+      expect(banner?.hidden).toBe(false);
+      expect(
+        document.getElementById("startup-recovery-banner-text")?.textContent,
+      ).toContain("malformed");
+      return {
+        workspaceMode: "basic",
+        theme: "system",
+        autoCheckUpdates: true,
+        updateChannel: "stable",
+      };
+    });
+
+    await loadMainModule();
+
+    expect(mocks.setupWizard.showSetupWizard).toHaveBeenCalled();
+    expect(mocks.ui.log).toHaveBeenCalledWith(warning, "error");
+  });
+
+  it("keeps preserved-recovery acknowledgement available when retry fails", async () => {
+    const recoveryMessage =
+      "Extraction stage is missing before its sibling publish was durably committed; the destination and recovery journal were preserved.";
+    setInvokeRouter((command) => {
+      if (command === "get_startup_recovery_status") return recoveryMessage;
+      if (command === "acknowledge_preserved_transaction") {
+        throw new Error("marker is locked");
+      }
+      if (command === "probe_7z") return undefined;
+      if (command === "get_cpu_count") return 8;
+      if (command === "get_log_dir") return "/tmp/logs";
+      if (command === "get_platform_info") return "linux";
+      if (command === "is_packaged") return true;
+      if (command === "is_flatpak") return false;
+      if (command === "get_initial_mode") return "";
+      if (command === "get_initial_paths") return [];
+      if (command === "drain_pending_paths") return [];
+      return undefined;
+    });
+    askMock.mockResolvedValue(true);
+
+    await loadMainModule();
+
+    const acknowledge = document.getElementById(
+      "startup-recovery-banner-acknowledge",
+    ) as HTMLButtonElement;
+    expect(acknowledge.hidden).toBe(false);
+
+    acknowledge.click();
+    await flushAsync();
+
+    expect(acknowledge.hidden).toBe(false);
+    expect(
+      document.getElementById("startup-recovery-banner-text")?.textContent,
+    ).toContain("Could not clear the recovery marker: marker is locked");
+  });
+
+  it("keeps Explorer handoff failures on the persistent banner", async () => {
+    setInvokeRouter((command) => {
+      if (command === "get_shell_handoff_error") return "handoff file missing";
+      if (command === "probe_7z") return undefined;
+      if (command === "get_cpu_count") return 8;
+      if (command === "get_log_dir") return "/tmp/logs";
+      if (command === "get_platform_info") return "windows";
+      if (command === "is_packaged") return true;
+      if (command === "is_flatpak") return false;
+      if (command === "get_initial_mode") return "";
+      if (command === "get_initial_paths") return [];
+      if (command === "drain_pending_paths") return [];
+      return undefined;
+    });
+
+    await loadMainModule();
+    await flushAsync();
+
+    const banner = document.getElementById("startup-recovery-banner");
+    expect(banner?.hidden).toBe(false);
+    expect(
+      document.getElementById("startup-recovery-banner-text")?.textContent,
+    ).toContain("Could not read the file selection from Explorer");
+    const toastText = [...document.querySelectorAll(".toast")]
+      .map((el) => el.textContent ?? "")
+      .join("\n");
+    expect(toastText).not.toContain(
+      "Could not read the file selection from Explorer",
+    );
+  });
+
+  it("keeps warm Explorer handoff failures on the persistent banner", async () => {
+    type DroppedHandler = (event: { payload: string }) => void;
+    let droppedHandler: DroppedHandler | null = null;
+    listenMock.mockImplementation(async (event, handler) => {
+      if (event === "open-paths-dropped") {
+        droppedHandler = handler as DroppedHandler;
+      }
+      return () => {};
+    });
+
+    await loadMainModule();
+    expect(droppedHandler).toBeTruthy();
+    droppedHandler!({ payload: "selection is too large" });
+
+    const banner = document.getElementById("startup-recovery-banner");
+    expect(banner?.hidden).toBe(false);
+    expect(
+      document.getElementById("startup-recovery-banner-text")?.textContent,
+    ).toContain("selection is too large");
+    const toastText = [...document.querySelectorAll(".toast")]
+      .map((el) => el.textContent ?? "")
+      .join("\n");
+    expect(toastText).not.toContain("selection is too large");
   });
 
   it("processes pending path batches into extract mode for multi-archive drops", async () => {
@@ -1416,6 +1654,26 @@ describe("main bootstrap", () => {
     mocks.runtime.mode = "add";
     await applyIncomingPaths(["/tmp/other.txt"], "compress", "Explorer");
     expect(state.inputs).toEqual(["/tmp/file.txt", "/tmp/other.txt"]);
+  });
+
+  it("routes implicit non-archives to a fresh compression session", async () => {
+    const { applyIncomingPaths } = await import("../incoming-paths");
+    const { state } = await import("../state");
+    mocks.archiveRules.validateArchivePaths.mockImplementation(async (paths) =>
+      (paths as string[]).map((path) => ({
+        path,
+        valid: false,
+        reason: "Not an archive",
+      })),
+    );
+
+    mocks.runtime.mode = "extract";
+    state.inputs = ["/tmp/stale-extract.7z"];
+    await applyIncomingPaths(["/tmp/document.txt"], "", "drop");
+
+    expect(state.inputs).toEqual(["/tmp/document.txt"]);
+    expect(mocks.ui.setMode).toHaveBeenCalledWith("add");
+    expect(mocks.basicUi.setBasicView).toHaveBeenCalledWith("compress");
   });
 
   it("adds platform-flatpak early and skips setup updates on Flatpak", async () => {

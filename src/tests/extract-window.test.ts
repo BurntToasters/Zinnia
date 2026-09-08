@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { isNativeWebviewContextMenuAllowed } from "../webview-context-menu";
+import { decodeRun7zInvokePayload } from "./backend-ipc-test-utils";
 
 type AnyInvoke = (cmd: string, payload?: unknown) => unknown;
 
@@ -16,7 +18,12 @@ function mountExtractDom(): void {
         </div>
         <div id="extract-status">Preparing...</div>
         <div id="extract-error" hidden>
-          <div class="extract-error-title">Extraction failed</div>
+          <div class="extract-error-header">
+            <div class="extract-error-title">Extraction failed</div>
+            <button type="button" id="copy-error-detail" hidden>
+              Copy details
+            </button>
+          </div>
           <pre id="error-detail"></pre>
         </div>
       </div>
@@ -26,19 +33,36 @@ function mountExtractDom(): void {
         <button id="close-btn" hidden>Close</button>
       </div>
     </div>
+    <div id="input-modal-overlay" hidden>
+      <div class="modal">
+        <h2 id="input-modal-title"></h2>
+        <label id="input-modal-label" for="input-modal-field"></label>
+        <input id="input-modal-field" />
+        <button id="input-modal-confirm">OK</button>
+        <button id="input-modal-cancel">Cancel</button>
+        <button id="input-modal-cancel-x">Close</button>
+      </div>
+    </div>
   `;
 }
 
 async function flushAsync(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
+  // Extract startup now includes probe + archive validation + run_7z.
+  for (let i = 0; i < 12; i++) {
+    await Promise.resolve();
+  }
 }
 
 async function setupAndRun(
   invokeImpl?: AnyInvoke,
   options?: {
-    injected?: { archive: string; destination: string };
+    injected?: {
+      archive: string;
+      destination: string;
+    };
     listenerRegistrations?: Array<Promise<() => void>>;
+    /** Leave false when run_7z is intentionally left pending (cancel tests). */
+    waitForSettle?: boolean;
   },
 ): Promise<{
   invokeMock: ReturnType<
@@ -50,6 +74,7 @@ async function setupAndRun(
     destroy: ReturnType<typeof vi.fn>;
   };
   progressUnlisten: ReturnType<typeof vi.fn>;
+  progressListeners: Map<string, (event: { payload: unknown }) => void>;
 }> {
   vi.resetModules();
   mountExtractDom();
@@ -76,32 +101,86 @@ async function setupAndRun(
   };
 
   const listenerRegistrations = [...(options?.listenerRegistrations ?? [])];
-  vi.mocked(eventApi.listen).mockImplementation(
-    () => listenerRegistrations.shift() ?? Promise.resolve(progressUnlisten),
-  );
+  const progressListeners = new Map<
+    string,
+    (event: { payload: unknown }) => void
+  >();
+  vi.mocked(eventApi.listen).mockImplementation((event, handler) => {
+    progressListeners.set(
+      String(event),
+      handler as (event: { payload: unknown }) => void,
+    );
+    return listenerRegistrations.shift() ?? Promise.resolve(progressUnlisten);
+  });
   vi.mocked(webviewApi.getCurrentWebviewWindow).mockReturnValue(
     appWindow as never,
   );
 
-  const defaultInvoke: AnyInvoke = async (cmd, _payload) => {
+  const defaultInvoke: AnyInvoke = async (cmd, payload) => {
     if (cmd === "get_extract_paths") return ["/tmp/archive.zip"];
+    if (cmd === "probe_7z") return "25.01";
+    if (cmd === "validate_archive_paths") {
+      const pathsJson =
+        typeof payload === "object" &&
+        payload &&
+        "pathsJson" in payload &&
+        typeof (payload as { pathsJson?: unknown }).pathsJson === "string"
+          ? (payload as { pathsJson: string }).pathsJson
+          : "[]";
+      let paths: string[] = [];
+      try {
+        paths = JSON.parse(pathsJson) as string[];
+      } catch {
+        paths = [];
+      }
+      return paths.map((path) => ({
+        path,
+        valid: true,
+        reason: null,
+        identity: `identity:${path}`,
+      }));
+    }
     if (cmd === "run_7z") {
       return { stdout: "", stderr: "", code: 0 };
     }
+    if (cmd === "inspect_extract_destination") return "missing";
+    if (cmd === "load_settings") {
+      return JSON.stringify({ extractAutoCloseSeconds: 1.5 });
+    }
     if (cmd === "close_extract_window") return undefined;
     if (cmd === "open_path") return undefined;
-    if (cmd === "cancel_7z") return undefined;
+    if (cmd === "cancel_7z") return true;
     return undefined;
   };
 
-  invokeMock.mockImplementation((cmd, payload) =>
-    Promise.resolve((invokeImpl ?? defaultInvoke)(cmd, payload)),
-  );
+  invokeMock.mockImplementation(async (cmd, payload) => {
+    if (invokeImpl) {
+      const custom = await invokeImpl(cmd, payload);
+      if (custom !== undefined) return custom;
+    }
+    return defaultInvoke(cmd, payload);
+  });
 
   await import("../extract-window");
   await flushAsync();
+  if (options?.waitForSettle !== false) {
+    await vi.waitFor(
+      () => {
+        const status =
+          document.getElementById("extract-status")?.textContent ?? "";
+        if (
+          status === "Extracting..." ||
+          status === "Starting extraction..." ||
+          status === "Still working…"
+        ) {
+          throw new Error(`extract still in progress: ${status}`);
+        }
+      },
+      { timeout: 1000, interval: 5 },
+    );
+  }
 
-  return { invokeMock, appWindow, progressUnlisten };
+  return { invokeMock, appWindow, progressUnlisten, progressListeners };
 }
 
 beforeEach(() => {
@@ -114,6 +193,38 @@ beforeEach(() => {
 });
 
 describe("extract-window", () => {
+  it("blocks the native webview context menu unless debug is on", async () => {
+    await setupAndRun();
+    expect(isNativeWebviewContextMenuAllowed()).toBe(false);
+
+    await setupAndRun(async (cmd) => {
+      if (cmd === "load_settings") {
+        return JSON.stringify({
+          debug: true,
+          extractAutoCloseSeconds: -1,
+        });
+      }
+      return undefined;
+    });
+    expect(isNativeWebviewContextMenuAllowed()).toBe(true);
+  });
+
+  it("disables auto-close when load_settings fails", async () => {
+    await setupAndRun(async (cmd) => {
+      if (cmd === "load_settings") {
+        throw new Error("settings unavailable");
+      }
+      if (cmd === "run_7z") {
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      return undefined;
+    });
+
+    expect(
+      (document.getElementById("close-btn") as HTMLButtonElement).textContent,
+    ).toBe("Close");
+  });
+
   it("applies the system dark theme and enabled window effects", async () => {
     const matchMedia = vi.fn().mockReturnValue({ matches: true });
     Object.defineProperty(window, "matchMedia", {
@@ -160,16 +271,11 @@ describe("extract-window", () => {
     );
   });
 
-  it("uses injected archive/destination without waiting on get_extract_paths", async () => {
-    const claim = {
-      resolve: null as ((value: string[]) => void) | null,
-    };
+  it("uses injected archive/destination and still drains get_extract_paths", async () => {
     const { invokeMock } = await setupAndRun(
       async (cmd) => {
         if (cmd === "get_extract_paths") {
-          return await new Promise<string[]>((resolve) => {
-            claim.resolve = resolve;
-          });
+          return [];
         }
         if (cmd === "run_7z") {
           return { stdout: "", stderr: "", code: 0 };
@@ -192,7 +298,10 @@ describe("extract-window", () => {
     expect(
       (document.getElementById("extract-dest") as HTMLElement).textContent,
     ).toBe("/Downloads/packed");
-    expect(invokeMock).toHaveBeenCalledWith("run_7z", {
+    const runCall = invokeMock.mock.calls.find(
+      ([command]) => command === "run_7z",
+    );
+    expect(decodeRun7zInvokePayload(runCall?.[1])).toEqual({
       args: [
         "x",
         "-o/Downloads/packed",
@@ -202,9 +311,136 @@ describe("extract-window", () => {
         "--",
         "/Downloads/packed.7z",
       ],
+      expectedArchiveIdentity: "identity:/Downloads/packed.7z",
+    });
+    expect(
+      invokeMock.mock.calls.some(([name]) => name === "get_extract_paths"),
+    ).toBe(true);
+  });
+
+  it("warns before quick extract merges into an existing destination", async () => {
+    const { invokeMock } = await setupAndRun(
+      async (cmd) => {
+        if (cmd === "inspect_extract_destination") return "directory";
+        return undefined;
+      },
+      {
+        injected: {
+          archive: "/Downloads/packed.7z",
+          destination: "/Downloads/packed",
+        },
+        waitForSettle: false,
+      },
+    );
+
+    await vi.waitFor(() => {
+      expect(
+        (document.getElementById("input-modal-overlay") as HTMLElement).hidden,
+      ).toBe(false);
+    });
+    expect(document.getElementById("input-modal-title")?.textContent).toBe(
+      "Destination already exists",
+    );
+    (
+      document.getElementById("input-modal-cancel") as HTMLButtonElement
+    ).click();
+
+    await vi.waitFor(() => {
+      expect(document.getElementById("extract-status")?.textContent).toBe(
+        "Cancelled",
+      );
+    });
+    expect(invokeMock.mock.calls.some(([name]) => name === "run_7z")).toBe(
+      false,
+    );
+  });
+
+  it("rejects a destination that is not a real directory", async () => {
+    const { invokeMock } = await setupAndRun(
+      async (cmd) => {
+        if (cmd === "inspect_extract_destination") return "invalid";
+        return undefined;
+      },
+      {
+        injected: {
+          archive: "/Downloads/packed.7z",
+          destination: "/Downloads/packed",
+        },
+      },
+    );
+
+    expect(
+      (document.getElementById("input-modal-overlay") as HTMLElement).hidden,
+    ).toBe(true);
+    expect(invokeMock.mock.calls.some(([name]) => name === "run_7z")).toBe(
+      false,
+    );
+    expect(document.getElementById("error-detail")?.textContent).toContain(
+      "not a file, symbolic link, or reparse point",
+    );
+  });
+
+  it("waits for progress listeners and then renders total extraction percent", async () => {
+    const deferred = {
+      resolveStructured: null as ((unlisten: () => void) => void) | null,
+      resolveRaw: null as ((unlisten: () => void) => void) | null,
+      resolveRun: null as ((result: unknown) => void) | null,
+    };
+    const structuredRegistration = new Promise<() => void>((resolve) => {
+      deferred.resolveStructured = resolve;
+    });
+    const rawRegistration = new Promise<() => void>((resolve) => {
+      deferred.resolveRaw = resolve;
     });
 
-    claim.resolve?.([]);
+    const { invokeMock, progressListeners } = await setupAndRun(
+      async (cmd) => {
+        if (cmd === "get_extract_paths") return ["/tmp/archive.7z"];
+        if (cmd === "run_7z") {
+          return await new Promise((resolve) => {
+            deferred.resolveRun = resolve;
+          });
+        }
+        return undefined;
+      },
+      {
+        listenerRegistrations: [structuredRegistration, rawRegistration],
+        waitForSettle: false,
+      },
+    );
+
+    expect(invokeMock.mock.calls.some(([name]) => name === "run_7z")).toBe(
+      false,
+    );
+
+    deferred.resolveStructured?.(vi.fn());
+    deferred.resolveRaw?.(vi.fn());
+    await vi.waitFor(() => {
+      expect(invokeMock.mock.calls.some(([name]) => name === "run_7z")).toBe(
+        true,
+      );
+    });
+
+    progressListeners.get("7z-progress-structured")?.({
+      payload: { currentFile: "folder/file.bin", percent: 37 },
+    });
+    await flushAsync();
+    const fill = document.getElementById("progress-fill") as HTMLElement;
+    expect(fill.classList.contains("is-determinate")).toBe(true);
+    expect(fill.classList.contains("pct-37")).toBe(true);
+    expect(fill.classList.contains("is-indeterminate")).toBe(false);
+    expect(
+      document
+        .getElementById("extract-progress")
+        ?.getAttribute("aria-valuenow"),
+    ).toBe("37");
+    expect(
+      document
+        .getElementById("extract-progress")
+        ?.getAttribute("data-saw-structured-percent"),
+    ).toBe("true");
+
+    deferred.resolveRun?.({ stdout: "", stderr: "", code: 0 });
     await flushAsync();
   });
 
@@ -226,10 +462,24 @@ describe("extract-window", () => {
     ).toContain("missing sidecar");
   });
 
-  it("treats warning exits as failed transactional extraction", async () => {
-    await setupAndRun(async (cmd, _payload) => {
+  it("treats warning exits as failed extraction with warning detail", async () => {
+    await setupAndRun(async (cmd, payload) => {
       if (cmd === "get_extract_paths") return ["/tmp/archive.7z"];
+      if (cmd === "probe_7z") return "25.01";
+      if (cmd === "validate_archive_paths") {
+        return [
+          {
+            path: "/tmp/archive.7z",
+            valid: true,
+            reason: null,
+            identity: "identity:/tmp/archive.7z",
+          },
+        ];
+      }
       if (cmd === "run_7z") {
+        expect(decodeRun7zInvokePayload(payload).expectedArchiveIdentity).toBe(
+          "identity:/tmp/archive.7z",
+        );
         return { stdout: "", stderr: "minor warning", code: 1 };
       }
       return undefined;
@@ -242,13 +492,121 @@ describe("extract-window", () => {
       (document.getElementById("extract-error") as HTMLElement).hidden,
     ).toBe(false);
     expect(
-      (document.querySelector(".extract-error-title") as HTMLElement)
-        .textContent,
-    ).toBe("Extraction failed");
+      (document.getElementById("error-detail") as HTMLElement).textContent,
+    ).toContain("minor warning");
+  });
+
+  it("includes copyable debug dump on extract failure when settings.debug is true", async () => {
+    await setupAndRun(async (cmd) => {
+      if (cmd === "load_settings") {
+        return JSON.stringify({
+          debug: true,
+          extractAutoCloseSeconds: -1,
+        });
+      }
+      if (cmd === "get_extract_paths") return ["/tmp/archive.7z"];
+      if (cmd === "run_7z") {
+        return {
+          stdout: "stdout body",
+          stderr: "stderr body",
+          code: 2,
+        };
+      }
+      return undefined;
+    });
+
+    const text =
+      (document.getElementById("error-detail") as HTMLElement).textContent ??
+      "";
+    expect(text).toContain("--- debug ---");
+    expect(text).toContain("exit: 2");
+    expect(text).toContain("cmd: 7z x");
+    expect(text).toContain("stdout body");
+    expect(text).toContain("stderr body");
     expect(
-      (document.getElementById("open-destination-btn") as HTMLButtonElement)
+      (document.getElementById("copy-error-detail") as HTMLButtonElement)
         .hidden,
-    ).toBe(true);
+    ).toBe(false);
+  });
+
+  it("retries when header-encrypted member preflight requests a password", async () => {
+    let runCount = 0;
+    const { invokeMock } = await setupAndRun(
+      async (cmd, payload) => {
+        if (cmd === "get_extract_paths") return ["/tmp/headers.7z"];
+        if (cmd === "run_7z") {
+          runCount += 1;
+          if (runCount === 1) {
+            throw new Error(
+              "Could not list archive members for path safety: Enter password:",
+            );
+          }
+          expect(decodeRun7zInvokePayload(payload).args).toContain("-psecret");
+          return { stdout: "", stderr: "", code: 0 };
+        }
+        return undefined;
+      },
+      { waitForSettle: false },
+    );
+
+    await vi.waitFor(() => {
+      expect(
+        (document.getElementById("input-modal-overlay") as HTMLElement).hidden,
+      ).toBe(false);
+    });
+    (document.getElementById("input-modal-field") as HTMLInputElement).value =
+      "secret";
+    (
+      document.getElementById("input-modal-confirm") as HTMLButtonElement
+    ).click();
+
+    await vi.waitFor(() => {
+      expect(
+        invokeMock.mock.calls.filter(([name]) => name === "run_7z"),
+      ).toHaveLength(2);
+      expect(document.getElementById("extract-status")?.textContent).toBe(
+        "Done",
+      );
+    });
+  });
+
+  it("ignores Finalizing progress while waiting for a password", async () => {
+    let runCount = 0;
+    const { progressListeners } = await setupAndRun(
+      async (cmd) => {
+        if (cmd === "get_extract_paths") return ["/tmp/headers.7z"];
+        if (cmd === "run_7z") {
+          runCount += 1;
+          if (runCount === 1) {
+            throw new Error(
+              "Could not list archive members for path safety: Enter password:",
+            );
+          }
+          return new Promise(() => undefined);
+        }
+        return undefined;
+      },
+      { waitForSettle: false },
+    );
+
+    await vi.waitFor(() => {
+      expect(
+        (document.getElementById("input-modal-overlay") as HTMLElement).hidden,
+      ).toBe(false);
+    });
+    const cancelBtn = document.getElementById(
+      "cancel-btn",
+    ) as HTMLButtonElement;
+    expect(cancelBtn.disabled).toBe(false);
+
+    progressListeners.get("7z-progress-structured")?.({
+      payload: { currentFile: "Finalizing…", percent: 100 },
+    });
+    await flushAsync();
+    expect(cancelBtn.disabled).toBe(false);
+    expect(document.getElementById("extract-status")?.textContent).not.toBe(
+      "Finalizing…",
+    );
   });
 
   it("shows failure details for non-warning extraction failures", async () => {
@@ -285,6 +643,23 @@ describe("extract-window", () => {
     ).toBe(false);
   });
 
+  it("removes auto-close abort listeners when the countdown expires", async () => {
+    vi.useFakeTimers();
+    const removeListener = vi.spyOn(window, "removeEventListener");
+
+    await setupAndRun();
+    vi.advanceTimersByTime(1600);
+    await flushAsync();
+
+    for (const eventName of ["mousemove", "keydown", "click"]) {
+      expect(removeListener).toHaveBeenCalledWith(
+        eventName,
+        expect.any(Function),
+      );
+    }
+    removeListener.mockRestore();
+  });
+
   it("wires the native minimize titlebar action", async () => {
     const { appWindow } = await setupAndRun();
 
@@ -319,19 +694,22 @@ describe("extract-window", () => {
 
   it("cancels a running extraction via cancel_7z", async () => {
     let resolveRun: ((value: unknown) => void) | null = null;
-    const { invokeMock } = await setupAndRun(async (cmd) => {
-      if (cmd === "get_extract_paths") return ["/tmp/archive.7z"];
-      if (cmd === "run_7z") {
-        return await new Promise((resolve) => {
-          resolveRun = resolve;
-        });
-      }
-      if (cmd === "cancel_7z") {
-        resolveRun?.({ stdout: "", stderr: "", code: -1 });
+    const { invokeMock } = await setupAndRun(
+      async (cmd) => {
+        if (cmd === "get_extract_paths") return ["/tmp/archive.7z"];
+        if (cmd === "run_7z") {
+          return await new Promise((resolve) => {
+            resolveRun = resolve;
+          });
+        }
+        if (cmd === "cancel_7z") {
+          resolveRun?.({ stdout: "", stderr: "", code: -1 });
+          return true;
+        }
         return undefined;
-      }
-      return undefined;
-    });
+      },
+      { waitForSettle: false },
+    );
 
     expect(
       (document.getElementById("cancel-btn") as HTMLButtonElement).disabled,
@@ -342,6 +720,38 @@ describe("extract-window", () => {
     await flushAsync();
 
     expect(invokeMock).toHaveBeenCalledWith("cancel_7z");
+  });
+
+  it("re-enables Cancel after a failed cancel_7z so the user can retry", async () => {
+    await setupAndRun(
+      async (cmd) => {
+        if (cmd === "get_extract_paths") return ["/tmp/archive.7z"];
+        if (cmd === "run_7z") {
+          return await new Promise(() => {
+            /* keep extraction running */
+          });
+        }
+        if (cmd === "cancel_7z") {
+          throw new Error("Could not stop 7z safely: permission denied");
+        }
+        return undefined;
+      },
+      { waitForSettle: false },
+    );
+
+    const cancelBtn = document.getElementById(
+      "cancel-btn",
+    ) as HTMLButtonElement;
+    const closeBtn = document.getElementById("close-btn") as HTMLButtonElement;
+    cancelBtn.click();
+    await flushAsync();
+    await flushAsync();
+
+    expect(cancelBtn.disabled).toBe(false);
+    expect(closeBtn.disabled).toBe(false);
+    expect(
+      (document.getElementById("error-detail") as HTMLElement).textContent,
+    ).toContain("Could not stop 7z safely");
   });
 
   it("removes a registered progress listener when its sibling registration fails", async () => {
@@ -397,7 +807,10 @@ describe("extract-window", () => {
       (document.getElementById("extract-dest") as HTMLElement).textContent,
     ).toBe("/Downloads/test");
 
-    expect(invokeMock).toHaveBeenCalledWith("run_7z", {
+    const runCall = invokeMock.mock.calls.find(
+      ([command]) => command === "run_7z",
+    );
+    expect(decodeRun7zInvokePayload(runCall?.[1])).toEqual({
       args: [
         "x",
         "-o/Downloads/test",
@@ -407,6 +820,7 @@ describe("extract-window", () => {
         "--",
         "/Downloads/test.zip",
       ],
+      expectedArchiveIdentity: "identity:/Downloads/test.zip",
     });
     expect(
       invokeMock.mock.calls.filter(([name]) => name === "run_7z"),
@@ -472,6 +886,8 @@ describe("sanitizeStatusFileName", () => {
     expect(sanitizeStatusFileName("░░░░ ░░░░- insurance 2026.pdf")).toBe(
       "insurance 2026.pdf",
     );
+    expect(sanitizeStatusFileName("*** file.txt")).toBe("file.txt");
+    expect(sanitizeStatusFileName("■■■ report.pdf")).toBe("report.pdf");
   });
 
   it("keeps unicode letters and hidden-style names", async () => {
@@ -479,6 +895,30 @@ describe("sanitizeStatusFileName", () => {
     const { sanitizeStatusFileName } = await import("../extract-window");
     expect(sanitizeStatusFileName("报告.pdf")).toBe("报告.pdf");
     expect(sanitizeStatusFileName(".hidden.txt")).toBe(".hidden.txt");
+    expect(sanitizeStatusFileName("(report).txt")).toBe("(report).txt");
+    expect(sanitizeStatusFileName("[draft] notes.txt")).toBe(
+      "[draft] notes.txt",
+    );
+  });
+
+  it("logs an injected-session queue drain failure without blocking extraction", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await setupAndRun(
+      async (cmd) => {
+        if (cmd === "get_extract_paths") throw new Error("queue unavailable");
+        if (cmd === "run_7z") return { stdout: "", stderr: "", code: 0 };
+        return undefined;
+      },
+      {
+        injected: { archive: "/tmp/injected.7z", destination: "/tmp/out" },
+      },
+    );
+
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringContaining("Could not drain quick-extract launch queue"),
+    );
+    expect(document.getElementById("extract-status")?.textContent).toBe("Done");
+    warning.mockRestore();
   });
 
   it("returns empty for replacement-only junk", async () => {

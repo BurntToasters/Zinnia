@@ -1,14 +1,21 @@
 import { invoke } from "@tauri-apps/api/core";
-import { message, open, save } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { $, parseThreads } from "../utils";
 import { SETTING_DEFAULTS, state } from "../state";
-import { devLog, log, setRunning, setStatus } from "../ui";
+import { devLog, getMode, log, setRunning, setStatus } from "../ui";
+import {
+  acquireIncomingPathLock,
+  isIncomingPathBusy,
+  releaseIncomingPathLock,
+} from "../incoming-paths";
+import { ensureArchivePaths } from "../archive-rules";
 import {
   normalizeCompressionSecurityOptions,
   validateCompressionSecurityOptions,
 } from "../compression-security";
 import { showToast } from "../toast";
 import { SAFE_EXTRACT_OVERWRITE_MODE } from "../extract-policy";
+import { debugLog, debugLogCommand, isDebugEnabled } from "../debug-mode";
 import {
   buildCompressionMethodSwitches,
   readSplitSize,
@@ -19,24 +26,58 @@ import { sanitizeCommandArgsForPreview } from "./preview";
 import {
   clearPasswordFields,
   ensureRuntimeReady,
+  invokeGuardedRun7z,
   logCommandResult,
   runWithPasswordRetry,
+  truncateForDialog,
   showOperationError,
-  type Run7zResult,
 } from "./runtime";
 import { confirmZipSymlinkRisk } from "./compress-fidelity";
 
 let mutationDialogOpen = false;
 
+type MutationDialogLease<T> = {
+  value: T;
+  release: () => void;
+};
+
 async function runMutationDialog<T>(
   dialog: () => Promise<T>,
-): Promise<T | null> {
-  if (mutationDialogOpen || state.running) return null;
+): Promise<MutationDialogLease<T> | null> {
+  if (mutationDialogOpen || isIncomingPathBusy()) return null;
   mutationDialogOpen = true;
-  try {
-    return await dialog();
-  } finally {
+  let locked = false;
+  let leased = false;
+  const release = () => {
+    if (locked) {
+      locked = false;
+      releaseIncomingPathLock();
+    }
     mutationDialogOpen = false;
+  };
+  try {
+    await acquireIncomingPathLock();
+    locked = true;
+    const mode = getMode();
+    const inputs = JSON.stringify(state.inputs);
+    const value = await dialog();
+    if (
+      state.running ||
+      state.operationPreparing ||
+      getMode() !== mode ||
+      JSON.stringify(state.inputs) !== inputs
+    ) {
+      return null;
+    }
+    leased = true;
+    return { value, release };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Could not open archive mutation dialog: ${msg}`, "error");
+    setStatus("Could not open the file dialog", 3000);
+    return null;
+  } finally {
+    if (!leased) release();
   }
 }
 
@@ -44,28 +85,61 @@ export async function addFilesToArchive(): Promise<void> {
   if (state.running) return;
   const archive = state.inputs[0];
   if (!archive) {
-    await message("Open an archive first to add files to it.", {
-      title: "No archive",
-      kind: "warning",
-    });
+    showToast("Open an archive first to add files to it.", "info");
+    return;
+  }
+  if (!/\.(?:7z|zip|tar)$/i.test(archive)) {
+    showToast(
+      "This archive format cannot be updated in place. Convert it to 7z, ZIP, or TAR, or create a new archive.",
+      "info",
+      0,
+    );
     return;
   }
 
-  const selection = await runMutationDialog(() =>
+  const picked = await runMutationDialog(() =>
     open({ multiple: true, directory: false }),
   );
+  if (!picked) return;
+  const selection = picked.value;
   const files = Array.isArray(selection)
     ? selection
     : selection
       ? [selection]
       : [];
-  if (files.length === 0) return;
+  if (files.length === 0) {
+    picked.release();
+    return;
+  }
 
   let refreshAfterRun = false;
-  setRunning(true);
   state.cancelRequested = false;
+  setRunning(true);
+  picked.release();
   try {
     if (!(await ensureRuntimeReady())) return;
+    if (state.cancelRequested) {
+      setStatus("Cancelled", 2000);
+      return;
+    }
+    const [validation] = await ensureArchivePaths(
+      [archive],
+      "extract",
+      undefined,
+      true,
+    );
+    if (!validation?.identity) {
+      throw new Error("Could not capture a stable archive identity.");
+    }
+    const outputSelectionToken = await invoke<string>(
+      "archive_output_selection_token",
+      { path: archive },
+    );
+    if (!outputSelectionToken || outputSelectionToken === "absent") {
+      throw new Error(
+        "Archive output disappeared after it was selected; choose the current file again.",
+      );
+    }
     const threads = parseThreads(
       $<HTMLInputElement>("threads").value,
       SETTING_DEFAULTS.threads,
@@ -73,10 +147,17 @@ export async function addFilesToArchive(): Promise<void> {
     const args = ["u", "-sse", "-snl", "-snh", "-spd"];
     const archivePassword = $<HTMLInputElement>("browse-password").value;
     if (archivePassword) args.push(`-p${archivePassword}`);
+    const zipDest = archive.toLowerCase().endsWith(".zip");
+    const cached = state.browseArchiveInfoByPath.get(archive);
+    if (zipDest && cached?.method?.toLowerCase().includes("zipcrypto")) {
+      throw new Error(
+        "This ZIP still has ZipCrypto members. Convert it to a new AES-256 ZIP instead of adding files in place.",
+      );
+    }
+    if (archivePassword && zipDest) args.push("-mem=AES256");
+    if (zipDest) args.push("-mcu=on");
     if (threads) args.push(`-mmt=${threads}`);
     args.push(archive, "--", ...files);
-
-    const zipDest = archive.toLowerCase().endsWith(".zip");
     if (zipDest && !(await confirmZipSymlinkRisk("zip", files))) {
       setStatus("Cancelled", 2000);
       return;
@@ -84,20 +165,32 @@ export async function addFilesToArchive(): Promise<void> {
 
     setStatus("Adding files");
     devLog(`7z ${sanitizeCommandArgsForPreview(args).join(" ")}`);
-    const result = await runWithPasswordRetry(args, true, "Add files");
-    if (state.cancelRequested) {
+    debugLogCommand(args);
+    const result = await runWithPasswordRetry(
+      args,
+      true,
+      "Add files",
+      outputSelectionToken,
+    );
+    if (state.cancelRequested && result.code !== 0) {
       setStatus("Cancelled", 2000);
       return;
     }
-    logCommandResult(result.stdout, result.stderr);
+    logCommandResult(result.stdout, result.stderr, result.code);
 
     if (result.code !== 0) {
       setStatus("Error", 3000, result.stderr || "Operation failed.");
-      await showOperationError(result.code, result.stdout, result.stderr);
+      if (isDebugEnabled()) {
+        debugLog(`Add files failed with exit code ${result.code}.`);
+      }
+      showOperationError(result.code, result.stdout, result.stderr);
       return;
     }
 
     setStatus("Done", 2000);
+    if (isDebugEnabled()) {
+      debugLog(`Added ${files.length} file(s) to archive.`);
+    }
     showToast(
       `Added ${files.length} file${files.length === 1 ? "" : "s"} to the archive.`,
       "success",
@@ -106,8 +199,13 @@ export async function addFilesToArchive(): Promise<void> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Error: ${msg}`, "error");
+    if (isDebugEnabled()) debugLog(`Add files threw: ${msg}`);
     setStatus("Error", 3000, msg);
-    await message(msg, { title: "Error", kind: "error" });
+    showToast(
+      `Add-files operation failed: ${truncateForDialog(msg, 1000)}`,
+      "error",
+      0,
+    );
   } finally {
     setRunning(false);
     if (!refreshAfterRun) clearPasswordFields();
@@ -120,10 +218,7 @@ export async function convertArchive(): Promise<void> {
   if (state.running) return;
   const archive = state.inputs[0];
   if (!archive) {
-    await message("Open an archive first to convert it.", {
-      title: "No archive",
-      kind: "warning",
-    });
+    showToast("Open an archive first to convert it.", "info");
     return;
   }
 
@@ -136,32 +231,74 @@ export async function convertArchive(): Promise<void> {
     rawEncryptHeaders,
   );
   if (securityError) {
-    await message(securityError, { title: "Invalid encryption options" });
+    showToast(securityError, "error", 0);
     return;
   }
   const { password: compressPassword, encryptHeaders } =
     normalizeCompressionSecurityOptions(format, rawPassword, rawEncryptHeaders);
-  const dest = await runMutationDialog(() =>
+  const picked = await runMutationDialog(() =>
     save({
       title: "Convert archive to",
       defaultPath: `converted.${format === "gzip" ? "gz" : format === "bzip2" ? "bz2" : format}`,
     }),
   );
-  if (!dest) return;
+  if (!picked) return;
+  const dest = picked.value;
+  if (!dest) {
+    picked.release();
+    return;
+  }
+  if ($<HTMLSelectElement>("format").value !== format) {
+    picked.release();
+    return;
+  }
   const extensionError = validateArchiveOutputExtension(dest, format);
   if (extensionError) {
-    await message(extensionError, {
-      title: "Invalid output filename",
-      kind: "warning",
-    });
+    picked.release();
+    showToast(extensionError, "error", 0);
     return;
   }
 
-  setRunning(true);
+  // Snapshot before the long extract so a file created in that window cannot
+  // be mistaken for an intentional overwrite target at recompress time.
+  let outputSelectionToken: string;
+  try {
+    outputSelectionToken = await invoke<string>(
+      "archive_output_selection_token",
+      {
+        path: dest,
+      },
+    );
+  } catch (err) {
+    picked.release();
+    const msg = err instanceof Error ? err.message : String(err);
+    showToast(
+      `Conversion setup failed: ${truncateForDialog(msg, 1000)}`,
+      "error",
+      0,
+    );
+    return;
+  }
+
   state.cancelRequested = false;
+  setRunning(true);
+  picked.release();
   let tempDir: string | null = null;
   try {
     if (!(await ensureRuntimeReady())) return;
+    if (state.cancelRequested) {
+      setStatus("Cancelled", 2000);
+      return;
+    }
+    const [validation] = await ensureArchivePaths(
+      [archive],
+      "extract",
+      undefined,
+      true,
+    );
+    if (!validation?.identity) {
+      throw new Error("Could not capture a stable archive identity.");
+    }
     tempDir = await invoke<string>("create_temp_extract_dir");
 
     const browsePassword = $<HTMLInputElement>("browse-password").value;
@@ -169,17 +306,34 @@ export async function convertArchive(): Promise<void> {
     const password = extractPassword || browsePassword;
 
     setStatus("Extracting for conversion");
-    const extractArgs = ["x", `-o${tempDir}`, SAFE_EXTRACT_OVERWRITE_MODE];
+    const extractArgs = [
+      "x",
+      `-o${tempDir}`,
+      SAFE_EXTRACT_OVERWRITE_MODE,
+      "-bb1",
+      "-bsp1",
+      "-spd",
+    ];
     if (password) extractArgs.push(`-p${password}`);
     extractArgs.push("--", archive);
-    const extract = await runWithPasswordRetry(extractArgs, true);
+    debugLogCommand(extractArgs);
+    const extract = await runWithPasswordRetry(
+      extractArgs,
+      true,
+      "Extract",
+      validation.identity,
+    );
     if (state.cancelRequested) {
       setStatus("Cancelled", 2000);
       return;
     }
+    logCommandResult(extract.stdout, extract.stderr, extract.code);
     if (extract.code !== 0) {
       setStatus("Error", 3000, extract.stderr || "Extraction failed.");
-      await showOperationError(extract.code, extract.stdout, extract.stderr);
+      if (isDebugEnabled()) {
+        debugLog(`Convert extract failed with exit code ${extract.code}.`);
+      }
+      showOperationError(extract.code, extract.stdout, extract.stderr);
       return;
     }
 
@@ -218,26 +372,34 @@ export async function convertArchive(): Promise<void> {
     }
     compress.push(dest, "--", ...children);
 
-    const result = await invoke<Run7zResult>("run_7z", { args: compress });
-    if (state.cancelRequested) {
+    debugLogCommand(compress);
+    const result = await invokeGuardedRun7z(compress, outputSelectionToken);
+    if (state.cancelRequested && result.code !== 0) {
       setStatus("Cancelled", 2000);
       return;
     }
-    logCommandResult(result.stdout, result.stderr);
+    logCommandResult(result.stdout, result.stderr, result.code);
     if (result.code !== 0) {
       setStatus("Error", 3000, result.stderr || "Conversion failed.");
-      await showOperationError(result.code, result.stdout, result.stderr);
+      if (isDebugEnabled()) {
+        debugLog(`Convert failed with exit code ${result.code}.`);
+      }
+      showOperationError(result.code, result.stdout, result.stderr);
       return;
     }
 
     setStatus("Done", 2000);
+    if (isDebugEnabled()) {
+      debugLog(`Converted archive to ${format.toUpperCase()}.`);
+    }
     showToast(`Converted archive to ${format.toUpperCase()}.`, "success");
     clearPasswordFields();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Error: ${msg}`, "error");
+    if (isDebugEnabled()) debugLog(`Convert threw: ${msg}`);
     setStatus("Error", 3000, msg);
-    await message(msg, { title: "Conversion error", kind: "error" });
+    showToast(`Conversion failed: ${truncateForDialog(msg, 1000)}`, "error", 0);
   } finally {
     if (tempDir) {
       try {

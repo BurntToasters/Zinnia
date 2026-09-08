@@ -34,7 +34,8 @@ beforeEach(() => {
   state.inputs = [];
   state.running = false;
   state.lastAutoExtractDestination = null;
-  state.lastInputsSignature = "";
+  state.lastInputsSignature = "[]";
+  state.browseArchiveIdentityByPath.clear();
   state.browseArchiveInfoByPath.clear();
   state.browseSelectionsByArchive.clear();
   state.selectiveSearchQuery = "";
@@ -207,11 +208,15 @@ describe("setMode", () => {
   });
 
   it("clears browse session state when changing modes", () => {
+    const requestId = state.selectiveOpenRequestId;
     state.selectiveSearchQuery = "test";
     state.selectiveActiveArchive = "archive.7z";
+    state.browseArchiveIdentityByPath.set("archive.7z", "identity");
     setMode("extract");
     expect(state.selectiveSearchQuery).toBe("");
     expect(state.selectiveActiveArchive).toBeNull();
+    expect(state.browseArchiveIdentityByPath.size).toBe(0);
+    expect(state.selectiveOpenRequestId).toBeGreaterThan(requestId);
   });
 
   it("does not clear browse state when staying in same mode", () => {
@@ -233,6 +238,9 @@ describe("workspace and density", () => {
     setWorkspaceMode("power", { persist: false });
     expect(getWorkspaceMode()).toBe("power");
     expect(state.currentSettings.workspaceMode).toBe("power");
+    expect(
+      (document.getElementById("s-workspace-mode") as HTMLSelectElement).value,
+    ).toBe("power");
   });
 
   it("blocks workspace and settings mode changes during a run", () => {
@@ -321,7 +329,7 @@ describe("workspace and density", () => {
     expect(appWindow.setSize).toHaveBeenCalledOnce();
   });
 
-  it("clamps restored power window size before resizing", () => {
+  it("clamps restored power window size before resizing", async () => {
     const appWindow = {
       onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
       setSize: vi.fn().mockResolvedValue(undefined),
@@ -335,6 +343,7 @@ describe("workspace and density", () => {
     state.currentSettings.powerWindowHeight = 99999;
 
     setWorkspaceMode("power", { persist: false });
+    await resizeWorkspaceWindow("power");
 
     expect(appWindow.setResizable).toHaveBeenCalledWith(true);
     expect(appWindow.setMaximizable).toHaveBeenCalledWith(true);
@@ -661,11 +670,21 @@ describe("renderInputs", () => {
 
   it("clears browse session state when input signature changes", () => {
     state.inputs = ["old.7z"];
-    state.lastInputsSignature = "old.7z";
+    state.lastInputsSignature = JSON.stringify(state.inputs);
     state.selectiveSearchQuery = "something";
     renderInputs();
     state.inputs = ["new.7z"];
     renderInputs();
+    expect(state.selectiveSearchQuery).toBe("");
+  });
+
+  it("does not alias distinct input arrays containing newline paths", () => {
+    state.inputs = ["a\nb"];
+    state.lastInputsSignature = JSON.stringify(["a", "b"]);
+    state.selectiveSearchQuery = "must-clear";
+
+    renderInputs();
+
     expect(state.selectiveSearchQuery).toBe("");
   });
 });
@@ -742,5 +761,22 @@ describe("setRunning", () => {
     expect(state.running).toBe(true);
     setRunning(false);
     expect(state.running).toBe(false);
+  });
+
+  it("toggles existing remove controls without rebuilding the input DOM", () => {
+    state.inputs = ["large-input.7z"];
+    renderInputs();
+    const item = dom.inputList.querySelector(".list__item");
+    const remove = dom.inputList.querySelector(
+      "[data-input-remove]",
+    ) as HTMLButtonElement;
+
+    setRunning(true);
+    expect(remove.disabled).toBe(true);
+    expect(dom.inputList.querySelector(".list__item")).toBe(item);
+
+    setRunning(false);
+    expect(remove.disabled).toBe(false);
+    expect(dom.inputList.querySelector(".list__item")).toBe(item);
   });
 });

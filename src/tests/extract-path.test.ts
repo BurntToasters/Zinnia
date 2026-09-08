@@ -91,6 +91,17 @@ describe("deriveExtractFolderName", () => {
       "archive.bin_extracted",
     );
   });
+
+  it("does not extract into . or .. when the archive stem is a parent marker", () => {
+    expect(deriveExtractFolderName("..zip")).toBe("_extracted");
+    expect(deriveExtractFolderName("...zip")).toBe("_extracted");
+  });
+
+  it("rewrites all-dot and trailing-dot dest stems that Win32 would collapse", () => {
+    expect(deriveExtractFolderName("....zip")).toBe("_extracted");
+    expect(deriveExtractFolderName("notes. .zip")).toBe("_extracted");
+    expect(deriveExtractFolderName("notes..zip")).toBe("_extracted");
+  });
 });
 
 describe("shouldAutofillExtractDestination", () => {

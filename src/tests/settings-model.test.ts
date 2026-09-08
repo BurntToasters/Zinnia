@@ -68,11 +68,31 @@ describe("normalizeUserSettings", () => {
       localLoggingEnabled: false,
       osIntegrationDismissed: true,
       logVerbosity: "debug",
+      debug: true,
     });
     expect(result.autoCheckUpdates).toBe(false);
     expect(result.localLoggingEnabled).toBe(false);
     expect(result.osIntegrationDismissed).toBe(true);
     expect(result.logVerbosity).toBe("debug");
+    expect(result.debug).toBe(true);
+    expect(SETTING_DEFAULTS.debug).toBe(false);
+  });
+
+  it("rejects non-boolean debug and defaults to false", () => {
+    expect(normalizeUserSettings({ debug: "true" }).debug).toBe(false);
+    expect(normalizeUserSettings({ debug: 1 }).debug).toBe(false);
+  });
+
+  it("accepts debugConsolePoppedOut and defaults to false", () => {
+    expect(
+      normalizeUserSettings({ debugConsolePoppedOut: true })
+        .debugConsolePoppedOut,
+    ).toBe(true);
+    expect(
+      normalizeUserSettings({ debugConsolePoppedOut: "yes" })
+        .debugConsolePoppedOut,
+    ).toBe(false);
+    expect(SETTING_DEFAULTS.debugConsolePoppedOut).toBe(false);
   });
 
   it("accepts valid updateChannel", () => {
@@ -181,6 +201,24 @@ describe("normalizeUserSettings", () => {
     });
     expect(result.customPresets[1].name).toBe("Solid");
     expect(result.customPresets[1].format).toBe(SETTING_DEFAULTS.format);
+  });
+
+  it("drops custom presets whose string fields are present but invalid", () => {
+    const result = normalizeUserSettings({
+      customPresets: [
+        {
+          name: "Hostile",
+          format: "rar",
+          level: "99",
+          method: "@listfile",
+          dict: "999g",
+          wordSize: "999",
+          solid: "../../escape",
+        },
+      ],
+    });
+
+    expect(result.customPresets).toHaveLength(0);
   });
 
   it("falls back when customPresets is not an array", () => {

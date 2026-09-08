@@ -3,6 +3,7 @@ import { confirm, open, save } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { state } from "../state";
+import { decodeRun7zInvokePayload } from "./backend-ipc-test-utils";
 
 const uiMocks = vi.hoisted(() => {
   const runtime = {
@@ -40,11 +41,25 @@ const uiMocks = vi.hoisted(() => {
   return {
     runtime,
     log: vi.fn(),
+    setStatus: vi.fn(),
     setMode: vi.fn((next: "add" | "extract" | "browse") => {
       runtime.mode = next;
     }),
     renderInputs: vi.fn(),
     clearBrowsePasswordFields,
+    resetPasswordFieldControl: (inputId: string, toggleId: string) => {
+      const input = document.getElementById(inputId) as HTMLInputElement | null;
+      const toggle = document.getElementById(
+        toggleId,
+      ) as HTMLButtonElement | null;
+      if (input) {
+        input.value = "";
+        input.type = "password";
+      }
+      if (!toggle) return;
+      toggle.textContent = "Show";
+      toggle.setAttribute("aria-pressed", "false");
+    },
     setBrowsePasswordFieldVisible: vi.fn((visible: boolean) => {
       const field = document.getElementById("browse-password-field");
       if (field) field.hidden = !visible;
@@ -69,6 +84,15 @@ const depMocks = vi.hoisted(() => ({
   cancelAction: vi.fn(),
   browseArchive: vi.fn().mockResolvedValue(null),
   testArchive: vi.fn().mockResolvedValue("passed"),
+  looksLikePasswordRequiredError: vi.fn().mockReturnValue(false),
+  parseArchiveListing: vi.fn().mockReturnValue({
+    type: "7z",
+    physicalSize: 10,
+    method: "LZMA2",
+    solid: false,
+    encrypted: false,
+    entries: [],
+  }),
   chooseOutput: vi.fn().mockResolvedValue(undefined),
   chooseOutputIfCurrent: vi.fn().mockResolvedValue(undefined),
   chooseExtract: vi.fn().mockResolvedValue(undefined),
@@ -85,11 +109,13 @@ const depMocks = vi.hoisted(() => ({
 
 vi.mock("../ui", () => ({
   log: uiMocks.log,
+  setStatus: uiMocks.setStatus,
   getWorkspaceMode: () => uiMocks.runtime.workspaceMode,
   getMode: () => uiMocks.runtime.mode,
   setMode: uiMocks.setMode,
   renderInputs: uiMocks.renderInputs,
   clearBrowsePasswordFields: uiMocks.clearBrowsePasswordFields,
+  resetPasswordFieldControl: uiMocks.resetPasswordFieldControl,
   setBrowsePasswordFieldVisible: uiMocks.setBrowsePasswordFieldVisible,
   registerBasicHooks: uiMocks.registerBasicHooks,
   triggerIconRefresh: vi.fn(),
@@ -103,6 +129,7 @@ vi.mock("../presets", () => ({
 }));
 
 vi.mock("../archive-rules", () => ({
+  MAX_ARCHIVE_PATHS: 4096,
   validateArchivePaths: depMocks.validateArchivePaths,
 }));
 
@@ -111,6 +138,8 @@ vi.mock("../archive", () => ({
   cancelAction: depMocks.cancelAction,
   browseArchive: depMocks.browseArchive,
   testArchive: depMocks.testArchive,
+  looksLikePasswordRequiredError: depMocks.looksLikePasswordRequiredError,
+  parseArchiveListing: depMocks.parseArchiveListing,
 }));
 
 vi.mock("../prompt-modal", () => ({
@@ -152,6 +181,9 @@ import {
   updateBasicRunningState,
   updateBasicStatus,
 } from "../basic";
+import { isArchiveEncrypted } from "../basic/actions";
+import { setBasicBarDeterminate, resetBasicBar } from "../basic/progress";
+import { setSevenZipRunInFlight } from "../archive/runtime";
 
 const openMock = vi.mocked(open);
 const confirmMock = vi.mocked(confirm);
@@ -225,6 +257,9 @@ function mountBasicDom(): void {
   addEl(root, "div", "basic-input-list");
   addEl(root, "div", "basic-extract-archive-name");
   addEl(root, "div", "basic-extract-archive-meta");
+  const extractArchiveInfo = addEl(root, "div", "basic-extract-archive-info");
+  extractArchiveInfo.setAttribute("role", "button");
+  extractArchiveInfo.tabIndex = 0;
   addEl(root, "div", "basic-browse-archive-name");
   addEl(root, "div", "basic-browse-archive-meta");
   addEl(root, "div", "basic-browse-summary");
@@ -240,6 +275,7 @@ function mountBasicDom(): void {
   addEl(root, "button", "basic-toggle-password");
   addEl(root, "button", "basic-compress-open-dest");
   addEl(root, "button", "basic-compress-again");
+  addEl(root, "button", "basic-compress-home");
 
   addEl(root, "button", "basic-choose-extract");
   addEl(root, "button", "basic-run-extract");
@@ -248,11 +284,23 @@ function mountBasicDom(): void {
   addEl(root, "button", "basic-toggle-extract-password");
   addEl(root, "button", "basic-extract-open-dest");
   addEl(root, "button", "basic-extract-another");
+  addEl(root, "button", "basic-extract-completion-close");
+  addEl(root, "button", "basic-extract-home");
 
   addEl(root, "button", "basic-browse-extract-all");
   addEl(root, "button", "basic-browse-test");
 
   addSelect(root, "basic-preset", ["balanced", "ultra"]);
+  for (const preset of ["balanced", "ultra"] as const) {
+    const pill = addEl<HTMLButtonElement>(
+      root,
+      "button",
+      `basic-preset-${preset}`,
+    );
+    pill.className = "basic-preset-pill";
+    pill.dataset.basicPreset = preset;
+    pill.setAttribute("aria-pressed", "false");
+  }
   addSelect(root, "basic-format", ["7z", "zip", "tar", "gzip", "bzip2", "xz"]);
   addSelect(root, "basic-split-size", [
     "",
@@ -277,8 +325,15 @@ function mountBasicDom(): void {
   encryptHeaders.type = "checkbox";
   addEl(root, "label", "basic-encrypt-headers-row");
   addEl(root, "input", "basic-extract-path");
-  addEl(root, "input", "basic-extract-password");
-  addEl(root, "button", "basic-browse-archive-info");
+  const basicExtractPassword = addEl<HTMLInputElement>(
+    root,
+    "input",
+    "basic-extract-password",
+  );
+  basicExtractPassword.type = "password";
+  const browseArchiveInfo = addEl(root, "div", "basic-browse-archive-info");
+  browseArchiveInfo.setAttribute("role", "button");
+  browseArchiveInfo.tabIndex = 0;
   const browsePasswordField = addEl<HTMLDivElement>(
     root,
     "div",
@@ -355,9 +410,11 @@ beforeEach(() => {
   state.running = false;
   state.operationPreparing = false;
   state.incomingPathsApplying = false;
+  state.platformName = "";
   state.lastAutoOutputPath = null;
   state.lastAutoExtractDestination = null;
   state.browseArchiveInfoByPath.clear();
+  state.browseArchiveIdentityByPath.clear();
 
   (document.getElementById("app") as HTMLElement).dataset.mode = "add";
 
@@ -370,6 +427,7 @@ beforeEach(() => {
   (document.getElementById("extract-password") as HTMLInputElement).value = "";
 
   uiMocks.log.mockReset();
+  uiMocks.setStatus.mockReset();
   uiMocks.setMode.mockClear();
   uiMocks.renderInputs.mockClear();
   uiMocks.clearBrowsePasswordFields.mockClear();
@@ -388,6 +446,17 @@ beforeEach(() => {
   depMocks.browseArchive.mockResolvedValue(null);
   depMocks.testArchive.mockReset();
   depMocks.testArchive.mockResolvedValue("passed");
+  depMocks.looksLikePasswordRequiredError.mockReset();
+  depMocks.looksLikePasswordRequiredError.mockReturnValue(false);
+  depMocks.parseArchiveListing.mockReset();
+  depMocks.parseArchiveListing.mockReturnValue({
+    type: "7z",
+    physicalSize: 10,
+    method: "LZMA2",
+    solid: false,
+    encrypted: false,
+    entries: [],
+  });
   depMocks.chooseOutput.mockReset();
   depMocks.chooseOutputIfCurrent.mockReset();
   depMocks.chooseOutputIfCurrent.mockResolvedValue(undefined);
@@ -422,6 +491,41 @@ beforeEach(() => {
 });
 
 describe("basic-ui views and rendering", () => {
+  it("invalidates cached encryption state when the archive identity changes", async () => {
+    const archive = "/tmp/replaced.7z";
+    state.browseArchiveInfoByPath.set(archive, {
+      type: "7z",
+      physicalSize: 10,
+      method: "LZMA2",
+      solid: false,
+      encrypted: true,
+      entries: [],
+    });
+    state.browseArchiveIdentityByPath.set(archive, "old-identity");
+    depMocks.validateArchivePaths.mockResolvedValueOnce([
+      { path: archive, valid: true, identity: "new-identity" },
+    ]);
+    invokeMock.mockImplementation((command) => {
+      if (command === "probe_7z") return Promise.resolve("26.03");
+      if (command === "run_7z") {
+        return Promise.resolve({ code: 0, stdout: "listing", stderr: "" });
+      }
+      return Promise.resolve(undefined);
+    });
+
+    await expect(isArchiveEncrypted(archive)).resolves.toBe(false);
+
+    expect(depMocks.validateArchivePaths).toHaveBeenCalledWith([archive], true);
+    expect(state.browseArchiveInfoByPath.has(archive)).toBe(false);
+    expect(state.browseArchiveIdentityByPath.has(archive)).toBe(false);
+    const runCall = invokeMock.mock.calls.find(
+      ([command]) => command === "run_7z",
+    );
+    expect(decodeRun7zInvokePayload(runCall?.[1])).toEqual({
+      args: ["l", "-slt", "-spd", "--", archive],
+    });
+  });
+
   it("switches to compress view and enforces format encryption support", () => {
     (document.getElementById("format") as HTMLSelectElement).value = "tar";
     (document.getElementById("archive-name") as HTMLInputElement).value =
@@ -522,10 +626,26 @@ describe("basic-ui views and rendering", () => {
     const removeButtons = document.querySelectorAll(
       ".basic-file-item__remove",
     ) as NodeListOf<HTMLButtonElement>;
+    expect(removeButtons[0].getAttribute("aria-label")).toBe("Remove a.txt");
     removeButtons[0].click();
 
     expect(state.inputs).toEqual(["/tmp/b.txt"]);
     expect(uiMocks.renderInputs).toHaveBeenCalled();
+  });
+
+  it("opens archive pickers from keyboard-accessible archive cards", async () => {
+    initBasicWorkspace();
+    openMock.mockResolvedValueOnce("/tmp/keyboard.7z");
+
+    document
+      .getElementById("basic-browse-archive-info")
+      ?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+      );
+    await flushAsync();
+
+    expect(state.inputs).toEqual(["/tmp/keyboard.7z"]);
+    expect(depMocks.browseArchive).toHaveBeenCalled();
   });
 
   it("disables remove buttons while preparing and ignores clicks", () => {
@@ -573,6 +693,10 @@ describe("basic-ui state transitions", () => {
       (document.getElementById("basic-tab-extract") as HTMLButtonElement)
         .disabled,
     ).toBe(false);
+    expect(
+      (document.getElementById("workspace-mode-power") as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
   });
 
   it("clears progress busy semantics when an operation ends", () => {
@@ -605,6 +729,49 @@ describe("basic-ui state transitions", () => {
       (document.getElementById("basic-browse-cancel") as HTMLButtonElement)
         .hidden,
     ).toBe(true);
+  });
+
+  it("ignores Finalizing while run_7z is not in flight", async () => {
+    uiMocks.runtime.mode = "extract";
+    let handler:
+      | ((event: {
+          payload?: { percent?: number; currentFile?: string };
+        }) => void)
+      | undefined;
+    listenMock.mockImplementation(async (_eventName, callback) => {
+      handler = callback as typeof handler;
+      return () => {};
+    });
+
+    updateBasicRunningState(true);
+    await vi.waitFor(() => {
+      expect(handler).toBeDefined();
+    });
+
+    const cancel = document.getElementById(
+      "basic-extract-cancel",
+    ) as HTMLButtonElement;
+    cancel.disabled = false;
+    const status = document.getElementById("basic-extract-status")!;
+    status.textContent = "Extracting";
+    setSevenZipRunInFlight(false);
+    handler?.({
+      payload: { currentFile: "Finalizing…", percent: 100 },
+    });
+    handler?.({
+      payload: { currentFile: "secret.txt", percent: 40 },
+    });
+    expect(cancel.disabled).toBe(false);
+    expect(status.textContent).toBe("Extracting");
+
+    setSevenZipRunInFlight(true);
+    handler?.({
+      payload: { currentFile: "Finalizing…", percent: 100 },
+    });
+    expect(cancel.disabled).toBe(true);
+    expect(status.textContent).toBe("Finalizing…");
+    setSevenZipRunInFlight(false);
+    updateBasicRunningState(false);
   });
 
   it("toggles running state across compress and extract sections", () => {
@@ -784,8 +951,13 @@ describe("basic-ui state transitions", () => {
     uiMocks.runtime.workspaceMode = "basic";
     uiMocks.runtime.mode = "add";
     (document.getElementById("update-mode") as HTMLInputElement).checked = true;
+    (document.getElementById("store-timestamps") as HTMLInputElement).checked =
+      true;
     (document.getElementById("path-mode") as HTMLSelectElement).value =
       "absolute";
+    (document.getElementById("extra-args") as HTMLInputElement).value = "-bb3";
+    (document.getElementById("extract-extra-args") as HTMLInputElement).value =
+      "-bsp1";
 
     syncBasicBeforeRun();
 
@@ -793,8 +965,17 @@ describe("basic-ui state transitions", () => {
       (document.getElementById("update-mode") as HTMLInputElement).checked,
     ).toBe(false);
     expect(
+      (document.getElementById("store-timestamps") as HTMLInputElement).checked,
+    ).toBe(false);
+    expect(
       (document.getElementById("path-mode") as HTMLSelectElement).value,
     ).toBe("relative");
+    expect(
+      (document.getElementById("extra-args") as HTMLInputElement).value,
+    ).toBe("");
+    expect(
+      (document.getElementById("extract-extra-args") as HTMLInputElement).value,
+    ).toBe("");
   });
 
   it("syncs power extract/browse passwords and custom split into basic", () => {
@@ -1133,6 +1314,28 @@ describe("basic-ui drag and init wiring", () => {
     expect(depMocks.browseArchive).toHaveBeenCalled();
   });
 
+  it("caps an oversized archive drop before probing and routes it to extraction", async () => {
+    const paths = Array.from(
+      { length: 4_097 },
+      (_, index) => `/tmp/archive-${index}.7z`,
+    );
+    depMocks.validateArchivePaths.mockImplementationOnce(async (candidate) =>
+      (candidate as string[]).map((path) => ({ path, valid: true })),
+    );
+
+    await handleBasicDrop(paths);
+
+    expect(depMocks.validateArchivePaths).toHaveBeenCalledWith(
+      paths.slice(0, 4_096),
+    );
+    expect(state.inputs).toHaveLength(4_096);
+    expect(uiMocks.setMode).toHaveBeenCalledWith("extract");
+    expect(getBasicView()).toBe("extract");
+    expect(document.querySelector(".toast")?.textContent).toContain(
+      "1 more were not added",
+    );
+  });
+
   it("does not default a dismissed mixed drop to compression", async () => {
     state.inputs = ["/tmp/original.txt"];
     depMocks.validateArchivePaths.mockResolvedValueOnce([
@@ -1147,6 +1350,38 @@ describe("basic-ui drag and init wiring", () => {
     expect(state.inputs).toEqual(["/tmp/original.txt"]);
     expect(uiMocks.setMode).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["first", [new Error("portal unavailable")]],
+    ["second", [false, new Error("portal unavailable")]],
+  ])(
+    "contains a rejected %s mixed-drop confirmation",
+    async (_which, replies) => {
+      state.inputs = ["/tmp/original.txt"];
+      depMocks.validateArchivePaths.mockResolvedValueOnce([
+        { path: "/tmp/archive.7z", valid: true },
+        { path: "/tmp/file.txt", valid: false },
+      ]);
+      for (const reply of replies) {
+        if (reply instanceof Error) confirmMock.mockRejectedValueOnce(reply);
+        else confirmMock.mockResolvedValueOnce(reply);
+      }
+
+      await expect(
+        handleBasicDrop(["/tmp/archive.7z", "/tmp/file.txt"]),
+      ).resolves.toBeUndefined();
+
+      expect(uiMocks.log).toHaveBeenCalledWith(
+        expect.stringContaining("Could not open Basic confirmation dialog"),
+        "error",
+      );
+      expect(uiMocks.setStatus).toHaveBeenCalledWith(
+        "Could not open confirmation dialog",
+        3000,
+      );
+      expect(state.inputs).toEqual(["/tmp/original.txt"]);
+    },
+  );
 
   it.each([
     ["gzip", ".gz"],
@@ -1240,6 +1475,14 @@ describe("basic-ui drag and init wiring", () => {
     (
       document.getElementById("basic-extract-password") as HTMLInputElement
     ).value = "basic-secret";
+    (
+      document.getElementById("basic-extract-password") as HTMLInputElement
+    ).type = "text";
+    (
+      document.getElementById(
+        "basic-toggle-extract-password",
+      ) as HTMLButtonElement
+    ).textContent = "Hide";
     (document.getElementById("extract-password") as HTMLInputElement).value =
       "power-secret";
 
@@ -1253,6 +1496,103 @@ describe("basic-ui drag and init wiring", () => {
     expect(
       (document.getElementById("extract-password") as HTMLInputElement).value,
     ).toBe("");
+    expect(
+      (document.getElementById("basic-extract-password") as HTMLInputElement)
+        .type,
+    ).toBe("password");
+    expect(
+      document.getElementById("basic-toggle-extract-password")?.textContent,
+    ).toBe("Show");
+  });
+
+  it("shows Basic extraction failure when folder dialog rejects", async () => {
+    const archive = "/tmp/archive.7z";
+    state.inputs = [archive];
+    state.browseArchiveInfoByPath.set(archive, {
+      type: "7z",
+      physicalSize: 10,
+      method: "LZMA2",
+      solid: false,
+      encrypted: false,
+      entries: [],
+    });
+    state.browseArchiveIdentityByPath.set(archive, "identity:archive");
+    depMocks.validateArchivePaths.mockResolvedValueOnce([
+      { path: archive, valid: true, identity: "identity:archive" },
+    ]);
+    uiMocks.runtime.mode = "extract";
+    setBasicView("extract");
+    openMock.mockRejectedValueOnce(new Error("portal unavailable"));
+
+    await expect(handleBasicExtractAction()).resolves.toBeUndefined();
+
+    expect(uiMocks.log).toHaveBeenCalledWith(
+      expect.stringContaining("Could not open the destination-folder dialog"),
+      "error",
+    );
+    expect(
+      document
+        .getElementById("basic-extract-completion")
+        ?.classList.contains("is-active"),
+    ).toBe(true);
+    expect(state.operationPreparing).toBe(false);
+  });
+
+  it("uses typed extraction destination without opening folder picker", async () => {
+    const archive = "/tmp/archive.7z";
+    state.inputs = [archive];
+    state.browseArchiveInfoByPath.set(archive, {
+      type: "7z",
+      physicalSize: 10,
+      method: "LZMA2",
+      solid: false,
+      encrypted: false,
+      entries: [],
+    });
+    state.browseArchiveIdentityByPath.set(archive, "identity:archive");
+    depMocks.validateArchivePaths.mockResolvedValueOnce([
+      { path: archive, valid: true, identity: "identity:archive" },
+    ]);
+    uiMocks.runtime.mode = "extract";
+    setBasicView("extract");
+    (document.getElementById("basic-extract-path") as HTMLInputElement).value =
+      "/tmp/typed-destination";
+    depMocks.runAction.mockResolvedValueOnce(undefined);
+
+    await handleBasicExtractAction();
+
+    expect(openMock).not.toHaveBeenCalled();
+    expect(depMocks.runAction).toHaveBeenCalled();
+    expect(state.operationPreparing).toBe(false);
+  });
+
+  it("uses typed compression destination without opening save dialog", async () => {
+    state.inputs = ["/tmp/input.txt"];
+    uiMocks.runtime.mode = "add";
+    setBasicView("compress");
+    (document.getElementById("basic-output-path") as HTMLInputElement).value =
+      "/tmp/typed-output.7z";
+    depMocks.runAction.mockResolvedValueOnce(undefined);
+
+    await handleBasicCompressAction();
+
+    expect(saveMock).not.toHaveBeenCalled();
+    expect(depMocks.runAction).toHaveBeenCalled();
+    expect(state.operationPreparing).toBe(false);
+  });
+
+  it("handles rejected Basic archive dialogs without an unhandled event error", async () => {
+    initBasicWorkspace();
+    openMock.mockRejectedValueOnce(new Error("portal unavailable"));
+
+    (document.getElementById("basic-action-open") as HTMLButtonElement).click();
+    await flushAsync();
+
+    expect(uiMocks.log).toHaveBeenCalledWith(
+      expect.stringContaining("Could not open Basic file dialog"),
+      "error",
+    );
+    expect(state.operationPreparing).toBe(false);
   });
 
   it("clears copied extraction passwords when runAction rejects", async () => {
@@ -1266,6 +1606,10 @@ describe("basic-ui drag and init wiring", () => {
       encrypted: true,
       entries: [],
     });
+    state.browseArchiveIdentityByPath.set(archive, "identity:encrypted");
+    depMocks.validateArchivePaths.mockResolvedValueOnce([
+      { path: archive, valid: true, identity: "identity:encrypted" },
+    ]);
     uiMocks.runtime.mode = "extract";
     setBasicView("extract");
     invokeMock.mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" });
@@ -1337,6 +1681,169 @@ describe("basic-ui drag and init wiring", () => {
     expect(getBasicView()).toBe("extract");
   });
 
+  it("wires Basic extraction controls and completion actions", async () => {
+    initBasicWorkspace();
+
+    depMocks.chooseExtractIfCurrent.mockImplementationOnce(
+      async (isCurrent) => {
+        expect(isCurrent()).toBe(true);
+        (document.getElementById("extract-path") as HTMLInputElement).value =
+          "/tmp/chosen-output";
+      },
+    );
+    (
+      document.getElementById("basic-choose-extract") as HTMLButtonElement
+    ).click();
+    await flushAsync();
+    expect(
+      (document.getElementById("basic-extract-path") as HTMLInputElement).value,
+    ).toBe("/tmp/chosen-output");
+
+    (
+      document.getElementById("basic-extract-cancel") as HTMLButtonElement
+    ).click();
+    expect(depMocks.cancelAction).toHaveBeenCalledOnce();
+
+    state.inputs = ["/tmp/archive.7z"];
+    (
+      document.getElementById("basic-browse-contents") as HTMLButtonElement
+    ).click();
+    await flushAsync();
+    expect(uiMocks.runtime.mode).toBe("browse");
+    expect(getBasicView()).toBe("browse");
+    expect(depMocks.browseArchive).toHaveBeenCalledTimes(1);
+
+    const browsePassword = document.getElementById(
+      "basic-browse-password",
+    ) as HTMLInputElement;
+    browsePassword.value = "browse-secret";
+    browsePassword.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(
+      (document.getElementById("browse-password") as HTMLInputElement).value,
+    ).toBe("browse-secret");
+    browsePassword.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+    );
+    await flushAsync();
+    expect(depMocks.browseArchive).toHaveBeenCalledTimes(2);
+
+    const browseToggle = document.getElementById(
+      "basic-toggle-browse-password",
+    ) as HTMLButtonElement;
+    browseToggle.click();
+    expect(browsePassword.type).toBe("text");
+    expect(browseToggle.getAttribute("aria-label")).toBe("Hide password");
+
+    const extractPassword = document.getElementById(
+      "basic-extract-password",
+    ) as HTMLInputElement;
+    const extractToggle = document.getElementById(
+      "basic-toggle-extract-password",
+    ) as HTMLButtonElement;
+    extractToggle.click();
+    expect(extractPassword.type).toBe("text");
+    expect(extractToggle.textContent).toBe("Hide");
+
+    (document.getElementById("basic-extract-path") as HTMLInputElement).value =
+      "/tmp/destination";
+    (
+      document.getElementById("basic-extract-open-dest") as HTMLButtonElement
+    ).click();
+    await flushAsync();
+    expect(invokeMock).toHaveBeenCalledWith("open_path", {
+      path: "/tmp/destination",
+    });
+
+    const ultraPill = document.getElementById(
+      "basic-preset-ultra",
+    ) as HTMLButtonElement;
+    ultraPill.click();
+    expect(ultraPill.classList.contains("is-active")).toBe(true);
+    expect(ultraPill.getAttribute("aria-pressed")).toBe("true");
+    expect(
+      (document.getElementById("basic-preset") as HTMLSelectElement).value,
+    ).toBe("ultra");
+    expect(depMocks.applyPreset).toHaveBeenCalledWith("ultra");
+
+    state.inputs = ["/tmp/input.txt"];
+    state.lastAutoOutputPath = "/tmp/output.7z";
+    (
+      document.getElementById("basic-compress-home") as HTMLButtonElement
+    ).click();
+    expect(state.inputs).toEqual([]);
+    expect(state.lastAutoOutputPath).toBeNull();
+    expect(getBasicView()).toBe("home");
+
+    const extractCompletion = document.getElementById(
+      "basic-extract-completion",
+    ) as HTMLElement;
+    const extractAgain = document.getElementById(
+      "basic-extract-another",
+    ) as HTMLButtonElement;
+    extractCompletion.classList.add("is-active");
+    extractAgain.textContent = "Close";
+    extractAgain.click();
+    expect(extractCompletion.classList.contains("is-active")).toBe(false);
+
+    state.inputs = ["/tmp/archive.7z"];
+    state.lastAutoExtractDestination = "/tmp/extracted";
+    extractCompletion.classList.add("is-active");
+    extractAgain.textContent = "Extract another";
+    extractAgain.click();
+    expect(state.inputs).toEqual([]);
+    expect(state.lastAutoExtractDestination).toBeNull();
+    expect(getBasicView()).toBe("home");
+
+    extractCompletion.classList.add("is-active");
+    (
+      document.getElementById(
+        "basic-extract-completion-close",
+      ) as HTMLButtonElement
+    ).click();
+    expect(extractCompletion.classList.contains("is-active")).toBe(false);
+
+    state.inputs = ["/tmp/archive.7z"];
+    state.lastAutoExtractDestination = "/tmp/extracted";
+    (
+      document.getElementById("basic-extract-home") as HTMLButtonElement
+    ).click();
+    expect(state.inputs).toEqual([]);
+    expect(state.lastAutoExtractDestination).toBeNull();
+  });
+
+  it("includes RAR files in Windows Basic archive pickers", async () => {
+    state.platformName = "windows";
+    initBasicWorkspace();
+    openMock.mockResolvedValueOnce(null);
+
+    (document.getElementById("basic-action-open") as HTMLButtonElement).click();
+    await flushAsync();
+
+    const options = openMock.mock.calls[0]?.[0];
+    const extensions = options?.filters?.[0]?.extensions ?? [];
+    expect(extensions).toContain("rar");
+    expect(extensions).toContain("zip");
+  });
+
+  it("caps Basic archive-picker selections before batch extraction", async () => {
+    initBasicWorkspace();
+    const paths = Array.from(
+      { length: 4_097 },
+      (_, index) => `/tmp/archive-${index}.7z`,
+    );
+    openMock.mockResolvedValueOnce(paths);
+
+    (document.getElementById("basic-action-open") as HTMLButtonElement).click();
+    await flushAsync();
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+
+    expect(state.inputs).toHaveLength(4_096);
+    expect(state.inputs.at(-1)).toBe("/tmp/archive-4095.7z");
+    expect(document.querySelector(".toast")?.textContent).toContain(
+      "1 more were not added",
+    );
+  });
+
   it("uses dropzone picker and routes non-archive picks to compress mode", async () => {
     initBasicWorkspace();
     setBasicView("home");
@@ -1389,5 +1896,19 @@ describe("basic-ui drag and init wiring", () => {
 
     expect(getBasicView()).toBe("compress");
     expect(uiMocks.runtime.mode).toBe("add");
+  });
+
+  it("writes aria-valuenow on the Basic progressbar track", () => {
+    const track = document.createElement("div");
+    track.setAttribute("role", "progressbar");
+    const fill = document.createElement("div");
+    fill.id = "basic-extract-bar";
+    track.appendChild(fill);
+    document.body.appendChild(track);
+
+    setBasicBarDeterminate("extract", 42);
+    expect(track.getAttribute("aria-valuenow")).toBe("42");
+    resetBasicBar("extract");
+    expect(track.getAttribute("aria-valuenow")).toBe("0");
   });
 });

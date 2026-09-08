@@ -172,6 +172,17 @@ fn sweep_stale_7z_list_dirs() {
         if !is_older_than(&metadata, STALE_LAUNCH_TEMP_MAX_AGE) {
             continue;
         }
+        // Only remove our own leftover directories. On unix the shared temp
+        // dir has sticky-bit protection, but a same-user planted prefix must
+        // still not be walked/deleted by us.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let uid = unsafe { libc::geteuid() };
+            if metadata.uid() != uid || metadata.gid() != unsafe { libc::getegid() } {
+                continue;
+            }
+        }
         if let Err(error) = crate::fs_secure::remove_dir_all_for_cleanup(&path) {
             if error.kind() != std::io::ErrorKind::NotFound {
                 eprintln!(
@@ -236,7 +247,7 @@ fn remove_managed_temp_dir_blocking(app: &tauri::AppHandle, path: &str) -> Resul
         return Err("Temp path is not a directory.".to_string());
     }
 
-    std::fs::remove_dir_all(&canonical_target).map_err(|e| e.to_string())
+    crate::fs_secure::remove_dir_all_for_cleanup(&canonical_target).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

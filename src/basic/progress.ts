@@ -1,4 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
+import { isSevenZipRunInFlight } from "../archive/runtime";
 import { state } from "../state";
 import { log, getWorkspaceMode, getMode, triggerIconRefresh } from "../ui";
 import {
@@ -109,13 +110,24 @@ export function setBasicBarDeterminate(
 ): void {
   const bar = document.getElementById(`basic-${section}-bar`);
   if (!bar) return;
-  setProgressPercentClass(bar, percent);
+  const clamped = Math.max(0, Math.min(100, Math.round(percent)));
+  setProgressPercentClass(bar, clamped);
+  const progressbar =
+    (bar.closest('[role="progressbar"]') as HTMLElement | null) ?? bar;
+  progressbar.setAttribute("aria-valuenow", String(clamped));
+  progressbar.setAttribute("aria-valuemin", "0");
+  progressbar.setAttribute("aria-valuemax", "100");
 }
 
 export function resetBasicBar(section: "compress" | "extract"): void {
   const bar = document.getElementById(`basic-${section}-bar`);
   if (!bar) return;
   setProgressIndeterminateClass(bar);
+  const progressbar =
+    (bar.closest('[role="progressbar"]') as HTMLElement | null) ?? bar;
+  progressbar.setAttribute("aria-valuenow", "0");
+  progressbar.setAttribute("aria-valuemin", "0");
+  progressbar.setAttribute("aria-valuemax", "100");
 }
 
 const disabledBeforeBasicLock = new Map<HTMLButtonElement, boolean>();
@@ -143,11 +155,18 @@ function setButtonInteractionLock(
 }
 
 function updateBasicInteractionLock(active: boolean): void {
+  // Workspace mode buttons have no independent disabled state. Keep their
+  // disabled property owned by this lock so a stale lock snapshot cannot leave
+  // Power inaccessible after a Basic operation finishes.
   document
-    .querySelectorAll<HTMLButtonElement>(
-      "#basic-workspace button, [data-workspace-mode-btn]",
-    )
+    .querySelectorAll<HTMLButtonElement>("[data-workspace-mode-btn]")
     .forEach((button) => {
+      button.disabled = active;
+    });
+  document
+    .querySelectorAll<HTMLButtonElement>("#basic-workspace button")
+    .forEach((button) => {
+      if (button.matches("[data-workspace-mode-btn]")) return;
       const keepCancelAvailable =
         active && state.running && basicCancelIds.has(button.id);
       setButtonInteractionLock(button, active && !keepCancelAvailable);
@@ -197,14 +216,21 @@ export function updateBasicRunningState(active: boolean): void {
     void listen<{ percent?: number; currentFile?: string }>(
       "7z-progress-structured",
       (event) => {
+        if (!isSevenZipRunInFlight()) return;
         if (event.payload?.currentFile === "Finalizing…") {
           setBasicBarDeterminate(section, 100);
+          for (const id of ["basic-compress-cancel", "basic-extract-cancel"]) {
+            const button = document.getElementById(
+              id,
+            ) as HTMLButtonElement | null;
+            if (button) button.disabled = true;
+          }
           const status = document.getElementById(`basic-${section}-status`);
           if (status) status.textContent = "Finalizing…";
           return;
         }
         const percent = event.payload?.percent;
-        if (typeof percent === "number") {
+        if (typeof percent === "number" && Number.isFinite(percent)) {
           setBasicBarDeterminate(section, Math.min(99, percent));
         }
       },
@@ -283,9 +309,16 @@ export function updateBasicStatus(text: string, errorDetail?: string): void {
       section === "compress"
         ? [outputPath, state.lastAutoOutputPath]
         : [extractPath, state.lastAutoExtractDestination];
-    const pathLabel =
+    let pathLabel =
       pathCandidates.find((candidate) => (candidate?.length ?? 0) > 0) ??
       undefined;
+    if (
+      section === "compress" &&
+      pathLabel &&
+      (document.getElementById("split-size") as HTMLSelectElement | null)?.value
+    ) {
+      pathLabel = `${pathLabel}.001`;
+    }
     showBasicCompletion(
       section,
       true,

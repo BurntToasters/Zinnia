@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { message } from "@tauri-apps/plugin-dialog";
 import { $ } from "./utils";
+import { showToast } from "./toast";
 
 export interface OsIntegrationStatus {
   platform: string;
@@ -49,6 +49,7 @@ interface DefaultArchiverResult {
 }
 
 let latestStatus: OsIntegrationStatus | null = null;
+let osIntegrationRefreshInFlight: Promise<void> | null = null;
 
 const FINDER_SYNC_ENABLED_MESSAGE = [
   "Zinnia's Finder extension is enabled.",
@@ -203,15 +204,27 @@ export function renderOsIntegrationStatus(status: OsIntegrationStatus): void {
     "os-file-assoc-status",
     status.fileAssociationsKnown,
     "Ready",
-    status.platform === "linux" && status.packaged
-      ? "Verify manually"
-      : "Action needed",
+    status.platform === "windows" &&
+      status.packaged &&
+      !(status.archiveDefaults ?? []).some(
+        (entry) => entry.currentHandler !== null || entry.isDefault,
+      )
+      ? "Unknown"
+      : status.platform === "linux" && status.packaged
+        ? "Verify manually"
+        : "Action needed",
   );
   {
     let contextReady = "Ready";
     let contextAction = "Action needed";
     if (status.platform === "linux" && status.packaged) {
       contextAction = "Verify manually";
+    } else if (
+      status.platform === "windows" &&
+      status.packaged &&
+      status.win11ModernMenuKnown === false
+    ) {
+      contextAction = "Unknown";
     } else if (
       status.platform === "macos" &&
       status.packaged &&
@@ -390,14 +403,60 @@ export async function refreshDefaultArchiverActionButton(
   }
 }
 
-export async function refreshOsIntegrationStatus(): Promise<void> {
-  try {
-    const status = await getOsIntegrationStatus();
-    renderOsIntegrationStatus(status);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`Failed to refresh OS integration status: ${msg}`);
+function renderOsIntegrationRefreshFailure(): void {
+  latestStatus = null;
+  const help = document.getElementById("os-integration-help");
+  if (help) {
+    if (!help.hasAttribute("aria-live")) {
+      help.setAttribute("aria-live", "polite");
+    }
+    help.textContent = "Unable to check OS integration status.";
   }
+  setText("os-platform-label", "Unable to check");
+  setText("os-package-label", "Unable to check");
+  const list = document.getElementById("os-archive-default-list");
+  if (list) list.innerHTML = "";
+  for (const id of [
+    "os-file-assoc-status",
+    "os-context-status",
+    "os-finder-sync-status",
+    "os-finder-services-status",
+    "os-win11-menu-status",
+  ]) {
+    setTriStatePill(id, false, false, "", "", "Unable to check");
+  }
+  for (const id of [
+    "open-os-integration-settings",
+    "reset-os-integration-defaults",
+  ]) {
+    const button = document.getElementById(id) as HTMLButtonElement | null;
+    if (button) {
+      button.disabled = true;
+      button.title = "Unable to check OS integration status.";
+    }
+  }
+}
+
+export async function refreshOsIntegrationStatus(): Promise<void> {
+  if (osIntegrationRefreshInFlight) return osIntegrationRefreshInFlight;
+  osIntegrationRefreshInFlight = (async () => {
+    const refresh = document.getElementById(
+      "refresh-os-integration-status",
+    ) as HTMLButtonElement | null;
+    if (refresh) refresh.disabled = true;
+    try {
+      const status = await getOsIntegrationStatus();
+      renderOsIntegrationStatus(status);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`Failed to refresh OS integration status: ${msg}`);
+      renderOsIntegrationRefreshFailure();
+    } finally {
+      if (refresh) refresh.disabled = false;
+      osIntegrationRefreshInFlight = null;
+    }
+  })();
+  return osIntegrationRefreshInFlight;
 }
 
 export async function openOsIntegrationSettings(): Promise<void> {
@@ -405,10 +464,7 @@ export async function openOsIntegrationSettings(): Promise<void> {
     await invoke("open_os_integration_settings");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    await message(msg, {
-      title: "Default app settings",
-      kind: "info",
-    });
+    showToast(msg, "error", 0);
   }
 }
 
@@ -421,20 +477,18 @@ export async function openFinderSyncSettings(): Promise<void> {
       await invoke("enable_finder_sync");
       await refreshOsIntegrationStatus();
       if (latestStatus?.finderSyncEnabled) {
-        await message(FINDER_SYNC_ENABLED_MESSAGE, {
-          title: "Finder context menu enabled",
-          kind: "info",
-        });
+        showToast(FINDER_SYNC_ENABLED_MESSAGE, "success", 0);
       } else {
         await invoke("open_finder_sync_settings");
-        await message(
+        showToast(
           [
             "System Settings will open to Login Items & Extensions.",
             "",
             "Find Zinnia Finder (or Zinnia) and turn it on.",
             "Return here and click Refresh when enabled.",
           ].join("\n"),
-          { title: "Enable Finder context menu", kind: "info" },
+          "info",
+          0,
         );
       }
       return;
@@ -442,10 +496,7 @@ export async function openFinderSyncSettings(): Promise<void> {
     await invoke("open_finder_sync_settings");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    await message(msg, {
-      title: "Finder context menu",
-      kind: "info",
-    });
+    showToast(msg, "error", 0);
   }
 }
 
@@ -456,27 +507,22 @@ export async function openFinderServicesSettings(): Promise<void> {
   try {
     if (needsEnable) {
       await invoke("open_finder_services_settings");
-      await message(
+      showToast(
         [
           "System Settings will open to Keyboard Shortcuts.",
           "",
           "Open Services → Files and Folders, then enable Extract with Zinnia and Compress with Zinnia.",
           "Return here and click Refresh when finished.",
         ].join("\n"),
-        {
-          title: "Enable Finder Services",
-          kind: "info",
-        },
+        "info",
+        0,
       );
       return;
     }
     await invoke("open_finder_services_settings");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    await message(msg, {
-      title: "Finder Services",
-      kind: "info",
-    });
+    showToast(msg, "error", 0);
   }
 }
 
@@ -498,17 +544,11 @@ export async function setZinniaDefaultArchiver(
     renderArchiveDefaults(result.results);
     await refreshOsIntegrationStatus();
     if (result.results.some((entry) => !entry.isDefault)) {
-      await message(result.message, {
-        title: "Default archive app",
-        kind: result.changed ? "info" : "warning",
-      });
+      showToast(result.message, result.changed ? "info" : "error", 0);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    await message(msg, {
-      title: "Default archive app",
-      kind: "warning",
-    });
+    showToast(msg, "error", 0);
   } finally {
     if (button) {
       button.disabled = false;
@@ -530,10 +570,7 @@ export async function runDefaultArchiverAction(
       status = await getOsIntegrationStatus();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      await message(msg, {
-        title: "Default archive app",
-        kind: "warning",
-      });
+      showToast(msg, "error", 0);
       return;
     }
   }
@@ -566,17 +603,11 @@ export async function resetPreferredArchiverToSystem(): Promise<void> {
       !result.changed ||
       result.results.some((entry) => entry.status !== "System");
     if (needsAttention) {
-      await message(result.message, {
-        title: "System archive app",
-        kind: result.changed ? "info" : "warning",
-      });
+      showToast(result.message, result.changed ? "info" : "error", 0);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    await message(msg, {
-      title: "System archive app",
-      kind: "warning",
-    });
+    showToast(msg, "error", 0);
   } finally {
     if (button) {
       button.textContent = previousLabel;

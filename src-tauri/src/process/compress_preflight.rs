@@ -3,8 +3,27 @@
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
-const MAX_WALK_ENTRIES: u32 = 40_000;
 const MAX_EXAMPLES: usize = 4;
+const MAX_PROBE_ENTRIES: u64 = 1_000_000;
+const MAX_PROBE_PATH_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_PROBE_DEPTH: usize = 256;
+const MAX_PROBE_DURATION: std::time::Duration = std::time::Duration::from_secs(60);
+
+struct ProbeBudget {
+    entries: u64,
+    path_bytes: u64,
+    deadline: std::time::Instant,
+}
+
+impl ProbeBudget {
+    fn new() -> Self {
+        Self {
+            entries: 0,
+            path_bytes: 0,
+            deadline: std::time::Instant::now() + MAX_PROBE_DURATION,
+        }
+    }
+}
 
 #[derive(Default, Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -18,23 +37,28 @@ pub struct CompressInputProbe {
 /// Walk selected compress inputs (files/folders). Top-level symlink inputs are
 /// rejected elsewhere; this finds nested links and Windows non-symlink reparse.
 pub fn probe_compress_input_paths(paths: &[String]) -> Result<CompressInputProbe, String> {
+    probe_compress_input_paths_with_cancel(paths, || false)
+}
+
+pub fn probe_compress_input_paths_with_cancel<C>(
+    paths: &[String],
+    should_cancel: C,
+) -> Result<CompressInputProbe, String>
+where
+    C: Fn() -> bool,
+{
     if paths.len() > 4096 {
         return Err("Too many compress inputs to probe.".to_string());
     }
     let mut probe = CompressInputProbe::default();
-    let mut visited = 0u32;
-    let mut hit_limit = false;
+    let mut budget = ProbeBudget::new();
+    let mut seen_roots = std::collections::HashSet::new();
     for raw in paths {
         let path = PathBuf::from(raw);
-        walk_path(&path, &mut probe, &mut visited, true, &mut hit_limit)?;
-        if hit_limit {
-            break;
+        if !seen_roots.insert(path.clone()) {
+            continue;
         }
-    }
-    if hit_limit {
-        return Err(format!(
-            "Compress input tree is too large to scan completely (>{MAX_WALK_ENTRIES} entries). Narrow the selection or archive a smaller folder."
-        ));
+        walk_path(&path, &mut probe, &mut budget, &should_cancel)?;
     }
     Ok(probe)
 }
@@ -54,84 +78,129 @@ fn is_app_bundle_name(name: &std::ffi::OsStr) -> bool {
         .is_some_and(|s| s.len() > 4 && s.to_ascii_lowercase().ends_with(".app"))
 }
 
-fn walk_path(
-    path: &Path,
+fn walk_path<C>(
+    root: &Path,
     probe: &mut CompressInputProbe,
-    visited: &mut u32,
-    is_root: bool,
-    hit_limit: &mut bool,
-) -> Result<(), String> {
-    if *visited >= MAX_WALK_ENTRIES {
-        *hit_limit = true;
-        return Ok(());
-    }
-    *visited = visited.saturating_add(1);
-
-    let meta = match std::fs::symlink_metadata(path) {
-        Ok(meta) => meta,
-        Err(error) => {
+    budget: &mut ProbeBudget,
+    should_cancel: &C,
+) -> Result<(), String>
+where
+    C: Fn() -> bool,
+{
+    let mut pending = vec![(root.to_path_buf(), true, 0usize)];
+    while let Some((path, is_root, depth)) = pending.pop() {
+        if should_cancel() {
+            return Err("Compress input scan was cancelled.".to_string());
+        }
+        if std::time::Instant::now() >= budget.deadline {
+            return Err("Compress input scan exceeded its 60-second safety deadline.".to_string());
+        }
+        budget.entries = budget.entries.saturating_add(1);
+        if budget.entries > MAX_PROBE_ENTRIES {
             return Err(format!(
-                "Unable to read compress input '{}': {error}",
-                path.display()
+                "Compress input scan exceeded the safety limit of {MAX_PROBE_ENTRIES} entries across all selected roots. Select smaller folders."
             ));
         }
-    };
-
-    if meta.file_type().is_symlink() {
-        if !is_root {
-            probe.nested_symlinks = probe.nested_symlinks.saturating_add(1);
-            push_example(probe, path);
+        budget.path_bytes = budget
+            .path_bytes
+            .saturating_add(path.as_os_str().as_encoded_bytes().len() as u64);
+        if budget.path_bytes > MAX_PROBE_PATH_BYTES {
+            return Err(format!(
+                "Compress input scan exceeded its {} MiB aggregate path-name safety limit.",
+                MAX_PROBE_PATH_BYTES / (1024 * 1024)
+            ));
         }
-        return Ok(());
-    }
-
-    #[cfg(windows)]
-    if crate::path_safety::is_link_or_reparse(&meta) {
-        // Non-symlink reparse (junctions, OneDrive placeholders, etc.).
-        if !is_root {
-            probe.nested_reparse_points = probe.nested_reparse_points.saturating_add(1);
-            push_example(probe, path);
+        if depth > MAX_PROBE_DEPTH {
+            return Err(format!(
+                "Compress input scan exceeded the maximum folder depth of {MAX_PROBE_DEPTH}."
+            ));
         }
-        return Ok(());
-    }
+        let meta = std::fs::symlink_metadata(&path).map_err(|error| {
+            format!(
+                "Unable to read compress input '{}': {error}",
+                path.display()
+            )
+        })?;
 
-    if meta.is_dir() {
-        if path.file_name().is_some_and(is_app_bundle_name) {
-            probe.app_bundles = probe.app_bundles.saturating_add(1);
-            push_example(probe, path);
+        #[cfg(windows)]
+        if crate::path_safety::is_link_or_reparse(&meta) {
+            if !is_root {
+                if crate::path_safety::is_non_symlink_reparse(&path, &meta) {
+                    probe.nested_reparse_points = probe.nested_reparse_points.saturating_add(1);
+                } else {
+                    probe.nested_symlinks = probe.nested_symlinks.saturating_add(1);
+                }
+                push_example(probe, &path);
+            }
+            continue;
         }
-        let entries = std::fs::read_dir(path)
-            .map_err(|e| format!("Unable to read directory '{}': {e}", path.display()))?;
-        for entry in entries {
-            let entry = entry.map_err(|e| e.to_string())?;
-            walk_path(&entry.path(), probe, visited, false, hit_limit)?;
-            if *hit_limit {
-                break;
+
+        #[cfg(not(windows))]
+        if meta.file_type().is_symlink() {
+            if !is_root {
+                probe.nested_symlinks = probe.nested_symlinks.saturating_add(1);
+                push_example(probe, &path);
+            }
+            continue;
+        }
+
+        if meta.is_dir() {
+            if path.file_name().is_some_and(is_app_bundle_name) {
+                probe.app_bundles = probe.app_bundles.saturating_add(1);
+                push_example(probe, &path);
+            }
+            let entries = std::fs::read_dir(&path)
+                .map_err(|e| format!("Unable to read directory '{}': {e}", path.display()))?;
+            for entry in entries {
+                if should_cancel() {
+                    return Err("Compress input scan was cancelled.".to_string());
+                }
+                if std::time::Instant::now() >= budget.deadline {
+                    return Err(
+                        "Compress input scan exceeded its 60-second safety deadline.".to_string(),
+                    );
+                }
+                pending.push((entry.map_err(|e| e.to_string())?.path(), false, depth + 1));
             }
         }
     }
     Ok(())
 }
 
-/// Fail closed when compress trees contain Windows cloud/junction reparse points.
-pub fn assert_no_nested_reparse_for_compress(paths: &[String]) -> Result<(), String> {
-    let probe = probe_compress_input_paths(paths)?;
-    if probe.nested_reparse_points == 0 {
-        return Ok(());
+/// Enforce one bounded, cancellable traversal across every selected root. On
+/// Windows, nested non-symlink reparse points additionally fail closed.
+pub fn assert_compress_inputs_safe_with_cancel<C>(
+    paths: &[String],
+    should_cancel: C,
+) -> Result<(), String>
+where
+    C: Fn() -> bool,
+{
+    let probe = probe_compress_input_paths_with_cancel(paths, should_cancel)?;
+    #[cfg(windows)]
+    if probe.nested_reparse_points != 0 {
+        let sample = probe
+            .examples
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "(path omitted)".to_string());
+        return Err(format!(
+            "Compress inputs contain a Windows reparse point (junction or cloud placeholder) that is not a symbolic link: {sample}. Copy the real files locally, or remove the reparse entry, then try again."
+        ));
     }
-    let sample = probe
-        .examples
-        .first()
-        .cloned()
-        .unwrap_or_else(|| "(path omitted)".to_string());
-    Err(format!(
-        "Compress inputs contain a Windows reparse point (junction or cloud placeholder) that is not a symbolic link: {sample}. Copy the real files locally, or remove the reparse entry, then try again."
-    ))
+    #[cfg(not(windows))]
+    let _ = probe;
+    Ok(())
+}
+
+/// Compatibility wrapper used by focused platform tests.
+#[cfg(test)]
+pub fn assert_no_nested_reparse_for_compress(paths: &[String]) -> Result<(), String> {
+    assert_compress_inputs_safe_with_cancel(paths, || false)
 }
 
 #[cfg(test)]
 mod tests {
-    #[cfg(unix)]
     use super::*;
 
     #[cfg(unix)]
@@ -149,6 +218,60 @@ mod tests {
         assert!(probe.app_bundles >= 1);
         assert!(probe.nested_symlinks >= 1);
         assert_eq!(probe.nested_reparse_points, 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn backend_compress_guard_walks_missing_inputs() {
+        let missing = std::env::temp_dir().join("zinnia-definitely-missing-compress-input");
+        let _ = std::fs::remove_dir_all(&missing);
+        assert!(
+            assert_no_nested_reparse_for_compress(&[missing.to_string_lossy().to_string()])
+                .expect_err("global traversal must validate every platform")
+                .contains("Unable to read compress input")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn backend_compress_guard_rejects_nested_junction() {
+        let root = std::env::temp_dir().join(format!(
+            "zinnia-probe-junc-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let real = root.join("real");
+        let nested = root.join("nested");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::create_dir_all(&nested).unwrap();
+        let junction = nested.join("cloud");
+        if let Err(error) = crate::path_safety::try_create_directory_junction(&junction, &real) {
+            let _ = std::fs::remove_dir_all(&root);
+            eprintln!("skipping backend_compress_guard_rejects_nested_junction: {error}");
+            return;
+        }
+        let meta = std::fs::symlink_metadata(&junction).expect("junction metadata");
+        assert!(
+            crate::path_safety::is_link_or_reparse(&meta),
+            "mklink /J must create a reparse point"
+        );
+        assert!(
+            crate::path_safety::is_non_symlink_reparse(&junction, &meta),
+            "directory junctions must not be classified as NTFS symbolic links"
+        );
+
+        let error = assert_no_nested_reparse_for_compress(&[root.to_string_lossy().to_string()])
+            .expect_err("nested junction must fail closed");
+        assert!(
+            error.contains("reparse point"),
+            "unexpected rejection: {error}"
+        );
+
+        let _ = std::fs::remove_dir(&junction);
         let _ = std::fs::remove_dir_all(&root);
     }
 }

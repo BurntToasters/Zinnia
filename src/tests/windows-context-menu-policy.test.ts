@@ -25,11 +25,8 @@ const supportedArchiveTypes = [
   ".zip",
   ".tar",
   ".gz",
-  ".tgz",
   ".bz2",
-  ".tbz2",
   ".xz",
-  ".txz",
   ".001",
 ];
 
@@ -135,19 +132,37 @@ describe("Windows 11 context-menu manifest", () => {
     ).version;
     const hooks = read("src-tauri/windows/nsis-hooks.nsh");
 
-    for (const destination of Object.values(tauriConfig.bundle.resources)) {
+    const shellDestinations = Object.entries(tauriConfig.bundle.resources)
+      .filter(([source]) => source !== "binaries/7z.dll")
+      .map(([, destination]) => destination);
+    for (const destination of shellDestinations) {
       expect(destination.startsWith(`shell-${packageVersion}/`)).toBe(true);
       expect(destination).not.toContain("${VERSION}");
     }
+    expect(tauriConfig.bundle.resources["binaries/7z.dll"]).toBe("7z.dll");
     expect(hooks).toContain('StrCpy $R9 "$INSTDIR\\shell-${VERSION}"');
     expect(hooks).toContain("!macro NSIS_HOOK_PREINSTALL");
+    expect(hooks).toContain("!macro NSIS_HOOK_PREUNINSTALL");
+    expect(hooks).toContain("!macro NSIS_HOOK_POSTUNINSTALL");
     expect(hooks).toContain("zinnia_preinstall_check_reparse");
     expect(hooks).toContain(
       "cannot install into a shell directory that is a junction or symbolic link",
     );
     expect(hooks).toContain("SetOverwrite ifdiff");
     expect(hooks).toContain("SetOverwrite on");
-    expect(hooks).not.toContain("!macro NSIS_HOOK_PREUNINSTALL");
+    expect(hooks).toContain("!macro NSIS_HOOK_PREUNINSTALL");
+    expect(hooks).toContain("zinnia_preuninstall_abort");
+    expect(hooks).toContain("/UPDATE");
+    expect(hooks).toContain("Get-AppxPackage");
+    expect(hooks).toContain(
+      '!insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".rar"',
+    );
+    expect(hooks).toContain(
+      '!insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".001"',
+    );
+    expect(hooks).toContain(
+      "Uninstall was cancelled so Explorer can still find the shell files",
+    );
     expect(hooks).toContain("!macro NSIS_HOOK_POSTUNINSTALL");
     expect(hooks).toContain("!macro ZINNIA_CLEAN_LEGACY_SHELL_PAYLOAD");
     expect(hooks).toContain('Delete /REBOOTOK "$INSTDIR\\zinnia_shell.dll"');
@@ -166,16 +181,36 @@ describe("Windows 11 context-menu manifest", () => {
     expect(hooks).toContain(
       '!insertmacro ZINNIA_CLEAN_SHELL_PAYLOADS "" zinnia_uninstall_shell_cleanup',
     );
-    expect(hooks.indexOf("!macro NSIS_HOOK_POSTUNINSTALL")).toBeLessThan(
-      hooks.indexOf(
-        '!insertmacro ZINNIA_CLEAN_SHELL_PAYLOADS "" zinnia_uninstall_shell_cleanup',
-      ),
+    const postUninstall = hooks.slice(
+      hooks.indexOf("!macro NSIS_HOOK_POSTUNINSTALL"),
     );
+    expect(postUninstall).not.toContain("ZINNIA_UNREGISTER_WIN11_CONTEXT_MENU");
+    expect(postUninstall).toContain(
+      '!insertmacro ZINNIA_CLEAN_SHELL_PAYLOADS "" zinnia_uninstall_shell_cleanup',
+    );
+    const preUninstall = hooks.slice(
+      hooks.indexOf("!macro NSIS_HOOK_PREUNINSTALL"),
+      hooks.indexOf("!macro NSIS_HOOK_POSTUNINSTALL"),
+    );
+    expect(preUninstall).toContain("ZINNIA_UNREGISTER_WIN11_CONTEXT_MENU");
+    expect(
+      preUninstall.match(/!insertmacro ZINNIA_UNREGISTER_WIN11_CONTEXT_MENU/g),
+    ).toHaveLength(1);
+    expect(preUninstall).toContain('StrCpy $R1 "0"');
+    expect(preUninstall).toContain('StrCpy $R1 "1"');
+    expect(preUninstall).toContain('StrCmp $R1 "1" zinnia_preuninstall_done');
+    expect(preUninstall).toMatch(/^\s*Abort\s*$/m);
+    expect(preUninstall).toContain("IntCmp $R5 1 zinnia_preuninstall_abort");
     expect(hooks).toContain(
       'Delete /REBOOTOK "$INSTDIR\\zinnia-context-menu-register.log"',
     );
     expect(hooks).toContain('RMDir /REBOOTOK "$INSTDIR"');
+    expect(hooks).not.toContain("zinnia_skip_instdir_rmdir");
     expect(hooks).not.toContain("taskkill");
+    expect(hooks).toContain(
+      '"$SYSDIR\\WindowsPowerShell\\v1.0\\powershell.exe"',
+    );
+    expect(hooks).not.toContain("'powershell.exe -NoProfile");
 
     const registration = read("scripts/register-windows-context-menu.ps1");
     expect(registration).toContain("Remove-StaleShellPayloads");
@@ -188,11 +223,34 @@ describe("Windows 11 context-menu manifest", () => {
       "ShellPayloadLocation must not be a reparse point",
     );
     expect(registration).not.toContain("-Recurse");
+    expect(registration).toContain("Find-PreviousShellPayloads");
+    expect(registration).toContain("Convert-ShellPayloadSortKey");
+    expect(registration).toContain("Sort-Object -Property SortKey");
+    expect(registration).not.toContain("SortName");
+    expect(registration).toContain("Assert-PayloadAuthenticode");
+    expect(registration).toContain("Get-AuthenticodeSignature");
+    expect(registration).toContain(
+      "Previous Win11 context-menu packages were restored",
+    );
+    expect(registration).toContain("Restore-PreviousShellPackages");
+    expect(registration).toContain("Restoring previous packages from");
+    expect(registration).toContain("-ForceUpdateFromAnyVersion");
+    expect(registration).toContain("Unregister-ZinniaShellPackages");
+    expect(registration).toContain("[switch]$Unregister");
+    expect(registration).not.toContain(
+      "if ($previousPayload -and $hadPreviousPackages)",
+    );
     expect(registration).toContain("Could not write registration log");
     expect(registration).toContain("Could not reset registration log");
+    expect(registration).toContain("$attempt -lt 5");
+    expect(hooks).toContain('StrCmp $0 "error"');
     expect(registration).toContain(
       "Cleanup of stale shell payloads was deferred",
     );
+
+    const cmake = read("src-tauri/windows/shell/CMakeLists.txt");
+    expect(cmake).toContain("MSVC_RUNTIME_LIBRARY");
+    expect(cmake).toContain("MultiThreaded");
 
     const build = read("scripts/build-windows-context-menu.ps1");
     expect(build).toContain("windows-vs-toolchain.ps1");
@@ -230,16 +288,16 @@ describe("Windows 11 context-menu manifest", () => {
       hooks.indexOf("!macro ZINNIA_UNREGISTER_WIN11_CONTEXT_MENU"),
       hooks.indexOf("!macro ZINNIA_CLEAN_SHELL_PAYLOADS"),
     );
-    expect(unregister).toContain("for($attempt=0;$attempt -lt 2;$attempt++)");
-    expect(unregister).toContain(
-      "Zinnia AppX packages still registered after uninstall",
-    );
+    expect(unregister).toContain("-Unregister");
+    expect(unregister).toContain('-File "$R8"');
+    expect(unregister).toContain('StrCmp $0 "error"');
     expect(unregister).toContain("zinnia_win11_unregister_ok");
     expect(unregister).toContain(
       "Could not fully unregister Win11 sparse context-menu packages",
     );
     expect(unregister).toContain("Pop $0");
     expect(unregister).toContain("IntCmp $0 0 zinnia_win11_unregister_ok");
+    expect(unregister).toContain('StrCpy $R5 "1"');
   });
 
   it("avoids stacking classic HKCU verbs on top of Win11 package verbs", () => {
@@ -266,7 +324,7 @@ describe("Windows 11 context-menu manifest", () => {
     expect(hooks).toContain("ZINNIA_POSTINSTALL_CLASSIC_EXTRACT_FALLBACK");
     const postInstall = hooks.slice(
       hooks.indexOf("!macro NSIS_HOOK_POSTINSTALL"),
-      hooks.indexOf("!macro NSIS_HOOK_POSTUNINSTALL"),
+      hooks.indexOf("!macro NSIS_HOOK_PREUNINSTALL"),
     );
     expect(postInstall).toContain("ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS");
     expect(postInstall).toContain("ZINNIA_REGISTER_PROGID_OPEN");
@@ -310,6 +368,7 @@ describe("Windows 11 context-menu manifest", () => {
     expect(shellSource).not.toContain("kMaxPathsPerBatch");
     expect(shellSource).not.toContain("kSafeParameterChars");
     expect(shellSource).toContain("kMaxPathsPerRequest = 4'096");
+    expect(shellSource).toContain("count > kMaxPathsPerRequest");
     expect(shellSource).toContain("selectionCount > kMaxPathsPerRequest");
     expect(openRoutingSource).toContain("MAX_PENDING_PATHS: usize = 4_096");
     expect(openRoutingSource).toContain(
@@ -326,5 +385,8 @@ describe("Windows 11 context-menu manifest", () => {
     );
     expect(shellSource).toContain("LaunchOneBatch");
     expect(shellSource).toContain("QuoteArgument");
+    expect(shellSource).toContain("DirectoryNameStartsWithShellDash");
+    expect(shellSource).toContain("if (length == 0) return std::wstring();");
+    expect(shellSource).not.toContain('if (length == 0) return L"zinnia.exe";');
   });
 });

@@ -1,6 +1,12 @@
-import { message } from "@tauri-apps/plugin-dialog";
 import { trapFocus, releaseFocusTrap } from "../utils";
 import { buildArgs } from "./args";
+import { buildCommandPreviewText } from "./command-sanitize";
+import { showToast } from "../toast";
+
+export {
+  sanitizeCommandArgsForPreview,
+  buildCommandPreviewText,
+} from "./command-sanitize";
 
 let commandPreviewTrigger: HTMLElement | null = null;
 let commandPreviewCopyTimer: number | undefined;
@@ -21,17 +27,6 @@ function resetCommandPreviewCopyStateSoon(): void {
   commandPreviewCopyTimer = window.setTimeout(() => {
     setCommandPreviewCopyButton(false);
   }, 1300);
-}
-
-export function sanitizeCommandArgsForPreview(args: string[]): string[] {
-  return args.map((arg) => {
-    if (arg.startsWith("-p")) return "-p***";
-    return arg;
-  });
-}
-
-export function buildCommandPreviewText(args: string[]): string {
-  return `7z ${sanitizeCommandArgsForPreview(args).join(" ")}`;
 }
 
 export function closeCommandPreviewModal() {
@@ -75,10 +70,7 @@ export async function copyCommandPreview(): Promise<void> {
     resetCommandPreviewCopyStateSoon();
   } catch (err) {
     const messageText = err instanceof Error ? err.message : String(err);
-    await message(`Could not copy command.\n\n${messageText}`, {
-      title: "Copy failed",
-      kind: "error",
-    });
+    showToast(`Could not copy command. ${messageText}`, "error", 0);
   }
 }
 
@@ -93,7 +85,7 @@ export async function previewCommand(trigger?: HTMLElement) {
       "command-preview-text",
     ) as HTMLElement | null;
     if (!overlay || !preview) {
-      await message(previewText, { title: "Command preview" });
+      showToast(previewText, "info", 0);
       return;
     }
 
@@ -105,6 +97,6 @@ export async function previewCommand(trigger?: HTMLElement) {
     if (modal) trapFocus(modal);
   } catch (err) {
     const messageText = err instanceof Error ? err.message : String(err);
-    await message(messageText, { title: "Missing info" });
+    showToast(messageText, "error", 0);
   }
 }

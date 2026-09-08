@@ -1,7 +1,8 @@
 name: CI
 
-# Note: CI workflows are only run on the main and beta branches.
-# Additionally, CI workflows only run tests and smoke runs, not actually release builds.
+# Pull requests prove candidate changes. Pushes prove the exact post-merge tips
+# of the protected release branches without duplicating every PR branch update.
+# Jobs run tests and smoke builds, not signed release artifacts.
 
 on:
   push:
@@ -16,19 +17,45 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  NODE_VERSION: "24.16.0"
+  NPM_VERSION: "12.0.2"
+  RUST_VERSION: "stable"
+  CARGO_AUDIT_VERSION: "0.22.2"
+
 jobs:
+  commit-message-policy:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install latest npm 12
+        run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - name: Enforce Co-authored-by email policy
+        run: node scripts/strip-coauthor-trailers.js --check-range ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+
   quality-gate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: 22.12
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
+      - name: Install latest npm 12
+        run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: stable
-          components: rustfmt
+          toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt, clippy
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
@@ -38,9 +65,15 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
-            patchelf
-      - run: npm ci
-      - run: npm run test:all
+            patchelf \
+            xvfb
+      - run: npm ci --ignore-scripts
+      - name: Strict Cargo license notices
+        run: npm run licenses:cargo:strict
+      - name: Quality gate
+        env:
+          WEBKIT_DISABLE_COMPOSITING_MODE: "1"
+        run: npm run test:all
 
   rust-check:
     needs: quality-gate
@@ -52,33 +85,46 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: 22.12
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
+      - name: Install latest npm 12
+        run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: stable
-      - run: npm ci
+          toolchain: ${{ env.RUST_VERSION }}
+      - run: npm ci --ignore-scripts
+      - run: npm audit signatures
       - run: npm run test:cov
       - run: npm run prepare:7z
+      - run: npm run test:archives
       - name: Compile Finder Sync extension smoke
         if: runner.os == 'macOS'
         run: npm run prepare:macos:finder-sync
       # Empty stubs only: CI never builds/signs the real Win11 shell package.
       - run: npm run prepare:win-shell-stubs
-      - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-      - run: cargo test --manifest-path src-tauri/Cargo.toml --all-targets
+      - run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets
+      - run: npm run test:e2e
 
   updater-manifest:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: 22.12
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install latest npm 12
+        run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
       - run: npm run validate:updater
-      # Feed-shape smoke only. Candidate-bound validation runs after publish.
+      # Read-only shape smoke. Exact candidate version is checked after publish
+      # by release:verify:published; requiring it here makes version bumps
+      # circular because build VMs cannot publish until this CI passes.
       - name: Published updater feed sanity
         run: npm run validate:updater:live
 
@@ -112,13 +158,17 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: 22.12
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
+      - name: Install latest npm 12
+        run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: stable
+          toolchain: ${{ env.RUST_VERSION }}
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
@@ -128,8 +178,11 @@ jobs:
             libappindicator3-dev \
             librsvg2-dev \
             patchelf
-      - run: npm ci
+      - run: npm ci --ignore-scripts
+      - run: npm audit signatures
       - run: npm run sync-version
+      - name: Verify synchronized version files are committed
+        run: git diff --exit-code
       - run: npm run prepare:7z
       - run: npm run licenses
       - name: Compile Finder Sync extension smoke
@@ -159,30 +212,62 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: 22.12
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
+      - name: Install latest npm 12
+        run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: stable
-          components: clippy
-      - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf
-      - run: npm ci
-      - name: npm audit (production)
+          toolchain: ${{ env.RUST_VERSION }}
+      - run: npm ci --ignore-scripts
+      - run: npm audit signatures
+      - name: npm audit - production
         run: npm audit --omit=dev --audit-level=high
+      - name: npm audit - reviewed dev toolchain
+        # Fail on any new advisory, production reachability, or an expired
+        # exception while upstream WDIO/Puppeteer fixes are unavailable.
+        run: npm run audit:dev-reviewed
+      - name: RustSec ignore review policy
+        run: npm run check:rustsec-ignore-policy
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        run: cargo install cargo-audit --version ${{ env.CARGO_AUDIT_VERSION }} --locked
       - name: cargo audit
         working-directory: src-tauri
         run: cargo audit
-      - run: npm run prepare:7z
-      - name: cargo clippy
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+  ci-gate:
+    if: ${{ always() }}
+    needs:
+      - commit-message-policy
+      - quality-gate
+      - rust-check
+      - updater-manifest
+      - smoke-build
+      - security-audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every release check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          COMMIT_MESSAGE_POLICY: ${{ needs.commit-message-policy.result }}
+          QUALITY_GATE: ${{ needs.quality-gate.result }}
+          RUST_CHECK: ${{ needs.rust-check.result }}
+          UPDATER_MANIFEST: ${{ needs.updater-manifest.result }}
+          SMOKE_BUILD: ${{ needs.smoke-build.result }}
+          SECURITY_AUDIT: ${{ needs.security-audit.result }}
+        run: |
+          set -euo pipefail
+          test "$QUALITY_GATE" = success
+          test "$RUST_CHECK" = success
+          test "$UPDATER_MANIFEST" = success
+          test "$SMOKE_BUILD" = success
+          test "$SECURITY_AUDIT" = success
+          if [ "$EVENT_NAME" = pull_request ]; then
+            test "$COMMIT_MESSAGE_POLICY" = success
+          else
+            test "$COMMIT_MESSAGE_POLICY" = skipped
+          fi

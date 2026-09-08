@@ -192,6 +192,19 @@ pub(crate) fn join_path(parent: &str, name: &str, separator: char) -> String {
     format!("{parent}{separator}{name}")
 }
 
+fn sanitize_extract_folder_name(folder: &str) -> String {
+    if folder == "." || folder == ".." {
+        return "_extracted".to_string();
+    }
+    if !folder.is_empty() && folder.chars().all(|ch| ch == '.') {
+        return "_extracted".to_string();
+    }
+    if folder.ends_with('.') || folder.ends_with(' ') {
+        return "_extracted".to_string();
+    }
+    folder.to_string()
+}
+
 pub(crate) fn derive_extract_folder_name(archive_name: &str) -> Option<String> {
     const SUFFIXES: &[&str] = &[
         ".tar.gz", ".tar.bz2", ".tar.xz", ".tbz2", ".tgz", ".txz", ".7z", ".zip", ".rar", ".tar",
@@ -204,10 +217,14 @@ pub(crate) fn derive_extract_folder_name(archive_name: &str) -> Option<String> {
     let lower = cleaned.to_ascii_lowercase();
     for suffix in SUFFIXES {
         if lower.ends_with(suffix) && cleaned.len() > suffix.len() {
-            return Some(cleaned[..cleaned.len() - suffix.len()].to_string());
+            return Some(sanitize_extract_folder_name(
+                &cleaned[..cleaned.len() - suffix.len()],
+            ));
         }
     }
-    Some(format!("{cleaned}_extracted"))
+    Some(sanitize_extract_folder_name(&format!(
+        "{cleaned}_extracted"
+    )))
 }
 
 /// Ensure an extract window's `-o` / open path matches the destination bound at spawn.
@@ -226,12 +243,36 @@ pub fn assert_extract_bound_destination(
     let Some(bound) = guard.get(label) else {
         return Err("Extract window has no bound destination.".to_string());
     };
-    let bound_norm = normalize_destination_path(bound)?;
+    let bound_norm = normalize_destination_path(&bound.destination)?;
     let requested_norm = normalize_destination_path(requested)?;
     if bound_norm != requested_norm {
         return Err(
             "Quick-extract windows may only write to their bound destination folder.".to_string(),
         );
+    }
+    Ok(())
+}
+
+/// Ensure an extract window's `--` archive matches the archive bound at spawn.
+pub fn assert_extract_bound_archive(
+    app: &tauri::AppHandle,
+    label: &str,
+    requested: &std::path::Path,
+) -> Result<(), String> {
+    let state = app
+        .try_state::<ExtractBoundDestination>()
+        .ok_or_else(|| "Extract archive binding is unavailable.".to_string())?;
+    let guard = state
+        .0
+        .lock()
+        .map_err(|_| "Extract destination lock poisoned.".to_string())?;
+    let Some(bound) = guard.get(label) else {
+        return Err("Extract window has no bound archive.".to_string());
+    };
+    let bound_norm = normalize_destination_path(&bound.archive)?;
+    let requested_norm = normalize_destination_path(requested)?;
+    if bound_norm != requested_norm {
+        return Err("Quick-extract windows may only extract their bound archive.".to_string());
     }
     Ok(())
 }

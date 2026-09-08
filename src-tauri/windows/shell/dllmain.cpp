@@ -51,15 +51,13 @@ static bool EndsWithIgnoreCase(const std::wstring& value, const wchar_t* suffix)
 }
 
 static bool LooksLikeArchiveExtension(const std::wstring& lower_or_path) {
-  static const wchar_t* kExts[] = {L".7z",  L".zip", L".tar", L".gz",
-                                   L".tgz", L".bz2", L".tbz2", L".xz",
-                                   L".txz"};
+  static const wchar_t* kExts[] = {
+      L".7z", L".zip", L".rar",  L".tar",  L".gz",
+      L".tgz", L".bz2", L".tbz2", L".xz", L".txz"};
   for (const wchar_t* candidate : kExts) {
     if (EndsWithIgnoreCase(lower_or_path, candidate)) return true;
   }
-  return EndsWithIgnoreCase(lower_or_path, L".tar.gz") ||
-         EndsWithIgnoreCase(lower_or_path, L".tar.xz") ||
-         EndsWithIgnoreCase(lower_or_path, L".tar.bz2");
+  return false;
 }
 
 // Match launch/open_routing.rs: archive.7z.001 / archive.zip.001, or bare
@@ -90,7 +88,6 @@ static bool LooksLikeSplitVolume(const std::wstring& path) {
 }
 
 static bool LooksLikeArchive(const std::wstring& path) {
-  // Keep .rar omitted on Windows (CVE-2026-58052 extract gate in the app).
   std::wstring lower = path;
   for (auto& ch : lower) ch = static_cast<wchar_t>(towlower(ch));
   return LooksLikeArchiveExtension(lower) || LooksLikeSplitVolume(path);
@@ -108,6 +105,9 @@ static HRESULT GetSelectedPaths(IShellItemArray* items,
   DWORD count = 0;
   HRESULT hr = items->GetCount(&count);
   if (FAILED(hr)) return hr;
+  if (count > kMaxPathsPerRequest) {
+    return HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);
+  }
   DWORD resolved = 0;
   for (DWORD i = 0; i < count; ++i) {
     IShellItem* item = nullptr;
@@ -158,8 +158,12 @@ static HRESULT GetFolderPathFromSite(IUnknown* site, std::wstring* out) {
   return S_OK;
 }
 
-// DLL is usually next to zinnia.exe ($INSTDIR). If mapped under resources\,
-// fall back to the parent directory.
+// DLL is usually next to zinnia.exe ($INSTDIR). If mapped under a sparse
+// `shell-*` payload directory, only the parent install dir is trusted.
+static bool DirectoryNameStartsWithShellDash(const std::wstring& name) {
+  return name.size() >= 6 && _wcsnicmp(name.c_str(), L"shell-", 6) == 0;
+}
+
 static std::wstring GetZinniaExePath() {
   std::vector<wchar_t> buffer(512);
   DWORD length = 0;
@@ -167,7 +171,7 @@ static std::wstring GetZinniaExePath() {
     SetLastError(ERROR_SUCCESS);
     length = GetModuleFileNameW(g_hInst, buffer.data(),
                                 static_cast<DWORD>(buffer.size()));
-    if (length == 0) return L"zinnia.exe";
+    if (length == 0) return std::wstring();
     if (length < buffer.size()) break;
     buffer.resize(buffer.size() * 2);
   }
@@ -175,6 +179,14 @@ static std::wstring GetZinniaExePath() {
   const std::filesystem::path modulePath(
       std::wstring(buffer.data(), static_cast<size_t>(length)));
   const auto moduleDir = modulePath.parent_path();
+  if (DirectoryNameStartsWithShellDash(moduleDir.filename().wstring())) {
+    auto candidate = moduleDir.parent_path() / L"zinnia.exe";
+    if (GetFileAttributesW(candidate.c_str()) != INVALID_FILE_ATTRIBUTES) {
+      return candidate.wstring();
+    }
+    return std::wstring();
+  }
+
   auto candidate = moduleDir / L"zinnia.exe";
   if (GetFileAttributesW(candidate.c_str()) != INVALID_FILE_ATTRIBUTES) {
     return candidate.wstring();

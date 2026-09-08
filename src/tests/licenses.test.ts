@@ -47,6 +47,16 @@ describe("licenses modal", () => {
                 },
               ],
             },
+            "pkg-cargo-reviewed": {
+              licenses: "MPL-2.0",
+              licenseTextStatus: "reviewed-omission",
+              licenseReferences: [
+                {
+                  identifier: "MPL-2.0",
+                  url: "https://spdx.org/licenses/MPL-2.0.html",
+                },
+              ],
+            },
           }),
         };
       }
@@ -72,11 +82,12 @@ describe("licenses modal", () => {
     expect(list.textContent).toContain("7-Zip");
     expect(list.textContent).toContain("pkg-npm");
     expect(list.textContent).toContain("pkg-cargo");
-    expect(list.textContent).toContain("did not include license text");
+    expect(list.textContent).toContain("pkg-cargo-reviewed");
+    expect(list.textContent).toContain("exact reviewed source revision");
     expect(
       list.querySelector('a[href="https://spdx.org/licenses/Apache-2.0.html"]'),
     ).not.toBeNull();
-    expect(list.querySelectorAll("details.license-card").length).toBe(3);
+    expect(list.querySelectorAll("details.license-card").length).toBe(4);
 
     closeLicensesModal();
     expect(document.activeElement).toBe(trigger);

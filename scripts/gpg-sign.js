@@ -4,13 +4,24 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { execSync, spawnSync } from "child_process";
-import https from "https";
+import os from "os";
 import { fileURLToPath, pathToFileURL } from "url";
 import {
   normalizeUpdaterSignature,
   verifyUpdaterSignatures,
 } from "./updater-signature-verifier.js";
 import { verifyReleaseSession } from "./release-session.js";
+import githubCli from "./github-cli.cjs";
+import { assertStableReleaseOverridesAllowed } from "./release-policy.cjs";
+import draftMetadata from "./release-draft-metadata.cjs";
+
+const { assertGitHubCliAuthenticated, githubApi, uploadReleaseAsset } =
+  githubCli;
+const {
+  assertExpectedRelease,
+  assertNoMisnamedVersionDrafts,
+  isExpectedRelease,
+} = draftMetadata;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -38,7 +49,6 @@ const EXPECTED_TAG = (process.env.EXPECTED_TAG || "").trim();
 
 const GPG_KEY_ID = process.env.GPG_KEY_ID;
 const GPG_PASSPHRASE = process.env.GPG_PASSPHRASE;
-const GH_TOKEN = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
 const REPO_OWNER = process.env.GH_REPO_OWNER || "BurntToasters";
 const REPO_NAME = process.env.GH_REPO_NAME || "zinnia";
 const TAG_DOWNLOAD_BASE_URL = `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${encodeURIComponent(TAG)}`;
@@ -52,6 +62,36 @@ function isExplicitTruthy(value) {
   return /^(1|true|yes|on)$/i.test(String(value || "").trim());
 }
 
+function currentReleaseCommit() {
+  const commit = execSync("git rev-parse HEAD", {
+    cwd: root,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+  if (!/^[0-9a-f]{40}$/i.test(commit)) {
+    throw new Error("Could not resolve an exact release commit from git HEAD.");
+  }
+  return commit;
+}
+
+function assertReleaseTargetsCommit(
+  release,
+  commit,
+  env = process.env,
+  log = console,
+) {
+  if (release?.target_commitish === commit) return release;
+  if (isExplicitTruthy(env.FORCE_UPLOAD)) {
+    log.warn(
+      `WARNING: Draft release ${TAG} targets ${release?.target_commitish || "an unknown commit"}, not checked-out commit ${commit}. FORCE_UPLOAD=1 bypassing commit check.`,
+    );
+    return release;
+  }
+  throw new Error(
+    `Draft release ${TAG} targets ${release?.target_commitish || "an unknown commit"}, not checked-out commit ${commit}. Delete or retarget stale draft before uploading assets. Or set FORCE_UPLOAD=1 to bypass.`,
+  );
+}
+
 const ALLOW_ASSET_REPLACE = isExplicitTruthy(process.env.ALLOW_ASSET_REPLACE);
 const REQUIRED_LINUX_TARGETS = (
   process.env.REQUIRED_LINUX_TARGETS || ""
@@ -59,6 +99,9 @@ const REQUIRED_LINUX_TARGETS = (
 const REQUIRE_LINUX_AARCH64 = isExplicitTruthy(
   process.env.REQUIRE_LINUX_AARCH64,
 );
+const REQUIRED_UPDATER_TARGETS = (
+  process.env.REQUIRED_UPDATER_TARGETS || ""
+).trim();
 const ENFORCE_LINUX_X64_PACKAGE_SET = !/^(0|false|no|off)$/i.test(
   String(process.env.ENFORCE_LINUX_X64_PACKAGE_SET || "").trim(),
 );
@@ -219,7 +262,9 @@ function clearPreStagedUpdaterManifests() {
   if (!fs.existsSync(releaseDir)) return;
   const removed = [];
   for (const name of fs.readdirSync(releaseDir)) {
-    if (!isPerTargetManifest(name)) continue;
+    // `latest.json` matches artifact rules but no endpoint reads it; treat it
+    // like the discovery path, which deletes it outright.
+    if (!isPerTargetManifest(name) && name !== "latest.json") continue;
     const fullPath = path.join(releaseDir, name);
     let isFile = false;
     try {
@@ -875,55 +920,14 @@ function signArtifacts(files) {
 }
 
 function ghRequest(method, endpoint, body) {
-  return new Promise((resolve, reject) => {
-    const opts = {
-      hostname: "api.github.com",
-      path: endpoint,
-      method,
-      headers: {
-        Authorization: `Bearer ${GH_TOKEN}`,
-        "User-Agent": "Zinnia-Release",
-        Accept: "application/vnd.github.v3+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-      },
-    };
-    if (body) opts.headers["Content-Type"] = "application/json";
+  return Promise.resolve(githubApi(method, endpoint, body));
+}
 
-    const req = https.request(opts, (res) => {
-      let data = "";
-      res.on("data", (c) => (data += c));
-      res.on("end", () => {
-        try {
-          const json = data ? JSON.parse(data) : {};
-          if (res.statusCode >= 200 && res.statusCode < 300) {
-            resolve(json);
-          } else {
-            const error = new Error(
-              `GitHub ${res.statusCode}: ${json.message || data}`,
-            );
-            error.statusCode = res.statusCode;
-            reject(error);
-          }
-        } catch {
-          if (res.statusCode >= 200 && res.statusCode < 300) {
-            resolve(data);
-          } else {
-            const error = new Error(
-              `GitHub ${res.statusCode}: ${data || "Non-JSON error response"}`,
-            );
-            error.statusCode = res.statusCode;
-            reject(error);
-          }
-        }
-      });
-    });
-    req.on("error", reject);
-    req.setTimeout(30_000, () => {
-      req.destroy(new Error("GitHub API request timed out."));
-    });
-    if (body) req.write(JSON.stringify(body));
-    req.end();
-  });
+// gh reports "HTTP 422"; statusCode is parsed by github-cli.cjs.
+function isGitHubConflict(error) {
+  if (error?.statusCode === 422) return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return /\((?:HTTP )?422\)|"status"\s*:\s*"?422"?/.test(message);
 }
 
 /**
@@ -943,83 +947,57 @@ async function listAllGithubPages(fetchPage, { perPage = 100 } = {}) {
 }
 
 async function getOrCreateRelease() {
-  try {
-    return await ghRequest(
-      "GET",
-      `/repos/${REPO_OWNER}/${REPO_NAME}/releases/tags/${TAG}`,
+  const commit = currentReleaseCommit();
+  const findExisting = async () => {
+    try {
+      return await ghRequest(
+        "GET",
+        `/repos/${REPO_OWNER}/${REPO_NAME}/releases/tags/${TAG}`,
+      );
+    } catch (error) {
+      if (error?.statusCode !== 404) throw error;
+    }
+
+    const releases = await listAllGithubPages((page, perPage) =>
+      ghRequest(
+        "GET",
+        `/repos/${REPO_OWNER}/${REPO_NAME}/releases?per_page=${perPage}&page=${page}`,
+      ),
     );
-  } catch (error) {
-    if (error?.statusCode !== 404) throw error;
+    assertNoMisnamedVersionDrafts(releases, TAG, VERSION);
+    // Duplicate drafts are a known GitHub failure; match ensure-draft-release.
+    const drafts = releases.filter(
+      (release) => release?.draft && isExpectedRelease(release, TAG, VERSION),
+    );
+    if (drafts.length > 1) {
+      throw new Error(
+        `Multiple draft releases exist for ${TAG}. Resolve duplicates before signing.`,
+      );
+    }
+    return drafts[0] || null;
+  };
+
+  const existing = await findExisting();
+  if (existing) {
+    return assertReleaseTargetsCommit(
+      assertExpectedRelease(existing, TAG, VERSION, "Signing release"),
+      commit,
+    );
   }
 
-  const releases = await listAllGithubPages((page, perPage) =>
-    ghRequest(
-      "GET",
-      `/repos/${REPO_OWNER}/${REPO_NAME}/releases?per_page=${perPage}&page=${page}`,
-    ),
+  throw new Error(
+    `No GitHub release exists for ${TAG}. Create the draft with npm run release:draft on Windows first; Mac/Linux wait for that draft.`,
   );
-  const draft = releases.find((r) => r.draft && r.tag_name === TAG);
-  if (draft) return draft;
-
-  return await ghRequest("POST", `/repos/${REPO_OWNER}/${REPO_NAME}/releases`, {
-    tag_name: TAG,
-    name: `Zinnia ${VERSION}`,
-    draft: true,
-    prerelease: IS_PRERELEASE,
-  });
 }
 
 async function uploadAssetOnce(uploadUrl, filePath) {
-  const fileName = path.basename(filePath);
-  const contentLength = fs.statSync(filePath).size;
-  const url = new URL(uploadUrl.replace("{?name,label}", ""));
-  url.searchParams.set("name", fileName);
-
-  const isText = /\.(asc|txt|json)$/i.test(fileName);
-
-  await new Promise((resolve, reject) => {
-    const req = https.request(
-      {
-        hostname: url.hostname,
-        path: url.pathname + url.search,
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${GH_TOKEN}`,
-          "User-Agent": "Zinnia-Release",
-          Accept: "application/vnd.github.v3+json",
-          "Content-Type": isText ? "text/plain" : "application/octet-stream",
-          "Content-Length": contentLength,
-        },
-      },
-      (res) => {
-        let data = "";
-        res.on("data", (c) => (data += c));
-        res.on("end", () => {
-          if (res.statusCode < 300) {
-            resolve(true);
-          } else if (res.statusCode === 422) {
-            let detail = data;
-            try {
-              const parsed = JSON.parse(data);
-              if (parsed?.message) detail = parsed.message;
-            } catch {}
-            reject(new Error(`Upload ${fileName} rejected (422): ${detail}.`));
-          } else {
-            reject(
-              new Error(`Upload ${fileName} failed ${res.statusCode}: ${data}`),
-            );
-          }
-        });
-      },
+  const uploaded = uploadReleaseAsset(uploadUrl, filePath);
+  if (!uploaded || typeof uploaded.id !== "number") {
+    throw new Error(
+      `Upload ${path.basename(filePath)} succeeded but GitHub returned no asset id.`,
     );
-    req.on("error", reject);
-    req.setTimeout(120_000, () => {
-      req.destroy(new Error(`Upload ${fileName} timed out.`));
-    });
-    const stream = fs.createReadStream(filePath);
-    stream.on("error", (error) => req.destroy(error));
-    stream.pipe(req);
-  });
+  }
+  return uploaded;
 }
 
 async function uploadAsset(uploadUrl, filePath) {
@@ -1029,8 +1007,7 @@ async function uploadAsset(uploadUrl, filePath) {
       return await uploadAssetOnce(uploadUrl, filePath);
     } catch (error) {
       lastError = error;
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("(422)") || attempt === 3) throw error;
+      if (isGitHubConflict(error) || attempt === 3) throw error;
       await new Promise((resolve) => setTimeout(resolve, attempt * 1000));
     }
   }
@@ -1046,6 +1023,286 @@ async function listReleaseAssets(releaseId) {
   );
 }
 
+async function downloadUrlToFile(url, destination) {
+  const headers = {
+    Accept: "application/octet-stream",
+    "User-Agent": "Zinnia-Release",
+  };
+  const response = await fetch(url, { headers, redirect: "follow" });
+  if (!response.ok) {
+    throw new Error(`Download ${url} failed with HTTP ${response.status}.`);
+  }
+  const bytes = Buffer.from(await response.arrayBuffer());
+  fs.writeFileSync(destination, bytes);
+}
+
+async function replaceReleaseAssetsTransactionally(
+  release,
+  files,
+  { assertStillHeld = null } = {},
+) {
+  if (files.length === 0) return;
+  const temporaryDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "zinnia-release-replace-"),
+  );
+  const token = crypto.randomBytes(8).toString("hex");
+  const staged = [];
+  const swapped = [];
+  try {
+    const assets = await listReleaseAssets(release.id);
+    for (const filePath of files) {
+      const name = path.basename(filePath);
+      const existing = assets.find((asset) => asset?.name === name);
+      // GitHub strips leading/trailing periods from asset names, so keep
+      // staging/backup names alphanumeric (see upload-a-release-asset docs).
+      const stagedName = `zinnia-pending-${token}-${name}`;
+      const stagedPath = path.join(temporaryDirectory, stagedName);
+      fs.copyFileSync(filePath, stagedPath);
+      const uploaded = await uploadAsset(release.upload_url, stagedPath);
+      if (!uploaded || typeof uploaded.id !== "number") {
+        throw new Error(`GitHub did not identify staged asset ${stagedName}.`);
+      }
+      staged.push({
+        name,
+        existing: existing && typeof existing.id === "number" ? existing : null,
+        uploaded,
+        backupName: `zinnia-previous-${token}-${name}`,
+        previousRenamed: false,
+      });
+    }
+
+    // Re-check fence ownership after the (possibly long) staging uploads and
+    // immediately before live-name renames.
+    if (typeof assertStillHeld === "function") {
+      await assertStillHeld();
+    }
+
+    // Upload every replacement before touching a live name. GitHub has no
+    // atomic asset swap, so two adjacent rename requests create the narrowest
+    // possible gap; the previous implementation deleted before a full upload.
+    for (const item of staged) {
+      if (item.existing) {
+        await ghRequest(
+          "PATCH",
+          `/repos/${REPO_OWNER}/${REPO_NAME}/releases/assets/${item.existing.id}`,
+          { name: item.backupName },
+        );
+        item.previousRenamed = true;
+      }
+      try {
+        await ghRequest(
+          "PATCH",
+          `/repos/${REPO_OWNER}/${REPO_NAME}/releases/assets/${item.uploaded.id}`,
+          { name: item.name },
+        );
+      } catch (error) {
+        if (item.existing) {
+          await ghRequest(
+            "PATCH",
+            `/repos/${REPO_OWNER}/${REPO_NAME}/releases/assets/${item.existing.id}`,
+            { name: item.name },
+          );
+          item.previousRenamed = false;
+        }
+        throw error;
+      }
+      swapped.push(item);
+    }
+
+    // All live names now point at the verified new set. Old renamed assets are
+    // cleanup-only; failure leaves a harmless hidden backup rather than undoing
+    // an already complete feed swap.
+    for (const item of staged) {
+      if (!item.existing) continue;
+      try {
+        await ghRequest(
+          "DELETE",
+          `/repos/${REPO_OWNER}/${REPO_NAME}/releases/assets/${item.existing.id}`,
+        );
+      } catch (error) {
+        console.warn(
+          `  ! could not remove previous feed asset ${item.backupName}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  } catch (error) {
+    const rollbackErrors = [];
+    for (const item of swapped.reverse()) {
+      try {
+        if (item.existing) {
+          await ghRequest(
+            "PATCH",
+            `/repos/${REPO_OWNER}/${REPO_NAME}/releases/assets/${item.uploaded.id}`,
+            { name: `zinnia-rollback-${token}-${item.name}` },
+          );
+          try {
+            await ghRequest(
+              "PATCH",
+              `/repos/${REPO_OWNER}/${REPO_NAME}/releases/assets/${item.existing.id}`,
+              { name: item.name },
+            );
+          } catch (restoreError) {
+            await ghRequest(
+              "PATCH",
+              `/repos/${REPO_OWNER}/${REPO_NAME}/releases/assets/${item.uploaded.id}`,
+              { name: item.name },
+            );
+            throw restoreError;
+          }
+          item.previousRenamed = false;
+        }
+        await ghRequest(
+          "DELETE",
+          `/repos/${REPO_OWNER}/${REPO_NAME}/releases/assets/${item.uploaded.id}`,
+        );
+      } catch (rollbackError) {
+        rollbackErrors.push(
+          `${item.name}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+        );
+      }
+    }
+    const swappedIds = new Set(swapped.map((item) => item.uploaded.id));
+    for (const item of staged) {
+      if (swappedIds.has(item.uploaded.id)) continue;
+      try {
+        if (item.existing && item.previousRenamed) {
+          await ghRequest(
+            "PATCH",
+            `/repos/${REPO_OWNER}/${REPO_NAME}/releases/assets/${item.existing.id}`,
+            { name: item.name },
+          );
+          item.previousRenamed = false;
+        }
+        await ghRequest(
+          "DELETE",
+          `/repos/${REPO_OWNER}/${REPO_NAME}/releases/assets/${item.uploaded.id}`,
+        );
+      } catch (cleanupError) {
+        rollbackErrors.push(
+          `${item.name} staged cleanup: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+        );
+      }
+    }
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}${
+        rollbackErrors.length
+          ? `; live-feed rollback failed: ${rollbackErrors.join("; ")}`
+          : ""
+      }`,
+    );
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
+const BETA_SYNC_LOCK_NAME = "zinnia-beta-manifest-sync-lock";
+const BETA_SYNC_LOCK_RETRIES = 30;
+
+function isTransactionalStagingAssetName(name) {
+  return /^(?:default\.)?zinnia-(?:pending|previous|rollback)-/i.test(name);
+}
+
+async function removeAssetBestEffort(asset, label) {
+  if (!asset || typeof asset.id !== "number") return;
+  try {
+    await ghRequest(
+      "DELETE",
+      `/repos/${REPO_OWNER}/${REPO_NAME}/releases/assets/${asset.id}`,
+    );
+  } catch (error) {
+    console.warn(
+      `  ! could not remove ${label}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+async function findBetaManifestSyncLock(releaseId) {
+  const assets = await listReleaseAssets(releaseId);
+  return assets.find((asset) => asset?.name === BETA_SYNC_LOCK_NAME) ?? null;
+}
+
+/** Fail closed if another operator or process deleted our lock asset. */
+async function assertOwnsBetaManifestSyncLock(release, acquired) {
+  if (!acquired || typeof acquired.id !== "number") {
+    throw new Error("Beta-manifest synchronization lock was not acquired.");
+  }
+  const current = await findBetaManifestSyncLock(release.id);
+  if (!current || current.id !== acquired.id) {
+    throw new Error(
+      "Lost the beta-manifest synchronization lock before mutating live feeds.",
+    );
+  }
+}
+
+async function withBetaManifestSyncLock(release, operation) {
+  const temporaryDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "zinnia-beta-sync-lock-"),
+  );
+  const lockToken = crypto.randomBytes(16).toString("hex");
+  const lockPath = path.join(temporaryDirectory, BETA_SYNC_LOCK_NAME);
+  fs.writeFileSync(
+    lockPath,
+    JSON.stringify({
+      tag: TAG,
+      pid: process.pid,
+      token: lockToken,
+      createdAt: new Date(),
+    }) + "\n",
+  );
+
+  let acquired = null;
+  try {
+    for (let attempt = 1; attempt <= BETA_SYNC_LOCK_RETRIES; attempt += 1) {
+      try {
+        acquired = await uploadAsset(release.upload_url, lockPath);
+        break;
+      } catch (error) {
+        if (!isGitHubConflict(error)) throw error;
+        if (attempt === BETA_SYNC_LOCK_RETRIES) {
+          const lock = await findBetaManifestSyncLock(release.id);
+          const createdAt = lock?.created_at
+            ? ` (created ${lock.created_at})`
+            : "";
+          throw new Error(
+            `Timed out waiting for another release VM to finish beta-manifest synchronization${createdAt}. ` +
+              `If no release signer is still running, manually delete the GitHub release asset named ` +
+              `"${BETA_SYNC_LOCK_NAME}" from the latest stable release, then retry. ` +
+              "Never remove the lock while another signer is active.",
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    }
+    if (!acquired) {
+      throw new Error(
+        "Could not acquire the beta-manifest synchronization lock.",
+      );
+    }
+    await assertOwnsBetaManifestSyncLock(release, acquired);
+    return await operation({
+      assertStillHeld: () => assertOwnsBetaManifestSyncLock(release, acquired),
+    });
+  } finally {
+    // Never delete a replacement lock created during manual recovery.
+    if (acquired && typeof acquired.id === "number") {
+      const current = await findBetaManifestSyncLock(release.id);
+      if (current?.id === acquired.id) {
+        await removeAssetBestEffort(acquired, "beta-manifest sync lock");
+      }
+    }
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
+async function cleanupTransactionalStagingAssets(release) {
+  const assets = await listReleaseAssets(release.id);
+  for (const asset of assets.filter((item) =>
+    isTransactionalStagingAssetName(item?.name ?? ""),
+  )) {
+    await removeAssetBestEffort(asset, `orphan feed asset ${asset.name}`);
+  }
+}
+
 async function uploadAssetWithReplace(
   release,
   filePath,
@@ -1054,8 +1311,7 @@ async function uploadAssetWithReplace(
   try {
     await uploadAsset(release.upload_url, filePath);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (!message.includes("(422)")) throw err;
+    if (!isGitHubConflict(err)) throw err;
 
     const fileName = path.basename(filePath);
     const assets = await listReleaseAssets(release.id);
@@ -1106,13 +1362,227 @@ async function syncBetaManifestsToLatestStable(
     return;
   }
 
-  for (const filePath of betaManifests) {
-    await uploadAssetWithReplace(latestStable, filePath, {
-      allowPublishedReplace: true,
+  await withBetaManifestSyncLock(latestStable, async ({ assertStillHeld }) => {
+    await assertStillHeld();
+    await replaceReleaseAssetsTransactionally(latestStable, betaManifests, {
+      assertStillHeld,
     });
+    await assertStillHeld();
+    await cleanupTransactionalStagingAssets(latestStable);
+  });
+  for (const filePath of betaManifests) {
     console.log(
       `  ~ synced ${path.basename(filePath)} to latest stable release`,
     );
+  }
+}
+
+function requiredPublishedBetaManifestNames() {
+  const targets = new Set([
+    "windows-beta-x86_64",
+    "windows-beta-x86_64-nsis",
+    "windows-beta-aarch64",
+    "windows-beta-aarch64-nsis",
+    "darwin-beta-x86_64",
+    "darwin-beta-x86_64-app",
+    "darwin-beta-aarch64",
+    "darwin-beta-aarch64-app",
+    "linux-beta-x86_64",
+    "linux-beta-x86_64-appimage",
+    "linux-beta-x86_64-deb",
+    "linux-beta-x86_64-rpm",
+  ]);
+  if (REQUIRE_LINUX_AARCH64) {
+    for (const suffix of ["", "-appimage", "-deb", "-rpm"]) {
+      targets.add(`linux-beta-aarch64${suffix}`);
+    }
+  }
+  for (const target of REQUIRED_UPDATER_TARGETS.split(/[,\s]+/).filter(
+    Boolean,
+  )) {
+    if (!/^[a-z0-9_-]+$/i.test(target)) {
+      throw new Error(`Invalid REQUIRED_UPDATER_TARGETS entry "${target}".`);
+    }
+    targets.add(target);
+  }
+  return Array.from(targets, (target) => `latest-${target}.json`).sort();
+}
+
+function expectedPublishedBetaManifestNames(actualNames = []) {
+  const expected = new Set(requiredPublishedBetaManifestNames());
+  const optionalGroups = [
+    ["", "-appimage", "-deb", "-rpm"].map(
+      (suffix) => `latest-linux-beta-aarch64${suffix}.json`,
+    ),
+  ];
+  for (const group of optionalGroups) {
+    const present = group.filter((name) => actualNames.includes(name));
+    if (present.length === 0) continue;
+    if (present.length !== group.length) {
+      throw new Error(
+        `Published beta manifest set contains an incomplete optional target group. Required together: ${group.join(", ")}. Found: ${present.join(", ")}.`,
+      );
+    }
+    for (const name of group) expected.add(name);
+  }
+  return Array.from(expected).sort();
+}
+
+function validatePublishedBetaManifest({ name, contents, releaseAssetNames }) {
+  let manifest;
+  try {
+    manifest = JSON.parse(contents);
+  } catch (error) {
+    throw new Error(`${name} is not valid JSON: ${error.message}`);
+  }
+  if (manifest?.version !== VERSION) {
+    throw new Error(
+      `${name} reports version ${JSON.stringify(manifest?.version)}, expected ${VERSION}.`,
+    );
+  }
+  const platforms = Object.entries(manifest?.platforms || {});
+  if (platforms.length === 0) {
+    throw new Error(`${name} has no updater platform entries.`);
+  }
+  const referencedArtifacts = [];
+  for (const [target, entry] of platforms) {
+    if (
+      !entry ||
+      typeof entry.url !== "string" ||
+      typeof entry.signature !== "string"
+    ) {
+      throw new Error(`${name} has an invalid platform entry for ${target}.`);
+    }
+    const url = new URL(entry.url);
+    const expectedPrefix = `/${REPO_OWNER}/${REPO_NAME}/releases/download/${TAG}/`;
+    if (
+      url.protocol !== "https:" ||
+      url.hostname.toLowerCase() !== "github.com" ||
+      url.port !== "" ||
+      url.username ||
+      url.password ||
+      url.hash ||
+      !url.pathname.toLowerCase().startsWith(expectedPrefix.toLowerCase())
+    ) {
+      throw new Error(`${name} points outside the published ${TAG} release.`);
+    }
+    const artifactName = decodeURIComponent(url.pathname.split("/").at(-1));
+    if (
+      artifactName !== path.posix.basename(artifactName) ||
+      artifactName !== path.win32.basename(artifactName) ||
+      path.posix.isAbsolute(artifactName) ||
+      path.win32.isAbsolute(artifactName) ||
+      artifactName.includes("/") ||
+      artifactName.includes("\\") ||
+      artifactName.includes(":") ||
+      artifactName === "." ||
+      artifactName === ".."
+    ) {
+      throw new Error(
+        `${name} has an unsafe artifact filename ${artifactName}.`,
+      );
+    }
+    if (!releaseAssetNames.has(artifactName)) {
+      throw new Error(
+        `${name} references missing release asset ${artifactName}.`,
+      );
+    }
+    referencedArtifacts.push({
+      name: artifactName,
+      url: entry.url,
+      signature: entry.signature,
+    });
+  }
+  return referencedArtifacts;
+}
+
+async function loadAndVerifyPublishedBetaManifests(currentRelease) {
+  const assets = await listReleaseAssets(currentRelease.id);
+  const byName = new Map(assets.map((asset) => [asset.name, asset]));
+  const actualNames = assets
+    .map((asset) => asset.name)
+    .filter((name) => /^latest-[a-z0-9]+-beta-[a-z0-9_-]+\.json$/i.test(name))
+    .sort();
+  const expectedNames = expectedPublishedBetaManifestNames(actualNames);
+  if (JSON.stringify(actualNames) !== JSON.stringify(expectedNames)) {
+    throw new Error(
+      `Published beta manifest set is incomplete or unexpected. Expected: ${expectedNames.join(", ")}. Found: ${actualNames.join(", ")}.`,
+    );
+  }
+
+  const temporaryDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "zinnia-beta-finalize-"),
+  );
+  try {
+    const manifests = [];
+    const artifactRecords = new Map();
+    for (const name of expectedNames) {
+      const asset = byName.get(name);
+      const manifestPath = path.join(temporaryDirectory, name);
+      await downloadUrlToFile(asset.browser_download_url, manifestPath);
+      const contents = fs.readFileSync(manifestPath, "utf8");
+      const referenced = validatePublishedBetaManifest({
+        name,
+        contents,
+        releaseAssetNames: new Set(byName.keys()),
+      });
+      manifests.push(manifestPath);
+      for (const record of referenced) {
+        const previous = artifactRecords.get(record.name);
+        if (previous && previous.signature !== record.signature) {
+          throw new Error(
+            `Published beta manifests disagree on the updater signature for ${record.name}.`,
+          );
+        }
+        artifactRecords.set(record.name, record);
+      }
+    }
+
+    const shapeValidation = spawnSync(
+      process.execPath,
+      [
+        path.join(root, "scripts", "validate-updater-manifest.js"),
+        ...manifests,
+      ],
+      { cwd: root, encoding: "utf8" },
+    );
+    if (shapeValidation.status !== 0) {
+      throw new Error(
+        `Published updater manifest validation failed: ${shapeValidation.stderr || shapeValidation.stdout}`,
+      );
+    }
+
+    const localArtifacts = new Map();
+    const localSignatures = new Map();
+    for (const record of artifactRecords.values()) {
+      const artifactPath = path.join(temporaryDirectory, record.name);
+      // Public, unauthenticated fetch proves clients can actually download it.
+      await downloadUrlToFile(record.url, artifactPath);
+      const signaturePath = `${artifactPath}.sig`;
+      fs.writeFileSync(signaturePath, `${record.signature}\n`);
+      localArtifacts.set(record.name, artifactPath);
+      localSignatures.set(record.name, signaturePath);
+    }
+    verifyUpdaterSignatures({
+      root,
+      releaseDir: temporaryDirectory,
+      byName: new Map([
+        ...localArtifacts,
+        ...Array.from(localSignatures, ([name, filePath]) => [
+          `${name}.sig`,
+          filePath,
+        ]),
+      ]),
+      signatureByBaseName: localSignatures,
+      resolveUpdaterTargets,
+    });
+    return manifests.map((manifestPath) => {
+      const destination = path.join(releaseDir, path.basename(manifestPath));
+      fs.copyFileSync(manifestPath, destination);
+      return destination;
+    });
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
   }
 }
 
@@ -1160,7 +1630,9 @@ function buildUploadList({
 }
 
 async function main() {
+  assertStableReleaseOverridesAllowed(process.env, VERSION);
   console.log(`\nZinnia ${VERSION}: release pipeline\n`);
+  assertGitHubCliAuthenticated();
 
   if (EXPECTED_TAG && EXPECTED_TAG !== TAG) {
     throw new Error(
@@ -1197,12 +1669,6 @@ async function main() {
     console.log(`  + ${path.basename(checksumFile)}.asc`);
   }
 
-  if (!GH_TOKEN) {
-    console.log("\n[5/5] GH_TOKEN not set; skipping GitHub upload.");
-    console.log(`Artifacts staged in: ${releaseDir}\n`);
-    return;
-  }
-
   console.log("[5/5] Uploading to GitHub...");
   const release = await getOrCreateRelease();
   if (!release?.draft && !ALLOW_ASSET_REPLACE) {
@@ -1223,8 +1689,10 @@ async function main() {
   }
   // Beta clients poll /releases/latest for latest-*-beta-*.json. Sync those
   // manifests onto the latest *stable* release during every beta sign upload,
-  // including while this tag is still a draft (same automatic behavior as
-  // beta.22). Keep release:sync-beta-manifests for recovery/re-sync only.
+  // including while this tag is still a draft. That is intentional: each
+  // release:*:continue VM should publish its platform feed as soon as it
+  // signs, preserving the established automatic beta-feed behavior.
+  // Keep release:sync-beta-manifests for recovery/re-sync only.
   if (IS_PRERELEASE) {
     await syncBetaManifestsToLatestStable(everything, release.id);
   }
@@ -1240,23 +1708,7 @@ async function syncBetaManifestsAfterPublish() {
       "release:sync-beta-manifests is only for beta versions (syncs latest-*-beta-*.json onto /releases/latest).",
     );
   }
-  if (!GH_TOKEN) {
-    throw new Error(
-      "GH_TOKEN or GITHUB_TOKEN is required to sync beta manifests.",
-    );
-  }
-  // Post-publish sync only needs the staged beta manifests + GitHub token.
-  // Do not re-bind the dirty working tree to a release build session here.
-  const betaManifests = fs
-    .readdirSync(releaseDir)
-    .filter((name) => /^latest-[a-z0-9]+-beta-[a-z0-9_-]+\.json$/i.test(name))
-    .map((name) => path.join(releaseDir, name));
-  if (betaManifests.length === 0) {
-    throw new Error(
-      `No beta updater manifests found in ${releaseDir}. Run release:sign:gpg first.`,
-    );
-  }
-
+  assertGitHubCliAuthenticated();
   let currentRelease;
   try {
     currentRelease = await ghRequest(
@@ -1276,6 +1728,11 @@ async function syncBetaManifestsAfterPublish() {
       `Release ${TAG} is still a draft. Publish it on GitHub before syncing beta manifests to /latest.`,
     );
   }
+  if (!currentRelease.published_at) {
+    throw new Error(`Release ${TAG} has no published timestamp.`);
+  }
+  const betaManifests =
+    await loadAndVerifyPublishedBetaManifests(currentRelease);
 
   console.log(
     `Syncing ${betaManifests.length} beta updater manifest(s) from ${TAG} onto /releases/latest…`,
@@ -1302,14 +1759,21 @@ if (isDirectExecution()) {
 
 export {
   artifactMatchesVersion,
+  assertReleaseTargetsCommit,
   buildUploadList,
   checksumTargetKeysForArtifactName,
   isChecksumTextName,
   isDirectExecution,
   isExplicitTruthy,
+  isGitHubConflict,
+  isTransactionalStagingAssetName,
   listAllGithubPages,
   rpmArtifactMatchesVersion,
+  expectedPublishedBetaManifestNames,
+  requiredPublishedBetaManifestNames,
   requiredLinuxTargetKeys,
+  resolveUpdaterTargets,
+  validatePublishedBetaManifest,
   syncBetaManifestsToLatestStable,
   updaterChannelVariants,
 };

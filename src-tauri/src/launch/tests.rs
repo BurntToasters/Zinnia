@@ -1,23 +1,53 @@
 //! Launch module unit tests.
 
 use super::extract_window::{
-    bump_extract_warm_idle_generation, extract_session_init_script, EXTRACT_WARM_IDLE_ACTIVE,
-    EXTRACT_WARM_IDLE_GENERATION,
+    bump_extract_warm_idle_generation, extract_session_init_script, warm_idle_timer_still_owns,
+    EXTRACT_WARM_IDLE_ACTIVE, EXTRACT_WARM_IDLE_GENERATION,
 };
 use super::open_path::{derive_extract_destination_path, normalize_destination_path};
 use super::open_routing::{
     enqueue_pending_batch, looks_like_archive_path, parse_open_request_args,
-    parse_open_request_args_ex, parse_shell_handoff_contents, should_use_extract_window,
+    parse_open_request_args_ex, parse_shell_handoff_contents, record_shell_handoff_error,
+    should_queue_extract_to_main, should_use_extract_window, take_shell_handoff_error,
 };
 use super::OpenPathsPayload;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Mutex,
+};
 use tauri::Url;
 
 static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
+static WARM_IDLE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+#[test]
+fn e2e_session_active_defaults_off() {
+    #[cfg(not(feature = "e2e"))]
+    {
+        assert!(
+            !super::e2e_session_active(),
+            "packaged/release builds must ignore ZINNIA_E2E"
+        );
+    }
+    #[cfg(feature = "e2e")]
+    {
+        if std::env::var("ZINNIA_E2E").ok().as_deref() == Some("1") {
+            return;
+        }
+        assert!(!super::e2e_session_active());
+    }
+}
+
+#[test]
+fn shell_handoff_error_is_consumed_once() {
+    record_shell_handoff_error("bad handoff".to_string());
+    assert_eq!(take_shell_handoff_error().as_deref(), Some("bad handoff"));
+    assert_eq!(take_shell_handoff_error(), None);
+}
 
 #[test]
 fn extract_session_init_script_escapes_js_line_separators() {
-    let script = extract_session_init_script("foo\u{2028}bar.zip", "a\u{2029}b");
+    let script = extract_session_init_script("foo\u{2028}bar.zip", "a\u{2029}b", true);
     assert!(
         script.contains("\\u2028"),
         "U+2028 must be escaped for JS embedding: {script}"
@@ -31,6 +61,16 @@ fn extract_session_init_script_escapes_js_line_separators() {
         "raw line separators must not appear in init script"
     );
     assert!(script.contains("__ZINNIA_EXTRACT__"));
+    assert!(script.contains("\"destinationExists\":true"));
+}
+
+#[test]
+fn native_context_menu_guard_script_blocks_until_debug_flag() {
+    let script = super::webview_context_menu::NATIVE_CONTEXT_MENU_GUARD_SCRIPT;
+    assert!(script.contains("__ZINNIA_ALLOW_NATIVE_CONTEXT_MENU__"));
+    assert!(script.contains("__ZINNIA_NATIVE_CONTEXT_MENU_GUARD__"));
+    assert!(script.contains("preventDefault"));
+    assert!(script.contains("contextmenu"));
 }
 
 #[test]
@@ -65,6 +105,22 @@ fn derive_extract_destination_matches_frontend_rules() {
         derive_extract_destination_path("   "),
         Some(std::path::PathBuf::from("   _extracted"))
     );
+    assert_eq!(
+        derive_extract_destination_path("/downloads/..zip"),
+        Some(std::path::PathBuf::from("/downloads/_extracted"))
+    );
+    assert_eq!(
+        derive_extract_destination_path("/downloads/...zip"),
+        Some(std::path::PathBuf::from("/downloads/_extracted"))
+    );
+    assert_eq!(
+        derive_extract_destination_path("/downloads/....zip"),
+        Some(std::path::PathBuf::from("/downloads/_extracted"))
+    );
+    assert_eq!(
+        derive_extract_destination_path("/downloads/notes. .zip"),
+        Some(std::path::PathBuf::from("/downloads/_extracted"))
+    );
 }
 
 #[test]
@@ -83,6 +139,13 @@ fn normalize_destination_path_joins_missing_leaf_under_canonical_parent() {
 fn should_use_extract_window_honors_explicit_extract_mode() {
     let paths = vec!["/tmp/not-an-archive.txt".to_string()];
     assert!(should_use_extract_window(&paths, "extract-explicit"));
+}
+
+#[test]
+fn should_use_extract_window_accepts_compound_tar() {
+    let paths = vec!["/downloads/bundle.tar.gz".to_string()];
+    assert!(should_use_extract_window(&paths, "extract-explicit"));
+    assert!(should_use_extract_window(&paths, ""));
 }
 
 #[test]
@@ -124,6 +187,14 @@ fn should_use_extract_window_rejects_multiple_paths_without_explicit_mode() {
     assert!(!should_use_extract_window(&paths, ""));
 
     let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
+fn should_queue_extract_to_main_when_slot_busy_or_extract_open() {
+    assert!(!should_queue_extract_to_main(false, false));
+    assert!(should_queue_extract_to_main(true, false));
+    assert!(should_queue_extract_to_main(false, true));
+    assert!(should_queue_extract_to_main(true, true));
 }
 
 #[test]
@@ -409,6 +480,9 @@ fn looks_like_archive_path_rejects_bare_numeric_suffix() {
     assert!(!looks_like_archive_path("/downloads/notes.001"));
     assert!(looks_like_archive_path("/downloads/archive.7z.001"));
     assert!(looks_like_archive_path("/downloads/archive.zip"));
+    assert!(looks_like_archive_path("/downloads/archive.tgz"));
+    assert!(looks_like_archive_path("/downloads/archive.tbz2"));
+    assert!(looks_like_archive_path("/downloads/archive.txz"));
 }
 
 #[test]
@@ -427,9 +501,20 @@ fn looks_like_split_volume_accepts_sibling_volumes() {
 
 #[test]
 fn warm_idle_generation_advances_when_bumped() {
+    let _lock = WARM_IDLE_TEST_LOCK.lock().expect("warm idle test lock");
     let before = EXTRACT_WARM_IDLE_GENERATION.load(Ordering::SeqCst);
     bump_extract_warm_idle_generation();
     let after = EXTRACT_WARM_IDLE_GENERATION.load(Ordering::SeqCst);
     assert!(after > before);
+    EXTRACT_WARM_IDLE_ACTIVE.store(false, Ordering::SeqCst);
+}
+
+#[test]
+fn warm_idle_timer_keeps_ownership_until_leave_bumps() {
+    let _lock = WARM_IDLE_TEST_LOCK.lock().expect("warm idle test lock");
+    let generation = EXTRACT_WARM_IDLE_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    assert!(warm_idle_timer_still_owns(generation));
+    bump_extract_warm_idle_generation();
+    assert!(!warm_idle_timer_still_owns(generation));
     EXTRACT_WARM_IDLE_ACTIVE.store(false, Ordering::SeqCst);
 }

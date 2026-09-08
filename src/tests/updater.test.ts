@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ask, message } from "@tauri-apps/plugin-dialog";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { check } from "@tauri-apps/plugin-updater";
@@ -40,8 +40,16 @@ import {
   discardPendingUpdate,
 } from "../updater";
 
+function defaultInvoke(command: string): Promise<unknown> {
+  if (command === "is_7z_running") return Promise.resolve(false);
+  if (command === "is_flatpak") return Promise.resolve(false);
+  if (command === "get_beta_updater_target") {
+    return Promise.resolve("windows-beta-x86_64-nsis");
+  }
+  return Promise.resolve("windows");
+}
+
 const askMock = vi.mocked(ask);
-const messageMock = vi.mocked(message);
 const getVersionMock = vi.mocked(getVersion);
 const invokeMock = vi.mocked(invoke);
 const checkMock = vi.mocked(check);
@@ -55,7 +63,6 @@ beforeEach(() => {
   mockState.currentSettings.updateChannel = "stable";
 
   askMock.mockReset();
-  messageMock.mockReset();
   getVersionMock.mockReset();
   invokeMock.mockReset();
   checkMock.mockReset();
@@ -68,11 +75,9 @@ beforeEach(() => {
   setStatusMock.mockReset();
 
   askMock.mockResolvedValue(false);
-  messageMock.mockResolvedValue("Ok");
+  document.getElementById("toast-region")?.remove();
   getVersionMock.mockResolvedValue("0.4.1");
-  invokeMock.mockImplementation((command) =>
-    Promise.resolve(command === "is_7z_running" ? false : "windows"),
-  );
+  invokeMock.mockImplementation((command) => defaultInvoke(String(command)));
   checkMock.mockResolvedValue(null);
   relaunchMock.mockResolvedValue(undefined);
   isPermissionGrantedMock.mockResolvedValue(true);
@@ -123,23 +128,35 @@ describe("checkUpdates", () => {
 
     expect(checkMock).toHaveBeenCalledWith({ timeout: 30_000 });
     expect(devLogMock).toHaveBeenCalledWith("No updates available.");
-    expect(messageMock).toHaveBeenCalledWith(
+    expect(document.getElementById("toast-region")?.textContent).toContain(
       "You are running the latest version.",
-      { title: "No updates" },
     );
     expect(setStatusMock).toHaveBeenNthCalledWith(1, "Checking updates");
     expect(setStatusMock).toHaveBeenLastCalledWith("Idle");
   });
 
+  it("skips the in-app updater on Flatpak", async () => {
+    invokeMock.mockImplementation((command) => {
+      if (command === "is_flatpak") return Promise.resolve(true);
+      return defaultInvoke(String(command));
+    });
+
+    await checkUpdates();
+
+    expect(checkMock).not.toHaveBeenCalled();
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Flatpak builds update through Flathub or a reinstalled bundle, not the in-app updater.",
+    );
+  });
+
   it("uses beta target when beta channel is selected", async () => {
     mockState.currentSettings.updateChannel = "beta";
-    invokeMock.mockImplementation((command) =>
-      Promise.resolve(
-        command === "get_beta_updater_target"
-          ? "windows-beta-x86_64-nsis"
-          : false,
-      ),
-    );
+    invokeMock.mockImplementation((command) => {
+      if (command === "get_beta_updater_target") {
+        return Promise.resolve("windows-beta-x86_64-nsis");
+      }
+      return defaultInvoke(String(command));
+    });
     checkMock.mockResolvedValue(null);
 
     await checkUpdates();
@@ -149,6 +166,22 @@ describe("checkUpdates", () => {
       target: "windows-beta-x86_64-nsis",
       timeout: 30_000,
     });
+    expect(checkMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries a transient beta feed lookup failure once", async () => {
+    mockState.currentSettings.updateChannel = "beta";
+    invokeMock.mockImplementation((command) => defaultInvoke(String(command)));
+    checkMock
+      .mockRejectedValueOnce(new Error("feed swap"))
+      .mockResolvedValueOnce(null);
+
+    await checkUpdates();
+
+    expect(checkMock).toHaveBeenCalledTimes(2);
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "You are running the latest version.",
+    );
   });
 
   it("downloads and installs update when user accepts restart", async () => {
@@ -166,9 +199,167 @@ describe("checkUpdates", () => {
     expect(download).toHaveBeenCalledWith(undefined, { timeout: 120_000 });
     expect(install).toHaveBeenCalledOnce();
     expect(relaunchMock).toHaveBeenCalledOnce();
+    expect(invokeMock).toHaveBeenCalledWith("is_7z_running", {
+      mode: "reserve_update",
+    });
+    expect(invokeMock).toHaveBeenCalledWith("is_7z_running", {
+      mode: "release_update",
+    });
     expect(setStatusMock).toHaveBeenCalledWith("Downloading update");
     expect(setStatusMock).toHaveBeenCalledWith("Update ready");
     expect(setStatusMock).toHaveBeenCalledWith("Installing update");
+  });
+
+  it("releases the archive-operation reservation when install fails", async () => {
+    const install = vi.fn().mockRejectedValue(new Error("install failed"));
+    checkMock.mockResolvedValue({
+      version: "0.5.0",
+      download: vi.fn().mockResolvedValue(undefined),
+      install,
+    } as unknown as Awaited<ReturnType<typeof check>>);
+    askMock.mockResolvedValue(true);
+
+    await checkUpdates();
+
+    expect(invokeMock).toHaveBeenCalledWith("is_7z_running", {
+      mode: "release_update",
+    });
+    expect(relaunchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not relaunch after install when reservation release IPC fails", async () => {
+    const install = vi.fn().mockResolvedValue(undefined);
+    checkMock.mockResolvedValue({
+      version: "0.5.0",
+      download: vi.fn().mockResolvedValue(undefined),
+      install,
+      close: vi.fn().mockResolvedValue(undefined),
+    } as unknown as Awaited<ReturnType<typeof check>>);
+    askMock.mockResolvedValue(true);
+    invokeMock.mockImplementation((command, payload) => {
+      if (
+        command === "is_7z_running" &&
+        (payload as { mode?: string } | undefined)?.mode === "release_update"
+      ) {
+        return Promise.reject(new Error("release IPC unavailable"));
+      }
+      return defaultInvoke(String(command));
+    });
+
+    await checkUpdates();
+
+    expect(install).toHaveBeenCalledOnce();
+    expect(relaunchMock).not.toHaveBeenCalled();
+    expect(logMock).toHaveBeenCalledWith(
+      "Unable to release update reservation: release IPC unavailable",
+      "error",
+    );
+  });
+
+  it("keeps the archive-operation reservation when install watchdog fires", async () => {
+    vi.useFakeTimers();
+    let resolveInstall: (() => void) | undefined;
+    const install = vi.fn().mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveInstall = resolve;
+        }),
+    );
+    checkMock.mockResolvedValue({
+      version: "0.5.0",
+      download: vi.fn().mockResolvedValue(undefined),
+      install,
+      close: vi.fn().mockResolvedValue(undefined),
+    } as unknown as Awaited<ReturnType<typeof check>>);
+    askMock.mockResolvedValue(true);
+
+    try {
+      const pending = checkUpdates();
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(invokeMock).not.toHaveBeenCalledWith("is_7z_running", {
+        mode: "release_update",
+      });
+      expect(logMock).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Update install still running after 180 seconds",
+        ),
+      );
+      expect(setStatusMock).toHaveBeenCalledWith("Still installing update");
+      expect(relaunchMock).not.toHaveBeenCalled();
+
+      resolveInstall?.();
+      await pending;
+
+      expect(invokeMock).toHaveBeenCalledWith("is_7z_running", {
+        mode: "release_update",
+      });
+      expect(relaunchMock).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("refreshes the update reservation while a long install is in flight", async () => {
+    vi.useFakeTimers();
+    let resolveInstall: (() => void) | undefined;
+    const install = vi.fn().mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveInstall = resolve;
+        }),
+    );
+    checkMock.mockResolvedValue({
+      version: "0.5.0",
+      download: vi.fn().mockResolvedValue(undefined),
+      install,
+      close: vi.fn().mockResolvedValue(undefined),
+    } as unknown as Awaited<ReturnType<typeof check>>);
+    askMock.mockResolvedValue(true);
+
+    try {
+      const pending = checkUpdates();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(invokeMock).toHaveBeenCalledWith("is_7z_running", {
+        mode: "touch_update",
+      });
+      resolveInstall?.();
+      await pending;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still attempts release_update when the release invoke itself fails", async () => {
+    const install = vi.fn().mockRejectedValue(new Error("install failed"));
+    checkMock.mockResolvedValue({
+      version: "0.5.0",
+      download: vi.fn().mockResolvedValue(undefined),
+      install,
+    } as unknown as Awaited<ReturnType<typeof check>>);
+    askMock.mockResolvedValue(true);
+    invokeMock.mockImplementation((command, payload) => {
+      if (
+        command === "is_7z_running" &&
+        payload &&
+        typeof payload === "object" &&
+        "mode" in payload &&
+        (payload as { mode?: string }).mode === "release_update"
+      ) {
+        return Promise.reject(new Error("release ipc failed"));
+      }
+      return defaultInvoke(String(command));
+    });
+
+    await checkUpdates();
+
+    expect(invokeMock).toHaveBeenCalledWith("is_7z_running", {
+      mode: "release_update",
+    });
+    expect(logMock).toHaveBeenCalledWith(
+      expect.stringContaining("Unable to release update reservation"),
+      "error",
+    );
+    expect(relaunchMock).not.toHaveBeenCalled();
   });
 
   it("downloads update and defers install when user chooses later", async () => {
@@ -273,16 +464,15 @@ describe("checkUpdates", () => {
     expect(checkMock).toHaveBeenCalledOnce();
   });
 
-  it("shows update error dialog on failures", async () => {
+  it("shows update error toast on failures", async () => {
     checkMock.mockRejectedValue(new Error("network down"));
 
     await checkUpdates();
 
     expect(logMock).toHaveBeenCalledWith("Updater error: network down");
     expect(setStatusMock).toHaveBeenLastCalledWith("Idle");
-    expect(messageMock).toHaveBeenCalledWith(
-      "Failed to check for updates.\n\nnetwork down",
-      { title: "Update error", kind: "error" },
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Failed to check for updates. network down",
     );
   });
 });
@@ -317,7 +507,7 @@ describe("autoCheckUpdates", () => {
     await autoCheckUpdates();
 
     expect(checkMock).toHaveBeenCalledWith({ timeout: 30_000 });
-    expect(invokeMock).not.toHaveBeenCalled();
+    expect(invokeMock).toHaveBeenCalledWith("is_flatpak");
     expect(devLogMock).toHaveBeenCalledWith(
       "Auto-update check: no updates available.",
     );
@@ -330,6 +520,6 @@ describe("autoCheckUpdates", () => {
 
     expect(logMock).toHaveBeenCalledWith("Update check failed: timeout");
     expect(setStatusMock).toHaveBeenCalledWith("Idle");
-    expect(messageMock).not.toHaveBeenCalled();
+    expect(document.getElementById("toast-region")).toBeNull();
   });
 });
