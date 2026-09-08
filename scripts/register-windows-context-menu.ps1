@@ -79,6 +79,48 @@ function Find-PreviousShellPayloads([string]$CurrentLocation, [string]$InstallRo
     }
 }
 
+function Add-ZinniaShellPackage(
+  [string]$Path,
+  [string]$PackageName,
+  [string]$ExternalLocation
+) {
+  try {
+    Add-AppxPackage -ForceUpdateFromAnyVersion -Path $Path -ExternalLocation $ExternalLocation -ErrorAction Stop
+    return
+  }
+  catch {
+    # Windows reports an already-registered exact package version as
+    # 0x80073CFB. This is common when an installer is re-run after a partial
+    # registration. Remove only that package identity, then retry once.
+    # PowerShell 5.1 exposes HRESULT as a signed Int32; keep it signed so the
+    # high-bit AppX code remains representable (`[uint32]0x80073CFB` overflows
+    # in Windows PowerShell 5.1).
+    $hresult = $_.Exception.HResult
+    $formattedHresult = '0x{0:X8}' -f $hresult
+    Write-Log "Add-AppxPackage failed for $Path (HRESULT $formattedHresult)."
+    if ($hresult -eq [int32]0x80073D02) {
+      # Explorer/dllhost can still have the previous shell extension loaded.
+      # Let Windows stage the update and register it when the host releases it.
+      Write-Log "Package resources are in use; retrying $PackageName with deferred registration."
+      Add-AppxPackage -ForceUpdateFromAnyVersion -DeferRegistrationWhenPackagesAreInUse -Path $Path -ExternalLocation $ExternalLocation -ErrorAction Stop
+      return
+    }
+    if ($hresult -ne [int32]0x80073CFB) {
+      throw
+    }
+
+    $existing = @(Get-AppxPackage -Name $PackageName -ErrorAction SilentlyContinue)
+    if ($existing.Count -gt 0) {
+      Write-Log "Removing exact-version package $PackageName before retry."
+      $existing | Remove-AppxPackage -ErrorAction Stop
+    }
+    else {
+      Write-Log "No registered package $PackageName found; retrying registration."
+    }
+    Add-AppxPackage -ForceUpdateFromAnyVersion -Path $Path -ExternalLocation $ExternalLocation -ErrorAction Stop
+  }
+}
+
 function Restore-PreviousShellPackages(
   [object]$PreviousPayload,
   [string]$ExternalLocation
@@ -92,6 +134,9 @@ function Restore-PreviousShellPackages(
     return $false
   }
   Write-Log "Restoring previous packages from $($PreviousPayload.Location)"
+  # Recovery must not remove a still-working prior identity. If it is already
+  # registered, the direct add may report 0x80073CFB; leave that package in
+  # place and let the caller keep the classic fallback available.
   Add-AppxPackage -ForceUpdateFromAnyVersion -Path $PreviousPayload.RootMsix -ExternalLocation $ExternalLocation -ErrorAction Stop
   Add-AppxPackage -ForceUpdateFromAnyVersion -Path $PreviousPayload.ExtractMsix -ExternalLocation $ExternalLocation -ErrorAction Stop
   Write-Log 'OK: Restored previous Win11 context menu packages.'
@@ -238,9 +283,9 @@ try {
   )
 
   Write-Log "Add-AppxPackage -ForceUpdateFromAnyVersion -Path $MsixPath -ExternalLocation $ExternalLocation"
-  Add-AppxPackage -ForceUpdateFromAnyVersion -Path $MsixPath -ExternalLocation $ExternalLocation -ErrorAction Stop
+  Add-ZinniaShellPackage -Path $MsixPath -PackageName 'run.rosie.zinnia.contextmenu' -ExternalLocation $ExternalLocation
   Write-Log "Add-AppxPackage -ForceUpdateFromAnyVersion -Path $ExtractMsixPath -ExternalLocation $ExternalLocation"
-  Add-AppxPackage -ForceUpdateFromAnyVersion -Path $ExtractMsixPath -ExternalLocation $ExternalLocation -ErrorAction Stop
+  Add-ZinniaShellPackage -Path $ExtractMsixPath -PackageName 'run.rosie.zinnia.extractmenu' -ExternalLocation $ExternalLocation
   Write-Log 'OK: Win11 context menu packages registered.'
   try {
     Remove-StaleShellPayloads -CurrentLocation $ShellPayloadLocation

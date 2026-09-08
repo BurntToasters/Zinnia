@@ -20,7 +20,10 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
 ## Changes in `v0.6.2:`
 
-- **Fix:** (add release notes)
+- **Windows fix:** Win11 sparse context-menu registration now recovers from an
+  already-registered exact package version (`0x80073CFB`) and defers safely when
+  Explorer still has the prior shell extension loaded (`0x80073D02`), without
+  disturbing unrelated deployment failures.
 
 ## Changes in `v0.6.0:`
 

@@ -86,7 +86,11 @@ without a BOM (PowerShell's default UTF-8 encoding breaks makeappx).
 `SKIP_WIN_CONTEXT_MENU=1`), signs both artifacts with Azure Artifact Signing,
 then bundles them into the NSIS installer. Post-install runs
 `scripts/register-windows-context-menu.ps1`
-(remove-before-add + `Add-AppxPackage -ExternalLocation`). Failures are written
+(`Add-AppxPackage -ExternalLocation`). If Windows reports an exact-version
+collision (`0x80073CFB`), the matching sparse identity is removed and that
+package is retried once. If Explorer still has the previous shell extension
+loaded (`0x80073D02`), Windows is asked to defer registration until that host
+releases it. Other deployment errors are not destructive. Failures are written
 to `$INSTDIR\zinnia-context-menu-register.log` without aborting the install
 (classic verbs still work).
 
