@@ -22,17 +22,6 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
 - **Fix:** (add release notes)
 
-## Changes in `v0.6.1:`
-
-- **Release:** First stable 0.6.1. Same product as published `v0.6.1-beta.9`.
-- **7-Zip:** Bundled sidecar is **26.03**. Probe refuses any other banner. 26.03 closes CVE-2026-58052 (RAR5 STM MotW wipe); Zinnia still forces `-snz` and `-sns-` on Windows extract.
-- **Security:** Windows MotW `Zone.Identifier` copy accepts UTF-8 and UTF-16 LE and skips malformed ads instead of failing the snapshot. macOS copies `com.apple.quarantine` onto the published tree. Member paths reject trailing-dot/space components and extra device names (`COM0`, `LPT0`, `CONIN$`, `CONOUT$`, COM¹-³). Extra args reject `-r`/`-scs`/`-scc` and non-AES `-mem=`. ZIP create emits `-mcu=on`. ZIP add refuses ZipCrypto members. List/test metadata-only exit 1 is classified like extract.
-- **Fix:** Forced Windows UTF-8 console charset is last-wins: strip every `-scc*` and insert `-sccUTF-8` immediately before `--`. Extract destinations treat `.` / `..` / all-dot / trailing-dot-or-space stems as `_extracted`. Quit after a kill error still `app.exit(0)`. Warm-idle re-checks generation before exit.
-- **Windows:** Shell DLLs link `/MT`. Versioned `shell-0.6.1/` payloads sit side by side so updates cannot overwrite loaded DLLs. NSIS `/UPDATE` never Aborts on leftover AppX; missing register script probes packages instead of failing closed. Classic Extract fallback covers `.rar` `.tgz` `.tbz2` `.txz` `.001`.
-- **Linux:** Main window is opaque before `show()`. Updater pkexec/sudo wait with a timeout, `PATH` includes `/usr/sbin:/sbin`, and `SSL_CERT_FILE` is set only when the Debian or Fedora bundle file exists. Frontend cannot force updater downgrades.
-- **macOS:** Finder Sync monitors `mountedVolumeURLs` and remounts, not the `/Volumes` folder itself. Services Extract includes split volumes (`.001`).
-- **UI:** Settings Save copies live Power format/method fields and Basic live compress fields. Workspace switch to Power no longer wipes extras. Batch extract unfreezes Basic destination/password. Password prompts ignore overlay clicks. Sticky toasts stay opaque and keyboard-dismissible.
-
 ## Changes in `v0.6.0:`
 
 ### v0.6.0 is a large feature-packed update :) a lot of painstaking work went into integrating Zinnia with the Windows 11 Context-menu :P
