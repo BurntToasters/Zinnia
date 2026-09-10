@@ -1602,7 +1602,7 @@ test("46. npm lock update cannot install packages or run lifecycle scripts", () 
   ]);
 });
 
-test("46a. npm update audits production strictly and dev tools through review policy", () => {
+test("46a. npm update audits production strictly and proves remaining findings are dev-only", () => {
   const root = path.join("isolated", "workspace");
   const plan = npmAuditPlan(root, "/isolated/npm-cache", {
     command: process.execPath,

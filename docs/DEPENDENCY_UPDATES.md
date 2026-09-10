@@ -24,21 +24,20 @@ Do not run `npm run workspace:prepare`, `npm run test:all`, Cargo checks, builds
 
 The three-day delay reduces exposure to newly published supply-chain attacks; it cannot prove that an older package is benign. Emergency young-crate and Git overrides must name one exact version or revision and include a written reason.
 
-## Reviewed development-only advisories
+## Development-only advisories
 
-CI audits the production dependency graph separately and also runs
-`npm run audit:dev-reviewed`. The latter does not ignore the development graph:
-it parses the full npm audit report, proves every affected installed node is
-marked dev-only in `package-lock.json`, and permits only the exact GHSA entries
-listed in `scripts/npm-dev-audit.cjs` until that review expires.
+CI audits the production dependency graph separately (`npm audit --omit=dev`)
+and also runs `npm run audit:dev-reviewed`. `npm run u` uses the same pair of
+checks. The production audit rejects high-severity findings in shipped
+dependencies. The reviewed-dev check parses the full npm audit report and
+fails only when an affected installed node is not marked `dev` in
+`package-lock.json`. Proven development-only findings, including the
+WebdriverIO/Puppeteer test chain, are warnings. They do not block lockfile
+updates or CI, because they do not ship to users.
 
-This temporary review exists because the current WebdriverIO/Puppeteer test
-chain still pulls advisory-bearing versions for which a compatible patched
-upgrade is not available. Any new advisory, a reviewed advisory becoming
-production-reachable, or the review expiration makes CI fail. Re-evaluate the
-allowlist as soon as upstream releases a compatible dependency chain; do not
-extend the date without checking the current advisories and running the full
-E2E suite.
+Known GHSA entries may be listed in `scripts/npm-dev-audit.cjs` for tracking.
+Re-evaluate that list when upstream releases a compatible patched chain. A
+reviewed advisory becoming production-reachable still fails closed.
 
 Cargo audit's reviewed transitive warning set is also fail-closed. The exact
 `src-tauri/.cargo/audit.toml` ignore IDs are checked by

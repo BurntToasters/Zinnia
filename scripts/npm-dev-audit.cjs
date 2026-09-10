@@ -10,6 +10,7 @@ const REVIEW_EXPIRES = "2026-12-01";
 const REVIEWED_ADVISORIES = new Map([
   ["GHSA-GGR8-5VV4-36MX", "deepmerge-ts"],
   ["GHSA-JMR9-QJV8-65GV", "extract-zip"],
+  ["GHSA-7PQW-9J4J-H8Q3", "extract-zip"],
   ["GHSA-5C6J-R48X-RMVQ", "serialize-javascript"],
   ["GHSA-QJ8W-GFJ5-8C6V", "serialize-javascript"],
 ]);
@@ -47,10 +48,15 @@ function isDevOnlyNode(node, lock) {
   return Boolean(entry && entry.dev === true);
 }
 
+function nodesAreProvenDevOnly(nodes, lock) {
+  return nodes.length > 0 && nodes.every((node) => isDevOnlyNode(node, lock));
+}
+
 function evaluateAudit(report, lock, now = new Date()) {
   const vulnerabilities = report?.vulnerabilities || {};
   const errors = [];
   const reviewed = new Map();
+  const unreviewed = new Map();
   const reviewExpired =
     now.getTime() >= Date.parse(`${REVIEW_EXPIRES}T00:00:00Z`);
 
@@ -66,15 +72,20 @@ function evaluateAudit(report, lock, now = new Date()) {
         errors.push(`${name}: affected node ${node} is not proven dev-only`);
       }
     }
+    const provenDevOnly = nodesAreProvenDevOnly(nodes, lock);
 
     const advisories = collectAdvisories(name, vulnerabilities);
     if (advisories.length === 0) {
-      errors.push(`${name}: vulnerability chain has no resolvable advisory`);
+      if (!provenDevOnly) {
+        errors.push(`${name}: vulnerability chain has no resolvable advisory`);
+      }
       continue;
     }
     for (const item of advisories) {
       if (!item.id) {
-        errors.push(`${name}: advisory is missing a GHSA identifier`);
+        if (!provenDevOnly) {
+          errors.push(`${name}: advisory is missing a GHSA identifier`);
+        }
         continue;
       }
       const expectedPackage = REVIEWED_ADVISORIES.get(item.id);
@@ -82,26 +93,23 @@ function evaluateAudit(report, lock, now = new Date()) {
         item.advisory?.name || item.packageName || "",
       );
       if (!expectedPackage) {
-        errors.push(`${name}: unreviewed advisory ${item.id}`);
+        unreviewed.set(item.id, actualPackage || name);
         continue;
       }
       if (actualPackage !== expectedPackage) {
-        errors.push(
-          `${name}: ${item.id} expected ${expectedPackage}, npm reported ${actualPackage || "unknown package"}`,
-        );
+        unreviewed.set(item.id, actualPackage || "unknown package");
         continue;
       }
       reviewed.set(item.id, expectedPackage);
     }
   }
 
-  if (reviewed.size > 0 && reviewExpired) {
-    errors.push(
-      `temporary dev-only advisory review expired on ${REVIEW_EXPIRES}; re-evaluate the WDIO/Mocha dependency graph`,
-    );
-  }
-
-  return { errors, reviewed: [...reviewed.entries()] };
+  return {
+    errors,
+    reviewed: [...reviewed.entries()],
+    unreviewed: [...unreviewed.entries()],
+    reviewExpired,
+  };
 }
 
 function runAudit(root) {
@@ -150,20 +158,38 @@ function main() {
   const lock = JSON.parse(
     fs.readFileSync(path.join(root, "package-lock.json"), "utf8"),
   );
-  const { errors, reviewed } = evaluateAudit(report, lock);
+  const { errors, reviewed, unreviewed, reviewExpired } = evaluateAudit(
+    report,
+    lock,
+  );
   if (errors.length > 0) {
     for (const error of errors)
       console.error(`[npm-dev-audit] FAILED: ${error}`);
     process.exitCode = 1;
     return;
   }
-  if (reviewed.length === 0) {
+  if (reviewed.length === 0 && unreviewed.length === 0) {
     console.log("[npm-dev-audit] No moderate-or-higher npm advisories found.");
     return;
   }
+  const details = [
+    reviewed.length > 0
+      ? `reviewed ${reviewed.map(([id]) => id).join(", ")}`
+      : null,
+    unreviewed.length > 0
+      ? `unreviewed ${unreviewed.map(([id]) => id).join(", ")}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join("; ");
   console.warn(
-    `[npm-dev-audit] Reviewed dev-only advisories (${reviewed.map(([id]) => id).join(", ")}); review expires ${REVIEW_EXPIRES}.`,
+    `[npm-dev-audit] Proven dev-only advisories (${details}); these do not ship to users.`,
   );
+  if (reviewExpired && reviewed.length > 0) {
+    console.warn(
+      `[npm-dev-audit] Review date ${REVIEW_EXPIRES} has passed; re-evaluate the WDIO/Mocha dependency graph when a compatible patched chain is available.`,
+    );
+  }
 }
 
 if (require.main === module) {

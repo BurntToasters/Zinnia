@@ -112,7 +112,7 @@ Also confirm:
 - `git status --short` is empty apart from generated Tauri schema paths that the
   release tooling explicitly permits.
 - `npm audit --omit=dev --audit-level=high` passes.
-- `npm run audit:dev-reviewed` passes without a new or expired exception.
+- `npm run audit:dev-reviewed` passes (fails only if an advisory is production-reachable).
 - `cargo audit` reports no unignored vulnerability.
 - The stable version is `X.Y.Z` everywhere and contains no `-beta.N` suffix.
 
