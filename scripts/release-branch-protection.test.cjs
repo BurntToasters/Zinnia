@@ -161,7 +161,7 @@ test("CI avoids duplicate PR branch runs and duplicate Ubuntu checks", () => {
   assert.ok(qualityJob);
   assert.ok(securityJob);
   for (const duplicate of [
-    "npm audit signatures",
+    "node scripts/npm-audit-signatures.cjs",
     "npm audit --omit=dev --audit-level=high",
     "npm run audit:dev-reviewed",
     "npm run check:rustsec-ignore-policy",
