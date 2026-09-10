@@ -25,6 +25,7 @@ import {
   toggleActivity,
   registerBasicHooks,
   persistSettingsImmediately,
+  flushPendingSettingsPersistence,
   syncWorkspaceWindowFx,
 } from "../ui";
 import { state, dom } from "../state";
@@ -114,6 +115,32 @@ describe("settings persistence queue", () => {
       "save_settings",
       expect.objectContaining({ json: expect.any(String) }),
     );
+  });
+
+  it("waits for an in-flight save before a settings reset", async () => {
+    const invokeMock = vi.mocked(invoke);
+    let releaseSave: (() => void) | undefined;
+    invokeMock.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseSave = resolve;
+        }),
+    );
+
+    const pendingSave = persistSettingsImmediately(
+      state.currentSettings,
+      state.settingsExtras,
+    );
+    await Promise.resolve();
+    let barrierFinished = false;
+    const barrier = flushPendingSettingsPersistence().then(() => {
+      barrierFinished = true;
+    });
+    await Promise.resolve();
+    expect(barrierFinished).toBe(false);
+    releaseSave?.();
+    await Promise.all([pendingSave, barrier]);
+    expect(barrierFinished).toBe(true);
   });
 });
 

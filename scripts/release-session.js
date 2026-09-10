@@ -42,10 +42,20 @@ function porcelainPaths(statusText) {
 }
 
 function isIgnorableReleaseDirtyPath(filePath) {
+  // Git porcelain uses forward slashes on every platform, while the paths
+  // used to read the generated proofs follow the host platform separator.
+  const normalizedPath = filePath.replaceAll("\\", "/");
+  const releaseSessionPath = RELEASE_SESSION_RELATIVE_PATH.replaceAll(
+    "\\",
+    "/",
+  );
+  const qualityGatePath = QUALITY_GATE_RELATIVE_PATH.replaceAll("\\", "/");
   return (
-    filePath.startsWith("src-tauri/gen/schemas/") ||
-    filePath === "src-tauri/gen/" ||
-    filePath === "src-tauri/gen/schemas/"
+    normalizedPath.startsWith("src-tauri/gen/schemas/") ||
+    normalizedPath === "src-tauri/gen/" ||
+    normalizedPath === "src-tauri/gen/schemas/" ||
+    normalizedPath === releaseSessionPath ||
+    normalizedPath === qualityGatePath
   );
 }
 
@@ -164,6 +174,30 @@ function recordSuccessfulQualityGate(root = defaultRoot) {
   return { recorded: true, dirtyFiles: null };
 }
 
+function assertReleaseTreeClean(root = defaultRoot) {
+  let status;
+  try {
+    status = command(
+      "git",
+      ["status", "--porcelain=v1", "--untracked-files=all"],
+      root,
+    );
+  } catch (error) {
+    throw new Error(
+      `Could not inspect the release working tree: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (!status) return;
+  const dirtyPaths = porcelainPaths(status).filter(
+    (filePath) => !isIgnorableReleaseDirtyPath(filePath),
+  );
+  if (dirtyPaths.length > 0) {
+    throw new Error(
+      `Release working tree changed after the quality gate; run test:all again before continuing:\n${status}`,
+    );
+  }
+}
+
 function verifyQualityGate(root = defaultRoot, options) {
   const proofPath = path.join(root, QUALITY_GATE_RELATIVE_PATH);
   let proof;
@@ -196,7 +230,13 @@ function verifyReleaseSession(root = defaultRoot, options) {
       `Release build session is missing or invalid. Run release:prepare first: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  return validateReleaseSession(session, currentReleaseIdentity(root), options);
+  const validated = validateReleaseSession(
+    session,
+    currentReleaseIdentity(root),
+    options,
+  );
+  assertReleaseTreeClean(root);
+  return validated;
 }
 
 function isDirectExecution() {
@@ -222,6 +262,7 @@ export {
   DEFAULT_MAX_AGE_MS,
   QUALITY_GATE_RELATIVE_PATH,
   RELEASE_SESSION_RELATIVE_PATH,
+  assertReleaseTreeClean,
   clearQualityGateProof,
   createReleaseSession,
   currentReleaseIdentity,

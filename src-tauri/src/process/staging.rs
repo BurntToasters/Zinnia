@@ -947,7 +947,12 @@ where
             if !path_entry_exists(&target)? {
                 return Err("Update requires an existing output archive file.".to_string());
             }
-            let current = archive_output_family_token(&target)?;
+            // Keep the full content snapshot that produced the selection token.
+            // Resolving a case-insensitive or symlinked target can canonicalize
+            // the path; without this comparison the file could be replaced in
+            // that gap and the replacement would be staged for update.
+            let pre_family = archive_destination_family_snapshot(&target)?;
+            let current = archive_output_family_token_from_snapshots(&pre_family);
             if expected == ARCHIVE_OUTPUT_ABSENT_TOKEN || current == ARCHIVE_OUTPUT_ABSENT_TOKEN {
                 return Err("Update requires an existing output archive file.".to_string());
             }
@@ -959,6 +964,12 @@ where
             }
             let target = resolve_existing_target(&target, false)?;
             let expected_archive_family = archive_destination_family_snapshot(&target)?;
+            if !archive_family_content_matches(&pre_family, &expected_archive_family) {
+                return Err(
+                    "Archive changed after it was selected; review the current archive before updating it."
+                        .to_string(),
+                );
+            }
             if expected_archive_family.len() != 1 {
                 return Err(
                     "Updating split or multi-volume archives is not supported by bundled 7-Zip. Create a new archive instead."

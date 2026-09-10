@@ -513,6 +513,26 @@ describe("autoCheckUpdates", () => {
     );
   });
 
+  it("continues the background download when notification permission probing fails", async () => {
+    const download = vi.fn().mockResolvedValue(undefined);
+    checkMock.mockResolvedValue({
+      version: "0.5.1",
+      download,
+      install: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+    } as unknown as Awaited<ReturnType<typeof check>>);
+    isPermissionGrantedMock.mockRejectedValue(
+      new Error("notification service unavailable"),
+    );
+
+    await autoCheckUpdates();
+
+    expect(download).toHaveBeenCalledOnce();
+    expect(devLogMock).toHaveBeenCalledWith(
+      "Unable to send update notification: notification service unavailable",
+    );
+  });
+
   it("logs and resets status when auto-check fails", async () => {
     checkMock.mockRejectedValue(new Error("timeout"));
 

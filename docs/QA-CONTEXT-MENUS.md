@@ -154,7 +154,8 @@ Requires a **signed** NSIS install with full `AZURE_ARTIFACT_SIGNING_PUBLISHER_D
 | Stub MSIX (≤1 KiB)                  | Classic verbs only                                                  |
 | CN-only publisher DN                | Context-menu build fails                                            |
 | MSIX missing `AllowExternalContent` | Register log shows `0x80073D2E`                                     |
-| Reinstall / upgrade                 | Versioned shell directory + remove-before-add; no file-write prompt |
+| Explorer still has shell DLL loaded | Register log shows deferred `0x80073D02` retry                       |
+| Reinstall / upgrade                 | Versioned shell directory + AppX retry/defer; no file-write prompt |
 
 ## Classic Windows verbs
 

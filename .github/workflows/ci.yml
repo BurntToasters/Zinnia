@@ -228,8 +228,8 @@ jobs:
       - name: npm audit - production
         run: npm audit --omit=dev --audit-level=high
       - name: npm audit - reviewed dev toolchain
-        # Fail on any new advisory, production reachability, or an expired
-        # exception while upstream WDIO/Puppeteer fixes are unavailable.
+        # Fail only when a moderate-or-higher advisory reaches a non-dev
+        # install node. Proven development-toolchain findings are warnings.
         run: npm run audit:dev-reviewed
       - name: RustSec ignore review policy
         run: npm run check:rustsec-ignore-policy

@@ -1250,6 +1250,9 @@ pub(crate) struct CollectedOutput {
 
 impl CollectedOutput {
     pub(crate) fn exit_code(&self) -> i32 {
+        if self.stream_error.is_some() {
+            return -1;
+        }
         self.exit
             .as_ref()
             .and_then(|payload| payload.code)
@@ -1257,7 +1260,10 @@ impl CollectedOutput {
     }
 
     pub(crate) fn output_is_complete(&self) -> bool {
-        !self.stdout_truncated && !self.stderr_truncated
+        self.stream_error.is_none()
+            && self.exit.is_some()
+            && !self.stdout_truncated
+            && !self.stderr_truncated
     }
 
     pub(crate) fn accepts_exit_one_with(
@@ -1265,6 +1271,31 @@ impl CollectedOutput {
         classifier: impl FnOnce(&str, &str) -> bool,
     ) -> bool {
         self.exit_code() == 1 && self.output_is_complete() && classifier(&self.stdout, &self.stderr)
+    }
+
+    pub(crate) fn into_run_result(
+        self,
+        was_cancelled: bool,
+        warning_code: Option<i32>,
+    ) -> RunResult {
+        // A cancelled operation is rolled back by the finalizer. Never report
+        // the child’s successful exit (or a metadata-only warning) after that
+        // rollback, or the UI will present a cancelled operation as Done.
+        let code = if was_cancelled {
+            -1
+        } else if warning_code.is_some() {
+            0
+        } else {
+            self.exit_code()
+        };
+        RunResult {
+            stdout: sanitize_output(&self.stdout),
+            stderr: sanitize_output(&self.stderr),
+            code,
+            warning_code: if was_cancelled { None } else { warning_code },
+            stdout_truncated: self.stdout_truncated,
+            stderr_truncated: self.stderr_truncated,
+        }
     }
 }
 
@@ -1964,14 +1995,7 @@ pub async fn run_7z(
         return Err(reason);
     }
 
-    Ok(RunResult {
-        stdout: sanitize_output(&collected.stdout),
-        stderr: sanitize_output(&collected.stderr),
-        code: if warning_code.is_some() { 0 } else { exit_code },
-        warning_code,
-        stdout_truncated: collected.stdout_truncated,
-        stderr_truncated: collected.stderr_truncated,
-    })
+    Ok(collected.into_run_result(was_cancelled, warning_code))
 }
 
 #[tauri::command]

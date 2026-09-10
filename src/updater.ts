@@ -43,7 +43,7 @@ function clearPendingUpdate(closeResource: boolean): void {
   if (closeResource && update) {
     const close = (update as Update & { close?: () => Promise<void> }).close;
     if (close) {
-      void close.call(update).catch((err) => {
+      void Promise.resolve(close.call(update)).catch((err) => {
         devLog(`Failed to release pending update resources: ${String(err)}`);
       });
     }
@@ -137,8 +137,17 @@ export async function notify(title: string, body: string) {
 }
 
 async function notifyIfAlreadyGranted(title: string, body: string) {
-  if (await isPermissionGranted()) {
-    sendNotification({ title, body });
+  try {
+    if (await isPermissionGranted()) {
+      sendNotification({ title, body });
+    }
+  } catch (err) {
+    // Notifications are an optional update hint. A platform permission query
+    // must never turn a successful background update check into an updater
+    // failure or prevent the update from downloading.
+    devLog(
+      `Unable to send update notification: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }
 

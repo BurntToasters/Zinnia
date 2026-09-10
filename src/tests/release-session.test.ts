@@ -8,6 +8,7 @@ import {
   DEFAULT_MAX_AGE_MS,
   RELEASE_SESSION_RELATIVE_PATH,
   createReleaseSession,
+  isIgnorableReleaseDirtyPath,
   porcelainPaths,
   recordSuccessfulQualityGate,
   validateQualityGate,
@@ -27,6 +28,18 @@ const identity = {
 };
 
 describe("release build session", () => {
+  it("normalizes generated proof paths across host separators", () => {
+    expect(isIgnorableReleaseDirtyPath("release/.build-session.json")).toBe(
+      true,
+    );
+    expect(isIgnorableReleaseDirtyPath("release\\.build-session.json")).toBe(
+      true,
+    );
+    expect(isIgnorableReleaseDirtyPath("src-tauri/gen/schemas/win.json")).toBe(
+      true,
+    );
+  });
+
   it("parses porcelain paths without eating the first path character", () => {
     // Regression: trim() on " M src-tauri/gen/schemas/x" became "M path",
     // slice(3) => "c-tauri/..." and the schema ignore filter missed it.
@@ -234,6 +247,13 @@ describe("release build session", () => {
 
       fs.writeFileSync(path.join(root, "package-lock.json"), "changed\n");
       expect(() => verifyReleaseSession(root)).toThrow(/packageLockSha256/);
+
+      fs.writeFileSync(path.join(root, "package-lock.json"), "lock\n");
+      fs.writeFileSync(
+        path.join(root, ".gitignore"),
+        "/coverage/*\n# edited\n",
+      );
+      expect(() => verifyReleaseSession(root)).toThrow(/working tree changed/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

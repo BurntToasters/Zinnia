@@ -234,6 +234,19 @@ describe("Windows 11 context-menu manifest", () => {
     );
     expect(registration).toContain("Restore-PreviousShellPackages");
     expect(registration).toContain("Restoring previous packages from");
+    expect(registration).toContain("function Add-ZinniaShellPackage");
+    expect(registration).toContain("0x80073CFB");
+    expect(registration).toContain("0x80073D02");
+    expect(registration).toContain("-DeferRegistrationWhenPackagesAreInUse");
+    expect(registration).toContain("if ($hresult -ne [int32]0x80073CFB) {");
+    expect(registration).toContain("Get-AppxPackage -Name $PackageName");
+    expect(registration).toContain("Remove-AppxPackage -ErrorAction Stop");
+    expect(registration).toContain(
+      "-PackageName 'run.rosie.zinnia.contextmenu'",
+    );
+    expect(registration).toContain(
+      "-PackageName 'run.rosie.zinnia.extractmenu'",
+    );
     expect(registration).toContain("-ForceUpdateFromAnyVersion");
     expect(registration).toContain("Unregister-ZinniaShellPackages");
     expect(registration).toContain("[switch]$Unregister");
@@ -320,6 +333,10 @@ describe("Windows 11 context-menu manifest", () => {
     // Extract/Compress are fallback-only when package registration fails.
     expect(hooks).toContain('StrCpy $R6 "0"');
     expect(hooks).toContain('StrCpy $R6 "1"');
+    expect(hooks).toContain('StrCpy $R6 "2"');
+    expect(hooks).toContain('StrCpy $R6 "3"');
+    expect(hooks).toContain("zinnia_menu_registration_deferred");
+    expect(hooks).toContain("zinnia_menu_previous_restored");
     expect(hooks).toContain("zinnia_postinstall_win11_ok");
     expect(hooks).toContain("ZINNIA_POSTINSTALL_CLASSIC_EXTRACT_FALLBACK");
     const postInstall = hooks.slice(

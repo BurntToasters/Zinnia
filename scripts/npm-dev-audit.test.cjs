@@ -35,6 +35,27 @@ test("reviewed WDIO advisory chains pass only when every node is dev-only", () =
   );
   assert.deepEqual(result.errors, []);
   assert.deepEqual(result.reviewed, [["GHSA-GGR8-5VV4-36MX", "deepmerge-ts"]]);
+  assert.deepEqual(result.unreviewed, []);
+});
+
+test("an unreviewed advisory fails if npm can reach a production node", () => {
+  const report = {
+    vulnerabilities: {
+      mystery: {
+        nodes: ["node_modules/mystery"],
+        via: [
+          {
+            name: "mystery",
+            url: "https://github.com/advisories/GHSA-2345-6789-cfgh",
+          },
+        ],
+      },
+    },
+  };
+  const lock = { packages: { "node_modules/mystery": { dev: false } } };
+  const result = evaluateAudit(report, lock, new Date("2026-09-05T00:00:00Z"));
+  assert.match(result.errors.join("\n"), /not proven dev-only/);
+  assert.doesNotMatch(result.errors.join("\n"), /unreviewed advisory/);
 });
 
 test("a reviewed advisory fails if npm can reach a production node", () => {
@@ -56,7 +77,7 @@ test("a reviewed advisory fails if npm can reach a production node", () => {
   assert.match(result.errors.join("\n"), /not proven dev-only/);
 });
 
-test("new advisories fail closed", () => {
+test("new proven-dev-only advisories do not block updates", () => {
   const report = {
     vulnerabilities: {
       mystery: {
@@ -75,10 +96,11 @@ test("new advisories fail closed", () => {
     lockFor("node_modules/mystery"),
     new Date("2026-09-05T00:00:00Z"),
   );
-  assert.match(result.errors.join("\n"), /unreviewed advisory/);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.unreviewed, [["GHSA-2345-6789-CFGH", "mystery"]]);
 });
 
-test("reviewed exceptions expire", () => {
+test("reviewed exceptions expire without blocking proven-dev-only findings", () => {
   const report = {
     vulnerabilities: {
       "serialize-javascript": {
@@ -97,7 +119,11 @@ test("reviewed exceptions expire", () => {
     lockFor("node_modules/serialize-javascript"),
     new Date("2026-12-01T00:00:00Z"),
   );
-  assert.match(result.errors.join("\n"), /review expired/);
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.reviewExpired, true);
+  assert.deepEqual(result.reviewed, [
+    ["GHSA-QJ8W-GFJ5-8C6V", "serialize-javascript"],
+  ]);
 });
 
 test("an explicit audit root selects the candidate workspace", () => {
