@@ -20,10 +20,12 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
 ## Changes in `v0.6.2:`
 
-- **Windows fix:** Win11 sparse context-menu registration now recovers from an
-  already-registered exact package version (`0x80073CFB`) and defers safely when
-  Explorer still has the prior shell extension loaded (`0x80073D02`), without
-  disturbing unrelated deployment failures.
+- **Windows:** Win11 sparse context-menu registration now recovers from an already-registered exact package version (`0x80073CFB`) and defers when Explorer still has the prior shell extension loaded (`0x80073D02`). Deferred installs keep classic Extract/Compress verbs until the modern menu finishes; a restored prior payload is no longer treated as a current-version success that would drop those fallbacks.
+- **UI:** Creating an archive over an existing file now asks to replace it instead of overwriting silently.
+- **Fix:** Cancelled 7-Zip jobs no longer report as Done after rollback. Convert, Test, Browse, Add, and batch extract honor Cancel between steps, and batch extract keeps Cancel available while a volume is running. Settings Reset waits for any in-flight settings write so a stale snapshot cannot come back after the reset. A broken 7-Zip output stream is treated as a failed run instead of a successful child exit.
+- **Security:** Updating an existing archive re-checks the selected file after path resolve so a swapped or case-aliased target cannot be staged in that gap.
+- **Updater:** A failed notification-permission check no longer aborts a background update. macOS privileged install reports AppleScript failures instead of panicking if compile or the main-thread callback does not complete.
+- **PKG:** Updated packages.
 
 ## Changes in `v0.6.0:`
 
