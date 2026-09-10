@@ -97,7 +97,7 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
       - run: npm ci --ignore-scripts
-      - run: npm audit signatures
+      - run: node scripts/npm-audit-signatures.cjs
       - run: npm run test:cov
       - run: npm run prepare:7z
       - run: npm run test:archives
@@ -179,7 +179,7 @@ jobs:
             librsvg2-dev \
             patchelf
       - run: npm ci --ignore-scripts
-      - run: npm audit signatures
+      - run: node scripts/npm-audit-signatures.cjs
       - run: npm run sync-version
       - name: Verify synchronized version files are committed
         run: git diff --exit-code
@@ -224,7 +224,7 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
       - run: npm ci --ignore-scripts
-      - run: npm audit signatures
+      - run: node scripts/npm-audit-signatures.cjs
       - name: npm audit - production
         run: npm audit --omit=dev --audit-level=high
       - name: npm audit - reviewed dev toolchain

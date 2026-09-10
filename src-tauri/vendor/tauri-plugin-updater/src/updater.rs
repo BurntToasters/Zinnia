@@ -1383,7 +1383,7 @@ impl Update {
 
         match unprivileged {
             Ok(()) => {
-                let _ = tmp_extract_dir.into_path();
+                let _ = tmp_extract_dir.keep();
             }
             Err(err)
                 if err.kind() == std::io::ErrorKind::PermissionDenied || is_cross_device(&err) =>
@@ -1398,17 +1398,24 @@ impl Update {
                         osakit::Language::AppleScript,
                         MACOS_PRIVILEGED_INSTALL_SCRIPT,
                     );
-                    let r = match script.compile() {
-                        Ok(()) => script.execute_function(
-                            "installUpdate",
-                            [
-                                osakit::Value::String(src),
-                                osakit::Value::String(new),
-                                osakit::Value::String(backup),
-                            ],
-                        ),
-                        Err(error) => Err(error),
-                    };
+                    // compile() and execute_function() use different error
+                    // types. Stringify both so a compile failure cannot panic
+                    // or fail to type-check against the execute Result.
+                    let r = script
+                        .compile()
+                        .map_err(|error| error.to_string())
+                        .and_then(|()| {
+                            script
+                                .execute_function(
+                                    "installUpdate",
+                                    [
+                                        osakit::Value::String(src),
+                                        osakit::Value::String(new),
+                                        osakit::Value::String(backup),
+                                    ],
+                                )
+                                .map_err(|error| error.to_string())
+                        });
                     // The main-thread callback can be torn down during app
                     // shutdown. Sending best-effort keeps that teardown from
                     // turning an update failure into a process panic.
@@ -1431,7 +1438,7 @@ impl Update {
                         "Failed to move the new app into place",
                     )));
                 }
-                let _ = tmp_extract_dir.into_path();
+                let _ = tmp_extract_dir.keep();
             }
             Err(err) => return Err(err.into()),
         }
