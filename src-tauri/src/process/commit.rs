@@ -3,15 +3,17 @@
 use super::journal::move_identity_log_path;
 use super::journal::{
     ensure_path_entry_identity, ensure_path_identity, ensure_recovery_path_unchanged,
-    ensure_retract_path_matches, file_identities_match, file_identity, identity_with_file_content,
-    identity_with_fingerprint_from, mark_archive_journal_committed, mark_extract_journal_committed,
-    move_plan_path, path_identity, path_identity_with_fingerprint, read_bounded_nofollow_bytes,
-    record_archive_journal_backup, record_archive_journal_published, regular_file_identity,
-    regular_file_identity_with_fingerprint, remove_directory_if_matches,
+    ensure_retract_path_matches, file_identities_match, file_identity, fingerprint_path_bytes,
+    fingerprint_records, fingerprint_symlink, identity_with_file_content,
+    identity_with_fingerprint_from, identity_with_object_fingerprint,
+    mark_archive_journal_committed, mark_extract_journal_committed, move_plan_path,
+    path_entry_identity, path_identity, path_identity_with_fingerprint,
+    read_bounded_nofollow_bytes, record_archive_journal_backup, record_archive_journal_published,
+    regular_file_identity, regular_file_identity_with_fingerprint, remove_directory_if_matches,
     remove_regular_file_if_matches, sync_directory, unregister_plan_stages,
     unregister_plan_stages_strict, update_archive_journal, FileIdentity, MoveRecord,
-    LEGACY_MOVE_PLAN_FILE_NAME, MAX_MOVE_IDENTITY_LOG_BYTES, MAX_MOVE_IDENTITY_RECORD_BYTES,
-    MAX_MOVE_PLAN_BYTES,
+    ObjectFingerprint, LEGACY_MOVE_PLAN_FILE_NAME, MAX_MOVE_IDENTITY_LOG_BYTES,
+    MAX_MOVE_IDENTITY_RECORD_BYTES, MAX_MOVE_PLAN_BYTES,
 };
 use super::quota::{MAX_EXTRACT_ENTRIES, MAX_EXTRACT_PATH_BYTES};
 use super::staging::{assert_real_directory, path_entry_exists};
@@ -75,6 +77,7 @@ pub(crate) fn archive_destination_family_snapshot(
         .collect()
 }
 
+#[cfg(test)]
 pub(crate) fn assert_archive_destination_unchanged(
     base: &std::path::Path,
     expected: &[ArchiveDestinationSnapshot],
@@ -217,14 +220,56 @@ pub(crate) fn publish_file_no_replace(
     source: &std::path::Path,
     target: &std::path::Path,
 ) -> Result<(), String> {
-    publish_file_no_replace_with_created(source, target, |_, _| Ok(()))
+    publish_file_no_replace_with_created(source, target, |_, _| Ok(())).map(|_| ())
+}
+
+/// Publication paths are deliberately explicit so diagnostics and structural
+/// checks describe the real branch taken. Journal wire data remains unchanged;
+/// this is an in-memory classification only.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PublishStrategy {
+    WholeStageRename,
+    DirectRename,
+    TargetLocalCopy,
+    HardLinkFallback,
+    CopyFallback,
+    Mixed,
+}
+
+impl PublishStrategy {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::WholeStageRename => "whole-stage-rename",
+            Self::DirectRename => "direct-rename",
+            Self::TargetLocalCopy => "target-local-copy",
+            Self::HardLinkFallback => "hard-link-fallback",
+            Self::CopyFallback => "copy-fallback",
+            Self::Mixed => "mixed-publish-paths",
+        }
+    }
+
+    fn combine(self, other: Self) -> Self {
+        if self == other {
+            return self;
+        }
+        if matches!(self, Self::CopyFallback) || matches!(other, Self::CopyFallback) {
+            return Self::CopyFallback;
+        }
+        if matches!(self, Self::TargetLocalCopy) || matches!(other, Self::TargetLocalCopy) {
+            return Self::TargetLocalCopy;
+        }
+        if matches!(self, Self::HardLinkFallback) || matches!(other, Self::HardLinkFallback) {
+            return Self::HardLinkFallback;
+        }
+        Self::Mixed
+    }
 }
 
 fn publish_file_no_replace_with_created(
     source: &std::path::Path,
     target: &std::path::Path,
     on_created: impl FnOnce(&std::path::Path, &FileIdentity) -> Result<(), String>,
-) -> Result<(), String> {
+) -> Result<PublishStrategy, String> {
     let source_file = crate::path_safety::open_regular_file_nofollow(source)?;
     // Same as directory fsync: some Windows setups deny FlushFileBuffers.
     sync_file_best_effort(&source_file)?;
@@ -236,13 +281,13 @@ fn publish_file_no_replace_with_created(
     // target, and no error path unlinks a pathname whose identity may have changed.
     // Only the final create-new copy fallback can expose bytes incrementally.
     match rename_file_no_replace(source, target) {
-        Ok(()) => Ok(()),
+        Ok(()) => Ok(PublishStrategy::DirectRename),
         Err(rename_error) => {
             // Older Unix filesystems may not implement the exclusive-rename
             // syscall. A hard link is also atomic and no-replace. Once linked,
             // failure to remove the private source is cleanup-only; the stage
             // scrub will retry after the durable commit point.
-            if let Err(link_error) = std::fs::hard_link(source, target) {
+            let strategy = if let Err(link_error) = std::fs::hard_link(source, target) {
                 // Some removable, network, and userspace filesystems support
                 // neither exclusive rename nor hard links. create_new still
                 // guarantees that this compatibility path never overwrites an
@@ -255,14 +300,17 @@ fn publish_file_no_replace_with_created(
                         target.display()
                     )
                 })?;
-            }
+                PublishStrategy::CopyFallback
+            } else {
+                PublishStrategy::HardLinkFallback
+            };
             if let Err(error) = std::fs::remove_file(source) {
                 eprintln!(
                     "Archive output published; staged source cleanup failed for {}: {error}",
                     source.display()
                 );
             }
-            Ok(())
+            Ok(strategy)
         }
     }
 }
@@ -759,7 +807,7 @@ fn promote_archive_family_with_commit<F, B, R>(
     mut record_backup: B,
     mut record_published: R,
     mark_committed: F,
-) -> Result<(), String>
+) -> Result<PublishStrategy, String>
 where
     F: FnOnce() -> Result<(), String>,
     B: FnMut(&std::path::Path, &super::journal::FileIdentity) -> Result<(), String>,
@@ -776,7 +824,20 @@ where
     ensure_path_identity(stage_dir, expected_stage_identity).map_err(|error| {
         format!("Archive stage changed after creation and was preserved: {error}")
     })?;
-    assert_archive_destination_unchanged(destination, expected_existing)?;
+    // Check family membership without rereading bytes. Each expected volume is
+    // opened and fingerprinted once below while its handle remains held across
+    // rename; an earlier full-family hash duplicated that I/O.
+    let current_family = archive_family(destination)?;
+    let expected_paths: Vec<_> = expected_existing
+        .iter()
+        .map(|snapshot| snapshot.path.clone())
+        .collect();
+    if current_family != expected_paths {
+        return Err(
+            "Archive destination changed while the operation was running; the new file was preserved."
+                .to_string(),
+        );
+    }
     let mut backups: Vec<(
         std::path::PathBuf,
         std::path::PathBuf,
@@ -861,6 +922,7 @@ where
     sync_directory(stage_dir)?;
 
     let mut promoted = Vec::new();
+    let mut publish_strategy: Option<PublishStrategy> = None;
     let result = (|| {
         for source in staged_family {
             let target = archive_destination_for(staged, destination, &source)?;
@@ -871,14 +933,19 @@ where
             let expected_identity = regular_file_identity_with_fingerprint(&source)?;
             record_published(&target, &expected_identity)?;
             let mut created_identity = None;
-            publish_file_no_replace_with_created(&source, &target, |created, identity| {
-                // The compatibility copy path allocates a new object. Journal
-                // that identity while its create-new handle is still open and
-                // before any bytes are copied, closing the last crash window.
-                record_published(created, identity)?;
-                created_identity = Some(identity.clone());
-                Ok(())
-            })?;
+            let selected_strategy =
+                publish_file_no_replace_with_created(&source, &target, |created, identity| {
+                    // The compatibility copy path allocates a new object. Journal
+                    // that identity while its create-new handle is still open and
+                    // before any bytes are copied, closing the last crash window.
+                    record_published(created, identity)?;
+                    created_identity = Some(identity.clone());
+                    Ok(())
+                })?;
+            publish_strategy = Some(match publish_strategy {
+                Some(previous) => previous.combine(selected_strategy),
+                None => selected_strategy,
+            });
 
             // Register a rollback identity immediately after publication. If the
             // post-publish query below fails, rename/hard-link paths can still be
@@ -974,7 +1041,7 @@ where
             "Archive was committed, but recovery artifact cleanup failed; published archives were preserved: {error}"
         )
     })?;
-    Ok(())
+    Ok(publish_strategy.unwrap_or(PublishStrategy::DirectRename))
 }
 
 #[cfg(test)]
@@ -996,6 +1063,7 @@ pub(crate) fn promote_archive_family(
         |_, _| Ok(()),
         || Ok(()),
     )
+    .map(|_| ())
 }
 
 /// True when the archive stage still holds `backup-*` files needed for journal recovery.
@@ -1153,23 +1221,54 @@ pub(crate) fn assert_path_under_root(
 }
 
 pub(crate) fn validate_staged_tree(root: &std::path::Path, max_bytes: u64) -> Result<(), String> {
-    validate_staged_tree_impl(root, max_bytes, false)
+    validate_staged_tree_impl(root, max_bytes, false, false).map(|_| ())
 }
 
-fn validate_and_sync_staged_tree(root: &std::path::Path, max_bytes: u64) -> Result<(), String> {
-    validate_staged_tree_impl(root, max_bytes, true)
+fn validate_and_sync_staged_tree(
+    root: &std::path::Path,
+    max_bytes: u64,
+) -> Result<FileIdentity, String> {
+    validate_staged_tree_impl(root, max_bytes, true, true)?.map_or_else(
+        || Err("Staged tree fingerprint was not produced during final validation.".to_string()),
+        |fingerprint| {
+            let identity = path_entry_identity(root)?;
+            Ok(identity_with_object_fingerprint(identity, fingerprint))
+        },
+    )
+}
+
+fn sync_staged_tree_without_fingerprint(
+    root: &std::path::Path,
+    max_bytes: u64,
+) -> Result<(), String> {
+    validate_staged_tree_impl(root, max_bytes, true, false).map(|_| ())
+}
+
+enum StagedFingerprintEntry {
+    Regular(std::path::PathBuf),
+    Directory,
+    Symlink(ObjectFingerprint),
 }
 
 fn validate_staged_tree_impl(
     root: &std::path::Path,
     max_bytes: u64,
     sync_contents: bool,
-) -> Result<(), String> {
+    fingerprint_contents: bool,
+) -> Result<Option<ObjectFingerprint>, String> {
     let mut pending = vec![root.to_path_buf()];
     let mut directories = Vec::new();
     let mut entries = 0u64;
     let mut bytes = 0u64;
     let mut path_bytes = 0u64;
+    let mut regular_files = Vec::new();
+    let mut fingerprint_entries = Vec::<(Vec<u8>, StagedFingerprintEntry)>::new();
+    let mut observed_entries = Vec::<(
+        std::path::PathBuf,
+        FileIdentity,
+        u64,
+        Option<std::time::SystemTime>,
+    )>::new();
     // Defense in depth for hard links: 7-Zip may create them by default. If any
     // staged file's link count exceeds the number of names we observed for that
     // inode under the stage root, it aliases a path outside the extract tree.
@@ -1210,6 +1309,20 @@ fn validate_staged_tree_impl(
             let meta = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
             if meta.file_type().is_symlink() {
                 crate::path_safety::assert_relative_symlink_within_root(root, &path)?;
+                if fingerprint_contents {
+                    let identity = path_entry_identity(&path)?;
+                    let relative = path.strip_prefix(root).map_err(|error| error.to_string())?;
+                    fingerprint_entries.push((
+                        fingerprint_path_bytes(relative.as_os_str()),
+                        StagedFingerprintEntry::Symlink(fingerprint_symlink(&path)?),
+                    ));
+                    observed_entries.push((
+                        path.clone(),
+                        identity,
+                        meta.len(),
+                        meta.modified().ok(),
+                    ));
+                }
                 continue;
             }
             if crate::path_safety::is_link_or_reparse(&meta) {
@@ -1218,7 +1331,26 @@ fn validate_staged_tree_impl(
                     path.display()
                 ));
             }
+            let sync_identity = fingerprint_contents
+                .then(|| path_entry_identity(&path))
+                .transpose()?;
+            let sync_relative = fingerprint_contents
+                .then(|| {
+                    path.strip_prefix(root)
+                        .map(|relative| fingerprint_path_bytes(relative.as_os_str()))
+                        .map_err(|error| error.to_string())
+                })
+                .transpose()?;
             if meta.is_dir() {
+                if let (Some(identity), Some(relative)) = (sync_identity, sync_relative) {
+                    observed_entries.push((
+                        path.clone(),
+                        identity,
+                        meta.len(),
+                        meta.modified().ok(),
+                    ));
+                    fingerprint_entries.push((relative, StagedFingerprintEntry::Directory));
+                }
                 pending.push(path);
             } else if meta.is_file() {
                 bytes = bytes.saturating_add(meta.len());
@@ -1229,28 +1361,22 @@ fn validate_staged_tree_impl(
                     ));
                 }
                 if sync_contents {
-                    let file = crate::path_safety::open_regular_file_nofollow(&path)?;
-                    let opened_identity = file_identity(&file)?;
-                    let current_identity = path_identity(&path)?;
-                    if !file_identities_match(&opened_identity, &current_identity) {
-                        return Err(format!(
-                            "Staged file changed while being prepared for durable publication: {}",
-                            path.display()
-                        ));
-                    }
-                    sync_file_best_effort(&file)?;
-                    let after_identity = path_identity(&path)?;
-                    if !file_identities_match(&opened_identity, &after_identity) {
-                        return Err(format!(
-                            "Staged file changed while being prepared for durable publication: {}",
-                            path.display()
-                        ));
-                    }
+                    regular_files.push(path.clone());
+                }
+                if let (Some(identity), Some(relative)) = (sync_identity, sync_relative) {
+                    observed_entries.push((
+                        path.clone(),
+                        identity,
+                        meta.len(),
+                        meta.modified().ok(),
+                    ));
+                    fingerprint_entries
+                        .push((relative, StagedFingerprintEntry::Regular(path.clone())));
                 }
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::MetadataExt as _;
-                    hardlink_files.push((path, meta.dev(), meta.ino(), meta.nlink()));
+                    hardlink_files.push((path.clone(), meta.dev(), meta.ino(), meta.nlink()));
                 }
                 #[cfg(windows)]
                 {
@@ -1282,7 +1408,7 @@ fn validate_staged_tree_impl(
                     let file_index =
                         (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
                     let nlink = u64::from(info.nNumberOfLinks);
-                    hardlink_files.push((path, file_index, nlink));
+                    hardlink_files.push((path.clone(), file_index, nlink));
                 }
             } else {
                 return Err(format!(
@@ -1297,12 +1423,171 @@ fn validate_staged_tree_impl(
     #[cfg(windows)]
     assert_staged_hardlinks_self_contained(&hardlink_files)?;
     if sync_contents {
+        let fingerprints = sync_staged_regular_files(&regular_files, fingerprint_contents)?;
+        if !fingerprint_contents {
+            directories.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+            for directory in directories {
+                crate::fs_secure::sync_directory_nofollow(&directory)?;
+            }
+            return Ok(None);
+        }
+        let fingerprints = fingerprints
+            .ok_or_else(|| "Final staged-file fingerprints were not produced.".to_string())?;
+        let records = fingerprint_entries
+            .into_iter()
+            .map(|(relative, entry)| {
+                let fingerprint = match entry {
+                    StagedFingerprintEntry::Regular(path) => {
+                        fingerprints.get(&path).cloned().ok_or_else(|| {
+                            format!(
+                                "Final staged-file fingerprint was not produced: {}",
+                                path.display()
+                            )
+                        })
+                    }
+                    StagedFingerprintEntry::Directory => {
+                        Ok(ObjectFingerprint::Directory { sha256: [0; 32] })
+                    }
+                    StagedFingerprintEntry::Symlink(fingerprint) => Ok(fingerprint),
+                }?;
+                Ok::<_, String>((relative, fingerprint))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        for (path, expected, len, modified) in observed_entries {
+            let metadata = std::fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
+            let actual = path_entry_identity(&path)?;
+            if !file_identities_match(&actual, &expected)
+                || metadata.len() != len
+                || metadata.modified().ok() != modified
+            {
+                return Err(format!(
+                    "Staged path changed while being prepared for durable publication: {}",
+                    path.display()
+                ));
+            }
+        }
         directories.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
         for directory in directories {
             crate::fs_secure::sync_directory_nofollow(&directory)?;
         }
+        return Ok(Some(fingerprint_records(records)));
     }
-    Ok(())
+    Ok(None)
+}
+
+fn sync_staged_regular_files(
+    paths: &[std::path::PathBuf],
+    fingerprint_contents: bool,
+) -> Result<Option<std::collections::HashMap<std::path::PathBuf, ObjectFingerprint>>, String> {
+    if paths.is_empty() {
+        return Ok(fingerprint_contents.then(std::collections::HashMap::new));
+    }
+    let worker_count = std::thread::available_parallelism()
+        .map(|count| count.get().min(8))
+        .unwrap_or(1)
+        .min(paths.len())
+        .max(1);
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let first_error = std::sync::Mutex::new(None::<String>);
+    let fingerprints = std::sync::Mutex::new(std::collections::HashMap::new());
+    std::thread::scope(|scope| {
+        for _ in 0..worker_count {
+            scope.spawn(|| loop {
+                if first_error
+                    .lock()
+                    .map(|error| error.is_some())
+                    .unwrap_or(true)
+                {
+                    break;
+                }
+                let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let Some(path) = paths.get(index) else {
+                    break;
+                };
+                let result = (|| {
+                    use sha2::Digest as _;
+                    use std::io::{Read as _, Seek as _};
+
+                    let mut file = crate::path_safety::open_regular_file_nofollow(path)?;
+                    let opened_identity = file_identity(&file)?;
+                    let before = file.metadata().map_err(|error| error.to_string())?;
+                    let current_identity = path_identity(path)?;
+                    if !file_identities_match(&opened_identity, &current_identity) {
+                        return Err(format!(
+                            "Staged file changed while being prepared for durable publication: {}",
+                            path.display()
+                        ));
+                    }
+                    sync_file_best_effort(&file)?;
+                    if !fingerprint_contents {
+                        let after_identity = path_identity(path)?;
+                        if !file_identities_match(&opened_identity, &after_identity) {
+                            return Err(format!(
+                                "Staged file changed while being prepared for durable publication: {}",
+                                path.display()
+                            ));
+                        }
+                        return Ok::<_, String>(None);
+                    }
+                    file.seek(std::io::SeekFrom::Start(0))
+                        .map_err(|error| error.to_string())?;
+                    let mut hasher = sha2::Sha256::new();
+                    let mut buffer = [0u8; 128 * 1024];
+                    loop {
+                        let read = file.read(&mut buffer).map_err(|error| error.to_string())?;
+                        if read == 0 {
+                            break;
+                        }
+                        hasher.update(&buffer[..read]);
+                    }
+                    let after_identity = file_identity(&file)?;
+                    let after = file.metadata().map_err(|error| error.to_string())?;
+                    if !file_identities_match(&opened_identity, &after_identity)
+                        || before.len() != after.len()
+                        || before.modified().ok() != after.modified().ok()
+                    {
+                        return Err(format!(
+                            "Staged file changed while being prepared for durable publication: {}",
+                            path.display()
+                        ));
+                    }
+                    Ok::<_, String>(Some(ObjectFingerprint::File {
+                        len: before.len(),
+                        sha256: hasher.finalize().into(),
+                    }))
+                })();
+                match result {
+                    Ok(Some(fingerprint)) => {
+                        if let Ok(mut fingerprints) = fingerprints.lock() {
+                            fingerprints.insert(path.clone(), fingerprint);
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        if let Ok(mut first) = first_error.lock() {
+                            if first.is_none() {
+                                *first = Some(error);
+                            }
+                        }
+                        break;
+                    }
+                }
+            });
+        }
+    });
+    first_error
+        .into_inner()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .map_or_else(
+            || {
+                Ok(fingerprint_contents.then(|| {
+                    fingerprints
+                        .into_inner()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                }))
+            },
+            Err,
+        )
 }
 
 #[cfg(unix)]
@@ -1433,6 +1718,8 @@ pub(crate) fn staged_tree_contains_symlink(root: &std::path::Path) -> Result<boo
 fn prepare_target_local_publish_paths(
     plan: &mut [MoveRecord],
     reserved: &mut std::collections::HashSet<std::path::PathBuf>,
+    allow_direct_root_rename: bool,
+    destination: &std::path::Path,
 ) -> Result<(), String> {
     for record in plan {
         let metadata =
@@ -1442,26 +1729,30 @@ fn prepare_target_local_publish_paths(
         if crate::path_safety::is_link_or_reparse(&metadata) {
             continue;
         }
+        if allow_direct_root_rename && record.target.parent() == Some(destination) {
+            // Stage was created under destination after link-free member
+            // preflight. Root entries inherit destination policy already;
+            // nested collision records still use target-local copies.
+            continue;
+        }
         let parent = record
             .target
             .parent()
             .ok_or_else(|| "Extraction target has no parent directory.".to_string())?;
         let mut publish_temp = None;
         for _ in 0..32 {
-            let candidate = parent.join(format!(
-                ".zinnia-publish-{}",
-                super::staging::random_token()?
-            ));
+            let mut candidate_name = String::from(".zinnia-publish-");
+            candidate_name.push_str(&super::staging::random_token()?);
+            let candidate = parent.join(candidate_name);
             if !reserved.contains(&candidate) && !path_entry_exists(&candidate)? {
                 publish_temp = Some(candidate);
                 break;
             }
         }
         let publish_temp = publish_temp.ok_or_else(|| {
-            format!(
-                "Could not reserve a unique extraction publish path under {}.",
-                parent.display()
-            )
+            "Could not reserve a unique extraction publish path under ".to_string()
+                + &parent.display().to_string()
+                + "."
         })?;
         reserved.insert(publish_temp.clone());
         record.publish_temp = Some(publish_temp);
@@ -1973,14 +2264,22 @@ pub(crate) fn validate_move_record(
     } else if record.publish_identity.is_some() {
         #[cfg(windows)]
         {
-            // New Windows publishes always set publish_temp for non-link roots.
-            // Only rename-published symlink/reparse roots may omit it.
+            // New Windows publishes normally set publish_temp for non-link
+            // roots. The one safe exception is a link-free stage created
+            // directly under the existing destination: root entries inherit
+            // the validated destination policy and are intentionally renamed
+            // in place. Nested records still require target-local staging.
             let allows_rename_publish = |path: &std::path::Path| -> bool {
                 std::fs::symlink_metadata(path)
                     .map(|metadata| crate::path_safety::is_link_or_reparse(&metadata))
                     .unwrap_or(false)
             };
-            if !allows_rename_publish(&record.source) && !allows_rename_publish(&record.target) {
+            let allows_direct_root_rename =
+                staged.parent() == Some(destination) && record.target.parent() == Some(destination);
+            if !allows_rename_publish(&record.source)
+                && !allows_rename_publish(&record.target)
+                && !allows_direct_root_rename
+            {
                 return Err(
                     "Refusing extraction publish identity without a publish path.".to_string(),
                 );
@@ -2263,7 +2562,7 @@ fn merge_staged_extract_recorded<R, F>(
     max_bytes: u64,
     recorder: &mut R,
     mark_committed: F,
-) -> Result<Vec<std::path::PathBuf>, String>
+) -> Result<(Vec<std::path::PathBuf>, PublishStrategy), String>
 where
     R: ExtractArtifactRecorder,
     F: FnOnce() -> Result<(), String>,
@@ -2274,7 +2573,17 @@ where
     // Always enforce the operation-specific limit immediately before publish,
     // and make every regular file plus directory entry durable before any
     // staged object becomes visible at the destination.
-    validate_and_sync_staged_tree(staged, max_bytes)?;
+    let destination_preexisting = path_entry_exists(destination)?;
+    let publish_identity = if destination_preexisting {
+        // Existing destinations use the per-record target-local plan below;
+        // hashing the entire staged tree here would duplicate those file
+        // fingerprints. If the destination disappears during validation, the
+        // whole-stage branch obtains the one required tree fingerprint below.
+        sync_staged_tree_without_fingerprint(staged, max_bytes)?;
+        None
+    } else {
+        Some(validate_and_sync_staged_tree(staged, max_bytes)?)
+    };
     if !path_entry_exists(destination)? {
         if let Some(parent) = destination.parent() {
             assert_real_directory(parent)?;
@@ -2294,19 +2603,20 @@ where
             }
             Err(error) => return Err(error.to_string()),
         }
-        let publish_identity = path_identity_with_fingerprint(staged)?;
+        let publish_identity = match publish_identity {
+            Some(identity) => identity,
+            None => path_identity_with_fingerprint(staged)?,
+        };
         if !file_identities_match(&publish_identity, expected_stage_identity) {
             return Err(
                 "Extraction stage changed before whole-stage publication and was preserved."
                     .to_string(),
             );
         }
-        let final_identity = path_identity_with_fingerprint(staged)?;
-        if !file_identities_match(&publish_identity, &final_identity)
-            || publish_identity.fingerprint() != final_identity.fingerprint()
-        {
-            return Err("Extraction stage changed before whole-stage publication.".to_string());
-        }
+        // `validate_and_sync_staged_tree` completed after 7-Zip exited, and
+        // this first fingerprint is immediately followed by no-write rename.
+        // Post-rename fingerprint below remains authoritative. A second full
+        // pre-rename tree hash only reread every extracted byte.
         rename_file_no_replace(staged, destination)?;
         let verification_error = match path_identity_with_fingerprint(destination) {
             Ok(actual)
@@ -2343,14 +2653,27 @@ where
                 "{error}; the published extraction destination was preserved for journal recovery"
             ));
         }
-        return Ok(vec![destination.to_path_buf()]);
+        return Ok((
+            vec![destination.to_path_buf()],
+            PublishStrategy::WholeStageRename,
+        ));
     }
     assert_real_directory(destination)?;
     let mut reserved = std::collections::HashSet::new();
     let mut plan = Vec::new();
     plan_staged_contents(staged, destination, &mut reserved, &mut plan)?;
     prepare_planned_links(staged, destination, &plan)?;
-    prepare_target_local_publish_paths(&mut plan, &mut reserved)?;
+    prepare_target_local_publish_paths(
+        &mut plan,
+        &mut reserved,
+        staged.parent() == Some(destination),
+        destination,
+    )?;
+    let publish_strategy = if plan.iter().any(|record| record.publish_temp.is_some()) {
+        PublishStrategy::TargetLocalCopy
+    } else {
+        PublishStrategy::DirectRename
+    };
     // Install both recovery siblings with create-new semantics. Each identity is
     // persisted to the active journal and exact pending record before any
     // destination publication begins.
@@ -2375,9 +2698,12 @@ where
                 return publish_target_local_copy(recorder, &mut identity_log, &mut plan, index);
             }
             let metadata = std::fs::symlink_metadata(&source).map_err(|e| e.to_string())?;
-            if !crate::path_safety::is_link_or_reparse(&metadata) {
+            if !crate::path_safety::is_link_or_reparse(&metadata)
+                && !metadata.is_file()
+                && !metadata.is_dir()
+            {
                 return Err(format!(
-                    "Extraction publish path missing for non-link entry: {}",
+                    "Extraction publish path is unsupported: {}",
                     source.display()
                 ));
             }
@@ -2474,7 +2800,7 @@ where
             "Extraction was committed, but recovery artifact cleanup failed; published files were preserved: {error}"
         )
     })?;
-    Ok(promoted)
+    Ok((promoted, publish_strategy))
 }
 
 struct JournalExtractArtifactRecorder<'a> {
@@ -2526,6 +2852,7 @@ where
         &mut recorder,
         mark_committed,
     )
+    .map(|(promoted, _)| promoted)
 }
 
 #[cfg(test)]
@@ -2538,7 +2865,11 @@ pub(crate) fn merge_staged_extract(
     merge_staged_extract_with_commit(staged, destination, &stage_identity, max_bytes, || Ok(()))
 }
 
-pub(crate) fn commit_cleanup(app: &tauri::AppHandle, plan: &CleanupPlan) -> Result<(), String> {
+pub(crate) fn commit_cleanup(
+    app: &tauri::AppHandle,
+    plan: &CleanupPlan,
+) -> Result<Option<PublishStrategy>, String> {
+    let mut publish_strategy = None;
     let input_only = plan.staged_input_archive.is_some()
         && plan.staged_extract.is_none()
         && plan.staged_archive.is_none();
@@ -2554,7 +2885,7 @@ pub(crate) fn commit_cleanup(app: &tauri::AppHandle, plan: &CleanupPlan) -> Resu
             "Extraction stage has no creation-bound ownership identity.".to_string()
         })?;
         let mut recorder = JournalExtractArtifactRecorder { app, plan };
-        merge_staged_extract_recorded(
+        let (_, extraction_strategy) = merge_staged_extract_recorded(
             staged,
             destination,
             stage_identity,
@@ -2563,10 +2894,10 @@ pub(crate) fn commit_cleanup(app: &tauri::AppHandle, plan: &CleanupPlan) -> Resu
             || mark_extract_journal_committed(app, plan),
         )
         .map_err(|e| format!("Could not promote staged extraction safely: {e}"))?;
+        publish_strategy = Some(extraction_strategy);
         crate::launch::remember_openable_directory(app, destination);
     }
     if let Some((staged, destination)) = &plan.staged_archive {
-        assert_archive_destination_unchanged(destination, &plan.expected_archive_family)?;
         update_archive_journal(app, plan)
             .map_err(|error| format!("Archive recovery ownership update failed: {error}"))?;
         let stage = staged
@@ -2575,7 +2906,7 @@ pub(crate) fn commit_cleanup(app: &tauri::AppHandle, plan: &CleanupPlan) -> Resu
         let stage_identity = plan
             .stage_identity(stage)
             .ok_or_else(|| "Archive stage has no creation-bound ownership identity.".to_string())?;
-        promote_archive_family_with_commit(
+        let archive_strategy = promote_archive_family_with_commit(
             staged,
             destination,
             &plan.expected_archive_family,
@@ -2593,6 +2924,7 @@ pub(crate) fn commit_cleanup(app: &tauri::AppHandle, plan: &CleanupPlan) -> Resu
                     .map_err(|error| format!("Archive recovery ownership update failed: {error}"))
             },
         )?;
+        publish_strategy = Some(archive_strategy);
         if let Some(parent) = destination.parent() {
             crate::launch::remember_openable_directory(app, parent);
         }
@@ -2606,5 +2938,5 @@ pub(crate) fn commit_cleanup(app: &tauri::AppHandle, plan: &CleanupPlan) -> Resu
     } else {
         unregister_plan_stages(plan);
     }
-    Ok(())
+    Ok(publish_strategy)
 }

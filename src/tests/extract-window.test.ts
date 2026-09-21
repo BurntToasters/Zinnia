@@ -497,7 +497,7 @@ describe("extract-window", () => {
   });
 
   it("includes copyable debug dump on extract failure when settings.debug is true", async () => {
-    await setupAndRun(async (cmd) => {
+    const { invokeMock } = await setupAndRun(async (cmd) => {
       if (cmd === "load_settings") {
         return JSON.stringify({
           debug: true,
@@ -510,6 +510,20 @@ describe("extract-window", () => {
           stdout: "stdout body",
           stderr: "stderr body",
           code: 2,
+          ioDiagnostics: {
+            phaseTimes: {
+              validation: 1,
+              recovery: 2,
+              inputScan: 3,
+              snapshot: 4,
+              memberPreflight: 5,
+              sevenZipExecution: 6,
+              quotaMonitoring: 7,
+              finalization: 8,
+              total: 36,
+            },
+            strategies: { snapshot: "CopyFile2" },
+          },
         };
       }
       return undefined;
@@ -523,6 +537,14 @@ describe("extract-window", () => {
     expect(text).toContain("cmd: 7z x");
     expect(text).toContain("stdout body");
     expect(text).toContain("stderr body");
+    expect(text).toContain("I/O diagnostics:");
+    expect(text).toContain("total=36.0ms");
+    const runCall = invokeMock.mock.calls.find(
+      ([command]) => command === "run_7z",
+    );
+    expect(decodeRun7zInvokePayload(runCall?.[1]).includeIoDiagnostics).toBe(
+      true,
+    );
     expect(
       (document.getElementById("copy-error-detail") as HTMLButtonElement)
         .hidden,

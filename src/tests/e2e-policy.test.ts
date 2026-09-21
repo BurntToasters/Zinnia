@@ -29,6 +29,25 @@ describe("unpackaged E2E must not ship in release builds", () => {
     );
     expect(hook).toContain("isE2eFrontend");
     expect(hook).toContain('import.meta.env.VITE_ZINNIA_E2E !== "1"');
+    expect(hook).toContain("runArchiveBenchmarkOperation");
+    const benchmarkRunner = read("src/e2e-archive-benchmark.ts");
+    expect(benchmarkRunner).toContain("ensureArchivePaths");
+    expect(benchmarkRunner).toContain("invokeGuardedRun7z");
+    expect(benchmarkRunner).toContain('"reserve_temp_extract_path"');
+    expect(benchmarkRunner).toContain('"remove_managed_temp_dir"');
+    expect(benchmarkRunner).toContain("performance.now()");
+    expect(read("e2e/specs/archive-io-benchmark.spec.js")).toContain(
+      "one persistent app",
+    );
+    const archiveBenchmarkHelper = read("e2e/helpers/archive-benchmark.js");
+    expect(archiveBenchmarkHelper).toContain("xvfb-run");
+    expect(archiveBenchmarkHelper).toContain("WAYLAND_DISPLAY");
+    expect(archiveBenchmarkHelper).toContain("requires xvfb-run");
+    expect(benchmarkRunner).toContain("literal `absent`");
+    expect(benchmarkRunner).toContain("64-character hex family token");
+    expect(benchmarkRunner).toContain(
+      "Capture duration only after managed conversion cleanup",
+    );
     expect(read("src/e2e-wdio-plugin.ts")).toContain("isE2eFrontend");
     expect(read("src/e2e-wdio-plugin.ts")).toContain(
       'import.meta.env.VITE_ZINNIA_E2E !== "1"',

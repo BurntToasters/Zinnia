@@ -1,5 +1,51 @@
 //! Stable archive-input snapshots shared by extraction preflight and 7-Zip.
 
+#[cfg(all(windows, not(test)))]
+type WindowsSnapshotHandle = (std::path::PathBuf, std::sync::Arc<std::fs::File>);
+
+#[cfg(all(windows, not(test)))]
+type WindowsSnapshotRegistry =
+    std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, Vec<WindowsSnapshotHandle>>>;
+
+#[cfg(all(windows, not(test)))]
+static WINDOWS_SNAPSHOT_HANDLES: std::sync::OnceLock<WindowsSnapshotRegistry> =
+    std::sync::OnceLock::new();
+
+#[cfg(all(windows, not(test)))]
+fn windows_snapshot_handles() -> &'static WindowsSnapshotRegistry {
+    WINDOWS_SNAPSHOT_HANDLES.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+#[cfg(all(windows, not(test)))]
+pub(crate) fn release_snapshot_handles(stage: &std::path::Path) {
+    if let Ok(mut handles) = windows_snapshot_handles().lock() {
+        handles.remove(stage);
+    }
+}
+
+#[cfg(all(windows, not(test)))]
+pub(super) fn archive_identity_from_snapshot_handle(
+    path: &std::path::Path,
+) -> Option<ArchiveFileIdentity> {
+    let stage = path.parent()?;
+    let handles = windows_snapshot_handles().lock().ok()?;
+    handles
+        .get(stage)?
+        .iter()
+        .find(|(snapshot, _)| snapshot == path)
+        .and_then(|(_, file)| archive_file_identity_from_open_file(path, file).ok())
+}
+
+#[cfg(not(all(windows, not(test))))]
+pub(super) fn archive_identity_from_snapshot_handle(
+    _path: &std::path::Path,
+) -> Option<ArchiveFileIdentity> {
+    None
+}
+
+#[cfg(not(all(windows, not(test))))]
+pub(crate) fn release_snapshot_handles(_stage: &std::path::Path) {}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ArchiveFileIdentity {
     canonical_path: std::path::PathBuf,
@@ -295,17 +341,163 @@ fn try_clone_snapshot_file(
     }
 }
 
+/// A Windows hard link plus a source handle that denies write/delete sharing
+/// gives 7-Zip stable, zero-copy input without weakening source replacement
+/// protection. Unsupported filesystems fall back to ordinary snapshot copy.
+#[cfg(all(windows, not(test)))]
+fn try_hardlink_snapshot_file(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+) -> Result<bool, String> {
+    match std::fs::hard_link(source, destination) {
+        Ok(()) => Ok(true),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::AlreadyExists
+                    | std::io::ErrorKind::PermissionDenied
+                    | std::io::ErrorKind::Unsupported
+            ) =>
+        {
+            Ok(false)
+        }
+        Err(_) => Ok(false),
+    }
+}
+
+#[cfg(windows)]
+struct CopyFile2Context<'a> {
+    should_cancel: &'a dyn Fn() -> bool,
+    cancel: *mut windows_sys::core::BOOL,
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn copy_file2_progress(
+    _message: *const windows_sys::Win32::Storage::FileSystem::COPYFILE2_MESSAGE,
+    callback_context: *const std::ffi::c_void,
+) -> windows_sys::Win32::Storage::FileSystem::COPYFILE2_MESSAGE_ACTION {
+    use windows_sys::Win32::Storage::FileSystem::{
+        COPYFILE2_PROGRESS_CANCEL, COPYFILE2_PROGRESS_CONTINUE,
+    };
+    if callback_context.is_null() {
+        return COPYFILE2_PROGRESS_CONTINUE;
+    }
+    let context = &*(callback_context as *const CopyFile2Context<'_>);
+    if (context.should_cancel)() {
+        *context.cancel = 1;
+        COPYFILE2_PROGRESS_CANCEL
+    } else {
+        COPYFILE2_PROGRESS_CONTINUE
+    }
+}
+
+/// Use the Windows native copy engine when the hard-link snapshot is not
+/// available. CopyFile2 keeps alternate data streams (including Zone.Identifier
+/// / MOTW) and can use ReFS block cloning or storage offload. The destination
+/// remains create-new and is removed on every failed native attempt before the
+/// cancellable byte-copy fallback runs.
+#[cfg(windows)]
+fn try_copy_file2_snapshot<C>(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+    should_cancel: &C,
+) -> Result<bool, String>
+where
+    C: Fn() -> bool,
+{
+    use std::os::windows::ffi::OsStrExt as _;
+    use windows_sys::Win32::Storage::FileSystem::{
+        CopyFile2, COPYFILE2_EXTENDED_PARAMETERS, COPY_FILE_FAIL_IF_EXISTS,
+    };
+
+    if should_cancel() {
+        return Err("Archive operation was cancelled during input snapshot.".to_string());
+    }
+    let source_wide: Vec<u16> = source
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let destination_wide: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut cancel: windows_sys::core::BOOL = 0;
+    let context = CopyFile2Context {
+        should_cancel,
+        cancel: &mut cancel,
+    };
+    let parameters = COPYFILE2_EXTENDED_PARAMETERS {
+        dwSize: std::mem::size_of::<COPYFILE2_EXTENDED_PARAMETERS>() as u32,
+        dwCopyFlags: COPY_FILE_FAIL_IF_EXISTS,
+        pfCancel: &mut cancel,
+        pProgressRoutine: Some(copy_file2_progress),
+        pvCallbackContext: (&context as *const CopyFile2Context<'_>) as *mut std::ffi::c_void,
+    };
+    let result = unsafe { CopyFile2(source_wide.as_ptr(), destination_wide.as_ptr(), &parameters) };
+    if result == 0 {
+        return Ok(true);
+    }
+    if cancel != 0 || should_cancel() {
+        let _ = crate::fs_secure::remove_file_for_cleanup(destination);
+        return Err("Archive operation was cancelled during input snapshot.".to_string());
+    }
+    // CopyFile2 is an optimization, not a new failure mode. A filesystem may
+    // reject offload/block-clone or an older Windows kernel may not implement
+    // the API; clean any partial target and let the existing byte-copy path
+    // preserve the private stage ACL and cancellation semantics.
+    let _ = crate::fs_secure::remove_file_for_cleanup(destination);
+    Ok(false)
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SnapshotStrategy {
+    WindowsHardlink,
+    CopyFile2,
+    CowClone,
+    ByteCopy,
+    Mixed,
+}
+
+impl SnapshotStrategy {
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::WindowsHardlink => "windows-hardlink-lock",
+            Self::CopyFile2 => "windows-copyfile2",
+            Self::CowClone => "cow-clone",
+            Self::ByteCopy => "cancellable-byte-copy",
+            Self::Mixed => "mixed-snapshot-strategies",
+        }
+    }
+
+    fn merge(self, other: Self) -> Self {
+        if self == other {
+            self
+        } else {
+            Self::Mixed
+        }
+    }
+}
+
 fn copy_archive_snapshot_file<C>(
     source: &mut std::fs::File,
     source_path: &std::path::Path,
     destination: &std::path::Path,
     should_cancel: &C,
-) -> Result<(), String>
+) -> Result<SnapshotStrategy, String>
 where
     C: Fn() -> bool,
 {
     if should_cancel() {
         return Err("Archive operation was cancelled during input snapshot.".to_string());
+    }
+    #[cfg(windows)]
+    {
+        if try_copy_file2_snapshot(source_path, destination, should_cancel)? {
+            return Ok(SnapshotStrategy::CopyFile2);
+        }
     }
     #[cfg(target_os = "macos")]
     {
@@ -345,7 +537,7 @@ where
                         }
                     });
                 }
-                return Ok(());
+                return Ok(SnapshotStrategy::CowClone);
             }
             Ok(false) => {}
             Err(error) => return Err(error),
@@ -400,7 +592,7 @@ where
                         }
                     });
                 }
-                return Ok(());
+                return Ok(SnapshotStrategy::CowClone);
             }
             Ok(false) => {
                 if let Err(error) = ensure_snapshot_byte_copy_space(source, destination) {
@@ -466,7 +658,7 @@ where
     copy_windows_zone_identifier(source_path, destination)?;
     #[cfg(not(windows))]
     let _ = source_path;
-    Ok(())
+    Ok(SnapshotStrategy::ByteCopy)
 }
 
 #[cfg(windows)]
@@ -575,7 +767,9 @@ pub(super) fn assert_archive_identity_unchanged(
     archive: &std::path::Path,
     expected: &ArchiveFileIdentity,
 ) -> Result<(), String> {
-    let current = archive_file_identity(archive)?;
+    let current = archive_identity_from_snapshot_handle(archive)
+        .or_else(|| archive_file_identity(archive).ok())
+        .ok_or_else(|| "Could not read archive identity after member preflight.".to_string())?;
     if &current != expected {
         return Err(
             "Archive changed after its member-safety preflight; extraction was cancelled."
@@ -855,6 +1049,7 @@ pub(super) struct StagedArchiveInput {
     pub(super) path: std::path::PathBuf,
     pub(super) stage_identity: super::journal::FileIdentity,
     pub(super) total_len: u64,
+    pub(super) snapshot_strategy: SnapshotStrategy,
 }
 
 #[cfg(test)]
@@ -923,6 +1118,13 @@ where
     let stage = created_stage.path;
     let stage_identity = created_stage.identity;
     let cleanup_identity = stage_identity.clone();
+    #[cfg(all(windows, not(test)))]
+    let mut hardlink_handles = Vec::new();
+    #[cfg(all(windows, not(test)))]
+    let mut used_hardlink = false;
+    #[cfg(not(all(windows, not(test))))]
+    let used_hardlink = false;
+    let mut snapshot_strategy: Option<SnapshotStrategy> = None;
     let result = (|| {
         for (source, expected) in inputs {
             if should_cancel() {
@@ -944,13 +1146,25 @@ where
                         .to_string(),
                 );
             }
-            copy_archive_snapshot_file(&mut source_file, &source, &destination, &should_cancel)
-                .map_err(|error| {
-                    format!(
-                        "Could not snapshot archive input {}: {error}",
-                        source.display()
-                    )
-                })?;
+            #[cfg(all(windows, not(test)))]
+            let hardlinked = try_hardlink_snapshot_file(&source, &destination)?;
+            #[cfg(not(all(windows, not(test))))]
+            let hardlinked = false;
+            let strategy = if hardlinked {
+                SnapshotStrategy::WindowsHardlink
+            } else {
+                copy_archive_snapshot_file(&mut source_file, &source, &destination, &should_cancel)
+                    .map_err(|error| {
+                        format!(
+                            "Could not snapshot archive input {}: {error}",
+                            source.display()
+                        )
+                    })?
+            };
+            snapshot_strategy = Some(match snapshot_strategy {
+                Some(previous) => previous.merge(strategy),
+                None => strategy,
+            });
             let copied_identity = archive_file_identity_from_open_file(&source, &source_file)?;
             if copied_identity != expected {
                 return Err(
@@ -958,13 +1172,28 @@ where
                         .to_string(),
                 );
             }
-            assert_archive_identity_unchanged(&source, &expected)?;
+            if !hardlinked {
+                assert_archive_identity_unchanged(&source, &expected)?;
+            }
+            #[cfg(all(windows, not(test)))]
+            if hardlinked {
+                used_hardlink = true;
+                hardlink_handles.push((destination.clone(), std::sync::Arc::new(source_file)));
+            }
         }
-        if archive_identity_token(&archive)? != initial_token {
+        if !used_hardlink && archive_identity_token(&archive)? != initial_token {
             return Err(
                 "Archive changed while its private snapshot was being created; extraction was cancelled."
                     .to_string(),
             );
+        }
+        #[cfg(all(windows, not(test)))]
+        if !hardlink_handles.is_empty() {
+            if let Ok(mut handles) = windows_snapshot_handles().lock() {
+                handles.insert(stage.clone(), hardlink_handles);
+            } else {
+                return Err("Windows snapshot handle registry is unavailable.".to_string());
+            }
         }
         Ok(StagedArchiveInput {
             path: stage.join(
@@ -974,11 +1203,19 @@ where
             ),
             stage_identity,
             total_len,
+            snapshot_strategy: snapshot_strategy.unwrap_or(SnapshotStrategy::ByteCopy),
         })
     })();
     match result {
         Ok(staged) => Ok(staged),
         Err(operation_error) => {
+            // The handle registry is populated just before the staged-input
+            // value is returned. If constructing that value ever fails, this
+            // path runs before a CleanupPlan/SnapshotHandleGuard exists; do
+            // not leave the source archive write/delete-locked while the
+            // private stage is rolled back.
+            #[cfg(all(windows, not(test)))]
+            release_snapshot_handles(&stage);
             let cleanup_result =
                 super::journal::remove_directory_if_matches(&stage, &cleanup_identity).and_then(
                     |()| {
@@ -997,5 +1234,29 @@ where
                 )),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod strategy_tests {
+    use super::SnapshotStrategy;
+
+    #[test]
+    fn snapshot_strategy_labels_and_mixed_classification_are_stable() {
+        assert_eq!(
+            SnapshotStrategy::WindowsHardlink.label(),
+            "windows-hardlink-lock"
+        );
+        assert_eq!(SnapshotStrategy::CopyFile2.label(), "windows-copyfile2");
+        assert_eq!(SnapshotStrategy::CowClone.label(), "cow-clone");
+        assert_eq!(SnapshotStrategy::ByteCopy.label(), "cancellable-byte-copy");
+        assert_eq!(
+            SnapshotStrategy::CowClone.merge(SnapshotStrategy::ByteCopy),
+            SnapshotStrategy::Mixed
+        );
+        assert_eq!(
+            SnapshotStrategy::Mixed.merge(SnapshotStrategy::ByteCopy),
+            SnapshotStrategy::Mixed
+        );
     }
 }

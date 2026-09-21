@@ -44,14 +44,16 @@ import {
   truncateForDialog,
 } from "./runtime";
 
-let browseArchiveLoader: (() => Promise<ArchiveInfo | null>) | null = null;
+let browseArchiveLoader:
+  ((expectedArchiveIdentity?: string) => Promise<ArchiveInfo | null>) | null =
+  null;
 const MAX_RENDERED_BROWSE_ROWS = 1_000;
 const MAX_RENDERED_SELECTIVE_ROWS = 1_000;
 const SELECTIVE_SEARCH_DEBOUNCE_MS = 120;
 let selectiveSearchTimer: number | undefined;
 
 export function registerBrowseArchiveLoader(
-  loader: () => Promise<ArchiveInfo | null>,
+  loader: (expectedArchiveIdentity?: string) => Promise<ArchiveInfo | null>,
 ): void {
   browseArchiveLoader = loader;
 }
@@ -598,25 +600,30 @@ function syncSelectiveDestinationWithExtractInput(): void {
 
 async function ensureArchiveInfoForPicker(
   archive: string,
+  validatedIdentity?: string,
 ): Promise<ArchiveInfo | null> {
   if (state.inputs[0] !== archive) return null;
-  const [validation] = await ensureArchivePaths(
-    [archive],
-    "browse",
-    undefined,
-    true,
-  );
-  if (state.inputs[0] !== archive || !validation?.identity) return null;
+  let identity = validatedIdentity;
+  if (!identity) {
+    const [validation] = await ensureArchivePaths(
+      [archive],
+      "browse",
+      undefined,
+      true,
+    );
+    identity = validation?.identity;
+  }
+  if (state.inputs[0] !== archive || !identity) return null;
   const cached = getCachedArchiveInfo(archive);
   const cachedIdentity = state.browseArchiveIdentityByPath.get(archive);
-  if (cached && cachedIdentity === validation.identity) return cached;
+  if (cached && cachedIdentity === identity) return cached;
   if (cached || cachedIdentity) {
     clearBrowseCache(archive);
   }
   if (!browseArchiveLoader) {
     throw new Error("Archive browsing is not initialized.");
   }
-  return await browseArchiveLoader();
+  return await browseArchiveLoader(identity);
 }
 
 export function closeSelectiveExtractModal(): void {
@@ -719,8 +726,18 @@ async function openSelectiveExtractModalOnce(): Promise<void> {
     return;
   }
 
+  let validatedIdentity: string | undefined;
   try {
-    await ensureArchivePaths([archive], "browse");
+    const [validation] = await ensureArchivePaths(
+      [archive],
+      "browse",
+      undefined,
+      true,
+    );
+    validatedIdentity = validation?.identity;
+    if (!validatedIdentity) {
+      throw new Error("Could not capture a stable archive identity.");
+    }
     if (!requestIsCurrent()) return;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -728,7 +745,7 @@ async function openSelectiveExtractModalOnce(): Promise<void> {
     return;
   }
 
-  const info = await ensureArchiveInfoForPicker(archive);
+  const info = await ensureArchiveInfoForPicker(archive, validatedIdentity);
   if (!info || !requestIsCurrent()) return;
 
   ensureExtractDestinationDefaultFromArchive(archive);

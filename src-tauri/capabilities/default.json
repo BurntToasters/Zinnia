@@ -68,7 +68,6 @@
     "allow-get-cpu-count",
     "allow-is-flatpak",
     "allow-is-packaged",
-    "allow-create-temp-extract-dir",
     "allow-remove-managed-temp-dir",
     "allow-list-managed-temp-children",
     "allow-probe-compress-inputs",
@@ -76,6 +75,7 @@
     "allow-set-workspace-window-fx",
     "allow-supports-workspace-window-fx",
     "allow-get-startup-recovery-status",
-    "allow-acknowledge-preserved-transaction"
+    "allow-acknowledge-preserved-transaction",
+    "allow-reserve-temp-extract-path"
   ]
 }

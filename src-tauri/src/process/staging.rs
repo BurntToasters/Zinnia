@@ -14,7 +14,9 @@ use super::journal::{
     file_identity, register_pending_stage, unregister_pending_stage, FileIdentity,
 };
 use super::quota::available_space_for_path;
-use super::{lock_process, ArchiveDestinationSnapshot, CleanupPlan, RunningProcess};
+use super::{
+    lock_process, ArchiveDestinationSnapshot, ArchiveManifestSummary, CleanupPlan, RunningProcess,
+};
 
 /// Selection token meaning "output path must still be absent at create time".
 pub(crate) const ARCHIVE_OUTPUT_ABSENT_TOKEN: &str = "absent";
@@ -201,6 +203,13 @@ fn cleanup_owned_stage(
     identity: &FileIdentity,
     cache_dir: Option<&std::path::Path>,
 ) -> Result<(), String> {
+    // A Windows hard-link snapshot keeps the source handle alive until the
+    // staged input is handed to the run plan. Preparation can still fail after
+    // that handoff (for example, a free-space or ratio check), before the
+    // caller has a CleanupPlan/SnapshotHandleGuard to release it. Unlock the
+    // source before direct rollback so an aborted preparation cannot retain a
+    // write/delete lock for the lifetime of the process.
+    super::release_snapshot_handles(stage);
     super::journal::remove_directory_if_matches(stage, identity)?;
     if let Some(cache_dir) = cache_dir {
         unregister_pending_stage(cache_dir, stage)?;
@@ -306,6 +315,23 @@ pub(crate) fn create_publish_stage_dir(
     )
 }
 
+/// Create an extraction stage as a hidden child of an already existing,
+/// validated destination. Caller may use this only after member preflight
+/// proves archive has no symbolic or hard links.
+#[cfg(not(test))]
+pub(crate) fn create_publish_stage_dir_inside(
+    destination: &std::path::Path,
+    purpose: &str,
+    cache_dir: Option<&std::path::Path>,
+) -> Result<CreatedStageDir, String> {
+    create_stage_dir_under(
+        destination,
+        purpose,
+        cache_dir,
+        crate::fs_secure::create_inheriting_stage_dir_open_in,
+    )
+}
+
 pub(crate) fn next_extract_stage_path(
     target: &std::path::Path,
     cache_dir: Option<&std::path::Path>,
@@ -320,13 +346,10 @@ pub(crate) fn next_extract_stage_path(
         }
     }
 
-    // Always stage as a sibling of the destination (never inside it). Extract
-    // uses `-snld10` for macOS `.framework` chains; an inside-destination stage
-    // would let a crafted relative escape symlink write into the live user
-    // folder during 7-Zip extract, before staged-tree validation. Existing
-    // destinations still get correct ACLs/mode via target-local publish under
-    // the final parent. Keep InsideDestination journal recovery for older
-    // in-flight transactions.
+    // Start sibling staging. After member preflight proves no symbolic/hard
+    // links, production may replace this empty stage with an inside-destination
+    // stage so link-free output inherits destination ACL/mode directly. Link-
+    // bearing archives always retain this sibling placement.
     create_publish_stage_dir(target, "extract", cache_dir)
 }
 
@@ -375,6 +398,39 @@ pub(crate) fn rewrite_archive_output(
         return Err("Compression command is missing an output archive.".to_string());
     };
     *arg = staged.to_string_lossy().to_string();
+    Ok(())
+}
+
+/// Keep update source archive read-only and ask 7-Zip to write complete output
+/// into staged path. Existing callers that need ordinary output replacement
+/// continue using `rewrite_archive_output`.
+pub(crate) fn rewrite_archive_update_output(
+    args: &mut Vec<String>,
+    staged: &std::path::Path,
+) -> Result<(), String> {
+    if args.first().map(String::as_str) != Some("u") {
+        return Err("Separate-output archive rewrite requires an update command.".to_string());
+    }
+    let separator = args
+        .iter()
+        .position(|arg| arg == "--")
+        .ok_or_else(|| "Compression command is missing '--'.".to_string())?;
+    if !args[1..separator].iter().any(|arg| !arg.starts_with('-')) {
+        return Err("Compression command is missing an output archive.".to_string());
+    }
+    // 7-Zip's full update action set: preserve all old records unless input
+    // selection replaces them, then write complete result to `staged`.
+    let retained: Vec<String> = args[1..separator]
+        .iter()
+        .filter(|arg| {
+            let lower = arg.to_ascii_lowercase();
+            !lower.starts_with("-u")
+        })
+        .cloned()
+        .collect();
+    args.splice(1..separator, retained);
+    args.insert(1, "-u-".to_string());
+    args.insert(2, format!("-up1q1r2x1y2z1w2!{}", staged.to_string_lossy()));
     Ok(())
 }
 
@@ -450,13 +506,14 @@ pub(crate) fn listing_preflight_exit_is_acceptable(code: i32, stdout: &str, stde
     code == 0 || (code == 1 && extract_warning_is_metadata_only(stdout, stderr))
 }
 
-pub(crate) fn assert_slt_archive_members_safe(
+fn parse_slt_archive_manifest(
     slt_output: &str,
     archive_path: &str,
-) -> Result<(), String> {
+    max_bytes: Option<u64>,
+) -> Result<ArchiveManifestSummary, String> {
     let mut seen_member = false;
-    let mut member_count = 0u64;
     let mut current_member: Option<&str> = None;
+    let mut summary = ArchiveManifestSummary::default();
     for line in slt_output.lines() {
         if let Some(path) = line.strip_prefix("Path = ") {
             if path.is_empty() {
@@ -471,11 +528,21 @@ pub(crate) fn assert_slt_archive_members_safe(
                 continue;
             }
             seen_member = true;
-            member_count = member_count.saturating_add(1);
-            if member_count > super::quota::MAX_EXTRACT_ENTRIES {
+            summary.entry_count = summary.entry_count.saturating_add(1);
+            if summary.entry_count > super::quota::MAX_EXTRACT_ENTRIES {
                 return Err(format!(
                     "Archive exceeds the safety limit of {} entries.",
                     super::quota::MAX_EXTRACT_ENTRIES
+                ));
+            }
+            summary.path_bytes = summary
+                .path_bytes
+                .checked_add(path.len() as u64)
+                .ok_or_else(|| "Archive path-name safety counter overflowed.".to_string())?;
+            if summary.path_bytes > super::quota::MAX_EXTRACT_PATH_BYTES {
+                return Err(format!(
+                    "Archive exceeds the {} MiB aggregate path-name safety limit.",
+                    super::quota::MAX_EXTRACT_PATH_BYTES / (1024 * 1024)
                 ));
             }
             current_member = Some(path);
@@ -487,6 +554,7 @@ pub(crate) fn assert_slt_archive_members_safe(
             continue;
         }
         if let Some(target) = line.strip_prefix("Symbolic Link = ") {
+            summary.has_symbolic_links = true;
             if target.is_empty() {
                 continue;
             }
@@ -502,6 +570,7 @@ pub(crate) fn assert_slt_archive_members_safe(
             continue;
         }
         if let Some(target) = line.strip_prefix("Hard Link = ") {
+            summary.has_hard_links = true;
             if target.is_empty() {
                 continue;
             }
@@ -517,6 +586,25 @@ pub(crate) fn assert_slt_archive_members_safe(
                 ));
             }
         }
+        if current_member.is_some() {
+            if let Some(size) = line.strip_prefix("Size = ") {
+                let size = size.parse::<u64>().map_err(|_| {
+                    "Archive listing contains an invalid declared member size.".to_string()
+                })?;
+                summary.declared_bytes =
+                    summary.declared_bytes.checked_add(size).ok_or_else(|| {
+                        "Archive declared size overflowed its safety counter.".to_string()
+                    })?;
+                if let Some(max_bytes) = max_bytes {
+                    if summary.declared_bytes > max_bytes {
+                        return Err(format!(
+                            "Archive declares more than {:.1} GiB of extracted data.",
+                            max_bytes as f64 / 1_073_741_824.0
+                        ));
+                    }
+                }
+            }
+        }
     }
     // Empty archives legitimately produce no records. Non-empty output with no
     // Path records means the machine-readable schema was not understood; fail
@@ -524,56 +612,48 @@ pub(crate) fn assert_slt_archive_members_safe(
     if !seen_member && !slt_output.trim().is_empty() {
         return Err("Could not parse archive member paths from 7-Zip listing.".to_string());
     }
-    Ok(())
+    Ok(summary)
 }
 
+#[cfg(test)]
+pub(crate) fn assert_slt_archive_members_safe(
+    slt_output: &str,
+    archive_path: &str,
+) -> Result<(), String> {
+    parse_slt_archive_manifest(slt_output, archive_path, None).map(|_| ())
+}
+
+#[cfg(test)]
 pub(crate) fn assert_slt_declared_size_within_limit(
     slt_output: &str,
     archive_path: &str,
     max_bytes: u64,
 ) -> Result<(), String> {
-    let mut current_is_member = false;
-    let mut declared_bytes = 0u64;
-    for line in slt_output.lines() {
-        if let Some(path) = line.strip_prefix("Path = ") {
-            current_is_member = !path.is_empty() && path != archive_path;
-            continue;
-        }
-        if !current_is_member {
-            continue;
-        }
-        let Some(size) = line.strip_prefix("Size = ") else {
-            continue;
-        };
-        let size = size
-            .parse::<u64>()
-            .map_err(|_| "Archive listing contains an invalid declared member size.".to_string())?;
-        declared_bytes = declared_bytes
-            .checked_add(size)
-            .ok_or_else(|| "Archive declared size overflowed its safety counter.".to_string())?;
-        if declared_bytes > max_bytes {
-            return Err(format!(
-                "Archive declares more than {:.1} GiB of extracted data.",
-                max_bytes as f64 / 1_073_741_824.0
-            ));
-        }
-    }
-    Ok(())
+    parse_slt_archive_manifest(slt_output, archive_path, Some(max_bytes)).map(|_| ())
 }
 
-pub(crate) async fn assert_extract_archive_members_safe(
+pub(crate) async fn assert_extract_archive_members_safe_with_summary(
     app: &tauri::AppHandle,
     state: &tauri::State<'_, RunningProcess>,
     args: &[String],
     max_declared_bytes: Option<u64>,
-) -> Result<(std::path::PathBuf, ArchiveFileIdentity), String> {
+) -> Result<
+    (
+        std::path::PathBuf,
+        ArchiveFileIdentity,
+        ArchiveManifestSummary,
+    ),
+    String,
+> {
     let list_args = extract_member_list_args(args)?;
     let archive = list_args
         .last()
         .cloned()
         .ok_or_else(|| "Extraction member list is missing an archive path.".to_string())?;
     let archive_path = std::path::PathBuf::from(&archive);
-    let identity = archive_file_identity(&archive_path)?;
+    let identity = super::archive_snapshot::archive_identity_from_snapshot_handle(&archive_path)
+        .or_else(|| archive_file_identity(&archive_path).ok())
+        .ok_or_else(|| "Could not read archive identity for member preflight.".to_string())?;
     let (mut rx, child, pending_password) =
         super::commands::spawn_7z_noninteractive(app, list_args, state)?;
     {
@@ -655,11 +735,21 @@ pub(crate) async fn assert_extract_archive_members_safe(
             format!("Could not list archive members for path safety: {detail}")
         });
     }
-    assert_slt_archive_members_safe(&collected.stdout, &archive)?;
-    if let Some(max_bytes) = max_declared_bytes {
-        assert_slt_declared_size_within_limit(&collected.stdout, &archive, max_bytes)?;
-    }
-    Ok((archive_path, identity))
+    let manifest = parse_slt_archive_manifest(&collected.stdout, &archive, max_declared_bytes)?;
+    Ok((archive_path, identity, manifest))
+}
+
+#[cfg(test)]
+#[allow(dead_code)]
+pub(crate) async fn assert_extract_archive_members_safe(
+    app: &tauri::AppHandle,
+    state: &tauri::State<'_, RunningProcess>,
+    args: &[String],
+    max_declared_bytes: Option<u64>,
+) -> Result<(std::path::PathBuf, ArchiveFileIdentity), String> {
+    assert_extract_archive_members_safe_with_summary(app, state, args, max_declared_bytes)
+        .await
+        .map(|(archive, identity, _)| (archive, identity))
 }
 
 #[cfg(test)]
@@ -748,9 +838,12 @@ where
                         staged_input.stage_identity.clone(),
                     )],
                     staged_input_archive: Some(staged_input.path),
+                    snapshot_strategy: Some(staged_input.snapshot_strategy),
                     cache_dir,
                     max_extract_bytes: Some(max_extract_bytes),
                     min_free_bytes: Some(min_free_bytes),
+                    #[cfg(not(test))]
+                    extract_destination_preexisting: false,
                 }),
                 Err(error) => {
                     let error = if let Some(parent) = staged_input.path.parent() {
@@ -773,10 +866,13 @@ where
             staged_archive: None,
             expected_archive_family: Vec::new(),
             staged_input_archive: None,
+            snapshot_strategy: None,
             cache_dir,
             stage_identities: Vec::new(),
             max_extract_bytes: None,
             min_free_bytes: None,
+            #[cfg(not(test))]
+            extract_destination_preexisting: false,
         });
     };
 
@@ -785,7 +881,8 @@ where
             let expected_archive_identity = expected_archive_identity.ok_or_else(|| {
                 "Mutating archive operations require an archive identity token.".to_string()
             })?;
-            let destination = if path_entry_exists(&target)? {
+            let destination_preexisting = path_entry_exists(&target)?;
+            let destination = if destination_preexisting {
                 resolve_existing_target(&target, true)
                     .map_err(|e| format!("Could not resolve the extraction destination: {e}"))?
             } else {
@@ -878,12 +975,15 @@ where
                     ),
                 ],
                 staged_input_archive: Some(staged_input.path),
+                snapshot_strategy: Some(staged_input.snapshot_strategy),
                 // Member preflight plus a fixed, wildcard-free stage
                 // contains 7-Zip output. Unrelated siblings may legitimately
                 // appear during a long extraction and must not abort commit.
                 cache_dir,
                 max_extract_bytes: Some(max_extract_bytes),
                 min_free_bytes: Some(reserve),
+                #[cfg(not(test))]
+                extract_destination_preexisting: destination_preexisting,
             })
         }
         Some("a") => {
@@ -910,12 +1010,19 @@ where
                         .to_string(),
                 );
             }
-            let target = if path_entry_exists(&target)? {
-                resolve_existing_target(&target, false)?
+            let requested_target = target.clone();
+            let target = if path_entry_exists(&requested_target)? {
+                resolve_existing_target(&requested_target, false)?
             } else {
-                resolve_new_target(&target)?
+                resolve_new_target(&requested_target)?
             };
-            let expected_archive_family = archive_destination_family_snapshot(&target)?;
+            let expected_archive_family = if target == requested_target {
+                // Selection snapshot already covered this exact path. Avoid a
+                // second full read/hash before 7-Zip starts.
+                pre_family.clone()
+            } else {
+                archive_destination_family_snapshot(&target)?
+            };
             if !archive_family_content_matches(&pre_family, &expected_archive_family) {
                 return Err(
                     "Archive output changed after it was selected; choose the current file again."
@@ -934,10 +1041,13 @@ where
                 staged_archive: Some((staged, target)),
                 expected_archive_family,
                 staged_input_archive: None,
+                snapshot_strategy: None,
                 cache_dir,
                 stage_identities: vec![(stage_dir, created_stage.identity)],
                 max_extract_bytes: None,
                 min_free_bytes: None,
+                #[cfg(not(test))]
+                extract_destination_preexisting: false,
             })
         }
         Some("u") => {
@@ -962,8 +1072,13 @@ where
                         .to_string(),
                 );
             }
-            let target = resolve_existing_target(&target, false)?;
-            let expected_archive_family = archive_destination_family_snapshot(&target)?;
+            let requested_target = target.clone();
+            let target = resolve_existing_target(&requested_target, false)?;
+            let expected_archive_family = if target == requested_target {
+                pre_family.clone()
+            } else {
+                archive_destination_family_snapshot(&target)?
+            };
             if !archive_family_content_matches(&pre_family, &expected_archive_family) {
                 return Err(
                     "Archive changed after it was selected; review the current archive before updating it."
@@ -983,24 +1098,18 @@ where
                     .file_name()
                     .ok_or_else(|| "Archive output has no file name.".to_string())?,
             );
-            if let Err(error) = std::fs::copy(&target, &staged) {
-                let operation_error = format!("Could not stage the archive for update: {error}");
-                return match cleanup_owned_stage(&stage_dir, &created_stage.identity, cache_ref) {
-                    Ok(()) => Err(operation_error),
-                    Err(cleanup_error) => {
-                        Err(preparation_cleanup_failed(operation_error, cleanup_error))
-                    }
-                };
-            }
             Ok(CleanupPlan {
                 staged_extract: None,
                 staged_archive: Some((staged, target)),
                 expected_archive_family,
                 staged_input_archive: None,
+                snapshot_strategy: None,
                 cache_dir,
                 stage_identities: vec![(stage_dir, created_stage.identity)],
                 max_extract_bytes: None,
                 min_free_bytes: None,
+                #[cfg(not(test))]
+                extract_destination_preexisting: false,
             })
         }
         _ => Ok(CleanupPlan {
@@ -1008,10 +1117,13 @@ where
             staged_archive: None,
             expected_archive_family: Vec::new(),
             staged_input_archive: None,
+            snapshot_strategy: None,
             cache_dir,
             stage_identities: Vec::new(),
             max_extract_bytes: None,
             min_free_bytes: None,
+            #[cfg(not(test))]
+            extract_destination_preexisting: false,
         }),
     }
 }

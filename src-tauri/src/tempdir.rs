@@ -4,6 +4,16 @@
 
 use tauri::Manager;
 
+static RESERVED_TEMP_EXTRACT_PATHS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>,
+> = std::sync::OnceLock::new();
+
+fn reserved_temp_extract_paths(
+) -> &'static std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>> {
+    RESERVED_TEMP_EXTRACT_PATHS
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
 fn managed_base(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?;
     Ok(dir.join("convert"))
@@ -205,20 +215,61 @@ pub fn sweep_stale_launch_temp_files() {
 
 #[tauri::command]
 pub fn create_temp_extract_dir(app: tauri::AppHandle) -> Result<String, String> {
-    let base = managed_base(&app)?;
+    let path = reserve_temp_extract_path_blocking(&app)?;
+    if let Err(error) = crate::fs_secure::create_private_dir(&path) {
+        if let Ok(mut paths) = reserved_temp_extract_paths().lock() {
+            paths.remove(&path);
+        }
+        return Err(error.to_string());
+    }
+    if let Ok(mut paths) = reserved_temp_extract_paths().lock() {
+        paths.remove(&path);
+    }
+    Ok(path.to_string_lossy().to_string())
+}
+
+fn reserve_temp_extract_path_blocking(
+    app: &tauri::AppHandle,
+) -> Result<std::path::PathBuf, String> {
+    let base = managed_base(app)?;
     std::fs::create_dir_all(&base).map_err(|e| e.to_string())?;
     for _ in 0..32 {
         let mut random = [0u8; 16];
         getrandom::fill(&mut random).map_err(|e| e.to_string())?;
         let token: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
         let dir = base.join(format!("tmp-{token}"));
-        match crate::fs_secure::create_private_dir(&dir) {
-            Ok(()) => return Ok(dir.to_string_lossy().to_string()),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+        let reserved = reserved_temp_extract_paths()
+            .lock()
+            .map_err(|_| "Conversion temp-path reservation is unavailable.".to_string())?;
+        if reserved.contains(&dir) {
+            continue;
+        }
+        drop(reserved);
+        match std::fs::symlink_metadata(&dir) {
+            Ok(_) => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                reserved_temp_extract_paths()
+                    .lock()
+                    .map_err(|_| "Conversion temp-path reservation is unavailable.".to_string())?
+                    .insert(dir.clone());
+                // The returned path is intentionally absent. run_7z creates a
+                // sibling stage and publishes the completed tree with one
+                // whole-stage rename, avoiding a second recursive copy.
+                return Ok(dir);
+            }
             Err(error) => return Err(error.to_string()),
         }
     }
-    Err("Could not reserve a unique conversion directory.".to_string())
+    Err("Could not reserve a unique conversion path.".to_string())
+}
+
+/// Reserve a managed conversion destination without creating it. Extraction
+/// can then use the normal absent-destination whole-stage publication path.
+#[tauri::command]
+pub fn reserve_temp_extract_path(app: tauri::AppHandle) -> Result<String, String> {
+    Ok(reserve_temp_extract_path_blocking(&app)?
+        .to_string_lossy()
+        .to_string())
 }
 
 fn is_direct_managed_child(base: &std::path::Path, target: &std::path::Path) -> bool {
@@ -233,7 +284,35 @@ fn remove_managed_temp_dir_blocking(app: &tauri::AppHandle, path: &str) -> Resul
     let base = managed_base(app)?;
     let target = std::path::PathBuf::from(path);
 
-    let raw_meta = std::fs::symlink_metadata(&target).map_err(|e| e.to_string())?;
+    let raw_meta = match std::fs::symlink_metadata(&target) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // A reserved destination is deliberately absent until extraction
+            // publishes the completed stage. Validate its lexical parent
+            // before accepting idempotent cleanup; never turn NotFound into a
+            // broad or recursive removal authorization.
+            let canonical_base = base.canonicalize().unwrap_or(base.clone());
+            let canonical_parent = target
+                .parent()
+                .ok_or_else(|| "Temp path has no managed parent directory.".to_string())?
+                .canonicalize()
+                .map_err(|error| error.to_string())?;
+            let canonical_target = canonical_parent.join(
+                target
+                    .file_name()
+                    .ok_or_else(|| "Temp path has no file name.".to_string())?,
+            );
+            if !is_direct_managed_child(&canonical_base, &canonical_target) {
+                return Err("Refusing to remove a path outside the managed temp area.".to_string());
+            }
+            if let Ok(mut paths) = reserved_temp_extract_paths().lock() {
+                paths.remove(&canonical_target);
+                paths.remove(&target);
+            }
+            return Ok(());
+        }
+        Err(error) => return Err(error.to_string()),
+    };
     crate::path_safety::reject_link_or_reparse(&target, &raw_meta)
         .map_err(|_| "Temp path cannot be a symbolic link or reparse point.".to_string())?;
 
@@ -247,7 +326,12 @@ fn remove_managed_temp_dir_blocking(app: &tauri::AppHandle, path: &str) -> Resul
         return Err("Temp path is not a directory.".to_string());
     }
 
-    crate::fs_secure::remove_dir_all_for_cleanup(&canonical_target).map_err(|e| e.to_string())
+    crate::fs_secure::remove_dir_all_for_cleanup(&canonical_target).map_err(|e| e.to_string())?;
+    if let Ok(mut paths) = reserved_temp_extract_paths().lock() {
+        paths.remove(&canonical_target);
+        paths.remove(&target);
+    }
+    Ok(())
 }
 
 #[tauri::command]

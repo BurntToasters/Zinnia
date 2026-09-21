@@ -645,6 +645,12 @@
           "markdownDescription": "Enables the remove_managed_temp_dir command without any pre-configured scope."
         },
         {
+          "description": "Enables the reserve_temp_extract_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-reserve-temp-extract-path",
+          "markdownDescription": "Enables the reserve_temp_extract_path command without any pre-configured scope."
+        },
+        {
           "description": "Enables the reset_preferred_archiver_to_system command without any pre-configured scope.",
           "type": "string",
           "const": "allow-reset-preferred-archiver-to-system",
@@ -949,6 +955,12 @@
           "type": "string",
           "const": "deny-remove-managed-temp-dir",
           "markdownDescription": "Denies the remove_managed_temp_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the reserve_temp_extract_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-reserve-temp-extract-path",
+          "markdownDescription": "Denies the reserve_temp_extract_path command without any pre-configured scope."
         },
         {
           "description": "Denies the reset_preferred_archiver_to_system command without any pre-configured scope.",

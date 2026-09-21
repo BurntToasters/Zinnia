@@ -20,8 +20,15 @@ import {
 } from "./progress-update";
 import { redactSensitiveText, assertRunResult } from "./utils";
 import { sanitizeCommandArgsForPreview } from "./archive/command-sanitize";
-import { invokeRun7z, type Run7zRequest } from "./archive/backend-ipc";
-import { formatCommandOutputForLogs } from "./output-logging";
+import {
+  invokeRun7z,
+  type ArchiveIoDiagnostics,
+  type Run7zRequest,
+} from "./archive/backend-ipc";
+import {
+  formatArchiveIoDiagnosticsForDebug,
+  formatCommandOutputForLogs,
+} from "./output-logging";
 import {
   installNativeWebviewContextMenuGuard,
   setNativeWebviewContextMenuAllowed,
@@ -36,6 +43,7 @@ interface Run7zResult {
   warning_code?: number;
   stdout_truncated?: boolean;
   stderr_truncated?: boolean;
+  ioDiagnostics?: ArchiveIoDiagnostics;
 }
 
 interface InjectedExtractSession {
@@ -92,10 +100,16 @@ function readInjectedExtractSession(): InjectedExtractSession | null {
 /** True only while this window's `run_7z` invoke is in flight. */
 let extractRunInFlight = false;
 
-async function invokeExtractRun(args: Run7zRequest): Promise<Run7zResult> {
+async function invokeExtractRun(
+  args: Run7zRequest,
+  includeIoDiagnostics = false,
+): Promise<Run7zResult> {
   extractRunInFlight = true;
   try {
-    const result = await invokeRun7z<unknown>(args);
+    const result = await invokeRun7z<unknown>({
+      ...args,
+      ...(includeIoDiagnostics ? { includeIoDiagnostics: true } : {}),
+    });
     assertRunResult(result);
     return result;
   } finally {
@@ -110,6 +124,7 @@ async function runWithPasswordRetry(
   shouldAbort: () => boolean,
   expectedArchiveIdentity?: string,
   signal?: AbortSignal,
+  includeIoDiagnostics = false,
 ): Promise<Run7zResult> {
   const invokeArgs = {
     args,
@@ -117,7 +132,7 @@ async function runWithPasswordRetry(
   };
   let result: Run7zResult;
   try {
-    result = await invokeExtractRun(invokeArgs);
+    result = await invokeExtractRun(invokeArgs, includeIoDiagnostics);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     // Header encryption can make backend safety listing request a password
@@ -152,10 +167,13 @@ async function runWithPasswordRetry(
       throw new Error(EXTRACT_PASSWORD_PROMPT_CANCELLED);
     }
     startIndeterminateProgress();
-    result = await invokeExtractRun({
-      args: withPassword(args, password),
-      ...(expectedArchiveIdentity ? { expectedArchiveIdentity } : {}),
-    });
+    result = await invokeExtractRun(
+      {
+        args: withPassword(args, password),
+        ...(expectedArchiveIdentity ? { expectedArchiveIdentity } : {}),
+      },
+      includeIoDiagnostics,
+    );
   }
   return result;
 }
@@ -448,7 +466,11 @@ async function run() {
 
   const showError = (
     detail: string,
-    debugDump?: { args?: string[]; result?: Run7zResult; extra?: string },
+    debugDump?: {
+      args?: string[];
+      result?: Run7zResult;
+      extra?: string;
+    },
   ) => {
     $("extract-error").hidden = false;
     const detailEl = $("error-detail");
@@ -469,6 +491,12 @@ async function run() {
         );
         for (const entry of streams) parts.push(entry.text);
         if (streams.length === 0) parts.push("(empty stdout/stderr)");
+        if (debugDump.result.ioDiagnostics) {
+          const summary = formatArchiveIoDiagnosticsForDebug(
+            debugDump.result.ioDiagnostics,
+          );
+          if (summary) parts.push(summary);
+        }
       }
       if (debugDump.extra) parts.push(debugDump.extra);
       text = redactSensitiveText(parts.join("\n"));
@@ -747,6 +775,7 @@ async function run() {
       () => cancelRequested,
       expectedArchiveIdentity,
       extractAbort.signal,
+      debugMode,
     );
     await removeProgressListeners();
 

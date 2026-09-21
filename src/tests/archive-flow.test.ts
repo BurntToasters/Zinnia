@@ -227,6 +227,7 @@ describe("addFilesToArchive", () => {
             ]),
             stderr: "",
             code: 0,
+            archiveIdentityAfter: `identity:${archive}`,
           };
         }
         return { stdout: "Everything is Ok", stderr: "", code: 0 };
@@ -372,7 +373,12 @@ describe("archive test/browse/selective flows", () => {
       }
       if (command === "probe_7z") return undefined;
       if (command === "run_7z") {
-        return { stdout: "", stderr: "warning", code: 1 };
+        return {
+          stdout: "",
+          stderr: "warning",
+          code: 1,
+          archiveIdentityAfter: "identity:/tmp/sample.7z",
+        };
       }
       return undefined;
     });
@@ -402,7 +408,12 @@ describe("archive test/browse/selective flows", () => {
       }
       if (command === "probe_7z") return undefined;
       if (command === "run_7z") {
-        return { stdout: "Everything is Ok", stderr: "", code: 0 };
+        return {
+          stdout: "Everything is Ok",
+          stderr: "",
+          code: 0,
+          archiveIdentityAfter: `identity:${archive}`,
+        };
       }
       return undefined;
     });
@@ -435,6 +446,7 @@ describe("archive test/browse/selective flows", () => {
           stderr: "Open as [zip]: 1",
           code: 0,
           warning_code: 1,
+          archiveIdentityAfter: "identity:/tmp/sample.7z",
         };
       }
       return undefined;
@@ -448,11 +460,68 @@ describe("archive test/browse/selective flows", () => {
     );
   });
 
-  it("browses zips/hello.zip and renders the hello.txt member from the manifest", async () => {
-    const archive = path.resolve(process.cwd(), "zips", "hello.zip");
+  it("rejects an integrity result without final archive identity", async () => {
+    const archive = "/tmp/missing-final-identity.7z";
     state.inputs = [archive];
     setInvokeRouter((command, payload) => {
       if (command === "validate_archive_paths") {
+        return pathsFromValidationPayload(payload).map((path) => ({
+          path,
+          valid: true,
+        }));
+      }
+      if (command === "probe_7z") return undefined;
+      if (command === "run_7z") {
+        return { stdout: "Everything is Ok", stderr: "", code: 0 };
+      }
+      return undefined;
+    });
+
+    const result = await testArchive();
+
+    expect(result).toBe("error");
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Archive identity was not returned after test",
+    );
+  });
+
+  it("rejects an integrity result whose final identity changed", async () => {
+    const archive = "/tmp/changed-final-identity.7z";
+    state.inputs = [archive];
+    setInvokeRouter((command, payload) => {
+      if (command === "validate_archive_paths") {
+        return pathsFromValidationPayload(payload).map((path) => ({
+          path,
+          valid: true,
+        }));
+      }
+      if (command === "probe_7z") return undefined;
+      if (command === "run_7z") {
+        return {
+          stdout: "Everything is Ok",
+          stderr: "",
+          code: 0,
+          archiveIdentityAfter: "changed-identity",
+        };
+      }
+      return undefined;
+    });
+
+    const result = await testArchive();
+
+    expect(result).toBe("error");
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Archive changed while test was running",
+    );
+  });
+
+  it("browses zips/hello.zip and renders the hello.txt member from the manifest", async () => {
+    const archive = path.resolve(process.cwd(), "zips", "hello.zip");
+    state.inputs = [archive];
+    let validationCalls = 0;
+    setInvokeRouter((command, payload) => {
+      if (command === "validate_archive_paths") {
+        validationCalls += 1;
         return pathsFromValidationPayload(payload).map((item) => ({
           path: item,
           valid: true,
@@ -472,6 +541,7 @@ describe("archive test/browse/selective flows", () => {
           ]),
           stderr: "",
           code: 0,
+          archiveIdentityAfter: `identity:${archive}`,
         };
       }
       return undefined;
@@ -479,6 +549,14 @@ describe("archive test/browse/selective flows", () => {
 
     const result = await browseArchive();
     expect(result?.entries.map((entry) => entry.path)).toEqual(["hello.txt"]);
+    expect(validationCalls).toBe(1);
+    expect(state.browseArchiveIdentityByPath.get(archive)).toBe(
+      `identity:${archive}`,
+    );
+    const runRequest = decodeRun7zInvokePayload(
+      invokeMock.mock.calls.find(([name]) => name === "run_7z")?.[1],
+    );
+    expect(runRequest.expectedArchiveIdentity).toBe(`identity:${archive}`);
     expect(document.getElementById("browse-summary")?.textContent).toContain(
       "1 file",
     );
@@ -534,6 +612,7 @@ describe("archive test/browse/selective flows", () => {
             "Folder = -",
             "----------",
           ].join("\n"),
+          archiveIdentityAfter: "identity:/tmp/listing.7z",
         };
       }
       return undefined;
@@ -546,6 +625,73 @@ describe("archive test/browse/selective flows", () => {
       (document.getElementById("browse-contents") as HTMLElement).hidden,
     ).toBe(false);
     expect(document.getElementById("browse-tbody")?.children.length).toBe(1);
+  });
+
+  it("rejects browse without final identity and clears stale cache", async () => {
+    const archive = "/tmp/missing-browse-identity.7z";
+    state.inputs = [archive];
+    state.browseArchiveInfoByPath.set(archive, archiveInfo([]));
+    state.browseArchiveIdentityByPath.set(archive, `identity:${archive}`);
+    setInvokeRouter((command, payload) => {
+      if (command === "validate_archive_paths") {
+        return pathsFromValidationPayload(payload).map((path) => ({
+          path,
+          valid: true,
+        }));
+      }
+      if (command === "probe_7z") return undefined;
+      if (command === "run_7z") {
+        return {
+          stdout: sltListing([]),
+          stderr: "",
+          code: 0,
+        };
+      }
+      return undefined;
+    });
+
+    const result = await browseArchive();
+
+    expect(result).toBeNull();
+    expect(state.browseArchiveInfoByPath.has(archive)).toBe(false);
+    expect(state.browseArchiveIdentityByPath.has(archive)).toBe(false);
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Archive identity was not returned after browse",
+    );
+  });
+
+  it("rejects browse when final archive identity changes and clears cache", async () => {
+    const archive = "/tmp/changed-browse-identity.7z";
+    state.inputs = [archive];
+    state.browseArchiveInfoByPath.set(archive, archiveInfo([]));
+    state.browseArchiveIdentityByPath.set(archive, `identity:${archive}`);
+    setInvokeRouter((command, payload) => {
+      if (command === "validate_archive_paths") {
+        return pathsFromValidationPayload(payload).map((path) => ({
+          path,
+          valid: true,
+        }));
+      }
+      if (command === "probe_7z") return undefined;
+      if (command === "run_7z") {
+        return {
+          stdout: sltListing([]),
+          stderr: "",
+          code: 0,
+          archiveIdentityAfter: "changed-identity",
+        };
+      }
+      return undefined;
+    });
+
+    const result = await browseArchive();
+
+    expect(result).toBeNull();
+    expect(state.browseArchiveInfoByPath.has(archive)).toBe(false);
+    expect(state.browseArchiveIdentityByPath.has(archive)).toBe(false);
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Archive changed while browse was running",
+    );
   });
 
   it("opens selective extract modal using cached archive info", async () => {
@@ -688,6 +834,7 @@ describe("archive test/browse/selective flows", () => {
           ]),
           stderr: "",
           code: 0,
+          archiveIdentityAfter: `identity:${archive}`,
         };
       }
       return undefined;
@@ -730,6 +877,7 @@ describe("archive test/browse/selective flows", () => {
             ]),
             stderr: "",
             code: 0,
+            archiveIdentityAfter: `identity:${archive}`,
           };
         }
         return { stdout: "Everything is Ok", stderr: "", code: 0 };
@@ -816,6 +964,7 @@ describe("archive test/browse/selective flows", () => {
             "----------",
             "----------",
           ].join("\n"),
+          archiveIdentityAfter: `identity:${archive}`,
         };
       }
       return undefined;
@@ -840,7 +989,14 @@ describe("archive test/browse/selective flows", () => {
         return paths.map((path) => ({ path, valid: true }));
       }
       if (command === "probe_7z") return undefined;
-      if (command === "run_7z") return { stdout: "", stderr: "", code: 0 };
+      if (command === "run_7z") {
+        return {
+          stdout: "",
+          stderr: "",
+          code: 0,
+          archiveIdentityAfter: `identity:${archive}`,
+        };
+      }
       return undefined;
     });
 
@@ -1673,7 +1829,7 @@ describe("convertArchive", () => {
       }
       if (command === "probe_7z") return undefined;
       if (command === "archive_output_selection_token") return "absent";
-      if (command === "create_temp_extract_dir")
+      if (command === "reserve_temp_extract_path")
         return "/tmp/zinnia-convert-tmp";
       if (command === "list_managed_temp_children")
         return ["/tmp/zinnia-convert-tmp/document.txt"];
@@ -1722,7 +1878,8 @@ describe("convertArchive", () => {
         }));
       }
       if (command === "probe_7z") return undefined;
-      if (command === "create_temp_extract_dir") return "/tmp/convert-warning";
+      if (command === "reserve_temp_extract_path")
+        return "/tmp/convert-warning";
       if (command === "remove_managed_temp_dir") return undefined;
       if (command === "run_7z") {
         return { stdout: "", stderr: "damaged member", code: 1 };
@@ -1759,7 +1916,7 @@ describe("convertArchive", () => {
         }));
       }
       if (command === "probe_7z") return undefined;
-      if (command === "create_temp_extract_dir")
+      if (command === "reserve_temp_extract_path")
         return "/tmp/convert-cancel-listing";
       if (command === "list_managed_temp_children") {
         state.cancelRequested = true;
@@ -1802,7 +1959,7 @@ describe("convertArchive", () => {
         }));
       }
       if (command === "probe_7z") return undefined;
-      if (command === "create_temp_extract_dir")
+      if (command === "reserve_temp_extract_path")
         return "/tmp/zinnia-convert-empty";
       if (command === "list_managed_temp_children") return [];
       if (command === "remove_managed_temp_dir") return undefined;
@@ -1840,7 +1997,7 @@ describe("convertArchive", () => {
         }));
       }
       if (command === "probe_7z") return undefined;
-      if (command === "create_temp_extract_dir")
+      if (command === "reserve_temp_extract_path")
         return "/tmp/zinnia-convert-zip";
       if (command === "list_managed_temp_children") {
         return ["/tmp/zinnia-convert-zip/Demo.app"];
@@ -1897,7 +2054,7 @@ describe("convertArchive", () => {
         }));
       }
       if (command === "probe_7z") return undefined;
-      if (command === "create_temp_extract_dir")
+      if (command === "reserve_temp_extract_path")
         return "/tmp/zinnia-convert-options";
       if (command === "list_managed_temp_children") {
         return ["/tmp/zinnia-convert-options/document.txt"];

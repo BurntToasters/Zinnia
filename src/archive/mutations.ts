@@ -301,7 +301,10 @@ export async function convertArchive(): Promise<void> {
     if (!validation?.identity) {
       throw new Error("Could not capture a stable archive identity.");
     }
-    tempDir = await invoke<string>("create_temp_extract_dir");
+    // Reserve a managed leaf without creating it. The extraction backend can
+    // then publish the completed stage by rename instead of copying into an
+    // already-created empty conversion directory.
+    tempDir = await invoke<string>("reserve_temp_extract_path");
 
     const browsePassword = $<HTMLInputElement>("browse-password").value;
     const extractPassword = $<HTMLInputElement>("extract-password").value;
