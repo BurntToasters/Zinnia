@@ -10,7 +10,10 @@ import {
   setCancelAvailable,
   setStatus,
 } from "../ui";
-import { formatCommandOutputForLogs } from "../output-logging";
+import {
+  formatArchiveIoDiagnosticsForDebug,
+  formatCommandOutputForLogs,
+} from "../output-logging";
 import {
   describe7zError,
   looksLikePasswordRequiredError,
@@ -20,20 +23,16 @@ import { withPassword } from "./args";
 import { basename } from "../path-display";
 import { formatEta, type ProgressUpdate } from "../progress-update";
 import { debugLog, isDebugEnabled } from "../debug-mode";
-import { invokeRun7z as invokeRun7zRequest } from "./backend-ipc";
+import {
+  invokeRun7z as invokeRun7zRequest,
+  type RunResult,
+} from "./backend-ipc";
 import { showToast } from "../toast";
 import { assertRunResult } from "../utils";
 
 export const formatBatchEta = formatEta;
 
-export interface Run7zResult {
-  stdout: string;
-  stderr: string;
-  code: number;
-  warning_code?: number;
-  stdout_truncated?: boolean;
-  stderr_truncated?: boolean;
-}
+export type Run7zResult = RunResult;
 
 const OUTPUT_TRUNCATION_LIMIT_MIB = 10;
 const RUNTIME_PROBE_TIMEOUT_MS = 7000;
@@ -200,9 +199,17 @@ export async function invokeGuardedRun7z(
     const result = await invokeRun7zRequest<unknown>({
       args,
       ...(expectedArchiveIdentity ? { expectedArchiveIdentity } : {}),
+      ...(isDebugEnabled() ? { includeIoDiagnostics: true } : {}),
     });
     assertRunResult(result);
-    return result;
+    const typedResult = result as Run7zResult;
+    if (isDebugEnabled() && typedResult.ioDiagnostics) {
+      const summary = formatArchiveIoDiagnosticsForDebug(
+        typedResult.ioDiagnostics,
+      );
+      if (summary) debugLog(summary);
+    }
+    return typedResult;
   } finally {
     sevenZipRunInFlight = false;
   }

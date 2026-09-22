@@ -2,7 +2,7 @@
 
 use super::archive_snapshot::{
     archive_file_identity, archive_input_family, assert_archive_identity_unchanged,
-    stage_extract_input,
+    stage_extract_input, SnapshotStrategy,
 };
 use super::commands::{
     read_command_stream, settle_archive_finalization, settle_preparation_failure,
@@ -262,10 +262,12 @@ fn preparation_cleanup_releases_only_after_every_recovery_boundary_succeeds() {
         staged_archive: None,
         expected_archive_family: Vec::new(),
         staged_input_archive: None,
+        snapshot_strategy: None,
         cache_dir: None,
         stage_identities: Vec::new(),
         max_extract_bytes: None,
         min_free_bytes: None,
+        extract_destination_preexisting: false,
     };
 
     let cleaned = preparing_state();
@@ -321,6 +323,102 @@ fn preparation_cleanup_releases_only_after_every_recovery_boundary_succeeds() {
     assert_eq!(journal_state.owner_label.as_deref(), Some("main"));
     assert_eq!(journal_state.abort_reason.as_deref(), Some("cancelled"));
     assert!(journal_state.cleanup_plan.is_some());
+}
+
+#[test]
+fn existing_destination_extract_stage_relocation_moves_and_rejournals_stage() {
+    let root = temp_root("zinnia-inside-extract-stage");
+    let destination = root.join("destination");
+    std::fs::create_dir_all(&destination).expect("destination");
+    let created = super::staging::create_publish_stage_dir(&destination, "extract", None)
+        .expect("sibling extraction stage");
+    let old_stage = created.path.clone();
+    let old_identity = created.identity.clone();
+    let mut plan = CleanupPlan {
+        staged_extract: Some((old_stage.clone(), destination.clone())),
+        staged_archive: None,
+        expected_archive_family: Vec::new(),
+        staged_input_archive: None,
+        snapshot_strategy: None,
+        cache_dir: None,
+        stage_identities: vec![(old_stage.clone(), old_identity.clone())],
+        max_extract_bytes: None,
+        min_free_bytes: None,
+        extract_destination_preexisting: true,
+    };
+
+    super::commands::relocate_extract_stage_inside_destination_with_journal(
+        &mut plan,
+        |journal_plan| {
+            let (stage, target) = journal_plan
+                .staged_extract
+                .as_ref()
+                .expect("relocated extraction stage");
+            assert_eq!(stage.parent(), Some(target.as_path()));
+            Ok(())
+        },
+    )
+    .expect("relocation succeeds");
+
+    let (new_stage, target) = plan
+        .staged_extract
+        .as_ref()
+        .expect("relocated extraction plan");
+    assert_eq!(target, &destination);
+    assert_eq!(new_stage.parent(), Some(destination.as_path()));
+    assert!(new_stage.is_dir(), "inside stage must remain owned");
+    assert!(!old_stage.exists(), "empty sibling stage must be removed");
+    let new_identity = super::journal::path_identity(new_stage).expect("new stage identity");
+    assert_eq!(plan.stage_identity(new_stage), Some(&new_identity));
+    assert_ne!(new_identity, old_identity);
+    assert_eq!(plan.stage_identity(&old_stage), None);
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn existing_destination_extract_stage_relocation_rolls_back_on_journal_failure() {
+    let root = temp_root("zinnia-inside-extract-stage-rollback");
+    let destination = root.join("destination");
+    std::fs::create_dir_all(&destination).expect("destination");
+    let created = super::staging::create_publish_stage_dir(&destination, "extract", None)
+        .expect("sibling extraction stage");
+    let old_stage = created.path.clone();
+    let old_identity = created.identity.clone();
+    let mut plan = CleanupPlan {
+        staged_extract: Some((old_stage.clone(), destination.clone())),
+        staged_archive: None,
+        expected_archive_family: Vec::new(),
+        staged_input_archive: None,
+        snapshot_strategy: None,
+        cache_dir: None,
+        stage_identities: vec![(old_stage.clone(), old_identity.clone())],
+        max_extract_bytes: None,
+        min_free_bytes: None,
+        extract_destination_preexisting: true,
+    };
+
+    let error =
+        super::commands::relocate_extract_stage_inside_destination_with_journal(&mut plan, |_| {
+            Err("journal write failed".to_string())
+        })
+        .expect_err("journal failure must roll relocation back");
+    assert_eq!(error, "journal write failed");
+    assert_eq!(
+        plan.staged_extract,
+        Some((old_stage.clone(), destination.clone()))
+    );
+    assert_eq!(plan.stage_identity(&old_stage), Some(&old_identity));
+    assert!(old_stage.is_dir(), "original sibling stage must remain");
+    assert!(
+        std::fs::read_dir(&destination)
+            .expect("destination entries")
+            .next()
+            .is_none(),
+        "failed relocation must remove the unjournaled inside stage"
+    );
+
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]
@@ -388,10 +486,12 @@ fn rollback_cleanup_reports_pending_registry_failure() {
         staged_archive: None,
         expected_archive_family: Vec::new(),
         staged_input_archive: Some(staged_input),
+        snapshot_strategy: None,
         cache_dir: Some(cache),
         stage_identities: vec![(created.path.clone(), created.identity)],
         max_extract_bytes: None,
         min_free_bytes: None,
+        extract_destination_preexisting: false,
     };
 
     let error = rollback_cleanup(&plan).expect_err("registry failure must retain ownership");
@@ -671,10 +771,12 @@ fn finalize_preparation_error_keeps_slot_when_child_is_still_running() {
         staged_archive: None,
         expected_archive_family: Vec::new(),
         staged_input_archive: None,
+        snapshot_strategy: None,
         cache_dir: None,
         stage_identities: Vec::new(),
         max_extract_bytes: None,
         min_free_bytes: None,
+        extract_destination_preexisting: false,
     };
     let message = finalize_preparation_error(&state, &plan, None, "stream error");
     assert!(
@@ -1231,6 +1333,52 @@ fn extraction_staging_supports_volume_guid_destinations() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[cfg(windows)]
+#[test]
+fn archive_snapshot_preserves_mark_of_the_web_stream() {
+    let root = temp_root("zinnia-snapshot-motw");
+    std::fs::create_dir_all(&root).expect("test directory");
+    let source = root.join("archive.7z");
+    std::fs::write(&source, b"archive payload").expect("archive");
+    let zone = std::path::PathBuf::from(format!("{}:Zone.Identifier", source.to_string_lossy()));
+    let zone_contents = b"[ZoneTransfer]\r\nZoneId=3\r\n";
+    let mut zone_file = match std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&zone)
+    {
+        Ok(file) => file,
+        Err(error) => {
+            eprintln!("skipping archive_snapshot_preserves_mark_of_the_web_stream: {error}");
+            let _ = std::fs::remove_dir_all(root);
+            return;
+        }
+    };
+    use std::io::Write as _;
+    zone_file
+        .write_all(zone_contents)
+        .expect("write Zone.Identifier");
+    zone_file.sync_all().expect("sync Zone.Identifier");
+
+    let staged = stage_extract_input(&source, None, None).expect("snapshot archive");
+    let staged_zone =
+        std::path::PathBuf::from(format!("{}:Zone.Identifier", staged.path.to_string_lossy()));
+    let copied_zone = std::fs::read(&staged_zone).expect("snapshot Zone.Identifier");
+    assert_eq!(copied_zone, zone_contents);
+    let stage = staged.path.parent().expect("snapshot stage");
+    super::release_snapshot_handles(stage);
+    super::journal::remove_directory_if_matches(stage, &staged.stage_identity)
+        .expect("remove snapshot stage");
+    assert!(
+        !stage.exists(),
+        "snapshot stage cleanup must remove the stage"
+    );
+    drop(zone_file);
+    std::fs::remove_dir_all(&root).expect("remove test root");
+    assert!(!root.exists(), "snapshot test cleanup must remove the root");
+}
+
 #[test]
 fn real_7z_extract_uses_snapshot_publish_stage_and_safe_commit() {
     let Some(binary) = bundled_7z_test_binary() else {
@@ -1648,10 +1796,24 @@ fn real_7z_archive_create_and_update_use_publish_stages() {
     .expect("prepare update plan");
     let (staged_update, resolved_destination) =
         update_plan.staged_archive.as_ref().expect("update stage");
-    assert!(staged_update.is_file(), "update must copy existing archive");
+    let original_update_bytes = std::fs::read(&normal_destination).expect("read original archive");
+    assert!(
+        !staged_update.exists(),
+        "separate-output update must reserve a fresh destination, not pre-copy the archive"
+    );
     let mut update_execution = update_args.clone();
-    super::staging::rewrite_archive_output(&mut update_execution, staged_update)
+    super::staging::rewrite_archive_update_output(&mut update_execution, staged_update)
         .expect("rewrite update output");
+    assert!(
+        update_execution.iter().any(|arg| arg == "-u-"),
+        "update must disable in-place archive output"
+    );
+    assert!(
+        update_execution
+            .iter()
+            .any(|arg| arg.starts_with("-up1q1r2x1y2z1w2!")),
+        "update must use 7-Zip's complete separate-output action set"
+    );
     let update = std::process::Command::new(&binary)
         .args(&update_execution)
         .output()
@@ -1660,6 +1822,11 @@ fn real_7z_archive_create_and_update_use_publish_stages() {
         update.status.success(),
         "7z update failed: {}",
         String::from_utf8_lossy(&update.stderr)
+    );
+    assert_eq!(
+        std::fs::read(&normal_destination).expect("original archive remains readable"),
+        original_update_bytes,
+        "separate-output update must leave the original untouched until publish"
     );
     promote_archive_family(staged_update, resolved_destination).expect("promote updated archive");
     unregister_plan_stages(&update_plan);
@@ -1680,6 +1847,160 @@ fn real_7z_archive_create_and_update_use_publish_stages() {
     }
 
     let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn separate_output_update_rewrite_is_explicit_and_does_not_pre_copy() {
+    let root = temp_root("zinnia-separate-output-update-args");
+    std::fs::create_dir_all(&root).expect("test directory");
+    let original = root.join("original.7z");
+    let staged = root.join(".zinnia-update-result.7z");
+    let input = root.join("input.txt");
+    std::fs::write(&original, b"original archive bytes").expect("original archive");
+    std::fs::write(&input, b"new input").expect("update input");
+    let original_bytes = std::fs::read(&original).expect("read original");
+    let mut args = vec![
+        "u".to_string(),
+        original.to_string_lossy().to_string(),
+        "-uold-action".to_string(),
+        "--".to_string(),
+        input.to_string_lossy().to_string(),
+    ];
+
+    super::staging::rewrite_archive_update_output(&mut args, &staged)
+        .expect("rewrite separate-output update");
+
+    assert!(
+        !staged.exists(),
+        "argument rewriting must not create a stage"
+    );
+    assert_eq!(
+        std::fs::read(&original).expect("original remains readable"),
+        original_bytes,
+        "argument rewriting must not modify the source archive"
+    );
+    assert_eq!(args[0], "u");
+    assert!(args.iter().any(|arg| arg == "-u-"));
+    assert!(args
+        .iter()
+        .any(|arg| arg == &format!("-up1q1r2x1y2z1w2!{}", staged.display())));
+    assert!(!args.iter().any(|arg| arg == "-uold-action"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn failed_separate_output_update_preserves_original_archive_bytes() {
+    let Some(binary) = bundled_7z_test_binary() else {
+        eprintln!("skipping: bundled 7z binary not found (run npm run prepare:7z)");
+        return;
+    };
+    let root = temp_root("zinnia-failed-separate-output-update");
+    std::fs::create_dir_all(&root).expect("test directory");
+    let input = root.join("input.txt");
+    let archive = root.join("archive.7z");
+    std::fs::write(&input, b"original payload").expect("input");
+    let created = std::process::Command::new(&binary)
+        .args([
+            "a",
+            "-t7z",
+            archive.to_string_lossy().as_ref(),
+            "--",
+            input.to_string_lossy().as_ref(),
+        ])
+        .output()
+        .expect("create archive");
+    assert!(
+        created.status.success(),
+        "archive creation failed: {}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let original_bytes = std::fs::read(&archive).expect("read original archive");
+    let missing = root.join("missing-input.txt");
+    let mut args = vec![
+        "u".to_string(),
+        archive.to_string_lossy().to_string(),
+        "--".to_string(),
+        missing.to_string_lossy().to_string(),
+    ];
+    crate::validation::validate_run_7z_args(&args).expect("valid failed-update arguments");
+    super::commands::harden_7z_args(&mut args);
+    let plan = prepare_cleanup_plan(&args, None, Some(&output_identity(&archive)))
+        .expect("prepare failed update");
+    let (staged, destination) = plan.staged_archive.as_ref().expect("update stage");
+    assert!(
+        !staged.exists(),
+        "failed update must not start from a copied archive"
+    );
+    let mut execution = args;
+    super::staging::rewrite_archive_update_output(&mut execution, staged)
+        .expect("rewrite failed update");
+    let failed = std::process::Command::new(&binary)
+        .args(&execution)
+        .output()
+        .expect("run failed update");
+    assert!(
+        !failed.status.success(),
+        "missing update input should fail rather than silently publish"
+    );
+    assert_eq!(
+        std::fs::read(&archive).expect("read unchanged archive"),
+        original_bytes,
+        "failed separate-output update must preserve the original bytes"
+    );
+    rollback_cleanup(&plan).expect("rollback failed update stage");
+    assert!(!staged.exists());
+    assert!(
+        destination.exists(),
+        "rollback must leave the original target"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn manifest_summary_classifies_bytes_entries_paths_and_links() {
+    let plain = ArchiveManifestSummary {
+        declared_bytes: 12,
+        entry_count: 2,
+        path_bytes: 27,
+        has_symbolic_links: false,
+        has_hard_links: false,
+    };
+    assert_eq!(plain.declared_bytes, 12);
+    assert_eq!(plain.entry_count, 2);
+    assert_eq!(plain.path_bytes, 27);
+    assert!(!plain.has_links());
+
+    let symbolic = ArchiveManifestSummary {
+        has_symbolic_links: true,
+        ..plain.clone()
+    };
+    assert!(symbolic.has_links());
+
+    let hard = ArchiveManifestSummary {
+        has_hard_links: true,
+        ..plain
+    };
+    assert!(hard.has_links());
+}
+
+#[test]
+fn publish_strategy_labels_cover_whole_stage_and_fallback_paths() {
+    use super::commit::PublishStrategy;
+
+    assert_eq!(
+        PublishStrategy::WholeStageRename.label(),
+        "whole-stage-rename"
+    );
+    assert_eq!(PublishStrategy::DirectRename.label(), "direct-rename");
+    assert_eq!(
+        PublishStrategy::TargetLocalCopy.label(),
+        "target-local-copy"
+    );
+    assert_eq!(
+        PublishStrategy::HardLinkFallback.label(),
+        "hard-link-fallback"
+    );
+    assert_eq!(PublishStrategy::CopyFallback.label(), "copy-fallback");
 }
 
 #[test]
@@ -1845,6 +2166,52 @@ fn inside_destination_extract_stage_merges_without_self_conflict() {
     );
     assert!(!staged.exists());
     assert!(!move_plan_path(&staged).exists());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn extraction_publish_uses_whole_stage_for_new_target_and_copy_for_collision() {
+    let root = temp_root("zinnia-extract-publish-strategies");
+    let new_stage = root.join(".zinnia-extract-new");
+    let new_destination = root.join("new-destination");
+    std::fs::create_dir_all(&new_stage).expect("new stage");
+    std::fs::write(new_stage.join("new.txt"), b"new").expect("new staged file");
+
+    // A missing destination is published as one stage rename, so no target
+    // local copy is needed for the common link-free path.
+    merge_staged_extract(&new_stage, &new_destination, MAX_EXTRACTED_BYTES)
+        .expect("whole-stage publish");
+    assert_eq!(
+        std::fs::read(new_destination.join("new.txt")).expect("whole-stage file"),
+        b"new"
+    );
+    assert!(!new_stage.exists());
+
+    let collision_stage = root.join(".zinnia-extract-collision");
+    let collision_destination = root.join("existing-destination");
+    std::fs::create_dir_all(&collision_stage).expect("collision stage");
+    std::fs::create_dir_all(&collision_destination).expect("existing destination");
+    std::fs::write(collision_stage.join("report.txt"), b"incoming")
+        .expect("incoming collision file");
+    std::fs::write(collision_destination.join("report.txt"), b"existing")
+        .expect("existing collision file");
+
+    // An existing nested target requires target-local no-replace publication;
+    // the existing file stays intact while the incoming file is renamed.
+    merge_staged_extract(
+        &collision_stage,
+        &collision_destination,
+        MAX_EXTRACTED_BYTES,
+    )
+    .expect("target-local collision fallback");
+    assert_eq!(
+        std::fs::read(collision_destination.join("report.txt")).expect("existing file"),
+        b"existing"
+    );
+    assert_eq!(
+        std::fs::read(collision_destination.join("report_1.txt")).expect("incoming file"),
+        b"incoming"
+    );
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -2036,10 +2403,12 @@ fn sibling_extract_journal_validation_accepts_published_destination() {
         staged_archive: None,
         expected_archive_family: Vec::new(),
         staged_input_archive: None,
+        snapshot_strategy: None,
         cache_dir: None,
         stage_identities: vec![(stage.clone(), stage_identity)],
         max_extract_bytes: None,
         min_free_bytes: None,
+        extract_destination_preexisting: false,
     };
 
     std::fs::rename(&stage, &destination).expect("publish stage");
@@ -3446,6 +3815,23 @@ Size = 5
 }
 
 #[test]
+fn slt_manifest_rejects_malformed_size_and_overflowing_limits() {
+    let malformed = "Path = one.bin\nSize = not-a-number\n";
+    let error = assert_slt_declared_size_within_limit(malformed, "/tmp/archive.7z", u64::MAX)
+        .expect_err("malformed declared size must fail closed");
+    assert!(error.contains("invalid declared member size"));
+
+    let over_limit = format!("Path = one.bin\nSize = {}\n", MAX_EXTRACTED_BYTES);
+    let error = assert_slt_declared_size_within_limit(
+        &over_limit,
+        "/tmp/archive.7z",
+        MAX_EXTRACTED_BYTES - 1,
+    )
+    .expect_err("declared bytes beyond the operation limit must fail");
+    assert!(error.contains("declares more than"));
+}
+
+#[test]
 fn slt_declared_size_counts_member_named_like_archive_basename() {
     let listing = "\
 Path = archive.7z
@@ -3613,11 +3999,28 @@ fn extraction_uses_a_private_archive_snapshot() {
             .expect("source archive permissions");
     }
     let snapshot = stage_extract_input(&archive, None, None).expect("snapshot");
-    std::fs::write(&archive, b"changed!").expect("mutate source");
-    assert_eq!(
-        std::fs::read(&snapshot.path).expect("snapshot data"),
-        b"original"
-    );
+    let hardlink_snapshot =
+        cfg!(windows) && snapshot.snapshot_strategy == SnapshotStrategy::WindowsHardlink;
+    if hardlink_snapshot {
+        assert!(
+            std::fs::write(&archive, b"changed!").is_err(),
+            "held Windows hard-link handle must reject source mutation"
+        );
+    } else {
+        std::fs::write(&archive, b"changed!").expect("mutate source");
+    }
+    let snapshot_data = if hardlink_snapshot {
+        use std::io::Read as _;
+        let mut file = crate::path_safety::open_regular_file_nofollow_for_snapshot(&snapshot.path)
+            .expect("open hard-link snapshot for read");
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)
+            .expect("read hard-link snapshot");
+        bytes
+    } else {
+        std::fs::read(&snapshot.path).expect("snapshot data")
+    };
+    assert_eq!(snapshot_data, b"original");
     assert_eq!(snapshot.total_len, 8);
     let stage = snapshot.path.parent().expect("stage");
     #[cfg(unix)]
@@ -3634,8 +4037,14 @@ fn extraction_uses_a_private_archive_snapshot() {
             .mode();
         assert_eq!(snapshot_mode & 0o777, 0o600);
     }
-    let _ = std::fs::remove_dir_all(stage);
-    let _ = std::fs::remove_dir_all(root);
+    super::release_snapshot_handles(stage);
+    std::fs::remove_dir_all(stage).expect("remove snapshot stage");
+    assert!(
+        !stage.exists(),
+        "snapshot stage cleanup must remove the stage"
+    );
+    std::fs::remove_dir_all(&root).expect("remove test root");
+    assert!(!root.exists(), "snapshot test cleanup must remove the root");
 }
 
 #[test]
@@ -3656,7 +4065,13 @@ fn extraction_snapshot_prefers_source_filesystem_when_cache_is_available() {
     let stage_text = stage.to_string_lossy().to_string();
     assert!(registered.iter().any(|path| path == &stage_text));
 
-    let _ = std::fs::remove_dir_all(root);
+    super::release_snapshot_handles(stage);
+    std::fs::remove_dir_all(&root).expect("remove test root");
+    assert!(
+        !stage.exists(),
+        "snapshot stage cleanup must remove the stage"
+    );
+    assert!(!root.exists(), "snapshot test cleanup must remove the root");
 }
 
 #[test]
@@ -3679,7 +4094,11 @@ fn extraction_snapshot_honors_preparation_cancel() {
         "cancelled snapshot must remove its stage"
     );
 
-    let _ = std::fs::remove_dir_all(root);
+    std::fs::remove_dir_all(&root).expect("remove test root");
+    assert!(
+        !root.exists(),
+        "cancelled snapshot cleanup must remove the root"
+    );
 }
 
 #[test]
@@ -3767,8 +4186,14 @@ fn archive_snapshot_collects_split_zip_family_and_total_size() {
     assert!(stage.join("archive.z01").is_file());
     assert!(stage.join("archive.z02").is_file());
     assert!(stage.join("archive.zip").is_file());
-    let _ = std::fs::remove_dir_all(stage);
-    let _ = std::fs::remove_dir_all(root);
+    super::release_snapshot_handles(&stage);
+    std::fs::remove_dir_all(&stage).expect("remove snapshot stage");
+    assert!(
+        !stage.exists(),
+        "snapshot stage cleanup must remove the stage"
+    );
+    std::fs::remove_dir_all(&root).expect("remove test root");
+    assert!(!root.exists(), "snapshot test cleanup must remove the root");
 }
 
 #[test]
@@ -3931,10 +4356,12 @@ fn unregister_plan_stages_keeps_present_archive_stage() {
         staged_archive: Some((staged, root.join("out.7z"))),
         expected_archive_family: Vec::new(),
         staged_input_archive: None,
+        snapshot_strategy: None,
         cache_dir: Some(cache.clone()),
         stage_identities: vec![(stage.clone(), identity)],
         max_extract_bytes: None,
         min_free_bytes: None,
+        extract_destination_preexisting: false,
     };
     unregister_plan_stages(&plan);
     assert_eq!(
@@ -4999,10 +5426,12 @@ fn commit_failure_scrub_skips_stages_with_recovery_backups() {
         staged_archive: Some((staged.clone(), destination.clone())),
         expected_archive_family: Vec::new(),
         staged_input_archive: None,
+        snapshot_strategy: None,
         cache_dir: None,
         stage_identities: Vec::new(),
         max_extract_bytes: None,
         min_free_bytes: None,
+        extract_destination_preexisting: false,
     };
     assert!(archive_stage_has_recovery_backups(&stage));
     assert!(!commit_failure_should_scrub_staging(
@@ -5032,10 +5461,12 @@ fn commit_failure_scrub_skips_stages_with_recovery_backups() {
         staged_archive: None,
         expected_archive_family: Vec::new(),
         staged_input_archive: None,
+        snapshot_strategy: None,
         cache_dir: None,
         stage_identities: Vec::new(),
         max_extract_bytes: None,
         min_free_bytes: None,
+        extract_destination_preexisting: false,
     };
     assert!(!commit_failure_should_scrub_staging(
         &plan_extract,
@@ -5062,10 +5493,12 @@ fn stage_replacement_between_creation_and_journal_write_cannot_claim_ownership()
         staged_archive: Some((stage.join("out.7z"), destination)),
         expected_archive_family: Vec::new(),
         staged_input_archive: None,
+        snapshot_strategy: None,
         cache_dir: None,
         stage_identities: vec![(stage.clone(), created.identity)],
         max_extract_bytes: None,
         min_free_bytes: None,
+        extract_destination_preexisting: false,
     };
 
     let error = super::journal::captured_plan_stage_identity(&plan, &stage)

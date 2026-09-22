@@ -216,6 +216,14 @@ pub(crate) fn identity_with_fingerprint_from(
     Ok(identity)
 }
 
+pub(crate) fn identity_with_object_fingerprint(
+    mut identity: FileIdentity,
+    fingerprint: ObjectFingerprint,
+) -> FileIdentity {
+    identity.set_fingerprint(fingerprint);
+    identity
+}
+
 /// Attach a regular-file content fingerprint to an inode/file-id identity.
 /// Used for archive destination backups so crash recovery can reject same-inode
 /// rewrites that would otherwise restore attacker/corrupt bytes.
@@ -565,6 +573,10 @@ fn os_value_bytes(value: &std::ffi::OsStr) -> Vec<u8> {
     }
 }
 
+pub(crate) fn fingerprint_path_bytes(value: &std::ffi::OsStr) -> Vec<u8> {
+    os_value_bytes(value)
+}
+
 fn hash_regular_file(path: &std::path::Path) -> Result<ObjectFingerprint, String> {
     use sha2::Digest as _;
     use std::io::Read as _;
@@ -603,17 +615,12 @@ fn hash_regular_file(path: &std::path::Path) -> Result<ObjectFingerprint, String
 }
 
 fn path_fingerprint(path: &std::path::Path) -> Result<ObjectFingerprint, String> {
-    use sha2::Digest as _;
-
     let root_metadata = std::fs::symlink_metadata(path).map_err(|error| error.to_string())?;
     if root_metadata.is_file() && !crate::path_safety::is_link_or_reparse(&root_metadata) {
         return hash_regular_file(path);
     }
     if root_metadata.file_type().is_symlink() {
-        let target = std::fs::read_link(path).map_err(|error| error.to_string())?;
-        return Ok(ObjectFingerprint::Symlink {
-            sha256: sha2::Sha256::digest(os_value_bytes(target.as_os_str())).into(),
-        });
+        return fingerprint_symlink(path);
     }
     if !root_metadata.is_dir() || crate::path_safety::is_link_or_reparse(&root_metadata) {
         return Err(format!(
@@ -648,10 +655,7 @@ fn path_fingerprint(path: &std::path::Path) -> Result<ObjectFingerprint, String>
             let len = metadata.len();
             let modified = metadata.modified().ok();
             let fingerprint = if metadata.file_type().is_symlink() {
-                let target = std::fs::read_link(&entry_path).map_err(|error| error.to_string())?;
-                ObjectFingerprint::Symlink {
-                    sha256: sha2::Sha256::digest(os_value_bytes(target.as_os_str())).into(),
-                }
+                fingerprint_symlink(&entry_path)?
             } else if metadata.is_file() && !crate::path_safety::is_link_or_reparse(&metadata) {
                 hash_regular_file(&entry_path)?
             } else if metadata.is_dir() && !crate::path_safety::is_link_or_reparse(&metadata) {
@@ -683,6 +687,23 @@ fn path_fingerprint(path: &std::path::Path) -> Result<ObjectFingerprint, String>
         }
     }
 
+    Ok(fingerprint_records(records))
+}
+
+pub(crate) fn fingerprint_symlink(path: &std::path::Path) -> Result<ObjectFingerprint, String> {
+    use sha2::Digest as _;
+
+    let target = std::fs::read_link(path).map_err(|error| error.to_string())?;
+    Ok(ObjectFingerprint::Symlink {
+        sha256: sha2::Sha256::digest(os_value_bytes(target.as_os_str())).into(),
+    })
+}
+
+pub(crate) fn fingerprint_records(
+    mut records: Vec<(Vec<u8>, ObjectFingerprint)>,
+) -> ObjectFingerprint {
+    use sha2::Digest as _;
+
     records.sort_by(|left, right| left.0.cmp(&right.0));
     let mut hasher = sha2::Sha256::new();
     for (relative, fingerprint) in records {
@@ -701,9 +722,9 @@ fn path_fingerprint(path: &std::path::Path) -> Result<ObjectFingerprint, String>
             }
         }
     }
-    Ok(ObjectFingerprint::Directory {
+    ObjectFingerprint::Directory {
         sha256: hasher.finalize().into(),
-    })
+    }
 }
 
 pub(crate) fn path_identity_with_fingerprint(

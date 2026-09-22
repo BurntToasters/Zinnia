@@ -18,20 +18,24 @@ use crate::validation::validate_run_7z_args;
 use super::archive_snapshot::assert_archive_identity_unchanged;
 use super::commit::{
     commit_cleanup, commit_failure_should_scrub_staging, rollback_cleanup, validate_staged_tree,
+    PublishStrategy,
 };
 use super::journal::{clear_cleanup_journal, write_cleanup_journal, CleanupJournalGuard};
-use super::quota::monitor_extract_quota;
+use super::quota::monitor_extract_quota_with_manifest;
 use super::recovery::{
     recover_interrupted_transaction, retract_scrub_archive_journal_or_fail,
     wait_for_startup_recovery,
 };
+use super::staging::create_publish_stage_dir_inside;
 use super::staging::{
-    assert_extract_archive_members_safe, operation_output_path, prepare_cleanup_plan_with_cancel,
-    rewrite_archive_output, rewrite_extract_archive, rewrite_extract_output,
+    assert_extract_archive_members_safe_with_summary, operation_output_path,
+    prepare_cleanup_plan_with_cancel, rewrite_archive_output, rewrite_archive_update_output,
+    rewrite_extract_archive, rewrite_extract_output,
 };
 use super::{
     ensure_idle_mut, lock_process, release_preparation_failure_best_effort,
-    release_prepare_slot_best_effort, CleanupPlan, RunResult, RunningProcess,
+    release_prepare_slot_best_effort, ArchiveIoDiagnostics, ArchiveManifestSummary, CleanupPlan,
+    RunResult, RunningProcess,
 };
 
 struct OperationLivenessGuard(Arc<std::sync::atomic::AtomicBool>);
@@ -42,8 +46,137 @@ impl Drop for OperationLivenessGuard {
     }
 }
 
+struct SnapshotHandleGuard(Option<std::path::PathBuf>);
+
+impl Drop for SnapshotHandleGuard {
+    fn drop(&mut self) {
+        if let Some(stage) = self.0.take() {
+            super::release_snapshot_handles(&stage);
+        }
+    }
+}
+
+fn release_snapshot_handles_for_plan(plan: &CleanupPlan) {
+    if let Some(stage) = plan
+        .staged_input_archive
+        .as_ref()
+        .and_then(|path| path.parent())
+    {
+        super::release_snapshot_handles(stage);
+    }
+}
+
 const MAX_RUN_7Z_REQUEST_BYTES: usize = 64 * 1024 * 1024;
 const MAX_COMPRESS_PROBE_REQUEST_BYTES: usize = 4 * 1024 * 1024;
+
+fn elapsed_ms(start: std::time::Instant) -> u64 {
+    start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+}
+
+fn archive_path_from_args(args: &[String]) -> Option<std::path::PathBuf> {
+    let separator = args.iter().position(|arg| arg == "--")?;
+    match args.first().map(String::as_str) {
+        Some("x" | "l" | "t") => args.get(separator + 1).map(std::path::PathBuf::from),
+        Some("a" | "u") => args[1..separator]
+            .iter()
+            .find(|arg| !arg.starts_with('-'))
+            .map(std::path::PathBuf::from),
+        _ => None,
+    }
+}
+
+fn relocate_extract_stage_inside_destination(
+    app: &tauri::AppHandle,
+    plan: &mut CleanupPlan,
+) -> Result<(), String> {
+    relocate_extract_stage_inside_destination_with_journal(plan, |plan| {
+        write_cleanup_journal(app, plan).map(|_| ())
+    })
+}
+
+/// Move an empty sibling extraction stage under an existing destination after
+/// member preflight proves that the archive contains no links. The journal
+/// callback is kept as a seam so the transaction mutation and rollback paths
+/// are exercised by unit tests without manufacturing a Tauri app handle.
+pub(crate) fn relocate_extract_stage_inside_destination_with_journal<F>(
+    plan: &mut CleanupPlan,
+    write_journal: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&CleanupPlan) -> Result<(), String>,
+{
+    let (old_stage, destination) = plan
+        .staged_extract
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| "Extraction plan has no stage to relocate.".to_string())?;
+    if old_stage.parent() == Some(destination.as_path()) {
+        return Ok(());
+    }
+    crate::path_safety::assert_real_directory(&destination)
+        .map_err(|error| format!("Extraction destination changed before staging: {error}"))?;
+    let old_identity = plan
+        .stage_identity(&old_stage)
+        .cloned()
+        .ok_or_else(|| "Extraction stage has no creation-bound identity.".to_string())?;
+    let created =
+        match create_publish_stage_dir_inside(&destination, "extract", plan.cache_dir.as_deref()) {
+            Ok(created) => created,
+            Err(error) => {
+                // Inside-destination staging is an optimization. ACLs, remote
+                // filesystems, or custom policies may reject a hidden child even
+                // though the already-created sibling stage can still publish via
+                // its authenticated target-local fallback.
+                eprintln!("Could not use inside-destination extraction stage: {error}");
+                return Ok(());
+            }
+        };
+    let new_stage = created.path.clone();
+    let new_identity = created.identity.clone();
+
+    plan.staged_extract = Some((new_stage.clone(), destination.clone()));
+    let Some((_, identity)) = plan
+        .stage_identities
+        .iter_mut()
+        .find(|(path, _)| path.as_path() == old_stage.as_path())
+    else {
+        let _ = super::journal::remove_directory_if_matches(&new_stage, &new_identity);
+        return Err("Extraction plan lost its original stage identity.".to_string());
+    };
+    *identity = new_identity.clone();
+    if let Some((path, _)) = plan
+        .stage_identities
+        .iter_mut()
+        .find(|(path, _)| path.as_path() == old_stage.as_path())
+    {
+        *path = new_stage.clone();
+    }
+
+    // Write new journal before removing old stage. If old cleanup fails, its
+    // pending-stage record remains an inert orphan for startup scrub.
+    if let Err(error) = write_journal(plan) {
+        plan.staged_extract = Some((old_stage.clone(), destination));
+        if let Some((path, identity)) = plan
+            .stage_identities
+            .iter_mut()
+            .find(|(path, _)| path.as_path() == new_stage.as_path())
+        {
+            *path = old_stage.clone();
+            *identity = old_identity.clone();
+        }
+        let _ = super::journal::remove_directory_if_matches(&new_stage, &new_identity);
+        if let Some(cache_dir) = &plan.cache_dir {
+            let _ = super::journal::unregister_pending_stage(cache_dir, &new_stage);
+        }
+        return Err(error);
+    }
+    if let Err(error) = super::journal::remove_directory_if_matches(&old_stage, &old_identity) {
+        eprintln!("Could not remove empty sibling extraction stage after relocation: {error}");
+    } else if let Some(cache_dir) = &plan.cache_dir {
+        let _ = super::journal::unregister_pending_stage(cache_dir, &old_stage);
+    }
+    Ok(())
+}
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -51,6 +184,8 @@ struct Run7zRequest {
     args: Vec<String>,
     #[serde(default, deserialize_with = "deserialize_present_optional_string")]
     expected_archive_identity: Option<String>,
+    #[serde(default)]
+    include_io_diagnostics: bool,
 }
 
 /// Missing is allowed for non-mutating calls, but mutating commands (`x`, `a`,
@@ -703,22 +838,27 @@ static PROBED_7Z_VERSION: Mutex<Option<String>> = Mutex::new(None);
 /// inside a real directory are stored via `-snl`/`-snh`. Symlink *members*
 /// under a managed convert temp dir are allowed so convert can round-trip
 /// top-level links extracted from an archive.
+#[derive(Clone, Copy, Debug, Default)]
+struct CompressInputPreflight {
+    input_scan_ms: u64,
+}
+
 fn assert_compress_inputs_are_real_paths<C>(
     app: &tauri::AppHandle,
     args: &[String],
     should_cancel: C,
-) -> Result<(), String>
+) -> Result<CompressInputPreflight, String>
 where
-    C: Fn() -> bool,
+    C: Fn() -> bool + Sync,
 {
     let Some(cmd) = args.first().map(String::as_str) else {
-        return Ok(());
+        return Ok(CompressInputPreflight::default());
     };
     if cmd != "a" && cmd != "u" {
-        return Ok(());
+        return Ok(CompressInputPreflight::default());
     }
     let Some(separator) = args.iter().position(|arg| arg == "--") else {
-        return Ok(());
+        return Ok(CompressInputPreflight::default());
     };
     let inputs: Vec<String> = args.iter().skip(separator + 1).cloned().collect();
     let single_stream = args.iter().any(|arg| {
@@ -744,6 +884,8 @@ where
         .ok_or_else(|| "Archive output has no file name.".to_string())?;
     let resolved_output = output_parent.join(output_name);
     let mut top_level_names = std::collections::HashMap::<String, String>::new();
+    let mut needs_recursive_probe = false;
+    let input_scan_started = std::time::Instant::now();
     for path in &inputs {
         if should_cancel() {
             return Err("Compress input scan was cancelled.".to_string());
@@ -770,6 +912,9 @@ where
             return Err(format!(
                 "GZIP, BZIP2, and XZ compression require one regular file, not a directory or special entry: {path}"
             ));
+        }
+        if meta.is_dir() {
+            needs_recursive_probe = true;
         }
         let canonical = fs_path
             .canonicalize()
@@ -798,7 +943,15 @@ where
             }
         }
     }
-    super::compress_preflight::assert_compress_inputs_safe_with_cancel(&inputs, should_cancel)
+    if !needs_recursive_probe {
+        return Ok(CompressInputPreflight {
+            input_scan_ms: elapsed_ms(input_scan_started),
+        });
+    }
+    super::compress_preflight::assert_compress_inputs_safe_with_cancel(&inputs, should_cancel)?;
+    Ok(CompressInputPreflight {
+        input_scan_ms: elapsed_ms(input_scan_started),
+    })
 }
 
 /// Check whether the owning window cancelled while an operation is in its
@@ -871,6 +1024,7 @@ pub(crate) fn finalize_preparation_error(
     journal_guard: Option<&mut CleanupJournalGuard>,
     error: impl Into<String>,
 ) -> String {
+    release_snapshot_handles_for_plan(cleanup_plan);
     settle_preparation_failure(
         state,
         cleanup_plan,
@@ -1066,7 +1220,7 @@ async fn prepare_compound_tar_snapshot(
 
     let result = async {
         let outer_args = compound_tar_outer_extract_args(&snapshot, &outer_stage);
-        assert_extract_archive_members_safe(
+        let (_, _, outer_manifest) = assert_extract_archive_members_safe_with_summary(
             app,
             state,
             &outer_args,
@@ -1096,12 +1250,13 @@ async fn prepare_compound_tar_snapshot(
             .max_extract_bytes
             .zip(cleanup_plan.min_free_bytes)
             .map(|(max_bytes, min_free_bytes)| {
-                tauri::async_runtime::spawn(monitor_extract_quota(
+                tauri::async_runtime::spawn(monitor_extract_quota_with_manifest(
                     app.clone(),
                     outer_stage.clone(),
                     max_bytes,
                     min_free_bytes,
                     finished.clone(),
+                    Some(outer_manifest.clone()),
                 ))
             });
         let collected = collect_command_output(&mut rx, MAX_OUTPUT_BYTES, |_| {}).await;
@@ -1273,10 +1428,21 @@ impl CollectedOutput {
         self.exit_code() == 1 && self.output_is_complete() && classifier(&self.stdout, &self.stderr)
     }
 
+    #[cfg(test)]
     pub(crate) fn into_run_result(
         self,
         was_cancelled: bool,
         warning_code: Option<i32>,
+    ) -> RunResult {
+        self.into_run_result_with_metadata(was_cancelled, warning_code, None, None)
+    }
+
+    pub(crate) fn into_run_result_with_metadata(
+        self,
+        was_cancelled: bool,
+        warning_code: Option<i32>,
+        archive_identity_after: Option<String>,
+        io_diagnostics: Option<ArchiveIoDiagnostics>,
     ) -> RunResult {
         // A cancelled operation is rolled back by the finalizer. Never report
         // the child’s successful exit (or a metadata-only warning) after that
@@ -1295,6 +1461,8 @@ impl CollectedOutput {
             warning_code: if was_cancelled { None } else { warning_code },
             stdout_truncated: self.stdout_truncated,
             stderr_truncated: self.stderr_truncated,
+            archive_identity_after,
+            io_diagnostics,
         }
     }
 }
@@ -1400,8 +1568,11 @@ pub async fn run_7z(
     let Run7zRequest {
         args,
         expected_archive_identity,
+        include_io_diagnostics,
     } = parse_run_7z_request(&request_json)?;
     drop(request_json);
+    let operation_started = std::time::Instant::now();
+    let mut io_diagnostics = include_io_diagnostics.then(ArchiveIoDiagnostics::default);
 
     // Claim the slot before every potentially slow pre-spawn phase. Without
     // this, Cancel could report "idle" while a recursive input scan or startup
@@ -1417,6 +1588,7 @@ pub async fn run_7z(
         process.operation_liveness = Some(operation_liveness);
     }
 
+    let validation_started = std::time::Instant::now();
     let preflight_app = app.clone();
     let preflight_result = tokio::task::spawn_blocking(move || {
         let result = assert_compress_inputs_are_real_paths(&preflight_app, &args, || {
@@ -1432,7 +1604,14 @@ pub async fn run_7z(
     .await;
     abort_cancelled_preparation(&state)?;
     let mut args = match preflight_result {
-        Ok((args, Ok(()))) => args,
+        Ok((args, Ok(preflight))) => {
+            if let Some(diagnostics) = io_diagnostics.as_mut() {
+                let total = elapsed_ms(validation_started);
+                diagnostics.phase_times.input_scan = preflight.input_scan_ms;
+                diagnostics.phase_times.validation = total.saturating_sub(preflight.input_scan_ms);
+            }
+            args
+        }
         Ok((_args, Err(error))) => {
             release_prepare_slot_best_effort(&state);
             return Err(error);
@@ -1442,10 +1621,35 @@ pub async fn run_7z(
             return Err(format!("Compress-input preflight worker failed: {error}"));
         }
     };
+    if let Some(diagnostics) = io_diagnostics.as_mut() {
+        if matches!(args.first().map(String::as_str), Some("a" | "u"))
+            && args
+                .iter()
+                .position(|arg| arg == "--")
+                .is_some_and(|separator| {
+                    args[separator + 1..].iter().all(|path| {
+                        std::fs::symlink_metadata(path)
+                            .map(|meta| meta.is_file())
+                            .unwrap_or(false)
+                    })
+                })
+        {
+            diagnostics.strategies.input_scan = Some("regular-files-bypass".to_string());
+        } else if matches!(args.first().map(String::as_str), Some("a" | "u"))
+            && args.iter().position(|arg| arg == "--").is_some()
+        {
+            diagnostics.strategies.input_scan = Some("bounded-directory-probe".to_string());
+        }
+    }
 
     harden_7z_args(&mut args);
     apply_backend_link_switches(&mut args);
     let compound_tar_operation = is_compound_tar_operation(&args);
+    // Listing and test commands do not create a cleanup plan, so retain the
+    // identity proof explicitly. The frontend uses this value to reject a
+    // stale browse/test result; keeping the initial token here also lets the
+    // backend fail closed when a caller omitted the optional precondition.
+    let mut non_mutating_archive_proof: Option<(std::path::PathBuf, String)> = None;
 
     if let Some("x" | "l" | "t") = args.first().map(String::as_str) {
         let separator = match args.iter().position(|arg| arg == "--") {
@@ -1468,6 +1672,30 @@ pub async fn run_7z(
             return Err(validation
                 .reason
                 .unwrap_or_else(|| "Archive path failed validation.".to_string()));
+        }
+        if matches!(args.first().map(String::as_str), Some("l" | "t")) {
+            let archive_path = std::path::PathBuf::from(archive);
+            let initial_identity =
+                match super::archive_snapshot::archive_identity_token(&archive_path) {
+                    Ok(identity) => identity,
+                    Err(error) => {
+                        release_prepare_slot_best_effort(&state);
+                        return Err(format!(
+                            "Could not capture archive identity before listing/test: {error}"
+                        ));
+                    }
+                };
+            if expected_archive_identity
+                .as_deref()
+                .is_some_and(|expected| expected != initial_identity)
+            {
+                release_prepare_slot_best_effort(&state);
+                return Err(
+                    "Archive changed after it was browsed; review the current contents before listing/testing."
+                        .to_string(),
+                );
+            }
+            non_mutating_archive_proof = Some((archive_path, initial_identity));
         }
     }
     if window.label().starts_with("extract-") {
@@ -1510,6 +1738,7 @@ pub async fn run_7z(
 
     // Startup recovery may take time on a large interrupted transaction. The
     // operation already owns its prepare slot, so Cancel is meaningful here.
+    let recovery_started = std::time::Instant::now();
     if let Err(error) = wait_for_startup_recovery().await {
         release_prepare_slot_best_effort(&state);
         return Err(error);
@@ -1521,6 +1750,9 @@ pub async fn run_7z(
         return Err(format!(
             "A previous archive transaction still requires recovery: {error}"
         ));
+    }
+    if let Some(diagnostics) = io_diagnostics.as_mut() {
+        diagnostics.phase_times.recovery = elapsed_ms(recovery_started);
     }
     abort_cancelled_preparation(&state)?;
 
@@ -1534,6 +1766,7 @@ pub async fn run_7z(
             return Err(format!("Could not resolve app cache directory: {error}"));
         }
     };
+    let plan_started = std::time::Instant::now();
     let mut cleanup_plan = match tokio::task::spawn_blocking(move || {
         let result = prepare_cleanup_plan_with_cancel(
             &blocking_plan_args,
@@ -1569,6 +1802,27 @@ pub async fn run_7z(
             return Err(format!("Archive preparation task failed: {error}"));
         }
     };
+    let _snapshot_handle_guard = SnapshotHandleGuard(
+        cleanup_plan
+            .staged_input_archive
+            .as_ref()
+            .and_then(|path| path.parent().map(std::path::Path::to_path_buf)),
+    );
+    if let Some(diagnostics) = io_diagnostics.as_mut() {
+        let duration = elapsed_ms(plan_started);
+        if cleanup_plan.staged_input_archive.is_some() {
+            diagnostics.phase_times.snapshot = duration;
+        }
+        if cleanup_plan.staged_input_archive.is_some() {
+            diagnostics.strategies.snapshot = cleanup_plan
+                .snapshot_strategy
+                .map(super::archive_snapshot::SnapshotStrategy::label)
+                .map(str::to_string);
+        }
+        if cleanup_plan.staged_extract.is_some() {
+            diagnostics.strategies.stage = Some("sibling-stage".to_string());
+        }
+    }
     // Checkpoint ownership before any member preflight, compound child, journal
     // write, or cancellation branch can fail.
     checkpoint_cleanup_plan(&state, &cleanup_plan);
@@ -1625,8 +1879,10 @@ pub async fn run_7z(
             ));
         }
     }
+    let member_preflight_started = std::time::Instant::now();
+    let mut extract_manifest: Option<ArchiveManifestSummary> = None;
     let extract_archive_identity = if cleanup_plan.staged_extract.is_some() {
-        match assert_extract_archive_members_safe(
+        match assert_extract_archive_members_safe_with_summary(
             &app,
             &state,
             &snapshot_args,
@@ -1634,7 +1890,10 @@ pub async fn run_7z(
         )
         .await
         {
-            Ok(identity) => Some(identity),
+            Ok((archive, identity, manifest)) => {
+                extract_manifest = Some(manifest);
+                Some((archive, identity))
+            }
             Err(error) => {
                 return Err(finalize_preparation_error(
                     &state,
@@ -1647,6 +1906,46 @@ pub async fn run_7z(
     } else {
         None
     };
+    if let Some(diagnostics) = io_diagnostics.as_mut() {
+        diagnostics.phase_times.member_preflight = elapsed_ms(member_preflight_started);
+        if let Some(manifest) = extract_manifest.as_ref() {
+            if manifest.has_links() {
+                diagnostics.strategies.stage = Some("link-bearing-sibling-safety".to_string());
+            }
+        }
+    }
+    if cleanup_plan.extract_destination_preexisting
+        && extract_manifest
+            .as_ref()
+            .is_some_and(|manifest| !manifest.has_links())
+    {
+        if let Err(error) = relocate_extract_stage_inside_destination(&app, &mut cleanup_plan) {
+            return Err(finalize_preparation_error(
+                &state,
+                &cleanup_plan,
+                Some(&mut journal_guard),
+                error,
+            ));
+        }
+        if let Some(diagnostics) = io_diagnostics.as_mut() {
+            // Relocation deliberately falls back with Ok(()) when a custom
+            // ACL, remote filesystem, or hidden-child policy rejects the
+            // inside stage. Classify the actual resulting location rather
+            // than reporting the attempted optimization as selected.
+            let inside_destination = cleanup_plan
+                .staged_extract
+                .as_ref()
+                .is_some_and(|(stage, destination)| stage.parent() == Some(destination.as_path()));
+            diagnostics.strategies.stage = Some(
+                if inside_destination {
+                    "inside-destination-no-links"
+                } else {
+                    "sibling-stage-existing-destination-fallback"
+                }
+                .to_string(),
+            );
+        }
+    }
 
     let mut execution_args = args.clone();
     if let Some(staged_archive) = &cleanup_plan.staged_input_archive {
@@ -1662,7 +1961,11 @@ pub async fn run_7z(
     let rewrite_result = if let Some((staged, _)) = &cleanup_plan.staged_extract {
         rewrite_extract_output(&mut execution_args, staged)
     } else if let Some((staged, _)) = &cleanup_plan.staged_archive {
-        rewrite_archive_output(&mut execution_args, staged)
+        if execution_args.first().map(String::as_str) == Some("u") {
+            rewrite_archive_update_output(&mut execution_args, staged)
+        } else {
+            rewrite_archive_output(&mut execution_args, staged)
+        }
     } else {
         Ok(())
     };
@@ -1698,6 +2001,7 @@ pub async fn run_7z(
         ));
     }
 
+    let seven_zip_started = std::time::Instant::now();
     let (mut rx, child) = {
         let (rx, child, pending_password) =
             match spawn_7z_noninteractive(&app, execution_args.clone(), &state) {
@@ -1830,6 +2134,7 @@ pub async fn run_7z(
             );
         }
     });
+    let quota_started = std::time::Instant::now();
     let quota_finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let quota_task = cleanup_plan
         .staged_extract
@@ -1839,15 +2144,17 @@ pub async fn run_7z(
                 .max_extract_bytes
                 .zip(cleanup_plan.min_free_bytes)
                 .map(|(max_bytes, min_free_bytes)| {
-                    tauri::async_runtime::spawn(monitor_extract_quota(
+                    tauri::async_runtime::spawn(monitor_extract_quota_with_manifest(
                         app.clone(),
                         staged.clone(),
                         max_bytes,
                         min_free_bytes,
                         quota_finished.clone(),
+                        extract_manifest.clone(),
                     ))
                 })
         });
+    let quota_enabled = quota_task.is_some();
     let mut last_raw_progress_emit = std::time::Instant::now()
         .checked_sub(std::time::Duration::from_millis(100))
         .unwrap_or_else(std::time::Instant::now);
@@ -1886,6 +2193,21 @@ pub async fn run_7z(
     if let Some(task) = quota_task {
         let _ = task.await;
     }
+    if let Some(diagnostics) = io_diagnostics.as_mut() {
+        diagnostics.phase_times.seven_zip_execution = elapsed_ms(seven_zip_started);
+        diagnostics.phase_times.quota_monitoring = if quota_enabled {
+            elapsed_ms(quota_started)
+        } else {
+            0
+        };
+        if quota_enabled {
+            diagnostics.strategies.quota = Some("manifest-headroom-and-final-scan".to_string());
+        }
+    }
+
+    // Child no longer reads input. Release Windows source locks before commit
+    // removes hard-link snapshot entries; guard still covers every early exit.
+    release_snapshot_handles_for_plan(&cleanup_plan);
 
     if collected.stream_error.is_some() || collected.exit.is_none() {
         terminate_registered_child(&state, &child)?;
@@ -1919,6 +2241,9 @@ pub async fn run_7z(
     let finalize_app = app.clone();
     let finalize_plan = cleanup_plan.clone();
     let finalize_emit = emit_window.clone();
+    let finalization_publish_strategy = Arc::new(Mutex::new(None::<PublishStrategy>));
+    let publish_strategy_slot = finalization_publish_strategy.clone();
+    let finalization_started = std::time::Instant::now();
     let finalize_join = tokio::task::spawn_blocking(move || {
         // Exit 1 is usually partial data. Publish only the narrow metadata-only
         // warning class identified above; every other warning rolls back.
@@ -1942,7 +2267,14 @@ pub async fn run_7z(
                 },
             );
             match commit_cleanup(&finalize_app, &finalize_plan) {
-                Ok(()) => Ok(Ok(())),
+                Ok(strategy) => {
+                    if let Some(strategy) = strategy {
+                        if let Ok(mut slot) = publish_strategy_slot.lock() {
+                            *slot = Some(strategy);
+                        }
+                    }
+                    Ok(Ok(()))
+                }
                 Err(error) => {
                     if commit_failure_should_scrub_staging(&finalize_plan, &error) {
                         // Safe orphan scrub (add-mode / no recovery backups).
@@ -1987,15 +2319,63 @@ pub async fn run_7z(
         Ok(result) => result,
         Err(error) => Err(format!("Archive finalization task failed: {error}")),
     };
+    if let Some(diagnostics) = io_diagnostics.as_mut() {
+        diagnostics.phase_times.finalization = elapsed_ms(finalization_started);
+    }
     // Keep the operation slot fail-closed until finalization and durable
     // journal removal both succeed. A cleanup-complete operation error is
     // returned only after the slot is released.
     settle_archive_finalization(&state, finalize_result, || journal_guard.clear())?;
+    if let Some(diagnostics) = io_diagnostics.as_mut() {
+        if let Ok(strategy) = finalization_publish_strategy.lock() {
+            if let Some(strategy) = *strategy {
+                diagnostics.strategies.publish = Some(strategy.label().to_string());
+            }
+        }
+    }
     if let Some(reason) = abort_reason {
         return Err(reason);
     }
 
-    Ok(collected.into_run_result(was_cancelled, warning_code))
+    // Snapshot handles only protect preflight/extraction. Release them before
+    // final identity lookup so Windows share-deny handles cannot block the
+    // normal archive identity reader.
+    release_snapshot_handles_for_plan(&cleanup_plan);
+    let archive_identity_after = if !was_cancelled {
+        if let Some((archive_path, initial_identity)) = non_mutating_archive_proof {
+            let final_identity = super::archive_snapshot::archive_identity_token(&archive_path)
+                .map_err(|error| {
+                    format!(
+                        "Could not prove archive identity after listing/test; operation was not accepted: {error}"
+                    )
+                })?;
+            if final_identity != initial_identity
+                || expected_archive_identity
+                    .as_deref()
+                    .is_some_and(|expected| expected != final_identity)
+            {
+                return Err(
+                    "Archive changed while listing/testing was running; operation was not accepted."
+                        .to_string(),
+                );
+            }
+            Some(final_identity)
+        } else {
+            archive_path_from_args(&args)
+                .and_then(|path| super::archive_snapshot::archive_identity_token(&path).ok())
+        }
+    } else {
+        None
+    };
+    if let Some(diagnostics) = io_diagnostics.as_mut() {
+        diagnostics.phase_times.total = elapsed_ms(operation_started);
+    }
+    Ok(collected.into_run_result_with_metadata(
+        was_cancelled,
+        warning_code,
+        archive_identity_after,
+        io_diagnostics,
+    ))
 }
 
 #[tauri::command]

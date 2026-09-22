@@ -2,7 +2,9 @@
 
 use tauri::Manager;
 
-use super::{commands::terminate_registered_child, lock_process, RunningProcess};
+use super::{
+    commands::terminate_registered_child, lock_process, ArchiveManifestSummary, RunningProcess,
+};
 
 // Large SDK/source/app archives routinely exceed 25k entries. Keep a high
 // anti-DoS ceiling and enforce it during member listing before extraction, then
@@ -155,6 +157,8 @@ pub(crate) fn staged_tree_usage(
     Ok((files, bytes))
 }
 
+#[cfg(test)]
+#[allow(dead_code)]
 pub(crate) async fn monitor_extract_quota(
     app: tauri::AppHandle,
     staged: std::path::PathBuf,
@@ -162,6 +166,28 @@ pub(crate) async fn monitor_extract_quota(
     min_free_bytes: u64,
     finished: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
+    monitor_extract_quota_with_manifest(app, staged, max_bytes, min_free_bytes, finished, None)
+        .await;
+}
+
+pub(crate) async fn monitor_extract_quota_with_manifest(
+    app: tauri::AppHandle,
+    staged: std::path::PathBuf,
+    max_bytes: u64,
+    min_free_bytes: u64,
+    finished: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    manifest: Option<ArchiveManifestSummary>,
+) {
+    // A trusted SLT manifest already bounds member bytes, entries, and path
+    // names. For clearly sub-limit, link-free archives, recursive scans add
+    // repeated metadata I/O without improving the final authoritative check.
+    // Keep free-space polling active; commit still validates actual output.
+    let skip_recursive_scans = manifest.as_ref().is_some_and(|summary| {
+        !summary.has_links()
+            && summary.declared_bytes <= max_bytes / 2
+            && summary.entry_count <= MAX_EXTRACT_ENTRIES / 2
+            && summary.path_bytes <= MAX_EXTRACT_PATH_BYTES / 2
+    });
     let mut next_tree_scan = std::time::Instant::now();
     let mut poll_delay = std::time::Duration::from_millis(250);
     let mut first_poll = true;
@@ -198,7 +224,7 @@ pub(crate) async fn monitor_extract_quota(
             stop_extract_for_quota(&app, reason);
             break;
         }
-        if std::time::Instant::now() < next_tree_scan {
+        if skip_recursive_scans || std::time::Instant::now() < next_tree_scan {
             continue;
         }
 

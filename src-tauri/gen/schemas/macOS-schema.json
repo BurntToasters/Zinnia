@@ -435,6 +435,12 @@
           "markdownDescription": "Enables the create_temp_extract_dir command without any pre-configured scope."
         },
         {
+          "description": "Enables the reserve_temp_extract_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-reserve-temp-extract-path",
+          "markdownDescription": "Enables the reserve_temp_extract_path command without any pre-configured scope."
+        },
+        {
           "description": "Enables the debug_console_window_open command without any pre-configured scope.",
           "type": "string",
           "const": "allow-debug-console-window-open",
@@ -733,6 +739,12 @@
           "type": "string",
           "const": "deny-create-temp-extract-dir",
           "markdownDescription": "Denies the create_temp_extract_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the reserve_temp_extract_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-reserve-temp-extract-path",
+          "markdownDescription": "Denies the reserve_temp_extract_path command without any pre-configured scope."
         },
         {
           "description": "Denies the debug_console_window_open command without any pre-configured scope.",

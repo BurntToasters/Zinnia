@@ -24,12 +24,32 @@ import {
   logTruncationNotice,
   truncateForDialog,
   invokeGuardedRun7z,
+  runWithPasswordRetry,
 } from "./runtime";
 import { debugLog, debugLogCommand, isDebugEnabled } from "../debug-mode";
 import type { ArchiveInfo } from "../browse-model";
 import { showToast } from "../toast";
 
 export type ArchiveTestResult = "passed" | "failed" | "cancelled" | "error";
+
+function requireFinalArchiveIdentity(
+  result: { archiveIdentityAfter?: string },
+  expectedIdentity: string,
+  operation: "test" | "browse",
+): string {
+  const finalIdentity = result.archiveIdentityAfter;
+  if (!finalIdentity) {
+    throw new Error(
+      `Archive identity was not returned after ${operation}. Operation was not accepted.`,
+    );
+  }
+  if (finalIdentity !== expectedIdentity) {
+    throw new Error(
+      `Archive changed while ${operation} was running. Operation was not accepted.`,
+    );
+  }
+  return finalIdentity;
+}
 
 export async function testArchive(): Promise<ArchiveTestResult> {
   if (state.running) return "cancelled";
@@ -42,8 +62,18 @@ export async function testArchive(): Promise<ArchiveTestResult> {
       showToast("Select an archive to test.", "info");
       return "failed";
     }
+    let expectedArchiveIdentity = "";
     try {
-      await ensureArchivePaths([archive], "test");
+      const [validation] = await ensureArchivePaths(
+        [archive],
+        "test",
+        undefined,
+        true,
+      );
+      if (!validation?.identity) {
+        throw new Error("Could not capture a stable archive identity.");
+      }
+      expectedArchiveIdentity = validation.identity;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       showToast(msg, "error", 0);
@@ -60,11 +90,17 @@ export async function testArchive(): Promise<ArchiveTestResult> {
     if (!(await ensureRuntimeReady())) return "error";
     setStatus("Testing archive integrity");
     debugLogCommand(args);
-    const result = await invokeGuardedRun7z(args);
+    const result = await runWithPasswordRetry(
+      args,
+      true,
+      "Test",
+      expectedArchiveIdentity,
+    );
     if (state.cancelRequested) {
       setStatus("Cancelled", 2000);
       return "cancelled";
     }
+    requireFinalArchiveIdentity(result, expectedArchiveIdentity, "test");
     logCommandResult(result.stdout, result.stderr, result.code);
     logTruncationNotice(result);
 
@@ -129,7 +165,13 @@ export async function testArchive(): Promise<ArchiveTestResult> {
   }
 }
 
-export async function browseArchive(): Promise<ArchiveInfo | null> {
+export function browseArchive(): Promise<ArchiveInfo | null>;
+export function browseArchive(
+  validatedArchiveIdentity: string,
+): Promise<ArchiveInfo | null>;
+export async function browseArchive(
+  validatedArchiveIdentity?: string,
+): Promise<ArchiveInfo | null> {
   if (state.running) return null;
   setRunning(true);
   state.cancelRequested = false;
@@ -142,18 +184,20 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
     }
     // Keep identity local until the listing succeeds so a failed browse does
     // not leave an orphan identity cache entry without archive info.
-    let listingIdentity = "";
+    let listingIdentity = validatedArchiveIdentity ?? "";
     try {
-      const [validation] = await ensureArchivePaths(
-        [archive],
-        "browse",
-        undefined,
-        true,
-      );
-      if (!validation?.identity) {
+      if (!listingIdentity) {
+        const [validation] = await ensureArchivePaths(
+          [archive],
+          "browse",
+          undefined,
+          true,
+        );
+        listingIdentity = validation?.identity ?? "";
+      }
+      if (!listingIdentity) {
         throw new Error("Could not capture a stable archive identity.");
       }
-      listingIdentity = validation.identity;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       showToast(msg, "error", 0);
@@ -169,7 +213,7 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
     setStatus("Listing archive contents");
     if (isDebugEnabled()) debugLog(`Listing archive: ${archive}`);
     debugLogCommand(args);
-    const result = await invokeGuardedRun7z(args);
+    const result = await invokeGuardedRun7z(args, listingIdentity);
     if (state.cancelRequested) {
       setStatus("Cancelled", 2000);
       return null;
@@ -177,6 +221,16 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
     logTruncationNotice(result);
 
     if (result.code !== 0) {
+      // Do not retain stale browse cache when backend cannot prove the
+      // archive identity after a failed listing.
+      if (!result.archiveIdentityAfter) {
+        clearBrowseCache(archive);
+      } else if (result.archiveIdentityAfter !== listingIdentity) {
+        clearBrowseCache(archive);
+        throw new Error(
+          "Archive changed while its contents were being listed. Browse it again.",
+        );
+      }
       const needsPassword = looksLikePasswordRequiredError(
         result.stdout,
         result.stderr,
@@ -201,6 +255,12 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
     }
 
     if (result.stdout_truncated) {
+      if (
+        !result.archiveIdentityAfter ||
+        result.archiveIdentityAfter !== listingIdentity
+      ) {
+        clearBrowseCache(archive);
+      }
       setStatus("Archive listing too large", 3000);
       showToast(
         "The archive listing exceeded Zinnia's safe output limit, so it cannot be displayed completely.",
@@ -210,26 +270,23 @@ export async function browseArchive(): Promise<ArchiveInfo | null> {
       return null;
     }
 
-    const [afterListing] = await ensureArchivePaths(
-      [archive],
-      "browse",
-      undefined,
-      true,
-    );
-    if (
-      !afterListing?.identity ||
-      !listingIdentity ||
-      afterListing.identity !== listingIdentity
-    ) {
-      clearBrowseCache(archive);
-      throw new Error(
-        "Archive changed while its contents were being listed. Browse it again.",
+    // Backend validates expected identity before listing and returns final
+    // identity from same operation. Never substitute pre-run identity.
+    let afterListingIdentity: string;
+    try {
+      afterListingIdentity = requireFinalArchiveIdentity(
+        result,
+        listingIdentity,
+        "browse",
       );
+    } catch (error) {
+      clearBrowseCache(archive);
+      throw error;
     }
     const info = parseArchiveListing(result.stdout);
     clearBrowseCache(archive);
     cacheBrowseInfo(archive, info);
-    cacheBrowseIdentity(archive, afterListing.identity);
+    cacheBrowseIdentity(archive, afterListingIdentity);
     setBrowsePasswordFieldVisible(info.encrypted);
     renderBrowseTable(info);
     setStatus(`${info.entries.length} entries listed`, 3000);

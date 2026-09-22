@@ -1,6 +1,6 @@
 {
   "name": "zinnia",
-  "version": "0.6.2",
+  "version": "0.6.3-beta.1",
   "license": "MPL-2.0",
   "private": true,
   "packageManager": "npm@12.0.2",
@@ -8,7 +8,7 @@
   "type": "module",
   "engines": {
     "node": "^22.22.2 || ^24.15.0 || >=26.0.0",
-    "npm": ">=12.0.1"
+    "npm": ">=12.0.2"
   },
   "scripts": {
     "prepare": "node scripts/install-git-hooks.js",
@@ -24,6 +24,11 @@
     "test:archives": "node scripts/test-archives.js",
     "test:archives:generate": "node scripts/generate-test-archives.js",
     "test:e2e": "node scripts/test-e2e.js",
+    "test:archive-io-workflow": "node --test scripts/archive-io-workflow.test.mjs",
+    "benchmark:archive-io": "node scripts/run-archive-io-benchmark.mjs",
+    "benchmark:archive-io:smoke": "npm run benchmark:archive-io -- --scale smoke",
+    "benchmark:archive-io:release": "npm run benchmark:archive-io -- --scale release",
+    "benchmark:archive-io:compare": "node bench/archive-io/compare.mjs",
     "test:all": "node scripts/test-all.js",
     "test:cargo-safe-update": "node --test scripts/cargo-safe-update.test.mjs scripts/check-cargo-update-policy.test.mjs scripts/test-all.test.js scripts/run-release.test.js scripts/github-cli.test.cjs scripts/release-branch-protection.test.cjs scripts/release-licenses.test.mjs scripts/npm-dev-audit.test.cjs scripts/generate-cargo-licenses.test.mjs scripts/check-rustsec-ignore-policy.test.mjs",
     "check:cargo-update-policy": "node scripts/check-cargo-update-policy.mjs",

@@ -74,6 +74,75 @@ jobs:
         env:
           WEBKIT_DISABLE_COMPOSITING_MODE: "1"
         run: npm run test:all
+      - name: Archive I/O structural performance gate
+        run: node bench/archive-io/structural-check.mjs
+      - name: Archive I/O workflow contract tests
+        run: npm run test:archive-io-workflow
+
+  archive-io-benchmark:
+    needs: quality-gate
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: macos-26-intel
+          - os: windows-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install latest npm 12
+        run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Install Linux E2E dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb
+      - run: npm ci --ignore-scripts
+      - run: npm run prepare:7z
+      - name: Prepare Windows shell stubs
+        if: runner.os == 'Windows'
+        run: npm run prepare:win-shell-stubs
+      - name: Archive I/O candidate benchmark
+        # Candidate correctness failures fail this job. Timing target/trend
+        # status stays report-only inside benchmark harness.
+        env:
+          ZINNIA_BENCH_REPORT_DIR: ${{ runner.temp }}/zinnia-archive-io
+          ZINNIA_BENCH_CANDIDATE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          ZINNIA_BENCH_BASELINE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          ZINNIA_BENCH_BASE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          # Compare PR/push smoke against the base revision when it is
+          # available. The wrapper catches first-rollout/base checkout
+          # failures and records baseline-unavailable without making timing a
+          # hard gate.
+          ZINNIA_BENCH_BASE_RUN: "1"
+          ZINNIA_BENCH_REQUIRE_CANDIDATE: "1"
+        run: >-
+          npm run benchmark:archive-io --
+          --formats zip,7z
+          --workloads bulk,small
+          --operation-formats zip
+          --operation-workloads bulk
+          --scale smoke
+      - name: Upload archive I/O smoke report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: archive-io-smoke-${{ matrix.os }}
+          path: ${{ runner.temp }}/zinnia-archive-io
+          if-no-files-found: error
+          retention-days: 30
 
   rust-check:
     needs: quality-gate
@@ -248,6 +317,7 @@ jobs:
       - updater-manifest
       - smoke-build
       - security-audit
+      - archive-io-benchmark
     runs-on: ubuntu-latest
     steps:
       - name: Require every release check
@@ -259,6 +329,7 @@ jobs:
           UPDATER_MANIFEST: ${{ needs.updater-manifest.result }}
           SMOKE_BUILD: ${{ needs.smoke-build.result }}
           SECURITY_AUDIT: ${{ needs.security-audit.result }}
+          ARCHIVE_IO_BENCHMARK: ${{ needs.archive-io-benchmark.result }}
         run: |
           set -euo pipefail
           test "$QUALITY_GATE" = success
@@ -266,6 +337,7 @@ jobs:
           test "$UPDATER_MANIFEST" = success
           test "$SMOKE_BUILD" = success
           test "$SECURITY_AUDIT" = success
+          test "$ARCHIVE_IO_BENCHMARK" = success
           if [ "$EVENT_NAME" = pull_request ]; then
             test "$COMMIT_MESSAGE_POLICY" = success
           else
