@@ -30,6 +30,27 @@ test("PR and push archive benchmark keeps x64 smoke matrix", () => {
   assert.match(benchmarkJob, /ZINNIA_BENCH_BASELINE_REF/);
 });
 
+test("archive benchmark checkout ref agrees with candidate metadata", () => {
+  const workflow = read(".github/workflows/ci.yml");
+  const benchmarkStart = workflow.indexOf("  archive-io-benchmark:");
+  const benchmarkJob = workflow.slice(
+    benchmarkStart,
+    workflow.indexOf("\n  rust-check:", benchmarkStart),
+  );
+  const checkoutRef = benchmarkJob.match(
+    /uses: actions\/checkout[^\n]*\n\s+with:\s*\n\s+ref:\s*(\$\{\{[^\n]+\}\})/,
+  )?.[1];
+  const candidateRef = benchmarkJob.match(
+    /ZINNIA_BENCH_CANDIDATE_REF:\s*(\$\{\{[^\n]+\}\})/,
+  )?.[1];
+  const expectedRef =
+    "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}";
+
+  assert.equal(checkoutRef, expectedRef);
+  assert.equal(candidateRef, expectedRef);
+  assert.match(benchmarkJob, /fetch-depth:\s*0/);
+});
+
 test("nightly archive benchmark covers all hosted architectures", () => {
   const workflow = read(".github/workflows/archive-io-benchmark.yml");
   assert.match(workflow, /cron: ['"]17 9 \* \* \*['"]/);
@@ -44,6 +65,11 @@ test("nightly archive benchmark covers all hosted architectures", () => {
   ]) {
     assert.match(workflow, new RegExp(`os: ${runner.replaceAll(".", "\\.")}`));
   }
+  assert.match(
+    workflow,
+    /\n    timeout-minutes:\s*360\s*\n/,
+    "release benchmark must retain the six-hour hosted-job budget",
+  );
   assert.match(workflow, /retention-days: 90/);
   assert.match(workflow, /contents: read/);
   assert.doesNotMatch(workflow, /peter-evans\/create-pull-request/);
@@ -97,6 +123,40 @@ test("release E2E helper refuses unstamped or stale production binaries", () => 
   assert.match(helper, /sourceMtimeMs/);
   assert.match(helper, /releaseE2eBinaryIsFresh/);
   assert.match(helper, /refusing to reuse a production binary/);
+});
+
+test("archive benchmark runner requirements remain role-specific", () => {
+  const script = read("scripts/run-archive-io-benchmark.mjs");
+  assert.match(
+    script,
+    /role === "baseline"\s*\? envFlag\("ZINNIA_BENCH_REQUIRE_BASELINE"\)/,
+  );
+  assert.match(
+    script,
+    /Baseline archive benchmark requires persistent release E2E runner; runner module not found\./,
+  );
+  assert.match(script, /metadata\.baselineUnavailable = true/);
+  assert.match(script, /baselineRef && !baselineReport/);
+});
+
+test("release E2E freshness covers frontend and Tauri build inputs", () => {
+  const helper = read("e2e/helpers/archive-benchmark.js");
+  for (const input of [
+    'path.join(REPO_ROOT, "public")',
+    'path.join(REPO_ROOT, "assets")',
+    'path.join(REPO_ROOT, "vite.config.ts")',
+    'path.join(REPO_ROOT, "tsconfig.json")',
+    'path.join(REPO_ROOT, "src-tauri", "build.rs")',
+    'path.join(REPO_ROOT, "src-tauri", "tauri.conf.json")',
+    'path.join(REPO_ROOT, "src-tauri", "tauri.linux.conf.json")',
+    'path.join(REPO_ROOT, "src-tauri", "tauri.macos.conf.json")',
+    'path.join(REPO_ROOT, "src-tauri", "tauri.windows.conf.json")',
+    "const VENDORED_UPDATER_DIR = path.join(",
+    '"tauri-plugin-updater",',
+    "VENDORED_UPDATER_DIR,",
+  ]) {
+    assert.ok(helper.includes(input), `freshness list missing ${input}`);
+  }
 });
 
 test("package scripts expose benchmark and comparison entry points", () => {

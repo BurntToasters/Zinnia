@@ -16,6 +16,7 @@ import {
   redactText,
   ratio as archiveIoRatio,
   runAlternatingExecutorPair,
+  verifyBrowseListing,
 } from "../../bench/archive-io/benchmark.mjs";
 
 describe("parseBenchmarkSummary", () => {
@@ -178,6 +179,68 @@ describe("archive I/O benchmark helpers", () => {
     expect(result.ratioSamples).toEqual([1.25, 1.25, 1.25, 1.25, 1.25]);
   });
 
+  it.each([
+    ["undefined", undefined, "executor returned invalid result"],
+    ["null", null, "executor returned invalid result"],
+    ["a string", "not a result", "executor returned invalid result"],
+    ["an array", [], "executor returned invalid result"],
+    ["missing code", { durationMs: 10 }, "executor returned invalid code"],
+    [
+      "a non-numeric code",
+      { code: "0", durationMs: 10 },
+      "executor returned invalid code",
+    ],
+    [
+      "a fractional code",
+      { code: 0.5, durationMs: 10 },
+      "executor returned invalid code",
+    ],
+    ["missing duration", { code: 0 }, "executor returned invalid durationMs"],
+    [
+      "a non-finite duration",
+      { code: 0, durationMs: Infinity },
+      "executor returned invalid durationMs",
+    ],
+    [
+      "a negative duration",
+      { code: 0, durationMs: -1 },
+      "executor returned invalid durationMs",
+    ],
+  ])(
+    "rejects malformed asynchronous executor result: %s",
+    async (_label, invalidResult, errorMessage) => {
+      const result = await runAlternatingExecutorPair({
+        measuredIterations: 1,
+        warmupIterations: 0,
+        direct: () => ({ durationMs: 100, code: 0 }),
+        zinnia: () => invalidResult,
+      });
+      expect(result.zinnia?.error).toBe(errorMessage);
+      expect(result.zinnia?.measuredMs).toEqual([]);
+      expect(result.ratioSamples).toEqual([]);
+    },
+  );
+
+  it("rejects missing or corrupt browse listings", () => {
+    const expectedManifest = [
+      { path: "payload/hello.txt", bytes: 5, sha256: "unused" },
+    ];
+    expect(verifyBrowseListing("", expectedManifest)).toEqual({
+      ok: false,
+      reason: "archive listing is empty",
+    });
+    expect(verifyBrowseListing("   \n", expectedManifest)).toEqual({
+      ok: false,
+      reason: "archive listing is empty",
+    });
+    expect(
+      verifyBrowseListing("Path = payload/other.txt\n", expectedManifest),
+    ).toEqual({
+      ok: false,
+      reason: "archive listing misses payload/hello.txt",
+    });
+  });
+
   it("classifies target and trend independently", () => {
     expect(classifyTargetStatus(1.2, "bulk")).toBe("met");
     expect(classifyTargetStatus(1.3, "bulk")).toBe("missed");
@@ -257,6 +320,92 @@ describe("archive I/O benchmark helpers", () => {
     expect(report.schemaVersion).toBe(3);
     expect(report.failures).toEqual([]);
     expect(report.cases[0].targetStatus).toBe("missed");
+    expect(report.comparison.baselineAvailable).toBe(true);
+    expect(report.comparison.baselineStatus).toBe("available");
+  });
+
+  it("marks a direct-only baseline as unavailable", () => {
+    const item = {
+      workload: "bulk",
+      format: "zip",
+      status: "measured",
+      direct: {
+        measuredMs: [100, 100, 100, 100, 100],
+        medianMs: 100,
+        verified: true,
+      },
+      zinnia: {
+        measuredMs: [120, 120, 120, 120, 120],
+        medianMs: 120,
+        verified: true,
+      },
+    };
+    const report = compareBenchmarkReports(
+      { cases: [item], operations: [], failures: [] },
+      {
+        cases: [{ ...item, zinnia: null }],
+        operations: [],
+        failures: [],
+      },
+    );
+
+    expect(report.base.available).toBe(false);
+    expect(report.comparison.baselineAvailable).toBe(false);
+    expect(report.comparison.baselineStatus).toBe("baseline-unavailable");
+    expect(report.cases[0].trendStatus).toBe("baseline-unavailable");
+  });
+
+  it("keeps partial baseline matches per item", () => {
+    const candidateItems = [
+      {
+        workload: "bulk",
+        format: "zip",
+        status: "measured",
+        direct: { measuredMs: [100], medianMs: 100, verified: true },
+        zinnia: { measuredMs: [120], medianMs: 120, verified: true },
+      },
+      {
+        workload: "small",
+        format: "zip",
+        status: "measured",
+        direct: { measuredMs: [100], medianMs: 100, verified: true },
+        zinnia: { measuredMs: [120], medianMs: 120, verified: true },
+      },
+    ];
+    const report = compareBenchmarkReports(
+      { cases: candidateItems, operations: [], failures: [] },
+      {
+        cases: [
+          {
+            ...candidateItems[0],
+            zinnia: { measuredMs: [120], medianMs: 120, verified: true },
+          },
+        ],
+        operations: [],
+        failures: [],
+      },
+    );
+
+    expect(report.comparison.baselineAvailable).toBe(true);
+    expect(report.cases[0].trendStatus).toBe("stable");
+    expect(report.cases[1].trendStatus).toBe("baseline-unavailable");
+
+    const mismatched = compareBenchmarkReports(
+      { cases: [candidateItems[0]], operations: [], failures: [] },
+      {
+        cases: [
+          {
+            ...candidateItems[0],
+            workload: "small",
+            zinnia: { measuredMs: [120], medianMs: 120, verified: true },
+          },
+        ],
+        operations: [],
+        failures: [],
+      },
+    );
+    expect(mismatched.comparison.baselineAvailable).toBe(false);
+    expect(mismatched.comparison.baselineStatus).toBe("baseline-unavailable");
   });
 
   it("keeps compatibility timing outside primary target and trend rollups", () => {

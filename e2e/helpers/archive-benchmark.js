@@ -5,6 +5,12 @@ import { spawn, spawnSync } from "node:child_process";
 import { createE2eProfile, REPO_ROOT } from "./profile.js";
 
 const E2E_CONFIG = path.join(REPO_ROOT, "src-tauri", "tauri.e2e.conf.json");
+const VENDORED_UPDATER_DIR = path.join(
+  REPO_ROOT,
+  "src-tauri",
+  "vendor",
+  "tauri-plugin-updater",
+);
 export const ARCHIVE_BENCHMARK_E2E_STAMP_VERSION = "archive-io-e2e-v1";
 
 function npmCommand() {
@@ -41,10 +47,30 @@ function releaseE2eStampPath() {
 
 const E2E_FRESHNESS_PATHS = [
   path.join(REPO_ROOT, "src"),
+  path.join(REPO_ROOT, "public"),
+  path.join(REPO_ROOT, "assets"),
+  path.join(REPO_ROOT, "vite.config.ts"),
+  path.join(REPO_ROOT, "tsconfig.json"),
+  path.join(REPO_ROOT, "rust-toolchain.toml"),
   path.join(REPO_ROOT, "src-tauri", "src"),
+  path.join(REPO_ROOT, "src-tauri", "build.rs"),
   path.join(REPO_ROOT, "src-tauri", "Cargo.toml"),
   path.join(REPO_ROOT, "src-tauri", "Cargo.lock"),
+  path.join(REPO_ROOT, "src-tauri", "tauri.conf.json"),
   E2E_CONFIG,
+  path.join(REPO_ROOT, "src-tauri", "tauri.linux.conf.json"),
+  path.join(REPO_ROOT, "src-tauri", "tauri.macos.conf.json"),
+  path.join(REPO_ROOT, "src-tauri", "tauri.windows.conf.json"),
+  path.join(REPO_ROOT, "src-tauri", "capabilities"),
+  path.join(REPO_ROOT, "src-tauri", "permissions"),
+  path.join(REPO_ROOT, "src-tauri", "icons"),
+  path.join(REPO_ROOT, "src-tauri", "binaries"),
+  path.join(REPO_ROOT, "src-tauri", "linux"),
+  path.join(REPO_ROOT, "src-tauri", "macos"),
+  path.join(REPO_ROOT, "src-tauri", "windows"),
+  path.join(REPO_ROOT, "src-tauri", "Info.plist"),
+  path.join(REPO_ROOT, "src-tauri", "entitlements.plist"),
+  VENDORED_UPDATER_DIR,
   path.join(REPO_ROOT, "e2e"),
   path.join(REPO_ROOT, "package.json"),
   path.join(REPO_ROOT, "package-lock.json"),
@@ -239,21 +265,75 @@ function wdioCommand() {
   };
 }
 
-function waitForChild(child, timeoutMs = 60 * 60 * 1000) {
+export const ARCHIVE_BENCHMARK_CLOSE_TIMEOUT_MS = 30_000;
+
+export function waitForChild(child) {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      child.removeListener("exit", onExit);
+      child.removeListener("error", onError);
+    };
+    const settle = (callback) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      callback();
+    };
+    const onExit = (code, signal) => {
+      settle(() => {
+        if (code === 0) resolve();
+        else
+          reject(
+            new Error(`Archive benchmark WDIO exited with ${code ?? signal}.`),
+          );
+      });
+    };
+    const onError = (error) => {
+      settle(() => reject(error));
+    };
+    child.once("exit", onExit);
+    child.once("error", onError);
+  });
+}
+
+export function waitForChildExit(
+  childExit,
+  child,
+  timeoutMs = ARCHIVE_BENCHMARK_CLOSE_TIMEOUT_MS,
+) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
     const timeout = setTimeout(() => {
-      child.kill();
-      reject(new Error("Archive benchmark WDIO process did not exit in time."));
-    }, timeoutMs);
-    child.once("exit", (code, signal) => {
+      if (settled) return;
+      try {
+        if (!child.killed) child.kill();
+      } catch {
+        // The timeout error below is the deterministic shutdown result; the
+        // child may already have exited between the check and kill().
+      }
+      settled = true;
       clearTimeout(timeout);
-      if (code === 0) resolve();
-      else
-        reject(
-          new Error(`Archive benchmark WDIO exited with ${code ?? signal}.`),
-        );
-    });
-    child.once("error", reject);
+      reject(
+        new Error(
+          "Archive benchmark WDIO process did not exit after close request.",
+        ),
+      );
+    }, timeoutMs);
+    childExit.then(
+      () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        resolve();
+      },
+      (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        reject(error);
+      },
+    );
   });
 }
 
@@ -401,7 +481,11 @@ export async function createArchiveBenchmarkSession() {
           child.kill();
         }
         try {
-          await childExit;
+          await waitForChildExit(
+            childExit,
+            child,
+            ARCHIVE_BENCHMARK_CLOSE_TIMEOUT_MS,
+          );
         } catch (error) {
           childError = error;
         }

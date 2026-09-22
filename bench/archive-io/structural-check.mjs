@@ -84,6 +84,9 @@ export function checkArchiveIoStructure(root = REPO_ROOT) {
     compressionPreflight,
     /fn\s+walk_path\s*</,
   );
+  const compressionRegularFileBypass = compressionFunction
+    ? sectionAfter(compressionFunction, /if\s*!needs_recursive_probe\s*\{/)
+    : null;
   const targetLocalPlanning = sectionAfter(
     commit,
     /fn\s+prepare_target_local_publish_paths\s*\(/,
@@ -231,8 +234,12 @@ export function checkArchiveIoStructure(root = REPO_ROOT) {
     /meta\.is_file\(\)/.test(compressionFunction) &&
     /meta\.is_dir\(\)/.test(compressionFunction) &&
     /needs_recursive_probe/.test(compressionFunction) &&
-    /if\s*!needs_recursive_probe\s*\{[\s\S]*return\s+Ok\(\(\)\)/.test(
-      compressionFunction,
+    compressionRegularFileBypass != null &&
+    !/assert_compress_inputs_safe_with_cancel/.test(
+      compressionRegularFileBypass,
+    ) &&
+    /return\s+Ok\s*\(\s*(?:\(\)|CompressInputPreflight\s*\{[\s\S]*?input_scan_ms\s*:\s*elapsed_ms\(input_scan_started\)[\s\S]*?\})\s*\)/.test(
+      compressionRegularFileBypass,
     );
   checks.push(
     check(

@@ -26,7 +26,6 @@ use super::recovery::{
     recover_interrupted_transaction, retract_scrub_archive_journal_or_fail,
     wait_for_startup_recovery,
 };
-#[cfg(not(test))]
 use super::staging::create_publish_stage_dir_inside;
 use super::staging::{
     assert_extract_archive_members_safe_with_summary, operation_output_path,
@@ -86,11 +85,26 @@ fn archive_path_from_args(args: &[String]) -> Option<std::path::PathBuf> {
     }
 }
 
-#[cfg(not(test))]
 fn relocate_extract_stage_inside_destination(
     app: &tauri::AppHandle,
     plan: &mut CleanupPlan,
 ) -> Result<(), String> {
+    relocate_extract_stage_inside_destination_with_journal(plan, |plan| {
+        write_cleanup_journal(app, plan).map(|_| ())
+    })
+}
+
+/// Move an empty sibling extraction stage under an existing destination after
+/// member preflight proves that the archive contains no links. The journal
+/// callback is kept as a seam so the transaction mutation and rollback paths
+/// are exercised by unit tests without manufacturing a Tauri app handle.
+pub(crate) fn relocate_extract_stage_inside_destination_with_journal<F>(
+    plan: &mut CleanupPlan,
+    write_journal: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&CleanupPlan) -> Result<(), String>,
+{
     let (old_stage, destination) = plan
         .staged_extract
         .as_ref()
@@ -140,7 +154,7 @@ fn relocate_extract_stage_inside_destination(
 
     // Write new journal before removing old stage. If old cleanup fails, its
     // pending-stage record remains an inert orphan for startup scrub.
-    if let Err(error) = write_cleanup_journal(app, plan) {
+    if let Err(error) = write_journal(plan) {
         plan.staged_extract = Some((old_stage.clone(), destination));
         if let Some((path, identity)) = plan
             .stage_identities
@@ -824,22 +838,27 @@ static PROBED_7Z_VERSION: Mutex<Option<String>> = Mutex::new(None);
 /// inside a real directory are stored via `-snl`/`-snh`. Symlink *members*
 /// under a managed convert temp dir are allowed so convert can round-trip
 /// top-level links extracted from an archive.
+#[derive(Clone, Copy, Debug, Default)]
+struct CompressInputPreflight {
+    input_scan_ms: u64,
+}
+
 fn assert_compress_inputs_are_real_paths<C>(
     app: &tauri::AppHandle,
     args: &[String],
     should_cancel: C,
-) -> Result<(), String>
+) -> Result<CompressInputPreflight, String>
 where
     C: Fn() -> bool + Sync,
 {
     let Some(cmd) = args.first().map(String::as_str) else {
-        return Ok(());
+        return Ok(CompressInputPreflight::default());
     };
     if cmd != "a" && cmd != "u" {
-        return Ok(());
+        return Ok(CompressInputPreflight::default());
     }
     let Some(separator) = args.iter().position(|arg| arg == "--") else {
-        return Ok(());
+        return Ok(CompressInputPreflight::default());
     };
     let inputs: Vec<String> = args.iter().skip(separator + 1).cloned().collect();
     let single_stream = args.iter().any(|arg| {
@@ -866,6 +885,7 @@ where
     let resolved_output = output_parent.join(output_name);
     let mut top_level_names = std::collections::HashMap::<String, String>::new();
     let mut needs_recursive_probe = false;
+    let input_scan_started = std::time::Instant::now();
     for path in &inputs {
         if should_cancel() {
             return Err("Compress input scan was cancelled.".to_string());
@@ -924,9 +944,14 @@ where
         }
     }
     if !needs_recursive_probe {
-        return Ok(());
+        return Ok(CompressInputPreflight {
+            input_scan_ms: elapsed_ms(input_scan_started),
+        });
     }
-    super::compress_preflight::assert_compress_inputs_safe_with_cancel(&inputs, should_cancel)
+    super::compress_preflight::assert_compress_inputs_safe_with_cancel(&inputs, should_cancel)?;
+    Ok(CompressInputPreflight {
+        input_scan_ms: elapsed_ms(input_scan_started),
+    })
 }
 
 /// Check whether the owning window cancelled while an operation is in its
@@ -1579,7 +1604,14 @@ pub async fn run_7z(
     .await;
     abort_cancelled_preparation(&state)?;
     let mut args = match preflight_result {
-        Ok((args, Ok(()))) => args,
+        Ok((args, Ok(preflight))) => {
+            if let Some(diagnostics) = io_diagnostics.as_mut() {
+                let total = elapsed_ms(validation_started);
+                diagnostics.phase_times.input_scan = preflight.input_scan_ms;
+                diagnostics.phase_times.validation = total.saturating_sub(preflight.input_scan_ms);
+            }
+            args
+        }
         Ok((_args, Err(error))) => {
             release_prepare_slot_best_effort(&state);
             return Err(error);
@@ -1590,9 +1622,6 @@ pub async fn run_7z(
         }
     };
     if let Some(diagnostics) = io_diagnostics.as_mut() {
-        let duration = elapsed_ms(validation_started);
-        diagnostics.phase_times.validation = duration;
-        diagnostics.phase_times.input_scan = duration;
         if matches!(args.first().map(String::as_str), Some("a" | "u"))
             && args
                 .iter()
@@ -1885,7 +1914,6 @@ pub async fn run_7z(
             }
         }
     }
-    #[cfg(not(test))]
     if cleanup_plan.extract_destination_preexisting
         && extract_manifest
             .as_ref()

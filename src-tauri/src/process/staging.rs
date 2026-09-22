@@ -318,7 +318,6 @@ pub(crate) fn create_publish_stage_dir(
 /// Create an extraction stage as a hidden child of an already existing,
 /// validated destination. Caller may use this only after member preflight
 /// proves archive has no symbolic or hard links.
-#[cfg(not(test))]
 pub(crate) fn create_publish_stage_dir_inside(
     destination: &std::path::Path,
     purpose: &str,
@@ -842,7 +841,6 @@ where
                     cache_dir,
                     max_extract_bytes: Some(max_extract_bytes),
                     min_free_bytes: Some(min_free_bytes),
-                    #[cfg(not(test))]
                     extract_destination_preexisting: false,
                 }),
                 Err(error) => {
@@ -871,7 +869,6 @@ where
             stage_identities: Vec::new(),
             max_extract_bytes: None,
             min_free_bytes: None,
-            #[cfg(not(test))]
             extract_destination_preexisting: false,
         });
     };
@@ -982,7 +979,6 @@ where
                 cache_dir,
                 max_extract_bytes: Some(max_extract_bytes),
                 min_free_bytes: Some(reserve),
-                #[cfg(not(test))]
                 extract_destination_preexisting: destination_preexisting,
             })
         }
@@ -1046,7 +1042,6 @@ where
                 stage_identities: vec![(stage_dir, created_stage.identity)],
                 max_extract_bytes: None,
                 min_free_bytes: None,
-                #[cfg(not(test))]
                 extract_destination_preexisting: false,
             })
         }
@@ -1108,7 +1103,6 @@ where
                 stage_identities: vec![(stage_dir, created_stage.identity)],
                 max_extract_bytes: None,
                 min_free_bytes: None,
-                #[cfg(not(test))]
                 extract_destination_preexisting: false,
             })
         }
@@ -1122,7 +1116,6 @@ where
             stage_identities: Vec::new(),
             max_extract_bytes: None,
             min_free_bytes: None,
-            #[cfg(not(test))]
             extract_destination_preexisting: false,
         }),
     }

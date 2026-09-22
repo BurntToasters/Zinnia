@@ -44,7 +44,11 @@ export interface ArchiveBenchmarkResult {
   stdout?: string;
 }
 
-const MAX_RESULT_STDOUT_CHARS = 512 * 1024;
+// Keep the WebDriver result bounded while allowing a complete listing from
+// the backend's 10 MiB-bounded run_7z output envelope. The release fixture's
+// 2,048-entry ZIP listing is over 512 KiB, so the old result cap could turn a
+// valid listing into a false missing-path verification failure.
+export const MAX_RESULT_STDOUT_CHARS = 10 * 1024 * 1024;
 
 type FormElement = HTMLInputElement | HTMLSelectElement;
 
@@ -326,11 +330,29 @@ function appendOutput(outputs: string[], result: Run7zResult): void {
   if (result.stdout) outputs.push(result.stdout);
 }
 
-function collectedStdout(outputs: string[]): string | undefined {
+export function collectArchiveBenchmarkStdout(
+  outputs: readonly string[],
+): string | undefined {
   if (outputs.length === 0) return undefined;
   const value = outputs.join("\n");
   if (value.length <= MAX_RESULT_STDOUT_CHARS) return value;
-  return `${value.slice(0, MAX_RESULT_STDOUT_CHARS)}\n[stdout truncated]`;
+  throw new Error(
+    `Archive benchmark stdout exceeded the ${MAX_RESULT_STDOUT_CHARS / (1024 * 1024)} MiB E2E result limit; refusing to return a partial result.`,
+  );
+}
+
+export function assertArchiveBenchmarkOutputComplete(
+  run: Pick<Run7zResult, "stdout_truncated" | "stderr_truncated">,
+  operation: string,
+): void {
+  const truncatedStreams: string[] = [];
+  if (run.stdout_truncated) truncatedStreams.push("stdout");
+  if (run.stderr_truncated) truncatedStreams.push("stderr");
+  if (truncatedStreams.length > 0) {
+    throw new Error(
+      `Archive benchmark ${operation} output was truncated by the backend (${truncatedStreams.join(" and ")}); refusing to verify a partial result.`,
+    );
+  }
 }
 
 function result(
@@ -338,10 +360,11 @@ function result(
   code: number,
   outputs: string[],
 ): ArchiveBenchmarkResult {
+  const stdout = collectArchiveBenchmarkStdout(outputs);
   return {
     durationMs: Math.max(0, performance.now() - startedAt),
     code,
-    ...(collectedStdout(outputs) ? { stdout: collectedStdout(outputs) } : {}),
+    ...(stdout ? { stdout } : {}),
   };
 }
 
@@ -408,6 +431,7 @@ async function runArchiveOperation(
       if (request.password) args.push(`-p${request.password}`);
       args.push("--", request.archive);
       const run = await run7z(args, identity, outputs);
+      assertArchiveBenchmarkOutputComplete(run, "browse");
       if (effectiveCode(run) === 0)
         assertFinalIdentity(run, identity, "browse");
       return result(startedAt, effectiveCode(run), outputs);

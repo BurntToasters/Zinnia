@@ -657,8 +657,8 @@ function assertSuccess(result, context) {
 }
 
 export function verifyBrowseListing(stdout, expectedManifest) {
-  const text = String(stdout || "").replaceAll("\\", "/");
-  if (!text) return { ok: false, reason: "archive listing is empty" };
+  const text = String(stdout ?? "").replaceAll("\\", "/");
+  if (!text.trim()) return { ok: false, reason: "archive listing is empty" };
   for (const entry of expectedManifest) {
     const path = entry.path.replaceAll("\\", "/");
     if (
@@ -1531,7 +1531,7 @@ function runZinniaOperationOnce({
     },
   });
   assertSuccess(result, `Zinnia ${operation} ${workload}/${format}`);
-  if (operation === "browse" && result.stdout) {
+  if (operation === "browse") {
     const browseVerification = verifyBrowseListing(
       result.stdout,
       operationExpectedManifest(operation, format, fixture),
@@ -1638,13 +1638,9 @@ async function runAsyncZinniaOperationOnce({
         throw new Error(`Zinnia batch/${name}: ${verification.reason}`);
     }
   } else if (operation === "browse") {
-    // Product runner may return listing stdout. If it does not, code 0 is the
-    // runner's explicit successful listing verification contract.
-    if (result.stdout) {
-      const verification = verifyBrowseListing(result.stdout, expected);
-      if (!verification.ok)
-        throw new Error(`Zinnia browse: ${verification.reason}`);
-    }
+    const verification = verifyBrowseListing(result.stdout, expected);
+    if (!verification.ok)
+      throw new Error(`Zinnia browse: ${verification.reason}`);
   } else if (
     ["create", "replace", "update", "conversion"].includes(operation)
   ) {
@@ -1771,11 +1767,19 @@ export function createArchiveBenchmarkRequest({
 }
 
 async function timedAsyncInvocation(callback, redactionPaths = []) {
-  const started = performance.now();
   const returned = await callback();
-  const elapsedMs = performance.now() - started;
-  const result = returned && typeof returned === "object" ? returned : {};
-  const code = result.code == null ? 0 : result.code;
+  if (
+    returned === null ||
+    typeof returned !== "object" ||
+    Array.isArray(returned)
+  ) {
+    throw new Error("executor returned invalid result");
+  }
+  const result = returned;
+  const code = result.code;
+  if (typeof code !== "number" || !Number.isInteger(code)) {
+    throw new Error("executor returned invalid code");
+  }
   if (code !== 0) {
     throw new Error(
       `executor failed with code ${code}${result.stdout ? `: ${safeError(result.stdout, redactionPaths)}` : ""}`,
@@ -1786,14 +1790,11 @@ async function timedAsyncInvocation(callback, redactionPaths = []) {
       result.verification?.reason || "executor output verification failed",
     );
   }
-  const durationMs = Number.isFinite(result.durationMs)
-    ? result.durationMs
-    : elapsedMs;
-  if (!Number.isFinite(durationMs) || durationMs < 0) {
+  if (!Number.isFinite(result.durationMs) || result.durationMs < 0) {
     throw new Error("executor returned invalid durationMs");
   }
   return {
-    durationMs,
+    durationMs: result.durationMs,
     code,
     stdout: result.stdout == null ? "" : String(result.stdout),
   };
@@ -1802,7 +1803,8 @@ async function timedAsyncInvocation(callback, redactionPaths = []) {
 /**
  * Execute direct and Zinnia callbacks with one warm-up and five measured
  * samples. Measured order alternates per iteration. Callback durationMs is
- * product time; transport time is used only when callback omits durationMs.
+ * product time and must be supplied by the callback; transport time is never
+ * used as a measurement.
  */
 export async function runAlternatingExecutorPair({
   direct,
@@ -2455,7 +2457,16 @@ export function compareBenchmarkReports(
       item,
     ]),
   );
-  const baselineAvailable = Boolean(baselineReport);
+  // A report can exist without a comparable normalized baseline measurement,
+  // such as a direct-only legacy report. Keep availability aligned with the
+  // per-item trend calculations while allowing partial baseline matches.
+  const baselineAvailable = allMeasurementItems(candidate).some((item) => {
+    const baseline = baselineByKey.get(comparisonItemKey(item));
+    const baselineRatio = baseline
+      ? itemRatioStats(baseline).candidateRatio
+      : null;
+    return Number.isFinite(baselineRatio) && baselineRatio > 0;
+  });
   const apply = (item) => {
     const comparison = compareMeasurementItem(
       item,

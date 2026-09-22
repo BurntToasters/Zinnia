@@ -20,7 +20,11 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
 ## Changes in `v0.6.3-beta.1:`
 
-- **Fix:** (add release notes)
+- **Performance:** Reduced avoidable archive and destination copies, added stable snapshots and bounded metadata/finalization workers, and combined final validation, quota, durability, and fingerprint passes while preserving containment, rollback, cancellation, MOTW, and crash recovery.
+- **Diagnostics:** Added optional archive I/O phase diagnostics for the Debug Console; diagnostics are disabled outside debug mode and redact archive paths and passwords.
+- **Benchmarking:** Added real cross-platform Zinnia archive benchmarks for PR smoke and nightly/manual x64 and ARM64 runs. Reports compare Zinnia with bundled 7-Zip and classify performance targets without making timing ratios block CI.
+- **Compatibility:** Expanded operation and output verification across ZIP, 7z, and TAR, with separate reporting for encrypted, split, link-bearing, RAR, and unsupported filesystem or custom-ACL cases.
+- **PKG:** Updated packages and raised the minimum npm version to 12.0.2.
 
 ## Changes in `v0.6.2:`
 

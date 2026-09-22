@@ -47,7 +47,11 @@ jobs:
           - os: windows-11-arm
             sidecar: 7z-aarch64-pc-windows-msvc.exe
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 120
+    # Release-sized candidate+baseline runs cover six platforms, multiple formats,
+    # every operation, and compatibility fixtures. Use GitHub's hosted-job maximum
+    # so a slow ARM or macOS runner can finish and publish its correctness report.
+    # Timing remains report-only; correctness and verification failures still fail.
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:

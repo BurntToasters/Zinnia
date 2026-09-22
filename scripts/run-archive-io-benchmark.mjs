@@ -406,6 +406,9 @@ async function main() {
     role === "candidate"
       ? await runBaselineCheckout({ argv, baselineRef, outputDir })
       : null;
+  if (role === "candidate" && baselineRef && !baselineReport) {
+    metadata.baselineUnavailable = true;
+  }
   const runArgs = baselineReport
     ? [
         ...withoutBaselineReport(benchmarkArgs),
@@ -424,10 +427,16 @@ async function main() {
       role === "candidate" || envFlag("ZINNIA_BENCH_REQUIRE_BASELINE");
     if (runnerRequired && !envFlag("ZINNIA_BENCH_SKIP_RUNNER")) {
       runner = await startPersistentRunner(metadata, explicitRunnerModule);
-      if (
-        !runner &&
-        envFlag("ZINNIA_BENCH_REQUIRE_CANDIDATE", role === "candidate")
-      ) {
+      const runnerRequirement =
+        role === "baseline"
+          ? envFlag("ZINNIA_BENCH_REQUIRE_BASELINE")
+          : envFlag("ZINNIA_BENCH_REQUIRE_CANDIDATE", role === "candidate");
+      if (!runner && runnerRequirement) {
+        if (role === "baseline") {
+          throw new Error(
+            "Baseline archive benchmark requires persistent release E2E runner; runner module not found.",
+          );
+        }
         throw new Error(
           "Candidate archive benchmark requires persistent release E2E runner; runner module not found.",
         );

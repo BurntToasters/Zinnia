@@ -223,9 +223,9 @@ pub(crate) struct CleanupPlan {
     pub(crate) stage_identities: Vec<(std::path::PathBuf, journal::FileIdentity)>,
     pub(crate) max_extract_bytes: Option<u64>,
     pub(crate) min_free_bytes: Option<u64>,
-    /// Captured before stage creation. Production-only because test helpers
-    /// construct legacy plans directly and do not run the async relocation.
-    #[cfg(not(test))]
+    /// Captured before stage creation. This remains part of every plan so the
+    /// production extraction-stage optimization and its rollback paths compile
+    /// and can be exercised by the same unit-test build.
     pub(crate) extract_destination_preexisting: bool,
 }
 
