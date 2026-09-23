@@ -2720,6 +2720,19 @@ where
             if !file_identities_match(&actual, &expected) {
                 record_publish_identity(recorder, &mut identity_log, &mut plan, index, &actual)?;
             }
+            // Direct directory renames preserve the private staging mode;
+            // normalize the published directory to its destination parent.
+            // The Unix helper re-opens the target without following links,
+            // and any failure still reaches the enclosing rollback path.
+            #[cfg(unix)]
+            if metadata.is_dir() {
+                crate::fs_secure::apply_parent_directory_mode(&target).map_err(|error| {
+                    format!(
+                        "Could not apply destination parent mode to published directory {}: {error}",
+                        target.display()
+                    )
+                })?;
+            }
             Ok(())
         };
         if let Err(error) = publish_one() {
