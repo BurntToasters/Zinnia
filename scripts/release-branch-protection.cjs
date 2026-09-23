@@ -7,7 +7,7 @@ const DEFAULT_OWNER = "BurntToasters";
 const DEFAULT_REPO = "zinnia";
 const REQUIRED_CHECK = "ci-gate";
 const REQUIRED_CHECK_APP_ID = 15368;
-const RELEASE_BRANCHES = ["beta", "main"];
+const PROTECTED_RELEASE_BRANCHES = ["main"];
 
 function repositoryTarget(env = process.env) {
   return {
@@ -77,6 +77,12 @@ function assertReleaseBranchProtection(
   branch,
   { api = githubApi, env = process.env } = {},
 ) {
+  // Beta is an intentionally mutable staging branch. Release preparation still
+  // requires a clean checkout whose HEAD exactly matches origin/beta, but beta
+  // may remain unprotected and deletable. Stable releases keep the strict main
+  // branch policy below.
+  if (branch === "beta") return null;
+
   let protection;
   try {
     protection = api("GET", branchProtectionEndpoint(branch, env));
@@ -110,7 +116,7 @@ function configureReleaseBranchProtection({
   api = githubApi,
   env = process.env,
 } = {}) {
-  for (const branch of RELEASE_BRANCHES) {
+  for (const branch of PROTECTED_RELEASE_BRANCHES) {
     api("PUT", branchProtectionEndpoint(branch, env), desiredProtection());
     assertReleaseBranchProtection(branch, { api, env });
     console.log(
@@ -139,7 +145,7 @@ if (require.main === module) {
 module.exports = {
   DEFAULT_OWNER,
   DEFAULT_REPO,
-  RELEASE_BRANCHES,
+  PROTECTED_RELEASE_BRANCHES,
   REQUIRED_CHECK,
   REQUIRED_CHECK_APP_ID,
   assertProtectionResponse,

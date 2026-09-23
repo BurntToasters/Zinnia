@@ -33,21 +33,31 @@ test("requiredStatusCheckNames supports checks and legacy contexts", () => {
   assert.deepEqual([...names].sort(), ["legacy-check", "quality-gate"]);
 });
 
-test("release branch protection requires a strict source-bound ci-gate", () => {
+test("stable release protection requires a strict source-bound ci-gate", () => {
   const calls = [];
   const api = (method, endpoint) => {
     calls.push([method, endpoint]);
     return protectedResponse();
   };
   assert.doesNotThrow(() =>
-    assertReleaseBranchProtection("beta", { api, env: {} }),
+    assertReleaseBranchProtection("main", { api, env: {} }),
   );
   assert.deepEqual(calls, [
-    ["GET", "/repos/BurntToasters/zinnia/branches/beta/protection"],
+    ["GET", "/repos/BurntToasters/zinnia/branches/main/protection"],
   ]);
 });
 
-test("release branch protection rejects weakened safety controls", () => {
+test("beta releases permit an unprotected and deletable staging branch", () => {
+  let called = false;
+  const api = () => {
+    called = true;
+    throw new Error("beta protection must not be queried");
+  };
+  assert.equal(assertReleaseBranchProtection("beta", { api, env: {} }), null);
+  assert.equal(called, false);
+});
+
+test("stable release branch protection rejects weakened safety controls", () => {
   const responses = [
     protectedResponse({ allow_force_pushes: { enabled: true } }),
     protectedResponse({ allow_deletions: { enabled: true } }),
@@ -60,7 +70,7 @@ test("release branch protection rejects weakened safety controls", () => {
   ];
   for (const response of responses) {
     assert.throws(() =>
-      assertReleaseBranchProtection("beta", {
+      assertReleaseBranchProtection("main", {
         api: () => response,
         env: {},
       }),
@@ -70,7 +80,7 @@ test("release branch protection rejects weakened safety controls", () => {
 
 test("release branch protection permits the intentional administrator bypass", () => {
   assert.doesNotThrow(() =>
-    assertReleaseBranchProtection("beta", {
+    assertReleaseBranchProtection("main", {
       api: () => protectedResponse({ enforce_admins: { enabled: false } }),
       env: {},
     }),
@@ -90,7 +100,7 @@ test("unprotected release branches fail closed", () => {
   );
 });
 
-test("configure applies the same fail-closed policy to beta and main", () => {
+test("configure protects main without changing mutable beta", () => {
   const writes = [];
   const api = (method, endpoint, body) => {
     if (method === "PUT") {
@@ -100,13 +110,10 @@ test("configure applies the same fail-closed policy to beta and main", () => {
     return protectedResponse();
   };
   configureReleaseBranchProtection({ api, env: {} });
-  assert.equal(writes.length, 2);
+  assert.equal(writes.length, 1);
   assert.deepEqual(
     writes.map((entry) => entry[0]),
-    [
-      "/repos/BurntToasters/zinnia/branches/beta/protection",
-      "/repos/BurntToasters/zinnia/branches/main/protection",
-    ],
+    ["/repos/BurntToasters/zinnia/branches/main/protection"],
   );
   assert.deepEqual(writes[0][1], desiredProtection());
 });
