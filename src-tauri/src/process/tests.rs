@@ -2218,7 +2218,7 @@ fn extraction_publish_uses_whole_stage_for_new_target_and_copy_for_collision() {
 #[cfg(unix)]
 #[test]
 fn merge_publish_applies_destination_parent_mode_to_directories() {
-    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 
     let root = temp_root("zinnia-merge-dir-mode");
     let destination = root.join("destination");
@@ -2227,26 +2227,37 @@ fn merge_publish_applies_destination_parent_mode_to_directories() {
         .recursive(true)
         .create(&destination)
         .expect("destination");
+    std::fs::set_permissions(&destination, std::fs::Permissions::from_mode(0o755))
+        .expect("destination mode");
     let staged = destination.join(".zinnia-extract-0123456789abcdef0123456789abcdef");
     std::fs::DirBuilder::new()
         .mode(0o700)
         .create(&staged)
         .expect("private stage");
+    std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o700)).expect("stage mode");
     let nested = staged.join("folder");
     std::fs::DirBuilder::new()
         .mode(0o700)
         .create(&nested)
         .expect("private nested dir");
+    std::fs::set_permissions(&nested, std::fs::Permissions::from_mode(0o700))
+        .expect("nested directory mode");
     std::fs::write(nested.join("file.txt"), b"payload").expect("nested file");
+    let nested_identity = {
+        let metadata = std::fs::metadata(&nested).expect("nested metadata");
+        (metadata.dev(), metadata.ino())
+    };
 
     merge_staged_extract(&staged, &destination, MAX_EXTRACTED_BYTES).expect("merge");
 
     let published = destination.join("folder");
-    let mode = std::fs::metadata(&published)
-        .expect("published dir")
-        .permissions()
-        .mode()
-        & 0o777;
+    let published_metadata = std::fs::metadata(&published).expect("published dir");
+    assert_eq!(
+        (published_metadata.dev(), published_metadata.ino()),
+        nested_identity,
+        "existing-destination merge must publish the staged directory by direct rename"
+    );
+    let mode = published_metadata.permissions().mode() & 0o777;
     assert_eq!(
         mode, 0o755,
         "merged directory must inherit destination mode"
