@@ -84,6 +84,13 @@ native build runs.
 - Updater is already configured in `src-tauri/tauri.conf.json`.
 - CI runs tests and checks on Linux, Windows, and macOS. It never builds release
   binaries, publishes releases, or consumes release signing secrets.
+- On each release VM, run `npm run b` before its platform release command. This
+  destructively resets that VM to the exact `origin/beta` tip. Then run
+  `npm run release:win`, `npm run release:mac`, `npm run release:linux`, or
+  `npm run release:linux:arm64` as appropriate.
+- Beta may remain unprotected and deletable. Beta release preflight still
+  requires a clean local `beta` checkout exactly matching `origin/beta`.
+  Stable releases continue to require strict `main` protection with `ci-gate`.
 - Signed releases are intentionally explicit: run the platform-specific
   `release:win`, `release:mac`, and `release:linux` scripts for the same version.
   `release:linux` is x64; run `release:linux:arm64` only from a suitable ARM64
