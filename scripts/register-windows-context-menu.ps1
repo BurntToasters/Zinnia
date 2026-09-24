@@ -79,6 +79,17 @@ function Find-PreviousShellPayloads([string]$CurrentLocation, [string]$InstallRo
     }
 }
 
+function Get-DeploymentHResult([System.Management.Automation.ErrorRecord]$ErrorRecord) {
+  $exception = $ErrorRecord.Exception
+  while ($exception) {
+    if ($exception.Message -match 'HRESULT:\s*0x(?<code>[0-9A-Fa-f]{8})') {
+      return [Convert]::ToInt32($Matches['code'], 16)
+    }
+    $exception = $exception.InnerException
+  }
+  return $ErrorRecord.Exception.HResult
+}
+
 function Add-ZinniaShellPackage(
   [string]$Path,
   [string]$PackageName,
@@ -96,7 +107,7 @@ function Add-ZinniaShellPackage(
     # PowerShell 5.1 exposes HRESULT as a signed Int32; keep it signed so the
     # high-bit AppX code remains representable (`[uint32]0x80073CFB` overflows
     # in Windows PowerShell 5.1).
-    $hresult = $_.Exception.HResult
+    $hresult = Get-DeploymentHResult $_
     $formattedHresult = '0x{0:X8}' -f $hresult
     Write-Log "Add-AppxPackage failed for $Path (HRESULT $formattedHresult)."
     if ($hresult -eq [int32]0x80073D02) {
@@ -123,7 +134,7 @@ function Add-ZinniaShellPackage(
       return 'registered'
     }
     catch {
-      $retryHresult = $_.Exception.HResult
+      $retryHresult = Get-DeploymentHResult $_
       if ($retryHresult -eq [int32]0x80073D02) {
         Write-Log "Package resources are still in use after the exact-version retry; deferring $PackageName."
         Add-AppxPackage -ForceUpdateFromAnyVersion -DeferRegistrationWhenPackagesAreInUse -Path $Path -ExternalLocation $ExternalLocation -ErrorAction Stop
@@ -154,14 +165,16 @@ function Restore-PreviousShellPackages(
     Add-AppxPackage -ForceUpdateFromAnyVersion -Path $PreviousPayload.RootMsix -ExternalLocation $ExternalLocation -ErrorAction Stop
   }
   catch {
-    if ($_.Exception.HResult -ne [int32]0x80073CFB) { throw }
+    $restoreHresult = Get-DeploymentHResult $_
+    if ($restoreHresult -ne [int32]0x80073CFB -and $restoreHresult -ne [int32]0x80073D02) { throw }
     Write-Log 'Previous root package is already registered; keeping it in place.'
   }
   try {
     Add-AppxPackage -ForceUpdateFromAnyVersion -Path $PreviousPayload.ExtractMsix -ExternalLocation $ExternalLocation -ErrorAction Stop
   }
   catch {
-    if ($_.Exception.HResult -ne [int32]0x80073CFB) { throw }
+    $restoreHresult = Get-DeploymentHResult $_
+    if ($restoreHresult -ne [int32]0x80073CFB -and $restoreHresult -ne [int32]0x80073D02) { throw }
     Write-Log 'Previous extract package is already registered; keeping it in place.'
   }
   Write-Log 'OK: Restored previous Win11 context menu packages.'

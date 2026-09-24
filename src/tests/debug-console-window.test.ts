@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { isNativeWebviewContextMenuAllowed } from "../webview-context-menu";
 
@@ -201,5 +203,18 @@ describe("debug console window", () => {
     document.getElementById("titlebar-close")?.click();
     await flushAsync(20);
     expect(appWindow.destroy).toHaveBeenCalled();
+  });
+
+  it("builds the pop-out window from an async command", () => {
+    const source = fs.readFileSync(
+      path.resolve(
+        process.cwd(),
+        "src-tauri/src/launch/debug_console_window.rs",
+      ),
+      "utf8",
+    );
+    expect(source).toContain(
+      "pub async fn open_debug_console_window(app: tauri::AppHandle)",
+    );
   });
 });
