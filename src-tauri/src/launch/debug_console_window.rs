@@ -18,7 +18,7 @@ fn attach_destroy_notifier(app: &tauri::AppHandle, window: &tauri::WebviewWindow
 }
 
 #[tauri::command]
-pub fn open_debug_console_window(app: tauri::AppHandle) -> Result<(), String> {
+pub async fn open_debug_console_window(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(existing) = app.get_webview_window(DEBUG_CONSOLE_LABEL) {
         existing.show().map_err(|e| e.to_string())?;
         existing.set_focus().map_err(|e| e.to_string())?;

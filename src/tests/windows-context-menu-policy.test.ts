@@ -239,6 +239,10 @@ describe("Windows 11 context-menu manifest", () => {
     expect(registration).toContain("0x80073D02");
     expect(registration).toContain("-DeferRegistrationWhenPackagesAreInUse");
     expect(registration).toContain("if ($hresult -ne [int32]0x80073CFB) {");
+    expect(registration).toContain("function Get-DeploymentHResult");
+    expect(registration).toContain("$hresult = Get-DeploymentHResult $_");
+    expect(registration).toContain("$retryHresult = Get-DeploymentHResult $_");
+    expect(registration).not.toContain("$_.Exception.HResult");
     expect(registration).toContain("Get-AppxPackage -Name $PackageName");
     expect(registration).toContain("Remove-AppxPackage -ErrorAction Stop");
     expect(registration).toContain(
