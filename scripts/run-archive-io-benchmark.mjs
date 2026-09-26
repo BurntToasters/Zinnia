@@ -9,7 +9,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -35,6 +35,29 @@ const RUNNER_MODULES = [
   join(REPO_ROOT, "e2e", "helpers", "benchmark-runner.js"),
 ].filter(Boolean);
 
+const DEFAULT_BENCH_RUN_TIMEOUT_MS = 45 * 60 * 1000;
+const DEFAULT_BENCH_COMMAND_TIMEOUT_MS = 20 * 60 * 1000;
+const DEFAULT_BENCH_ABORT_SETTLE_TIMEOUT_MS = 30 * 1000;
+
+function positiveInteger(value, fallback) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function benchmarkRunTimeoutMs(env = process.env) {
+  return positiveInteger(
+    env.ZINNIA_BENCH_RUN_TIMEOUT_MS,
+    DEFAULT_BENCH_RUN_TIMEOUT_MS,
+  );
+}
+
+function benchmarkCommandTimeoutMs(env = process.env) {
+  return positiveInteger(
+    env.ZINNIA_BENCH_COMMAND_TIMEOUT_MS,
+    DEFAULT_BENCH_COMMAND_TIMEOUT_MS,
+  );
+}
+
 function envFlag(name, fallback = false) {
   const value = process.env[name];
   if (value == null) return fallback;
@@ -53,20 +76,124 @@ function gitRevision(ref) {
   return value || null;
 }
 
-function runCommand(command, args, cwd, env = {}) {
-  const result = spawnSync(command, args, {
+function waitForCommandExit(child, command, args) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      child.removeListener("error", onError);
+      child.removeListener("exit", onExit);
+    };
+    const settle = (callback) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      callback();
+    };
+    const onError = (error) => settle(() => reject(error));
+    const onExit = (code, signal) =>
+      settle(() => {
+        if (code === 0) resolve();
+        else
+          reject(
+            new Error(
+              `${command} ${args.join(" ")} exited with ${code ?? signal}`,
+            ),
+          );
+      });
+    child.once("error", onError);
+    child.once("exit", onExit);
+  });
+}
+
+function waitForCommandProcessExit(child, timeoutMs) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve(true);
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (exited) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      child.removeListener("exit", onExit);
+      resolve(exited);
+    };
+    const onExit = () => finish(true);
+    const timeout = setTimeout(() => finish(false), timeoutMs);
+    child.once("exit", onExit);
+  });
+}
+
+async function terminateCommandProcessTree(child) {
+  if (!child?.pid) return false;
+  if (process.platform === "win32") {
+    const result = spawnSync(
+      "taskkill",
+      ["/PID", String(child.pid), "/T", "/F"],
+      { stdio: "ignore", windowsHide: true, timeout: 10_000 },
+    );
+    if (result.status !== 0) {
+      try {
+        child.kill("SIGKILL");
+      } catch {}
+    }
+    return waitForCommandProcessExit(child, 10_000);
+  }
+  try {
+    process.kill(-child.pid, "SIGTERM");
+  } catch (error) {
+    if (error.code !== "ESRCH") {
+      try {
+        child.kill("SIGTERM");
+      } catch {}
+    }
+  }
+  await waitForCommandProcessExit(child, 1_000);
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch {
+    try {
+      child.kill("SIGKILL");
+    } catch {}
+  }
+  return waitForCommandProcessExit(child, 10_000);
+}
+
+async function runCommand(command, args, cwd, env = {}, timeoutMs) {
+  const mergedEnv = { ...process.env, ...env };
+  const commandTimeoutMs = timeoutMs ?? benchmarkCommandTimeoutMs(mergedEnv);
+  const child = spawn(command, args, {
     cwd,
-    env: { ...process.env, ...env },
-    encoding: "utf8",
+    env: mergedEnv,
     stdio: "inherit",
     windowsHide: true,
     shell: process.platform === "win32" && /^(npm|npx)(\.cmd)?$/i.test(command),
+    detached: process.platform !== "win32",
   });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(
-      `${command} ${args.join(" ")} exited with ${result.status}`,
-    );
+  const childExit = waitForCommandExit(child, command, args);
+  childExit.catch(() => {});
+  let timeout;
+  let timedOut = false;
+  const deadline = new Promise((_, reject) => {
+    timeout = setTimeout(() => {
+      timedOut = true;
+      reject(
+        new Error(
+          `${command} ${args.join(" ")} timed out after ${commandTimeoutMs}ms`,
+        ),
+      );
+    }, commandTimeoutMs);
+  });
+  try {
+    await Promise.race([childExit, deadline]);
+  } catch (error) {
+    if (!timedOut) throw error;
+    if (!(await terminateCommandProcessTree(child))) {
+      throw new Error(`${command} process tree did not stop after timeout.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -135,15 +262,19 @@ async function runBaselineCheckout({ argv, baselineRef, outputDir }) {
   const baselineOutput = join(worktree, ".archive-io-baseline");
   let added = false;
   try {
-    runCommand(
+    await runCommand(
       "git",
       ["worktree", "add", "--detach", worktree, baselineRef],
       REPO_ROOT,
     );
     added = true;
     const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-    runCommand(npm, ["ci", "--ignore-scripts"], worktree);
-    runCommand(npm, ["run", "prepare:7z"], worktree);
+    await runCommand(npm, ["ci", "--ignore-scripts"], worktree);
+    if (process.platform === "win32") {
+      await runCommand(npm, ["run", "prepare:win-shell-stubs"], worktree);
+    }
+    await runCommand(npm, ["run", "prepare:7z"], worktree);
+    const baselineRunTimeoutMs = Math.floor(benchmarkRunTimeoutMs() / 2);
     const childEnv = {
       ZINNIA_BENCH_REPORT_DIR: baselineOutput,
       ZINNIA_BENCH_CANDIDATE_REF: baselineRef,
@@ -157,6 +288,8 @@ async function runBaselineCheckout({ argv, baselineRef, outputDir }) {
       ZINNIA_BENCH_REQUIRE_BASELINE: "1",
       ZINNIA_BENCH_REQUIRE_CANDIDATE: "0",
       ZINNIA_BENCH_REQUIRE_ZINNIA: "0",
+      ZINNIA_BENCH_RUN_TIMEOUT_MS: String(baselineRunTimeoutMs),
+      RUSTUP_TOOLCHAIN: process.env.RUST_VERSION || "1.98.1",
     };
     const childArgs = [
       "scripts/run-archive-io-benchmark.mjs",
@@ -164,7 +297,13 @@ async function runBaselineCheckout({ argv, baselineRef, outputDir }) {
       "baseline",
       ...withoutBaselineReport(withoutWrapperOptions(argv)),
     ];
-    runCommand(process.execPath, childArgs, worktree, childEnv);
+    await runCommand(
+      process.execPath,
+      childArgs,
+      worktree,
+      childEnv,
+      baselineRunTimeoutMs + 60_000,
+    );
     const baselineJson = reportFiles(baselineOutput)[0];
     if (!baselineJson) return null;
     mkdirSync(outputDir, { recursive: true });
@@ -183,7 +322,7 @@ async function runBaselineCheckout({ argv, baselineRef, outputDir }) {
   } finally {
     if (added) {
       try {
-        runCommand(
+        await runCommand(
           "git",
           ["worktree", "remove", "--force", worktree],
           REPO_ROOT,
@@ -256,6 +395,62 @@ function writeStepSummary(outputDir, metadata) {
   appendFileSync(summaryPath, `${heading}${blocks.join("\n\n")}\n`);
 }
 
+function withTimeout(
+  promise,
+  timeoutMs,
+  onTimeout,
+  settleTimeoutMs = DEFAULT_BENCH_ABORT_SETTLE_TIMEOUT_MS,
+) {
+  const operation = Promise.resolve(promise);
+  operation.catch(() => {});
+  let timeout;
+  let settleTimeout;
+  const deadline = new Promise((_, reject) => {
+    timeout = setTimeout(async () => {
+      const error = new Error(
+        `Archive benchmark exceeded its ${timeoutMs}ms run timeout.`,
+      );
+      let cleanupError;
+      try {
+        await onTimeout?.(error);
+      } catch (failure) {
+        cleanupError = failure;
+      }
+      const operationSettled = await Promise.race([
+        operation.then(
+          () => true,
+          () => true,
+        ),
+        new Promise((resolve) => {
+          settleTimeout = setTimeout(() => resolve(false), settleTimeoutMs);
+        }),
+      ]);
+      clearTimeout(settleTimeout);
+      if (!operationSettled) {
+        reject(
+          new Error(
+            `${error.message} Cancellation did not settle underlying benchmark within ${settleTimeoutMs}ms.`,
+            { cause: error },
+          ),
+        );
+      } else if (cleanupError) {
+        reject(
+          new Error(
+            `${error.message} Runner cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+            { cause: cleanupError },
+          ),
+        );
+      } else {
+        reject(error);
+      }
+    }, timeoutMs);
+  });
+  return Promise.race([operation, deadline]).finally(() => {
+    clearTimeout(timeout);
+    clearTimeout(settleTimeout);
+  });
+}
+
 async function loadRunner(explicitModule) {
   const candidates = [explicitModule, ...RUNNER_MODULES].filter(Boolean);
   for (const candidate of candidates) {
@@ -295,7 +490,7 @@ function batchExecutorFromSession(session) {
   return null;
 }
 
-async function startPersistentRunner(metadata, explicitModule) {
+async function startPersistentRunner(metadata, explicitModule, signal) {
   if (envFlag("ZINNIA_BENCH_SKIP_RUNNER")) return null;
   const runner = await loadRunner(explicitModule);
   if (!runner) return null;
@@ -306,6 +501,7 @@ async function startPersistentRunner(metadata, explicitModule) {
     baselineRef: metadata.baselineRef,
     persistent: true,
     excludeTransportTime: true,
+    signal,
   });
   const execute = executorFromSession(session);
   const executeBatch = batchExecutorFromSession(session);
@@ -320,6 +516,7 @@ async function startPersistentRunner(metadata, explicitModule) {
         }
       }
     },
+    abort: session?.abort?.bind(session),
   };
 }
 
@@ -406,6 +603,15 @@ async function main() {
     role === "candidate"
       ? await runBaselineCheckout({ argv, baselineRef, outputDir })
       : null;
+  if (
+    role === "candidate" &&
+    envFlag("ZINNIA_BENCH_REQUIRE_BASELINE_REPORT") &&
+    !baselineReport
+  ) {
+    throw new Error(
+      "Required baseline archive benchmark report is unavailable.",
+    );
+  }
   if (role === "candidate" && baselineRef && !baselineReport) {
     metadata.baselineUnavailable = true;
   }
@@ -422,30 +628,40 @@ async function main() {
   let runner = null;
   let failure = null;
   let report = null;
+  const abortController = new AbortController();
   try {
-    const runnerRequired =
-      role === "candidate" || envFlag("ZINNIA_BENCH_REQUIRE_BASELINE");
-    if (runnerRequired && !envFlag("ZINNIA_BENCH_SKIP_RUNNER")) {
-      runner = await startPersistentRunner(metadata, explicitRunnerModule);
-      const runnerRequirement =
-        role === "baseline"
-          ? envFlag("ZINNIA_BENCH_REQUIRE_BASELINE")
-          : envFlag("ZINNIA_BENCH_REQUIRE_CANDIDATE", role === "candidate");
-      if (!runner && runnerRequirement) {
-        if (role === "baseline") {
+    const timeoutMs = benchmarkRunTimeoutMs();
+    const benchmarkExecution = (async () => {
+      const runnerRequired =
+        role === "candidate" || envFlag("ZINNIA_BENCH_REQUIRE_BASELINE");
+      if (runnerRequired && !envFlag("ZINNIA_BENCH_SKIP_RUNNER")) {
+        runner = await startPersistentRunner(
+          metadata,
+          explicitRunnerModule,
+          abortController.signal,
+        );
+        const runnerRequirement =
+          role === "baseline"
+            ? envFlag("ZINNIA_BENCH_REQUIRE_BASELINE")
+            : envFlag("ZINNIA_BENCH_REQUIRE_CANDIDATE", role === "candidate");
+        if (!runner && runnerRequirement) {
+          if (role === "baseline") {
+            throw new Error(
+              "Baseline archive benchmark requires persistent release E2E runner; runner module not found.",
+            );
+          }
           throw new Error(
-            "Baseline archive benchmark requires persistent release E2E runner; runner module not found.",
+            "Candidate archive benchmark requires persistent release E2E runner; runner module not found.",
           );
         }
-        throw new Error(
-          "Candidate archive benchmark requires persistent release E2E runner; runner module not found.",
-        );
+        if (runner) process.env.ZINNIA_BENCH_RUNNER_ACTIVE = "1";
       }
-      if (runner) process.env.ZINNIA_BENCH_RUNNER_ACTIVE = "1";
-    }
-    report = await benchmark.runBenchmark(
-      mergeExecutorOptions(runOptions, runner),
-    );
+      return benchmark.runBenchmark(mergeExecutorOptions(runOptions, runner));
+    })();
+    report = await withTimeout(benchmarkExecution, timeoutMs, async () => {
+      abortController.abort();
+      await runner?.abort?.();
+    });
   } catch (error) {
     failure = error;
   } finally {

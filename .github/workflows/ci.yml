@@ -20,7 +20,7 @@ permissions:
 env:
   NODE_VERSION: "24.16.0"
   NPM_VERSION: "12.0.2"
-  RUST_VERSION: "stable"
+  RUST_VERSION: "1.98.1"
   CARGO_AUDIT_VERSION: "0.22.2"
 
 jobs:
@@ -39,6 +39,16 @@ jobs:
         run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
       - name: Enforce Co-authored-by email policy
         run: node scripts/strip-coauthor-trailers.js --check-range ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+      - name: Enforce stable metadata-only main PR
+        if: >-
+          ${{
+            github.event.pull_request.base.ref == 'main' &&
+            startsWith(github.head_ref, 'release/')
+          }}
+        run: >-
+          node scripts/check-stable-metadata-pr.mjs
+          ${{ github.event.pull_request.base.sha }}
+          ${{ github.event.pull_request.head.sha }}
 
   quality-gate:
     runs-on: ubuntu-latest
@@ -88,7 +98,9 @@ jobs:
           - os: macos-26-intel
           - os: windows-latest
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    # Baseline and candidate each build the release E2E binary on x86 runners.
+    # Give the persistent benchmark a bounded 60-minute run plus cleanup time.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -128,6 +140,9 @@ jobs:
           # hard gate.
           ZINNIA_BENCH_BASE_RUN: "1"
           ZINNIA_BENCH_REQUIRE_CANDIDATE: "1"
+          ZINNIA_BENCH_RUN_TIMEOUT_MS: "3600000"
+          ZINNIA_BENCH_COMMAND_TIMEOUT_MS: "1200000"
+          ZINNIA_BENCH_BUILD_TIMEOUT_MS: "2400000"
         run: >-
           npm run benchmark:archive-io --
           --formats zip,7z
@@ -143,6 +158,93 @@ jobs:
           path: ${{ runner.temp }}/zinnia-archive-io
           if-no-files-found: error
           retention-days: 30
+
+  # Stable promotion PRs get the full review-grade benchmark on every hosted
+  # architecture. Ordinary beta/feature PRs keep the smaller smoke matrix.
+  archive-io-promotion-benchmark:
+    if: >-
+      ${{
+        github.event_name == 'pull_request' &&
+        github.event.pull_request.base.ref == 'main' &&
+        startsWith(github.head_ref, 'next-')
+      }}
+    needs: quality-gate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            sidecar: 7z-x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            sidecar: 7z-aarch64-unknown-linux-gnu
+          - os: macos-26
+            sidecar: 7z-aarch64-apple-darwin
+          - os: macos-26-intel
+            sidecar: 7z-x86_64-apple-darwin
+          - os: windows-latest
+            sidecar: 7z-x86_64-pc-windows-msvc.exe
+          - os: windows-11-arm
+            sidecar: 7z-aarch64-pc-windows-msvc.exe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve accepted beta baseline
+        id: accepted-beta
+        run: node scripts/resolve-archive-io-baseline.mjs
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install latest npm 12
+        run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Install Linux E2E dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb
+      - run: npm ci --ignore-scripts
+      - run: npm run prepare:7z
+      - name: Prepare Windows shell stubs
+        if: runner.os == 'Windows'
+        run: npm run prepare:win-shell-stubs
+      - name: Archive I/O release benchmark
+        env:
+          ZINNIA_BENCH_REPORT_DIR: ${{ runner.temp }}/zinnia-archive-io
+          ZINNIA_BENCH_CANDIDATE_REF: ${{ github.event.pull_request.head.sha }}
+          ZINNIA_BENCH_BASELINE_REF: ${{ steps.accepted-beta.outputs.sha }}
+          ZINNIA_BENCH_BASE_REF: ${{ steps.accepted-beta.outputs.sha }}
+          ZINNIA_BENCH_BASELINE_TAG: ${{ steps.accepted-beta.outputs.tag }}
+          ZINNIA_BENCH_BASE_RUN: "1"
+          ZINNIA_BENCH_REQUIRE_CANDIDATE: "1"
+          ZINNIA_BENCH_REQUIRE_BASELINE: "1"
+          ZINNIA_BENCH_REQUIRE_BASELINE_REPORT: "1"
+          ZINNIA_BENCH_RUN_TIMEOUT_MS: "10800000"
+          ZINNIA_BENCH_COMMAND_TIMEOUT_MS: "1800000"
+          ZINNIA_BENCH_BUILD_TIMEOUT_MS: "5400000"
+        run: >-
+          npm run benchmark:archive-io --
+          --formats zip,7z,tar,gzip,bzip2,xz
+          --workloads bulk,small
+          --operation-formats zip,7z,tar
+          --operation-workloads bulk,small
+          --scale release
+          --compatibility
+      - name: Upload archive I/O release report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: archive-io-promotion-${{ matrix.os }}
+          path: ${{ runner.temp }}/zinnia-archive-io
+          if-no-files-found: error
+          retention-days: 90
 
   rust-check:
     needs: quality-gate
@@ -165,6 +267,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           toolchain: ${{ env.RUST_VERSION }}
+          components: clippy
       - run: npm ci --ignore-scripts
       - run: node scripts/npm-audit-signatures.cjs
       - run: npm run test:cov
@@ -318,6 +421,7 @@ jobs:
       - smoke-build
       - security-audit
       - archive-io-benchmark
+      - archive-io-promotion-benchmark
     runs-on: ubuntu-latest
     steps:
       - name: Require every release check
@@ -330,6 +434,10 @@ jobs:
           SMOKE_BUILD: ${{ needs.smoke-build.result }}
           SECURITY_AUDIT: ${{ needs.security-audit.result }}
           ARCHIVE_IO_BENCHMARK: ${{ needs.archive-io-benchmark.result }}
+          ARCHIVE_IO_PROMOTION_BENCHMARK: ${{ needs.archive-io-promotion-benchmark.result }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          RELEASE_PROMOTION_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && startsWith(github.head_ref, 'next-') }}
+          STABLE_METADATA_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && startsWith(github.head_ref, 'release/') }}
         run: |
           set -euo pipefail
           test "$QUALITY_GATE" = success
@@ -338,6 +446,13 @@ jobs:
           test "$SMOKE_BUILD" = success
           test "$SECURITY_AUDIT" = success
           test "$ARCHIVE_IO_BENCHMARK" = success
+          if [ "$RELEASE_PROMOTION_PR" = "true" ]; then
+            test "$ARCHIVE_IO_PROMOTION_BENCHMARK" = success
+          else
+            test "$ARCHIVE_IO_PROMOTION_BENCHMARK" = skipped
+          fi
+          # Main accepts measured next-* promotion or tightly scoped stable metadata.
+          test "$PR_BASE_REF" != "main" || test "$RELEASE_PROMOTION_PR" = "true" || test "$STABLE_METADATA_PR" = "true"
           if [ "$EVENT_NAME" = pull_request ]; then
             test "$COMMIT_MESSAGE_POLICY" = success
           else

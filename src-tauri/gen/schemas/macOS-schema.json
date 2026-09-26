@@ -435,12 +435,6 @@
           "markdownDescription": "Enables the create_temp_extract_dir command without any pre-configured scope."
         },
         {
-          "description": "Enables the reserve_temp_extract_path command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-reserve-temp-extract-path",
-          "markdownDescription": "Enables the reserve_temp_extract_path command without any pre-configured scope."
-        },
-        {
           "description": "Enables the debug_console_window_open command without any pre-configured scope.",
           "type": "string",
           "const": "allow-debug-console-window-open",
@@ -523,6 +517,12 @@
           "type": "string",
           "const": "allow-get-startup-recovery-status",
           "markdownDescription": "Enables the get_startup_recovery_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the inspect_extract_destination command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-inspect-extract-destination",
+          "markdownDescription": "Enables the inspect_extract_destination command without any pre-configured scope."
         },
         {
           "description": "Enables the is_7z_running command without any pre-configured scope.",
@@ -645,6 +645,12 @@
           "markdownDescription": "Enables the remove_managed_temp_dir command without any pre-configured scope."
         },
         {
+          "description": "Enables the reserve_temp_extract_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-reserve-temp-extract-path",
+          "markdownDescription": "Enables the reserve_temp_extract_path command without any pre-configured scope."
+        },
+        {
           "description": "Enables the reset_preferred_archiver_to_system command without any pre-configured scope.",
           "type": "string",
           "const": "allow-reset-preferred-archiver-to-system",
@@ -741,12 +747,6 @@
           "markdownDescription": "Denies the create_temp_extract_dir command without any pre-configured scope."
         },
         {
-          "description": "Denies the reserve_temp_extract_path command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-reserve-temp-extract-path",
-          "markdownDescription": "Denies the reserve_temp_extract_path command without any pre-configured scope."
-        },
-        {
           "description": "Denies the debug_console_window_open command without any pre-configured scope.",
           "type": "string",
           "const": "deny-debug-console-window-open",
@@ -829,6 +829,12 @@
           "type": "string",
           "const": "deny-get-startup-recovery-status",
           "markdownDescription": "Denies the get_startup_recovery_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the inspect_extract_destination command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-inspect-extract-destination",
+          "markdownDescription": "Denies the inspect_extract_destination command without any pre-configured scope."
         },
         {
           "description": "Denies the is_7z_running command without any pre-configured scope.",
@@ -949,6 +955,12 @@
           "type": "string",
           "const": "deny-remove-managed-temp-dir",
           "markdownDescription": "Denies the remove_managed_temp_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the reserve_temp_extract_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-reserve-temp-extract-path",
+          "markdownDescription": "Denies the reserve_temp_extract_path command without any pre-configured scope."
         },
         {
           "description": "Denies the reset_preferred_archiver_to_system command without any pre-configured scope.",

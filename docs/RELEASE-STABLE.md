@@ -6,38 +6,46 @@ with the accepted beta number. Do not use it to bypass a failed candidate or
 `main` gate. Every command below is expected to run from a clean checkout of
 the canonical repository.
 
-## 1. One-time release branch enforcement
+## 1. One-time stable branch enforcement
 
-Both release branches must be protected before any beta or stable release.
-With a GitHub CLI account that has repository administration permission, run:
+The stable release branch, `main`, must be protected before stable promotion.
+The `beta` branch is an intentionally mutable staging branch and does not need
+branch protection. With a GitHub CLI account that has repository
+administration permission, run:
 
 ```sh
 npm run repo:protect-release-branches
 ```
 
-The command protects both `beta` and `main`, requires the source-bound `ci-gate`
-status check that aggregates every CI proof job, requires the branch to be up
-to date, allows the intentional administrator bypass, and disables force pushes
-and branch deletion. CI remains limited to tests, audits, validation, and
-unsigned compile smoke; all release building, signing, and publishing stays on
-the manually operated release VMs. `release:preflight` verifies the active
-release branch on every release VM while allowing the administrator bypass.
+The command protects `main` with the source-bound `ci-gate` status check that
+aggregates every CI proof job, requires the branch to be up to date, allows the
+intentional administrator bypass, and disables force pushes and branch
+deletion. CI remains limited to tests, audits, validation, and unsigned compile
+smoke; all release building, signing, and publishing stays on the manually
+operated release VMs. `release:preflight` requires that protection for stable
+releases. Beta preflight instead requires a clean local `beta` checkout exactly
+matching `origin/beta` and does not require branch protection.
 
 Confirm the repository Settings page shows the rule before continuing.
 
 ## 2. Freeze and prove the stable candidate
 
-The stable candidate is `next-X.Y.Z`, which is promoted directly to `main`.
-The published `beta` branch is not an intermediate merge target and does not
-need to contain post-beta test-only fixes.
+The only stable candidate source branch is `next-X.Y.Z`, promoted directly to
+`main`; promotion CI enforces this source/target pairing. The published `beta`
+branch is not an intermediate merge target and does not need to contain
+post-beta test-only fixes.
 
 The production source must remain the accepted beta source users tested.
 Review every post-beta difference and prove that any accepted difference is
 limited to tests or documentation and cannot enter release binaries. No
-production, packaging, updater, installer, or release-tooling path may change
-without another beta. Then run the complete gate, including E2E:
+production, packaging, updater, installer, build, or release-toolchain path may
+change without another beta. Any such change requires a fresh beta, repeated
+beta smoke testing, and a full new burn-in period before stable promotion. Then
+run the complete gate, including E2E:
 
 ```sh
+git fetch --tags origin
+git rev-parse --verify "refs/tags/vX.Y.Z-beta.N^{commit}"
 git switch next-X.Y.Z
 git pull --ff-only origin next-X.Y.Z
 git diff --name-status vX.Y.Z-beta.N..HEAD
@@ -47,6 +55,10 @@ npm run workspace:bootstrap
 npm run test:all -- --require-clean-proof
 ```
 
+Confirm that the displayed beta-tag commit is the exact published beta source
+users tested. Use this tag as the comparison baseline; do not substitute the
+mutable `origin/beta` branch tip.
+
 Do not run `release:preflight` on `next-X.Y.Z`; it deliberately accepts only an
 actual release branch (`beta` for beta versions and `main` for stable versions).
 Open the promotion pull request from `next-X.Y.Z` directly to `main`. All GitHub
@@ -54,7 +66,13 @@ Actions jobs for that exact pull-request head must be green on every supported
 runner before merge. Do not treat a platform-local release build as a
 replacement for cross-platform CI. If the production-tree comparison above
 finds a runtime change, stop: that runtime must be beta-tested before stable
-promotion.
+promotion. Require all six platform-specific `archive-io-promotion-*`
+release-scale benchmark artifacts for that exact PR head. Each artifact must
+identify the PR head as candidate and the commit resolved from
+`vX.Y.Z-beta.N` as baseline. Review every platform report against that accepted
+beta baseline and record an explicit disposition in the PR for every target
+miss and measured regression. Benchmark timings remain report-only, so a green
+check alone does not resolve those findings.
 
 If the accepted beta still needs to be published, use the normal beta release
 flow first and complete beta smoke testing before the stable version change.
@@ -74,18 +92,21 @@ git switch -c release/X.Y.Z
 ```
 
 Change only the release metadata needed for stable `X.Y.Z`. Edit `package.json`
-`version` to `X.Y.Z`, then let `npm run u` copy that value across the repo and
-refresh lockfiles:
+`version` to `X.Y.Z`, then synchronize that value without performing dependency
+updates:
 
 ```sh
-npm run u
+npm run sync-version
+node scripts/update-metainfo.js
 ```
 
 Edit `CHANGELOG.md` so the current section is the final stable `X.Y.Z` entry and
 remove beta-only release wording. Review the resulting diff carefully, then
 commit it and merge the stable-metadata branch to protected `main` through the
 normal pull-request flow. Require every pull-request and post-merge `main` CI
-job to pass.
+job to pass. CI accepts `release/*` to `main` only when the base version is the
+same beta series, the head removes only the beta suffix, and every changed path
+is an enumerated release-metadata file.
 
 ## 4. Prove the stable source
 
@@ -181,7 +202,8 @@ tag resolves to the exact stable `main` commit.
 
 Install or update to `X.Y.Z` through each supported distribution path and perform
 a short smoke test of compress, extract, browse, updater, and platform shell
-integration. Keep `main` and `beta` protection enabled for the next cycle.
+integration. Keep strict `main` protection enabled for the next cycle; `beta`
+may remain unprotected.
 
 If any publish-time verification fails, stop distribution work and repair the
 release metadata or assets. Do not create a second same-version stable release.

@@ -39,11 +39,12 @@ modules:
       append-path: /run/build/zinnia/npm-global/bin:/usr/lib/sdk/node22/bin:/usr/lib/sdk/rust-stable/bin
       env:
         CARGO_HOME: /run/build/zinnia/cargo
-        RUSTUP_HOME: /run/build/zinnia/rustup
         npm_config_cache: /run/build/zinnia/npm-cache
         HUSKY: "0"
-        RUSTUP_TOOLCHAIN: stable
     build-commands:
+      # The Flatpak rust-stable SDK extension installs rustc/cargo directly,
+      # not through rustup. Fail closed if that extension drifts from our pin.
+      - test "$(rustc --version | cut -d' ' -f2)" = 1.98.1
       # node22 SDK ships npm 10.x, which does not support --min-release-age.
       # npm@12 plus --before 3 days ago takes the newest 12.x that is old enough.
       - npm install --global npm@12 --ignore-scripts --engine-strict=false --before="$(date -u -d '3 days ago' +%Y-%m-%dT%H:%M:%SZ)" --prefix /run/build/zinnia/npm-global

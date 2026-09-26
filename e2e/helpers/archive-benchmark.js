@@ -12,6 +12,7 @@ const VENDORED_UPDATER_DIR = path.join(
   "tauri-plugin-updater",
 );
 export const ARCHIVE_BENCHMARK_E2E_STAMP_VERSION = "archive-io-e2e-v1";
+const DEFAULT_ARCHIVE_BENCHMARK_BUILD_TIMEOUT_MS = 45 * 60 * 1000;
 
 function npmCommand() {
   return process.platform === "win32" ? "npm.cmd" : "npm";
@@ -137,20 +138,164 @@ function writeE2eStamp(binary) {
   );
 }
 
-function run(command, args, cwd = REPO_ROOT, env = {}) {
-  const result = spawnSync(command, args, {
+function buildCommandTimeoutMs(env = process.env) {
+  const parsed = Number(env.ZINNIA_BENCH_BUILD_TIMEOUT_MS);
+  return Number.isSafeInteger(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_ARCHIVE_BENCHMARK_BUILD_TIMEOUT_MS;
+}
+
+export function terminateProcessTree(child, signal = "SIGTERM") {
+  if (!child) return false;
+  if (!child.pid) {
+    try {
+      return child.kill(signal) !== false;
+    } catch {
+      return false;
+    }
+  }
+  if (process.platform === "win32") {
+    const result = spawnSync(
+      "taskkill",
+      ["/PID", String(child.pid), "/T", "/F"],
+      { stdio: "ignore", windowsHide: true, timeout: 10_000 },
+    );
+    if (result.status === 0) return true;
+  } else {
+    try {
+      process.kill(-child.pid, signal);
+      return true;
+    } catch (error) {
+      if (error.code !== "ESRCH") {
+        try {
+          child.kill(signal);
+          return true;
+        } catch {}
+      }
+    }
+  }
+  try {
+    child.kill(signal);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function waitForProcessExit(child, timeoutMs) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve(true);
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (exited) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      child.removeListener("exit", onExit);
+      resolve(exited);
+    };
+    const onExit = () => finish(true);
+    const timeout = setTimeout(() => finish(false), timeoutMs);
+    child.once("exit", onExit);
+  });
+}
+
+function processGroupIsAlive(pid) {
+  if (!pid || process.platform === "win32") return false;
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    return error.code !== "ESRCH";
+  }
+}
+
+function waitForProcessGroupExit(pid, timeoutMs) {
+  if (!processGroupIsAlive(pid)) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const deadline = Date.now() + timeoutMs;
+    const check = () => {
+      if (!processGroupIsAlive(pid)) {
+        resolve(true);
+      } else if (Date.now() >= deadline) {
+        resolve(false);
+      } else {
+        setTimeout(check, 25);
+      }
+    };
+    check();
+  });
+}
+
+async function terminateAndWaitForProcessTree(child) {
+  if (!child?.pid) {
+    terminateProcessTree(child, "SIGTERM");
+    return waitForProcessExit(child, 10_000);
+  }
+  terminateProcessTree(child, "SIGTERM");
+  const leaderExited = await waitForProcessExit(child, 1_000);
+  if (process.platform === "win32") return leaderExited;
+  if (!processGroupIsAlive(child.pid)) return leaderExited;
+  terminateProcessTree(child, "SIGKILL");
+  const [leaderStopped, groupStopped] = await Promise.all([
+    waitForProcessExit(child, 10_000),
+    waitForProcessGroupExit(child.pid, 10_000),
+  ]);
+  return leaderStopped && groupStopped;
+}
+
+async function run(command, args, cwd = REPO_ROOT, env = {}, signal) {
+  if (signal?.aborted) {
+    throw new Error("Archive benchmark build was aborted before starting.");
+  }
+  const mergedEnv = { ...process.env, ...env };
+  const buildTimeoutMs = buildCommandTimeoutMs(mergedEnv);
+  const child = spawn(command, args, {
     cwd,
-    env: { ...process.env, ...env },
-    encoding: "utf8",
+    env: mergedEnv,
     stdio: "inherit",
     windowsHide: true,
     shell: process.platform === "win32" && /^(npm|npx)(\.cmd)?$/i.test(command),
+    detached: process.platform !== "win32",
   });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(
-      `${command} ${args.join(" ")} exited with ${result.status}`,
-    );
+  const childExit = waitForChild(child);
+  childExit.catch(() => {});
+  let timeout;
+  let timedOut = false;
+  let aborted = false;
+  let onAbort;
+  const deadline = new Promise((_, reject) => {
+    timeout = setTimeout(() => {
+      timedOut = true;
+      reject(
+        new Error(
+          `Archive benchmark build command ${command} ${args.join(" ")} timed out after ${buildTimeoutMs}ms`,
+        ),
+      );
+    }, buildTimeoutMs);
+  });
+  const abortSignal = new Promise((_, reject) => {
+    if (!signal) return;
+    onAbort = () => {
+      aborted = true;
+      reject(new Error("Archive benchmark build was aborted."));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    await Promise.race([childExit, deadline, abortSignal]);
+  } catch (error) {
+    if (!timedOut && !aborted) throw error;
+    if (!(await terminateAndWaitForProcessTree(child))) {
+      throw new Error(
+        `Archive benchmark build process tree did not stop after interruption: ${command}`,
+      );
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    if (signal && onAbort) signal.removeEventListener("abort", onAbort);
   }
 }
 
@@ -169,7 +314,10 @@ function restoreGeneratedSchemas(snapshots) {
   for (const [file, contents] of snapshots) fs.writeFileSync(file, contents);
 }
 
-function ensureReleaseE2eBinary() {
+async function ensureReleaseE2eBinary(signal) {
+  if (signal?.aborted) {
+    throw new Error("Archive benchmark build was aborted before starting.");
+  }
   const binary = releaseBinaryPath();
   if (
     process.env.ZINNIA_E2E_REBUILD !== "1" &&
@@ -180,17 +328,23 @@ function ensureReleaseE2eBinary() {
   const buildStartedAt = Date.now();
   const snapshots = snapshotGeneratedSchemas();
   try {
-    run(npmCommand(), ["run", "prepare:7z"]);
-    run(npxCommand(), [
-      "tauri",
-      "build",
-      "--no-bundle",
-      "--config",
-      E2E_CONFIG,
-      "--",
-      "--features",
-      "e2e",
-    ]);
+    await run(npmCommand(), ["run", "prepare:7z"], REPO_ROOT, {}, signal);
+    await run(
+      npxCommand(),
+      [
+        "tauri",
+        "build",
+        "--no-bundle",
+        "--config",
+        E2E_CONFIG,
+        "--",
+        "--features",
+        "e2e",
+      ],
+      REPO_ROOT,
+      {},
+      signal,
+    );
   } finally {
     restoreGeneratedSchemas(snapshots);
   }
@@ -302,39 +456,27 @@ export function waitForChildExit(
   child,
   timeoutMs = ARCHIVE_BENCHMARK_CLOSE_TIMEOUT_MS,
 ) {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const timeout = setTimeout(() => {
-      if (settled) return;
-      try {
-        if (!child.killed) child.kill();
-      } catch {
-        // The timeout error below is the deterministic shutdown result; the
-        // child may already have exited between the check and kill().
-      }
-      settled = true;
-      clearTimeout(timeout);
-      reject(
-        new Error(
-          "Archive benchmark WDIO process did not exit after close request.",
-        ),
-      );
+  let timeout;
+  let timedOut = false;
+  const deadline = new Promise((_, reject) => {
+    timeout = setTimeout(() => {
+      timedOut = true;
+      reject(new Error("Archive benchmark WDIO close deadline expired."));
     }, timeoutMs);
-    childExit.then(
-      () => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        resolve();
-      },
-      (error) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        reject(error);
-      },
-    );
   });
+  return Promise.race([childExit, deadline])
+    .catch(async (error) => {
+      if (!timedOut) throw error;
+      if (!(await terminateAndWaitForProcessTree(child))) {
+        throw new Error(
+          "Archive benchmark WDIO process tree did not stop after timeout.",
+        );
+      }
+      throw new Error(
+        "Archive benchmark WDIO process did not exit after close request.",
+      );
+    })
+    .finally(() => clearTimeout(timeout));
 }
 
 function cleanupProfile(profileDir) {
@@ -359,8 +501,11 @@ function closeServer(server) {
  * Start one release E2E app and expose request/response transport to harness.
  * archive-io-benchmark.spec.js must keep socket open until close request.
  */
-export async function createArchiveBenchmarkSession() {
-  const binary = ensureReleaseE2eBinary();
+export async function createArchiveBenchmarkSession({ signal } = {}) {
+  const binary = await ensureReleaseE2eBinary(signal);
+  if (signal?.aborted) {
+    throw new Error("Archive benchmark runner was aborted before startup.");
+  }
   const profile = createE2eProfile(REPO_ROOT);
   const pending = new Map();
   let requestId = 0;
@@ -457,6 +602,7 @@ export async function createArchiveBenchmarkSession() {
       stdio: "inherit",
       windowsHide: true,
       shell: command.shell,
+      detached: process.platform !== "win32",
     });
   } catch (error) {
     await closeServer(server);
@@ -466,6 +612,35 @@ export async function createArchiveBenchmarkSession() {
   const childExit = waitForChild(child);
   childExit.catch(() => {});
   let closePromise;
+  const rejectPending = (error) => {
+    for (const request of pending.values()) request.reject(error);
+    pending.clear();
+  };
+  const onAbort = () => {
+    void abort().catch(() => {});
+  };
+  const cleanup = async () => {
+    rejectPending(new Error("Archive benchmark session closed."));
+    if (socket && !socket.destroyed) socket.destroy();
+    await closeServer(server);
+    cleanupProfile(profile.profileDir);
+    signal?.removeEventListener("abort", onAbort);
+  };
+  const abort = () => {
+    if (closePromise) return closePromise;
+    closePromise = (async () => {
+      try {
+        if (!(await terminateAndWaitForProcessTree(child))) {
+          throw new Error(
+            "Archive benchmark WDIO process tree did not stop after abort.",
+          );
+        }
+      } finally {
+        await cleanup();
+      }
+    })();
+    return closePromise;
+  };
   const close = () => {
     if (closePromise) return closePromise;
     closePromise = (async () => {
@@ -477,8 +652,12 @@ export async function createArchiveBenchmarkSession() {
               error ? reject(error) : resolve(),
             );
           });
-        } else if (!child.killed) {
-          child.kill();
+        } else if (child.exitCode === null && child.signalCode === null) {
+          if (!(await terminateAndWaitForProcessTree(child))) {
+            throw new Error(
+              "Archive benchmark WDIO process tree did not stop after close.",
+            );
+          }
         }
         try {
           await waitForChildExit(
@@ -490,17 +669,22 @@ export async function createArchiveBenchmarkSession() {
           childError = error;
         }
       } finally {
-        const socketError = new Error("Archive benchmark session closed.");
-        for (const request of pending.values()) request.reject(socketError);
-        pending.clear();
-        if (socket && !socket.destroyed) socket.destroy();
-        await closeServer(server);
-        cleanupProfile(profile.profileDir);
+        if (childError) {
+          const stopped = await terminateAndWaitForProcessTree(child);
+          if (!stopped) {
+            childError = new Error(
+              "Archive benchmark WDIO process tree did not stop after close failure.",
+            );
+          }
+        }
+        await cleanup();
       }
       if (childError) throw childError;
     })();
     return closePromise;
   };
+  signal?.addEventListener("abort", onAbort, { once: true });
+  if (signal?.aborted) onAbort();
   const run = async (request) => {
     await Promise.race([
       socketReady,
@@ -525,5 +709,5 @@ export async function createArchiveBenchmarkSession() {
       }
     });
   };
-  return { run, runArchiveBenchmarkOperation: run, close };
+  return { run, runArchiveBenchmarkOperation: run, close, abort };
 }

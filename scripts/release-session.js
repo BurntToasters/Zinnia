@@ -15,6 +15,18 @@ const QUALITY_GATE_RELATIVE_PATH = path.join(
   ".release-quality.json",
 );
 const DEFAULT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+// Native Tauri builds rewrite these tracked outputs. Keep the allowlist exact:
+// a new or unexpected file under gen/ must still invalidate release proof.
+const GENERATED_TAURI_SCHEMA_PATHS = new Set(
+  [
+    "acl-manifests.json",
+    "capabilities.json",
+    "desktop-schema.json",
+    "linux-schema.json",
+    "macOS-schema.json",
+    "windows-schema.json",
+  ].map((name) => `src-tauri/gen/schemas/${name}`),
+);
 
 function command(commandName, args, root) {
   // trimEnd only: git porcelain uses " M path" / "M  path". trim() would turn
@@ -51,9 +63,7 @@ function isIgnorableReleaseDirtyPath(filePath) {
   );
   const qualityGatePath = QUALITY_GATE_RELATIVE_PATH.replaceAll("\\", "/");
   return (
-    normalizedPath.startsWith("src-tauri/gen/schemas/") ||
-    normalizedPath === "src-tauri/gen/" ||
-    normalizedPath === "src-tauri/gen/schemas/" ||
+    GENERATED_TAURI_SCHEMA_PATHS.has(normalizedPath) ||
     normalizedPath === releaseSessionPath ||
     normalizedPath === qualityGatePath
   );

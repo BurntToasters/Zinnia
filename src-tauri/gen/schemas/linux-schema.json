@@ -387,16 +387,640 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the acknowledge_preserved_transaction command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-acknowledge-preserved-transaction",
+          "markdownDescription": "Enables the acknowledge_preserved_transaction command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the append_local_log command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-append-local-log",
+          "markdownDescription": "Enables the append_local_log command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the archive_output_selection_token command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-archive-output-selection-token",
+          "markdownDescription": "Enables the archive_output_selection_token command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the cancel_7z command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-cancel-7z",
+          "markdownDescription": "Enables the cancel_7z command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the clear_logs command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-clear-logs",
+          "markdownDescription": "Enables the clear_logs command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the close_debug_console_window command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-close-debug-console-window",
+          "markdownDescription": "Enables the close_debug_console_window command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the close_extract_window command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-close-extract-window",
+          "markdownDescription": "Enables the close_extract_window command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the create_temp_extract_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-create-temp-extract-dir",
+          "markdownDescription": "Enables the create_temp_extract_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the debug_console_window_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-debug-console-window-open",
+          "markdownDescription": "Enables the debug_console_window_open command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the drain_pending_paths command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-drain-pending-paths",
+          "markdownDescription": "Enables the drain_pending_paths command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the enable_finder_sync command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-enable-finder-sync",
+          "markdownDescription": "Enables the enable_finder_sync command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the export_logs command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-export-logs",
+          "markdownDescription": "Enables the export_logs command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_beta_updater_target command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-beta-updater-target",
+          "markdownDescription": "Enables the get_beta_updater_target command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_cpu_count command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-cpu-count",
+          "markdownDescription": "Enables the get_cpu_count command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_extract_paths command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-extract-paths",
+          "markdownDescription": "Enables the get_extract_paths command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_initial_mode command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-initial-mode",
+          "markdownDescription": "Enables the get_initial_mode command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_initial_paths command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-initial-paths",
+          "markdownDescription": "Enables the get_initial_paths command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_log_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-log-dir",
+          "markdownDescription": "Enables the get_log_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_os_integration_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-os-integration-status",
+          "markdownDescription": "Enables the get_os_integration_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_platform_info command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-platform-info",
+          "markdownDescription": "Enables the get_platform_info command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_shell_handoff_error command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-shell-handoff-error",
+          "markdownDescription": "Enables the get_shell_handoff_error command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_startup_recovery_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-startup-recovery-status",
+          "markdownDescription": "Enables the get_startup_recovery_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the inspect_extract_destination command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-inspect-extract-destination",
+          "markdownDescription": "Enables the inspect_extract_destination command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the is_7z_running command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-is-7z-running",
+          "markdownDescription": "Enables the is_7z_running command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the is_flatpak command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-is-flatpak",
+          "markdownDescription": "Enables the is_flatpak command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the is_packaged command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-is-packaged",
+          "markdownDescription": "Enables the is_packaged command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_managed_temp_children command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-list-managed-temp-children",
+          "markdownDescription": "Enables the list_managed_temp_children command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the load_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-load-settings",
+          "markdownDescription": "Enables the load_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the mark_main_window_ready command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-mark-main-window-ready",
+          "markdownDescription": "Enables the mark_main_window_ready command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_debug_console_window command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-debug-console-window",
+          "markdownDescription": "Enables the open_debug_console_window command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_finder_services_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-finder-services-settings",
+          "markdownDescription": "Enables the open_finder_services_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_finder_sync_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-finder-sync-settings",
+          "markdownDescription": "Enables the open_finder_sync_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_log_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-log-dir",
+          "markdownDescription": "Enables the open_log_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_os_integration_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-os-integration-settings",
+          "markdownDescription": "Enables the open_os_integration_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-path",
+          "markdownDescription": "Enables the open_path command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the probe_7z command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-probe-7z",
+          "markdownDescription": "Enables the probe_7z command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the probe_compress_inputs command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-probe-compress-inputs",
+          "markdownDescription": "Enables the probe_compress_inputs command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the register_extract_open_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-register-extract-open-path",
+          "markdownDescription": "Enables the register_extract_open_path command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the relay_debug_console_clear command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-relay-debug-console-clear",
+          "markdownDescription": "Enables the relay_debug_console_clear command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the relay_debug_console_line command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-relay-debug-console-line",
+          "markdownDescription": "Enables the relay_debug_console_line command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the relay_debug_console_seed command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-relay-debug-console-seed",
+          "markdownDescription": "Enables the relay_debug_console_seed command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the relay_debug_console_signal command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-relay-debug-console-signal",
+          "markdownDescription": "Enables the relay_debug_console_signal command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the remove_managed_temp_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-remove-managed-temp-dir",
+          "markdownDescription": "Enables the remove_managed_temp_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the reserve_temp_extract_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-reserve-temp-extract-path",
+          "markdownDescription": "Enables the reserve_temp_extract_path command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the reset_preferred_archiver_to_system command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-reset-preferred-archiver-to-system",
+          "markdownDescription": "Enables the reset_preferred_archiver_to_system command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the reset_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-reset-settings",
+          "markdownDescription": "Enables the reset_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the run_7z command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-run-7z",
+          "markdownDescription": "Enables the run_7z command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-save-settings",
+          "markdownDescription": "Enables the save_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_workspace_window_fx command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-workspace-window-fx",
+          "markdownDescription": "Enables the set_workspace_window_fx command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_zinnia_default_archiver command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-zinnia-default-archiver",
+          "markdownDescription": "Enables the set_zinnia_default_archiver command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the supports_workspace_window_fx command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-supports-workspace-window-fx",
+          "markdownDescription": "Enables the supports_workspace_window_fx command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the validate_archive_paths command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-validate-archive-paths",
+          "markdownDescription": "Enables the validate_archive_paths command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the acknowledge_preserved_transaction command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-acknowledge-preserved-transaction",
+          "markdownDescription": "Denies the acknowledge_preserved_transaction command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the append_local_log command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-append-local-log",
+          "markdownDescription": "Denies the append_local_log command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the archive_output_selection_token command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-archive-output-selection-token",
+          "markdownDescription": "Denies the archive_output_selection_token command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cancel_7z command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-cancel-7z",
+          "markdownDescription": "Denies the cancel_7z command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the clear_logs command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-clear-logs",
+          "markdownDescription": "Denies the clear_logs command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the close_debug_console_window command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-close-debug-console-window",
+          "markdownDescription": "Denies the close_debug_console_window command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the close_extract_window command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-close-extract-window",
+          "markdownDescription": "Denies the close_extract_window command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the create_temp_extract_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-create-temp-extract-dir",
+          "markdownDescription": "Denies the create_temp_extract_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the debug_console_window_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-debug-console-window-open",
+          "markdownDescription": "Denies the debug_console_window_open command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the drain_pending_paths command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-drain-pending-paths",
+          "markdownDescription": "Denies the drain_pending_paths command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the enable_finder_sync command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-enable-finder-sync",
+          "markdownDescription": "Denies the enable_finder_sync command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the export_logs command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-export-logs",
+          "markdownDescription": "Denies the export_logs command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_beta_updater_target command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-beta-updater-target",
+          "markdownDescription": "Denies the get_beta_updater_target command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_cpu_count command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-cpu-count",
+          "markdownDescription": "Denies the get_cpu_count command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_extract_paths command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-extract-paths",
+          "markdownDescription": "Denies the get_extract_paths command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_initial_mode command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-initial-mode",
+          "markdownDescription": "Denies the get_initial_mode command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_initial_paths command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-initial-paths",
+          "markdownDescription": "Denies the get_initial_paths command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_log_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-log-dir",
+          "markdownDescription": "Denies the get_log_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_os_integration_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-os-integration-status",
+          "markdownDescription": "Denies the get_os_integration_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_platform_info command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-platform-info",
+          "markdownDescription": "Denies the get_platform_info command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_shell_handoff_error command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-shell-handoff-error",
+          "markdownDescription": "Denies the get_shell_handoff_error command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_startup_recovery_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-startup-recovery-status",
+          "markdownDescription": "Denies the get_startup_recovery_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the inspect_extract_destination command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-inspect-extract-destination",
+          "markdownDescription": "Denies the inspect_extract_destination command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the is_7z_running command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-is-7z-running",
+          "markdownDescription": "Denies the is_7z_running command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the is_flatpak command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-is-flatpak",
+          "markdownDescription": "Denies the is_flatpak command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the is_packaged command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-is-packaged",
+          "markdownDescription": "Denies the is_packaged command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_managed_temp_children command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-list-managed-temp-children",
+          "markdownDescription": "Denies the list_managed_temp_children command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the load_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-load-settings",
+          "markdownDescription": "Denies the load_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the mark_main_window_ready command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-mark-main-window-ready",
+          "markdownDescription": "Denies the mark_main_window_ready command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_debug_console_window command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-debug-console-window",
+          "markdownDescription": "Denies the open_debug_console_window command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_finder_services_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-finder-services-settings",
+          "markdownDescription": "Denies the open_finder_services_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_finder_sync_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-finder-sync-settings",
+          "markdownDescription": "Denies the open_finder_sync_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_log_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-log-dir",
+          "markdownDescription": "Denies the open_log_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_os_integration_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-os-integration-settings",
+          "markdownDescription": "Denies the open_os_integration_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-path",
+          "markdownDescription": "Denies the open_path command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the probe_7z command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-probe-7z",
+          "markdownDescription": "Denies the probe_7z command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the probe_compress_inputs command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-probe-compress-inputs",
+          "markdownDescription": "Denies the probe_compress_inputs command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the register_extract_open_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-register-extract-open-path",
+          "markdownDescription": "Denies the register_extract_open_path command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the relay_debug_console_clear command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-relay-debug-console-clear",
+          "markdownDescription": "Denies the relay_debug_console_clear command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the relay_debug_console_line command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-relay-debug-console-line",
+          "markdownDescription": "Denies the relay_debug_console_line command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the relay_debug_console_seed command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-relay-debug-console-seed",
+          "markdownDescription": "Denies the relay_debug_console_seed command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the relay_debug_console_signal command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-relay-debug-console-signal",
+          "markdownDescription": "Denies the relay_debug_console_signal command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the remove_managed_temp_dir command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-remove-managed-temp-dir",
+          "markdownDescription": "Denies the remove_managed_temp_dir command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the reserve_temp_extract_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-reserve-temp-extract-path",
+          "markdownDescription": "Denies the reserve_temp_extract_path command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the reset_preferred_archiver_to_system command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-reset-preferred-archiver-to-system",
+          "markdownDescription": "Denies the reset_preferred_archiver_to_system command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the reset_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-reset-settings",
+          "markdownDescription": "Denies the reset_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the run_7z command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-run-7z",
+          "markdownDescription": "Denies the run_7z command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-save-settings",
+          "markdownDescription": "Denies the save_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_workspace_window_fx command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-workspace-window-fx",
+          "markdownDescription": "Denies the set_workspace_window_fx command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_zinnia_default_archiver command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-zinnia-default-archiver",
+          "markdownDescription": "Denies the set_zinnia_default_archiver command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the supports_workspace_window_fx command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-supports-workspace-window-fx",
+          "markdownDescription": "Denies the supports_workspace_window_fx command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the validate_archive_paths command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-validate-archive-paths",
+          "markdownDescription": "Denies the validate_archive_paths command without any pre-configured scope."
+        },
+        {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",
           "type": "string",
           "const": "core:default",
           "markdownDescription": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`"
         },
         {
-          "description": "Default permissions for the plugin.\n#### This default permission set includes:\n\n- `allow-version`\n- `allow-name`\n- `allow-tauri-version`\n- `allow-identifier`\n- `allow-bundle-type`\n- `allow-register-listener`\n- `allow-remove-listener`",
+          "description": "Default permissions for the plugin.\n#### This default permission set includes:\n\n- `allow-version`\n- `allow-name`\n- `allow-tauri-version`\n- `allow-identifier`\n- `allow-bundle-type`\n- `allow-register-listener`\n- `allow-remove-listener`\n- `allow-supports-multiple-windows`",
           "type": "string",
           "const": "core:app:default",
-          "markdownDescription": "Default permissions for the plugin.\n#### This default permission set includes:\n\n- `allow-version`\n- `allow-name`\n- `allow-tauri-version`\n- `allow-identifier`\n- `allow-bundle-type`\n- `allow-register-listener`\n- `allow-remove-listener`"
+          "markdownDescription": "Default permissions for the plugin.\n#### This default permission set includes:\n\n- `allow-version`\n- `allow-name`\n- `allow-tauri-version`\n- `allow-identifier`\n- `allow-bundle-type`\n- `allow-register-listener`\n- `allow-remove-listener`\n- `allow-supports-multiple-windows`"
         },
         {
           "description": "Enables the app_hide command without any pre-configured scope.",
@@ -469,6 +1093,12 @@
           "type": "string",
           "const": "core:app:allow-set-dock-visibility",
           "markdownDescription": "Enables the set_dock_visibility command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the supports_multiple_windows command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:app:allow-supports-multiple-windows",
+          "markdownDescription": "Enables the supports_multiple_windows command without any pre-configured scope."
         },
         {
           "description": "Enables the tauri_version command without any pre-configured scope.",
@@ -553,6 +1183,12 @@
           "type": "string",
           "const": "core:app:deny-set-dock-visibility",
           "markdownDescription": "Denies the set_dock_visibility command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the supports_multiple_windows command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:app:deny-supports-multiple-windows",
+          "markdownDescription": "Denies the supports_multiple_windows command without any pre-configured scope."
         },
         {
           "description": "Denies the tauri_version command without any pre-configured scope.",
@@ -1077,10 +1713,10 @@
           "markdownDescription": "Denies the close command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the plugin, which enables all commands.\n#### This default permission set includes:\n\n- `allow-new`\n- `allow-get-by-id`\n- `allow-remove-by-id`\n- `allow-set-icon`\n- `allow-set-menu`\n- `allow-set-tooltip`\n- `allow-set-title`\n- `allow-set-visible`\n- `allow-set-temp-dir-path`\n- `allow-set-icon-as-template`\n- `allow-set-show-menu-on-left-click`",
+          "description": "Default permissions for the plugin, which enables all commands.\n#### This default permission set includes:\n\n- `allow-new`\n- `allow-get-by-id`\n- `allow-remove-by-id`\n- `allow-set-icon`\n- `allow-set-menu`\n- `allow-set-tooltip`\n- `allow-set-title`\n- `allow-set-visible`\n- `allow-set-temp-dir-path`\n- `allow-set-icon-as-template`\n- `allow-set-icon-with-as-template`\n- `allow-set-show-menu-on-left-click`",
           "type": "string",
           "const": "core:tray:default",
-          "markdownDescription": "Default permissions for the plugin, which enables all commands.\n#### This default permission set includes:\n\n- `allow-new`\n- `allow-get-by-id`\n- `allow-remove-by-id`\n- `allow-set-icon`\n- `allow-set-menu`\n- `allow-set-tooltip`\n- `allow-set-title`\n- `allow-set-visible`\n- `allow-set-temp-dir-path`\n- `allow-set-icon-as-template`\n- `allow-set-show-menu-on-left-click`"
+          "markdownDescription": "Default permissions for the plugin, which enables all commands.\n#### This default permission set includes:\n\n- `allow-new`\n- `allow-get-by-id`\n- `allow-remove-by-id`\n- `allow-set-icon`\n- `allow-set-menu`\n- `allow-set-tooltip`\n- `allow-set-title`\n- `allow-set-visible`\n- `allow-set-temp-dir-path`\n- `allow-set-icon-as-template`\n- `allow-set-icon-with-as-template`\n- `allow-set-show-menu-on-left-click`"
         },
         {
           "description": "Enables the get_by_id command without any pre-configured scope.",
@@ -1111,6 +1747,12 @@
           "type": "string",
           "const": "core:tray:allow-set-icon-as-template",
           "markdownDescription": "Enables the set_icon_as_template command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_icon_with_as_template command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:tray:allow-set-icon-with-as-template",
+          "markdownDescription": "Enables the set_icon_with_as_template command without any pre-configured scope."
         },
         {
           "description": "Enables the set_menu command without any pre-configured scope.",
@@ -1177,6 +1819,12 @@
           "type": "string",
           "const": "core:tray:deny-set-icon-as-template",
           "markdownDescription": "Denies the set_icon_as_template command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_icon_with_as_template command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:tray:deny-set-icon-with-as-template",
+          "markdownDescription": "Denies the set_icon_with_as_template command without any pre-configured scope."
         },
         {
           "description": "Denies the set_menu command without any pre-configured scope.",
@@ -1437,10 +2085,16 @@
           "markdownDescription": "Denies the webview_size command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the plugin.\n#### This default permission set includes:\n\n- `allow-get-all-windows`\n- `allow-scale-factor`\n- `allow-inner-position`\n- `allow-outer-position`\n- `allow-inner-size`\n- `allow-outer-size`\n- `allow-is-fullscreen`\n- `allow-is-minimized`\n- `allow-is-maximized`\n- `allow-is-focused`\n- `allow-is-decorated`\n- `allow-is-resizable`\n- `allow-is-maximizable`\n- `allow-is-minimizable`\n- `allow-is-closable`\n- `allow-is-visible`\n- `allow-is-enabled`\n- `allow-title`\n- `allow-current-monitor`\n- `allow-primary-monitor`\n- `allow-monitor-from-point`\n- `allow-available-monitors`\n- `allow-cursor-position`\n- `allow-theme`\n- `allow-is-always-on-top`\n- `allow-internal-toggle-maximize`",
+          "description": "Default permissions for the plugin.\n#### This default permission set includes:\n\n- `allow-get-all-windows`\n- `allow-scale-factor`\n- `allow-inner-position`\n- `allow-outer-position`\n- `allow-inner-size`\n- `allow-outer-size`\n- `allow-is-fullscreen`\n- `allow-is-minimized`\n- `allow-is-maximized`\n- `allow-is-focused`\n- `allow-is-decorated`\n- `allow-is-resizable`\n- `allow-is-maximizable`\n- `allow-is-minimizable`\n- `allow-is-closable`\n- `allow-is-visible`\n- `allow-is-enabled`\n- `allow-title`\n- `allow-current-monitor`\n- `allow-primary-monitor`\n- `allow-monitor-from-point`\n- `allow-available-monitors`\n- `allow-cursor-position`\n- `allow-theme`\n- `allow-is-always-on-top`\n- `allow-activity-name`\n- `allow-scene-identifier`\n- `allow-internal-toggle-maximize`",
           "type": "string",
           "const": "core:window:default",
-          "markdownDescription": "Default permissions for the plugin.\n#### This default permission set includes:\n\n- `allow-get-all-windows`\n- `allow-scale-factor`\n- `allow-inner-position`\n- `allow-outer-position`\n- `allow-inner-size`\n- `allow-outer-size`\n- `allow-is-fullscreen`\n- `allow-is-minimized`\n- `allow-is-maximized`\n- `allow-is-focused`\n- `allow-is-decorated`\n- `allow-is-resizable`\n- `allow-is-maximizable`\n- `allow-is-minimizable`\n- `allow-is-closable`\n- `allow-is-visible`\n- `allow-is-enabled`\n- `allow-title`\n- `allow-current-monitor`\n- `allow-primary-monitor`\n- `allow-monitor-from-point`\n- `allow-available-monitors`\n- `allow-cursor-position`\n- `allow-theme`\n- `allow-is-always-on-top`\n- `allow-internal-toggle-maximize`"
+          "markdownDescription": "Default permissions for the plugin.\n#### This default permission set includes:\n\n- `allow-get-all-windows`\n- `allow-scale-factor`\n- `allow-inner-position`\n- `allow-outer-position`\n- `allow-inner-size`\n- `allow-outer-size`\n- `allow-is-fullscreen`\n- `allow-is-minimized`\n- `allow-is-maximized`\n- `allow-is-focused`\n- `allow-is-decorated`\n- `allow-is-resizable`\n- `allow-is-maximizable`\n- `allow-is-minimizable`\n- `allow-is-closable`\n- `allow-is-visible`\n- `allow-is-enabled`\n- `allow-title`\n- `allow-current-monitor`\n- `allow-primary-monitor`\n- `allow-monitor-from-point`\n- `allow-available-monitors`\n- `allow-cursor-position`\n- `allow-theme`\n- `allow-is-always-on-top`\n- `allow-activity-name`\n- `allow-scene-identifier`\n- `allow-internal-toggle-maximize`"
+        },
+        {
+          "description": "Enables the activity_name command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:window:allow-activity-name",
+          "markdownDescription": "Enables the activity_name command without any pre-configured scope."
         },
         {
           "description": "Enables the available_monitors command without any pre-configured scope.",
@@ -1633,6 +2287,12 @@
           "type": "string",
           "const": "core:window:allow-scale-factor",
           "markdownDescription": "Enables the scale_factor command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the scene_identifier command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:window:allow-scene-identifier",
+          "markdownDescription": "Enables the scene_identifier command without any pre-configured scope."
         },
         {
           "description": "Enables the set_always_on_bottom command without any pre-configured scope.",
@@ -1899,6 +2559,12 @@
           "markdownDescription": "Enables the unminimize command without any pre-configured scope."
         },
         {
+          "description": "Denies the activity_name command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:window:deny-activity-name",
+          "markdownDescription": "Denies the activity_name command without any pre-configured scope."
+        },
+        {
           "description": "Denies the available_monitors command without any pre-configured scope.",
           "type": "string",
           "const": "core:window:deny-available-monitors",
@@ -2089,6 +2755,12 @@
           "type": "string",
           "const": "core:window:deny-scale-factor",
           "markdownDescription": "Denies the scale_factor command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the scene_identifier command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:window:deny-scene-identifier",
+          "markdownDescription": "Denies the scene_identifier command without any pre-configured scope."
         },
         {
           "description": "Denies the set_always_on_bottom command without any pre-configured scope.",
@@ -2355,22 +3027,22 @@
           "markdownDescription": "Denies the unminimize command without any pre-configured scope."
         },
         {
-          "description": "This permission set configures the types of dialogs\navailable from the dialog plugin.\n\n#### Granted Permissions\n\nAll dialog types are enabled.\n\n\n\n#### This default permission set includes:\n\n- `allow-ask`\n- `allow-confirm`\n- `allow-message`\n- `allow-save`\n- `allow-open`",
+          "description": "This permission set configures the types of dialogs\navailable from the dialog plugin.\n\n#### Granted Permissions\n\nAll dialog types are enabled.\n\n\n\n#### This default permission set includes:\n\n- `allow-message`\n- `allow-save`\n- `allow-open`",
           "type": "string",
           "const": "dialog:default",
-          "markdownDescription": "This permission set configures the types of dialogs\navailable from the dialog plugin.\n\n#### Granted Permissions\n\nAll dialog types are enabled.\n\n\n\n#### This default permission set includes:\n\n- `allow-ask`\n- `allow-confirm`\n- `allow-message`\n- `allow-save`\n- `allow-open`"
+          "markdownDescription": "This permission set configures the types of dialogs\navailable from the dialog plugin.\n\n#### Granted Permissions\n\nAll dialog types are enabled.\n\n\n\n#### This default permission set includes:\n\n- `allow-message`\n- `allow-save`\n- `allow-open`"
         },
         {
-          "description": "Enables the ask command without any pre-configured scope.",
+          "description": "Enables the ask command without any pre-configured scope. (**DEPRECATED**: This is now an alias to `allow-message` and will be removed in v3)",
           "type": "string",
           "const": "dialog:allow-ask",
-          "markdownDescription": "Enables the ask command without any pre-configured scope."
+          "markdownDescription": "Enables the ask command without any pre-configured scope. (**DEPRECATED**: This is now an alias to `allow-message` and will be removed in v3)"
         },
         {
-          "description": "Enables the confirm command without any pre-configured scope.",
+          "description": "Enables the confirm command without any pre-configured scope. (**DEPRECATED**: This is now an alias to `allow-message` and will be removed in v3)",
           "type": "string",
           "const": "dialog:allow-confirm",
-          "markdownDescription": "Enables the confirm command without any pre-configured scope."
+          "markdownDescription": "Enables the confirm command without any pre-configured scope. (**DEPRECATED**: This is now an alias to `allow-message` and will be removed in v3)"
         },
         {
           "description": "Enables the message command without any pre-configured scope.",
@@ -2391,16 +3063,16 @@
           "markdownDescription": "Enables the save command without any pre-configured scope."
         },
         {
-          "description": "Denies the ask command without any pre-configured scope.",
+          "description": "Denies the ask command without any pre-configured scope. (**DEPRECATED**: This is now an alias to `deny-message` and will be removed in v3)",
           "type": "string",
           "const": "dialog:deny-ask",
-          "markdownDescription": "Denies the ask command without any pre-configured scope."
+          "markdownDescription": "Denies the ask command without any pre-configured scope. (**DEPRECATED**: This is now an alias to `deny-message` and will be removed in v3)"
         },
         {
-          "description": "Denies the confirm command without any pre-configured scope.",
+          "description": "Denies the confirm command without any pre-configured scope. (**DEPRECATED**: This is now an alias to `deny-message` and will be removed in v3)",
           "type": "string",
           "const": "dialog:deny-confirm",
-          "markdownDescription": "Denies the confirm command without any pre-configured scope."
+          "markdownDescription": "Denies the confirm command without any pre-configured scope. (**DEPRECATED**: This is now an alias to `deny-message` and will be removed in v3)"
         },
         {
           "description": "Denies the message command without any pre-configured scope.",

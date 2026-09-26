@@ -18,6 +18,9 @@ const required = [
   "scripts/prepare-flatpak-source.js",
 ];
 const expectedRuntime = 'runtime-version: "50"';
+const rustToolchain = fs
+  .readFileSync(path.join(root, "rust-toolchain.toml"), "utf8")
+  .match(/^channel = "(\d+\.\d+\.\d+)"$/m)?.[1];
 
 let failed = false;
 for (const rel of required) {
@@ -76,6 +79,19 @@ if (fs.existsSync(manifest)) {
   }
   if (!yaml.includes("tauri build --no-bundle -- --locked")) {
     console.error("flatpak-dry-run: Cargo build must enforce Cargo.lock");
+    failed = true;
+  }
+  if (
+    !rustToolchain ||
+    !yaml.includes(
+      `test "$(rustc --version | cut -d' ' -f2)" = ${rustToolchain}`,
+    ) ||
+    yaml.includes("rustup toolchain install") ||
+    yaml.includes("RUSTUP_TOOLCHAIN:")
+  ) {
+    console.error(
+      "flatpak-dry-run: Rust SDK extension must fail closed on the exact pinned compiler without invoking unavailable rustup",
+    );
     failed = true;
   }
   if (!yaml.includes("Unsupported FLATPAK_ARCH")) {

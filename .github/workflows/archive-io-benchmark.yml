@@ -86,6 +86,9 @@ jobs:
           ZINNIA_BENCH_BASE_RUN: "1"
           ZINNIA_BENCH_REQUIRE_CANDIDATE: "1"
           ZINNIA_BENCH_REQUIRE_BASELINE: "0"
+          ZINNIA_BENCH_RUN_TIMEOUT_MS: "10800000"
+          ZINNIA_BENCH_COMMAND_TIMEOUT_MS: "1800000"
+          ZINNIA_BENCH_BUILD_TIMEOUT_MS: "5400000"
         run: >-
           npm run benchmark:archive-io --
           --formats zip,7z,tar,gzip,bzip2,xz
