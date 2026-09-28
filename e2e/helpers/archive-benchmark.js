@@ -39,7 +39,33 @@ function describeWindowsProcesses(processes, limit = 12) {
 
 /** Why the last Windows tree cleanup for this child could not be proven. */
 export function windowsProcessCleanupFailure(child) {
-  return windowsCleanupFailures.get(child) ?? null;
+  return windowsCleanupFailures.get(child)?.reason ?? null;
+}
+
+/**
+ * Failure class of the last Windows tree cleanup: "capture-gap" (every seen
+ * process exited, but a short-lived one may have been missed), "survivors",
+ * "unresolved", "inventory", or "identity".
+ */
+export function windowsProcessCleanupFailureKind(child) {
+  return windowsCleanupFailures.get(child)?.kind ?? null;
+}
+
+/**
+ * Cleanup status for a finished command. Only proven-safe gaps after a
+ * successful command are warnings; everything else stays fail-closed.
+ */
+export function classifyProcessTreeCleanup({
+  stopped,
+  kind = null,
+  commandFailed = false,
+  allowBuildCleanupWarning = false,
+}) {
+  if (stopped) return "verified";
+  if (commandFailed) return "unproven";
+  if (kind === "capture-gap") return "capture-gap";
+  if (allowBuildCleanupWarning) return "build-unproven";
+  return "unproven";
 }
 
 function positiveProcessTimeout(value, fallback) {
@@ -978,20 +1004,21 @@ export async function terminateAndWaitForProcessTree(child, options = {}) {
         ));
     const state = windowsProcessStates.get(child);
     if (!state) {
-      windowsCleanupFailures.set(
-        child,
-        "leader identity capture never started",
-      );
+      windowsCleanupFailures.set(child, {
+        kind: "identity",
+        reason: "leader identity capture never started",
+      });
       return false;
     }
-    const failCleanup = (reason, remaining = []) => {
+    const failCleanup = (kind, reason, remaining = []) => {
       state.captureStopped = true;
-      windowsCleanupFailures.set(
-        child,
-        remaining.length > 0
-          ? `${reason}; remaining: ${describeWindowsProcesses(remaining)}`
-          : reason,
-      );
+      windowsCleanupFailures.set(child, {
+        kind,
+        reason:
+          remaining.length > 0
+            ? `${reason}; remaining: ${describeWindowsProcesses(remaining)}`
+            : reason,
+      });
       return false;
     };
     let identityTimer;
@@ -1009,6 +1036,7 @@ export async function terminateAndWaitForProcessTree(child, options = {}) {
     clearTimeout(identityTimer);
     if (!leaderIdentity || leaderIdentity.pid !== child.pid) {
       return failCleanup(
+        "identity",
         "leader identity (PID and creation time) was not captured",
       );
     }
@@ -1049,13 +1077,16 @@ export async function terminateAndWaitForProcessTree(child, options = {}) {
       try {
         snapshot = await snapshotTree();
       } catch {
-        return failCleanup("process inventory read failed");
+        return failCleanup("inventory", "process inventory read failed");
       }
       if (!snapshot || !Array.isArray(snapshot.processes)) {
-        return failCleanup("process inventory was unavailable");
+        return failCleanup("inventory", "process inventory was unavailable");
       }
       if (snapshot.reusedLeaderPid) {
-        return failCleanup("leader PID was reused by another process");
+        return failCleanup(
+          "identity",
+          "leader PID was reused by another process",
+        );
       }
       const unresolvedDescendants = snapshot.unresolvedDescendants ?? [];
 
@@ -1066,7 +1097,10 @@ export async function terminateAndWaitForProcessTree(child, options = {}) {
         leaderFromSnapshot &&
         !sameWindowsProcess(leaderFromSnapshot, leaderIdentity)
       ) {
-        return failCleanup("leader identity changed during cleanup");
+        return failCleanup(
+          "identity",
+          "leader identity changed during cleanup",
+        );
       }
       const processes = snapshot.processes.filter((processInfo) =>
         windowsProcessIdentity(processInfo),
@@ -1139,6 +1173,7 @@ export async function terminateAndWaitForProcessTree(child, options = {}) {
         if (unresolvedDescendants.length === 0) {
           if (state.captureIncomplete) {
             return failCleanup(
+              "capture-gap",
               "process capture missed part of the tree while the command ran",
             );
           }
@@ -1165,11 +1200,13 @@ export async function terminateAndWaitForProcessTree(child, options = {}) {
     }
     if (lastRemaining.length > 0) {
       return failCleanup(
+        "survivors",
         `deadline passed with owned processes still running`,
         lastRemaining,
       );
     }
     return failCleanup(
+      "unresolved",
       `deadline passed with processes of unproven ownership (parent PID matches a process seen during the run)`,
       lastUnresolved,
     );
@@ -1292,11 +1329,16 @@ export async function runArchiveBenchmarkBuildCommand(
       const reason =
         windowsProcessCleanupFailure(child) ??
         "leader identity or descendant ownership could not be proven safely";
-      if (options.allowBuildCleanupWarning && !commandError) {
-        // Same policy as the E2E runner: a successful build step may leave
-        // toolchain helpers whose ownership cannot be proven. Warn, record,
-        // and let the caller refuse to stamp the binary as fresh.
-        processTreeCleanup = { status: "build-unproven", reason };
+      // Same policy as the E2E runner. Warned statuses make the caller
+      // refuse to stamp the binary as fresh.
+      const status = classifyProcessTreeCleanup({
+        stopped: false,
+        kind: windowsProcessCleanupFailureKind(child),
+        commandFailed: Boolean(commandError),
+        allowBuildCleanupWarning: options.allowBuildCleanupWarning,
+      });
+      if (status !== "unproven") {
+        processTreeCleanup = { status, reason };
         console.warn(
           `Warning: archive benchmark build step ${command} succeeded but its process tree cleanup could not be verified (${reason}). Continuing.`,
         );
@@ -1323,10 +1365,7 @@ export async function runArchiveBenchmarkBuildCommand(
     }
   }
   if (commandError) throw commandError;
-  if (
-    processTreeCleanup.status !== "verified" &&
-    processTreeCleanup.status !== "build-unproven"
-  ) {
+  if (processTreeCleanup.status === "unproven") {
     throw new Error(
       `Archive benchmark build process tree cleanup was not verified: ${command}`,
     );
@@ -1570,7 +1609,19 @@ export async function closeArchiveBenchmarkSession({
   } catch (error) {
     closeError = error;
   } finally {
-    const stopped = await terminateAndWaitForProcessTree(child);
+    let stopped = await terminateAndWaitForProcessTree(child);
+    if (
+      !stopped &&
+      !closeError &&
+      windowsProcessCleanupFailureKind(child) === "capture-gap"
+    ) {
+      // Clean close and every seen process exited; a short-lived WebView2
+      // helper may have been missed between scans.
+      console.warn(
+        `Warning: archive benchmark WDIO cleanup could not be fully verified (${windowsProcessCleanupFailure(child)}). Continuing.`,
+      );
+      stopped = true;
+    }
     if (!stopped) {
       closeError = new Error(
         "Archive benchmark WDIO process tree did not stop after close.",

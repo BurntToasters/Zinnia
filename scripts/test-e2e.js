@@ -7,8 +7,10 @@ import {
   captureWindowsProcessIdentity,
   createE2eWebdriverPortHandoff,
   reserveE2eWebdriverPort,
+  classifyProcessTreeCleanup,
   terminateAndWaitForProcessTree,
   windowsProcessCleanupFailure,
+  windowsProcessCleanupFailureKind,
 } from "../e2e/helpers/archive-benchmark.js";
 import {
   startWindowsFencedCommand,
@@ -76,6 +78,8 @@ const IGNORED_INPUT_DIRECTORIES = new Set([
   "out",
 ]);
 const IGNORED_INPUT_PATHS = new Set(["src-tauri/binaries"]);
+// Keep in sync with the E2E proof validators in .github/workflows/ci.yml.
+const ACCEPTED_CLEANUP_STATUSES = ["verified", "build-unproven", "capture-gap"];
 
 function positiveTimeout(value, fallback) {
   const parsed = Number(value);
@@ -364,16 +368,21 @@ export async function runBoundedCommand(command, args, options = {}) {
       const reason =
         detail ??
         "leader identity or descendant ownership could not be proven safely";
-      // Build steps (npm/npx/cargo) can leave toolchain helpers whose ownership
-      // the Windows scan cannot prove. A successful build step is recorded and
-      // warned, not failed. Failed commands and the app session stay strict.
-      if (options.allowBuildCleanupWarning && !commandError) {
-        processTreeCleanup = { status: "build-unproven", reason };
+      // A successful command whose seen processes all exited may still have
+      // had a short-lived helper slip between scans (capture-gap). Build steps
+      // may also leave toolchain helpers (build-unproven). Both are recorded
+      // and warned. Failed commands and surviving session processes stay strict.
+      const status = classifyProcessTreeCleanup({
+        stopped: false,
+        kind: windowsProcessCleanupFailureKind(child),
+        commandFailed: Boolean(commandError),
+        allowBuildCleanupWarning: options.allowBuildCleanupWarning,
+      });
+      processTreeCleanup = { status, reason };
+      if (status !== "unproven") {
         console.warn(
           `Warning: ${command} succeeded but its process tree cleanup could not be verified (${reason}). Continuing.`,
         );
-      } else {
-        processTreeCleanup = { status: "unproven", reason };
       }
     }
     if (processTreeCleanup.status === "unproven") {
@@ -778,13 +787,15 @@ export function writeE2eArtifact({
       : processCleanup.every((record) => record.status === "verified")
         ? "verified"
         : processCleanup.every((record) =>
-              ["verified", "build-unproven"].includes(record.status),
+              ACCEPTED_CLEANUP_STATUSES.includes(record.status),
             )
-          ? "build-unproven"
+          ? processCleanup.some((record) => record.status === "capture-gap")
+            ? "capture-gap"
+            : "build-unproven"
           : "unproven";
   const windowsCleanupUnproven =
     platform === "win32" &&
-    !["verified", "build-unproven"].includes(processCleanupStatus);
+    !ACCEPTED_CLEANUP_STATUSES.includes(processCleanupStatus);
   const finalStatus =
     status === "passed" &&
     (!inputsUnchanged ||
