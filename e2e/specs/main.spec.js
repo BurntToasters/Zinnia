@@ -515,11 +515,27 @@ describe("Zinnia main window", () => {
       `Preset "${name}" saved`,
       "Preset save did not finish",
     );
-    await browser.execute(() => window.location.reload());
-    // The persisted Power workspace is restored, so wait for the app shell
-    // rather than the Basic workspace.
-    await $("#app").waitForExist({ timeout: 30_000 });
-    await waitForE2eHook();
+    // Reload after this WebDriver call returns: WebView2 never answers a
+    // synchronous execute that navigates away. The marker proves a new page.
+    await browser.execute(() => {
+      window.__zinniaBeforeReload = true;
+      window.setTimeout(() => window.location.reload(), 50);
+    });
+    await browser.waitUntil(
+      async () =>
+        browser
+          .execute(
+            () =>
+              !window.__zinniaBeforeReload &&
+              Boolean(window.__ZINNIA_E2E__) &&
+              Boolean(document.getElementById("app")),
+          )
+          .catch(() => false),
+      {
+        timeout: 30_000,
+        timeoutMsg: "Window did not finish reloading",
+      },
+    );
     await browser.waitUntil(
       async () =>
         browser.execute(

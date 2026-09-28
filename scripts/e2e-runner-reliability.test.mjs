@@ -1209,7 +1209,7 @@ test("CI E2E proof validators require verified process cleanup", () => {
     "utf8",
   );
   const cleanupChecks = workflow.match(
-    /!\["verified","build-unproven"\]\.includes\(r\.processCleanup\?\.status\)/g,
+    /!\["verified","build-unproven","capture-gap"\]\.includes\(r\.processCleanup\?\.status\)/g,
   );
   assert.equal(
     cleanupChecks?.length,
@@ -1703,6 +1703,123 @@ test("Windows E2E artifact passes with warned build steps but not unproven sessi
     });
     assert.equal(unproven.status, "failed");
     assert.equal(unproven.processCleanup.status, "unproven");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Windows cleanup classifies a capture gap separately from survivors", async () => {
+  const child = windowsChild(52_000);
+  const leader = windowsProcess(child.pid, 1, 5);
+  // Parent PID matches the leader but it predates the leader, so ownership
+  // cannot be proven: the capture records a gap.
+  const unowned = windowsProcess(52_001, child.pid, 1);
+  await archiveBenchmark.captureWindowsProcessIdentity(child, {
+    platform: "win32",
+    readWindowsProcessTable: async () => [leader, unowned],
+    captureIntervalMs: 2,
+  });
+  await delay(20);
+  child.exitCode = 0;
+  assert.equal(
+    await archiveBenchmark.terminateAndWaitForProcessTree(child, {
+      platform: "win32",
+      processTreeCleanupTimeoutMs: 200,
+      processTreeScanDelayMs: 2,
+      readWindowsProcessTable: async () => [],
+    }),
+    false,
+  );
+  assert.equal(
+    archiveBenchmark.windowsProcessCleanupFailureKind(child),
+    "capture-gap",
+  );
+
+  const survivorChild = windowsChild(52_100);
+  const survivorLeader = windowsProcess(survivorChild.pid, 1, 0);
+  const survivor = windowsProcess(52_101, survivorChild.pid, 1);
+  await archiveBenchmark.captureWindowsProcessIdentity(survivorChild, {
+    platform: "win32",
+    readWindowsProcessTable: async () => [survivorLeader, survivor],
+    captureIntervalMs: 2,
+  });
+  await delay(20);
+  survivorChild.exitCode = 0;
+  assert.equal(
+    await archiveBenchmark.terminateAndWaitForProcessTree(survivorChild, {
+      platform: "win32",
+      processTreeCleanupTimeoutMs: 40,
+      processTreeScanDelayMs: 2,
+      readWindowsProcessTable: async () => [survivor],
+      killWindowsProcess: async () => true,
+    }),
+    false,
+  );
+  assert.equal(
+    archiveBenchmark.windowsProcessCleanupFailureKind(survivorChild),
+    "survivors",
+  );
+});
+
+test("cleanup status policy warns only for proven-safe Windows gaps", () => {
+  const classify = archiveBenchmark.classifyProcessTreeCleanup;
+  assert.equal(classify({ stopped: true }), "verified");
+  assert.equal(
+    classify({ stopped: false, kind: "capture-gap", commandFailed: false }),
+    "capture-gap",
+  );
+  assert.equal(
+    classify({ stopped: false, kind: "capture-gap", commandFailed: true }),
+    "unproven",
+  );
+  assert.equal(
+    classify({
+      stopped: false,
+      kind: "survivors",
+      commandFailed: false,
+      allowBuildCleanupWarning: true,
+    }),
+    "build-unproven",
+  );
+  assert.equal(
+    classify({ stopped: false, kind: "survivors", commandFailed: false }),
+    "unproven",
+  );
+  assert.equal(
+    classify({ stopped: false, kind: "identity", commandFailed: false }),
+    "unproven",
+  );
+});
+
+test("Windows E2E artifact accepts a session capture gap", () => {
+  const root = temporaryRoot();
+  try {
+    const binary = join(root, "zinnia");
+    const manifest = join(root, "manifest.json");
+    const reportDir = join(root, "report");
+    const logFile = join(reportDir, "main.log");
+    mkdirSync(reportDir, { recursive: true });
+    writeFileSync(binary, "feature-enabled binary\n");
+    writeFileSync(manifest, '{"payloadFile":"hello.txt"}\n');
+    writeFileSync(logFile, "passing\n");
+    const artifact = e2eRunner.writeE2eArtifact({
+      reportDir,
+      root,
+      binary,
+      fixtureManifest: manifest,
+      platform: "win32",
+      status: "passed",
+      suites: [{ spec: "./specs/main.spec.js", status: "passed", logFile }],
+      processCleanup: [
+        { command: "npx.cmd", status: "build-unproven", reason: "x" },
+        { command: "npx.cmd", status: "capture-gap", reason: "y" },
+      ],
+    });
+    assert.equal(artifact.processCleanup.status, "capture-gap");
+    assert.notEqual(
+      artifact.failure,
+      "Windows E2E process cleanup was not verified.",
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
