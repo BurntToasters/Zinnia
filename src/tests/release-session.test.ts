@@ -58,6 +58,11 @@ describe("release build session", () => {
     expect(
       porcelainPaths("?? src-tauri/gen/schemas/linux-schema.json"),
     ).toEqual(["src-tauri/gen/schemas/linux-schema.json"]);
+    expect(
+      porcelainPaths(
+        "R  src/main.rs -> src-tauri/gen/schemas/linux-schema.json",
+      ),
+    ).toEqual(["src/main.rs", "src-tauri/gen/schemas/linux-schema.json"]);
   });
 
   it("accepts a recent session for the exact source and environment", () => {

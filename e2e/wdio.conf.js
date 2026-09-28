@@ -63,6 +63,8 @@ export const config = {
         driverProvider: "embedded",
         windowLabel: process.env.ZINNIA_E2E_WINDOW_LABEL || "main",
         startTimeout: 180_000,
+        captureBackendLogs: true,
+        backendLogLevel: "debug",
       },
     ],
   ],

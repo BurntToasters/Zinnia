@@ -67,7 +67,10 @@ describe("unpackaged E2E must not ship in release builds", () => {
     expect(read("e2e/helpers/profile.js")).toContain(
       "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
     );
-    expect(read("scripts/test-e2e.js")).toContain("e2e-feature-8");
+    const e2eRunner = read("scripts/test-e2e.js");
+    expect(e2eRunner).toMatch(/const E2E_STAMP_VERSION = "e2e-feature-\d+";/);
+    expect(e2eRunner).toContain("version: E2E_STAMP_VERSION");
+    expect(e2eRunner).toContain("proof.version === E2E_STAMP_VERSION");
     expect(read("src-tauri/src/launch/mod.rs")).toContain(
       "fn e2e_session_active()",
     );

@@ -13,6 +13,16 @@ import { spawn, spawnSync } from "node:child_process";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  assertReleaseBenchmarkInventory,
+  assertBaselineReport,
+  assertComparedBaseline,
+  benchmarkInventoryFromOptions,
+  pinBaselineCheckoutRevision,
+  RELEASE_BENCHMARK_INVENTORY,
+  writeFailureArtifacts,
+  withTimeout,
+} from "./archive-io-policy.mjs";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BENCHMARK_MODULE = join(
@@ -37,7 +47,21 @@ const RUNNER_MODULES = [
 
 const DEFAULT_BENCH_RUN_TIMEOUT_MS = 45 * 60 * 1000;
 const DEFAULT_BENCH_COMMAND_TIMEOUT_MS = 20 * 60 * 1000;
-const DEFAULT_BENCH_ABORT_SETTLE_TIMEOUT_MS = 30 * 1000;
+
+let activeFailureStage = "setup";
+let activeFailureMetadata = {};
+let activeReportDirectory =
+  process.env.ZINNIA_BENCH_REPORT_DIR ||
+  join(process.cwd(), "archive-io-report");
+
+function failureStageFor(error, fallback) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /(?:exceeded its .*timeout|timed out after|did not exit after close request|did not stop after timeout)/i.test(
+    message,
+  )
+    ? "timeout"
+    : fallback;
+}
 
 function positiveInteger(value, fallback) {
   const parsed = Number(value);
@@ -64,10 +88,10 @@ function envFlag(name, fallback = false) {
   return ["1", "true", "yes", "on"].includes(value.toLowerCase());
 }
 
-function gitRevision(ref) {
+function gitRevision(ref, cwd = REPO_ROOT) {
   if (!ref) return null;
   const result = spawnSync("git", ["rev-parse", ref], {
-    cwd: REPO_ROOT,
+    cwd,
     encoding: "utf8",
     windowsHide: true,
   });
@@ -206,6 +230,7 @@ function withoutWrapperOptions(argv) {
   const valueOptions = new Set([
     "--candidate-ref",
     "--baseline-ref",
+    "--expected-candidate-revision",
     "--role",
     "--runner-module",
   ]);
@@ -234,7 +259,9 @@ function reportDirectory(benchmarkOptions) {
 function reportFiles(outputDir) {
   if (!existsSync(outputDir)) return [];
   return readdirSync(outputDir)
-    .filter((name) => name.endsWith(".json"))
+    .filter(
+      (name) => name.endsWith(".json") && name !== "archive-io-failure.json",
+    )
     .map((name) => join(outputDir, name));
 }
 
@@ -250,7 +277,13 @@ function withoutBaselineReport(argv) {
   return result;
 }
 
-async function runBaselineCheckout({ argv, baselineRef, outputDir }) {
+async function runBaselineCheckout({
+  argv,
+  baselineRef,
+  outputDir,
+  expectedInventory,
+  metadata,
+}) {
   if (
     !baselineRef ||
     !envFlag("ZINNIA_BENCH_BASE_RUN") ||
@@ -261,6 +294,7 @@ async function runBaselineCheckout({ argv, baselineRef, outputDir }) {
   const worktree = mkdtempSync(join(tmpdir(), "zinnia-archive-io-base-"));
   const baselineOutput = join(worktree, ".archive-io-baseline");
   let added = false;
+  let pinnedBaselineRevision = null;
   try {
     await runCommand(
       "git",
@@ -268,6 +302,11 @@ async function runBaselineCheckout({ argv, baselineRef, outputDir }) {
       REPO_ROOT,
     );
     added = true;
+    pinnedBaselineRevision = pinBaselineCheckoutRevision(() =>
+      gitRevision("HEAD", worktree),
+    );
+    metadata.baselineRef = pinnedBaselineRevision;
+    metadata.baselineRevision = pinnedBaselineRevision;
     const npm = process.platform === "win32" ? "npm.cmd" : "npm";
     await runCommand(npm, ["ci", "--ignore-scripts"], worktree);
     if (process.platform === "win32") {
@@ -277,10 +316,10 @@ async function runBaselineCheckout({ argv, baselineRef, outputDir }) {
     const baselineRunTimeoutMs = Math.floor(benchmarkRunTimeoutMs() / 2);
     const childEnv = {
       ZINNIA_BENCH_REPORT_DIR: baselineOutput,
-      ZINNIA_BENCH_CANDIDATE_REF: baselineRef,
+      ZINNIA_BENCH_CANDIDATE_REF: pinnedBaselineRevision,
       ZINNIA_BENCH_BASE_REF: "",
       ZINNIA_BENCH_BASELINE_REF: "",
-      ZINNIA_BENCH_CANDIDATE_REVISION: gitRevision(baselineRef) || baselineRef,
+      ZINNIA_BENCH_CANDIDATE_REVISION: pinnedBaselineRevision,
       ZINNIA_BENCH_BASE_REVISION: "",
       ZINNIA_BENCH_ROLE: "baseline",
       ZINNIA_BENCH_BASE_RUN: "0",
@@ -306,6 +345,11 @@ async function runBaselineCheckout({ argv, baselineRef, outputDir }) {
     );
     const baselineJson = reportFiles(baselineOutput)[0];
     if (!baselineJson) return null;
+    assertBaselineReport(
+      JSON.parse(readFileSync(baselineJson, "utf8")),
+      pinnedBaselineRevision,
+      expectedInventory,
+    );
     mkdirSync(outputDir, { recursive: true });
     const destination = join(outputDir, "archive-io-baseline.json");
     copyFileSync(baselineJson, destination);
@@ -313,11 +357,25 @@ async function runBaselineCheckout({ argv, baselineRef, outputDir }) {
     if (existsSync(baselineMarkdown)) {
       copyFileSync(baselineMarkdown, join(outputDir, "archive-io-baseline.md"));
     }
-    return destination;
+    return { reportPath: destination, revision: pinnedBaselineRevision };
   } catch (error) {
     console.warn(
       `Baseline archive benchmark unavailable: ${error instanceof Error ? error.message : String(error)}`,
     );
+    try {
+      writeFailureArtifacts(outputDir, {
+        stage: failureStageFor(error, "setup"),
+        severity: envFlag("ZINNIA_BENCH_REQUIRE_BASELINE_REPORT")
+          ? "error"
+          : "warning",
+        error,
+        metadata,
+      });
+    } catch (artifactError) {
+      console.error(
+        `Could not retain baseline failure artifact: ${artifactError instanceof Error ? artifactError.message : String(artifactError)}`,
+      );
+    }
     return null;
   } finally {
     if (added) {
@@ -329,7 +387,7 @@ async function runBaselineCheckout({ argv, baselineRef, outputDir }) {
         );
       } catch (error) {
         console.warn(
-          `Baseline worktree cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+          `Baseline worktree cleanup failed for ${pinnedBaselineRevision || baselineRef}: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
     }
@@ -393,62 +451,6 @@ function writeStepSummary(outputDir, metadata) {
     "",
   ].join("\n");
   appendFileSync(summaryPath, `${heading}${blocks.join("\n\n")}\n`);
-}
-
-function withTimeout(
-  promise,
-  timeoutMs,
-  onTimeout,
-  settleTimeoutMs = DEFAULT_BENCH_ABORT_SETTLE_TIMEOUT_MS,
-) {
-  const operation = Promise.resolve(promise);
-  operation.catch(() => {});
-  let timeout;
-  let settleTimeout;
-  const deadline = new Promise((_, reject) => {
-    timeout = setTimeout(async () => {
-      const error = new Error(
-        `Archive benchmark exceeded its ${timeoutMs}ms run timeout.`,
-      );
-      let cleanupError;
-      try {
-        await onTimeout?.(error);
-      } catch (failure) {
-        cleanupError = failure;
-      }
-      const operationSettled = await Promise.race([
-        operation.then(
-          () => true,
-          () => true,
-        ),
-        new Promise((resolve) => {
-          settleTimeout = setTimeout(() => resolve(false), settleTimeoutMs);
-        }),
-      ]);
-      clearTimeout(settleTimeout);
-      if (!operationSettled) {
-        reject(
-          new Error(
-            `${error.message} Cancellation did not settle underlying benchmark within ${settleTimeoutMs}ms.`,
-            { cause: error },
-          ),
-        );
-      } else if (cleanupError) {
-        reject(
-          new Error(
-            `${error.message} Runner cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
-            { cause: cleanupError },
-          ),
-        );
-      } else {
-        reject(error);
-      }
-    }, timeoutMs);
-  });
-  return Promise.race([operation, deadline]).finally(() => {
-    clearTimeout(timeout);
-    clearTimeout(settleTimeout);
-  });
 }
 
 async function loadRunner(explicitModule) {
@@ -540,11 +542,21 @@ function mergeExecutorOptions(options, runner) {
 
 async function main() {
   const argv = process.argv.slice(2);
+  const requestedOutputDirectory = optionValue(argv, "--output-dir");
+  if (requestedOutputDirectory) {
+    activeReportDirectory = resolve(requestedOutputDirectory);
+  }
   const candidateRef =
     optionValue(argv, "--candidate-ref") ||
     process.env.ZINNIA_BENCH_CANDIDATE_REF ||
     process.env.GITHUB_SHA ||
     null;
+  const checkoutRevision = gitRevision("HEAD");
+  const expectedCandidateRevision =
+    optionValue(argv, "--expected-candidate-revision") ||
+    process.env.ZINNIA_BENCH_EXPECTED_CANDIDATE_REVISION ||
+    checkoutRevision ||
+    candidateRef;
   const baselineRef =
     optionValue(argv, "--baseline-ref") ||
     process.env.ZINNIA_BENCH_BASELINE_REF ||
@@ -554,10 +566,13 @@ async function main() {
     process.env.ZINNIA_BENCH_CANDIDATE_REVISION ||
     gitRevision("HEAD") ||
     candidateRef;
-  const baselineRevision =
-    process.env.ZINNIA_BENCH_BASE_REVISION ||
-    gitRevision(baselineRef) ||
-    baselineRef;
+  const configuredBaselineRevision =
+    process.env.ZINNIA_BENCH_BASE_REVISION || "";
+  const baselineRevision = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(
+    configuredBaselineRevision,
+  )
+    ? configuredBaselineRevision.toLowerCase()
+    : null;
   const role =
     optionValue(argv, "--role") || process.env.ZINNIA_BENCH_ROLE || "candidate";
   const explicitRunnerModule =
@@ -569,25 +584,59 @@ async function main() {
   if (options.help) {
     console.log("Usage: npm run benchmark:archive-io -- [benchmark options]");
     console.log(
-      "Wrapper options: --candidate-ref, --baseline-ref, --role, --baseline-report",
+      "Wrapper options: --candidate-ref, --baseline-ref, --expected-candidate-revision, --role, --baseline-report",
     );
     return;
   }
   const outputDir = reportDirectory(options);
   options.outputDir = outputDir;
+  activeReportDirectory = outputDir;
+  const expectedInventory = benchmarkInventoryFromOptions(options);
 
   const metadata = {
     candidateRef,
     baselineRef,
     candidateRevision,
+    expectedCandidateRevision,
     baselineRevision,
     baselineUnavailable: Boolean(
       baselineRef && role === "candidate" && !envFlag("ZINNIA_BENCH_BASE_RUN"),
     ),
   };
+  activeFailureMetadata = metadata;
+  if (envFlag("ZINNIA_BENCH_REQUIRE_BASELINE_REPORT")) {
+    assertReleaseBenchmarkInventory(expectedInventory);
+    if (role === "candidate") {
+      if (
+        typeof expectedCandidateRevision !== "string" ||
+        !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(expectedCandidateRevision)
+      ) {
+        throw new Error(
+          "Release archive benchmark requires an expected candidate checkout SHA.",
+        );
+      }
+      if (
+        !checkoutRevision ||
+        checkoutRevision.toLowerCase() !==
+          expectedCandidateRevision.toLowerCase()
+      ) {
+        throw new Error(
+          `Expected candidate checkout ${expectedCandidateRevision} does not match checked-out HEAD ${checkoutRevision ?? "missing"}.`,
+        );
+      }
+      if (
+        candidateRevision?.toLowerCase() !==
+        expectedCandidateRevision.toLowerCase()
+      ) {
+        throw new Error(
+          "Candidate benchmark revision metadata does not match the expected checkout SHA.",
+        );
+      }
+    }
+  }
   process.env.ZINNIA_BENCH_CANDIDATE_REF = candidateRef || "";
-  process.env.ZINNIA_BENCH_BASELINE_REF = baselineRef || "";
-  process.env.ZINNIA_BENCH_BASE_REF = baselineRef || "";
+  process.env.ZINNIA_BENCH_BASELINE_REF = baselineRevision || "";
+  process.env.ZINNIA_BENCH_BASE_REF = baselineRevision || "";
   process.env.ZINNIA_BENCH_CANDIDATE_REVISION = candidateRevision || "";
   process.env.ZINNIA_BENCH_BASE_REVISION = baselineRevision || "";
   process.env.ZINNIA_BENCH_ROLE = role;
@@ -599,10 +648,24 @@ async function main() {
   if (argv.includes("--skip-runner"))
     process.env.ZINNIA_BENCH_SKIP_RUNNER = "1";
 
-  const baselineReport =
+  const baselineCheckout =
     role === "candidate"
-      ? await runBaselineCheckout({ argv, baselineRef, outputDir })
+      ? await runBaselineCheckout({
+          argv,
+          baselineRef,
+          outputDir,
+          expectedInventory,
+          metadata,
+        })
       : null;
+  if (baselineCheckout) {
+    metadata.baselineRef = baselineCheckout.revision;
+    metadata.baselineRevision = baselineCheckout.revision;
+    process.env.ZINNIA_BENCH_BASELINE_REF = baselineCheckout.revision;
+    process.env.ZINNIA_BENCH_BASE_REF = baselineCheckout.revision;
+    process.env.ZINNIA_BENCH_BASE_REVISION = baselineCheckout.revision;
+  }
+  const baselineReport = baselineCheckout?.reportPath ?? null;
   if (
     role === "candidate" &&
     envFlag("ZINNIA_BENCH_REQUIRE_BASELINE_REPORT") &&
@@ -635,6 +698,7 @@ async function main() {
       const runnerRequired =
         role === "candidate" || envFlag("ZINNIA_BENCH_REQUIRE_BASELINE");
       if (runnerRequired && !envFlag("ZINNIA_BENCH_SKIP_RUNNER")) {
+        activeFailureStage = "runner";
         runner = await startPersistentRunner(
           metadata,
           explicitRunnerModule,
@@ -656,12 +720,25 @@ async function main() {
         }
         if (runner) process.env.ZINNIA_BENCH_RUNNER_ACTIVE = "1";
       }
+      activeFailureStage = "operation";
       return benchmark.runBenchmark(mergeExecutorOptions(runOptions, runner));
     })();
     report = await withTimeout(benchmarkExecution, timeoutMs, async () => {
       abortController.abort();
       await runner?.abort?.();
     });
+    if (
+      role === "candidate" &&
+      envFlag("ZINNIA_BENCH_REQUIRE_BASELINE_REPORT")
+    ) {
+      activeFailureStage = "setup";
+      assertComparedBaseline(
+        report,
+        metadata.baselineRevision,
+        expectedCandidateRevision,
+        RELEASE_BENCHMARK_INVENTORY,
+      );
+    }
   } catch (error) {
     failure = error;
   } finally {
@@ -683,6 +760,17 @@ async function main() {
 try {
   await main();
 } catch (error) {
+  try {
+    writeFailureArtifacts(activeReportDirectory, {
+      stage: failureStageFor(error, activeFailureStage),
+      error,
+      metadata: activeFailureMetadata,
+    });
+  } catch (artifactError) {
+    console.error(
+      `Could not retain archive benchmark failure artifact: ${artifactError instanceof Error ? artifactError.message : String(artifactError)}`,
+    );
+  }
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
 }

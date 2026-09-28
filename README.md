@@ -114,10 +114,9 @@ native build runs.
 - GitHub may temporarily expose an unpublished draft under an `untagged-*`
   identifier. Release scripts accept it only when the draft name and target
   commit match exactly, then set the intended `vX.Y.Z` tag during publication.
-- Each full release command prepares and runs every non-E2E quality gate once.
-  Native E2E is skipped for local release commands because CI runs it on Linux,
-  Windows, and macOS; a direct `npm run test:all` still includes E2E. If
-  `release:prepare` was already run separately on the same VM, use the matching
+- Each full release command prepares and runs the complete local quality gate,
+  including native E2E, once. If `release:prepare` was already run separately
+  on the same VM, use the matching
   `release:*:resume` command; its build session is bound to the exact commit,
   lockfiles, platform, architecture, and Node/Rust toolchain and expires after
   24 hours.

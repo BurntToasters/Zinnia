@@ -204,6 +204,12 @@ describe("Tauri capability policy", () => {
         ).toContain(`allow-${command.replaceAll("_", "-")}`);
       }
       expect(
+        [...permissionIds]
+          .filter((permission) => permission.startsWith("allow-"))
+          .sort(),
+        `${schemaName} schema has no stale custom command permissions`,
+      ).toEqual(handlerCommands.map(allowPermission).sort());
+      expect(
         [...permissionIds].filter((permission) => permission.startsWith("fs:")),
         `${schemaName} schema excludes optional E2E filesystem plugin permissions`,
       ).toEqual([]);

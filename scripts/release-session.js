@@ -44,12 +44,10 @@ function porcelainPaths(statusText) {
     .split("\n")
     .map((line) => line.replace(/\r$/, ""))
     .filter(Boolean)
-    .map((line) => {
+    .flatMap((line) => {
       // XY PATH  or  XY ORIG -> PATH  (XY is always two status columns)
       const pathPart = line.length >= 3 ? line.slice(3) : line;
-      return pathPart.includes(" -> ")
-        ? pathPart.split(" -> ").at(-1)
-        : pathPart;
+      return pathPart.includes(" -> ") ? pathPart.split(" -> ") : [pathPart];
     });
 }
 

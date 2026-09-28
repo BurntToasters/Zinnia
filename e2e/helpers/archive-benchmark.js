@@ -2,6 +2,11 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
+import {
+  startWindowsFencedCommand,
+  waitForWindowsFencedCommand,
+} from "./windows-fenced-launcher.js";
 import { createE2eProfile, REPO_ROOT } from "./profile.js";
 
 const E2E_CONFIG = path.join(REPO_ROOT, "src-tauri", "tauri.e2e.conf.json");
@@ -11,8 +16,18 @@ const VENDORED_UPDATER_DIR = path.join(
   "vendor",
   "tauri-plugin-updater",
 );
-export const ARCHIVE_BENCHMARK_E2E_STAMP_VERSION = "archive-io-e2e-v1";
+export const ARCHIVE_BENCHMARK_E2E_STAMP_VERSION = "archive-io-e2e-v2";
 const DEFAULT_ARCHIVE_BENCHMARK_BUILD_TIMEOUT_MS = 45 * 60 * 1000;
+const WINDOWS_PROCESS_CLEANUP_TIMEOUT_MS = 10_000;
+const WINDOWS_PROCESS_QUIET_ROUNDS = 3;
+const WINDOWS_PROCESS_SCAN_DELAY_MS = 50;
+const WINDOWS_PROCESS_CAPTURE_INTERVAL_MS = 50;
+const windowsProcessStates = new WeakMap();
+
+function positiveProcessTimeout(value, fallback) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
 
 function npmCommand() {
   return process.platform === "win32" ? "npm.cmd" : "npm";
@@ -77,60 +92,350 @@ const E2E_FRESHNESS_PATHS = [
   path.join(REPO_ROOT, "package-lock.json"),
 ];
 
-function latestMtime(pathname) {
-  let metadata;
+export async function reserveE2eWebdriverPort(
+  serverFactory = net.createServer,
+) {
+  const server = serverFactory();
+  server.on?.("connection", (connection) => connection.destroy());
+  let port = null;
+  let releasePromise;
   try {
-    metadata = fs.statSync(pathname);
-  } catch {
-    return 0;
+    await new Promise((resolve, reject) => {
+      const onError = (error) => reject(error);
+      server.once("error", onError);
+      server.listen(0, "127.0.0.1", () => {
+        server.removeListener?.("error", onError);
+        resolve();
+      });
+    });
+    const address = server.address();
+    if (!address || typeof address === "string" || address.port <= 0) {
+      throw new Error("Could not reserve an available E2E WebDriver port.");
+    }
+    port = address.port;
+  } catch (error) {
+    if (server.listening) {
+      await new Promise((resolve) => server.close(() => resolve()));
+    }
+    throw error;
   }
-  if (!metadata.isDirectory()) return metadata.mtimeMs;
-  let latest = metadata.mtimeMs;
-  for (const entry of fs.readdirSync(pathname, { withFileTypes: true })) {
-    latest = Math.max(latest, latestMtime(path.join(pathname, entry.name)));
-  }
-  return latest;
+  return {
+    port,
+    release() {
+      if (!server.listening) return Promise.resolve();
+      if (!releasePromise) {
+        releasePromise = new Promise((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()));
+        });
+        releasePromise.catch(() => {
+          if (server.listening) releasePromise = undefined;
+        });
+      }
+      return releasePromise;
+    },
+  };
 }
 
-function e2eSourceMtime() {
-  return Math.max(
-    ...E2E_FRESHNESS_PATHS.map((pathname) => latestMtime(pathname)),
+export async function createE2eWebdriverPortHandoff({
+  binary,
+  args = [],
+  directory,
+  reservation,
+}) {
+  if (!binary || !directory || !reservation?.port || !reservation.release) {
+    throw new Error("E2E WebDriver port handoff inputs are incomplete.");
+  }
+  const token = randomBytes(32).toString("hex");
+  const launcher = path.join(directory, `.zinnia-e2e-launch-${token}.cjs`);
+  let handoffConsumed = false;
+  const server = net.createServer((connection) => {
+    let buffered = "";
+    connection.setEncoding("utf8");
+    connection.on("data", (chunk) => {
+      buffered += chunk;
+      const newline = buffered.indexOf("\n");
+      if (newline < 0) return;
+      const receivedToken = buffered.slice(0, newline);
+      if (receivedToken !== token || handoffConsumed) {
+        connection.destroy();
+        return;
+      }
+      handoffConsumed = true;
+      buffered = "";
+      void releaseReservation()
+        .then(() => {
+          connection.end("ready\n");
+          void closeServer(server);
+        })
+        .catch(() => {
+          connection.end("unavailable\n");
+          void closeServer(server);
+        });
+    });
+  });
+  let handoffPort;
+  try {
+    await new Promise((resolve, reject) => {
+      const onError = (error) => reject(error);
+      server.once("error", onError);
+      server.listen(0, "127.0.0.1", () => {
+        server.removeListener?.("error", onError);
+        resolve();
+      });
+    });
+    const address = server.address();
+    if (!address || typeof address === "string" || address.port <= 0) {
+      throw new Error("Could not open E2E WebDriver handoff channel.");
+    }
+    handoffPort = address.port;
+  } catch (error) {
+    await closeServer(server);
+    throw error;
+  }
+  try {
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(
+      launcher,
+      [
+        'const net = require("node:net");',
+        'const { spawn } = require("node:child_process");',
+        "const [binary, ...args] = process.argv.slice(2);",
+        "const host = process.env.ZINNIA_E2E_HANDOFF_HOST;",
+        "const port = Number(process.env.ZINNIA_E2E_HANDOFF_PORT);",
+        "const token = process.env.ZINNIA_E2E_HANDOFF_TOKEN;",
+        "let finished = false;",
+        "const socket = net.connect({ host, port });",
+        "const fail = (error) => {",
+        "  if (finished) return;",
+        "  finished = true;",
+        "  console.error(`E2E app port handoff failed: ${error instanceof Error ? error.message : String(error)}`);",
+        "  socket.destroy();",
+        "  process.exitCode = 1;",
+        "};",
+        'let response = "";',
+        'socket.setEncoding("utf8");',
+        'socket.once("connect", () => socket.write(`${token}\\n`));',
+        'socket.on("data", (chunk) => {',
+        "  response += chunk;",
+        '  if (!response.includes("\\n")) return;',
+        '  if (response.split("\\n", 1)[0] !== "ready") return fail("reserved port could not be released");',
+        "  socket.destroy();",
+        '  const app = spawn(binary, args, { stdio: "inherit", windowsHide: true });',
+        '  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {',
+        "    process.on(signal, () => { if (app.pid) app.kill(signal); });",
+        "  }",
+        '  app.once("error", fail);',
+        '  app.once("exit", (code, signal) => {',
+        "    if (finished) return;",
+        "    finished = true;",
+        "    process.exitCode = code ?? (signal ? 1 : 0);",
+        "  });",
+        "});",
+        'socket.once("error", fail);',
+      ].join("\n") + "\n",
+    );
+  } catch (error) {
+    await closeServer(server);
+    fs.rmSync(launcher, { force: true });
+    throw error;
+  }
+  let reservationRelease;
+  const releaseReservation = () => {
+    reservationRelease ??= Promise.resolve().then(() => reservation.release());
+    return reservationRelease;
+  };
+  let releasePromise;
+  return {
+    binary: process.execPath,
+    args: [launcher, binary, ...args],
+    env: {
+      ZINNIA_E2E_HANDOFF_HOST: "127.0.0.1",
+      ZINNIA_E2E_HANDOFF_PORT: String(handoffPort),
+      ZINNIA_E2E_HANDOFF_TOKEN: token,
+    },
+    release() {
+      releasePromise ??= (async () => {
+        let releaseError;
+        try {
+          await releaseReservation();
+        } catch (error) {
+          releaseError = error;
+        }
+        try {
+          await closeServer(server);
+        } catch (error) {
+          releaseError ??= error;
+        }
+        fs.rmSync(launcher, { force: true });
+        if (releaseError) throw releaseError;
+      })();
+      return releasePromise;
+    },
+  };
+}
+
+function sha256(contents) {
+  return createHash("sha256").update(contents).digest("hex");
+}
+
+function normalizedPath(pathname) {
+  return path.resolve(pathname).replaceAll("\\", "/");
+}
+
+function archiveBenchmarkInputRecords(inputPaths) {
+  const records = new Map();
+  const activeDirectories = new Set();
+  const addRecord = (pathname, record) => {
+    records.set(normalizedPath(pathname), sha256(JSON.stringify(record)));
+  };
+  const visit = (pathname) => {
+    let metadata;
+    try {
+      metadata = fs.lstatSync(pathname);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      addRecord(pathname, ["missing"]);
+      return;
+    }
+    if (metadata.isSymbolicLink()) {
+      const target = fs.readlinkSync(pathname);
+      let targetMetadata;
+      try {
+        targetMetadata = fs.statSync(pathname);
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+        addRecord(pathname, ["symlink", target, "missing-target"]);
+        return;
+      }
+      addRecord(pathname, ["symlink", target]);
+      if (targetMetadata.isDirectory()) {
+        visitDirectory(pathname);
+      } else if (targetMetadata.isFile()) {
+        addRecord(`${pathname}#target`, [
+          "file-target",
+          targetMetadata.mode & 0o777,
+          targetMetadata.size,
+          sha256(fs.readFileSync(pathname)),
+        ]);
+      }
+      return;
+    }
+    if (metadata.isDirectory()) {
+      visitDirectory(pathname);
+      return;
+    }
+    if (metadata.isFile()) {
+      addRecord(pathname, [
+        "file",
+        metadata.mode & 0o777,
+        metadata.size,
+        sha256(fs.readFileSync(pathname)),
+      ]);
+      return;
+    }
+    addRecord(pathname, ["special", metadata.mode & 0o777]);
+  };
+  const visitDirectory = (pathname) => {
+    let realpath;
+    try {
+      realpath = fs.realpathSync(pathname);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      addRecord(pathname, ["missing"]);
+      return;
+    }
+    if (activeDirectories.has(realpath)) {
+      addRecord(pathname, ["directory-cycle", realpath]);
+      return;
+    }
+    activeDirectories.add(realpath);
+    const metadata = fs.statSync(pathname);
+    addRecord(pathname, ["directory", metadata.mode & 0o777]);
+    for (const entry of fs
+      .readdirSync(pathname, { withFileTypes: true })
+      .sort((left, right) => left.name.localeCompare(right.name))) {
+      visit(path.join(pathname, entry.name));
+    }
+    activeDirectories.delete(realpath);
+  };
+  for (const inputPath of inputPaths) visit(inputPath);
+  return Object.fromEntries(
+    [...records.entries()].sort(([left], [right]) => left.localeCompare(right)),
   );
 }
 
-function readE2eStamp() {
+export function archiveBenchmarkBuildInputSnapshot(
+  inputPaths = E2E_FRESHNESS_PATHS,
+) {
+  return archiveBenchmarkInputRecords(inputPaths);
+}
+
+export function archiveBenchmarkBuildInputSha256(
+  inputPaths = E2E_FRESHNESS_PATHS,
+) {
+  return sha256(JSON.stringify(archiveBenchmarkBuildInputSnapshot(inputPaths)));
+}
+
+export function assertArchiveBenchmarkBuildInputsUnchanged(before, after) {
+  const paths = new Set([...Object.keys(before), ...Object.keys(after)]);
+  const changed = [...paths]
+    .filter((pathname) => before[pathname] !== after[pathname])
+    .sort();
+  if (changed.length > 0) {
+    throw new Error(
+      `Archive benchmark build inputs changed during build (${changed.join(", ")}); refusing to stamp binary.`,
+    );
+  }
+}
+
+function readE2eStamp(stampPath = releaseE2eStampPath()) {
   try {
-    return JSON.parse(fs.readFileSync(releaseE2eStampPath(), "utf8"));
+    return JSON.parse(fs.readFileSync(stampPath, "utf8"));
   } catch {
     return null;
   }
 }
 
-function releaseE2eBinaryIsFresh(binary) {
+export function isArchiveBenchmarkE2eBinaryFresh({
+  binary = releaseBinaryPath(),
+  stamp = releaseE2eStampPath(),
+  inputPaths = E2E_FRESHNESS_PATHS,
+} = {}) {
   if (!fs.existsSync(binary)) return false;
-  const stamp = readE2eStamp();
-  if (!stamp || stamp.version !== ARCHIVE_BENCHMARK_E2E_STAMP_VERSION) {
+  const proof = readE2eStamp(stamp);
+  if (!proof || proof.version !== ARCHIVE_BENCHMARK_E2E_STAMP_VERSION) {
     return false;
   }
-  const binaryMtimeMs = fs.statSync(binary).mtimeMs;
-  return (
-    stamp.binaryPath === binary &&
-    stamp.binaryMtimeMs === binaryMtimeMs &&
-    stamp.sourceMtimeMs >= e2eSourceMtime()
-  );
+  try {
+    return (
+      proof.binaryPath === binary &&
+      proof.binarySha256 === sha256(fs.readFileSync(binary)) &&
+      proof.buildInputSha256 === archiveBenchmarkBuildInputSha256(inputPaths)
+    );
+  } catch {
+    return false;
+  }
 }
 
-function writeE2eStamp(binary) {
-  const binaryMtimeMs = fs.statSync(binary).mtimeMs;
+export function writeArchiveBenchmarkE2eStamp({
+  binary,
+  stamp = releaseE2eStampPath(),
+  inputPaths = E2E_FRESHNESS_PATHS,
+  inputSnapshot = archiveBenchmarkBuildInputSnapshot(inputPaths),
+}) {
+  if (!binary || !fs.existsSync(binary)) {
+    throw new Error("Cannot stamp missing release E2E binary.");
+  }
+  fs.mkdirSync(path.dirname(stamp), { recursive: true });
   fs.writeFileSync(
-    releaseE2eStampPath(),
+    stamp,
     `${JSON.stringify(
       {
         version: ARCHIVE_BENCHMARK_E2E_STAMP_VERSION,
         kind: "release-e2e",
         binaryPath: binary,
-        binaryMtimeMs,
-        sourceMtimeMs: e2eSourceMtime(),
+        binarySha256: sha256(fs.readFileSync(binary)),
+        buildInputSha256: sha256(JSON.stringify(inputSnapshot)),
       },
       null,
       2,
@@ -160,7 +465,7 @@ export function terminateProcessTree(child, signal = "SIGTERM") {
       ["/PID", String(child.pid), "/T", "/F"],
       { stdio: "ignore", windowsHide: true, timeout: 10_000 },
     );
-    if (result.status === 0) return true;
+    return !result.error && result.status === 0;
   } else {
     try {
       process.kill(-child.pid, signal);
@@ -228,14 +533,591 @@ function waitForProcessGroupExit(pid, timeoutMs) {
   });
 }
 
-async function terminateAndWaitForProcessTree(child) {
+function runWindowsPowerShell(command, env = process.env, timeoutMs = 5_000) {
+  return new Promise((resolve) => {
+    const child = spawn(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-Command", command],
+      {
+        env,
+        stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
+      },
+    );
+    let output = "";
+    let settled = false;
+    let timeout;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve(result);
+    };
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      output += chunk;
+    });
+    child.once("error", () => finish(null));
+    child.once("close", (status) => finish({ status, output }));
+    timeout = setTimeout(() => {
+      child.kill();
+      finish(null);
+    }, timeoutMs);
+  });
+}
+
+async function readWindowsProcessTable(timeoutMs = 5_000) {
+  const command = [
+    "$ErrorActionPreference = 'Stop'",
+    "$rows = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop | ForEach-Object {",
+    "  [pscustomobject]@{ pid = [int]$_.ProcessId; parentPid = [int]$_.ParentProcessId; created = [string]$_.CreationDate }",
+    "})",
+    "ConvertTo-Json -InputObject $rows -Compress",
+  ].join("\n");
+  const result = await runWindowsPowerShell(command, process.env, timeoutMs);
+  if (!result || result.status !== 0) return null;
+  try {
+    const parsed = JSON.parse(result.output.trim() || "[]");
+    const rows = Array.isArray(parsed) ? parsed : [parsed];
+    return rows.map(({ pid, parentPid, created }) => ({
+      pid: Number(pid),
+      parentPid: Number(parentPid),
+      created: String(created),
+    }));
+  } catch {
+    return null;
+  }
+}
+
+function windowsProcessIdentity(processInfo) {
+  if (
+    !Number.isSafeInteger(processInfo?.pid) ||
+    processInfo.pid <= 0 ||
+    typeof processInfo.created !== "string" ||
+    !processInfo.created ||
+    processInfo.created === "undefined"
+  ) {
+    return null;
+  }
+  return { pid: processInfo.pid, created: processInfo.created };
+}
+
+function windowsProcessIdentityKey(processInfo) {
+  return `${processInfo.pid}:${processInfo.created}`;
+}
+
+function sameWindowsProcess(left, right) {
+  return left?.pid === right?.pid && left?.created === right?.created;
+}
+
+function windowsCreationTimeMs(value) {
+  if (typeof value !== "string") return null;
+  const cim = value.match(
+    /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\.(\d{1,6})([+-])(\d{3})$/,
+  );
+  if (cim) {
+    const [, year, month, day, hour, minute, second, fraction, sign, offset] =
+      cim;
+    const localMs = Date.UTC(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+      Number(hour),
+      Number(minute),
+      Number(second),
+      Number(fraction.padEnd(3, "0").slice(0, 3)),
+    );
+    const signedOffset = Number(offset) * (sign === "+" ? 1 : -1);
+    return localMs - signedOffset * 60_000;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function windowsChildCreatedAfterParent(processInfo, parentIdentity) {
+  const childCreatedAt = windowsCreationTimeMs(processInfo?.created);
+  const parentCreatedAt = windowsCreationTimeMs(parentIdentity?.created);
+  return (
+    childCreatedAt !== null &&
+    parentCreatedAt !== null &&
+    childCreatedAt >= parentCreatedAt
+  );
+}
+
+function processTreeFromTable(
+  table,
+  leaderIdentity,
+  state,
+  allowNewDescendants = false,
+) {
+  if (!Array.isArray(table)) return null;
+  const currentByPid = new Map(table.map((item) => [item.pid, item]));
+  const currentLeader = currentByPid.get(leaderIdentity.pid);
+  if (currentLeader && !sameWindowsProcess(currentLeader, leaderIdentity)) {
+    return { reusedLeaderPid: true, processes: [] };
+  }
+
+  const processesByIdentity = new Map();
+  const ownedParentsByPid = new Map();
+  const addOwned = (processInfo, observe = false) => {
+    const identity = windowsProcessIdentity(processInfo);
+    if (!identity) return false;
+    const current = currentByPid.get(identity.pid);
+    if (!sameWindowsProcess(current, identity)) return false;
+    processesByIdentity.set(windowsProcessIdentityKey(identity), processInfo);
+    ownedParentsByPid.set(identity.pid, identity);
+    if (observe) {
+      state.observed.set(windowsProcessIdentityKey(identity), processInfo);
+    }
+    return true;
+  };
+
+  // Keep only exact process identities observed while their parents were live.
+  for (const observed of state.observed.values()) addOwned(observed);
+
+  // New ownership requires a live, identity-matched parent in this snapshot.
+  if (allowNewDescendants && currentLeader) {
+    addOwned(currentLeader, true);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const processInfo of table) {
+        const identity = windowsProcessIdentity(processInfo);
+        const parentIdentity = ownedParentsByPid.get(processInfo.parentPid);
+        const currentParent = currentByPid.get(processInfo.parentPid);
+        if (
+          !identity ||
+          !parentIdentity ||
+          !sameWindowsProcess(currentParent, parentIdentity) ||
+          !windowsChildCreatedAfterParent(processInfo, parentIdentity) ||
+          processesByIdentity.has(windowsProcessIdentityKey(identity))
+        ) {
+          continue;
+        }
+        if (addOwned(processInfo, true)) changed = true;
+      }
+    }
+  }
+
+  const processes = [...processesByIdentity.values()].sort(
+    (left, right) => left.pid - right.pid,
+  );
+  const knownParentPids = new Set([
+    leaderIdentity.pid,
+    ...[...state.observed.values()].map((processInfo) => processInfo.pid),
+  ]);
+  const unresolvedParentPids = new Set();
+  const unresolvedDescendants = [];
+  let hasUnresolved = true;
+  while (hasUnresolved) {
+    hasUnresolved = false;
+    for (const processInfo of table) {
+      const identity = windowsProcessIdentity(processInfo);
+      const identityKey = identity && windowsProcessIdentityKey(identity);
+      if (identityKey && processesByIdentity.has(identityKey)) continue;
+      if (
+        !knownParentPids.has(processInfo.parentPid) &&
+        !unresolvedParentPids.has(processInfo.parentPid)
+      ) {
+        continue;
+      }
+      unresolvedDescendants.push(processInfo);
+      if (!unresolvedParentPids.has(processInfo.pid)) {
+        unresolvedParentPids.add(processInfo.pid);
+        hasUnresolved = true;
+      }
+    }
+  }
+  return { reusedLeaderPid: false, processes, unresolvedDescendants };
+}
+
+async function snapshotWindowsProcessTree(
+  leaderIdentity,
+  state,
+  readProcessTable = readWindowsProcessTable,
+  allowNewDescendants = false,
+) {
+  const table = await readProcessTable();
+  return processTreeFromTable(
+    table,
+    leaderIdentity,
+    state,
+    allowNewDescendants,
+  );
+}
+
+export function captureWindowsProcessIdentity(child, options = {}) {
+  const platform = options.platform ?? process.platform;
+  if (platform !== "win32" || !child?.pid) return Promise.resolve(null);
+  if (options.waitForSpawn) {
+    if (child.pid) {
+      return captureWindowsProcessIdentity(child, {
+        ...options,
+        waitForSpawn: false,
+        spawnObservedAt: Date.now(),
+      });
+    }
+    return new Promise((resolve) => {
+      const cleanup = () => {
+        child.removeListener?.("spawn", onSpawn);
+        child.removeListener?.("error", onError);
+      };
+      const onSpawn = () => {
+        cleanup();
+        const spawnObservedAt = Date.now();
+        void captureWindowsProcessIdentity(child, {
+          ...options,
+          waitForSpawn: false,
+          spawnObservedAt,
+        }).then(resolve);
+      };
+      const onError = () => {
+        cleanup();
+        resolve(null);
+      };
+      child.once("spawn", onSpawn);
+      child.once("error", onError);
+    });
+  }
+  const existing = windowsProcessStates.get(child);
+  if (existing) return existing.identityPromise;
+
+  const readProcessTable =
+    options.readWindowsProcessTable ?? (() => readWindowsProcessTable());
+  const state = {
+    identity: null,
+    identityPromise: null,
+    observed: new Map(),
+    leaderExited: false,
+    captureStopped: false,
+    captureIncomplete: false,
+    readProcessTable,
+  };
+  windowsProcessStates.set(child, state);
+  let resolveIdentity;
+  let identitySettled = false;
+  state.identityPromise = new Promise((resolve) => {
+    resolveIdentity = resolve;
+  });
+  const settleIdentity = (identity) => {
+    if (identitySettled) return;
+    identitySettled = true;
+    resolveIdentity(identity);
+  };
+  const markLeaderExited = () => {
+    state.leaderExited = true;
+    state.captureStopped = true;
+    settleIdentity(state.identity);
+  };
+  child.once?.("exit", markLeaderExited);
+  const captureIntervalMs = positiveProcessTimeout(
+    options.captureIntervalMs,
+    WINDOWS_PROCESS_CAPTURE_INTERVAL_MS,
+  );
+  state.captureTask = (async () => {
+    while (!state.leaderExited && !state.captureStopped) {
+      if (child.exitCode !== null || child.signalCode !== null) {
+        markLeaderExited();
+        break;
+      }
+      let table;
+      try {
+        table = await readProcessTable();
+      } catch {
+        table = null;
+      }
+      if (state.captureStopped) break;
+      if (
+        state.leaderExited ||
+        child.exitCode !== null ||
+        child.signalCode !== null
+      ) {
+        markLeaderExited();
+        break;
+      }
+      if (!Array.isArray(table)) {
+        state.captureIncomplete = true;
+      } else {
+        const leader = table.find(
+          (processInfo) => processInfo.pid === child.pid,
+        );
+        if (!leader) {
+          if (state.identity) state.captureIncomplete = true;
+        } else {
+          const identity = windowsProcessIdentity(leader);
+          const createdAtMs = windowsCreationTimeMs(identity?.created);
+          const identityMatchesSpawn =
+            options.spawnObservedAt === undefined ||
+            (createdAtMs !== null && createdAtMs <= options.spawnObservedAt);
+          if (!identity || !identityMatchesSpawn) {
+            state.captureIncomplete = true;
+          } else if (
+            state.identity &&
+            !sameWindowsProcess(state.identity, identity)
+          ) {
+            state.captureIncomplete = true;
+          } else {
+            state.identity = identity;
+            state.observed.set(windowsProcessIdentityKey(identity), leader);
+            settleIdentity(identity);
+            const ownership = processTreeFromTable(
+              table,
+              identity,
+              state,
+              true,
+            );
+            if (!ownership || ownership.unresolvedDescendants.length > 0) {
+              state.captureIncomplete = true;
+            }
+          }
+        }
+      }
+      await new Promise((resolve) => {
+        const wait = setTimeout(resolve, captureIntervalMs);
+        wait.unref?.();
+      });
+    }
+    settleIdentity(state.identity);
+  })().catch(() => {
+    state.captureIncomplete = true;
+    settleIdentity(state.identity);
+  });
+  return state.identityPromise;
+}
+
+export function hasCapturedWindowsProcessIdentity(child) {
+  return Boolean(windowsProcessStates.get(child)?.identity);
+}
+
+async function killWindowsProcessSnapshot(processInfo, timeoutMs = 10_000) {
+  if (
+    !Number.isSafeInteger(processInfo?.pid) ||
+    processInfo.pid <= 0 ||
+    !processInfo.created ||
+    processInfo.created === "undefined"
+  ) {
+    return false;
+  }
+  const command = [
+    "$ErrorActionPreference = 'Stop'",
+    "$targetPid = [int]$env:ZINNIA_PROCESS_PID",
+    "$expectedCreated = [string]$env:ZINNIA_PROCESS_CREATED",
+    "Add-Type -AssemblyName System.Management",
+    "$process = $null",
+    "try { $process = [System.Diagnostics.Process]::GetProcessById($targetPid) } catch [System.ArgumentException] { exit 0 }",
+    "try {",
+    "  $expected = [System.Management.ManagementDateTimeConverter]::ToDateTime($expectedCreated).ToUniversalTime().Ticks",
+    "  $actual = $process.StartTime.ToUniversalTime().Ticks",
+    "  if ([Math]::Abs([long]$actual - [long]$expected) -gt 9) { exit 3 }",
+    "  $process.Kill()",
+    "  if (-not $process.WaitForExit(10000)) { exit 4 }",
+    "} finally { $process.Dispose() }",
+  ].join("\n");
+  const result = await runWindowsPowerShell(
+    command,
+    {
+      ...process.env,
+      ZINNIA_PROCESS_PID: String(processInfo.pid),
+      ZINNIA_PROCESS_CREATED: processInfo.created,
+    },
+    Math.max(1, Math.min(10_000, timeoutMs)),
+  );
+  return result !== null && result.status === 0;
+}
+
+function windowsProcessDepth(processInfo, byPid) {
+  const seen = new Set([processInfo.pid]);
+  let depth = 0;
+  let parentPid = processInfo.parentPid;
+  while (byPid.has(parentPid) && !seen.has(parentPid)) {
+    seen.add(parentPid);
+    depth += 1;
+    parentPid = byPid.get(parentPid).parentPid;
+  }
+  return depth;
+}
+
+export async function terminateAndWaitForProcessTree(child, options = {}) {
+  const platform = options.platform ?? process.platform;
   if (!child?.pid) {
     terminateProcessTree(child, "SIGTERM");
-    return waitForProcessExit(child, 10_000);
+    return platform !== "win32" && waitForProcessExit(child, 10_000);
+  }
+  if (platform === "win32") {
+    const timeoutMs = positiveProcessTimeout(
+      options.processTreeCleanupTimeoutMs,
+      WINDOWS_PROCESS_CLEANUP_TIMEOUT_MS,
+    );
+    const deadline = Date.now() + timeoutMs;
+    const readProcessTable =
+      options.readWindowsProcessTable ??
+      (() =>
+        readWindowsProcessTable(
+          Math.max(1, Math.min(5_000, deadline - Date.now())),
+        ));
+    const state = windowsProcessStates.get(child);
+    if (!state) return false;
+    const failCleanup = () => {
+      state.captureStopped = true;
+      return false;
+    };
+    let identityTimer;
+    const identityDeadline = new Promise((resolve) => {
+      identityTimer = setTimeout(
+        () => resolve(null),
+        Math.max(1, deadline - Date.now()),
+      );
+      identityTimer.unref?.();
+    });
+    const leaderIdentity = await Promise.race([
+      state.identityPromise,
+      identityDeadline,
+    ]);
+    clearTimeout(identityTimer);
+    if (!leaderIdentity || leaderIdentity.pid !== child.pid) {
+      return failCleanup();
+    }
+    const snapshotTree = async () =>
+      snapshotWindowsProcessTree(
+        leaderIdentity,
+        state,
+        readProcessTable,
+        !state.leaderExited &&
+          child.exitCode === null &&
+          child.signalCode === null,
+      );
+    const terminateTree =
+      options.killWindowsProcessTree ??
+      ((_processChild, identity) =>
+        killWindowsProcessSnapshot(
+          identity,
+          Math.max(1, deadline - Date.now()),
+        ));
+    const terminateProcess =
+      options.killWindowsProcess ??
+      ((identity) =>
+        killWindowsProcessSnapshot(
+          identity,
+          Math.max(1, deadline - Date.now()),
+        ));
+    const scanDelayMs = positiveProcessTimeout(
+      options.processTreeScanDelayMs,
+      WINDOWS_PROCESS_SCAN_DELAY_MS,
+    );
+    let treeKillAttempted = false;
+    let quietRounds = 0;
+
+    while (Date.now() < deadline) {
+      let snapshot;
+      try {
+        snapshot = await snapshotTree();
+      } catch {
+        return failCleanup();
+      }
+      if (!snapshot || !Array.isArray(snapshot.processes)) return failCleanup();
+      if (snapshot.reusedLeaderPid) return failCleanup();
+      const unresolvedDescendants = snapshot.unresolvedDescendants ?? [];
+
+      const leaderFromSnapshot = snapshot.processes.find(
+        (processInfo) => processInfo.pid === child.pid,
+      );
+      if (
+        leaderFromSnapshot &&
+        !sameWindowsProcess(leaderFromSnapshot, leaderIdentity)
+      ) {
+        return failCleanup();
+      }
+      const processes = snapshot.processes.filter((processInfo) =>
+        windowsProcessIdentity(processInfo),
+      );
+      for (const processInfo of processes) {
+        state.observed.set(windowsProcessIdentityKey(processInfo), processInfo);
+      }
+
+      const leaderStopped =
+        child.exitCode !== null || child.signalCode !== null;
+      const leaderPresent = Boolean(leaderFromSnapshot);
+      if (!leaderStopped && leaderPresent && !treeKillAttempted) {
+        treeKillAttempted = true;
+        try {
+          await terminateTree(child, leaderIdentity);
+        } catch {
+          // The individual identity-checked fallback below is still attempted.
+        }
+      }
+      if (!leaderStopped && !leaderPresent) {
+        // The process inventory may lag spawn/exit notifications. Target only
+        // the captured PID+creation-time identity; never issue PID-only treekill.
+        treeKillAttempted = true;
+        try {
+          await terminateProcess(leaderIdentity);
+        } catch {
+          // Continue scanning and require identity-based exit proof.
+        }
+      }
+
+      const processesByPid = new Map(
+        processes.map((processInfo) => [processInfo.pid, processInfo]),
+      );
+      const descendants = processes
+        .filter((processInfo) => processInfo.pid !== child.pid)
+        .sort(
+          (left, right) =>
+            windowsProcessDepth(right, processesByPid) -
+              windowsProcessDepth(left, processesByPid) || right.pid - left.pid,
+        );
+      for (const processInfo of descendants) {
+        try {
+          await terminateProcess(processInfo);
+        } catch {
+          // Keep scanning: later rounds prove whether the exact identity left.
+        }
+      }
+      if (!leaderStopped && leaderPresent && treeKillAttempted) {
+        try {
+          await terminateProcess(leaderIdentity);
+        } catch {
+          // Keep scanning for exit and late descendants.
+        }
+      }
+
+      const currentDescendants = processes.filter(
+        (processInfo) => processInfo.pid !== child.pid,
+      );
+      const leaderStoppedNow =
+        child.exitCode !== null || child.signalCode !== null;
+      if (
+        leaderStoppedNow &&
+        !leaderPresent &&
+        currentDescendants.length === 0
+      ) {
+        if (unresolvedDescendants.length === 0) {
+          if (state.captureIncomplete) return failCleanup();
+          quietRounds += 1;
+          if (quietRounds >= WINDOWS_PROCESS_QUIET_ROUNDS) {
+            state.captureStopped = true;
+            return true;
+          }
+        } else {
+          quietRounds = 0;
+        }
+      } else {
+        quietRounds = 0;
+      }
+
+      if (!leaderStopped) {
+        await waitForProcessExit(
+          child,
+          Math.min(scanDelayMs, Math.max(1, deadline - Date.now())),
+        );
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, scanDelayMs));
+      }
+    }
+    return failCleanup();
   }
   terminateProcessTree(child, "SIGTERM");
   const leaderExited = await waitForProcessExit(child, 1_000);
-  if (process.platform === "win32") return leaderExited;
   if (!processGroupIsAlive(child.pid)) return leaderExited;
   terminateProcessTree(child, "SIGKILL");
   const [leaderStopped, groupStopped] = await Promise.all([
@@ -245,29 +1127,60 @@ async function terminateAndWaitForProcessTree(child) {
   return leaderStopped && groupStopped;
 }
 
-async function run(command, args, cwd = REPO_ROOT, env = {}, signal) {
+export async function runArchiveBenchmarkBuildCommand(
+  command,
+  args,
+  cwd = REPO_ROOT,
+  env = {},
+  signal,
+  options = {},
+) {
   if (signal?.aborted) {
     throw new Error("Archive benchmark build was aborted before starting.");
   }
   const mergedEnv = { ...process.env, ...env };
   const buildTimeoutMs = buildCommandTimeoutMs(mergedEnv);
-  const child = spawn(command, args, {
-    cwd,
-    env: mergedEnv,
-    stdio: "inherit",
-    windowsHide: true,
-    shell: process.platform === "win32" && /^(npm|npx)(\.cmd)?$/i.test(command),
-    detached: process.platform !== "win32",
+  const shell =
+    process.platform === "win32" && /^(npm|npx)(\.cmd)?$/i.test(command);
+  let fencedLaunch = null;
+  let child;
+  if (process.platform === "win32") {
+    fencedLaunch = await startWindowsFencedCommand(command, args, {
+      cwd,
+      env: mergedEnv,
+      stdio: "inherit",
+      shell,
+      startupTimeoutMs: Math.min(buildTimeoutMs, 20_000),
+    });
+    child = fencedLaunch.child;
+  } else {
+    child = spawn(command, args, {
+      cwd,
+      env: mergedEnv,
+      stdio: "inherit",
+      windowsHide: true,
+      shell,
+      detached: true,
+    });
+  }
+  const processPlatform = options.processPlatform ?? process.platform;
+  const windowsProcessOptions = options.windowsProcessOptions ?? {};
+  const identityCapture = captureWindowsProcessIdentity(child, {
+    ...windowsProcessOptions,
+    platform: processPlatform,
+    waitForSpawn: true,
   });
-  const childExit = waitForChild(child);
+  const childExit = fencedLaunch
+    ? waitForWindowsFencedCommand(
+        fencedLaunch,
+        `Archive benchmark build command ${command} ${args.join(" ")}`,
+      )
+    : waitForChild(child);
   childExit.catch(() => {});
   let timeout;
-  let timedOut = false;
-  let aborted = false;
   let onAbort;
   const deadline = new Promise((_, reject) => {
     timeout = setTimeout(() => {
-      timedOut = true;
       reject(
         new Error(
           `Archive benchmark build command ${command} ${args.join(" ")} timed out after ${buildTimeoutMs}ms`,
@@ -278,25 +1191,74 @@ async function run(command, args, cwd = REPO_ROOT, env = {}, signal) {
   const abortSignal = new Promise((_, reject) => {
     if (!signal) return;
     onAbort = () => {
-      aborted = true;
       reject(new Error("Archive benchmark build was aborted."));
     };
     signal.addEventListener("abort", onAbort, { once: true });
   });
+  let commandError = null;
+  let launchReleased = false;
   try {
+    if (fencedLaunch) {
+      const identity = await Promise.race([
+        identityCapture,
+        deadline,
+        abortSignal,
+      ]);
+      if (!identity || identity.pid !== child.pid) {
+        throw new Error(
+          `Archive benchmark build launch fence could not capture its exact leader identity: ${command}`,
+        );
+      }
+      await Promise.race([fencedLaunch.release(), deadline, abortSignal]);
+      launchReleased = true;
+    }
     await Promise.race([childExit, deadline, abortSignal]);
   } catch (error) {
-    if (!timedOut && !aborted) throw error;
-    if (!(await terminateAndWaitForProcessTree(child))) {
-      throw new Error(
-        `Archive benchmark build process tree did not stop after interruption: ${command}`,
-      );
-    }
-    throw error;
+    commandError = error;
   } finally {
     clearTimeout(timeout);
     if (signal && onAbort) signal.removeEventListener("abort", onAbort);
   }
+  if (fencedLaunch && !launchReleased) {
+    await fencedLaunch.abort().catch(() => {});
+  }
+  let processTreeCleanup = { status: "verified" };
+  if (child.pid) {
+    if (
+      !(await terminateAndWaitForProcessTree(child, {
+        ...windowsProcessOptions,
+        ...options.processTreeCleanupOptions,
+        platform: processPlatform,
+      }))
+    ) {
+      const cleanupError = new Error(
+        `Archive benchmark build process tree cleanup could not be verified: ${command}`,
+        { cause: commandError },
+      );
+      processTreeCleanup = {
+        status: "unproven",
+        reason:
+          "leader identity or descendant ownership could not be proven safely",
+      };
+      commandError = commandError
+        ? new AggregateError([commandError, cleanupError], cleanupError.message)
+        : cleanupError;
+    }
+  }
+  if (fencedLaunch) {
+    try {
+      await fencedLaunch.dispose();
+    } catch (error) {
+      commandError ??= error;
+    }
+  }
+  if (commandError) throw commandError;
+  if (processTreeCleanup.status !== "verified") {
+    throw new Error(
+      `Archive benchmark build process tree cleanup was not verified: ${command}`,
+    );
+  }
+  return { processTreeCleanup };
 }
 
 function snapshotGeneratedSchemas() {
@@ -321,15 +1283,25 @@ async function ensureReleaseE2eBinary(signal) {
   const binary = releaseBinaryPath();
   if (
     process.env.ZINNIA_E2E_REBUILD !== "1" &&
-    releaseE2eBinaryIsFresh(binary)
+    isArchiveBenchmarkE2eBinaryFresh({ binary })
   ) {
     return binary;
   }
-  const buildStartedAt = Date.now();
   const snapshots = snapshotGeneratedSchemas();
+  let buildInputSnapshot;
   try {
-    await run(npmCommand(), ["run", "prepare:7z"], REPO_ROOT, {}, signal);
-    await run(
+    await runArchiveBenchmarkBuildCommand(
+      npmCommand(),
+      ["run", "prepare:7z"],
+      REPO_ROOT,
+      {},
+      signal,
+    );
+    buildInputSnapshot = archiveBenchmarkBuildInputSnapshot();
+    // Never stamp an older release binary if Cargo reports success without
+    // replacing the feature-enabled E2E artifact.
+    fs.rmSync(binary, { force: true });
+    await runArchiveBenchmarkBuildCommand(
       npxCommand(),
       [
         "tauri",
@@ -351,19 +1323,16 @@ async function ensureReleaseE2eBinary(signal) {
   if (!fs.existsSync(binary)) {
     throw new Error(`Release E2E binary missing after build: ${binary}`);
   }
-  // A production release binary may occupy target/release. The stamp is only
-  // written after the feature-enabled build refreshes that exact path, so an
-  // un-stamped production binary can never be reused as an E2E executable.
-  if (fs.statSync(binary).mtimeMs < buildStartedAt) {
-    throw new Error(
-      "Release E2E build did not refresh target/release/zinnia; refusing to reuse a production binary.",
-    );
-  }
-  writeE2eStamp(binary);
+  const buildInputSnapshotAfter = archiveBenchmarkBuildInputSnapshot();
+  assertArchiveBenchmarkBuildInputsUnchanged(
+    buildInputSnapshot,
+    buildInputSnapshotAfter,
+  );
+  writeArchiveBenchmarkE2eStamp({ binary, inputSnapshot: buildInputSnapshot });
   return binary;
 }
 
-function childEnvironment(profile, binary, port) {
+function childEnvironment(profile, binary, port, webdriverPort) {
   return {
     ...process.env,
     ...profile.env,
@@ -386,6 +1355,7 @@ function childEnvironment(profile, binary, port) {
     ZINNIA_E2E_PASSWORD: profile.manifest.password,
     ZINNIA_BENCH_SOCKET_HOST: "127.0.0.1",
     ZINNIA_BENCH_SOCKET_PORT: String(port),
+    TAURI_WEBDRIVER_PORT: String(webdriverPort),
   };
 }
 
@@ -479,6 +1449,47 @@ export function waitForChildExit(
     .finally(() => clearTimeout(timeout));
 }
 
+export async function closeArchiveBenchmarkSession({
+  socket,
+  child,
+  childExit,
+  cleanup,
+}) {
+  let closeError = null;
+  try {
+    if (socket && !socket.destroyed) {
+      await new Promise((resolve, reject) => {
+        socket.write(`${JSON.stringify({ close: true })}\n`, (error) =>
+          error ? reject(error) : resolve(),
+        );
+      });
+    } else if (child.exitCode === null && child.signalCode === null) {
+      if (!(await terminateAndWaitForProcessTree(child))) {
+        throw new Error(
+          "Archive benchmark WDIO process tree did not stop after close.",
+        );
+      }
+    }
+    await waitForChildExit(
+      childExit,
+      child,
+      ARCHIVE_BENCHMARK_CLOSE_TIMEOUT_MS,
+    );
+  } catch (error) {
+    closeError = error;
+  } finally {
+    const stopped = await terminateAndWaitForProcessTree(child);
+    if (!stopped) {
+      closeError = new Error(
+        "Archive benchmark WDIO process tree did not stop after close.",
+        { cause: closeError },
+      );
+    }
+    await cleanup();
+  }
+  if (closeError) throw closeError;
+}
+
 function cleanupProfile(profileDir) {
   try {
     fs.rmSync(profileDir, {
@@ -494,7 +1505,9 @@ function cleanupProfile(profileDir) {
 
 function closeServer(server) {
   if (!server.listening) return Promise.resolve();
-  return new Promise((resolve) => server.close(() => resolve()));
+  return new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
 }
 
 /**
@@ -577,6 +1590,13 @@ export async function createArchiveBenchmarkSession({ signal } = {}) {
       pending.clear();
     });
   });
+  let webdriverReservation;
+  try {
+    webdriverReservation = await reserveE2eWebdriverPort();
+  } catch (error) {
+    cleanupProfile(profile.profileDir);
+    throw error;
+  }
   try {
     await new Promise((resolve, reject) => {
       server.listen(0, "127.0.0.1", () => resolve());
@@ -584,33 +1604,77 @@ export async function createArchiveBenchmarkSession({ signal } = {}) {
     });
   } catch (error) {
     await closeServer(server);
+    await webdriverReservation.release();
     cleanupProfile(profile.profileDir);
     throw error;
   }
   const address = server.address();
   if (!address || typeof address === "string") {
     await closeServer(server);
+    await webdriverReservation.release();
     cleanupProfile(profile.profileDir);
     throw new Error("Benchmark socket did not bind.");
   }
   let child;
+  let webdriverHandoff;
   try {
     const command = wdioCommand();
+    webdriverHandoff = await createE2eWebdriverPortHandoff({
+      binary,
+      directory: profile.work,
+      reservation: webdriverReservation,
+    });
+    const env = childEnvironment(
+      profile,
+      binary,
+      address.port,
+      webdriverReservation.port,
+    );
+    env.ZINNIA_E2E_BINARY = webdriverHandoff.binary;
+    env.ZINNIA_E2E_APP_ARGS = JSON.stringify(webdriverHandoff.args);
+    Object.assign(env, webdriverHandoff.env);
     child = spawn(command.command, command.args, {
       cwd: REPO_ROOT,
-      env: childEnvironment(profile, binary, address.port),
+      env,
       stdio: "inherit",
       windowsHide: true,
       shell: command.shell,
       detached: process.platform !== "win32",
     });
+    void captureWindowsProcessIdentity(child, { waitForSpawn: true });
   } catch (error) {
     await closeServer(server);
+    if (webdriverHandoff) await webdriverHandoff.release();
+    else await webdriverReservation.release();
     cleanupProfile(profile.profileDir);
     throw error;
   }
   const childExit = waitForChild(child);
   childExit.catch(() => {});
+  try {
+    await new Promise((resolve, reject) => {
+      child.once("spawn", resolve);
+      child.once("error", reject);
+    });
+  } catch (error) {
+    const stopped = await terminateAndWaitForProcessTree(child);
+    await closeServer(server);
+    if (webdriverHandoff) await webdriverHandoff.release();
+    else await webdriverReservation.release();
+    cleanupProfile(profile.profileDir);
+    if (!stopped) {
+      throw new AggregateError(
+        [
+          error,
+          new Error(
+            "Archive benchmark WDIO process tree did not stop after port handoff.",
+          ),
+        ],
+        "Archive benchmark startup and process cleanup both failed.",
+      );
+    }
+    throw error;
+  }
   let closePromise;
   const rejectPending = (error) => {
     for (const request of pending.values()) request.reject(error);
@@ -623,6 +1687,7 @@ export async function createArchiveBenchmarkSession({ signal } = {}) {
     rejectPending(new Error("Archive benchmark session closed."));
     if (socket && !socket.destroyed) socket.destroy();
     await closeServer(server);
+    await webdriverHandoff.release();
     cleanupProfile(profile.profileDir);
     signal?.removeEventListener("abort", onAbort);
   };
@@ -643,44 +1708,12 @@ export async function createArchiveBenchmarkSession({ signal } = {}) {
   };
   const close = () => {
     if (closePromise) return closePromise;
-    closePromise = (async () => {
-      let childError = null;
-      try {
-        if (socket && !socket.destroyed) {
-          await new Promise((resolve, reject) => {
-            socket.write(`${JSON.stringify({ close: true })}\n`, (error) =>
-              error ? reject(error) : resolve(),
-            );
-          });
-        } else if (child.exitCode === null && child.signalCode === null) {
-          if (!(await terminateAndWaitForProcessTree(child))) {
-            throw new Error(
-              "Archive benchmark WDIO process tree did not stop after close.",
-            );
-          }
-        }
-        try {
-          await waitForChildExit(
-            childExit,
-            child,
-            ARCHIVE_BENCHMARK_CLOSE_TIMEOUT_MS,
-          );
-        } catch (error) {
-          childError = error;
-        }
-      } finally {
-        if (childError) {
-          const stopped = await terminateAndWaitForProcessTree(child);
-          if (!stopped) {
-            childError = new Error(
-              "Archive benchmark WDIO process tree did not stop after close failure.",
-            );
-          }
-        }
-        await cleanup();
-      }
-      if (childError) throw childError;
-    })();
+    closePromise = closeArchiveBenchmarkSession({
+      socket,
+      child,
+      childExit,
+      cleanup,
+    });
     return closePromise;
   };
   signal?.addEventListener("abort", onAbort, { once: true });

@@ -21,6 +21,10 @@ const expectedRuntime = 'runtime-version: "50"';
 const rustToolchain = fs
   .readFileSync(path.join(root, "rust-toolchain.toml"), "utf8")
   .match(/^channel = "(\d+\.\d+\.\d+)"$/m)?.[1];
+const packageManager = JSON.parse(
+  fs.readFileSync(path.join(root, "package.json"), "utf8"),
+).packageManager;
+const pinnedNpm = /^npm@(\d+\.\d+\.\d+)$/.exec(packageManager || "")?.[1];
 
 let failed = false;
 for (const rel of required) {
@@ -68,12 +72,13 @@ if (fs.existsSync(manifest)) {
     failed = true;
   }
   if (
-    !yaml.includes("npm@12 --") ||
+    !pinnedNpm ||
+    !yaml.includes(`npm install --global npm@${pinnedNpm} --`) ||
     !yaml.includes("--before=") ||
     !yaml.includes("3 days ago")
   ) {
     console.error(
-      "flatpak-dry-run: node22 SDK npm 10.x must be upgraded to newest npm 12 with a 3-day --before age gate before npm ci",
+      "flatpak-dry-run: node22 SDK npm 10.x must be upgraded to the packageManager-pinned npm with a 3-day --before age gate before npm ci",
     );
     failed = true;
   }

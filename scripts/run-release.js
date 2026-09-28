@@ -56,7 +56,7 @@ export function main(argv = process.argv.slice(2), runner = runNpm) {
   const { skipCheck, continueScript } = parseReleaseArgs(argv);
   runner("prerelease:prepare");
   runner("workspace:bootstrap");
-  runner("test:all", ["--", "--require-clean-proof", "--skip-e2e"]);
+  runner("test:all", ["--", "--require-clean-proof"]);
   runner("dist:clean-release-artifacts");
   runner(continueScript, [], skipCheck ? { FORCE_UPLOAD: "1" } : {});
 }

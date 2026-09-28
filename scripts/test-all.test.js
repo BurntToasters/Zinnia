@@ -131,12 +131,13 @@ test("main records quality-gate proof when all checks pass", () => {
   assert.equal(exitCode, 0);
 });
 
-test("main skips e2e and still records quality-gate proof for --skip-e2e", () => {
+test("main skips e2e without minting release proof for --skip-e2e", () => {
   const calls = [];
   const resultsSeen = [];
   const exitCode = main({
     root: repoRoot,
     skipE2e: true,
+    requireCleanProof: true,
     clearProof: () => calls.push("clearProof"),
     recordProof: () => {
       calls.push("recordProof");
@@ -156,8 +157,8 @@ test("main skips e2e and still records quality-gate proof for --skip-e2e", () =>
 
   assert.ok(!calls.includes("run:e2e"));
   assert.equal(resultsSeen.at(-1)?.e2e.status, "skipped");
-  assert.ok(calls.includes("recordProof"));
-  assert.equal(exitCode, 0);
+  assert.ok(!calls.includes("recordProof"));
+  assert.equal(exitCode, 1);
 });
 
 test("main keeps generic test:all green when proof cannot be recorded", () => {
