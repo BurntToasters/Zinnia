@@ -98,7 +98,7 @@ jobs:
           node -e 'const r=require("./coverage/e2e/result.json"),fs=require("node:fs"),crypto=require("node:crypto"),path=require("node:path");
           const sha=f=>crypto.createHash("sha256").update(fs.readFileSync(f)).digest("hex");
           if(r.commit!==process.env.GITHUB_SHA || r.status!=="passed" ||
-          r.processCleanup?.status!=="verified" ||
+          !["verified","build-unproven"].includes(r.processCleanup?.status) ||
           !/^[a-f0-9]{64}$/.test(r.sourceSha256||"") || r.verification?.inputsUnchanged!==true ||
           !/^[a-f0-9]{64}$/.test(r.buildEnvironmentSha256||"") ||
           !/^[a-f0-9]{64}$/.test(r.binary?.sha256||"") ||
@@ -413,7 +413,7 @@ jobs:
           node -e 'const r=require("./coverage/e2e/result.json"),fs=require("node:fs"),crypto=require("node:crypto"),path=require("node:path");
           const sha=f=>crypto.createHash("sha256").update(fs.readFileSync(f)).digest("hex");
           if(r.commit!==process.env.GITHUB_SHA || r.status!=="passed" ||
-          r.processCleanup?.status!=="verified" ||
+          !["verified","build-unproven"].includes(r.processCleanup?.status) ||
           !/^[a-f0-9]{64}$/.test(r.sourceSha256||"") || r.verification?.inputsUnchanged!==true ||
           !/^[a-f0-9]{64}$/.test(r.buildEnvironmentSha256||"") ||
           !/^[a-f0-9]{64}$/.test(r.binary?.sha256||"") ||

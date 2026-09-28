@@ -23,6 +23,24 @@ const WINDOWS_PROCESS_QUIET_ROUNDS = 3;
 const WINDOWS_PROCESS_SCAN_DELAY_MS = 50;
 const WINDOWS_PROCESS_CAPTURE_INTERVAL_MS = 50;
 const windowsProcessStates = new WeakMap();
+const windowsCleanupFailures = new WeakMap();
+
+function describeWindowsProcesses(processes, limit = 12) {
+  const shown = processes
+    .slice(0, limit)
+    .map(
+      (processInfo) =>
+        `${processInfo.name || "?"}(pid ${processInfo.pid}, parent ${processInfo.parentPid}, created ${processInfo.created})`,
+    );
+  const more =
+    processes.length > limit ? ` +${processes.length - limit} more` : "";
+  return `${shown.join(", ")}${more}`;
+}
+
+/** Why the last Windows tree cleanup for this child could not be proven. */
+export function windowsProcessCleanupFailure(child) {
+  return windowsCleanupFailures.get(child) ?? null;
+}
 
 function positiveProcessTimeout(value, fallback) {
   const parsed = Number(value);
@@ -572,7 +590,7 @@ async function readWindowsProcessTable(timeoutMs = 5_000) {
   const command = [
     "$ErrorActionPreference = 'Stop'",
     "$rows = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop | ForEach-Object {",
-    "  [pscustomobject]@{ pid = [int]$_.ProcessId; parentPid = [int]$_.ParentProcessId; created = [string]$_.CreationDate }",
+    "  [pscustomobject]@{ pid = [int]$_.ProcessId; parentPid = [int]$_.ParentProcessId; created = [string]$_.CreationDate; name = [string]$_.Name }",
     "})",
     "ConvertTo-Json -InputObject $rows -Compress",
   ].join("\n");
@@ -581,10 +599,11 @@ async function readWindowsProcessTable(timeoutMs = 5_000) {
   try {
     const parsed = JSON.parse(result.output.trim() || "[]");
     const rows = Array.isArray(parsed) ? parsed : [parsed];
-    return rows.map(({ pid, parentPid, created }) => ({
+    return rows.map(({ pid, parentPid, created, name }) => ({
       pid: Number(pid),
       parentPid: Number(parentPid),
       created: String(created),
+      name: typeof name === "string" ? name : "",
     }));
   } catch {
     return null;
@@ -958,9 +977,21 @@ export async function terminateAndWaitForProcessTree(child, options = {}) {
           Math.max(1, Math.min(5_000, deadline - Date.now())),
         ));
     const state = windowsProcessStates.get(child);
-    if (!state) return false;
-    const failCleanup = () => {
+    if (!state) {
+      windowsCleanupFailures.set(
+        child,
+        "leader identity capture never started",
+      );
+      return false;
+    }
+    const failCleanup = (reason, remaining = []) => {
       state.captureStopped = true;
+      windowsCleanupFailures.set(
+        child,
+        remaining.length > 0
+          ? `${reason}; remaining: ${describeWindowsProcesses(remaining)}`
+          : reason,
+      );
       return false;
     };
     let identityTimer;
@@ -977,7 +1008,9 @@ export async function terminateAndWaitForProcessTree(child, options = {}) {
     ]);
     clearTimeout(identityTimer);
     if (!leaderIdentity || leaderIdentity.pid !== child.pid) {
-      return failCleanup();
+      return failCleanup(
+        "leader identity (PID and creation time) was not captured",
+      );
     }
     const snapshotTree = async () =>
       snapshotWindowsProcessTree(
@@ -1008,16 +1041,22 @@ export async function terminateAndWaitForProcessTree(child, options = {}) {
     );
     let treeKillAttempted = false;
     let quietRounds = 0;
+    let lastRemaining = [];
+    let lastUnresolved = [];
 
     while (Date.now() < deadline) {
       let snapshot;
       try {
         snapshot = await snapshotTree();
       } catch {
-        return failCleanup();
+        return failCleanup("process inventory read failed");
       }
-      if (!snapshot || !Array.isArray(snapshot.processes)) return failCleanup();
-      if (snapshot.reusedLeaderPid) return failCleanup();
+      if (!snapshot || !Array.isArray(snapshot.processes)) {
+        return failCleanup("process inventory was unavailable");
+      }
+      if (snapshot.reusedLeaderPid) {
+        return failCleanup("leader PID was reused by another process");
+      }
       const unresolvedDescendants = snapshot.unresolvedDescendants ?? [];
 
       const leaderFromSnapshot = snapshot.processes.find(
@@ -1027,7 +1066,7 @@ export async function terminateAndWaitForProcessTree(child, options = {}) {
         leaderFromSnapshot &&
         !sameWindowsProcess(leaderFromSnapshot, leaderIdentity)
       ) {
-        return failCleanup();
+        return failCleanup("leader identity changed during cleanup");
       }
       const processes = snapshot.processes.filter((processInfo) =>
         windowsProcessIdentity(processInfo),
@@ -1086,6 +1125,10 @@ export async function terminateAndWaitForProcessTree(child, options = {}) {
       const currentDescendants = processes.filter(
         (processInfo) => processInfo.pid !== child.pid,
       );
+      lastRemaining = leaderPresent
+        ? [leaderFromSnapshot, ...currentDescendants]
+        : currentDescendants;
+      lastUnresolved = unresolvedDescendants;
       const leaderStoppedNow =
         child.exitCode !== null || child.signalCode !== null;
       if (
@@ -1094,7 +1137,11 @@ export async function terminateAndWaitForProcessTree(child, options = {}) {
         currentDescendants.length === 0
       ) {
         if (unresolvedDescendants.length === 0) {
-          if (state.captureIncomplete) return failCleanup();
+          if (state.captureIncomplete) {
+            return failCleanup(
+              "process capture missed part of the tree while the command ran",
+            );
+          }
           quietRounds += 1;
           if (quietRounds >= WINDOWS_PROCESS_QUIET_ROUNDS) {
             state.captureStopped = true;
@@ -1116,7 +1163,16 @@ export async function terminateAndWaitForProcessTree(child, options = {}) {
         await new Promise((resolve) => setTimeout(resolve, scanDelayMs));
       }
     }
-    return failCleanup();
+    if (lastRemaining.length > 0) {
+      return failCleanup(
+        `deadline passed with owned processes still running`,
+        lastRemaining,
+      );
+    }
+    return failCleanup(
+      `deadline passed with processes of unproven ownership (parent PID matches a process seen during the run)`,
+      lastUnresolved,
+    );
   }
   terminateProcessTree(child, "SIGTERM");
   const leaderExited = await waitForProcessExit(child, 1_000);
@@ -1233,18 +1289,30 @@ export async function runArchiveBenchmarkBuildCommand(
         platform: processPlatform,
       }))
     ) {
-      const cleanupError = new Error(
-        `Archive benchmark build process tree cleanup could not be verified: ${command}`,
-        { cause: commandError },
-      );
-      processTreeCleanup = {
-        status: "unproven",
-        reason:
-          "leader identity or descendant ownership could not be proven safely",
-      };
-      commandError = commandError
-        ? new AggregateError([commandError, cleanupError], cleanupError.message)
-        : cleanupError;
+      const reason =
+        windowsProcessCleanupFailure(child) ??
+        "leader identity or descendant ownership could not be proven safely";
+      if (options.allowBuildCleanupWarning && !commandError) {
+        // Same policy as the E2E runner: a successful build step may leave
+        // toolchain helpers whose ownership cannot be proven. Warn, record,
+        // and let the caller refuse to stamp the binary as fresh.
+        processTreeCleanup = { status: "build-unproven", reason };
+        console.warn(
+          `Warning: archive benchmark build step ${command} succeeded but its process tree cleanup could not be verified (${reason}). Continuing.`,
+        );
+      } else {
+        const cleanupError = new Error(
+          `Archive benchmark build process tree cleanup could not be verified: ${command} (${reason})`,
+          { cause: commandError },
+        );
+        processTreeCleanup = { status: "unproven", reason };
+        commandError = commandError
+          ? new AggregateError(
+              [commandError, cleanupError],
+              cleanupError.message,
+            )
+          : cleanupError;
+      }
     }
   }
   if (fencedLaunch) {
@@ -1255,7 +1323,10 @@ export async function runArchiveBenchmarkBuildCommand(
     }
   }
   if (commandError) throw commandError;
-  if (processTreeCleanup.status !== "verified") {
+  if (
+    processTreeCleanup.status !== "verified" &&
+    processTreeCleanup.status !== "build-unproven"
+  ) {
     throw new Error(
       `Archive benchmark build process tree cleanup was not verified: ${command}`,
     );
@@ -1291,33 +1362,40 @@ async function ensureReleaseE2eBinary(signal) {
   }
   const snapshots = snapshotGeneratedSchemas();
   let buildInputSnapshot;
+  const buildCleanups = [];
   try {
-    await runArchiveBenchmarkBuildCommand(
-      npmCommand(),
-      ["run", "prepare:7z"],
-      REPO_ROOT,
-      {},
-      signal,
+    buildCleanups.push(
+      await runArchiveBenchmarkBuildCommand(
+        npmCommand(),
+        ["run", "prepare:7z"],
+        REPO_ROOT,
+        {},
+        signal,
+        { allowBuildCleanupWarning: true },
+      ),
     );
     buildInputSnapshot = archiveBenchmarkBuildInputSnapshot();
     // Never stamp an older release binary if Cargo reports success without
     // replacing the feature-enabled E2E artifact.
     fs.rmSync(binary, { force: true });
-    await runArchiveBenchmarkBuildCommand(
-      npxCommand(),
-      [
-        "tauri",
-        "build",
-        "--no-bundle",
-        "--config",
-        E2E_CONFIG,
-        "--",
-        "--features",
-        "e2e",
-      ],
-      REPO_ROOT,
-      {},
-      signal,
+    buildCleanups.push(
+      await runArchiveBenchmarkBuildCommand(
+        npxCommand(),
+        [
+          "tauri",
+          "build",
+          "--no-bundle",
+          "--config",
+          E2E_CONFIG,
+          "--",
+          "--features",
+          "e2e",
+        ],
+        REPO_ROOT,
+        {},
+        signal,
+        { allowBuildCleanupWarning: true },
+      ),
     );
   } finally {
     restoreGeneratedSchemas(snapshots);
@@ -1330,6 +1408,18 @@ async function ensureReleaseE2eBinary(signal) {
     buildInputSnapshot,
     buildInputSnapshotAfter,
   );
+  if (
+    buildCleanups.some(
+      (result) => result?.processTreeCleanup?.status !== "verified",
+    )
+  ) {
+    // Use this binary for the current run, but never mark it reusable.
+    fs.rmSync(releaseE2eStampPath(), { force: true });
+    console.warn(
+      "Warning: archive benchmark build cleanup was unproven; the binary will not be reused by a later run.",
+    );
+    return binary;
+  }
   writeArchiveBenchmarkE2eStamp({ binary, inputSnapshot: buildInputSnapshot });
   return binary;
 }

@@ -8,6 +8,7 @@ import {
   createE2eWebdriverPortHandoff,
   reserveE2eWebdriverPort,
   terminateAndWaitForProcessTree,
+  windowsProcessCleanupFailure,
 } from "../e2e/helpers/archive-benchmark.js";
 import {
   startWindowsFencedCommand,
@@ -359,13 +360,25 @@ export async function runBoundedCommand(command, args, options = {}) {
     });
     if (!stopped) {
       cleanupVerified = false;
-      processTreeCleanup = {
-        status: "unproven",
-        reason:
-          "leader identity or descendant ownership could not be proven safely",
-      };
+      const detail = windowsProcessCleanupFailure(child);
+      const reason =
+        detail ??
+        "leader identity or descendant ownership could not be proven safely";
+      // Build steps (npm/npx/cargo) can leave toolchain helpers whose ownership
+      // the Windows scan cannot prove. A successful build step is recorded and
+      // warned, not failed. Failed commands and the app session stay strict.
+      if (options.allowBuildCleanupWarning && !commandError) {
+        processTreeCleanup = { status: "build-unproven", reason };
+        console.warn(
+          `Warning: ${command} succeeded but its process tree cleanup could not be verified (${reason}). Continuing.`,
+        );
+      } else {
+        processTreeCleanup = { status: "unproven", reason };
+      }
+    }
+    if (processTreeCleanup.status === "unproven") {
       const cleanupFailure = new Error(
-        `${command} process tree cleanup could not be verified.`,
+        `${command} process tree cleanup could not be verified: ${processTreeCleanup.reason}`,
         { cause: commandError },
       );
       commandError = commandError
@@ -482,6 +495,7 @@ async function buildE2eBinary(reportDir, processCleanup) {
     ),
     logFile: path.join(reportDir, "prepare-7z.log"),
     onProcessTreeCleanup: (record) => processCleanup.push(record),
+    allowBuildCleanupWarning: true,
   });
   const schemaSnapshots = snapshotGeneratedSchemas();
   const binary = e2eBinaryPath();
@@ -509,6 +523,7 @@ async function buildE2eBinary(reportDir, processCleanup) {
         ),
         logFile: path.join(reportDir, "build.log"),
         onProcessTreeCleanup: (record) => processCleanup.push(record),
+        allowBuildCleanupWarning: true,
       },
     );
   } finally {
@@ -762,9 +777,14 @@ export function writeE2eArtifact({
       ? "not-recorded"
       : processCleanup.every((record) => record.status === "verified")
         ? "verified"
-        : "unproven";
+        : processCleanup.every((record) =>
+              ["verified", "build-unproven"].includes(record.status),
+            )
+          ? "build-unproven"
+          : "unproven";
   const windowsCleanupUnproven =
-    platform === "win32" && processCleanupStatus !== "verified";
+    platform === "win32" &&
+    !["verified", "build-unproven"].includes(processCleanupStatus);
   const finalStatus =
     status === "passed" &&
     (!inputsUnchanged ||

@@ -1209,12 +1209,12 @@ test("CI E2E proof validators require verified process cleanup", () => {
     "utf8",
   );
   const cleanupChecks = workflow.match(
-    /r\.processCleanup\?\.status!=="verified"/g,
+    /!\["verified","build-unproven"\]\.includes\(r\.processCleanup\?\.status\)/g,
   );
   assert.equal(
     cleanupChecks?.length,
     2,
-    "quality-gate and matrix E2E proof validators both reject unverified cleanup",
+    "quality-gate and matrix E2E proof validators accept only verified cleanup or a warned build step",
   );
 });
 
@@ -1583,4 +1583,127 @@ test("Flatpak npm version matches packageManager pin", () => {
     new RegExp(`npm@${npmVersion.replaceAll(".", "\\.")}\\b`),
   );
   assert.doesNotMatch(flatpak, /npm@12\s+--/);
+});
+
+// Windows build steps (npm/npx/cargo) can leave toolchain helpers whose
+// ownership the PID+creation-time scan cannot prove. A successful build step
+// records "build-unproven" and continues; failures and non-build commands
+// stay fail-closed.
+const unprovableWindowsCleanup = {
+  processPlatform: "win32",
+  windowsProcessOptions: {
+    captureIntervalMs: 2,
+    readWindowsProcessTable: async () => {
+      await delay(100);
+      return [];
+    },
+  },
+  processTreeCleanupOptions: { processTreeCleanupTimeoutMs: 40 },
+};
+
+test("successful Windows build step with unproven cleanup warns and continues", async () => {
+  const root = temporaryRoot();
+  const cleanupRecords = [];
+  try {
+    const result = await e2eRunner.runBoundedCommand(
+      process.execPath,
+      ["-e", "process.exit(0)"],
+      {
+        cwd: root,
+        timeoutMs: 5_000,
+        allowBuildCleanupWarning: true,
+        ...unprovableWindowsCleanup,
+        onProcessTreeCleanup: (record) => cleanupRecords.push(record),
+      },
+    );
+    assert.equal(result.processTreeCleanup.status, "build-unproven");
+    assert.equal(cleanupRecords[0]?.status, "build-unproven");
+    assert.match(cleanupRecords[0]?.reason, /leader identity/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("failed Windows build step with unproven cleanup still fails", async () => {
+  const root = temporaryRoot();
+  try {
+    await assert.rejects(
+      e2eRunner.runBoundedCommand(process.execPath, ["-e", "process.exit(3)"], {
+        cwd: root,
+        timeoutMs: 5_000,
+        allowBuildCleanupWarning: true,
+        ...unprovableWindowsCleanup,
+      }),
+      /exited with 3|cleanup could not be verified/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test(
+  "archive benchmark build step with unproven cleanup warns when allowed",
+  { skip: process.platform === "win32" },
+  async () => {
+    const root = temporaryRoot();
+    try {
+      const result = await archiveBenchmark.runArchiveBenchmarkBuildCommand(
+        process.execPath,
+        ["-e", "process.exit(0)"],
+        root,
+        {},
+        undefined,
+        { allowBuildCleanupWarning: true, ...unprovableWindowsCleanup },
+      );
+      assert.equal(result.processTreeCleanup.status, "build-unproven");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test("Windows E2E artifact passes with warned build steps but not unproven sessions", () => {
+  const root = temporaryRoot();
+  try {
+    const binary = join(root, "zinnia");
+    const manifest = join(root, "manifest.json");
+    const reportDir = join(root, "report");
+    const logFile = join(reportDir, "main.log");
+    mkdirSync(reportDir, { recursive: true });
+    writeFileSync(binary, "feature-enabled binary\n");
+    writeFileSync(manifest, '{"payloadFile":"hello.txt"}\n');
+    writeFileSync(logFile, "passing\n");
+    const common = {
+      reportDir,
+      root,
+      binary,
+      fixtureManifest: manifest,
+      platform: "win32",
+      status: "passed",
+      suites: [{ spec: "./specs/main.spec.js", status: "passed", logFile }],
+    };
+    const warned = e2eRunner.writeE2eArtifact({
+      ...common,
+      processCleanup: [
+        { command: "npx.cmd", status: "build-unproven", reason: "x" },
+        { command: "wdio", status: "verified" },
+      ],
+    });
+    assert.equal(warned.processCleanup.status, "build-unproven");
+    assert.notEqual(
+      warned.failure,
+      "Windows E2E process cleanup was not verified.",
+    );
+    const unproven = e2eRunner.writeE2eArtifact({
+      ...common,
+      processCleanup: [
+        { command: "npx.cmd", status: "build-unproven", reason: "x" },
+        { command: "wdio", status: "unproven" },
+      ],
+    });
+    assert.equal(unproven.status, "failed");
+    assert.equal(unproven.processCleanup.status, "unproven");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

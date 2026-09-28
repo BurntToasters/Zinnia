@@ -16,9 +16,18 @@ class FakeChild extends EventEmitter {
   }
 }
 
+const realPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+
+// FakeChild has no PID. Windows cleanup deliberately fails closed without a
+// PID-and-creation-time identity, so these lifetime cases use the POSIX path.
+function usePosixPlatform(): void {
+  Object.defineProperty(process, "platform", { value: "linux" });
+}
+
 describe("persistent archive benchmark child lifetime", () => {
   afterEach(() => {
     vi.useRealTimers();
+    if (realPlatform) Object.defineProperty(process, "platform", realPlatform);
   });
 
   it("does not force-kill an active session after one hour", async () => {
@@ -34,6 +43,7 @@ describe("persistent archive benchmark child lifetime", () => {
   });
 
   it("bounds close while preserving the child exit result", async () => {
+    usePosixPlatform();
     vi.useFakeTimers();
     const child = new FakeChild();
     const childExit = waitForChild(child);
