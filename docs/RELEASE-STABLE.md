@@ -12,8 +12,9 @@ The `main` and `beta` branches intentionally have no branch protection. The
 `beta` branch is mutable and may be deleted and recreated. Pull request review,
 hosted CI, and promotion policy checks are mandatory release-process gates that
 operators must verify; GitHub does not enforce them through branch rules. With
-a GitHub CLI account that has repository administration permission, install
-the mandatory beta-tag ruleset:
+a GitHub CLI account that has repository administration permission, you can
+install the beta-tag ruleset. It is optional for now: neither
+`release:preflight` nor the `release-policy` check requires it.
 
 ```sh
 npm run repo:protect-beta-tags
@@ -43,29 +44,24 @@ exact beta SHA to have succeeded. Its `ci-gate` must belong to that run's check
 suite and use the GitHub Actions app. It repeats the PR, label, release, and CI
 reads and rejects changes between the two snapshots, then resolves the beta tag
 again immediately before completing the same check as success or failure.
-Missing API evidence, duplicate governance rulesets, or a missing/failed policy
-check blocks promotion. Ruleset setup and preflight paginate the full repository
-ruleset list before accepting uniqueness.
+Missing API evidence or a missing/failed policy check blocks promotion. The
+beta-tag ruleset is not checked for now.
 
 For a public repository, verify the repository or organization Actions event
 policy explicitly permits this restricted `pull_request_target` workflow;
 GitHub's default public-repository policy will block that event when enforced.
 Because neither release branch has protection, operators must require the
-appropriate PR reviews and checks before merging. `release:preflight` requires
-a successful hosted push `ci-gate` on the exact `main` HEAD for stable releases.
-Beta preflight requires a successful hosted push `ci-gate` on the exact `beta`
-HEAD. These checks remain release requirements even when a direct push bypasses
-the normal review flow.
+appropriate PR reviews and checks before merging. `release:preflight` no longer
+checks hosted CI status. Operators must confirm a successful hosted push
+`ci-gate` on the exact `main` (stable) or `beta` (beta) HEAD before releasing,
+including when a direct push bypasses the normal review flow.
 
 The command creates an active repository ruleset named `Immutable beta release
 tags`. It targets only `refs/tags/v*-beta.*`, blocks updates and deletions, and
 has no bypass actors. It still permits creating a new beta tag. This ruleset
 protects tags only; it does not protect either branch, so `beta` remains
-deletable and recreatable. Run the command before accepting a beta tag.
-`release:preflight` fails closed if this exact active tag ruleset is absent,
-weakened, or has a bypass actor. Preflight uses repository administration
-credentials because GitHub hides ruleset bypass actors from read-only API
-callers.
+deletable and recreatable. The ruleset is optional for now; without it, beta
+tags can be moved or deleted, so do not rewrite a published beta tag.
 
 ## 2. Freeze and prove the stable candidate
 
@@ -279,7 +275,7 @@ Install or update to `X.Y.Z` through each supported distribution path and perfor
 a short smoke test of compress, extract, browse, updater, and platform shell
 integration. The `main` and `beta` branches remain intentionally unprotected.
 The `beta` branch may be deleted and recreated; immutable beta release tags
-remain governed by the required tag ruleset.
+are protected only when the optional tag ruleset is installed.
 
 If any publish-time verification fails, stop distribution work and repair the
 release metadata or assets. Do not create a second same-version stable release.

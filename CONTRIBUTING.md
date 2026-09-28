@@ -61,11 +61,12 @@ The `main` and `beta` branches intentionally have no branch protection. The
 `beta` branch may be deleted and recreated. Pull request review and hosted CI
 checks remain mandatory release-process requirements, and operators must verify
 them before merging; branch rules do not enforce them. The source-bound
-`ci-gate` check aggregates every independent proof job. Release preflight also
-requires a successful hosted `ci-gate` for the exact `main` or `beta` commit
-being released.
+`ci-gate` check aggregates every independent proof job. Before releasing,
+confirm a successful hosted `ci-gate` for the exact `main` or `beta` commit;
+release preflight does not check it.
 
-A repository admin must install the immutable beta release-tag ruleset with:
+A repository admin can install the immutable beta release-tag ruleset (optional
+for now; release preflight and the release-policy check do not require it) with:
 
 ```sh
 npm run repo:protect-beta-tags
