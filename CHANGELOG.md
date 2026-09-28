@@ -2,10 +2,10 @@
 
 | <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                                          | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux        |
 | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------- |
-| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.3-beta.2/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.3-beta.2/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.3-beta.2/Zinnia-macOS.dmg)**   | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.3-beta.2/Zinnia-Linux-x64.AppImage) |
-| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>-->                     | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.3-beta.2/Zinnia-macOS.zip)**   | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.3-beta.2/Zinnia-Linux-x64.deb)           |
-|                                                                                                                                                                                                                            |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.3-beta.2/Zinnia-Linux-x64.rpm)           |
-|                                                                                                                                                                                                                            |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.3-beta.2/Zinnia-Linux-x64.flatpak)   |
+| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.3-beta.3/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.3-beta.3/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.3-beta.3/Zinnia-macOS.dmg)**   | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.3-beta.3/Zinnia-Linux-x64.AppImage) |
+| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>-->                     | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.3-beta.3/Zinnia-macOS.zip)**   | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.3-beta.3/Zinnia-Linux-x64.deb)           |
+|                                                                                                                                                                                                                            |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.3-beta.3/Zinnia-Linux-x64.rpm)           |
+|                                                                                                                                                                                                                            |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.3-beta.3/Zinnia-Linux-x64.flatpak)   |
 
 > macOS downloads require macOS 26 or later.
 
@@ -18,11 +18,26 @@
 
 Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
+## Changes in `v0.6.3-beta.3:`
+
+- **Fix - Extraction:** `.bz2` and `.xz` files that store no file name inside (the usual case) now extract instead of failing with "Could not parse archive member paths from 7-Zip listing."
+- **Fix - Recovery:** A crash at one specific point during extraction no longer leaves a recovery state that blocks every later archive operation. Recovery still refuses anything it cannot verify.
+- **Fix - Basic mode:** Choosing a different archive from the Extract or Browse archive card now updates the shown archive name and the automatic destination. Previously, Extract could write the new archive into the old archive's folder. A destination you typed yourself is kept.
+- **Fix - Basic mode:** Form fields are locked while an operation runs, so the completion message and Recents always show the archive that was actually created.
+- **Fix - Presets:** Custom presets with default (empty) options, such as most ZIP presets, no longer disappear after restarting Zinnia.
+- **Fix - macOS:** Opening Settings, Check for Updates, or another app-menu item during a quick extract now keeps the main window open after the extract window closes.
+- **Fix - Command line:** Relative paths passed to an already-running Zinnia (for example `zinnia --compress ./file.txt` from another folder) now resolve against the folder you ran the command from.
+- **Fix - Windows:** Read-only archives are snapshotted by copy instead of hard link, so cleanup can no longer clear the read-only flag on your original file.
+- **Fix - Debug Mode:** Fixed an issue where popping out the debug mode console would cause a white screen and an unresponsive console.
+- **Release:** Publishing now refuses a release whose existing tag points at a different commit, and replacing an existing release asset uploads the new file before removing the old one. `ALLOW_ASSET_REPLACE=true` now works as documented.
+- **CI:** Stable promotion now requires exact-commit CI evidence, an accepted immutable beta tag, and six-platform release-scale archive benchmarks against that beta. The Rust toolchain is pinned to 1.98.1.
+- **Benchmarks:** Archive I/O benchmarks now run on macOS (sidecar signing no longer invalidates the build stamp) and long sessions are no longer cut off after 2 minutes.
+- **Tests:** Added end-to-end coverage for the fixes above, including real `.bz2`/`.xz` extraction, Basic archive replacement, field locking, and preset persistence across a reload.
+
 ## Changes in `v0.6.3-beta.2:`
 
 - **Fix - Windows 11 Context-menu integration:** Added better error handling for the Windows appx updater step.
   - The `.appx` package would update correctly but show an error if the `DLL` was already loaded.
-- **Fix - Debug Mode:** Fixed an issue where popping out the debug mode console would cause a white screen and un-intractable console.
 
 ## Changes in `v0.6.3-beta.1:`
 

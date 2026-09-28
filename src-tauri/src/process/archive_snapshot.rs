@@ -349,6 +349,13 @@ fn try_hardlink_snapshot_file(
     source: &std::path::Path,
     destination: &std::path::Path,
 ) -> Result<bool, String> {
+    // Attributes belong to the file, not the link. Stage cleanup clears the
+    // read-only attribute before deleting, which would also strip it from the
+    // user's archive. Copy read-only archives instead.
+    match std::fs::metadata(source) {
+        Ok(metadata) if !metadata.permissions().readonly() => {}
+        _ => return Ok(false),
+    }
     match std::fs::hard_link(source, destination) {
         Ok(()) => Ok(true),
         Err(error)

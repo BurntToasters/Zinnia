@@ -515,6 +515,91 @@ pub(crate) fn read_bounded_nofollow_bytes_if_matches(
     Ok(Some(bytes))
 }
 
+/// The extraction publisher appends and fsyncs one identity record, then
+/// journals the grown log's fingerprint. A crash between those two durable
+/// writes leaves exactly one record (or a torn part of one) after the
+/// journaled length. Its object has not been published yet, because
+/// publication waits for the journal update.
+///
+/// Return the identity that describes the log as it is on disk when, and only
+/// when, the journaled prefix is intact and the unjournaled suffix has that
+/// shape. Otherwise return `expected` unchanged so the caller's strict check
+/// fails closed. The suffix remains bounded by the move-plan checks applied
+/// when records are hydrated.
+pub(crate) fn effective_move_identity_log_identity(
+    stage: &std::path::Path,
+    expected: Option<&FileIdentity>,
+) -> Result<Option<FileIdentity>, String> {
+    use sha2::Digest as _;
+    use std::io::Read as _;
+
+    let Some(expected) = expected else {
+        return Ok(None);
+    };
+    let unchanged = Ok(Some(expected.clone()));
+    let Some(ObjectFingerprint::File {
+        len: expected_len,
+        sha256: expected_sha256,
+    }) = expected.fingerprint()
+    else {
+        return unchanged;
+    };
+    let path = move_identity_log_path(stage);
+    match std::fs::symlink_metadata(&path) {
+        Ok(metadata)
+            if !crate::path_safety::is_link_or_reparse(&metadata) && metadata.is_file() => {}
+        Ok(_) => return unchanged,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return unchanged,
+        Err(error) => return Err(error.to_string()),
+    }
+    let mut file = crate::path_safety::open_regular_file_nofollow(&path)?;
+    let before_identity = file_identity(&file)?;
+    let before = file.metadata().map_err(|error| error.to_string())?;
+    if !file_identities_match(&before_identity, expected)
+        || before.len() <= *expected_len
+        || before.len() > MAX_MOVE_IDENTITY_LOG_BYTES
+    {
+        return unchanged;
+    }
+    let mut bytes = Vec::with_capacity(usize::try_from(before.len()).unwrap_or(0));
+    file.by_ref()
+        .take(MAX_MOVE_IDENTITY_LOG_BYTES.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    let after = file.metadata().map_err(|error| error.to_string())?;
+    if bytes.len() as u64 != before.len()
+        || after.len() != before.len()
+        || after.modified().ok() != before.modified().ok()
+    {
+        return unchanged;
+    }
+    let Ok(prefix_len) = usize::try_from(*expected_len) else {
+        return unchanged;
+    };
+    let (prefix, suffix) = bytes.split_at(prefix_len);
+    if sha2::Sha256::digest(prefix).as_slice() != expected_sha256
+        || prefix.last().is_some_and(|byte| *byte != b'\n')
+    {
+        return unchanged;
+    }
+    // At most one record can be unjournaled: either torn (no newline yet) or
+    // complete (exactly one newline, at the end).
+    let newlines = suffix.iter().filter(|byte| **byte == b'\n').count();
+    let one_record = match newlines {
+        0 => true,
+        1 => suffix.last() == Some(&b'\n'),
+        _ => false,
+    };
+    if !one_record || suffix.len() > MAX_MOVE_IDENTITY_RECORD_BYTES.saturating_add(1) {
+        return unchanged;
+    }
+    Ok(Some(identity_with_file_content(
+        before_identity,
+        before.len(),
+        sha2::Sha256::digest(&bytes).into(),
+    )))
+}
+
 #[cfg(windows)]
 fn file_identity_for_entry(
     file: &std::fs::File,
@@ -1082,6 +1167,9 @@ pub(crate) fn cleanup_transaction_artifacts(
     move_identity_log_identity: Option<&FileIdentity>,
     archive_backup_identities: &[Option<FileIdentity>],
 ) -> Result<(), String> {
+    let move_identity_log_identity =
+        effective_move_identity_log_identity(stage, move_identity_log_identity)?;
+    let move_identity_log_identity = move_identity_log_identity.as_ref();
     let present = validate_transaction_artifacts(
         stage,
         stage_identity,

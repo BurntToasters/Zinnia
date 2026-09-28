@@ -609,7 +609,68 @@ fn parse_slt_archive_manifest(
     // Path records means the machine-readable schema was not understood; fail
     // closed instead of silently bypassing the safety check.
     if !seen_member && !slt_output.trim().is_empty() {
-        return Err("Could not parse archive member paths from 7-Zip listing.".to_string());
+        return parse_pathless_single_stream_record(slt_output, archive_path, max_bytes);
+    }
+    Ok(summary)
+}
+
+/// bzip2, xz and similar single-stream formats store no member name, so
+/// `-ba -slt` prints one record without `Path =`. 7-Zip derives the output
+/// name from the archive file name, which cannot escape the destination.
+/// Accept exactly one such key/value record with a `Size` field; anything
+/// else still fails closed.
+fn parse_pathless_single_stream_record(
+    slt_output: &str,
+    archive_path: &str,
+    max_bytes: Option<u64>,
+) -> Result<ArchiveManifestSummary, String> {
+    let unparsed = || "Could not parse archive member paths from 7-Zip listing.".to_string();
+    // Group by blank lines; `lines()` and `trim_end` also cover CRLF output.
+    let mut records: Vec<Vec<&str>> = vec![Vec::new()];
+    for line in slt_output.lines().map(str::trim_end) {
+        match records.last_mut() {
+            Some(current) if !line.is_empty() => current.push(line),
+            Some(current) if !current.is_empty() => records.push(Vec::new()),
+            _ => {}
+        }
+    }
+    records.retain(|lines| !lines.is_empty());
+    let [record] = records.as_slice() else {
+        return Err(unparsed());
+    };
+    let mut size = None;
+    for line in record {
+        let (key, value) = line.split_once(" =").ok_or_else(unparsed)?;
+        if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == ' ') {
+            return Err(unparsed());
+        }
+        match key {
+            "Path" | "Symbolic Link" | "Hard Link" => return Err(unparsed()),
+            "Size" => size = Some(value.trim()),
+            _ => {}
+        }
+    }
+    let size = size.ok_or_else(unparsed)?;
+    let mut summary = ArchiveManifestSummary {
+        entry_count: 1,
+        ..ArchiveManifestSummary::default()
+    };
+    // The derived output name is at most the archive's own file name.
+    summary.path_bytes = std::path::Path::new(archive_path)
+        .file_name()
+        .map_or(0, |name| name.len() as u64);
+    if !size.is_empty() {
+        summary.declared_bytes = size
+            .parse::<u64>()
+            .map_err(|_| "Archive listing contains an invalid declared member size.".to_string())?;
+        if let Some(max_bytes) = max_bytes {
+            if summary.declared_bytes > max_bytes {
+                return Err(format!(
+                    "Archive declares more than {:.1} GiB of extracted data.",
+                    max_bytes as f64 / 1_073_741_824.0
+                ));
+            }
+        }
     }
     Ok(summary)
 }

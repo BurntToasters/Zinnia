@@ -130,15 +130,21 @@ export function resetBasicBar(section: "compress" | "extract"): void {
   progressbar.setAttribute("aria-valuemax", "100");
 }
 
-const disabledBeforeBasicLock = new Map<HTMLButtonElement, boolean>();
+type BasicLockableControl =
+  | HTMLButtonElement
+  | HTMLInputElement
+  | HTMLSelectElement
+  | HTMLTextAreaElement;
+
+const disabledBeforeBasicLock = new Map<BasicLockableControl, boolean>();
 const basicCancelIds = new Set([
   "basic-compress-cancel",
   "basic-extract-cancel",
   "basic-browse-cancel",
 ]);
 
-function setButtonInteractionLock(
-  button: HTMLButtonElement,
+function setControlInteractionLock(
+  button: BasicLockableControl,
   active: boolean,
 ): void {
   if (active) {
@@ -169,7 +175,18 @@ function updateBasicInteractionLock(active: boolean): void {
       if (button.matches("[data-workspace-mode-btn]")) return;
       const keepCancelAvailable =
         active && state.running && basicCancelIds.has(button.id);
-      setButtonInteractionLock(button, active && !keepCancelAvailable);
+      setControlInteractionLock(button, active && !keepCancelAvailable);
+    });
+  // Completion and recent archives describe the submitted operation. Form
+  // fields stay read-only until it ends so the two cannot diverge.
+  document
+    .querySelectorAll<
+      HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+    >(
+      "#basic-workspace input, #basic-workspace select, #basic-workspace textarea",
+    )
+    .forEach((control) => {
+      setControlInteractionLock(control, active);
     });
 
   const dropzone = document.getElementById("basic-dropzone");

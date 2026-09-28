@@ -80,7 +80,9 @@ const E2E_FRESHNESS_PATHS = [
   path.join(REPO_ROOT, "src-tauri", "capabilities"),
   path.join(REPO_ROOT, "src-tauri", "permissions"),
   path.join(REPO_ROOT, "src-tauri", "icons"),
-  path.join(REPO_ROOT, "src-tauri", "binaries"),
+  // src-tauri/binaries is derived from assets/ (already listed). prepare-7z
+  // ad-hoc signs macOS copies and build.rs recopies the assets, so including
+  // it made every macOS build look changed. Matches scripts/test-e2e.js.
   path.join(REPO_ROOT, "src-tauri", "linux"),
   path.join(REPO_ROOT, "src-tauri", "macos"),
   path.join(REPO_ROOT, "src-tauri", "windows"),

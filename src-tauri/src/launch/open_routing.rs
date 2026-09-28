@@ -580,6 +580,37 @@ pub fn emit_open_urls(app: &tauri::AppHandle, urls: Vec<Url>) {
     let _ = route_open_request(app, paths, String::new());
 }
 
+/// A second instance forwards its argv to this process, whose working
+/// directory may differ. Resolve relative path arguments against the sender's
+/// cwd before routing. argv[0], mode flags, file URLs and absolute paths are
+/// kept. A dash-prefixed argument is resolved only when that file exists under
+/// the sender cwd, so junk flags such as `-psn_*` are still dropped later.
+pub(crate) fn resolve_open_args_against_cwd(argv: Vec<String>, cwd: &str) -> Vec<String> {
+    let cwd = std::path::Path::new(cwd);
+    if cwd.as_os_str().is_empty() || !cwd.is_absolute() {
+        return argv;
+    }
+    let mut args = argv.into_iter();
+    let mut resolved: Vec<String> = args.next().into_iter().collect();
+    for arg in args {
+        let path = std::path::Path::new(&arg);
+        let keep = arg.is_empty()
+            || arg == "--"
+            || arg == "--extract"
+            || arg == "--compress"
+            || arg == "--zinnia-shell-handoff"
+            || arg.to_ascii_lowercase().starts_with("file://")
+            || !path.is_relative()
+            || (arg.starts_with('-') && !cwd.join(path).exists());
+        if keep {
+            resolved.push(arg);
+        } else {
+            resolved.push(cwd.join(path).to_string_lossy().into_owned());
+        }
+    }
+    resolved
+}
+
 pub fn emit_open_paths(app: &tauri::AppHandle, argv: Vec<String>) -> bool {
     // Primary (or sole) instance: consume Windows shell handoffs now.
     let (paths, mode) = parse_open_request_args(argv.into_iter().skip(1));

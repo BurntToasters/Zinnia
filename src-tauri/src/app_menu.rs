@@ -133,9 +133,10 @@ pub fn install_macos_app_menu(app: &AppHandle) -> Result<(), String> {
         let id = event.id().as_ref();
         match id {
             MENU_CHECK_UPDATES | MENU_SETTINGS | MENU_SHORTCUTS | MENU_SUPPORT | MENU_LICENSES => {
-                if let Err(error) = crate::launch::show_main_window(app) {
-                    eprintln!("Failed to show main window for menu action: {error}");
-                }
+                // A menu action is an explicit request for the full workspace.
+                // Leave extract-only mode so closing a quick-extract window
+                // does not destroy the main window this action opens.
+                crate::launch::open_main_from_extract_warm(app);
                 let delivered = crate::launch::MAIN_WINDOW_READY
                     .load(std::sync::atomic::Ordering::SeqCst)
                     && app

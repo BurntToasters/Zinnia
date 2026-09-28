@@ -101,6 +101,13 @@ const {
   ) => { draft?: boolean; tag_name?: string; id?: number } | null;
   verifyReleaseSession: (run?: typeof spawnSync) => void;
 };
+const { assertExistingTagTargetsCommit } =
+  require("../../scripts/release-draft-metadata.cjs") as {
+    assertExistingTagTargetsCommit: (
+      apiGet: (endpoint: string) => unknown,
+      options: { owner: string; repo: string; tag: string; commit: string },
+    ) => void;
+  };
 const { assertStableReleaseOverridesAllowed, isStableReleaseVersion } =
   require("../../scripts/release-policy.cjs") as {
     assertStableReleaseOverridesAllowed: (
@@ -1517,6 +1524,88 @@ describe("release script safeguards", () => {
     expect(packageJson.scripts.r).toContain("gitprune:force");
     expect(packageJson.scripts["release:verify:draft"]).toContain(
       "verify-release-draft.js",
+    );
+  });
+
+  describe("publish binds an existing tag to the release commit", () => {
+    const head = "a".repeat(40);
+    const other = "b".repeat(40);
+    const options = { owner: "o", repo: "r", tag: "v1.2.3", commit: head };
+    const notFound = () => {
+      throw Object.assign(new Error("gh: Not Found (HTTP 404)"), {
+        statusCode: 404,
+      });
+    };
+
+    it("accepts an absent tag", () => {
+      const calls: string[] = [];
+      assertExistingTagTargetsCommit((endpoint) => {
+        calls.push(endpoint);
+        return notFound();
+      }, options);
+      expect(calls).toEqual(["/repos/o/r/git/ref/tags/v1.2.3"]);
+    });
+
+    it("accepts a lightweight tag at HEAD", () => {
+      expect(() =>
+        assertExistingTagTargetsCommit(
+          () => ({ object: { type: "commit", sha: head } }),
+          options,
+        ),
+      ).not.toThrow();
+    });
+
+    it("accepts an annotated tag whose commit is HEAD", () => {
+      const tagSha = "c".repeat(40);
+      expect(() =>
+        assertExistingTagTargetsCommit((endpoint) => {
+          if (endpoint.endsWith("/git/ref/tags/v1.2.3")) {
+            return { object: { type: "tag", sha: tagSha } };
+          }
+          expect(endpoint).toBe(`/repos/o/r/git/tags/${tagSha}`);
+          return { object: { type: "commit", sha: head } };
+        }, options),
+      ).not.toThrow();
+    });
+
+    it("refuses a tag at another commit", () => {
+      expect(() =>
+        assertExistingTagTargetsCommit(
+          () => ({ object: { type: "commit", sha: other } }),
+          options,
+        ),
+      ).toThrow(/v1\.2\.3 already points to b{40}, not HEAD a{40}/);
+    });
+
+    it("fails closed on other API errors", () => {
+      expect(() =>
+        assertExistingTagTargetsCommit(() => {
+          throw Object.assign(new Error("gh: Server Error (HTTP 502)"), {
+            statusCode: 502,
+          });
+        }, options),
+      ).toThrow(/HTTP 502/);
+    });
+
+    it("runs before the draft is published", () => {
+      const source = fs.readFileSync("scripts/publish-release.cjs", "utf8");
+      const check = source.indexOf("assertExistingTagTargetsCommit(");
+      const patch = source.indexOf('"PATCH"');
+      expect(check).toBeGreaterThan(0);
+      expect(check).toBeLessThan(patch);
+    });
+  });
+
+  it("replaces a conflicting release asset without a delete-first gap", () => {
+    const source = fs.readFileSync("scripts/gpg-sign.js", "utf8");
+    const start = source.indexOf("async function uploadAssetWithReplace(");
+    const end = source.indexOf("\nasync function ", start + 1);
+    const body = source.slice(start, end);
+    expect(start).toBeGreaterThan(0);
+    expect(body).toContain("replaceReleaseAssetsTransactionally(release, [");
+    expect(body).not.toMatch(/"DELETE"/);
+    expect(source).toMatch(
+      /uploadAssetWithReplace\(release, f, \{\s*allowPublishedReplace: ALLOW_ASSET_REPLACE,?\s*\}\)/,
     );
   });
 });

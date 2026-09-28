@@ -1,7 +1,9 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { browser, $, expect } from "@wdio/globals";
+import { requireHostSidecar, run7z } from "../../scripts/archive-fixtures.js";
 
 async function waitForMainWindow() {
   await $("#app").waitForExist({ timeout: 30_000 });
@@ -31,6 +33,49 @@ async function applyIncomingPaths(paths, mode) {
     mode,
   );
   if (error) throw new Error(String(error));
+}
+
+async function queueDialogResult(result) {
+  await waitForE2eHook();
+  await browser.execute((next) => {
+    window.__ZINNIA_E2E__.queueDialogResult(next);
+  }, result);
+}
+
+async function domValue(selector) {
+  return browser.execute(
+    (target) => document.querySelector(target)?.value ?? null,
+    selector,
+  );
+}
+
+async function domText(selector) {
+  return browser.execute(
+    (target) => document.querySelector(target)?.textContent ?? null,
+    selector,
+  );
+}
+
+async function waitForDomText(selector, expected, timeoutMsg) {
+  await browser.waitUntil(async () => (await domText(selector)) === expected, {
+    timeout: 20_000,
+    timeoutMsg,
+  });
+}
+
+function writeIncompressibleFile(file, bytes) {
+  const handle = fs.openSync(file, "w");
+  try {
+    const chunk = 4 * 1024 * 1024;
+    for (let written = 0; written < bytes; written += chunk) {
+      fs.writeSync(
+        handle,
+        crypto.randomBytes(Math.min(chunk, bytes - written)),
+      );
+    }
+  } finally {
+    fs.closeSync(handle);
+  }
 }
 
 async function setInputValue(selector, value) {
@@ -166,6 +211,154 @@ describe("Zinnia main window", () => {
     });
   });
 
+  it("replaces the Basic extract archive from its archive card", async () => {
+    const first = process.env.ZINNIA_E2E_HELLO_7Z;
+    const second = process.env.ZINNIA_E2E_NESTED_ZIP;
+    const payload = process.env.ZINNIA_E2E_PAYLOAD;
+    await waitForArchiveIdle();
+    // Start from an automatic destination, not the typed one from earlier.
+    await browser.execute(() => {
+      for (const id of ["extract-path", "basic-extract-path"]) {
+        const input = document.getElementById(id);
+        if (input) input.value = "";
+      }
+    });
+    await applyIncomingPaths([first], "extract");
+    await waitForDomText(
+      "#basic-extract-archive-name",
+      "hello.7z",
+      "Basic extract did not show the first archive",
+    );
+    assert.equal(
+      await domValue("#basic-extract-path"),
+      path.join(path.dirname(first), "hello"),
+    );
+
+    await queueDialogResult(second);
+    await browser.execute(() => {
+      document.getElementById("basic-extract-archive-info")?.click();
+    });
+    await waitForDomText(
+      "#basic-extract-archive-name",
+      "nested.zip",
+      "Basic extract header still names the replaced archive",
+    );
+    assert.equal(
+      await domValue("#basic-extract-path"),
+      path.join(path.dirname(second), "nested"),
+      "automatic Basic destination must follow the new archive",
+    );
+
+    // A typed destination is the user's choice and survives a replacement.
+    const typed = path.join(process.env.ZINNIA_E2E_WORK, "basic-replaced");
+    fs.mkdirSync(typed, { recursive: true });
+    await setInputValue("#basic-extract-path", typed);
+    await queueDialogResult(first);
+    await browser.execute(() => {
+      document.getElementById("basic-extract-archive-info")?.click();
+    });
+    await waitForDomText(
+      "#basic-extract-archive-name",
+      "hello.7z",
+      "Basic extract header did not follow the second replacement",
+    );
+    assert.equal(await domValue("#basic-extract-path"), typed);
+    await $("#basic-run-extract").click();
+    const extracted = path.join(typed, "hello.txt");
+    await browser.waitUntil(() => fs.existsSync(extracted), {
+      timeout: 60_000,
+      timeoutMsg: `replaced archive did not extract to ${extracted}`,
+    });
+    assert.equal(fs.readFileSync(extracted, "utf8"), payload);
+    await waitForArchiveIdle();
+  });
+
+  it("replaces the Basic browse archive from its archive card", async () => {
+    await waitForArchiveIdle();
+    await applyIncomingPaths([process.env.ZINNIA_E2E_HELLO_7Z], "");
+    await waitForDomText(
+      "#basic-browse-archive-name",
+      "hello.7z",
+      "Basic browse did not show the first archive",
+    );
+    await waitForArchiveIdle();
+    await queueDialogResult(process.env.ZINNIA_E2E_NESTED_ZIP);
+    await browser.execute(() => {
+      document.getElementById("basic-browse-archive-info")?.click();
+    });
+    await waitForDomText(
+      "#basic-browse-archive-name",
+      "nested.zip",
+      "Basic browse header still names the replaced archive",
+    );
+    await browser.waitUntil(
+      async () =>
+        String(await domText("#basic-browse-tbody"))
+          .replaceAll("\\", "/")
+          .includes("nested/hello.txt"),
+      {
+        timeout: 20_000,
+        timeoutMsg: "Basic browse did not list the replacement archive",
+      },
+    );
+    await waitForArchiveIdle();
+  });
+
+  it("locks Basic compression fields until the archive is written", async () => {
+    const work = process.env.ZINNIA_E2E_WORK;
+    const input = path.join(work, "incompressible.bin");
+    const output = path.join(work, "basic-locked.7z");
+    writeIncompressibleFile(input, 96 * 1024 * 1024);
+    await waitForArchiveIdle();
+    await applyIncomingPaths([input], "compress");
+    await setInputValue("#basic-output-path", output);
+    await browser.execute(() => {
+      document.getElementById("basic-run-compress")?.click();
+    });
+    await browser.waitUntil(
+      async () =>
+        browser.execute(
+          () => document.getElementById("basic-output-path")?.disabled === true,
+        ),
+      {
+        timeout: 10_000,
+        interval: 20,
+        timeoutMsg: "Basic output path stayed editable during compression",
+      },
+    );
+    const lockedWhileRunning = await browser.execute(() =>
+      [
+        "basic-output-path",
+        "basic-archive-name",
+        "basic-format",
+        "basic-split-size",
+        "basic-password",
+      ].every((id) => {
+        const control = document.getElementById(id);
+        return !control || control.disabled === true;
+      }),
+    );
+    assert.equal(lockedWhileRunning, true);
+    await browser.waitUntil(() => fs.existsSync(output), {
+      timeout: 120_000,
+      timeoutMsg: `locked compress did not write ${output}`,
+    });
+    await waitForArchiveIdle();
+    await browser.waitUntil(
+      async () =>
+        browser.execute(
+          () =>
+            document.getElementById("basic-output-path")?.disabled === false,
+        ),
+      {
+        timeout: 10_000,
+        timeoutMsg: "Basic output path stayed locked after compression",
+      },
+    );
+    assert.equal(await domText("#basic-compress-completion-path"), output);
+    fs.rmSync(input, { force: true });
+  });
+
   it("extracts hello.7z from Power using a typed destination", async () => {
     const archive = process.env.ZINNIA_E2E_HELLO_7Z;
     const dest = process.env.ZINNIA_E2E_EXTRACT_OUT;
@@ -205,6 +398,33 @@ describe("Zinnia main window", () => {
     });
     assert.equal(fs.readFileSync(extracted, "utf8"), payload);
   });
+
+  for (const [format, extension] of [
+    ["bzip2", "bz2"],
+    ["xz", "xz"],
+  ]) {
+    it(`extracts a single-stream ${format} file that stores no member name`, async () => {
+      const work = path.join(process.env.ZINNIA_E2E_WORK, `stream-${format}`);
+      const dest = path.join(work, "out");
+      const payload = process.env.ZINNIA_E2E_PAYLOAD;
+      fs.mkdirSync(dest, { recursive: true });
+      fs.copyFileSync(
+        process.env.ZINNIA_E2E_HELLO_TXT,
+        path.join(work, "hello.txt"),
+      );
+      const archive = path.join(work, `hello.txt.${extension}`);
+      run7z(requireHostSidecar(), ["a", `-t${format}`, archive, "hello.txt"], {
+        cwd: work,
+      });
+      await extractArchiveTo(archive, dest);
+      const extracted = path.join(dest, "hello.txt");
+      await browser.waitUntil(() => fs.existsSync(extracted), {
+        timeout: 60_000,
+        timeoutMsg: `${format} extract did not write ${extracted}`,
+      });
+      assert.equal(fs.readFileSync(extracted, "utf8"), payload);
+    });
+  }
 
   it("extracts encrypted.7z when the password field is set", async () => {
     const archive = process.env.ZINNIA_E2E_ENCRYPTED_7Z;
@@ -264,6 +484,54 @@ describe("Zinnia main window", () => {
         timeout: 20_000,
         timeoutMsg:
           "nested zip browse listing did not include nested/hello.txt",
+      },
+    );
+  });
+
+  it("keeps a ZIP custom preset after the window reloads", async () => {
+    const name = "E2E ZIP preset";
+    await waitForArchiveIdle();
+    await $('[data-mode-btn="add"]').click();
+    await browser.execute(() => {
+      const format = document.getElementById("format");
+      format.value = "zip";
+      format.dispatchEvent(new Event("change", { bubbles: true }));
+      document.getElementById("save-preset")?.click();
+    });
+    await browser.waitUntil(
+      async () =>
+        browser.execute(
+          () =>
+            document.getElementById("input-modal-overlay")?.hidden === false,
+        ),
+      { timeout: 10_000, timeoutMsg: "Save preset prompt did not open" },
+    );
+    await setInputValue("#input-modal-field", name);
+    await browser.execute(() => {
+      document.getElementById("input-modal-confirm")?.click();
+    });
+    await waitForDomText(
+      "#status",
+      `Preset "${name}" saved`,
+      "Preset save did not finish",
+    );
+    await browser.execute(() => window.location.reload());
+    // The persisted Power workspace is restored, so wait for the app shell
+    // rather than the Basic workspace.
+    await $("#app").waitForExist({ timeout: 30_000 });
+    await waitForE2eHook();
+    await browser.waitUntil(
+      async () =>
+        browser.execute(
+          (value) =>
+            [...document.getElementById("preset").options].some(
+              (option) => option.value === value,
+            ),
+          `custom:${name}`,
+        ),
+      {
+        timeout: 20_000,
+        timeoutMsg: "ZIP custom preset disappeared after reload",
       },
     );
   });
