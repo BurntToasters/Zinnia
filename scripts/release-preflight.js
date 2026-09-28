@@ -11,7 +11,6 @@ import {
 const require = createRequire(import.meta.url);
 const {
   assertBetaTagProtection,
-  assertReleaseBranchProtection,
   assertSuccessfulHostedCi,
 } = require("./release-branch-protection.cjs");
 
@@ -86,7 +85,6 @@ function runPreflight() {
     );
   }
 
-  assertReleaseBranchProtection(expectedBranch);
   assertBetaTagProtection();
   assertSuccessfulHostedCi(expectedBranch, head);
 

@@ -88,9 +88,14 @@ native build runs.
   destructively resets that VM to the exact `origin/beta` tip. Then run
   `npm run release:win`, `npm run release:mac`, `npm run release:linux`, or
   `npm run release:linux:arm64` as appropriate.
-- Beta may remain unprotected and deletable. Beta release preflight still
-  requires a clean local `beta` checkout exactly matching `origin/beta`.
-  Stable releases continue to require strict `main` protection with `ci-gate`.
+- The `main` and `beta` branches intentionally have no branch protection.
+  Operators may delete and recreate `beta`. Pull request review and hosted CI
+  checks are release-process requirements enforced by operators, not branch
+  rules. Beta release preflight still requires a clean local `beta` checkout
+  exactly matching `origin/beta`; stable preflight requires hosted `ci-gate`
+  success on the exact `main` HEAD.
+- `npm run repo:protect-beta-tags` installs the mandatory immutable beta-tag
+  ruleset. It protects beta release tags, not the `main` or `beta` branches.
 - Signed releases are intentionally explicit: run the platform-specific
   `release:win`, `release:mac`, and `release:linux` scripts for the same version.
   `release:linux` is x64; run `release:linux:arm64` only from a suitable ARM64

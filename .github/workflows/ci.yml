@@ -1,7 +1,7 @@
 name: CI
 
 # Pull requests prove candidate changes. Pushes prove the exact post-merge tips
-# of the protected release branches without duplicating every PR branch update.
+# of main and beta without duplicating every PR branch update.
 # Jobs run tests and smoke builds, not signed release artifacts.
 
 on:

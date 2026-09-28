@@ -6,32 +6,29 @@ with the accepted beta number. Do not use it to bypass a failed candidate or
 `main` gate. Every command below is expected to run from a clean checkout of
 the canonical repository.
 
-## 1. One-time stable branch and beta-tag enforcement
+## 1. One-time beta-tag enforcement
 
-The stable release branch, `main`, must be protected before stable promotion.
-The `beta` branch is an intentionally mutable staging branch and does not need
-branch protection. With a GitHub CLI account that has repository
-administration permission, run:
+The `main` and `beta` branches intentionally have no branch protection. The
+`beta` branch is mutable and may be deleted and recreated. Pull request review,
+hosted CI, and promotion policy checks are mandatory release-process gates that
+operators must verify; GitHub does not enforce them through branch rules. With
+a GitHub CLI account that has repository administration permission, install
+the mandatory beta-tag ruleset:
 
 ```sh
-npm run repo:protect-release-branches
+npm run repo:protect-beta-tags
 ```
 
 First land the trusted `.github/workflows/release-policy.yml` and
 `scripts/release-promotion-policy.mjs` on `main` through a separately reviewed
 policy bootstrap. The workflow runs from the PR base, so adding it only to a
 candidate branch cannot enforce that candidate; requiring its check before it
-exists on `main` would block every PR. After its first hosted run, the command
-protects `main` with both GitHub Actions-bound `ci-gate` and `release-policy`.
-The command also installs or repairs the repository tag ruleset for beta tags.
-The former check aggregates CI proof; the latter reads PR commits as Git data
-from base-owned code and never executes PR code. Main requires one approval by
-someone other than the latest pusher. New commits dismiss old approvals, and
-admins must follow the same review and check rules. No actor can bypass required
-PR reviews. The rule requires an up-to-date branch and disables force pushes
-and deletion. CI remains limited to tests, audits, validation, and unsigned
-compile smoke; release building, signing, and publishing stay on manually
-operated release VMs.
+exists on `main` would block every PR. After bootstrap, operators must verify
+the hosted `ci-gate` and `release-policy` checks before merging a promotion PR.
+`ci-gate` aggregates CI proof; `release-policy` reads PR commits as Git data
+from base-owned code and never executes PR code. CI remains limited to tests,
+audits, validation, and unsigned compile smoke; release building, signing, and
+publishing stay on manually operated release VMs.
 
 `release-policy.yml` grants only `contents: read`, `pull-requests: read`,
 `actions: read`, and `checks: write`. Before checkout it creates a
@@ -53,26 +50,30 @@ ruleset list before accepting uniqueness.
 For a public repository, verify the repository or organization Actions event
 policy explicitly permits this restricted `pull_request_target` workflow;
 GitHub's default public-repository policy will block that event when enforced.
-`release:preflight` requires both protected checks for stable releases and a
-successful hosted push `ci-gate` on the exact `main` HEAD. Beta preflight does
-not require branch protection, but it also requires a successful hosted push
-`ci-gate` on the exact `beta` HEAD. A direct push or administrator bypass is not
-a release-CI bypass.
+Because neither release branch has protection, operators must require the
+appropriate PR reviews and checks before merging. `release:preflight` requires
+a successful hosted push `ci-gate` on the exact `main` HEAD for stable releases.
+Beta preflight requires a successful hosted push `ci-gate` on the exact `beta`
+HEAD. These checks remain release requirements even when a direct push bypasses
+the normal review flow.
 
 The command creates an active repository ruleset named `Immutable beta release
 tags`. It targets only `refs/tags/v*-beta.*`, blocks updates and deletions, and
-has no bypass actors. It still permits creating a new beta tag. Run the command
-before accepting a beta tag. `release:preflight` fails closed if main review
-protection or this exact active tag ruleset is absent, weakened, or has a bypass
-actor. Preflight uses repository administration credentials because GitHub
-hides ruleset bypass actors from read-only API callers.
+has no bypass actors. It still permits creating a new beta tag. This ruleset
+protects tags only; it does not protect either branch, so `beta` remains
+deletable and recreatable. Run the command before accepting a beta tag.
+`release:preflight` fails closed if this exact active tag ruleset is absent,
+weakened, or has a bypass actor. Preflight uses repository administration
+credentials because GitHub hides ruleset bypass actors from read-only API
+callers.
 
 ## 2. Freeze and prove the stable candidate
 
 The only stable candidate source branch is `next-X.Y.Z`, promoted directly to
-`main`; promotion CI enforces this source/target pairing. The published `beta`
-branch is not an intermediate merge target and does not need to contain
-post-beta test-only fixes.
+`main`; promotion CI enforces this source/target pairing. Operators must review
+the PR and verify all required checks because branch rules do not enforce them.
+The published `beta` branch is not an intermediate merge target and does not
+need to contain post-beta test-only fixes.
 
 The production source must remain the accepted beta source users tested.
 Review every post-beta difference and prove that any accepted difference is
@@ -147,11 +148,11 @@ flow first and complete beta smoke testing before the stable version change.
 
 ## 3. Promote the tested source to main
 
-Merge the exact accepted `next-X.Y.Z` pull-request head into protected `main`
-through the normal GitHub merge flow. Do not merge it through `beta` first and
-do not force push either release branch. Require the post-merge `main` CI run to
-pass, then start a short-lived stable-metadata branch from that pushed `main`
-tip:
+Merge the exact accepted `next-X.Y.Z` pull-request head into `main` through the
+normal GitHub review flow after an operator verifies the required reviews and
+checks. Do not merge it through `beta` first. Require the post-merge `main` CI
+run to pass, then start a short-lived stable-metadata branch from that pushed
+`main` tip:
 
 ```sh
 git switch main
@@ -170,9 +171,10 @@ node scripts/update-metainfo.js
 
 Edit `CHANGELOG.md` so the current section is the final stable `X.Y.Z` entry and
 remove beta-only release wording. Review the resulting diff carefully, then
-commit it and merge the stable-metadata branch to protected `main` through the
-normal pull-request flow. Require every pull-request and post-merge `main` CI
-job to pass. CI accepts `release/*` to `main` only when the base version is the
+commit it and merge the stable-metadata branch to `main` through the normal
+pull-request flow after verifying every required review and check. Require
+every pull-request and post-merge `main` CI job to pass. CI accepts
+`release/*` to `main` only when the base version is the
 same beta series, the head removes only the beta suffix, the diff is the exact
 synchronized metadata set, and every machine-readable file matches its
 version-only transformation. Additions, deletions, renames, dependency changes,
@@ -275,8 +277,9 @@ tag resolves to the exact stable `main` commit.
 
 Install or update to `X.Y.Z` through each supported distribution path and perform
 a short smoke test of compress, extract, browse, updater, and platform shell
-integration. Keep strict `main` protection enabled for the next cycle; `beta`
-may remain unprotected.
+integration. The `main` and `beta` branches remain intentionally unprotected.
+The `beta` branch may be deleted and recreated; immutable beta release tags
+remain governed by the required tag ruleset.
 
 If any publish-time verification fails, stop distribution work and repair the
 release metadata or assets. Do not create a second same-version stable release.

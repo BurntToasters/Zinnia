@@ -7,38 +7,12 @@ const {
   REQUIRED_CHECK_APP_ID,
   assertBetaTagProtection,
   assertBetaTagRulesetResponse,
-  assertReleaseBranchProtection,
   assertSuccessfulHostedCi,
   configureBetaTagProtection,
-  configureReleaseBranchProtection,
   desiredBetaTagRuleset,
-  desiredProtection,
   betaTagRulesetListEndpoint,
   betaTagRulesetEndpoint,
-  requiredStatusCheckNames,
 } = require("./release-branch-protection.cjs");
-
-function protectedResponse(overrides = {}) {
-  return {
-    required_status_checks: {
-      strict: true,
-      checks: [
-        { context: "ci-gate", app_id: REQUIRED_CHECK_APP_ID },
-        { context: "release-policy", app_id: REQUIRED_CHECK_APP_ID },
-      ],
-    },
-    required_pull_request_reviews: {
-      dismiss_stale_reviews: true,
-      required_approving_review_count: 1,
-      require_last_push_approval: true,
-      bypass_pull_request_allowances: { users: [], teams: [], apps: [] },
-    },
-    enforce_admins: { enabled: true },
-    allow_force_pushes: { enabled: false },
-    allow_deletions: { enabled: false },
-    ...overrides,
-  };
-}
 
 function immutableBetaTagRuleset(overrides = {}) {
   return {
@@ -59,179 +33,30 @@ function immutableBetaTagRuleset(overrides = {}) {
   };
 }
 
-test("requiredStatusCheckNames supports checks and legacy contexts", () => {
-  const names = requiredStatusCheckNames({
-    required_status_checks: {
-      checks: [{ context: "quality-gate" }],
-      contexts: ["legacy-check"],
-    },
-  });
-  assert.deepEqual([...names].sort(), ["legacy-check", "quality-gate"]);
-});
-
-test("stable release protection requires strict source-bound CI and policy checks", () => {
-  const calls = [];
-  const api = (method, endpoint) => {
-    calls.push([method, endpoint]);
-    return protectedResponse();
-  };
-  assert.doesNotThrow(() =>
-    assertReleaseBranchProtection("main", { api, env: {} }),
-  );
-  assert.deepEqual(calls, [
-    ["GET", "/repos/BurntToasters/zinnia/branches/main/protection"],
-  ]);
-});
-
-test("beta releases permit an unprotected and deletable staging branch", () => {
-  let called = false;
-  const api = () => {
-    called = true;
-    throw new Error("beta protection must not be queried");
-  };
-  assert.equal(assertReleaseBranchProtection("beta", { api, env: {} }), null);
-  assert.equal(called, false);
-});
-
-test("stable release branch protection rejects weakened safety controls", () => {
-  const responses = [
-    protectedResponse({ allow_force_pushes: { enabled: true } }),
-    protectedResponse({ allow_deletions: { enabled: true } }),
-    protectedResponse({
-      required_status_checks: {
-        strict: true,
-        checks: [{ context: "ci-gate", app_id: 1 }],
-      },
-    }),
-    protectedResponse({
-      required_status_checks: {
-        strict: true,
-        checks: [{ context: "ci-gate", app_id: REQUIRED_CHECK_APP_ID }],
-      },
-    }),
-    protectedResponse({
-      required_status_checks: {
-        strict: true,
-        checks: [
-          { context: "ci-gate", app_id: REQUIRED_CHECK_APP_ID },
-          { context: "release-policy", app_id: 1 },
-        ],
-      },
-    }),
-  ];
-  for (const response of responses) {
-    assert.throws(() =>
-      assertReleaseBranchProtection("main", {
-        api: () => response,
-        env: {},
-      }),
-    );
-  }
-});
-
-test("main requires independent review and enforces rules for administrators", () => {
-  for (const protection of [
-    protectedResponse({ enforce_admins: { enabled: false } }),
-    protectedResponse({ required_pull_request_reviews: null }),
-    protectedResponse({
-      required_pull_request_reviews: {
-        dismiss_stale_reviews: false,
-        required_approving_review_count: 1,
-        require_last_push_approval: true,
-      },
-    }),
-    protectedResponse({
-      required_pull_request_reviews: {
-        dismiss_stale_reviews: true,
-        required_approving_review_count: 0,
-        require_last_push_approval: true,
-      },
-    }),
-    protectedResponse({
-      required_pull_request_reviews: {
-        dismiss_stale_reviews: true,
-        required_approving_review_count: 1,
-        require_last_push_approval: false,
-      },
-    }),
-    protectedResponse({
-      required_pull_request_reviews: {
-        dismiss_stale_reviews: true,
-        required_approving_review_count: 1,
-        require_last_push_approval: true,
-        bypass_pull_request_allowances: {
-          users: ["labeler"],
-          teams: [],
-          apps: [],
-        },
-      },
-    }),
+test("release preflight never queries or requires branch protection", () => {
+  const policy = require("./release-branch-protection.cjs");
+  for (const removedPath of [
+    "branchProtectionEndpoint",
+    "assertProtectionResponse",
+    "assertReleaseBranchProtection",
+    "configureReleaseBranchProtection",
+    "desiredProtection",
+    "PROTECTED_RELEASE_BRANCHES",
   ]) {
-    assert.throws(() =>
-      assertReleaseBranchProtection("main", {
-        api: () => protection,
-        env: {},
-      }),
+    assert.equal(
+      Object.hasOwn(policy, removedPath),
+      false,
+      `${removedPath} must not expose a branch-protection path`,
     );
   }
-  assert.doesNotThrow(() =>
-    assertReleaseBranchProtection("main", {
-      api: () => protectedResponse(),
-      env: {},
-    }),
+  const preflight = require("node:fs").readFileSync(
+    require("node:path").join(__dirname, "release-preflight.js"),
+    "utf8",
   );
-  assert.equal(desiredProtection().enforce_admins, true);
-  assert.deepEqual(desiredProtection().required_pull_request_reviews, {
-    dismiss_stale_reviews: true,
-    required_approving_review_count: 1,
-    require_last_push_approval: true,
-  });
-});
-
-test("unprotected release branches fail closed", () => {
-  const api = () => {
-    const error = new Error("HTTP 404");
-    error.statusCode = 404;
-    throw error;
-  };
-  assert.throws(
-    () => assertReleaseBranchProtection("main", { api, env: {} }),
-    /main is not protected/,
+  assert.doesNotMatch(
+    preflight,
+    /assertReleaseBranchProtection|branchProtectionEndpoint|\/protection/,
   );
-});
-
-test("configure protects main and installs immutable beta tag rules", () => {
-  const writes = [];
-  let ruleset = null;
-  const api = (method, endpoint, body) => {
-    if (endpoint.includes("/branches/main/protection") && method === "PUT") {
-      writes.push([endpoint, body]);
-      return {};
-    }
-    if (endpoint.includes("/branches/main/protection")) {
-      return protectedResponse();
-    }
-    if (endpoint === betaTagRulesetListEndpoint({})) {
-      return ruleset ? [{ id: ruleset.id, name: ruleset.name }] : [];
-    }
-    if (endpoint.endsWith("/rulesets") && method === "POST") {
-      ruleset = { ...body, id: 17, source_type: "Repository" };
-      writes.push([endpoint, body]);
-      return ruleset;
-    }
-    if (endpoint === betaTagRulesetEndpoint(17, {})) return ruleset;
-    throw new Error(`Unexpected API call: ${method} ${endpoint}`);
-  };
-  configureReleaseBranchProtection({ api, env: {} });
-  assert.equal(writes.length, 2);
-  assert.deepEqual(writes[0], [
-    "/repos/BurntToasters/zinnia/branches/main/protection",
-    desiredProtection(),
-  ]);
-  assert.deepEqual(writes[1], [
-    "/repos/BurntToasters/zinnia/rulesets",
-    desiredBetaTagRuleset(),
-  ]);
 });
 
 // Tag-governance failures to prevent before implementation:
@@ -357,7 +182,9 @@ test("beta tag protection scans every ruleset page before accepting uniqueness",
 test("beta tag protection creates or repairs ruleset, then verifies persisted settings", () => {
   let saved = null;
   const writes = [];
+  const calls = [];
   const api = (method, endpoint, body) => {
+    calls.push([method, endpoint]);
     if (endpoint === betaTagRulesetListEndpoint({})) {
       return saved ? [{ id: saved.id, name: saved.name }] : [];
     }
@@ -384,6 +211,8 @@ test("beta tag protection creates or repairs ruleset, then verifies persisted se
     "/repos/BurntToasters/zinnia/rulesets/22",
     desiredBetaTagRuleset(),
   ]);
+  assert.ok(calls.every(([, endpoint]) => endpoint.includes("/rulesets")));
+  assert.ok(calls.every(([method]) => method !== "DELETE"));
 });
 
 test("CI gate aggregates every independent proof check", () => {

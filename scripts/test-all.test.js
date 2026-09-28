@@ -40,9 +40,10 @@ test("package.json scripts define cargo safe update test and policy check", () =
     "node scripts/check-rustsec-ignore-policy.mjs",
   );
   assert.equal(
-    scripts["repo:protect-release-branches"],
+    scripts["repo:protect-beta-tags"],
     "node scripts/release-branch-protection.cjs --apply",
   );
+  assert.equal(scripts["repo:protect-release-branches"], undefined);
   assert.equal(scripts["test:archives"], "node scripts/test-archives.js");
   assert.equal(scripts["test:e2e"], "node scripts/test-e2e.js");
 });

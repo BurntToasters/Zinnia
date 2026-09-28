@@ -112,7 +112,7 @@
     "release:publish": "dotenv -e .env -- node scripts/publish-release.cjs",
     "release:wait-draft": "dotenv -e .env -- node scripts/ensure-draft-release.cjs --wait",
     "release:preflight": "node scripts/release-preflight.js",
-    "repo:protect-release-branches": "node scripts/release-branch-protection.cjs --apply",
+    "repo:protect-beta-tags": "node scripts/release-branch-protection.cjs --apply",
     "prerelease:prepare": "node scripts/release-warning.js && npm run release:preflight && npm run release:licenses",
     "release:mirror": "dotenv -e .env -- node scripts/finalize-release-assets.js",
     "release:finalize": "npm run release:mirror && git fetch origin && git reset --hard @{u} && git clean -fd",
