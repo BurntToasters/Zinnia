@@ -8,7 +8,8 @@ use super::open_path::{derive_extract_destination_path, normalize_destination_pa
 use super::open_routing::{
     enqueue_pending_batch, looks_like_archive_path, parse_open_request_args,
     parse_open_request_args_ex, parse_shell_handoff_contents, record_shell_handoff_error,
-    should_queue_extract_to_main, should_use_extract_window, take_shell_handoff_error,
+    resolve_open_args_against_cwd, should_queue_extract_to_main, should_use_extract_window,
+    take_shell_handoff_error,
 };
 use super::OpenPathsPayload;
 use std::sync::{
@@ -517,4 +518,62 @@ fn warm_idle_timer_keeps_ownership_until_leave_bumps() {
     bump_extract_warm_idle_generation();
     assert!(!warm_idle_timer_still_owns(generation));
     EXTRACT_WARM_IDLE_ACTIVE.store(false, Ordering::SeqCst);
+}
+
+#[test]
+fn secondary_open_args_resolve_against_sender_cwd() {
+    let sender = temp_base("sender-cwd");
+    std::fs::write(sender.join("-named-file.txt"), b"x").expect("dash-named file");
+    let absolute = sender.join("absolute.zip");
+    let file_url = Url::from_file_path(sender.join("url.zip"))
+        .expect("file URL")
+        .to_string();
+    let cwd = sender.to_string_lossy().to_string();
+    let argv = vec![
+        "zinnia".to_string(),
+        "--compress".to_string(),
+        "./input.txt".to_string(),
+        "nested/other.txt".to_string(),
+        absolute.to_string_lossy().to_string(),
+        file_url.clone(),
+        "-psn_0_12345".to_string(),
+        "-named-file.txt".to_string(),
+        "--extract".to_string(),
+        "--zinnia-shell-handoff".to_string(),
+        "handoff.json".to_string(),
+    ];
+
+    let resolved = resolve_open_args_against_cwd(argv, &cwd);
+
+    assert_eq!(
+        resolved,
+        vec![
+            "zinnia".to_string(),
+            "--compress".to_string(),
+            sender.join("./input.txt").to_string_lossy().to_string(),
+            sender
+                .join("nested/other.txt")
+                .to_string_lossy()
+                .to_string(),
+            absolute.to_string_lossy().to_string(),
+            file_url,
+            "-psn_0_12345".to_string(),
+            sender.join("-named-file.txt").to_string_lossy().to_string(),
+            "--extract".to_string(),
+            "--zinnia-shell-handoff".to_string(),
+            sender.join("handoff.json").to_string_lossy().to_string(),
+        ]
+    );
+
+    let _ = std::fs::remove_dir_all(sender);
+}
+
+#[test]
+fn secondary_open_args_are_unchanged_without_an_absolute_cwd() {
+    let argv = vec!["zinnia".to_string(), "relative.zip".to_string()];
+    assert_eq!(resolve_open_args_against_cwd(argv.clone(), ""), argv);
+    assert_eq!(
+        resolve_open_args_against_cwd(argv.clone(), "relative/cwd"),
+        argv
+    );
 }

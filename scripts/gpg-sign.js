@@ -1325,11 +1325,9 @@ async function uploadAssetWithReplace(
       );
     }
 
-    await ghRequest(
-      "DELETE",
-      `/repos/${REPO_OWNER}/${REPO_NAME}/releases/assets/${existing.id}`,
-    );
-    await uploadAsset(release.upload_url, filePath);
+    // Upload the new bytes under a staging name, then swap names. A failed
+    // upload leaves the live asset untouched instead of deleting it first.
+    await replaceReleaseAssetsTransactionally(release, [filePath]);
   }
 }
 
@@ -1684,7 +1682,9 @@ async function main() {
     signatureFiles: ascFiles,
   });
   for (const f of everything) {
-    await uploadAssetWithReplace(release, f);
+    await uploadAssetWithReplace(release, f, {
+      allowPublishedReplace: ALLOW_ASSET_REPLACE,
+    });
     console.log(`  ^ ${path.basename(f)}`);
   }
   // Beta clients poll /releases/latest for latest-*-beta-*.json. Sync those

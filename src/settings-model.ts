@@ -351,7 +351,16 @@ function asCustomPresets(
       VALID_SOLIDS,
       SETTING_DEFAULTS.solid,
     );
-    if (!format || !level || !method || !dict || !wordSize || !solid) {
+    // "" is a valid "use 7-Zip's default" value for the optional fields;
+    // only null means the persisted value was rejected.
+    if (
+      format === null ||
+      level === null ||
+      method === null ||
+      dict === null ||
+      wordSize === null ||
+      solid === null
+    ) {
       continue;
     }
     seen.add(name);

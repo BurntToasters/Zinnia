@@ -129,7 +129,23 @@ When adding a format, update all three (and file associations / NSIS verbs as ne
 
 ### Remaining size hotspots
 
-Prefer peeling before growing these further: `src/styles/main-mid.css`,
-`src/power-events.ts` (`wireEvents`), `src-tauri/src/process/commands.rs`.
+Do not refactor these during release stabilization. For later work, keep existing
+APIs and safety invariants while extracting along these seams:
+
+- `src-tauri/src/process/commit.rs`: archive backup/promotion vs staged-tree
+  validation and move-plan recovery; preserve rollback ordering and no-replace
+  behavior.
+- `src-tauri/src/fs_secure.rs`: platform-specific handle-relative create,
+  quarantine, and ACL helpers behind the current shared APIs.
+- `src-tauri/src/process/commands.rs`: process execution and stream handling vs
+  command preparation and archive-operation orchestration.
+- `src-tauri/src/process/journal.rs`: file identity/fingerprinting vs journal
+  persistence, state transitions, and orphan-stage cleanup; preserve record
+  format and recovery ordering.
+- `src-tauri/src/process/archive_snapshot.rs`: platform identity and snapshot
+  copy strategies behind the current snapshot/token API.
+- `src/styles/main-mid.css` and `src/power-events.ts` (`wireEvents`): peel
+  cohesive style sections and event wiring with behavior unchanged.
+
 Critical coverage gates in `scripts/test-all.js` cover `archive/`, `basic/`,
 `power-helpers.ts`, `power-shortcuts.ts`, and other high-risk modules.

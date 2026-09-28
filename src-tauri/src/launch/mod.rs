@@ -108,6 +108,8 @@ pub(crate) use extract_window::bump_extract_warm_idle_generation;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 #[allow(unused_imports)]
 pub use extract_window::first_extract_window;
+#[cfg(target_os = "macos")]
+pub(crate) use extract_window::open_main_from_extract_warm;
 #[allow(unused_imports)]
 pub use extract_window::{
     cancel_owner_and_wait, clear_extract_window_bindings, close_extract_window, ensure_main_window,
@@ -124,6 +126,7 @@ pub use open_path::{
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 #[allow(unused_imports)]
 pub use open_routing::emit_open_urls;
+pub(crate) use open_routing::resolve_open_args_against_cwd;
 #[allow(unused_imports)]
 pub use open_routing::{
     collect_cli_context, emit_open_paths, get_shell_handoff_error,

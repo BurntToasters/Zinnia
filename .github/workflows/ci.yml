@@ -1,7 +1,7 @@
 name: CI
 
 # Pull requests prove candidate changes. Pushes prove the exact post-merge tips
-# of the protected release branches without duplicating every PR branch update.
+# of main and beta without duplicating every PR branch update.
 # Jobs run tests and smoke builds, not signed release artifacts.
 
 on:
@@ -20,7 +20,7 @@ permissions:
 env:
   NODE_VERSION: "24.16.0"
   NPM_VERSION: "12.0.2"
-  RUST_VERSION: "stable"
+  RUST_VERSION: "1.98.1"
   CARGO_AUDIT_VERSION: "0.22.2"
 
 jobs:
@@ -39,6 +39,16 @@ jobs:
         run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
       - name: Enforce Co-authored-by email policy
         run: node scripts/strip-coauthor-trailers.js --check-range ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+      - name: Enforce stable metadata-only main PR
+        if: >-
+          ${{
+            github.event.pull_request.base.ref == 'main' &&
+            startsWith(github.head_ref, 'release/')
+          }}
+        run: >-
+          node scripts/check-stable-metadata-pr.mjs
+          ${{ github.event.pull_request.base.sha }}
+          ${{ github.event.pull_request.head.sha }}
 
   quality-gate:
     runs-on: ubuntu-latest
@@ -71,6 +81,7 @@ jobs:
       - name: Strict Cargo license notices
         run: npm run licenses:cargo:strict
       - name: Quality gate
+        id: quality-gate
         env:
           WEBKIT_DISABLE_COMPOSITING_MODE: "1"
         run: npm run test:all
@@ -78,6 +89,35 @@ jobs:
         run: node bench/archive-io/structural-check.mjs
       - name: Archive I/O workflow contract tests
         run: npm run test:archive-io-workflow
+      - name: E2E runner reliability contract tests
+        run: npm run test:e2e-runner
+      - name: Require exact-commit quality-gate E2E proof
+        if: always() && steps.quality-gate.outcome == 'success'
+        shell: bash
+        run: >-
+          node -e 'const r=require("./coverage/e2e/result.json"),fs=require("node:fs"),crypto=require("node:crypto"),path=require("node:path");
+          const sha=f=>crypto.createHash("sha256").update(fs.readFileSync(f)).digest("hex");
+          if(r.commit!==process.env.GITHUB_SHA || r.status!=="passed" ||
+          r.processCleanup?.status!=="verified" ||
+          !/^[a-f0-9]{64}$/.test(r.sourceSha256||"") || r.verification?.inputsUnchanged!==true ||
+          !/^[a-f0-9]{64}$/.test(r.buildEnvironmentSha256||"") ||
+          !/^[a-f0-9]{64}$/.test(r.binary?.sha256||"") ||
+          !Object.values(r.externalBinaries||{}).length ||
+          !Object.values(r.externalBinaries).every(h=>/^[a-f0-9]{64}$/.test(h)) ||
+          !/^[a-f0-9]{64}$/.test(r.fixtures?.manifestSha256||"") ||
+          !Object.values(r.fixtures?.files||{}).length ||
+          !Object.values(r.fixtures.files).every(h=>/^[a-f0-9]{64}$/.test(h)) ||
+          r.suites.length!==2 || r.suites.some(s=>s.status!=="passed" ||
+          !/^[a-f0-9]{64}$/.test(s.logSha256||"") ||
+          sha(path.join("coverage/e2e",s.logFile))!==s.logSha256)) process.exit(1)'
+      - name: Upload quality-gate E2E proof
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-proof-quality-gate
+          path: coverage/e2e
+          if-no-files-found: warn
+          retention-days: 90
 
   archive-io-benchmark:
     needs: quality-gate
@@ -88,38 +128,50 @@ jobs:
           - os: macos-26-intel
           - os: windows-latest
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    # Baseline and candidate each build the release E2E binary on x86 runners.
+    # Give the persistent benchmark a bounded 60-minute run plus cleanup time.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        id: checkout
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        id: setup-node
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - name: Install latest npm 12
+        id: install-npm
         run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        id: rust-toolchain
         with:
           toolchain: ${{ env.RUST_VERSION }}
       - name: Install Linux E2E dependencies
+        id: linux-dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb
       - run: npm ci --ignore-scripts
+        id: npm-ci
       - run: npm run prepare:7z
+        id: prepare-7z
       - name: Prepare Windows shell stubs
+        id: prepare-windows-stubs
         if: runner.os == 'Windows'
         run: npm run prepare:win-shell-stubs
       - name: Archive I/O candidate benchmark
+        id: archive-benchmark
         # Candidate correctness failures fail this job. Timing target/trend
         # status stays report-only inside benchmark harness.
         env:
           ZINNIA_BENCH_REPORT_DIR: ${{ runner.temp }}/zinnia-archive-io
           ZINNIA_BENCH_CANDIDATE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          ZINNIA_BENCH_EXPECTED_CANDIDATE_REVISION: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           ZINNIA_BENCH_BASELINE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
           ZINNIA_BENCH_BASE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
           # Compare PR/push smoke against the base revision when it is
@@ -128,6 +180,9 @@ jobs:
           # hard gate.
           ZINNIA_BENCH_BASE_RUN: "1"
           ZINNIA_BENCH_REQUIRE_CANDIDATE: "1"
+          ZINNIA_BENCH_RUN_TIMEOUT_MS: "3600000"
+          ZINNIA_BENCH_COMMAND_TIMEOUT_MS: "1200000"
+          ZINNIA_BENCH_BUILD_TIMEOUT_MS: "2400000"
         run: >-
           npm run benchmark:archive-io --
           --formats zip,7z
@@ -135,7 +190,42 @@ jobs:
           --operation-formats zip
           --operation-workloads bulk
           --scale smoke
-      - name: Upload archive I/O smoke report
+      # Hard job cancellation can terminate the runner before this diagnostic step runs.
+      - name: Capture archive benchmark setup diagnostics
+        if: always()
+        shell: pwsh
+        env:
+          JOB_STATUS: ${{ job.status }}
+          CHECKOUT_OUTCOME: ${{ steps.checkout.outcome }}
+          SETUP_NODE_OUTCOME: ${{ steps.setup-node.outcome }}
+          INSTALL_NPM_OUTCOME: ${{ steps.install-npm.outcome }}
+          RUST_TOOLCHAIN_OUTCOME: ${{ steps.rust-toolchain.outcome }}
+          LINUX_DEPENDENCIES_OUTCOME: ${{ steps.linux-dependencies.outcome }}
+          NPM_CI_OUTCOME: ${{ steps.npm-ci.outcome }}
+          PREPARE_7Z_OUTCOME: ${{ steps.prepare-7z.outcome }}
+          PREPARE_WINDOWS_STUBS_OUTCOME: ${{ steps.prepare-windows-stubs.outcome }}
+          ARCHIVE_BENCHMARK_OUTCOME: ${{ steps.archive-benchmark.outcome }}
+        run: |
+          $reportDir = Join-Path $env:RUNNER_TEMP 'zinnia-archive-io'
+          New-Item -ItemType Directory -Path $reportDir -Force | Out-Null
+          @(
+            "job_status=$env:JOB_STATUS"
+            "run_id=$env:GITHUB_RUN_ID"
+            "run_attempt=$env:GITHUB_RUN_ATTEMPT"
+            "event=$env:GITHUB_EVENT_NAME"
+            "ref=$env:GITHUB_REF"
+            "sha=$env:GITHUB_SHA"
+            "checkout=$env:CHECKOUT_OUTCOME"
+            "setup_node=$env:SETUP_NODE_OUTCOME"
+            "install_npm=$env:INSTALL_NPM_OUTCOME"
+            "rust_toolchain=$env:RUST_TOOLCHAIN_OUTCOME"
+            "linux_dependencies=$env:LINUX_DEPENDENCIES_OUTCOME"
+            "npm_ci=$env:NPM_CI_OUTCOME"
+            "prepare_7z=$env:PREPARE_7Z_OUTCOME"
+            "prepare_windows_stubs=$env:PREPARE_WINDOWS_STUBS_OUTCOME"
+            "archive_benchmark=$env:ARCHIVE_BENCHMARK_OUTCOME"
+          ) | Set-Content -LiteralPath (Join-Path $reportDir 'workflow-diagnostics.txt') -Encoding utf8
+      - name: Upload archive I/O smoke report and workflow diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -143,6 +233,140 @@ jobs:
           path: ${{ runner.temp }}/zinnia-archive-io
           if-no-files-found: error
           retention-days: 30
+
+  # Stable promotion PRs get the full review-grade benchmark on every hosted
+  # architecture. Ordinary beta/feature PRs keep the smaller smoke matrix.
+  archive-io-promotion-benchmark:
+    if: >-
+      ${{
+        github.event_name == 'pull_request' &&
+        github.event.pull_request.base.ref == 'main' &&
+        startsWith(github.head_ref, 'next-')
+      }}
+    needs: quality-gate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            sidecar: 7z-x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            sidecar: 7z-aarch64-unknown-linux-gnu
+          - os: macos-26
+            sidecar: 7z-aarch64-apple-darwin
+          - os: macos-26-intel
+            sidecar: 7z-x86_64-apple-darwin
+          - os: windows-latest
+            sidecar: 7z-x86_64-pc-windows-msvc.exe
+          - os: windows-11-arm
+            sidecar: 7z-aarch64-pc-windows-msvc.exe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        id: checkout
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve accepted beta baseline
+        id: accepted-beta
+        run: node scripts/resolve-archive-io-baseline.mjs
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        id: setup-node
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install latest npm 12
+        id: install-npm
+        run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        id: rust-toolchain
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Install Linux E2E dependencies
+        id: linux-dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb
+      - run: npm ci --ignore-scripts
+        id: npm-ci
+      - run: npm run prepare:7z
+        id: prepare-7z
+      - name: Prepare Windows shell stubs
+        id: prepare-windows-stubs
+        if: runner.os == 'Windows'
+        run: npm run prepare:win-shell-stubs
+      - name: Archive I/O release benchmark
+        id: archive-benchmark
+        env:
+          ZINNIA_BENCH_REPORT_DIR: ${{ runner.temp }}/zinnia-archive-io
+          ZINNIA_BENCH_CANDIDATE_REF: ${{ github.event.pull_request.head.sha }}
+          ZINNIA_BENCH_EXPECTED_CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha }}
+          ZINNIA_BENCH_BASELINE_REF: ${{ steps.accepted-beta.outputs.sha }}
+          ZINNIA_BENCH_BASE_REF: ${{ steps.accepted-beta.outputs.sha }}
+          ZINNIA_BENCH_BASELINE_TAG: ${{ steps.accepted-beta.outputs.tag }}
+          ZINNIA_BENCH_BASE_RUN: "1"
+          ZINNIA_BENCH_REQUIRE_CANDIDATE: "1"
+          ZINNIA_BENCH_REQUIRE_BASELINE: "1"
+          ZINNIA_BENCH_REQUIRE_BASELINE_REPORT: "1"
+          ZINNIA_BENCH_RUN_TIMEOUT_MS: "10800000"
+          ZINNIA_BENCH_COMMAND_TIMEOUT_MS: "1800000"
+          ZINNIA_BENCH_BUILD_TIMEOUT_MS: "5400000"
+        run: >-
+          npm run benchmark:archive-io --
+          --formats zip,7z,tar,gzip,bzip2,xz
+          --workloads bulk,small
+          --operation-formats zip,7z,tar
+          --operation-workloads bulk,small
+          --scale release
+          --compatibility
+      # Hard job cancellation can terminate the runner before this diagnostic step runs.
+      - name: Capture archive benchmark setup diagnostics
+        if: always()
+        shell: pwsh
+        env:
+          JOB_STATUS: ${{ job.status }}
+          CHECKOUT_OUTCOME: ${{ steps.checkout.outcome }}
+          ACCEPTED_BETA_OUTCOME: ${{ steps.accepted-beta.outcome }}
+          SETUP_NODE_OUTCOME: ${{ steps.setup-node.outcome }}
+          INSTALL_NPM_OUTCOME: ${{ steps.install-npm.outcome }}
+          RUST_TOOLCHAIN_OUTCOME: ${{ steps.rust-toolchain.outcome }}
+          LINUX_DEPENDENCIES_OUTCOME: ${{ steps.linux-dependencies.outcome }}
+          NPM_CI_OUTCOME: ${{ steps.npm-ci.outcome }}
+          PREPARE_7Z_OUTCOME: ${{ steps.prepare-7z.outcome }}
+          PREPARE_WINDOWS_STUBS_OUTCOME: ${{ steps.prepare-windows-stubs.outcome }}
+          ARCHIVE_BENCHMARK_OUTCOME: ${{ steps.archive-benchmark.outcome }}
+        run: |
+          $reportDir = Join-Path $env:RUNNER_TEMP 'zinnia-archive-io'
+          New-Item -ItemType Directory -Path $reportDir -Force | Out-Null
+          @(
+            "job_status=$env:JOB_STATUS"
+            "run_id=$env:GITHUB_RUN_ID"
+            "run_attempt=$env:GITHUB_RUN_ATTEMPT"
+            "event=$env:GITHUB_EVENT_NAME"
+            "ref=$env:GITHUB_REF"
+            "sha=$env:GITHUB_SHA"
+            "checkout=$env:CHECKOUT_OUTCOME"
+            "accepted_beta=$env:ACCEPTED_BETA_OUTCOME"
+            "setup_node=$env:SETUP_NODE_OUTCOME"
+            "install_npm=$env:INSTALL_NPM_OUTCOME"
+            "rust_toolchain=$env:RUST_TOOLCHAIN_OUTCOME"
+            "linux_dependencies=$env:LINUX_DEPENDENCIES_OUTCOME"
+            "npm_ci=$env:NPM_CI_OUTCOME"
+            "prepare_7z=$env:PREPARE_7Z_OUTCOME"
+            "prepare_windows_stubs=$env:PREPARE_WINDOWS_STUBS_OUTCOME"
+            "archive_benchmark=$env:ARCHIVE_BENCHMARK_OUTCOME"
+          ) | Set-Content -LiteralPath (Join-Path $reportDir 'workflow-diagnostics.txt') -Encoding utf8
+      - name: Upload archive I/O release report and workflow diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: archive-io-promotion-${{ matrix.os }}
+          path: ${{ runner.temp }}/zinnia-archive-io
+          if-no-files-found: error
+          retention-days: 90
 
   rust-check:
     needs: quality-gate
@@ -165,9 +389,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           toolchain: ${{ env.RUST_VERSION }}
+          components: clippy
       - run: npm ci --ignore-scripts
       - run: node scripts/npm-audit-signatures.cjs
       - run: npm run test:cov
+      - name: Windows process-tree cleanup reliability tests
+        if: runner.os == 'Windows'
+        run: node --test --test-name-pattern=Windows scripts/e2e-runner-reliability.test.mjs
       - run: npm run prepare:7z
       - run: npm run test:archives
       - name: Compile Finder Sync extension smoke
@@ -177,7 +405,36 @@ jobs:
       - run: npm run prepare:win-shell-stubs
       - run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
       - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets
-      - run: npm run test:e2e
+      - name: Unpackaged GUI E2E
+        run: npm run test:e2e
+      - name: Require exact-commit E2E proof
+        shell: bash
+        run: >-
+          node -e 'const r=require("./coverage/e2e/result.json"),fs=require("node:fs"),crypto=require("node:crypto"),path=require("node:path");
+          const sha=f=>crypto.createHash("sha256").update(fs.readFileSync(f)).digest("hex");
+          if(r.commit!==process.env.GITHUB_SHA || r.status!=="passed" ||
+          r.processCleanup?.status!=="verified" ||
+          !/^[a-f0-9]{64}$/.test(r.sourceSha256||"") || r.verification?.inputsUnchanged!==true ||
+          !/^[a-f0-9]{64}$/.test(r.buildEnvironmentSha256||"") ||
+          !/^[a-f0-9]{64}$/.test(r.binary?.sha256||"") ||
+          !Object.values(r.externalBinaries||{}).length ||
+          !Object.values(r.externalBinaries).every(h=>/^[a-f0-9]{64}$/.test(h)) ||
+          !/^[a-f0-9]{64}$/.test(r.fixtures?.manifestSha256||"") ||
+          !Object.values(r.fixtures?.files||{}).length ||
+          !Object.values(r.fixtures.files).every(h=>/^[a-f0-9]{64}$/.test(h)) ||
+          r.suites.length!==2 || r.suites.some(s=>s.status!=="passed" ||
+          !/^[a-f0-9]{64}$/.test(s.logSha256||"") ||
+          sha(path.join("coverage/e2e",s.logFile))!==s.logSha256)) process.exit(1)'
+      - name: Upload E2E proof
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-proof-${{ matrix.os }}
+          path: coverage/e2e
+          # Earlier setup steps can fail before E2E produces a report; the job
+          # is already red in that case. A green E2E must pass the proof step.
+          if-no-files-found: warn
+          retention-days: 90
 
   updater-manifest:
     runs-on: ubuntu-latest
@@ -318,6 +575,7 @@ jobs:
       - smoke-build
       - security-audit
       - archive-io-benchmark
+      - archive-io-promotion-benchmark
     runs-on: ubuntu-latest
     steps:
       - name: Require every release check
@@ -330,6 +588,10 @@ jobs:
           SMOKE_BUILD: ${{ needs.smoke-build.result }}
           SECURITY_AUDIT: ${{ needs.security-audit.result }}
           ARCHIVE_IO_BENCHMARK: ${{ needs.archive-io-benchmark.result }}
+          ARCHIVE_IO_PROMOTION_BENCHMARK: ${{ needs.archive-io-promotion-benchmark.result }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          RELEASE_PROMOTION_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && startsWith(github.head_ref, 'next-') }}
+          STABLE_METADATA_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && startsWith(github.head_ref, 'release/') }}
         run: |
           set -euo pipefail
           test "$QUALITY_GATE" = success
@@ -338,6 +600,13 @@ jobs:
           test "$SMOKE_BUILD" = success
           test "$SECURITY_AUDIT" = success
           test "$ARCHIVE_IO_BENCHMARK" = success
+          if [ "$RELEASE_PROMOTION_PR" = "true" ]; then
+            test "$ARCHIVE_IO_PROMOTION_BENCHMARK" = success
+          else
+            test "$ARCHIVE_IO_PROMOTION_BENCHMARK" = skipped
+          fi
+          # Main accepts measured next-* promotion or tightly scoped stable metadata.
+          test "$PR_BASE_REF" != "main" || test "$RELEASE_PROMOTION_PR" = "true" || test "$STABLE_METADATA_PR" = "true"
           if [ "$EVENT_NAME" = pull_request ]; then
             test "$COMMIT_MESSAGE_POLICY" = success
           else

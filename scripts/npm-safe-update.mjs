@@ -27,7 +27,29 @@ const npmDevAuditScript = fileURLToPath(
 
 export const MINIMUM_NPM_VERSION = "12.0.1";
 export const SUPPORTED_NODE_VERSIONS = "^22.22.2 || ^24.15.0 || >=26.0.0";
-export const STABLE_RUST_CHANNEL = "stable";
+
+export function readPinnedRustToolchain(root) {
+  const filePath = path.join(root, "rust-toolchain.toml");
+  let contents;
+  try {
+    contents = readFileSync(filePath, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      throw new Error(`Rust toolchain pin is missing: ${filePath}`, {
+        cause: error,
+      });
+    }
+    throw error;
+  }
+
+  const channel = contents.match(/^\s*channel\s*=\s*"([^"]+)"\s*$/mu)?.[1];
+  if (!channel || !/^\d+\.\d+\.\d+$/u.test(channel)) {
+    throw new Error(
+      `rust-toolchain.toml must pin an exact Rust version; found ${channel || "no channel"}`,
+    );
+  }
+  return channel;
+}
 
 export function parseVersion(value) {
   const match = String(value)
@@ -54,14 +76,15 @@ export function isSupportedNodeVersion(value) {
   return major >= 26;
 }
 
-export function hasStableRustToolchain(output, channel = STABLE_RUST_CHANNEL) {
+export function hasRustToolchain(output, toolchain) {
+  if (!/^\d+\.\d+\.\d+$/u.test(String(toolchain))) return false;
   return String(output)
     .split(/\r?\n/u)
     .some(
       (line) =>
-        line === channel ||
-        line.startsWith(`${channel}-`) ||
-        line.startsWith(`${channel} `),
+        line === toolchain ||
+        line.startsWith(`${toolchain}-`) ||
+        line.startsWith(`${toolchain} `),
     );
 }
 
@@ -285,9 +308,14 @@ export function assertUpdateEnvironment() {
   const rustToolchains = run("rustup", ["toolchain", "list"], {
     capture: true,
   });
-  if (!hasStableRustToolchain(rustToolchains)) {
+  const updaterRoot = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "..",
+  );
+  const rustToolchain = readPinnedRustToolchain(updaterRoot);
+  if (!hasRustToolchain(rustToolchains, rustToolchain)) {
     throw new Error(
-      `Rust ${STABLE_RUST_CHANNEL} must already be installed before updating dependencies`,
+      `Rust ${rustToolchain} must already be installed before updating dependencies`,
     );
   }
 }

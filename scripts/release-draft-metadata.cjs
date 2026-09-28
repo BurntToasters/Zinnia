@@ -68,7 +68,41 @@ function assertNoMisnamedVersionDrafts(
   );
 }
 
+// GitHub ignores target_commitish when the tag already exists. Publishing a
+// draft would then bind the release to that tag, not to the verified HEAD.
+function assertExistingTagTargetsCommit(apiGet, { owner, repo, tag, commit }) {
+  let ref;
+  try {
+    ref = apiGet(
+      `/repos/${owner}/${repo}/git/ref/tags/${encodeURIComponent(tag)}`,
+    );
+  } catch (error) {
+    if (error && error.statusCode === 404) return;
+    throw error;
+  }
+  let object = ref && ref.object;
+  // Annotated tags point to a tag object; follow a short chain to the commit.
+  for (
+    let depth = 0;
+    object && object.type === "tag" && depth < 5;
+    depth += 1
+  ) {
+    object = apiGet(`/repos/${owner}/${repo}/git/tags/${object.sha}`)?.object;
+  }
+  if (!object || object.type !== "commit" || typeof object.sha !== "string") {
+    throw new Error(
+      `Tag ${tag} does not resolve to a commit; refusing to publish.`,
+    );
+  }
+  if (object.sha.toLowerCase() !== String(commit).toLowerCase()) {
+    throw new Error(
+      `Tag ${tag} already points to ${object.sha}, not HEAD ${commit}. Delete or move the tag before publishing.`,
+    );
+  }
+}
+
 module.exports = {
+  assertExistingTagTargetsCommit,
   assertExpectedRelease,
   assertNoMisnamedVersionDrafts,
   assertReleaseTagName,

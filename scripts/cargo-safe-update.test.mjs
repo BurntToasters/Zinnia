@@ -34,15 +34,15 @@ import {
 } from "./cargo-safe-update.mjs";
 import {
   MINIMUM_NPM_VERSION,
-  STABLE_RUST_CHANNEL,
   assertVendoredUpdaterParity,
-  hasStableRustToolchain,
+  hasRustToolchain,
   isSupportedNodeVersion,
   isVersionAtLeast,
   npmAuditPlan,
   npmUpdateArguments,
   npmUpdateInvocation,
   parseVersion,
+  readPinnedRustToolchain,
   restoreSnapshot,
   usesWindowsCmdShell,
 } from "./npm-safe-update.mjs";
@@ -1581,13 +1581,48 @@ test("45. update environment versions fail closed at exact boundaries", () => {
   assert.equal(isSupportedNodeVersion("25.99.99"), false);
   assert.equal(isSupportedNodeVersion("26.0.0"), true);
   assert.throws(() => parseVersion("latest"), /Invalid semantic version/);
+});
+
+// Failure modes covered: a floating `stable` toolchain passes without the
+// repository pin; a prefix match accepts 1.98.10 for 1.98.1; rustup's
+// host-qualified exact version is rejected; or a malformed pin passes.
+test("45a. npm updater requires exact repository-pinned Rust toolchain", () => {
+  const root = process.cwd();
+  const pinned = readPinnedRustToolchain(root);
+  assert.equal(pinned, "1.98.1");
+  assert.equal(hasRustToolchain("1.98.1\n", pinned), true);
   assert.equal(
-    hasStableRustToolchain(
-      `${STABLE_RUST_CHANNEL}-aarch64-apple-darwin (default)\n`,
-    ),
+    hasRustToolchain("1.98.1-aarch64-apple-darwin (default)\n", pinned),
     true,
   );
-  assert.equal(hasStableRustToolchain("1.97.1-aarch64-apple-darwin\n"), false);
+  assert.equal(hasRustToolchain("stable\n", pinned), false);
+  assert.equal(
+    hasRustToolchain("stable-aarch64-apple-darwin\n", pinned),
+    false,
+  );
+  assert.equal(
+    hasRustToolchain("1.98.10-aarch64-apple-darwin\n", pinned),
+    false,
+  );
+
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), "rust-toolchain-pin-"));
+  try {
+    writeFileSync(
+      path.join(tempRoot, "rust-toolchain.toml"),
+      '[toolchain]\nchannel = "2.7.3"\n',
+    );
+    assert.equal(readPinnedRustToolchain(tempRoot), "2.7.3");
+    writeFileSync(
+      path.join(tempRoot, "rust-toolchain.toml"),
+      '[toolchain]\nchannel = "stable"\n',
+    );
+    assert.throws(
+      () => readPinnedRustToolchain(tempRoot),
+      /must pin an exact Rust version/,
+    );
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test("46. npm lock update cannot install packages or run lifecycle scripts", () => {
@@ -1801,7 +1836,7 @@ test(
           env: {
             ...process.env,
             CARGO_HOME: userCargoHome,
-            RUSTUP_TOOLCHAIN: STABLE_RUST_CHANNEL,
+            RUSTUP_TOOLCHAIN: readPinnedRustToolchain(process.cwd()),
           },
           encoding: "utf8",
           timeout: 120_000,

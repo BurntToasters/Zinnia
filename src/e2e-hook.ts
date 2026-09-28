@@ -3,6 +3,7 @@ import {
   waitUntilIncomingPathIdle,
 } from "./incoming-paths";
 import { isE2eFrontend } from "./e2e-env";
+import { queueE2eDialogResult } from "./e2e-dialog";
 import { installWdioGuestPluginIfEnabled } from "./e2e-wdio-plugin";
 import type {
   ArchiveBenchmarkRequest,
@@ -11,6 +12,7 @@ import type {
 
 export type E2eHook = {
   applyIncomingPaths: (paths: string[], mode: string) => Promise<void>;
+  queueDialogResult: (result: string | string[] | null) => void;
   runArchiveBenchmarkOperation: (
     request: ArchiveBenchmarkRequest,
   ) => Promise<ArchiveBenchmarkResult>;
@@ -32,6 +34,7 @@ export async function installE2eHookIfEnabled(): Promise<void> {
       await applyIncomingPaths(paths, mode, "e2e");
       await waitUntilIncomingPathIdle();
     },
+    queueDialogResult: queueE2eDialogResult,
     runArchiveBenchmarkOperation,
   };
 }

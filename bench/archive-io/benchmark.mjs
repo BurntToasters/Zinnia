@@ -135,7 +135,7 @@ export const COMPATIBILITY_CASES = Object.freeze([
     name: "link-bearing",
     status: "host-gated",
     primary: false,
-    note: "Generates a TAR with 7-Zip hard-link metadata; hosts that cannot create or preserve links report not-available.",
+    note: "Generates a TAR with 7-Zip hard-link metadata; hosts that cannot create hard links report not-available.",
   }),
   Object.freeze({
     name: "unsupported-filesystem",
@@ -489,6 +489,38 @@ function createFixture(root, workload, scaleName = "smoke") {
 }
 
 const COMPATIBILITY_PASSWORD = "zinnia-test";
+const HARD_LINK_CAPABILITY_ERROR_CODES = new Set([
+  "EACCES",
+  "ENOSYS",
+  "ENOTSUP",
+  "EOPNOTSUPP",
+  "EPERM",
+]);
+
+export class HardLinkCapabilityUnavailableError extends Error {
+  constructor(error) {
+    super(
+      `Host cannot create the hard link required by the link-bearing compatibility fixture: ${safeError(error)}`,
+      { cause: error },
+    );
+    this.name = "HardLinkCapabilityUnavailableError";
+  }
+}
+
+export function createHardLinkForCompatibilityFixture(
+  source,
+  target,
+  createLink = linkSync,
+) {
+  try {
+    createLink(source, target);
+  } catch (error) {
+    if (HARD_LINK_CAPABILITY_ERROR_CODES.has(error?.code)) {
+      throw new HardLinkCapabilityUnavailableError(error);
+    }
+    throw error;
+  }
+}
 
 function createCompatibilityFixture(root, name) {
   const fixtureRoot = join(root, "compatibility", name);
@@ -504,7 +536,10 @@ function createCompatibilityFixture(root, name) {
   }
   if (name === "link-bearing") {
     writeFileSync(join(fixtureRoot, "real.txt"), "link-bearing fixture\n");
-    linkSync(join(fixtureRoot, "real.txt"), join(fixtureRoot, "hard.txt"));
+    createHardLinkForCompatibilityFixture(
+      join(fixtureRoot, "real.txt"),
+      join(fixtureRoot, "hard.txt"),
+    );
     setDeterministicTimes(fixtureRoot);
     return {
       root: fixtureRoot,
@@ -2156,25 +2191,23 @@ function failedCompatibilityReport(name, error, executor) {
   };
 }
 
-async function runCompatibilityMeasurements({
-  sidecar,
-  executor,
-  workRoot,
-  archiveRoot,
-  runRoot,
-}) {
+export async function runCompatibilityMeasurements(
+  { sidecar, executor, workRoot, archiveRoot, runRoot },
+  dependencies = {},
+) {
+  const createFixtureForCase =
+    dependencies.createFixture ?? createCompatibilityFixture;
+  const createArchiveForCase =
+    dependencies.createArchive ?? createCompatibilityArchive;
+  const measureCompatibility =
+    dependencies.compatibilityReport ?? compatibilityReportAsync;
   const rows = [];
   for (const name of ["rar", "split", "encrypted", "link-bearing"]) {
     try {
-      const fixture = createCompatibilityFixture(workRoot, name);
-      const archive = createCompatibilityArchive(
-        name,
-        fixture,
-        sidecar,
-        archiveRoot,
-      );
+      const fixture = createFixtureForCase(workRoot, name);
+      const archive = createArchiveForCase(name, fixture, sidecar, archiveRoot);
       rows.push(
-        await compatibilityReportAsync({
+        await measureCompatibility({
           name,
           fixture,
           archivePath: archive.archivePath,
@@ -2186,7 +2219,10 @@ async function runCompatibilityMeasurements({
         }),
       );
     } catch (error) {
-      if (name === "link-bearing") {
+      if (
+        name === "link-bearing" &&
+        error instanceof HardLinkCapabilityUnavailableError
+      ) {
         rows.push(
           unavailableCompatibilityReport(
             name,
@@ -2737,6 +2773,15 @@ export async function runBenchmark(options) {
       alternatingOrder: zinniaConfigured,
       fixtureScale: scaleName,
       fixtureDescription: FIXTURE_SCALES[scaleName].description,
+    },
+    requestedInventory: {
+      scale: scaleName,
+      formats: [...options.formats],
+      workloads: [...options.workloads],
+      operations: [...operationList],
+      operationFormats: [...operationFormats],
+      operationWorkloads: [...operationWorkloads],
+      compatibility: Boolean(options.compatibility),
     },
     zinnia: {
       configured: zinniaConfigured,

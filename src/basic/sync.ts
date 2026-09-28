@@ -331,6 +331,13 @@ export function updateBasicBrowseInfo(): void {
   if (metaEl) metaEl.textContent = ext;
 }
 
+/** Keep the visible archive card in step with inputs replaced in place. */
+export function refreshBasicArchiveInfo(): void {
+  if (getWorkspaceMode() !== "basic") return;
+  if (currentBasicView === "extract") updateBasicExtractInfo();
+  else if (currentBasicView === "browse") updateBasicBrowseInfo();
+}
+
 export function renderBasicInputs(): void {
   if (getWorkspaceMode() !== "basic") return;
 

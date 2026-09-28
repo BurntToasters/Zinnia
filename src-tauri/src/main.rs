@@ -222,7 +222,9 @@ fn main() {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         if production_integrations_enabled() {
-            builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _| {
+            builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+                // Relative paths belong to the sender's working directory.
+                let argv = launch::resolve_open_args_against_cwd(argv, &cwd);
                 // Invalidate extract warm-idle before the deferred main-thread
                 // dispatch so an in-flight idle-exit cannot destroy the window
                 // that this second-instance open is about to reuse.

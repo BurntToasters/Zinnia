@@ -7,10 +7,14 @@ function readRepositoryFile(...segments: string[]): string {
 }
 
 describe("Rust toolchain policy", () => {
-  it("tracks the rustup stable channel and uses the Flatpak stable extension", () => {
-    const rustChannel = "stable";
+  // Failure modes covered: a build script installs a different compiler than
+  // Cargo selects; target setup adds targets to a moving channel; CI silently
+  // follows a newer compiler; or Flatpak releases compile with a different
+  // Rust toolchain than native releases.
+  it("pins every release/build path to the same exact Rust toolchain", () => {
+    const rustToolchain = "1.98.1";
     expect(readRepositoryFile("rust-toolchain.toml")).toMatch(
-      new RegExp(`^channel = "${rustChannel}"$`, "m"),
+      new RegExp(`^channel = "${rustToolchain}"$`, "m"),
     );
 
     const packageJson = JSON.parse(readRepositoryFile("package.json")) as {
@@ -21,11 +25,14 @@ describe("Rust toolchain policy", () => {
     );
     expect(rustScripts.length).toBeGreaterThan(0);
     for (const [, command] of rustScripts) {
-      expect(command).toContain(rustChannel);
+      expect(command).toContain(rustToolchain);
     }
+    expect(packageJson.scripts?.["rust:update"]).toContain(
+      `toolchain install ${rustToolchain}`,
+    );
 
     const workflow = readRepositoryFile(".github", "workflows", "ci.yml");
-    expect(workflow).toContain(`RUST_VERSION: "${rustChannel}"`);
+    expect(workflow).toContain(`RUST_VERSION: "${rustToolchain}"`);
     const workflowToolchains = workflow.match(/^\s+toolchain: .+$/gm) ?? [];
     expect(workflowToolchains.length).toBeGreaterThan(0);
     expect(
@@ -36,11 +43,31 @@ describe("Rust toolchain policy", () => {
     expect(workflow).toMatch(
       /rust-check:[\s\S]*cargo clippy --locked --manifest-path src-tauri\/Cargo\.toml --all-targets -- -D warnings/,
     );
+    const rustCheckStart = workflow.indexOf("\n  rust-check:");
+    const rustCheckEnd = workflow.indexOf(
+      "\n  updater-manifest:",
+      rustCheckStart,
+    );
+    expect(rustCheckStart).toBeGreaterThanOrEqual(0);
+    expect(rustCheckEnd).toBeGreaterThan(rustCheckStart);
+    const rustCheckJob = workflow.slice(rustCheckStart, rustCheckEnd);
+    expect(rustCheckJob).toContain("toolchain: ${{ env.RUST_VERSION }}");
+    expect(rustCheckJob).toMatch(/^\s+components: clippy\s*$/m);
+    const benchmarkWorkflow = readRepositoryFile(
+      ".github",
+      "workflows",
+      "archive-io-benchmark.yml",
+    );
+    expect(benchmarkWorkflow).toContain(`RUST_VERSION: "${rustToolchain}"`);
 
     const flatpakManifest = readRepositoryFile("run.rosie.zinnia.yml");
     expect(flatpakManifest).toContain(
       "org.freedesktop.Sdk.Extension.rust-stable",
     );
-    expect(flatpakManifest).toMatch(/^\s+RUSTUP_TOOLCHAIN: stable$/m);
+    expect(flatpakManifest).not.toContain("RUSTUP_TOOLCHAIN:");
+    expect(flatpakManifest).not.toContain("rustup toolchain install");
+    expect(flatpakManifest).toContain(
+      `test "$(rustc --version | cut -d' ' -f2)" = ${rustToolchain}`,
+    );
   });
 });

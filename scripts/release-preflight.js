@@ -10,7 +10,8 @@ import {
 
 const require = createRequire(import.meta.url);
 const {
-  assertReleaseBranchProtection,
+  assertBetaTagProtection,
+  assertSuccessfulHostedCi,
 } = require("./release-branch-protection.cjs");
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -84,7 +85,8 @@ function runPreflight() {
     );
   }
 
-  assertReleaseBranchProtection(expectedBranch);
+  assertBetaTagProtection();
+  assertSuccessfulHostedCi(expectedBranch, head);
 
   console.log(
     `release-preflight: ok (${version}, ${expectedBranch}@${head.slice(0, 12)})`,

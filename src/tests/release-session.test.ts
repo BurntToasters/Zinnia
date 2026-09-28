@@ -35,8 +35,14 @@ describe("release build session", () => {
     expect(isIgnorableReleaseDirtyPath("release\\.build-session.json")).toBe(
       true,
     );
-    expect(isIgnorableReleaseDirtyPath("src-tauri/gen/schemas/win.json")).toBe(
-      true,
+    expect(
+      isIgnorableReleaseDirtyPath("src-tauri/gen/schemas/macOS-schema.json"),
+    ).toBe(true);
+    expect(
+      isIgnorableReleaseDirtyPath("src-tauri/gen/schemas/unexpected.json"),
+    ).toBe(false);
+    expect(isIgnorableReleaseDirtyPath("src-tauri/gen/unexpected.json")).toBe(
+      false,
     );
   });
 
@@ -52,6 +58,11 @@ describe("release build session", () => {
     expect(
       porcelainPaths("?? src-tauri/gen/schemas/linux-schema.json"),
     ).toEqual(["src-tauri/gen/schemas/linux-schema.json"]);
+    expect(
+      porcelainPaths(
+        "R  src/main.rs -> src-tauri/gen/schemas/linux-schema.json",
+      ),
+    ).toEqual(["src/main.rs", "src-tauri/gen/schemas/linux-schema.json"]);
   });
 
   it("accepts a recent session for the exact source and environment", () => {
@@ -237,6 +248,14 @@ describe("release build session", () => {
         { cwd: root },
       );
       fs.writeFileSync(path.join(schemaDir, "linux-schema.json"), "dirty\n");
+      expect(recordSuccessfulQualityGate(root).recorded).toBe(true);
+
+      // Only Tauri's known generated outputs may be ignored. Otherwise a new
+      // file can hide unexpected source drift beneath the generated directory.
+      const unexpectedSchema = path.join(schemaDir, "unexpected.json");
+      fs.writeFileSync(unexpectedSchema, "not a Tauri output\n");
+      expect(recordSuccessfulQualityGate(root).recorded).toBe(false);
+      fs.rmSync(unexpectedSchema);
       expect(recordSuccessfulQualityGate(root).recorded).toBe(true);
 
       const session = createReleaseSession(root);

@@ -127,9 +127,12 @@ pub fn restore_foreground_activation(app: &tauri::AppHandle) {
 
 pub(crate) fn open_main_from_extract_warm(app: &tauri::AppHandle) {
     EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);
+    // An explicit user request keeps the main window. It must not stay a
+    // disposable macOS fallback that a later Extract destroys.
+    MAC_FALLBACK_MAIN_PENDING.store(false, Ordering::SeqCst);
     leave_extract_warm(app);
     if let Err(error) = show_main_window(app) {
-        eprintln!("Failed to open main window from warm tray: {error}");
+        eprintln!("Failed to open main window: {error}");
     }
 }
 

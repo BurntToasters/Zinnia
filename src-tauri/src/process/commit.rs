@@ -2520,9 +2520,11 @@ pub(crate) fn rollback_persisted_move_plan(
     };
 
     let log_path = move_identity_log_path(staged);
+    let move_identity_log_identity =
+        super::journal::effective_move_identity_log_identity(staged, move_identity_log_identity)?;
     let log_bytes = match std::fs::symlink_metadata(&log_path) {
         Ok(_) => {
-            let expected = move_identity_log_identity.ok_or_else(|| {
+            let expected = move_identity_log_identity.as_ref().ok_or_else(|| {
                 format!(
                     "Refusing to read present move-identity-log sibling {} without its recorded identity.",
                     log_path.display()

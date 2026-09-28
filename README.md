@@ -88,9 +88,14 @@ native build runs.
   destructively resets that VM to the exact `origin/beta` tip. Then run
   `npm run release:win`, `npm run release:mac`, `npm run release:linux`, or
   `npm run release:linux:arm64` as appropriate.
-- Beta may remain unprotected and deletable. Beta release preflight still
-  requires a clean local `beta` checkout exactly matching `origin/beta`.
-  Stable releases continue to require strict `main` protection with `ci-gate`.
+- The `main` and `beta` branches intentionally have no branch protection.
+  Operators may delete and recreate `beta`. Pull request review and hosted CI
+  checks are release-process requirements enforced by operators, not branch
+  rules. Beta release preflight still requires a clean local `beta` checkout
+  exactly matching `origin/beta`; stable preflight requires hosted `ci-gate`
+  success on the exact `main` HEAD.
+- `npm run repo:protect-beta-tags` installs the mandatory immutable beta-tag
+  ruleset. It protects beta release tags, not the `main` or `beta` branches.
 - Signed releases are intentionally explicit: run the platform-specific
   `release:win`, `release:mac`, and `release:linux` scripts for the same version.
   `release:linux` is x64; run `release:linux:arm64` only from a suitable ARM64
@@ -114,10 +119,9 @@ native build runs.
 - GitHub may temporarily expose an unpublished draft under an `untagged-*`
   identifier. Release scripts accept it only when the draft name and target
   commit match exactly, then set the intended `vX.Y.Z` tag during publication.
-- Each full release command prepares and runs every non-E2E quality gate once.
-  Native E2E is skipped for local release commands because CI runs it on Linux,
-  Windows, and macOS; a direct `npm run test:all` still includes E2E. If
-  `release:prepare` was already run separately on the same VM, use the matching
+- Each full release command prepares and runs the complete local quality gate,
+  including native E2E, once. If `release:prepare` was already run separately
+  on the same VM, use the matching
   `release:*:resume` command; its build session is bound to the exact commit,
   lockfiles, platform, architecture, and Node/Rust toolchain and expires after
   24 hours.

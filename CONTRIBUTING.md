@@ -49,7 +49,7 @@ which points git at the tracked [`.githooks`](.githooks) directory.
 - Enable manually: `git config core.hooksPath .githooks`
 - Bypass once: `git commit --no-verify`
 
-## CI and merge protection
+## CI and merge expectations
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on PRs to `main` and
 `beta`, then runs again on pushes to those branches to prove the exact
@@ -57,19 +57,23 @@ post-merge tip. Feature-branch pushes with an open PR are not run twice. The
 workflow includes Windows/macOS Rust checks, every supported platform/CPU
 compile smoke, and `npm audit`/`cargo audit` security checks.
 
-Release branches must require the source-bound `ci-gate` check, which aggregates
-every independent proof job. A repository admin can apply the project policy to
-both `main` and `beta` with:
+The `main` and `beta` branches intentionally have no branch protection. The
+`beta` branch may be deleted and recreated. Pull request review and hosted CI
+checks remain mandatory release-process requirements, and operators must verify
+them before merging; branch rules do not enforce them. The source-bound
+`ci-gate` check aggregates every independent proof job. Release preflight also
+requires a successful hosted `ci-gate` for the exact `main` or `beta` commit
+being released.
+
+A repository admin must install the immutable beta release-tag ruleset with:
 
 ```sh
-npm run repo:protect-release-branches
+npm run repo:protect-beta-tags
 ```
 
-The command requires strict status checks, keeps the intentional administrator
-bypass enabled, and disables force pushes and branch deletion. Release
-preflight verifies the required protection while allowing that bypass.
-Additional checks such as `rust-check` and `security-audit` may also be required
-in repository settings.
+This ruleset protects `v*-beta.*` tags from updates and deletions. It does not
+protect `main` or `beta`; a deleted `beta` branch can be recreated while its
+published beta tags remain immutable.
 
 ## Cutting a stable release
 

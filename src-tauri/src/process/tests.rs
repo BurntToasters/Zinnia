@@ -6107,3 +6107,260 @@ fn legacy_identity_less_current_pending_record_fails_closed_for_sibling() {
     );
     let _ = std::fs::remove_dir_all(cache);
 }
+
+/// Crash between the identity-log append (fsynced) and the journal update that
+/// records the new log fingerprint. The journal authenticates only the prefix.
+#[cfg(not(windows))]
+struct UnjournaledLogFixture {
+    root: std::path::PathBuf,
+    destination: std::path::PathBuf,
+    staged: std::path::PathBuf,
+    source: std::path::PathBuf,
+    target: std::path::PathBuf,
+    stage_identity: super::journal::FileIdentity,
+    move_plan_identity: super::journal::FileIdentity,
+    journaled_log_identity: super::journal::FileIdentity,
+}
+
+#[cfg(not(windows))]
+fn unjournaled_log_fixture(prefix: &str, suffix: &[u8]) -> UnjournaledLogFixture {
+    use std::io::Write as _;
+
+    let root = temp_root(prefix);
+    let destination = root.join("destination");
+    let staged = destination.join(".zinnia-extract-0123456789abcdef0123456789abcdef");
+    std::fs::create_dir_all(&staged).expect("stage");
+    let stage_identity = super::journal::path_identity(&staged).expect("stage identity");
+    let source = staged.join("new.txt");
+    std::fs::write(&source, b"staged source").expect("source");
+    let target = destination.join("new.txt");
+    std::fs::write(&target, b"corrected copy").expect("published target");
+    let pre_copy_identity = super::journal::path_identity(&source).expect("source identity");
+    let post_copy_identity =
+        super::journal::path_identity_with_fingerprint(&target).expect("target identity");
+
+    let plan = vec![MoveRecord {
+        source: source.clone(),
+        target: target.clone(),
+        publish_temp: None,
+        publish_identity: None,
+    }];
+    let move_plan_identity = write_move_plan(&staged, &plan).expect("move plan");
+
+    let log_path = move_identity_log_path(&staged);
+    let mut log = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&log_path)
+        .expect("identity log");
+    let first = serde_json::json!({ "index": 0, "identity": pre_copy_identity });
+    writeln!(log, "{}", serde_json::to_string(&first).unwrap()).expect("journaled record");
+    log.sync_all().expect("sync journaled prefix");
+    let journaled_log_identity = super::journal::regular_file_identity_with_fingerprint(&log_path)
+        .expect("journaled log identity");
+
+    // The crash happens here: the next record is durable but its fingerprint
+    // never reached the journal.
+    let second = serde_json::json!({ "index": 0, "identity": post_copy_identity });
+    let mut appended = serde_json::to_vec(&second).unwrap();
+    appended.push(b'\n');
+    let suffix = if suffix == b"<complete>" {
+        appended
+    } else {
+        suffix.to_vec()
+    };
+    log.write_all(&suffix).expect("unjournaled suffix");
+    log.sync_all().expect("sync unjournaled suffix");
+    drop(log);
+
+    UnjournaledLogFixture {
+        root,
+        destination,
+        staged,
+        source,
+        target,
+        stage_identity,
+        move_plan_identity,
+        journaled_log_identity,
+    }
+}
+
+#[cfg(not(windows))]
+fn rollback_unjournaled_fixture(fixture: &UnjournaledLogFixture) -> Result<(), String> {
+    rollback_persisted_move_plan(
+        &fixture.staged,
+        &fixture.destination,
+        false,
+        Some(&fixture.move_plan_identity),
+        Some(&fixture.journaled_log_identity),
+    )
+}
+
+#[cfg(not(windows))]
+#[test]
+fn recovery_applies_one_complete_unjournaled_identity_record() {
+    let fixture = unjournaled_log_fixture("zinnia-unjournaled-complete", b"<complete>");
+
+    rollback_unjournaled_fixture(&fixture)
+        .expect("one durable unjournaled record must not block recovery");
+    assert_eq!(std::fs::read(&fixture.source).unwrap(), b"staged source");
+    assert!(
+        !fixture.target.exists(),
+        "verified publish must be retracted"
+    );
+
+    super::journal::cleanup_transaction_artifacts(
+        &fixture.staged,
+        Some(&fixture.stage_identity),
+        Some(&fixture.move_plan_identity),
+        Some(&fixture.journaled_log_identity),
+        &[],
+    )
+    .expect("artifact cleanup must accept the same unjournaled record");
+    assert!(!move_identity_log_path(&fixture.staged).exists());
+    assert!(!move_plan_path(&fixture.staged).exists());
+    let _ = std::fs::remove_dir_all(&fixture.root);
+}
+
+#[cfg(not(windows))]
+#[test]
+fn recovery_ignores_torn_unjournaled_identity_record() {
+    let fixture = unjournaled_log_fixture("zinnia-unjournaled-torn", b"{\"index\":0,\"ident");
+    // The torn append precedes publication, so no copy reached the target.
+    std::fs::remove_file(&fixture.target).expect("target was not published yet");
+
+    rollback_unjournaled_fixture(&fixture)
+        .expect("torn unjournaled append must not block recovery");
+    assert_eq!(std::fs::read(&fixture.source).unwrap(), b"staged source");
+    assert!(!fixture.target.exists());
+
+    super::journal::cleanup_transaction_artifacts(
+        &fixture.staged,
+        Some(&fixture.stage_identity),
+        Some(&fixture.move_plan_identity),
+        Some(&fixture.journaled_log_identity),
+        &[],
+    )
+    .expect("artifact cleanup must accept a torn unjournaled tail");
+    assert!(!move_identity_log_path(&fixture.staged).exists());
+    let _ = std::fs::remove_dir_all(&fixture.root);
+}
+
+#[cfg(not(windows))]
+#[test]
+fn recovery_rejects_two_unjournaled_identity_records() {
+    let record = b"{\"index\":0,\"identity\":null}\n";
+    let mut suffix = record.to_vec();
+    suffix.extend_from_slice(record);
+    let fixture = unjournaled_log_fixture("zinnia-unjournaled-two", &suffix);
+
+    let error = rollback_unjournaled_fixture(&fixture).expect_err("two records must fail closed");
+    assert!(error.contains("length changed"), "{error}");
+    assert_eq!(std::fs::read(&fixture.target).unwrap(), b"corrected copy");
+    assert!(super::journal::cleanup_transaction_artifacts(
+        &fixture.staged,
+        Some(&fixture.stage_identity),
+        Some(&fixture.move_plan_identity),
+        Some(&fixture.journaled_log_identity),
+        &[],
+    )
+    .is_err());
+    assert!(move_identity_log_path(&fixture.staged).exists());
+    let _ = std::fs::remove_dir_all(&fixture.root);
+}
+
+#[cfg(not(windows))]
+#[test]
+fn recovery_rejects_rewritten_journaled_identity_prefix() {
+    use std::io::{Seek as _, Write as _};
+
+    let fixture = unjournaled_log_fixture("zinnia-unjournaled-rewrite", b"<complete>");
+    let mut log = std::fs::OpenOptions::new()
+        .write(true)
+        .open(move_identity_log_path(&fixture.staged))
+        .expect("reopen log");
+    log.seek(std::io::SeekFrom::Start(1)).expect("seek");
+    log.write_all(b" ").expect("rewrite journaled prefix");
+    drop(log);
+
+    assert!(rollback_unjournaled_fixture(&fixture).is_err());
+    assert_eq!(std::fs::read(&fixture.target).unwrap(), b"corrected copy");
+    assert!(move_identity_log_path(&fixture.staged).exists());
+    let _ = std::fs::remove_dir_all(&fixture.root);
+}
+
+#[cfg(not(windows))]
+#[test]
+fn recovery_rejects_truncated_journaled_identity_log() {
+    let fixture = unjournaled_log_fixture("zinnia-unjournaled-truncated", b"");
+    let log_path = move_identity_log_path(&fixture.staged);
+    let bytes = std::fs::read(&log_path).unwrap();
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&log_path)
+        .unwrap()
+        .set_len(bytes.len() as u64 - 2)
+        .expect("truncate");
+
+    assert!(rollback_unjournaled_fixture(&fixture).is_err());
+    assert!(log_path.exists());
+    let _ = std::fs::remove_dir_all(&fixture.root);
+}
+
+#[cfg(not(windows))]
+#[test]
+fn recovery_rejects_replaced_identity_log_file() {
+    let fixture = unjournaled_log_fixture("zinnia-unjournaled-replaced", b"<complete>");
+    let log_path = move_identity_log_path(&fixture.staged);
+    let bytes = std::fs::read(&log_path).unwrap();
+    std::fs::remove_file(&log_path).unwrap();
+    std::fs::write(&log_path, &bytes).expect("same bytes, new inode");
+
+    assert!(rollback_unjournaled_fixture(&fixture).is_err());
+    assert_eq!(std::fs::read(&fixture.target).unwrap(), b"corrected copy");
+    let _ = std::fs::remove_dir_all(&fixture.root);
+}
+
+// bzip2 and xz store no member name. 7-Zip `-ba -slt` then prints one record
+// without `Path =`; extraction derives the output name from the archive name.
+const BZIP2_PATHLESS_SLT: &str = "Size = \nPacked Size = \n\n";
+const XZ_PATHLESS_SLT: &str = "Size = 100000\nPacked Size = 100064\nMethod = LZMA2:17 CRC32\n\n";
+
+#[test]
+fn slt_preflight_accepts_one_pathless_single_stream_record() {
+    assert_slt_archive_members_safe(BZIP2_PATHLESS_SLT, "/tmp/payload.bin.bz2")
+        .expect("bzip2 listing without a stored name must be extractable");
+    assert_slt_archive_members_safe(XZ_PATHLESS_SLT, "/tmp/payload.bin.xz")
+        .expect("xz listing without a stored name must be extractable");
+    assert_slt_declared_size_within_limit(XZ_PATHLESS_SLT, "/tmp/payload.bin.xz", 100_000)
+        .expect("declared size at the limit is allowed");
+    assert_slt_archive_members_safe(&XZ_PATHLESS_SLT.replace('\n', "\r\n"), r"C:\t\p.xz")
+        .expect("Windows CRLF listing must parse the same way");
+}
+
+#[test]
+fn slt_preflight_enforces_declared_size_for_pathless_record() {
+    let err = assert_slt_declared_size_within_limit(XZ_PATHLESS_SLT, "/tmp/payload.bin.xz", 99_999)
+        .expect_err("declared size above the limit must fail");
+    assert!(err.contains("Archive declares more than"), "{err}");
+    let err = assert_slt_archive_members_safe("Size = lots\n\n", "/tmp/payload.bin.xz")
+        .expect_err("invalid size must fail");
+    assert!(err.contains("invalid declared member size"), "{err}");
+}
+
+#[test]
+fn slt_preflight_rejects_ambiguous_pathless_listings() {
+    let two = format!("{XZ_PATHLESS_SLT}{XZ_PATHLESS_SLT}");
+    for (label, listing) in [
+        ("two pathless records", two.as_str()),
+        ("pathless link target", "Size = 1\nSymbolic Link = ../x\n\n"),
+        ("garbage", "not a listing\n"),
+        ("record without size", "Method = LZMA2\n\n"),
+    ] {
+        assert!(
+            assert_slt_archive_members_safe(listing, "/tmp/payload.bin.xz").is_err(),
+            "{label} must fail closed"
+        );
+    }
+    assert_slt_archive_members_safe("", "/tmp/empty.7z").expect("empty listing is empty archive");
+}

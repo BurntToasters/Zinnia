@@ -209,9 +209,21 @@ describe("Zinnia archive I/O benchmark runner", () => {
     return;
   }
 
+  // One test carries the whole benchmark session. The benchmark wrapper owns
+  // the run deadline and kills this process tree when it expires, so Mocha
+  // must not end the session first. WDIO reads the timeout before the test
+  // body runs, so it is set on the definition, not with this.timeout().
+  // Mocha maps its maximum (2^31-1) to "disabled" (0), which WDIO then
+  // treats as an immediate deadline. Stay one millisecond below it.
+  const maxSessionTimeoutMs = 2 ** 31 - 2;
+  const configured = Number(process.env.ZINNIA_BENCH_RUN_TIMEOUT_MS);
+  const sessionTimeoutMs =
+    Number.isSafeInteger(configured) && configured > 0
+      ? Math.min(configured + 60_000, maxSessionTimeoutMs)
+      : maxSessionTimeoutMs;
   it("runs all supplied operations in one persistent app", async () => {
     await waitForBenchmarkHook();
     await runSocketSession();
     console.log("Archive benchmark socket session completed.");
-  });
+  }).timeout(sessionTimeoutMs);
 });
