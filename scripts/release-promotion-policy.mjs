@@ -51,7 +51,6 @@ export function validatePromotionCandidate({
   labels,
   betaSha,
   taggedVersion,
-  tagRuleset,
   changedEntries,
 }) {
   const match = String(headVersion).match(BETA_VERSION_PATTERN);
@@ -82,7 +81,8 @@ export function validatePromotionCandidate({
       "Accepted beta tag package version differs from the candidate.",
     );
   }
-  assertBetaTagRulesetResponse(tagRuleset, { requireNoBypassActors: false });
+  // The beta tag ruleset requirement is intentionally disabled for now;
+  // releases are cut from maintainer-controlled release VMs.
   const tag = `v${headVersion}`;
   const acceptanceLabels = Array.isArray(labels)
     ? labels.filter((label) =>
@@ -522,7 +522,6 @@ export async function loadBetaTagRuleset(
 }
 
 async function verifyRemoteAcceptedBetaTag(tag, expectedSha, expectedVersion) {
-  await loadBetaTagRuleset();
   git(["fetch", "--no-tags", "origin", `refs/tags/${tag}`]);
   const liveSha = git(["rev-parse", "FETCH_HEAD^{commit}"]).toLowerCase();
   if (liveSha !== String(expectedSha).toLowerCase()) {
@@ -762,7 +761,6 @@ async function main() {
       throw new Error("Promotion branch name and beta package version differ.");
     }
     const tag = `v${headVersion}`;
-    const tagRuleset = await loadBetaTagRuleset();
     git(["fetch", "--no-tags", "origin", `refs/tags/${tag}`]);
     const betaSha = git(["rev-parse", "FETCH_HEAD^{commit}"]);
     validatePromotionCandidate({
@@ -773,7 +771,6 @@ async function main() {
       labels: pr.labels,
       betaSha,
       taggedVersion: versionAt(betaSha),
-      tagRuleset,
       changedEntries: changedEntriesBetween(betaSha, headSha),
     });
     await verifyRemoteAcceptedBetaTag(tag, betaSha, headVersion);

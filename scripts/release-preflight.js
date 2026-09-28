@@ -1,24 +1,19 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   isIgnorableReleaseDirtyPath,
   porcelainPaths,
 } from "./release-session.js";
 
-const require = createRequire(import.meta.url);
-const {
-  assertBetaTagProtection,
-  assertSuccessfulHostedCi,
-} = require("./release-branch-protection.cjs");
-
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(scriptDir, "..");
 const packageJson = JSON.parse(
   fs.readFileSync(path.join(root, "package.json"), "utf8"),
 );
+
+// Note from BurntToasters: Branch protection pre-flight rules have been intentionally removed for now
 
 function expectedReleaseBranch(version) {
   const numeric = "(?:0|[1-9]\\d*)";
@@ -84,9 +79,6 @@ function runPreflight() {
       `HEAD ${head.slice(0, 12)} does not match pushed ${expectedUpstream} ${upstreamHead.slice(0, 12)}.`,
     );
   }
-
-  assertBetaTagProtection();
-  assertSuccessfulHostedCi(expectedBranch, head);
 
   console.log(
     `release-preflight: ok (${version}, ${expectedBranch}@${head.slice(0, 12)})`,

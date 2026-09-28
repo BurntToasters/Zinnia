@@ -92,9 +92,9 @@ native build runs.
   Operators may delete and recreate `beta`. Pull request review and hosted CI
   checks are release-process requirements enforced by operators, not branch
   rules. Beta release preflight still requires a clean local `beta` checkout
-  exactly matching `origin/beta`; stable preflight requires hosted `ci-gate`
-  success on the exact `main` HEAD.
-- `npm run repo:protect-beta-tags` installs the mandatory immutable beta-tag
+  exactly matching `origin/beta`. Operators confirm hosted `ci-gate` success
+  on the exact release commit; preflight does not check it.
+- `npm run repo:protect-beta-tags` installs the optional immutable beta-tag
   ruleset. It protects beta release tags, not the `main` or `beta` branches.
 - Signed releases are intentionally explicit: run the platform-specific
   `release:win`, `release:mac`, and `release:linux` scripts for the same version.
