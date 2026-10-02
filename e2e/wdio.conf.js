@@ -15,6 +15,10 @@ if (process.env.ZINNIA_E2E_APP_ARGS) {
 async function requestGracefulAppShutdown() {
   const activeBrowser = globalThis.browser;
   if (!activeBrowser?.sessionId) return;
+  if (globalThis.__ZINNIA_E2E_APP_CLOSED_BY_SPEC__) {
+    activeBrowser.sessionId = undefined;
+    return;
+  }
 
   const processApiAvailable = await activeBrowser.execute(
     () => typeof window.__TAURI__?.core?.invoke === "function",

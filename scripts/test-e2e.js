@@ -21,10 +21,13 @@ import {
   createE2eProfile,
   e2eBinaryPath,
   e2eStampPath,
+  updateE2eSettings,
 } from "../e2e/helpers/profile.js";
 export { reserveE2eWebdriverPort };
 
 import { usesWindowsCmdShell } from "./npm-safe-update.mjs";
+
+const EXTRACT_WINDOW_AUTO_CLOSE_SECONDS = 10;
 
 function npmCommand() {
   return process.platform === "win32" ? "npm.cmd" : "npm";
@@ -942,6 +945,9 @@ async function main() {
       processCleanup,
     );
     mainSuite.status = "passed";
+    updateE2eSettings(profile.profileDir, {
+      extractAutoCloseSeconds: EXTRACT_WINDOW_AUTO_CLOSE_SECONDS,
+    });
     const extractWebdriver = await reserveE2eWebdriverPort();
     const extractSuite = {
       spec: "./specs/extract-window.spec.js",
@@ -956,6 +962,9 @@ async function main() {
       reportDir,
       {
         ZINNIA_E2E_HELLO_7Z: extractWindowArchive,
+        ZINNIA_E2E_AUTO_CLOSE_SECONDS: String(
+          EXTRACT_WINDOW_AUTO_CLOSE_SECONDS,
+        ),
         TAURI_WEBDRIVER_PORT: String(extractWebdriver.port),
       },
       extractWebdriver,

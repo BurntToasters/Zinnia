@@ -676,7 +676,7 @@ impl Update {
             request = request.danger_accept_invalid_hostnames(true);
         }
         if let Some(timeout) = self.timeout {
-            request = request.timeout(timeout);
+            request = request.connect_timeout(timeout).read_timeout(timeout);
         }
         if self.no_proxy {
             request = request.no_proxy();
