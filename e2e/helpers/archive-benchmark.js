@@ -615,8 +615,10 @@ function runWindowsPowerShell(command, env = process.env, timeoutMs = 5_000) {
 async function readWindowsProcessTable(timeoutMs = 5_000) {
   const command = [
     "$ErrorActionPreference = 'Stop'",
+    "Add-Type -AssemblyName System.Management",
     "$rows = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop | ForEach-Object {",
-    "  [pscustomobject]@{ pid = [int]$_.ProcessId; parentPid = [int]$_.ParentProcessId; created = [string]$_.CreationDate; name = [string]$_.Name }",
+    "  $created = if ($_.CreationDate) { [System.Management.ManagementDateTimeConverter]::ToDmtfDateTime($_.CreationDate) } else { '' }",
+    "  [pscustomobject]@{ pid = [int]$_.ProcessId; parentPid = [int]$_.ParentProcessId; created = $created; name = [string]$_.Name }",
     "})",
     "ConvertTo-Json -InputObject $rows -Compress",
   ].join("\n");
@@ -873,23 +875,21 @@ export function captureWindowsProcessIdentity(child, options = {}) {
       } catch {
         table = null;
       }
-      if (state.captureStopped) break;
-      if (
+      if (state.captureStopped && !state.leaderExited) break;
+      const leaderExitedDuringScan =
         state.leaderExited ||
         child.exitCode !== null ||
-        child.signalCode !== null
-      ) {
-        markLeaderExited();
-        break;
-      }
+        child.signalCode !== null;
       if (!Array.isArray(table)) {
-        state.captureIncomplete = true;
+        if (!leaderExitedDuringScan) state.captureIncomplete = true;
       } else {
         const leader = table.find(
           (processInfo) => processInfo.pid === child.pid,
         );
         if (!leader) {
-          if (state.identity) state.captureIncomplete = true;
+          if (state.identity && !leaderExitedDuringScan) {
+            state.captureIncomplete = true;
+          }
         } else {
           const identity = windowsProcessIdentity(leader);
           const createdAtMs = windowsCreationTimeMs(identity?.created);
@@ -918,6 +918,10 @@ export function captureWindowsProcessIdentity(child, options = {}) {
             }
           }
         }
+      }
+      if (leaderExitedDuringScan) {
+        markLeaderExited();
+        break;
       }
       await new Promise((resolve) => {
         const wait = setTimeout(resolve, captureIntervalMs);
@@ -1039,6 +1043,25 @@ export async function terminateAndWaitForProcessTree(child, options = {}) {
         "identity",
         "leader identity (PID and creation time) was not captured",
       );
+    }
+    if (
+      state.captureTask &&
+      (state.leaderExited ||
+        child.exitCode !== null ||
+        child.signalCode !== null)
+    ) {
+      let captureTimer;
+      await Promise.race([
+        state.captureTask,
+        new Promise((resolve) => {
+          captureTimer = setTimeout(
+            resolve,
+            Math.max(1, deadline - Date.now()),
+          );
+          captureTimer.unref?.();
+        }),
+      ]);
+      clearTimeout(captureTimer);
     }
     const snapshotTree = async () =>
       snapshotWindowsProcessTree(

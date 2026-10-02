@@ -623,47 +623,54 @@ test(
   },
 );
 
-test("timed-out Windows command bounds cleanup when identity capture is delayed", async () => {
-  const root = temporaryRoot();
-  const pidFile = join(root, "leader.pid");
-  let leaderPid = null;
-  try {
-    const code = [
-      "const fs=require('node:fs');",
-      "fs.writeFileSync(process.argv[1],String(process.pid));",
-      "setInterval(()=>{},1000);",
-    ].join("");
-    const startedAt = Date.now();
-    await assert.rejects(
-      e2eRunner.runBoundedCommand(process.execPath, ["-e", code, pidFile], {
-        cwd: root,
-        timeoutMs: 100,
-        processPlatform: "win32",
-        windowsProcessOptions: {
-          captureIntervalMs: 2,
-          readWindowsProcessTable: async () => {
-            await delay(250);
-            return [];
+test(
+  "timed-out Windows command bounds cleanup when identity capture is delayed",
+  { skip: process.platform === "win32" },
+  async () => {
+    const root = temporaryRoot();
+    const pidFile = join(root, "leader.pid");
+    let leaderPid = null;
+    try {
+      const code = [
+        "const fs=require('node:fs');",
+        "fs.writeFileSync(process.argv[1],String(process.pid));",
+        "setInterval(()=>{},1000);",
+      ].join("");
+      const startedAt = Date.now();
+      await assert.rejects(
+        e2eRunner.runBoundedCommand(process.execPath, ["-e", code, pidFile], {
+          cwd: root,
+          timeoutMs: 100,
+          processPlatform: "win32",
+          windowsProcessOptions: {
+            captureIntervalMs: 2,
+            readWindowsProcessTable: async () => {
+              await delay(250);
+              return [];
+            },
           },
-        },
-        processTreeCleanupOptions: { processTreeCleanupTimeoutMs: 60 },
-      }),
-      /cleanup could not be verified/,
-    );
-    assert.ok(Date.now() - startedAt < 1_000, "cleanup observes its deadline");
-    leaderPid = Number(readFileSync(pidFile, "utf8"));
-    assert.ok(processIsAlive(leaderPid), "unknown PID was not killed");
-  } finally {
-    if (!leaderPid && existsSync(pidFile)) {
+          processTreeCleanupOptions: { processTreeCleanupTimeoutMs: 60 },
+        }),
+        /cleanup could not be verified/,
+      );
+      assert.ok(
+        Date.now() - startedAt < 1_000,
+        "cleanup observes its deadline",
+      );
       leaderPid = Number(readFileSync(pidFile, "utf8"));
+      assert.ok(processIsAlive(leaderPid), "unknown PID was not killed");
+    } finally {
+      if (!leaderPid && existsSync(pidFile)) {
+        leaderPid = Number(readFileSync(pidFile, "utf8"));
+      }
+      if (leaderPid && processIsAlive(leaderPid)) {
+        process.kill(leaderPid, "SIGKILL");
+        await assertStopped(leaderPid);
+      }
+      rmSync(root, { recursive: true, force: true });
     }
-    if (leaderPid && processIsAlive(leaderPid)) {
-      process.kill(leaderPid, "SIGKILL");
-      await assertStopped(leaderPid);
-    }
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+  },
+);
 
 test("archive benchmark workflow writes diagnostics after preparation failures", () => {
   const workflow = readFileSync(
@@ -1601,28 +1608,32 @@ const unprovableWindowsCleanup = {
   processTreeCleanupOptions: { processTreeCleanupTimeoutMs: 40 },
 };
 
-test("successful Windows build step with unproven cleanup warns and continues", async () => {
-  const root = temporaryRoot();
-  const cleanupRecords = [];
-  try {
-    const result = await e2eRunner.runBoundedCommand(
-      process.execPath,
-      ["-e", "process.exit(0)"],
-      {
-        cwd: root,
-        timeoutMs: 5_000,
-        allowBuildCleanupWarning: true,
-        ...unprovableWindowsCleanup,
-        onProcessTreeCleanup: (record) => cleanupRecords.push(record),
-      },
-    );
-    assert.equal(result.processTreeCleanup.status, "build-unproven");
-    assert.equal(cleanupRecords[0]?.status, "build-unproven");
-    assert.match(cleanupRecords[0]?.reason, /leader identity/);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+test(
+  "successful Windows build step with unproven cleanup warns and continues",
+  { skip: process.platform === "win32" },
+  async () => {
+    const root = temporaryRoot();
+    const cleanupRecords = [];
+    try {
+      const result = await e2eRunner.runBoundedCommand(
+        process.execPath,
+        ["-e", "process.exit(0)"],
+        {
+          cwd: root,
+          timeoutMs: 5_000,
+          allowBuildCleanupWarning: true,
+          ...unprovableWindowsCleanup,
+          onProcessTreeCleanup: (record) => cleanupRecords.push(record),
+        },
+      );
+      assert.equal(result.processTreeCleanup.status, "build-unproven");
+      assert.equal(cleanupRecords[0]?.status, "build-unproven");
+      assert.match(cleanupRecords[0]?.reason, /leader identity/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
 
 test("failed Windows build step with unproven cleanup still fails", async () => {
   const root = temporaryRoot();
