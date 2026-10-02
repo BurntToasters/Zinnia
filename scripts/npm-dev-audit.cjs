@@ -13,6 +13,7 @@ const REVIEWED_ADVISORIES = new Map([
   ["GHSA-7PQW-9J4J-H8Q3", "extract-zip"],
   ["GHSA-5C6J-R48X-RMVQ", "serialize-javascript"],
   ["GHSA-QJ8W-GFJ5-8C6V", "serialize-javascript"],
+  ["GHSA-C475-QRG2-PJ4R", "basic-ftp"],
 ]);
 
 function advisoryId(via) {

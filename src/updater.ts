@@ -22,7 +22,7 @@ let updateGeneration = 0;
 /** True while native `update.install()` is live. Timeout must not unlock. */
 let installInFlight = false;
 const UPDATE_CHECK_TIMEOUT_MS = 30_000;
-const UPDATE_DOWNLOAD_TIMEOUT_MS = 120_000;
+const UPDATE_DOWNLOAD_STALL_TIMEOUT_MS = 120_000;
 const UPDATE_INSTALL_WATCHDOG_MS = 180_000;
 const UPDATE_RESERVATION_HEARTBEAT_MS = 60_000;
 
@@ -319,7 +319,7 @@ async function runUpdateCheck(interactive: boolean): Promise<void> {
     }
     setStatus("Downloading update");
     await checkedUpdate.download(undefined, {
-      timeout: UPDATE_DOWNLOAD_TIMEOUT_MS,
+      timeout: UPDATE_DOWNLOAD_STALL_TIMEOUT_MS,
     });
     if (generation !== updateGeneration) {
       await checkedUpdate.close().catch(() => {});

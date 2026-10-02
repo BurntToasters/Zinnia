@@ -58,9 +58,12 @@ minisign-verify = "0.2.5"
 default = []
 e2e = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
 
-# Patched: macOS transactional install, confined tar, Linux helper PATH, Windows ShellExecute.
+# Patched: macOS transactional install, confined tar, Linux helper PATH, Windows ShellExecute,
+# download timeout as connect/stall limit instead of a total-transfer cap.
+# wdio-webdriver: webview2-com 0.39 / windows 0.62 to match wry 0.57 (tauri 2.12).
 [patch.crates-io]
 tauri-plugin-updater = { path = "vendor/tauri-plugin-updater" }
+tauri-plugin-wdio-webdriver = { path = "vendor/tauri-plugin-wdio-webdriver" }
 
 [profile.release]
 panic = "abort"

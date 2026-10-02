@@ -118,6 +118,16 @@ async function invokeExtractRun(
 }
 
 const EXTRACT_PASSWORD_PROMPT_CANCELLED = "EXTRACT_PASSWORD_PROMPT_CANCELLED";
+const AUTO_CLOSE_POINTER_SLOP_PX = 4;
+const AUTO_CLOSE_IGNORED_KEYS = new Set([
+  "Alt",
+  "AltGraph",
+  "Control",
+  "Meta",
+  "OS",
+  "Shift",
+  "Unidentified",
+]);
 
 async function runWithPasswordRetry(
   args: string[],
@@ -360,24 +370,111 @@ async function run() {
   setNativeWebviewContextMenuAllowed(debugMode);
 
   let autoCloseInterval: ReturnType<typeof setInterval> | null = null;
-  const autoCloseAbortEvents = ["mousemove", "keydown", "click"] as const;
-  let autoCloseAbortListener: (() => void) | null = null;
+  let autoCloseDeadline = 0;
+  let autoClosePaused = false;
+  let autoCloseListening = false;
+  let autoClosePointer: { x: number; y: number } | null = null;
+  const autoCloseCancelEvents = ["keydown", "click"] as const;
 
-  const removeAutoCloseAbortListeners = () => {
-    if (!autoCloseAbortListener) return;
-    for (const eventName of autoCloseAbortEvents) {
-      window.removeEventListener(eventName, autoCloseAbortListener);
-    }
-    autoCloseAbortListener = null;
-  };
-
-  const abortAutoClose = () => {
-    removeAutoCloseAbortListeners();
+  const stopAutoCloseTimer = () => {
     if (autoCloseInterval !== null) {
       clearInterval(autoCloseInterval);
       autoCloseInterval = null;
-      closeBtn.textContent = "Close";
     }
+  };
+
+  const renderAutoCloseCountdown = () => {
+    const remainingMs = autoCloseDeadline - Date.now();
+    if (remainingMs <= 0) {
+      cancelAutoClose();
+      closeBtn.textContent = "Closing…";
+      void closeWindowSafely().then(() => {
+        closeBtn.textContent = "Close";
+      });
+      return;
+    }
+    closeBtn.textContent = `Close (${Math.ceil(remainingMs / 1000)}s)`;
+  };
+
+  const startAutoCloseCountdown = () => {
+    stopAutoCloseTimer();
+    autoClosePaused = false;
+    autoCloseDeadline = Date.now() + autoCloseDelay * 1000;
+    renderAutoCloseCountdown();
+    if (autoCloseListening) {
+      autoCloseInterval = setInterval(renderAutoCloseCountdown, 100);
+    }
+  };
+
+  const pauseAutoClose = () => {
+    stopAutoCloseTimer();
+    autoClosePaused = true;
+    closeBtn.textContent = "Close (paused)";
+  };
+
+  const onAutoClosePointerMove = (event: MouseEvent) => {
+    const point = { x: event.screenX, y: event.screenY };
+    if (!autoClosePointer) {
+      autoClosePointer = point;
+      return;
+    }
+    const moved = Math.max(
+      Math.abs(point.x - autoClosePointer.x),
+      Math.abs(point.y - autoClosePointer.y),
+    );
+    if (moved < AUTO_CLOSE_POINTER_SLOP_PX) return;
+    autoClosePointer = point;
+    if (!autoClosePaused) pauseAutoClose();
+  };
+
+  const onAutoClosePointerLeave = () => {
+    autoClosePointer = null;
+    if (autoClosePaused) startAutoCloseCountdown();
+  };
+
+  const onAutoCloseCancel = (event: Event) => {
+    if (
+      event instanceof KeyboardEvent &&
+      AUTO_CLOSE_IGNORED_KEYS.has(event.key)
+    ) {
+      return;
+    }
+    cancelAutoClose(true);
+  };
+
+  const removeAutoCloseListeners = () => {
+    if (!autoCloseListening) return;
+    window.removeEventListener("mousemove", onAutoClosePointerMove);
+    for (const eventName of autoCloseCancelEvents) {
+      window.removeEventListener(eventName, onAutoCloseCancel);
+    }
+    document.documentElement.removeEventListener(
+      "mouseleave",
+      onAutoClosePointerLeave,
+    );
+    autoCloseListening = false;
+  };
+
+  const cancelAutoClose = (resetLabel = false) => {
+    const wasActive = autoCloseListening;
+    removeAutoCloseListeners();
+    stopAutoCloseTimer();
+    autoClosePaused = false;
+    autoClosePointer = null;
+    if (resetLabel && wasActive) closeBtn.textContent = "Close";
+  };
+
+  const beginAutoClose = () => {
+    autoCloseListening = true;
+    window.addEventListener("mousemove", onAutoClosePointerMove);
+    for (const eventName of autoCloseCancelEvents) {
+      window.addEventListener(eventName, onAutoCloseCancel);
+    }
+    document.documentElement.addEventListener(
+      "mouseleave",
+      onAutoClosePointerLeave,
+    );
+    startAutoCloseCountdown();
   };
 
   const finish = (
@@ -419,25 +516,7 @@ async function run() {
         return;
       }
 
-      let remaining = autoCloseDelay;
-      closeBtn.textContent = `Close (${Math.ceil(remaining)}s)`;
-
-      autoCloseAbortListener = () => abortAutoClose();
-      for (const eventName of autoCloseAbortEvents) {
-        window.addEventListener(eventName, autoCloseAbortListener, {
-          once: true,
-        });
-      }
-
-      autoCloseInterval = setInterval(() => {
-        remaining -= 0.1;
-        if (remaining <= 0) {
-          abortAutoClose();
-          void closeWindowSafely();
-        } else {
-          closeBtn.textContent = `Close (${Math.ceil(remaining)}s)`;
-        }
-      }, 100);
+      beginAutoClose();
     }
   };
 
