@@ -48,7 +48,7 @@ impl<R: Runtime> MacOSExecutor<R> {
     }
 
     /// Dispatch one `callAsyncJavaScript` attempt of a DirectEval wrapper. The returned receiver fires
-    /// when macOS 26.4's WebKit reclaims the completion with no value — the signal `execute_direct_eval`
+    /// when macOS 26.4's WebKit reclaims the completion with no value - the signal `execute_direct_eval`
     /// uses to re-dispatch. When the completion *does* carry a value, it is delivered to `registry` as a
     /// fallback for a lost message-handler post (first-write-wins keeps the post authoritative).
     fn dispatch_eval_attempt(
@@ -142,7 +142,7 @@ pub fn register_webview_handlers<R: Runtime>(webview: &tauri::Webview<R>) {
         );
 
         // The DirectEval result channel (see execute_direct_eval). WKUserContentController retains the
-        // handler for the webview's lifetime, so — unlike the UI delegate — it needs no associated object.
+        // handler for the webview's lifetime, so - unlike the UI delegate - it needs no associated object.
         let eval_handler = EvalMessageHandler::new(eval_registry);
         let eval_proto: Retained<ProtocolObject<dyn WKScriptMessageHandler>> =
             ProtocolObject::from_retained(eval_handler);
@@ -161,12 +161,12 @@ pub fn register_webview_handlers<R: Runtime>(webview: &tauri::Webview<R>) {
 ///
 /// With no display, the app parks in `-[NSApplication run]` waiting for events, so WebKit doesn't
 /// promptly service WebContent's URL-scheme resource requests (page-load subresources) or eval
-/// dispatches — a DirectEval can then stall for tens of seconds and time out. A no-op timer in the
+/// dispatches - a DirectEval can then stall for tens of seconds and time out. A no-op timer in the
 /// run loop's common modes forces it to wake, draining that pending work each tick; the interval only
 /// bounds worst-case servicing latency (well under the command timeout). Harmless with a real display
 /// (the loop already pumps continuously). This plugin ships only in WebDriver-automation builds.
 ///
-/// `Once`-guarded, so it is safe to schedule from both plugin `setup` (earliest — covers cold-start
+/// `Once`-guarded, so it is safe to schedule from both plugin `setup` (earliest - covers cold-start
 /// and deeplink navigation before the first webview is ready) and `on_webview_ready` (fallback).
 /// https://github.com/webdriverio/desktop-mobile/issues/540
 ///
@@ -264,7 +264,7 @@ impl<R: Runtime + 'static> PlatformExecutor<R> for MacOSExecutor<R> {
             .map_err(|e| WebDriverErrorResponse::invalid_argument(&e.to_string()))?;
 
         // Build wrapper that includes argument deserialization.
-        // callAsyncJavaScript treats the body as function statements, so `return` is required —
+        // callAsyncJavaScript treats the body as function statements, so `return` is required -
         // without it the function returns undefined immediately and the Promise is discarded.
         let wrapper = format!(
             r"return new Promise((resolve, reject) => {{
@@ -363,20 +363,20 @@ impl<R: Runtime + 'static> PlatformExecutor<R> for MacOSExecutor<R> {
     /// DirectEval (`/wdio/eval`) with out-of-band result delivery + reclaim recovery.
     ///
     /// Each attempt is dispatched by `dispatch_eval_attempt` via `callAsyncJavaScript`, which keeps the
-    /// run loop pumping — on a headless runner the app's own `core.invoke` IPC response only completes
+    /// run loop pumping - on a headless runner the app's own `core.invoke` IPC response only completes
     /// while WebKit holds a run-loop activity. The result is delivered primarily out-of-band: the
     /// wrapper posts `{ id, result }` to the `wdioEvalResult` `WKScriptMessageHandler`, which completes
     /// the `oneshot` awaited here. macOS 26.4's WebKit intermittently reclaims the `callAsyncJavaScript`
     /// completion ("Completion handler for function call is no longer reachable"); usually the post
     /// still lands, but sometimes the script never posts and this would otherwise dead-wait to the
     /// script timeout (#540 residual). Two guards recover it without changing the happy path:
-    ///   1. **Fallback delivery** — when the completion *does* fire with a value, `dispatch_eval_attempt`
+    ///   1. **Fallback delivery** - when the completion *does* fire with a value, `dispatch_eval_attempt`
     ///      hands it to the same registry (first-write-wins keeps the post authoritative), so a lost
     ///      post resolves instead of dead-waiting.
-    ///   2. **Bounded re-dispatch** — when the completion is reclaimed with *no* value and no post lands
+    ///   2. **Bounded re-dispatch** - when the completion is reclaimed with *no* value and no post lands
     ///      within `RECLAIM_GRACE`, re-run the script (up to `MAX_ATTEMPTS`). The grace lets a racing
     ///      post settle first; a genuine re-dispatch *re-executes* the script, so a non-idempotent eval
-    ///      could double-apply — acceptable for the read-style evals `execute` runs in practice.
+    ///      could double-apply - acceptable for the read-style evals `execute` runs in practice.
     /// The whole sequence is bounded by `deadline`. Mirrors the Windows native-handler path
     /// (`AsyncScriptState`). https://github.com/webdriverio/desktop-mobile/issues/540
     ///
@@ -429,7 +429,7 @@ impl<R: Runtime + 'static> PlatformExecutor<R> for MacOSExecutor<R> {
                             return (&mut rx).await.map_err(|_| channel_closed());
                         }
                         // Race a late post against the grace: if the script actually ran and posts
-                        // here, return it — re-dispatching would execute the script (and any mocks it
+                        // here, return it - re-dispatching would execute the script (and any mocks it
                         // hits) a second time. Only re-dispatch once the grace elapses with no result.
                         tokio::select! {
                             r = &mut rx => return r.map_err(|_| channel_closed()),

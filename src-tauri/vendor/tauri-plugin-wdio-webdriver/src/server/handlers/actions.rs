@@ -116,7 +116,7 @@ pub enum PointerAction {
 const ELEMENT_KEY: &str = "element-6066-11e4-a52e-4f735466cecf";
 
 /// Coordinate origin for a `pointerMove`. Per the WebDriver Actions spec the
-/// `origin` is either the string `"viewport"` (the default — x/y are absolute
+/// `origin` is either the string `"viewport"` (the default - x/y are absolute
 /// viewport coordinates) or `"pointer"` (x/y are relative to the current pointer
 /// position), or an element reference object
 /// `{ "element-6066-11e4-a52e-4f735466cecf": "<id>" }` (x/y are offsets from the
@@ -192,7 +192,7 @@ pub async fn perform<R: Runtime + 'static>(
 
     // Process actions tick-by-tick across sources (W3C): the action at index N from every source runs
     // before index N+1 from any source, so cross-source chains interleave correctly (e.g. Ctrl+click
-    // built as a key source + a pointer source in one performActions — the modifier is down when the
+    // built as a key source + a pointer source in one performActions - the modifier is down when the
     // click lands). A source with fewer actions contributes nothing on later ticks.
     let tick_count = request
         .actions
@@ -279,7 +279,7 @@ pub async fn perform<R: Runtime + 'static>(
                                 // click; emit the click event the browser would
                                 // synthesize for real input so element handlers fire.
                                 // Only the primary button's release consumes/clears
-                                // the press state — a non-primary release in between
+                                // the press state - a non-primary release in between
                                 // must not drop it.
                                 if *button == 0 {
                                     if primary_down_pos == Some((pointer_state.x, pointer_state.y)) {
@@ -503,9 +503,9 @@ mod tests {
         );
         let tick_ms =
             |tick: usize| req.actions.iter().filter_map(|s| s.duration_at(tick)).max().unwrap_or(0);
-        // tick 0: max(100, 200, 80) = 200 — not the sum (380).
+        // tick 0: max(100, 200, 80) = 200 - not the sum (380).
         assert_eq!(tick_ms(0), 200);
-        // tick 1: max(50, 30) = 50 — the wheel source is exhausted and contributes nothing.
+        // tick 1: max(50, 30) = 50 - the wheel source is exhausted and contributes nothing.
         assert_eq!(tick_ms(1), 50);
     }
 }

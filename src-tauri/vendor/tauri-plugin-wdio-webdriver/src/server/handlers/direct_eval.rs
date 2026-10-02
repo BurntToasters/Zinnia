@@ -27,7 +27,7 @@ pub struct DirectEvalResponse {
     pub undef: Option<bool>,
 }
 
-/// POST `/wdio/eval` — execute a pre-wrapped async script directly in a webview window
+/// POST `/wdio/eval` - execute a pre-wrapped async script directly in a webview window
 /// without going through the W3C WebDriver session layer or Tauri IPC.
 ///
 /// The script must use the W3C async-script callback contract:

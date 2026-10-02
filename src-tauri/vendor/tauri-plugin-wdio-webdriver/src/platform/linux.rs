@@ -456,7 +456,7 @@ impl<R: Runtime + 'static> PlatformExecutor<R> for LinuxExecutor<R> {
 
         // Build wrapper that includes argument deserialization.
         // call_async_javascript_function_future treats the body as function statements,
-        // so `return` is required — without it the function returns undefined immediately.
+        // so `return` is required - without it the function returns undefined immediately.
         let wrapper = format!(
             r"return new Promise((resolve, reject) => {{
                 var ELEMENT_KEY = 'element-6066-11e4-a52e-4f735466cecf';

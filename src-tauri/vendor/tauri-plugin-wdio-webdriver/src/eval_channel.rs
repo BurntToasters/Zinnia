@@ -8,7 +8,7 @@ use tokio::sync::oneshot;
 ///
 /// The macOS DirectEval path runs its script via `callAsyncJavaScript` to keep the run loop pumping
 /// (so the app's own `core.invoke` IPC resolves on a headless runner) but must NOT read the result
-/// from that call's completion handler — macOS 26.4's WebKit reclaims it intermittently. Instead the
+/// from that call's completion handler - macOS 26.4's WebKit reclaims it intermittently. Instead the
 /// script posts `{ id, result }` to a `WKScriptMessageHandler`, which calls `complete` to wake the
 /// executor awaiting `register`. Mirrors the Windows `AsyncScriptState` native-handler pattern.
 /// Removable once the upstream reclaim is resolved:

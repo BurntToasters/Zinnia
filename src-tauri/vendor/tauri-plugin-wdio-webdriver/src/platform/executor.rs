@@ -70,7 +70,7 @@ const WINDOW_CHANGE_EVENT_TIMEOUT: std::time::Duration = std::time::Duration::fr
 /// Apply a native window change and wait for Tauri to confirm it via `event_name`.
 ///
 /// Only a failure of the native call itself is an error. A window manager may clamp or
-/// ignore a request, in which case the confirming event never arrives — `Set Window Rect`
+/// ignore a request, in which case the confirming event never arrives - `Set Window Rect`
 /// is best-effort, so callers report the rect the window actually ended up with instead
 /// of failing the command.
 #[cfg(desktop)]
@@ -1074,7 +1074,7 @@ pub trait PlatformExecutor<R: Runtime>: Send + Sync {
         // Note: We use an IIFE that returns `undefined` to avoid Promise serialization issues
         //
         // The script is treated as a function body. Clients that want to return a value must
-        // include an explicit `return` statement — this matches WebdriverIO's function-object
+        // include an explicit `return` statement - this matches WebdriverIO's function-object
         // wrapping (`return (fn).apply(null, arguments)`) and raw string scripts like
         // `"return document.title"`.
         let wrapper = format!(

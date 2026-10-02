@@ -129,7 +129,7 @@ impl<R: Runtime> WindowsExecutor<R> {
 }
 
 impl<R: Runtime + 'static> WindowsExecutor<R> {
-    /// Core WebView2 script execution — no per-webview lock.
+    /// Core WebView2 script execution - no per-webview lock.
     /// Callers that need serialization must acquire the lock from
     /// `ScriptExecutionLocks` before calling this method.
     async fn evaluate_js_inner(&self, script: &str) -> Result<Value, WebDriverErrorResponse> {
