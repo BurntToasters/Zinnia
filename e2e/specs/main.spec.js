@@ -56,6 +56,20 @@ async function domText(selector) {
   );
 }
 
+async function uiDiagnostics() {
+  return browser.execute(() =>
+    JSON.stringify({
+      status: document.getElementById("status")?.textContent ?? null,
+      toasts: [...document.querySelectorAll(".toast-message")].map(
+        (toast) => toast.textContent,
+      ),
+      log: (document.getElementById("log")?.textContent ?? "")
+        .split("\n")
+        .slice(-15),
+    }),
+  );
+}
+
 async function waitForDomText(selector, expected, timeoutMsg) {
   await browser.waitUntil(async () => (await domText(selector)) === expected, {
     timeout: 20_000,
@@ -291,16 +305,19 @@ describe("Zinnia main window", () => {
       "nested.zip",
       "Basic browse header still names the replaced archive",
     );
-    await browser.waitUntil(
-      async () =>
-        String(await domText("#basic-browse-tbody"))
-          .replaceAll("\\", "/")
-          .includes("nested/hello.txt"),
-      {
-        timeout: 20_000,
-        timeoutMsg: "Basic browse did not list the replacement archive",
-      },
-    );
+    await browser
+      .waitUntil(
+        async () =>
+          String(await domText("#basic-browse-tbody"))
+            .replaceAll("\\", "/")
+            .includes("nested/hello.txt"),
+        { timeout: 20_000 },
+      )
+      .catch(async () => {
+        throw new Error(
+          `Basic browse did not list the replacement archive: ${await uiDiagnostics()}`,
+        );
+      });
     await waitForArchiveIdle();
   });
 
