@@ -475,6 +475,10 @@ pub fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Resul
     .resizable(false)
     .minimizable(true)
     .maximizable(false)
+    // macOS 14+ suspends timers in occluded webviews, which would hold the
+    // auto-close countdown until the window is visible again. Windows/Linux
+    // ignore this and only throttle; the countdown is deadline-based.
+    .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled)
     .initialization_script(init_script)
     .initialization_script(super::webview_context_menu::NATIVE_CONTEXT_MENU_GUARD_SCRIPT);
 

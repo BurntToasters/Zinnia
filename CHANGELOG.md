@@ -21,10 +21,11 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 ## Changes in `v0.6.3-beta.4:`
 
 - **Fix - Quick extract:** The extract window now reliably closes when its auto-close countdown ends. Previously, mouse events the system sends without any real movement, or pressing `Alt` to switch away with `Alt+Tab`, could silently cancel the countdown and leave the window open.
-- **Change - Quick extract:** Moving the mouse over the extract window now pauses the countdown and shows **Close (paused)**. Moving the mouse out of the window restarts it. Pressing a key (other than `Alt`, `Ctrl`, `Shift`, or the Windows/Command key) or clicking still cancels it. The countdown also stays on time when the window is covered or in the background.
+- **Change - Quick extract:** Moving the mouse over the extract window now pauses the countdown and shows **Close (paused)**. Moving the mouse out of the window, or switching to another window, restarts it. Pressing a key (other than `Alt`, `Ctrl`, `Shift`, or the Windows/Command key) or clicking still cancels it. The countdown also stays on time when the window is covered or in the background.
 - **Fix - Updater:** Large updates no longer fail on slow connections. Downloads were limited to 120 seconds in total; they now fail only if the connection stalls for 120 seconds.
 - **PKG:** Updated packages, including Tauri 2.12.
 - **Tests:** End-to-end tests now cover the extract-window auto-close countdown and run again on Windows after the Tauri 2.12 update. The WebDriver test plugin is patched to match Tauri 2.12's WebView2 bindings.
+- **7-Zip:** Updated bundled 7-Zip to `26.04`.
 
 ## Changes in `v0.6.3-beta.3:`
 

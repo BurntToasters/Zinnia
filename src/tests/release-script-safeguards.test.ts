@@ -753,7 +753,7 @@ describe("release script safeguards", () => {
       source.indexOf("async function replaceReleaseAssetsTransactionally"),
       source.indexOf("async function uploadAssetWithReplace"),
     );
-    // GitHub strips leading periods from asset names  -  do not use dotfiles.
+    // GitHub strips leading periods from asset names; do not use dotfiles.
     expect(transaction).toContain("zinnia-pending-");
     expect(transaction).toContain("zinnia-previous-");
     expect(transaction).not.toContain(".zinnia-pending-");

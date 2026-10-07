@@ -830,8 +830,8 @@ pub(crate) fn apply_backend_link_switches(args: &mut Vec<String>) {
     }
 }
 
-/// Parsed bundled 7-Zip version from the last successful `probe_7z` (e.g. "26.03").
-pub(crate) const BUNDLED_7Z_VERSION: &str = "26.03";
+/// Bundled 7-Zip version, taken from `assets/7z-provenance.json` by `build.rs`.
+pub(crate) const BUNDLED_7Z_VERSION: &str = env!("ZINNIA_BUNDLED_7Z_VERSION");
 static PROBED_7Z_VERSION: Mutex<Option<String>> = Mutex::new(None);
 
 /// Refuse symlink/reparse *user input paths* for create/update. Nested links
@@ -2279,7 +2279,7 @@ pub async fn run_7z(
                     if commit_failure_should_scrub_staging(&finalize_plan, &error) {
                         // Safe orphan scrub (add-mode / no recovery backups).
                         // Retract any partial publishes from the journal BEFORE
-                        // clearing it  -  clearing alone left destinations orphaned
+                        // clearing it; clearing alone left destinations orphaned
                         // when live retract during commit also failed.
                         match rollback_cleanup(&finalize_plan) {
                             Ok(()) => {

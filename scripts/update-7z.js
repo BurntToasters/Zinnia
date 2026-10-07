@@ -19,6 +19,9 @@ const root = process.cwd();
 const assetsDirectory = path.join(root, "assets");
 const outputDirectory = path.join(root, "src-tauri", "binaries");
 const provenancePath = path.join(assetsDirectory, "7z-provenance.json");
+const changelogPath = path.join(root, "CHANGELOG.md");
+const packageJsonPath = path.join(root, "package.json");
+const CHANGELOG_7Z_BULLET_PREFIX = "- **7-Zip:**";
 const latestReleaseUrl = "https://github.com/ip7z/7zip/releases/latest";
 const officialDownloadPage = "https://www.7-zip.org/download.html";
 
@@ -111,6 +114,42 @@ export function printUpdate7zUsage() {
   --force        Refresh assets even when the version matches
   --trusted-7z   External extractor (or set ZINNIA_TRUSTED_7Z)
 `);
+}
+
+/**
+ * Record the bundled 7-Zip version in the current release's CHANGELOG section.
+ * Replaces an earlier 7-Zip bullet so repeated updates in one release do not
+ * stack. Throws when the section is missing so no assets are touched first.
+ */
+export function syncChangelog7zVersion(changelog, appVersion, sevenZipVersion) {
+  const eol = changelog.includes("\r\n") ? "\r\n" : "\n";
+  const text = changelog.replace(/\r\n/g, "\n");
+  const heading = `## Changes in \`v${appVersion}:\``;
+  const headingIndex = text.indexOf(heading);
+  if (headingIndex === -1) {
+    throw new Error(
+      `CHANGELOG.md has no "${heading}" section. Run npm run sync-version first.`,
+    );
+  }
+  const bodyStart = headingIndex + heading.length;
+  const nextHeading = text.indexOf("\n## ", bodyStart);
+  const bodyEnd = nextHeading === -1 ? text.length : nextHeading + 1;
+  const bullet = `${CHANGELOG_7Z_BULLET_PREFIX} Updated bundled 7-Zip to \`${sevenZipVersion}\`.`;
+  const lines = text
+    .slice(bodyStart, bodyEnd)
+    .trim()
+    .split("\n")
+    .filter((line) => !line.startsWith(CHANGELOG_7Z_BULLET_PREFIX));
+  lines.push(bullet);
+  const body = `\n\n${lines.join("\n").trim()}\n${nextHeading === -1 ? "" : "\n"}`;
+  return (text.slice(0, bodyStart) + body + text.slice(bodyEnd)).replace(
+    /\n/g,
+    eol,
+  );
+}
+
+function readAppVersion() {
+  return JSON.parse(fs.readFileSync(packageJsonPath, "utf8")).version;
 }
 
 function sha256File(filePath) {
@@ -350,6 +389,13 @@ function commitStaging(stagingDirectory, files) {
 }
 
 async function update(version) {
+  // Fail before any download or write when the release notes cannot be synced.
+  const appVersion = readAppVersion();
+  const changelog = syncChangelog7zVersion(
+    fs.readFileSync(changelogPath, "utf8"),
+    appVersion,
+    version,
+  );
   const sources = sourceDefinitions(version);
   const temporaryDirectory = fs.mkdtempSync(
     path.join(os.tmpdir(), "zinnia-7z-update-"),
@@ -473,7 +519,11 @@ async function update(version) {
       [path.join(root, "scripts", "prepare-7z.js"), "--all"],
       { inherit: true },
     );
+    // `build.rs` reads the runtime version gate from 7z-provenance.json, so
+    // the release notes are the only other place that names the version.
+    fs.writeFileSync(changelogPath, changelog);
     console.log(`Updated official 7-Zip assets to ${version}.`);
+    console.log(`CHANGELOG.md v${appVersion} notes 7-Zip ${version}.`);
   } finally {
     fs.rmSync(temporaryDirectory, { recursive: true, force: true });
   }

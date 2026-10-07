@@ -5,3 +5,8 @@ export function parseUpdate7zArgv(argv: string[]): {
   force: boolean;
 };
 export function printUpdate7zUsage(): void;
+export function syncChangelog7zVersion(
+  changelog: string,
+  appVersion: string,
+  sevenZipVersion: string,
+): string;

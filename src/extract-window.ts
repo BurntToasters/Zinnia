@@ -452,6 +452,7 @@ async function run() {
       "mouseleave",
       onAutoClosePointerLeave,
     );
+    window.removeEventListener("blur", onAutoClosePointerLeave);
     autoCloseListening = false;
   };
 
@@ -474,6 +475,8 @@ async function run() {
       "mouseleave",
       onAutoClosePointerLeave,
     );
+    // Alt+Tab away with the pointer resting inside fires no mouseleave.
+    window.addEventListener("blur", onAutoClosePointerLeave);
     startAutoCloseCountdown();
   };
 

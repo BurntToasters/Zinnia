@@ -109,6 +109,23 @@ describe("Zinnia extract window", () => {
     const seconds = Number(process.env.ZINNIA_E2E_AUTO_CLOSE_SECONDS);
     assert.ok(seconds > 0, "ZINNIA_E2E_AUTO_CLOSE_SECONDS must be positive");
 
+    // Alt+Tab away with the pointer still inside fires blur but no mouseleave.
+    await browser.execute(() => {
+      window.dispatchEvent(new FocusEvent("blur"));
+    });
+    await waitForLabel(
+      (label) => COUNTDOWN_LABEL.test(label),
+      "a countdown after window blur",
+    );
+    await record("after-window-blur");
+
+    await dispatchPointerMoves([
+      [300, 300],
+      [320, 320],
+    ]);
+    await waitForLabel((label) => label === "Close (paused)", "paused again");
+    await record("paused-after-blur-resume");
+
     await browser.execute(() => {
       document.documentElement.dispatchEvent(
         new MouseEvent("mouseleave", { bubbles: false }),
