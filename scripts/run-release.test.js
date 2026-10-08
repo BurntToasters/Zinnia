@@ -45,14 +45,14 @@ test("main scopes --skip-check to the release continuation", () => {
   assert.ok(calls.slice(0, -1).every(([, , envOverrides]) => !envOverrides));
 });
 
-test("main runs full local proof including e2e before release continuation", () => {
+test("main runs local proof without GUI e2e before release continuation", () => {
   const calls = [];
   main(["win"], (...args) => calls.push(args));
 
   assert.deepEqual(calls, [
     ["prerelease:prepare"],
     ["workspace:bootstrap"],
-    ["test:all", ["--", "--require-clean-proof"]],
+    ["test:all", ["--", "--require-clean-proof", "--skip-e2e"]],
     ["dist:clean-release-artifacts"],
     ["release:win:continue", [], {}],
   ]);

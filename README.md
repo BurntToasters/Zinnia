@@ -119,8 +119,11 @@ native build runs.
 - GitHub may temporarily expose an unpublished draft under an `untagged-*`
   identifier. Release scripts accept it only when the draft name and target
   commit match exactly, then set the intended `vX.Y.Z` tag during publication.
-- Each full release command prepares and runs the complete local quality gate,
-  including native E2E, once. If `release:prepare` was already run separately
+- Each full release command prepares and runs the local quality gate once.
+  GUI E2E is temporarily skipped on signing VMs; the quality-gate proof and
+  release session explicitly record `e2e: "skipped"`. Normal `test:all` and CI
+  still run GUI E2E. See [Windows E2E limitations](CONTRIBUTING.md#windows-gui-e2e).
+  If `release:prepare` was already run separately
   on the same VM, use the matching
   `release:*:resume` command; its build session is bound to the exact commit,
   lockfiles, platform, architecture, and Node/Rust toolchain and expires after

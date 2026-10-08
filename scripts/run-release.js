@@ -21,7 +21,7 @@ function npmCommand() {
 
 export function parseReleaseArgs(argv) {
   const flags = argv.filter((arg) => arg.startsWith("-"));
-  // Keep the former opt-in flag as a no-op so old operator commands still work.
+  // GUI E2E is temporarily skipped for releases, so the legacy flag is a no-op.
   const knownFlags = new Set(["--skip-e2e", "--skip-check"]);
   const unknown = flags.filter((flag) => !knownFlags.has(flag));
   if (unknown.length > 0) {
@@ -57,7 +57,7 @@ export function main(argv = process.argv.slice(2), runner = runNpm) {
   const { skipCheck, continueScript } = parseReleaseArgs(argv);
   runner("prerelease:prepare");
   runner("workspace:bootstrap");
-  runner("test:all", ["--", "--require-clean-proof"]);
+  runner("test:all", ["--", "--require-clean-proof", "--skip-e2e"]);
   runner("dist:clean-release-artifacts");
   runner(continueScript, [], skipCheck ? { FORCE_UPLOAD: "1" } : {});
 }

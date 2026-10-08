@@ -226,12 +226,20 @@ Run `release:linux:arm64` only on the supported ARM64 release environment when
 that artifact is part of the release. Do not use beta recovery overrides for a
 stable release.
 
-The platform release commands run the full gate, including unpackaged GUI E2E,
-on each signing VM before building artifacts. Keep the verifiable
+The platform release commands and `release:prepare` temporarily skip unpackaged
+GUI E2E on signing VMs. All remaining checks still run, and the quality-gate
+proof and release session explicitly record `e2e: "skipped"`. See
+[Windows GUI E2E](../CONTRIBUTING.md#windows-gui-e2e) for the startup failure and
+desktop-session limitation. Resume and continuation commands still verify the
+existing release session.
+
+The separate complete-gate commands above, `workspace:prepare`, normal
+`test:all`, and hosted CI still run GUI E2E. Keep any verifiable
 `coverage/e2e/result.json` and suite logs with the release evidence, and check
-the commit recorded there equals the stable `main` HEAD. Protected CI also
-uploads `e2e-proof-*` artifacts for its Windows and macOS jobs. Neither the
-local nor hosted E2E proof substitutes for packaged-artifact QA below.
+the commit recorded there equals the stable `main` HEAD. CI also uploads
+`e2e-proof-*` artifacts for its Windows and macOS jobs. A release proof marked
+`e2e: "skipped"` does not establish GUI verification. Neither local nor hosted
+E2E proof substitutes for packaged-artifact QA below.
 
 ## 6. Packaged-artifact QA
 

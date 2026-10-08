@@ -564,15 +564,20 @@ function main({
 
   const exitCode = printSummary(results);
   if (exitCode === 0) {
-    if (skipE2e) {
+    if (skipE2e && !requireCleanProof) {
       console.error(
         `${colors.red}Release quality-gate proof NOT recorded because E2E was skipped.${colors.reset}`,
       );
-      return requireCleanProof ? 1 : 0;
+      return 0;
     }
-    const qualityGate = recordProof(root);
+    const qualityGate = recordProof(root, {
+      e2e: skipE2e ? "skipped" : "passed",
+    });
     if (qualityGate.recorded) {
       console.log("Release quality-gate proof recorded for this clean commit.");
+      if (skipE2e) {
+        console.log("GUI E2E was skipped; release proof records e2e=skipped.");
+      }
     } else {
       console.error(
         `${colors.red}Release quality-gate proof NOT recorded because the working tree is dirty. Commit generated files (e.g. run.rosie.zinnia.metainfo.xml from workspace:bootstrap) and re-run test:all before any release step.${colors.reset}`,
