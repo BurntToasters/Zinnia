@@ -6353,7 +6353,11 @@ fn recovery_rejects_replaced_identity_log_file() {
     let fixture = unjournaled_log_fixture("zinnia-unjournaled-replaced", b"<complete>");
     let log_path = move_identity_log_path(&fixture.staged);
     let bytes = std::fs::read(&log_path).unwrap();
-    std::fs::remove_file(&log_path).unwrap();
+    // Keep the original inode alive under another name. A plain remove + write
+    // lets Linux ext4 hand the same inode number straight back, which makes the
+    // replacement indistinguishable (same device, inode, and bytes).
+    let held_original = log_path.with_extension("held-original");
+    std::fs::rename(&log_path, &held_original).unwrap();
     std::fs::write(&log_path, &bytes).expect("same bytes, new inode");
 
     assert!(rollback_unjournaled_fixture(&fixture).is_err());
