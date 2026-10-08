@@ -154,7 +154,10 @@ function clearQualityGateProof(root = defaultRoot) {
   fs.rmSync(path.join(root, QUALITY_GATE_RELATIVE_PATH), { force: true });
 }
 
-function recordSuccessfulQualityGate(root = defaultRoot) {
+function recordSuccessfulQualityGate(
+  root = defaultRoot,
+  { e2e = "passed" } = {},
+) {
   let status;
   try {
     status = command(
@@ -177,7 +180,7 @@ function recordSuccessfulQualityGate(root = defaultRoot) {
   fs.mkdirSync(path.dirname(proofPath), { recursive: true });
   fs.writeFileSync(
     proofPath,
-    `${JSON.stringify({ ...currentReleaseIdentity(root), completedAt: Date.now() })}\n`,
+    `${JSON.stringify({ ...currentReleaseIdentity(root), completedAt: Date.now(), e2e })}\n`,
     { mode: 0o600 },
   );
   return { recorded: true, dirtyFiles: null };
@@ -225,6 +228,7 @@ function createReleaseSession(root = defaultRoot) {
   return {
     ...currentReleaseIdentity(root),
     qualityGateCompletedAt: qualityGate.completedAt,
+    e2e: qualityGate.e2e ?? "unknown",
     startedAt: Date.now(),
   };
 }

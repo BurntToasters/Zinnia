@@ -372,7 +372,7 @@ class DryRunContext {
     ).href;
     const script = `
       const { recordSuccessfulQualityGate } = await import(${JSON.stringify(sessionModule)});
-      const result = recordSuccessfulQualityGate(process.cwd());
+      const result = recordSuccessfulQualityGate(process.cwd(), { e2e: "skipped" });
       if (!result.recorded) {
         console.error(result.dirtyFiles ?? "quality gate not recorded");
         process.exit(1);
@@ -389,6 +389,19 @@ class DryRunContext {
       ],
       { cwd: this.root },
     );
+    for (const file of [
+      "coverage/.release-quality.json",
+      "release/.build-session.json",
+    ]) {
+      const proof = JSON.parse(
+        fs.readFileSync(path.join(this.root, file), "utf8"),
+      );
+      this.check(
+        `${file} preserves the explicit GUI E2E skip`,
+        proof.e2e === "skipped",
+        `e2e=${proof.e2e}`,
+      );
+    }
   }
 
   // Writes build outputs the way a platform build would, after the session.

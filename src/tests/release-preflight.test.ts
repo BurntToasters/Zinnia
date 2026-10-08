@@ -26,7 +26,10 @@ describe("release preflight policy", () => {
     expect(packageJson.scripts["release:prepare"]).toContain(
       "test:all -- --require-clean-proof",
     );
-    expect(packageJson.scripts["release:prepare"]).not.toContain("--skip-e2e");
+    expect(packageJson.scripts["release:prepare"]).toContain("--skip-e2e");
+    expect(packageJson.scripts["workspace:prepare"]).not.toContain(
+      "--skip-e2e",
+    );
     expect(packageJson.scripts["release:prepare"]).toContain(
       "dist:clean-release-artifacts",
     );
@@ -55,9 +58,7 @@ describe("release preflight policy", () => {
     expect(releaseRunner).toContain("workspace:bootstrap");
     expect(releaseRunner).toContain("test:all");
     expect(releaseRunner).toContain("--require-clean-proof");
-    expect(releaseRunner).not.toContain(
-      '"--require-clean-proof", "--skip-e2e"',
-    );
+    expect(releaseRunner).toContain('"--require-clean-proof", "--skip-e2e"');
     expect(releaseRunner).toContain("--skip-check");
     expect(releaseRunner).toContain('FORCE_UPLOAD: "1"');
     expect(releaseRunner).toContain("dist:clean-release-artifacts");

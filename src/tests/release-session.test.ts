@@ -225,6 +225,19 @@ describe("release build session", () => {
 
       expect(recordSuccessfulQualityGate(root).recorded).toBe(true);
 
+      expect(
+        recordSuccessfulQualityGate(root, { e2e: "skipped" }).recorded,
+      ).toBe(true);
+      expect(
+        JSON.parse(
+          fs.readFileSync(
+            path.join(root, "coverage", ".release-quality.json"),
+            "utf8",
+          ),
+        ).e2e,
+      ).toBe("skipped");
+      expect(createReleaseSession(root).e2e).toBe("skipped");
+
       // Generated ACL schemas rewritten by tauri build must not block the quality
       // gate, including when they are tracked and show porcelain " M path".
       const schemaDir = path.join(root, "src-tauri", "gen", "schemas");
