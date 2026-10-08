@@ -1,0 +1,4 @@
+[package]
+name = "zinnia-release-dry-run"
+version = "__VERSION__"
+edition = "2021"

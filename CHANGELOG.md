@@ -23,8 +23,11 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Fix - Quick extract:** The extract window now reliably closes when its auto-close countdown ends. Previously, mouse events the system sends without any real movement, or pressing `Alt` to switch away with `Alt+Tab`, could silently cancel the countdown and leave the window open.
 - **Change - Quick extract:** Moving the mouse over the extract window now pauses the countdown and shows **Close (paused)**. Moving the mouse out of the window, or switching to another window, restarts it. Pressing a key (other than `Alt`, `Ctrl`, `Shift`, or the Windows/Command key) or clicking still cancels it. The countdown also stays on time when the window is covered or in the background.
 - **Fix - Updater:** Large updates no longer fail on slow connections. Downloads were limited to 120 seconds in total; they now fail only if the connection stalls for 120 seconds.
-- **PKG:** Updated packages, including Tauri 2.12.
-- **Tests:** End-to-end tests now cover the extract-window auto-close countdown and run again on Windows after the Tauri 2.12 update. The WebDriver test plugin is patched to match Tauri 2.12's WebView2 bindings.
+- **Fix - Recovery:** If a newer Zinnia version leaves an unfinished archive job and you open an older version, the older version now leaves the files alone and explains how to finish the job, instead of guessing at it. You can still clear it with **Accept**.
+- **Security - Extraction:** ZIP archives that contain symbolic links are now always handled with Zinnia's extra link safety checks. Previously some ZIP links were not recognized up front; 7-Zip still refused any link pointing outside the destination.
+- **Security:** Release and maintenance scripts no longer skip their work silently when run through a symbolic-linked path. Bundled 7-Zip updates now require identical downloads from both official sources (7-zip.org and GitHub).
+- **PKG:** Updated packages, including Tauri 2.12, TypeScript 7, and Vitest 5.
+- **Tests:** End-to-end tests now cover the extract-window auto-close countdown and run again on Windows after the Tauri 2.12 update. The WebDriver test plugin is patched to match Tauri 2.12's WebView2 bindings. New end-to-end tests cover crash recovery at every stage of extracting and creating an archive, cancelling, unsafe archives, split archives, adding files to an archive, and the release process. CI now also runs them on ARM Windows and ARM Linux.
 - **7-Zip:** Updated bundled 7-Zip to `26.04`.
 
 ## Changes in `v0.6.3-beta.3:`

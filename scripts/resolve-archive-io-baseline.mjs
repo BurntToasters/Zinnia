@@ -2,6 +2,7 @@ import { appendFileSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 export function resolveBetaBaseline(packageVersion, resolveTagCommit) {
   if (!/^\d+\.\d+\.\d+-beta\.\d+$/.test(packageVersion)) {
@@ -47,8 +48,7 @@ function main() {
   }
 }
 
-const invokedPath = process.argv[1] ? resolve(process.argv[1]) : null;
-if (invokedPath && pathToFileURL(invokedPath).href === import.meta.url) {
+if (isDirectExecutionOf(import.meta.url)) {
   try {
     main();
   } catch (error) {

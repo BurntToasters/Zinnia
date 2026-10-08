@@ -1,6 +1,5 @@
 import { spawnSync } from "node:child_process";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 const SCRIPT_VERSION = "1.0.0";
 
@@ -247,8 +246,7 @@ export function isDirectExecution(
   executablePath = process.argv[1],
 ) {
   return Boolean(
-    executablePath &&
-    pathToFileURL(path.resolve(executablePath)).href === moduleUrl,
+    executablePath && isDirectExecutionOf(moduleUrl, executablePath),
   );
 }
 

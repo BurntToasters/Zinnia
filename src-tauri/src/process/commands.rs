@@ -623,6 +623,10 @@ pub(crate) fn mask_password_arg_tokens(args: &mut [String]) {
             // string valid UTF-8 even when the password contained multibyte
             // characters. `as_bytes_mut` is safe here because only ASCII bytes
             // are written.
+            // SAFETY: the branch above checked that the first two bytes are the ASCII `-p` prefix.
+            // Every byte from index 2 on is overwritten with ASCII `*` before `arg` is used again,
+            // so the String is valid UTF-8 when the borrow ends. The `truncate(2)` below then lands
+            // on a char boundary.
             let bytes = unsafe { arg.as_bytes_mut() };
             for byte in bytes.iter_mut().skip(2) {
                 *byte = b'*';
@@ -1857,6 +1861,8 @@ pub async fn run_7z(
     match write_cleanup_journal(&app, &cleanup_plan) {
         Ok(active) => {
             journal_guard = CleanupJournalGuard::new(app.clone(), active);
+            #[cfg(feature = "e2e")]
+            crate::process::e2e_crash::crash_point("after-journal");
         }
         Err(error) => {
             return Err(finalize_preparation_error(
@@ -2266,6 +2272,8 @@ pub async fn run_7z(
                     current_file: Some("Finalizing…".to_string()),
                 },
             );
+            #[cfg(feature = "e2e")]
+            crate::process::e2e_crash::crash_point("before-promote");
             match commit_cleanup(&finalize_app, &finalize_plan) {
                 Ok(strategy) => {
                     if let Some(strategy) = strategy {

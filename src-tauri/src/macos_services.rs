@@ -52,6 +52,8 @@ define_class!(
         }
     }
 
+    // SAFETY: the class inherits from NSObject, which already implements NSObjectProtocol, so the
+    // impl adds no methods.
     unsafe impl NSObjectProtocol for ZinniaServicesProvider {}
 );
 
@@ -117,6 +119,10 @@ fn handle_service(pasteboard: Option<&NSPasteboard>, mode: &str) {
 }
 
 fn read_paths_from_pasteboard(pasteboard: &NSPasteboard) -> Result<Vec<String>, String> {
+    // SAFETY: AppKit calls this on the main thread with a valid NSPasteboard. `classes` is an
+    // NSArray holding only the NSURL class. Each `obj` returned by readObjectsForClasses is
+    // retained for its loop iteration. `ns_path` owns the UTF8String buffer, which is read only
+    // while `ns_path` is alive, and it is copied into an owned String.
     unsafe {
         let classes = NSArray::from_slice(&[NSURL::class()]);
         let objects = pasteboard
@@ -162,9 +168,15 @@ pub fn install_macos_services(app: &AppHandle) {
     };
 
     let provider = ZinniaServicesProvider::alloc(mtm).set_ivars(ServiceIvars);
+    // SAFETY: `provider` is a freshly allocated instance with its ivars set. `init` is an
+    // init-family method that returns an owned (+1) object, which Retained takes ownership of.
+    // `super(provider)` sends init to NSObject's implementation.
     let provider: Retained<ZinniaServicesProvider> = unsafe { msg_send![super(provider), init] };
 
     let ns_app = NSApplication::sharedApplication(mtm);
+    // SAFETY: `provider` is a live retained ZinniaServicesProvider. Every Objective-C object is a
+    // valid AnyObject, so the reference cast is valid. The provider is leaked below, so the pointer
+    // stays valid for the process lifetime.
     unsafe {
         let as_any: &AnyObject =
             &*((&*provider) as *const ZinniaServicesProvider as *const AnyObject);

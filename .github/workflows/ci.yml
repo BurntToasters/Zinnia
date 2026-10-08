@@ -107,7 +107,7 @@ jobs:
           !/^[a-f0-9]{64}$/.test(r.fixtures?.manifestSha256||"") ||
           !Object.values(r.fixtures?.files||{}).length ||
           !Object.values(r.fixtures.files).every(h=>/^[a-f0-9]{64}$/.test(h)) ||
-          r.suites.length!==2 || r.suites.some(s=>s.status!=="passed" ||
+          r.suites.length!==require("./e2e/recovery-plan.json").suiteCount || r.suites.some(s=>s.status!=="passed" ||
           !/^[a-f0-9]{64}$/.test(s.logSha256||"") ||
           sha(path.join("coverage/e2e",s.logFile))!==s.logSha256)) process.exit(1)'
       - name: Upload quality-gate E2E proof
@@ -374,7 +374,8 @@ jobs:
       matrix:
         # Pin macos-26: bundled 7-Zip / minimumSystemVersion require 26.0+.
         # macos-latest still resolves to macOS 15 arm64 on GitHub-hosted runners.
-        os: [windows-latest, macos-26]
+        # ARM entries run the same unpackaged GUI E2E as x64, not only a smoke build.
+        os: [windows-latest, macos-26, ubuntu-24.04-arm, windows-11-arm]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -390,6 +391,19 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
           components: clippy
+      # Same Linux E2E packages as quality-gate, for the ubuntu-24.04-arm entry.
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            appstream \
+            desktop-file-utils \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            xvfb
       - run: npm ci --ignore-scripts
       - run: node scripts/npm-audit-signatures.cjs
       - run: npm run test:cov
@@ -406,6 +420,9 @@ jobs:
       - run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
       - run: cargo test --locked --manifest-path src-tauri/Cargo.toml --all-targets
       - name: Unpackaged GUI E2E
+        env:
+          # Matches quality-gate; ignored by the Windows and macOS WebViews.
+          WEBKIT_DISABLE_COMPOSITING_MODE: "1"
         run: npm run test:e2e
       - name: Require exact-commit E2E proof
         shell: bash
@@ -422,13 +439,14 @@ jobs:
           !/^[a-f0-9]{64}$/.test(r.fixtures?.manifestSha256||"") ||
           !Object.values(r.fixtures?.files||{}).length ||
           !Object.values(r.fixtures.files).every(h=>/^[a-f0-9]{64}$/.test(h)) ||
-          r.suites.length!==2 || r.suites.some(s=>s.status!=="passed" ||
+          r.suites.length!==require("./e2e/recovery-plan.json").suiteCount || r.suites.some(s=>s.status!=="passed" ||
           !/^[a-f0-9]{64}$/.test(s.logSha256||"") ||
           sha(path.join("coverage/e2e",s.logFile))!==s.logSha256)) process.exit(1)'
       - name: Upload E2E proof
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
+          # Unique per matrix OS, so the four rust-check legs never collide.
           name: e2e-proof-${{ matrix.os }}
           path: coverage/e2e
           # Earlier setup steps can fail before E2E produces a report; the job

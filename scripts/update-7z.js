@@ -7,13 +7,13 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
-import { pathToFileURL } from "node:url";
 import {
   assertExtractedTreeContained,
   assertOfficialArchiveMembersSafe,
   findExtractedRegularFile,
   validateTrusted7zPath,
 } from "./prepare-7z-helpers.js";
+import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 const root = process.cwd();
 const assetsDirectory = path.join(root, "assets");
@@ -46,6 +46,7 @@ function optionValue(name, argv = process.argv) {
 
 const UPDATE_7Z_FLAGS = new Set([
   "--check",
+  "--json",
   "--update",
   "--force",
   "--trusted-7z",
@@ -57,6 +58,7 @@ export function parseUpdate7zArgv(argv) {
   const flags = {
     help: false,
     check: false,
+    json: false,
     update: false,
     force: false,
   };
@@ -68,6 +70,10 @@ export function parseUpdate7zArgv(argv) {
     }
     if (arg === "--check") {
       flags.check = true;
+      continue;
+    }
+    if (arg === "--json") {
+      flags.json = true;
       continue;
     }
     if (arg === "--update") {
@@ -99,6 +105,9 @@ export function parseUpdate7zArgv(argv) {
   if (flags.check && (flags.update || flags.force)) {
     throw new Error("--check cannot be combined with --update or --force");
   }
+  if (flags.json && !flags.check && !flags.help) {
+    throw new Error("--json requires --check");
+  }
   if (!flags.help && !flags.check && !flags.update && !flags.force) {
     throw new Error("7z:update requires --check, --update, or --force");
   }
@@ -110,6 +119,7 @@ export function printUpdate7zUsage() {
 
   --help, -h     Show this help and exit without network or writes
   --check        Report whether a newer official 7-Zip exists (no writes)
+  --json         With --check, print {current, latest, updateAvailable} as JSON
   --update       Download and replace vendored 7-Zip assets if newer
   --force        Refresh assets even when the version matches
   --trusted-7z   External extractor (or set ZINNIA_TRUSTED_7Z)
@@ -185,18 +195,28 @@ function compactVersion(version) {
   return version.replace(".", "");
 }
 
+/**
+ * Each official file is published on two hosts: www.7-zip.org/a/ and the
+ * ip7z/7zip GitHub release. `url` keeps the historical primary host and
+ * `mirrorUrl` is the second host. Both must return identical bytes.
+ */
 function sourceDefinitions(version) {
   const compact = compactVersion(version);
+  const siteUrl = (file) => `https://www.7-zip.org/a/${file}`;
+  const releaseUrl = (file) =>
+    `https://github.com/ip7z/7zip/releases/download/${version}/${file}`;
   return [
     {
       name: "linux-arm64",
-      url: `https://www.7-zip.org/a/7z${compact}-linux-arm64.tar.xz`,
+      url: siteUrl(`7z${compact}-linux-arm64.tar.xz`),
+      mirrorUrl: releaseUrl(`7z${compact}-linux-arm64.tar.xz`),
       format: "tar.xz",
       artifacts: [{ asset: "linux/arm64/7zzs", member: "7zzs" }],
     },
     {
       name: "linux-x64",
-      url: `https://www.7-zip.org/a/7z${compact}-linux-x64.tar.xz`,
+      url: siteUrl(`7z${compact}-linux-x64.tar.xz`),
+      mirrorUrl: releaseUrl(`7z${compact}-linux-x64.tar.xz`),
       format: "tar.xz",
       artifacts: [{ asset: "linux/x64/7zzs", member: "7zzs" }],
       license: {
@@ -207,13 +227,15 @@ function sourceDefinitions(version) {
     },
     {
       name: "mac",
-      url: `https://www.7-zip.org/a/7z${compact}-mac.tar.xz`,
+      url: siteUrl(`7z${compact}-mac.tar.xz`),
+      mirrorUrl: releaseUrl(`7z${compact}-mac.tar.xz`),
       format: "tar.xz",
       artifacts: [{ asset: "mac/7zz", member: "7zz" }],
     },
     {
       name: "windows-arm64-installer",
-      url: `https://github.com/ip7z/7zip/releases/download/${version}/7z${compact}-arm64.exe`,
+      url: releaseUrl(`7z${compact}-arm64.exe`),
+      mirrorUrl: siteUrl(`7z${compact}-arm64.exe`),
       format: "7z",
       artifacts: [
         { asset: "win/arm64/7z.dll", member: "7z.dll" },
@@ -222,7 +244,8 @@ function sourceDefinitions(version) {
     },
     {
       name: "windows-x64-installer",
-      url: `https://github.com/ip7z/7zip/releases/download/${version}/7z${compact}-x64.exe`,
+      url: releaseUrl(`7z${compact}-x64.exe`),
+      mirrorUrl: siteUrl(`7z${compact}-x64.exe`),
       format: "7z",
       artifacts: [
         { asset: "win/x64/7z.dll", member: "7z.dll" },
@@ -235,6 +258,37 @@ function sourceDefinitions(version) {
       },
     },
   ];
+}
+
+/**
+ * Test-only mirror override: ZINNIA_7Z_MIRROR_OVERRIDE_<SOURCE>, where <SOURCE>
+ * is the source name upper-cased with "-" replaced by "_" (for example
+ * ZINNIA_7Z_MIRROR_OVERRIDE_WINDOWS_X64_INSTALLER). It only takes effect when
+ * set, and only to a plain http:// loopback URL, so it can never point a
+ * release run at a third-party host. Used by the E2E harness to prove that a
+ * mismatched mirror is rejected.
+ */
+export function mirrorOverrideFor(sourceName, env = process.env) {
+  const name = `ZINNIA_7Z_MIRROR_OVERRIDE_${sourceName
+    .toUpperCase()
+    .replace(/-/g, "_")}`;
+  const value = env[name];
+  if (value === undefined || value === "") return undefined;
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(`${name} must be a URL, got ${JSON.stringify(value)}.`);
+  }
+  if (
+    parsed.protocol !== "http:" ||
+    !["127.0.0.1", "localhost"].includes(parsed.hostname)
+  ) {
+    throw new Error(
+      `${name} is test-only and must be an http://127.0.0.1 or http://localhost URL.`,
+    );
+  }
+  return value;
 }
 
 async function fetchLatestVersion() {
@@ -277,6 +331,44 @@ async function downloadFile(url, destination) {
     Readable.fromWeb(response.body),
     fs.createWriteStream(destination, { flags: "wx" }),
   );
+}
+
+/**
+ * Download one official archive from both hosts and require identical bytes.
+ * Nothing is extracted or staged unless the two sha256 values match.
+ */
+async function downloadMirroredArchive(source, downloadDirectory) {
+  const archiveName = path.basename(new URL(source.url).pathname);
+  const mirrorUrl = source.mirrorUrl;
+  // Separate directories: both hosts serve the same file name.
+  const archivePath = path.join(
+    downloadDirectory,
+    source.name,
+    "primary",
+    archiveName,
+  );
+  const mirrorPath = path.join(
+    downloadDirectory,
+    source.name,
+    "mirror",
+    archiveName,
+  );
+  fs.mkdirSync(path.dirname(archivePath), { recursive: true });
+  fs.mkdirSync(path.dirname(mirrorPath), { recursive: true });
+  console.log(
+    `Downloading ${archiveName} from ${source.url} and ${mirrorUrl}...`,
+  );
+  await downloadFile(source.url, archivePath);
+  await downloadFile(mirrorUrl, mirrorPath);
+  const sha256 = sha256File(archivePath);
+  const mirrorSha256 = sha256File(mirrorPath);
+  if (sha256 !== mirrorSha256) {
+    throw new Error(
+      `Mirror mismatch for ${archiveName}: ${source.url} sha256 ${sha256} does not match ${mirrorUrl} sha256 ${mirrorSha256}. Refusing to update.`,
+    );
+  }
+  console.log(`Verified ${archiveName}: both mirrors sha256 ${sha256}.`);
+  return { archivePath, sha256, mirrorUrl };
 }
 
 function run(command, args, { inherit = false } = {}) {
@@ -396,7 +488,14 @@ async function update(version) {
     appVersion,
     version,
   );
-  const sources = sourceDefinitions(version);
+  // Resolve every test-only mirror override before the first download, so a
+  // bad override fails with nothing fetched.
+  const sources = sourceDefinitions(version).map((source) => {
+    const override = mirrorOverrideFor(source.name);
+    if (!override) return source;
+    console.warn(`TEST OVERRIDE: ${source.name} mirror set to ${override}`);
+    return { ...source, mirrorUrl: override };
+  });
   const temporaryDirectory = fs.mkdtempSync(
     path.join(os.tmpdir(), "zinnia-7z-update-"),
   );
@@ -413,13 +512,12 @@ async function update(version) {
   try {
     const extractor = resolveTrustedExtractor();
     for (const source of sources) {
-      const archiveName = path.basename(new URL(source.url).pathname);
-      const archivePath = path.join(downloadDirectory, archiveName);
-      console.log(`Downloading ${archiveName}...`);
-      await downloadFile(source.url, archivePath);
+      const archive = await downloadMirroredArchive(source, downloadDirectory);
+      const archivePath = archive.archivePath;
       sourceArchives[source.name] = {
         url: source.url,
-        sha256: sha256File(archivePath),
+        sha256: archive.sha256,
+        mirrorUrl: archive.mirrorUrl,
       };
 
       const extracted = path.join(extractionDirectory, source.name);
@@ -486,7 +584,11 @@ async function update(version) {
       sourceArchives: Object.fromEntries(
         Object.entries(sourceArchives).map(([name, source]) => [
           name,
-          { url: source.url, sha256: source.sha256 },
+          {
+            url: source.url,
+            sha256: source.sha256,
+            mirrorUrl: source.mirrorUrl,
+          },
         ]),
       ),
       licenseNotices,
@@ -541,9 +643,24 @@ async function main() {
   const latestVersion = await fetchLatestVersion();
 
   if (flags.check) {
+    const updateAvailable = compareVersions(latestVersion, currentVersion) > 0;
+    if (flags.json) {
+      console.log(
+        JSON.stringify(
+          {
+            current: currentVersion,
+            latest: latestVersion,
+            updateAvailable,
+          },
+          null,
+          2,
+        ),
+      );
+      return;
+    }
     console.log(`Current official 7-Zip: ${currentVersion}`);
     console.log(`Latest official 7-Zip: ${latestVersion}`);
-    if (compareVersions(latestVersion, currentVersion) > 0) {
+    if (updateAvailable) {
       console.log(`Update available. Run npm run 7z:update.`);
     } else {
       console.log("No newer official 7-Zip release found.");
@@ -561,10 +678,7 @@ async function main() {
 }
 
 function isDirectExecution() {
-  return Boolean(
-    process.argv[1] &&
-    pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url,
-  );
+  return Boolean(process.argv[1] && isDirectExecutionOf(import.meta.url));
 }
 
 if (isDirectExecution()) {

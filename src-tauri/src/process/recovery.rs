@@ -2,10 +2,11 @@
 
 use super::commit::{archive_backup_path, archive_family, rollback_persisted_move_plan};
 use super::journal::{
-    cleanup_journal_path, clear_cleanup_journal, ensure_path_identity,
-    ensure_recovery_path_unchanged, is_safe_stage_dir_name, move_plan_path,
-    read_cleanup_journal_at, remove_recovery_regular_file_if_matches, ArchiveJournalPhase,
-    CleanupJournal, ExtractJournalPhase, FileIdentity,
+    cleanup_journal_path, clear_acknowledged_cleanup_journal_at, clear_cleanup_journal,
+    ensure_path_identity, ensure_recovery_path_unchanged, is_safe_stage_dir_name, move_plan_path,
+    read_cleanup_journal_any_version_at, read_cleanup_journal_at,
+    remove_recovery_regular_file_if_matches, ArchiveJournalPhase, CleanupJournal,
+    ExtractJournalPhase, FileIdentity,
 };
 
 static RECOVERY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -362,25 +363,45 @@ pub(crate) fn journal_is_preserved_ambiguous_publish(
     Ok(true)
 }
 
+/// Whether acknowledgment may drop this journal without recovering it.
+///
+/// A journal from a newer format is always acknowledgeable: this build cannot
+/// interpret it, so the only offered action is to clear the marker and leave
+/// every file as it is. This check does not inspect the filesystem. Any other
+/// journal must be a preserved ambiguous publish.
+pub(crate) fn journal_may_be_acknowledged(journal: &CleanupJournal) -> Result<bool, String> {
+    if journal.format_version > super::journal::CLEANUP_JOURNAL_FORMAT_VERSION {
+        return Ok(true);
+    }
+    journal_is_preserved_ambiguous_publish(journal)
+}
+
 /// Accept a preserved destination as-is and drop only the recovery journal.
 fn acknowledge_preserved_transaction_at(app: &tauri::AppHandle) -> Result<String, String> {
     let _recovery_guard = RECOVERY_LOCK
         .lock()
         .map_err(|_| "Archive recovery lock is unavailable.".to_string())?;
     let path = cleanup_journal_path(app)?;
-    let Some(journal) = read_cleanup_journal_at(&path)? else {
+    // Use the any-version reader: a newer journal is acknowledged, not recovered.
+    let Some(journal) = read_cleanup_journal_any_version_at(&path)? else {
         return Ok("No interrupted transaction requires acknowledgment.".to_string());
     };
-    if !journal_is_preserved_ambiguous_publish(&journal)? {
+    if !journal_may_be_acknowledged(&journal)? {
         return Err(
             "The active recovery journal is not a preserved ambiguous publish; \
              let normal recovery resolve it."
                 .to_string(),
         );
     }
-    clear_cleanup_journal(app)?;
+    let newer_format = journal.format_version > super::journal::CLEANUP_JOURNAL_FORMAT_VERSION;
+    clear_acknowledged_cleanup_journal_at(&path)?;
     set_startup_recovery_error(None);
-    Ok("Preserved extraction destination accepted; the recovery journal was cleared.".to_string())
+    Ok(if newer_format {
+        "Recovery journal from a newer Zinnia version accepted; files were left unchanged and the recovery journal was cleared."
+            .to_string()
+    } else {
+        "Preserved extraction destination accepted; the recovery journal was cleared.".to_string()
+    })
 }
 
 #[tauri::command]

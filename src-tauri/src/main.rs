@@ -1,4 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![warn(clippy::undocumented_unsafe_blocks)]
 
 mod app_menu;
 mod archive_detect;

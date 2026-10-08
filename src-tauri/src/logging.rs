@@ -75,6 +75,10 @@ fn create_log_export_temp(
                 .map_err(|error| error.to_string())?;
             let name = std::ffi::CString::new(name.as_bytes())
                 .map_err(|_| "Log export file name contains a NUL byte.".to_string())?;
+            // SAFETY: `directory` is an open O_DIRECTORY descriptor that outlives this call, and
+            // `name` is a live NUL-terminated CString. openat only reads the name. O_EXCL stops it
+            // from replacing an existing entry, O_NOFOLLOW stops it from following a symlink, and
+            // O_CLOEXEC keeps the fd out of child processes.
             let fd = unsafe {
                 libc::openat(
                     directory.as_raw_fd(),
@@ -94,6 +98,8 @@ fn create_log_export_temp(
                 }
                 return Err(error.to_string());
             }
+            // SAFETY: `fd` is non-negative (checked above) and was just returned by openat, so
+            // nothing else owns it. File takes sole ownership and closes it once.
             let file = unsafe { std::fs::File::from_raw_fd(fd) };
             let file_meta = file.metadata().map_err(|error| error.to_string())?;
             if !file_meta.is_file() {

@@ -349,6 +349,8 @@ pub(crate) const MACOS_FINDER_SYNC_BUNDLE_ID: &str = "run.rosie.zinnia.findersyn
 // are usable even before pluginkit discovers the embedded extension.
 #[cfg(target_os = "macos")]
 #[link(name = "FinderSync", kind = "framework")]
+// SAFETY: this block declares no items. It exists only so the linker loads FinderSync.framework and
+// the FIFinderSyncController class is registered.
 unsafe extern "C" {}
 
 #[cfg(target_os = "macos")]
@@ -365,6 +367,10 @@ pub(crate) fn show_finder_sync_management_interface(app: &tauri::AppHandle) -> b
         if let Some(controller) = finder_sync_controller_class() {
             // `showExtensionManagementInterface` is FinderSync's documented
             // route to the system-managed enablement interface.
+            // SAFETY: `controller` is the FIFinderSyncController class object returned by
+            // AnyClass::get, and the selector is a class method that takes no arguments and returns
+            // nothing. It is sent on the main thread. Caveat: the selector is not checked with
+            // respondsToSelector:, so this assumes it exists on every supported macOS version.
             unsafe { msg_send![controller, showExtensionManagementInterface] }
         }
     })
@@ -396,6 +402,9 @@ pub(crate) fn macos_finder_sync_enabled() -> Option<bool> {
     if let Some(controller) = finder_sync_controller_class() {
         // `isExtensionEnabled` is the public FinderSync status API. Retain the
         // pluginkit query below only for compatibility if the framework loads.
+        // SAFETY: same class object as above. `isExtensionEnabled` is a class method returning
+        // BOOL, which matches the bool return type. It has the same unchecked existence assumption
+        // as the note on the previous block.
         return Some(unsafe { msg_send![controller, isExtensionEnabled] });
     }
     // `+` election means the user (or pluginkit -e use) enabled the extension.

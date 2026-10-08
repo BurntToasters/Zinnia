@@ -434,6 +434,8 @@ fn copy_macos_quarantine_xattr(
     let source_c = c_path(source)?;
     let target_c = c_path(target)?;
     let name = CString::new("com.apple.quarantine").expect("static xattr name");
+    // SAFETY: `source_c` and `name` are live NUL-terminated CStrings. A null buffer with size 0 is
+    // getxattr's documented size query, which writes nothing.
     let size = unsafe {
         libc::getxattr(
             source_c.as_ptr(),
@@ -453,6 +455,9 @@ fn copy_macos_quarantine_xattr(
         return Ok(());
     }
     let mut buffer = vec![0u8; size as usize];
+    // SAFETY: `buffer` is a live allocation of exactly `buffer.len()` bytes, the same length passed
+    // to getxattr, so the kernel writes only inside it. `source_c` and `name` are live
+    // NUL-terminated CStrings.
     let read = unsafe {
         libc::getxattr(
             source_c.as_ptr(),
@@ -471,6 +476,8 @@ fn copy_macos_quarantine_xattr(
         return Ok(());
     }
     buffer.truncate(read as usize);
+    // SAFETY: `target_c` and `name` are live NUL-terminated CStrings. `buffer` holds the
+    // `buffer.len()` bytes read above, and setxattr only reads them.
     let written = unsafe {
         libc::setxattr(
             target_c.as_ptr(),
@@ -511,6 +518,8 @@ fn copy_windows_times_and_attributes(
     let mut created = FILETIME::default();
     let mut accessed = FILETIME::default();
     let mut modified = FILETIME::default();
+    // SAFETY: `source` is a live File borrowed for this call, so its raw handle is valid. The three
+    // FILETIME out-pointers refer to live locals.
     if unsafe {
         GetFileTime(
             source.as_raw_handle() as HANDLE,
@@ -526,6 +535,9 @@ fn copy_windows_times_and_attributes(
             std::io::Error::last_os_error()
         ));
     }
+    // SAFETY: `target` is a live File borrowed for this call, so its handle is valid. The FILETIME
+    // arguments point at live locals and are only read. If the handle lacks write access, the call
+    // fails and that error is returned.
     if unsafe {
         SetFileTime(
             target.as_raw_handle() as HANDLE,
@@ -562,6 +574,7 @@ fn copy_windows_times_and_attributes(
         .encode_wide()
         .chain(std::iter::once(0))
         .collect();
+    // SAFETY: `target_wide` is NUL-terminated (`chain(once(0))`) and alive for the call.
     if unsafe { SetFileAttributesW(target_wide.as_ptr(), target_attributes) } == 0 {
         return Err(format!(
             "Could not preserve extracted {} attributes: {}",
@@ -691,6 +704,8 @@ pub(crate) fn rename_file_no_replace(
         .encode_wide()
         .chain(std::iter::once(0))
         .collect();
+    // SAFETY: both wide paths are NUL-terminated and alive for the call. MoveFileW only reads them,
+    // and without MOVEFILE_REPLACE_EXISTING it fails rather than overwriting.
     if unsafe { MoveFileW(source_wide.as_ptr(), target_wide.as_ptr()) } != 0 {
         Ok(())
     } else {
@@ -705,6 +720,8 @@ pub(crate) fn rename_file_no_replace(
 ) -> Result<(), String> {
     use std::os::unix::ffi::OsStrExt as _;
 
+    // SAFETY: matches macOS `int renamex_np(const char *, const char *, unsigned int)`. Callers
+    // pass NUL-terminated CStrings that live across the call.
     unsafe extern "C" {
         fn renamex_np(
             old: *const std::ffi::c_char,
@@ -718,6 +735,9 @@ pub(crate) fn rename_file_no_replace(
         .map_err(|_| "Archive staging path contains a NUL byte.".to_string())?;
     let target = std::ffi::CString::new(target.as_os_str().as_bytes())
         .map_err(|_| "Archive output path contains a NUL byte.".to_string())?;
+    // SAFETY: `source` and `target` are NUL-terminated CStrings alive for the call. The declaration
+    // matches macOS `renamex_np(const char *, const char *, unsigned int)`. RENAME_EXCL makes the
+    // call fail, not replace, when the target exists.
     let result = unsafe { renamex_np(source.as_ptr(), target.as_ptr(), RENAME_EXCL) };
     if result == 0 {
         Ok(())
@@ -733,6 +753,9 @@ pub(crate) fn rename_file_no_replace(
 ) -> Result<(), String> {
     use std::os::unix::ffi::OsStrExt as _;
 
+    // SAFETY: matches the renameat2(2) prototype that glibc exports (2.28+). Callers pass
+    // NUL-terminated CStrings that live across the call, and AT_FDCWD for path-based (cwd-relative)
+    // operation.
     unsafe extern "C" {
         fn renameat2(
             olddirfd: std::ffi::c_int,
@@ -749,6 +772,10 @@ pub(crate) fn rename_file_no_replace(
         .map_err(|_| "Archive staging path contains a NUL byte.".to_string())?;
     let target = std::ffi::CString::new(target.as_os_str().as_bytes())
         .map_err(|_| "Archive output path contains a NUL byte.".to_string())?;
+    // SAFETY: `source` and `target` are NUL-terminated CStrings alive for the call. AT_FDCWD
+    // resolves both paths relative to the working directory, as the path-based API does. The
+    // declaration matches renameat2(2), and RENAME_NOREPLACE makes the call fail, not replace, when
+    // the target exists.
     let result = unsafe {
         renameat2(
             AT_FDCWD,
@@ -977,6 +1004,10 @@ where
                 // the actual identity in `promoted` if this journal update fails.
                 record_published(&target, &identity)?;
             }
+            #[cfg(feature = "e2e")]
+            if promoted.len() == 1 {
+                crate::process::e2e_crash::crash_point("mid-promotion");
+            }
         }
         if let Some(parent) = destination.parent() {
             sync_directory(parent)?;
@@ -986,6 +1017,8 @@ where
         // it, recovery restores the complete old family. After it, recovery
         // preserves the complete new family and only removes backup leftovers.
         mark_committed()?;
+        #[cfg(feature = "e2e")]
+        crate::process::e2e_crash::crash_point("after-commit");
         Ok::<(), String>(())
     })();
 
@@ -1397,7 +1430,11 @@ fn validate_staged_tree_impl(
                         },
                     )?;
                     let handle = file.as_raw_handle() as HANDLE;
+                    // SAFETY: BY_HANDLE_FILE_INFORMATION holds only integers, so all-zero is valid;
+                    // GetFileInformationByHandle overwrites it on success.
                     let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+                    // SAFETY: `handle` comes from `file`, which is live for this call, and `info`
+                    // is a live writable struct of the type the API fills.
                     let success = unsafe { GetFileInformationByHandle(handle, &mut info) };
                     if success == 0 {
                         return Err(format!(
@@ -2655,6 +2692,8 @@ where
                 "{error}; the published extraction destination was preserved for journal recovery"
             ));
         }
+        #[cfg(feature = "e2e")]
+        crate::process::e2e_crash::crash_point("after-commit");
         return Ok((
             vec![destination.to_path_buf()],
             PublishStrategy::WholeStageRename,
@@ -2744,6 +2783,10 @@ where
                 Err(rollback_error) => format!("{error}; rollback also failed: {rollback_error}"),
             });
         }
+        #[cfg(feature = "e2e")]
+        if index == 0 {
+            crate::process::e2e_crash::crash_point("mid-promotion");
+        }
     }
     move_identity_log_identity = match identity_log.seal().and_then(|identity| {
         recorder.record_move_identity_log(&identity)?;
@@ -2799,6 +2842,8 @@ where
             }
         });
     }
+    #[cfg(feature = "e2e")]
+    crate::process::e2e_crash::crash_point("after-commit");
 
     // The journal now records a durable extraction commit. Cleanup remains an
     // owned recovery operation: return failure while preserving publication so

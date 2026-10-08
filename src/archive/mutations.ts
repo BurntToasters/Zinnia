@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { takeE2eDialogResult } from "../e2e-dialog";
 import { $, parseThreads } from "../utils";
 import { SETTING_DEFAULTS, state } from "../state";
 import { devLog, getMode, log, setRunning, setStatus } from "../ui";
@@ -97,9 +98,12 @@ export async function addFilesToArchive(): Promise<void> {
     return;
   }
 
-  const picked = await runMutationDialog(() =>
-    open({ multiple: true, directory: false }),
-  );
+  const picked = await runMutationDialog(() => {
+    const queued = takeE2eDialogResult();
+    return queued
+      ? Promise.resolve(queued.result)
+      : open({ multiple: true, directory: false });
+  });
   if (!picked) return;
   const selection = picked.value;
   const files = Array.isArray(selection)

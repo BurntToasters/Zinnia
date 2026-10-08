@@ -1,11 +1,5 @@
 import { confirm } from "@tauri-apps/plugin-dialog";
-import {
-  $,
-  escapeHtml,
-  formatSize,
-  trapFocus,
-  releaseFocusTrap,
-} from "../utils";
+import { $, formatSize, trapFocus, releaseFocusTrap } from "../utils";
 import { state, cacheSelection, clearBrowseCache } from "../state";
 import {
   log,
@@ -59,12 +53,15 @@ export function registerBrowseArchiveLoader(
 }
 import { clearPasswordFields, showOperationError } from "./runtime";
 
+// Matches the rendered output of the former " &nbsp;·&nbsp; " HTML separator.
+const BROWSE_SUMMARY_SEPARATOR = " \u00a0\u00b7\u00a0 ";
+
 function renderBrowseRows(
   tbody: HTMLElement,
   entries: BrowseEntry[],
   folderClass: string,
 ): void {
-  tbody.innerHTML = "";
+  tbody.replaceChildren();
   const fragment = document.createDocumentFragment();
   if (entries.length === 0) {
     const tr = document.createElement("tr");
@@ -83,8 +80,12 @@ function renderBrowseRows(
 
     const tdName = document.createElement("td");
     const iconName = entry.isFolder ? "folder" : "file";
-    tdName.innerHTML = `<i data-lucide="${iconName}" class="lucide-icon lucide-icon--inline"></i><span></span>`;
-    tdName.querySelector("span")!.textContent = entry.path;
+    const icon = document.createElement("i");
+    icon.setAttribute("data-lucide", iconName);
+    icon.className = "lucide-icon lucide-icon--inline";
+    const label = document.createElement("span");
+    label.textContent = entry.path;
+    tdName.replaceChildren(icon, label);
     tdName.title = entry.path;
     tdName.classList.add("cell-break");
 
@@ -124,16 +125,23 @@ export function renderBrowseTable(info: ArchiveInfo) {
     const totalPacked = info.entries.reduce((sum, e) => sum + e.packedSize, 0);
     const fileCount = info.entries.filter((e) => !e.isFolder).length;
     const folderCount = info.entries.filter((e) => e.isFolder).length;
-    const parts: string[] = [];
-    parts.push(`<strong>${escapeHtml(info.type || "Archive")}</strong>`);
-    if (info.method) parts.push(`Method: ${escapeHtml(info.method)}`);
+    const parts: Array<string | HTMLElement> = [];
+    const typeEl = document.createElement("strong");
+    typeEl.textContent = info.type || "Archive";
+    parts.push(typeEl);
+    if (info.method) parts.push(`Method: ${info.method}`);
     if (info.solid) parts.push("Solid");
     if (info.encrypted) parts.push("Encrypted");
     parts.push(
       `${fileCount} file${fileCount !== 1 ? "s" : ""}${folderCount > 0 ? `, ${folderCount} folder${folderCount !== 1 ? "s" : ""}` : ""}`,
     );
     parts.push(`${formatSize(totalSize)} \u2192 ${formatSize(totalPacked)}`);
-    summary.innerHTML = parts.join(" &nbsp;\u00b7&nbsp; ");
+    const nodes: Array<string | HTMLElement> = [];
+    parts.forEach((part, index) => {
+      if (index > 0) nodes.push(BROWSE_SUMMARY_SEPARATOR);
+      nodes.push(part);
+    });
+    summary.replaceChildren(...nodes);
   }
 
   const tbody = document.getElementById("browse-tbody");
@@ -147,7 +155,9 @@ export function renderBrowseTable(info: ArchiveInfo) {
 
   const basicSummary = document.getElementById("basic-browse-summary");
   if (basicSummary && summary) {
-    basicSummary.innerHTML = summary.innerHTML;
+    basicSummary.replaceChildren(
+      ...Array.from(summary.childNodes, (node) => node.cloneNode(true)),
+    );
   }
   triggerIconRefresh();
 }
@@ -454,7 +464,7 @@ function renderSelectiveEntryList(
   const focusedPath = list.contains(activeRow ?? null)
     ? activeRow?.dataset.memberPath
     : undefined;
-  list.innerHTML = "";
+  list.replaceChildren();
   list.removeAttribute("role");
   list.removeAttribute("aria-label");
   list.removeAttribute("aria-multiselectable");

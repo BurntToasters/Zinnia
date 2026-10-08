@@ -68,9 +68,11 @@ Check the official GitHub release tag and update status:
 npm run 7z:update:check
 ```
 
-Download the latest official Linux, macOS, and Windows archives, extract only
-the runtime binaries and notices, verify their hashes, remove obsolete assets,
-and regenerate prepared sidecars:
+Download the latest official Linux, macOS, and Windows archives from both
+official hosts (`www.7-zip.org` and the `ip7z/7zip` GitHub release), refuse the
+update unless both copies are byte-identical, extract only the runtime binaries
+and notices, verify their hashes, remove obsolete assets, and regenerate
+prepared sidecars:
 
 ```sh
 npm run 7z:update
@@ -80,6 +82,21 @@ The updater requires an external trusted extractor. Pass `--trusted-7z <path>`
 or set `ZINNIA_TRUSTED_7Z`. The in-tree 7-Zip sidecar is not trusted for this
 update. Use `--force` to refresh assets when the official version has not
 changed.
+
+The bundled version has one source of truth: the `version` field in
+`assets/7z-provenance.json`. `src-tauri/build.rs` (`provenance_version`) reads
+that field and exports `ZINNIA_BUNDLED_7Z_VERSION`. `BUNDLED_7Z_VERSION` in
+`src-tauri/src/process/commands.rs` is set from it with `env!`, and `probe_7z`
+refuses any sidecar whose banner reports a different version. The build fails
+if `version` is missing, appears more than once, or is not of the form `NN.NN`.
+
+`npm run 7z:update` also records the version in `CHANGELOG.md`. It adds one
+bullet that starts with `- **7-Zip:**` to the release section for the current
+`package.json` version. That section's heading is `## Changes in` followed by
+the version. Re-runs replace the bullet rather than adding another. The script
+checks for the section before it downloads anything and fails if it is missing,
+so run `npm run sync-version` first. It writes `CHANGELOG.md` only after the
+assets are committed.
 
 ## Verify the toolchain
 

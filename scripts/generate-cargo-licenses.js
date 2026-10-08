@@ -14,7 +14,8 @@ import {
 } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = dirname(scriptDir);
@@ -524,7 +525,7 @@ function main() {
 
 function isDirectExecution() {
   if (!process.argv[1]) return false;
-  return pathToFileURL(resolve(process.argv[1])).href === import.meta.url;
+  return isDirectExecutionOf(import.meta.url);
 }
 
 if (isDirectExecution()) {

@@ -1,0 +1,68 @@
+{
+  "description": "Crash-injection matrix and scenario specs for transaction recovery. Each crashCases entry runs two unpackaged app launches on one profile: a crash launch with ZINNIA_E2E_CRASH_AT, then a clean relaunch that must recover. suiteCount is the exact number of wdio suites the runner records; CI checks it.",
+  "crashCases": [
+    {
+      "id": "extract-after-journal",
+      "operation": "extract",
+      "point": "after-journal",
+      "destination": "absent",
+      "expect": "rolled-back"
+    },
+    {
+      "id": "extract-before-promote",
+      "operation": "extract",
+      "point": "before-promote",
+      "destination": "absent",
+      "expect": "rolled-back"
+    },
+    {
+      "id": "extract-mid-promotion",
+      "operation": "extract",
+      "point": "mid-promotion",
+      "destination": "preexisting",
+      "expect": "rolled-back"
+    },
+    {
+      "id": "extract-after-commit",
+      "operation": "extract",
+      "point": "after-commit",
+      "destination": "absent",
+      "expect": "committed"
+    },
+    {
+      "id": "create-after-journal",
+      "operation": "create",
+      "point": "after-journal",
+      "output": "absent",
+      "expect": "rolled-back"
+    },
+    {
+      "id": "create-before-promote",
+      "operation": "create",
+      "point": "before-promote",
+      "output": "existing",
+      "expect": "rolled-back"
+    },
+    {
+      "id": "create-mid-promotion",
+      "operation": "create",
+      "point": "mid-promotion",
+      "output": "existing",
+      "expect": "rolled-back"
+    },
+    {
+      "id": "create-after-commit",
+      "operation": "create",
+      "point": "after-commit",
+      "output": "existing",
+      "expect": "committed"
+    }
+  ],
+  "scenarioSpecs": [
+    "./specs/newer-journal.spec.js",
+    "./specs/cancel-extract.spec.js",
+    "./specs/hostile-archives.spec.js",
+    "./specs/split-update.spec.js"
+  ],
+  "suiteCount": 22
+}

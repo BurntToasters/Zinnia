@@ -19,6 +19,7 @@ import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import npmCli from "./npm-cli.cjs";
+import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 const { npmInvocation } = npmCli;
 const npmDevAuditScript = fileURLToPath(
@@ -387,9 +388,7 @@ function main() {
   }
 }
 
-const isMainModule =
-  process.argv[1] &&
-  pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url;
+const isMainModule = process.argv[1] && isDirectExecutionOf(import.meta.url);
 if (isMainModule) {
   try {
     main();

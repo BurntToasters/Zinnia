@@ -57,9 +57,12 @@ export function showBasicCompletion(
   const pathEl = document.getElementById(`basic-${section}-completion-path`);
 
   if (iconEl) {
-    iconEl.innerHTML = success
-      ? '<i data-lucide="check" class="lucide-icon text-success"></i>'
-      : '<i data-lucide="alert-triangle" class="lucide-icon text-danger"></i>';
+    const icon = document.createElement("i");
+    icon.setAttribute("data-lucide", success ? "check" : "alert-triangle");
+    icon.className = success
+      ? "lucide-icon text-success"
+      : "lucide-icon text-danger";
+    iconEl.replaceChildren(icon);
   }
   if (titleEl) titleEl.textContent = title;
   if (msgEl) msgEl.textContent = message;

@@ -1,7 +1,19 @@
 import tsPlugin from "@typescript-eslint/eslint-plugin";
 import tsParser from "@typescript-eslint/parser";
+import noUnsanitized from "eslint-plugin-no-unsanitized";
 
 export default [
+  {
+    files: ["src/**/*.ts"],
+    ignores: ["src/tests/**"],
+    plugins: {
+      "no-unsanitized": noUnsanitized,
+    },
+    rules: {
+      "no-unsanitized/method": "error",
+      "no-unsanitized/property": "error",
+    },
+  },
   {
     files: ["src/**/*.{ts,tsx}"],
     languageOptions: {

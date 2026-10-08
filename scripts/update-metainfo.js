@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
-import { fileURLToPath, pathToFileURL } from "url";
+import { fileURLToPath } from "url";
+import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -164,8 +165,7 @@ function isDirectExecution(
   executablePath = process.argv[1],
 ) {
   return Boolean(
-    executablePath &&
-    pathToFileURL(path.resolve(executablePath)).href === moduleUrl,
+    executablePath && isDirectExecutionOf(moduleUrl, executablePath),
   );
 }
 

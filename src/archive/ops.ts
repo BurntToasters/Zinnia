@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { confirm } from "@tauri-apps/plugin-dialog";
+import { confirmWithE2eQueue } from "../e2e-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { $, splitArgs } from "../utils";
 import { state } from "../state";
@@ -116,14 +117,16 @@ export async function runAction() {
         expectedArchiveIdentity.length > 0 &&
         expectedArchiveIdentity !== "absent"
       ) {
-        const replace = await confirm(
-          `An archive already exists at ${outputPath}. Replace its contents?`,
-          {
-            title: "Replace archive",
-            kind: "warning",
-            okLabel: "Replace",
-            cancelLabel: "Cancel",
-          },
+        const replace = await confirmWithE2eQueue(() =>
+          confirm(
+            `An archive already exists at ${outputPath}. Replace its contents?`,
+            {
+              title: "Replace archive",
+              kind: "warning",
+              okLabel: "Replace",
+              cancelLabel: "Cancel",
+            },
+          ),
         );
         if (!replace) {
           setStatus("Cancelled", 2000);

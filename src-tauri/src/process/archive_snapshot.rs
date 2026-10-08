@@ -121,6 +121,8 @@ fn windows_file_identity(file: &std::fs::File) -> Result<WindowsArchiveFileIdent
 
     let handle = file.as_raw_handle() as HANDLE;
     let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: `handle` is the raw handle of `file`, which is borrowed for this call, and `info` is
+    // a live, writable BY_HANDLE_FILE_INFORMATION that the API fills.
     let ok = unsafe { GetFileInformationByHandle(handle, &mut info) };
     if ok == 0 {
         return Err(format!(
@@ -133,7 +135,11 @@ fn windows_file_identity(file: &std::fs::File) -> Result<WindowsArchiveFileIdent
     // ReFS uses 128-bit file IDs; the legacy 64-bit index is not guaranteed
     // unique there. Keep the legacy pair as a compatibility fallback for
     // filesystems and SMB servers that do not implement FileIdInfo.
+    // SAFETY: FILE_ID_INFO holds only integers and byte arrays, so all-zero is valid. It is read
+    // only when the call below succeeds.
     let mut extended: FILE_ID_INFO = unsafe { std::mem::zeroed() };
+    // SAFETY: `handle` is still open. The pointer and size describe `extended`, a live
+    // FILE_ID_INFO, and the API writes at most `size_of::<FILE_ID_INFO>()` bytes into it.
     let has_extended_id = unsafe {
         GetFileInformationByHandleEx(
             handle,
@@ -296,6 +302,10 @@ fn try_clone_snapshot_file(
     let dest_c = std::ffi::CString::new(destination.as_os_str().as_encoded_bytes())
         .map_err(|_| "Snapshot destination path contains a NUL byte.".to_string())?;
     let result =
+        // SAFETY: `source` is an open File, so its fd is valid for the call. `dest_c` is a live
+        // NUL-terminated string. AT_FDCWD is the documented dirfd for a cwd-relative destination.
+        // fclonefileat does not retain either pointer, and its create-new behavior comes from the
+        // kernel (EEXIST).
         unsafe { libc::fclonefileat(source.as_raw_fd(), libc::AT_FDCWD, dest_c.as_ptr(), 0) };
     if result == 0 {
         return Ok(true);
@@ -323,6 +333,8 @@ fn try_clone_snapshot_file(
     // linux/fs.h: `#define FICLONE _IOW(0x94, 9, int)`. Not exposed by the
     // `libc` crate; the encoding is a stable kernel UAPI constant.
     const FICLONE: libc::c_ulong = 0x4004_9409;
+    // SAFETY: `source` and `destination_file` are open Files, so both fds are valid for the call.
+    // FICLONE takes the source fd as a plain int argument and does not retain it.
     let result = unsafe {
         libc::ioctl(
             destination_file.as_raw_fd(),
@@ -378,6 +390,9 @@ struct CopyFile2Context<'a> {
     cancel: *mut windows_sys::core::BOOL,
 }
 
+/// # Safety
+/// Called only by CopyFile2, synchronously, with `callback_context` set to the address of a live
+/// `CopyFile2Context` whose `cancel` pointer refers to a live BOOL for the duration of the call.
 #[cfg(windows)]
 unsafe extern "system" fn copy_file2_progress(
     _message: *const windows_sys::Win32::Storage::FileSystem::COPYFILE2_MESSAGE,
@@ -442,6 +457,9 @@ where
         pProgressRoutine: Some(copy_file2_progress),
         pvCallbackContext: (&context as *const CopyFile2Context<'_>) as *mut std::ffi::c_void,
     };
+    // SAFETY: both wide paths are NUL-terminated and alive for the call. `parameters` is fully
+    // initialized, with dwSize set to its own size. `cancel` and `context` are locals that outlive
+    // the call, and the progress routine runs only during it.
     let result = unsafe { CopyFile2(source_wide.as_ptr(), destination_wide.as_ptr(), &parameters) };
     if result == 0 {
         return Ok(true);

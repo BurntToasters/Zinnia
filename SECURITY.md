@@ -47,6 +47,10 @@ operations:
   Zinnia lists members (`7z l -slt`) and rejects unsafe `Path =`,
   `Symbolic Link =`, and `Hard Link =` fields. Parent-relative symbolic links
   are resolved against their member directory so contained links remain valid.
+  ZIP stores a link target in the member data, so its listing shows only a Unix
+  `l` mode in `Attributes`; Zinnia flags those members as links (so link-safe
+  staging and full scans apply), and their targets are judged by 7-Zip
+  `-snld10` and the staged-tree checks below.
   Before promotion, Zinnia
   also snapshots sibling names in the stage parent (new names outside the stage
   fail closed), walks the staged tree, rejects absolute or escaping symbolic
@@ -135,10 +139,15 @@ for new advisories. When a new 7-Zip version addresses a security issue, run
 `npm run 7z:update:check` to compare the pinned version with
 `https://github.com/ip7z/7zip/releases/latest`, then run `npm run 7z:update`
 (or `npm run 7z:update -- --force` after review when refreshing the same
-version). Confirm `assets/7z-provenance.json` records the exact official
-archive URLs, archive SHA-256 values, extracted member mapping, and license
-notice hashes before cutting a Zinnia release. The updater downloads only the
-five official source archives, extracts the seven runtime artifacts, rewrites
+version). The version is read from `assets/7z-provenance.json` at build time
+and gates the sidecar banner check, and the updater adds a 7-Zip bullet to the
+current `CHANGELOG.md` release section (see `build-setup.md`). Confirm
+`assets/7z-provenance.json` records the exact official archive URLs, archive
+SHA-256 values, extracted member mapping, and license notice hashes before
+cutting a Zinnia release. The updater downloads only the
+five official source archives, each from both official hosts (`www.7-zip.org`
+and the `ip7z/7zip` GitHub release), and refuses to continue unless both copies
+are byte-identical; provenance records both as `url` and `mirrorUrl`. It extracts the seven runtime artifacts, rewrites
 checksums/provenance/licenses, removes obsolete assets, and regenerates
 prepared sidecars. Prefer an independently installed extractor via
 `--trusted-7z <path>` or `ZINNIA_TRUSTED_7Z` outside this repository's
@@ -224,3 +233,43 @@ extract-to-folder uses the same privilege as the signed app. A compromised main
 webview can therefore write to any allowlisted-shape destination the user could
 already reach. Extract-only windows remain pinned to the folder derived at
 window spawn.
+
+## Updater signing key
+
+The Tauri updater installs an update only if its Minisign signature verifies
+against the single public key in `src-tauri/tauri.conf.json`
+(`plugins.updater.pubkey`). The matching private key exists only on the
+maintainer's release VMs. Releases are built and signed there, never in CI.
+
+### Custody
+
+- Keep an offline, encrypted backup of the private key and its password,
+  stored separately from the release VMs.
+- If the private key is lost, installed copies cannot verify updates signed
+  with any new key. Users must reinstall manually. Zinnia has no in-app path to
+  trust a replacement key.
+
+### Rotation
+
+Use this procedure to replace the key on a schedule or after exposure.
+
+1. Generate a new keypair on a release VM.
+2. Ship a bridge release signed with the old key whose `tauri.conf.json`
+   embeds the new public key.
+3. Sign all later releases with the new private key only.
+
+### Compromise
+
+If the private key may have been exposed:
+
+1. Rotate immediately using the procedure above.
+2. Publish a security advisory naming the affected versions and the required
+   action.
+3. Pull the release assets signed with the compromised key.
+
+Until the bridge release is installed, anyone holding the compromised key can
+sign an update that existing installs will accept. Installs only fetch update
+manifests from the GitHub release URLs in `plugins.updater.endpoints`, so an
+attacker also needs write access to those releases (or the maintainer's GitHub
+account). Check that account's sessions, tokens, and deploy keys as part of the
+response. Treat the bridge release as urgent.

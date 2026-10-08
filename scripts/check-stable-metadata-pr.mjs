@@ -16,6 +16,7 @@ import {
   updateWindowsShellResourceDestinations,
 } from "./sync-version-helpers.js";
 import { run as updateMetainfo } from "./update-metainfo.js";
+import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 const STABLE_METADATA_PATHS = new Set([
   "CHANGELOG.md",
@@ -298,8 +299,7 @@ function main() {
   console.log("Stable metadata pull request scope and content are valid.");
 }
 
-const invokedPath = process.argv[1] ? resolve(process.argv[1]) : null;
-if (invokedPath && pathToFileURL(invokedPath).href === import.meta.url) {
+if (isDirectExecutionOf(import.meta.url)) {
   try {
     main();
   } catch (error) {

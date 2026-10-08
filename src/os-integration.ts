@@ -166,7 +166,7 @@ function renderArchiveDefaults(defaults: ArchiveDefaultStatus[] = []): void {
   const list = document.getElementById("os-archive-default-list");
   if (!list) return;
 
-  list.innerHTML = "";
+  list.replaceChildren();
   for (const item of defaults) {
     const row = document.createElement("div");
     row.className = "os-default-row";
@@ -415,7 +415,7 @@ function renderOsIntegrationRefreshFailure(): void {
   setText("os-platform-label", "Unable to check");
   setText("os-package-label", "Unable to check");
   const list = document.getElementById("os-archive-default-list");
-  if (list) list.innerHTML = "";
+  if (list) list.replaceChildren();
   for (const id of [
     "os-file-assoc-status",
     "os-context-status",

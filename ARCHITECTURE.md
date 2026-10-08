@@ -14,19 +14,24 @@ frontend (src/, TS)  ──invoke()──▶  Rust commands (src-tauri/src/)  �
 `main.rs` is glue only (state registration, builder, command registry). Logic is
 split into focused modules:
 
-| Module              | Responsibility                                                                                              |
-| ------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `validation.rs`     | Allow-list validation of 7z args: the security boundary                                                     |
-| `process/`          | Process lifecycle: journal/recovery/staging/commit, `run_7z`/`probe_7z`/`cancel_7z`, 7z version attestation |
-| `progress.rs`       | Parse 7z stdout into structured `{percent, filesDone, currentFile}`                                         |
-| `archive_detect.rs` | Magic-byte / TAR detection, extension-vs-header validation                                                  |
-| `settings_store.rs` | Atomic settings load/save (preserves reserved `_` keys)                                                     |
-| `logging.rs`        | Rolling local diagnostics log                                                                               |
-| `launch/`           | CLI/file-association routing, extract windows, pending-path queues, quick-extract warm-idle / tray          |
-| `platform/`         | Platform/OS-integration queries, defaults commands, xdg-mime / macOS UTI                                    |
-| `output.rs`         | Byte-bounded, UTF-8-safe output buffering                                                                   |
-| `window_fx.rs`      | Basic-mode native glass (macOS vibrancy, Windows Mica/Acrylic); Linux stays opaque                          |
-| `path_safety.rs`    | Symlink / reparse rejection; Unix `O_NOFOLLOW` opens for promote                                            |
+| Module                    | Responsibility                                                                                                    |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `validation.rs`           | Allow-list validation of 7z args: the security boundary                                                           |
+| `process/`                | Process lifecycle: journal/recovery/staging/commit, `run_7z`/`probe_7z`/`cancel_7z`, 7z version attestation       |
+| `progress.rs`             | Parse 7z stdout into structured `{percent, filesDone, currentFile}`                                               |
+| `archive_detect.rs`       | Magic-byte / TAR detection, extension-vs-header validation                                                        |
+| `settings_store.rs`       | Atomic settings load/save (preserves reserved `_` keys)                                                           |
+| `logging.rs`              | Rolling local diagnostics log                                                                                     |
+| `launch/`                 | CLI/file-association routing, extract windows, pending-path queues, quick-extract warm-idle / tray                |
+| `platform/`               | Platform/OS-integration queries, defaults commands, xdg-mime / macOS UTI                                          |
+| `output.rs`               | Byte-bounded, UTF-8-safe output buffering                                                                         |
+| `window_fx.rs`            | Basic-mode native glass (macOS vibrancy, Windows Mica/Acrylic); Linux stays opaque                                |
+| `path_safety.rs`          | Symlink / reparse rejection; Unix `O_NOFOLLOW` opens for promote                                                  |
+| `fs_secure.rs`            | Private (0700 / current-user ACL) and inheriting stage directory creation, nofollow opens, durable directory sync |
+| `tempdir.rs`              | Managed temp directories under one app-owned base; stale-dir sweeps; removal refused outside that base            |
+| `app_menu.rs`             | Native macOS menu bar; queues menu actions until the main window can receive them                                 |
+| `macos_services.rs`       | macOS Finder Services provider (Extract / Compress with Zinnia); reads paths from the pasteboard (macOS only)     |
+| `finder_sync_requests.rs` | macOS: drains requests the sandboxed Finder Sync extension writes to the App Group container (macOS only)         |
 
 `run_7z` validates args, owns one sidecar operation globally, emits throttled
 raw (`7z-progress`) plus structured (`7z-progress-structured`) progress events,
@@ -117,15 +122,22 @@ re-exports from each crate module root.
 
 ### Archive extension allowlists
 
-Three lists must stay intentionally aligned (with platform filters):
+Supported formats are declared once in `archive-formats.json` at the repo root.
+Each format lists its extensions, MIME type, magic-byte family, and which
+layers include it on which platform. About 30 copies of these lists live in
+TypeScript, Rust, C++ (Win11 shell), Swift (Finder Sync), NSIS, the Tauri
+configs, and the Linux desktop/metainfo files, each with a different meaning
+(recognize, route, strip a folder suffix, create, register an OS association).
+`npm run check:archive-formats` (part of `npm run lint`) parses every copy and
+fails on any drift from the manifest. Intentional differences between layers
+are recorded in the manifest's `asymmetries` array.
 
-| Layer        | File                                                     | Notes                                                                                        |
-| ------------ | -------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| Frontend UI  | `src/utils.ts` `ARCHIVE_EXTENSIONS`                      | Includes `.rar`; Windows pickers filter it and Rust routes it through the full 7-Zip sidecar |
-| Open routing | `src-tauri/src/launch/open_routing.rs`                   | Includes `.rar` on Windows because packaged `7z.exe` ships with matching `7z.dll`            |
-| Win11 shell  | `src-tauri/windows/shell/dllmain.cpp` `LooksLikeArchive` | Includes Windows `.rar` plus `*.7z.001` / split-volume siblings (aligned with open routing)  |
+`.rar` is recognized and routed on every platform: the bundled `7zz` (macOS,
+Linux) and `7z.exe` + `7z.dll` (Windows) both extract RAR. Zinnia never creates
+RAR archives.
 
-When adding a format, update all three (and file associations / NSIS verbs as needed).
+When adding a format, add it to `archive-formats.json` first, then run the
+checker and update each copy it names.
 
 ### Remaining size hotspots
 

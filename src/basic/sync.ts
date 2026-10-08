@@ -344,7 +344,7 @@ export function renderBasicInputs(): void {
   const list = document.getElementById("basic-input-list");
   if (!list) return;
 
-  list.innerHTML = "";
+  list.replaceChildren();
 
   if (state.inputs.length === 0) {
     const empty = document.createElement("button");

@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 const REVIEW_EXPIRES = "2026-12-01";
 const EXPECTED_IGNORES = new Set([
@@ -84,7 +85,7 @@ function main() {
 
 function isDirectExecution() {
   if (!process.argv[1]) return false;
-  return pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url;
+  return isDirectExecutionOf(import.meta.url);
 }
 
 if (isDirectExecution()) main();

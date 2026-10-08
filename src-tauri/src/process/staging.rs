@@ -505,6 +505,17 @@ pub(crate) fn listing_preflight_exit_is_acceptable(code: i32, stdout: &str, stde
     code == 0 || (code == 1 && extract_warning_is_metadata_only(stdout, stderr))
 }
 
+/// True for a 10-character `ls`-style mode string whose type is a symlink,
+/// as 7-Zip prints for archive members that carry Unix attributes.
+fn unix_mode_is_symlink(mode: &str) -> bool {
+    let bytes = mode.as_bytes();
+    bytes.len() == 10
+        && bytes[0] == b'l'
+        && bytes[1..]
+            .iter()
+            .all(|byte| matches!(byte, b'r' | b'w' | b'x' | b'-' | b's' | b'S' | b't' | b'T'))
+}
+
 fn parse_slt_archive_manifest(
     slt_output: &str,
     archive_path: &str,
@@ -549,6 +560,20 @@ fn parse_slt_archive_manifest(
                 return Err(format!(
                     "Archive contains an unsafe member path that could escape the extract folder: {path}"
                 ));
+            }
+            continue;
+        }
+        // ZIP keeps a symlink's target in the member data, so the listing has no
+        // `Symbolic Link =` line, only a Unix `l` mode as the last `Attributes`
+        // token. Flag it so extraction keeps link-bearing staging and scans;
+        // `-snld10` and staged-tree validation still judge the target.
+        if let Some(attributes) = line.strip_prefix("Attributes = ") {
+            if attributes
+                .split_whitespace()
+                .next_back()
+                .is_some_and(unix_mode_is_symlink)
+            {
+                summary.has_symbolic_links = true;
             }
             continue;
         }
@@ -681,6 +706,11 @@ pub(crate) fn assert_slt_archive_members_safe(
     archive_path: &str,
 ) -> Result<(), String> {
     parse_slt_archive_manifest(slt_output, archive_path, None).map(|_| ())
+}
+
+#[cfg(test)]
+pub(crate) fn slt_manifest_has_links(slt_output: &str, archive_path: &str) -> Result<bool, String> {
+    parse_slt_archive_manifest(slt_output, archive_path, None).map(|summary| summary.has_links())
 }
 
 #[cfg(test)]

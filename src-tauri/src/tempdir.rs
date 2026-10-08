@@ -188,7 +188,9 @@ fn sweep_stale_7z_list_dirs() {
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
+            // SAFETY: geteuid takes no arguments, has no preconditions, and cannot fail.
             let uid = unsafe { libc::geteuid() };
+            // SAFETY: getegid takes no arguments, has no preconditions, and cannot fail.
             if metadata.uid() != uid || metadata.gid() != unsafe { libc::getegid() } {
                 continue;
             }

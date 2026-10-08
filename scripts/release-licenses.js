@@ -2,8 +2,9 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 const require = createRequire(import.meta.url);
 const { npmInvocation } = require("./npm-cli.cjs");
@@ -37,8 +38,7 @@ function runReleaseLicenses({
 }
 
 const isDirectExecution =
-  process.argv[1] &&
-  pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url;
+  process.argv[1] && isDirectExecutionOf(import.meta.url);
 if (isDirectExecution) {
   try {
     process.exitCode = runReleaseLicenses();

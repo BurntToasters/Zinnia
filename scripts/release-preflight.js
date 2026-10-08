@@ -1,11 +1,12 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import {
   isIgnorableReleaseDirtyPath,
   porcelainPaths,
 } from "./release-session.js";
+import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(scriptDir, "..");
@@ -87,7 +88,7 @@ function runPreflight() {
 
 function isDirectExecution() {
   if (!process.argv[1]) return false;
-  return pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url;
+  return isDirectExecutionOf(import.meta.url);
 }
 
 if (isDirectExecution()) {

@@ -23,11 +23,24 @@ import {
   e2eStampPath,
   updateE2eSettings,
 } from "../e2e/helpers/profile.js";
+import {
+  CRASH_SPEC,
+  RECOVERY_SPEC,
+  collectEvidence,
+  expectedRecoverySuiteCount,
+  journalPathForProfile,
+  loadRecoveryPlan,
+  prepareCrashCase,
+  prepareNewerJournal,
+} from "../e2e/helpers/recovery-harness.js";
 export { reserveE2eWebdriverPort };
 
 import { usesWindowsCmdShell } from "./npm-safe-update.mjs";
+import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 const EXTRACT_WINDOW_AUTO_CLOSE_SECONDS = 10;
+// Crash launches are retried only for a startup timeout before #app (see runRecoveryScenarios).
+const CRASH_LAUNCH_ATTEMPTS = 3;
 
 function npmCommand() {
   return process.platform === "win32" ? "npm.cmd" : "npm";
@@ -569,10 +582,15 @@ async function runWdio(
   envOverrides = {},
   webdriverReservation,
   processCleanup,
+  logName = null,
 ) {
   const env = {
     ...process.env,
     ...profile.env,
+    // Only the crash-injection phase sets a crash point; every other launch
+    // must not inherit one from the developer's shell.
+    ZINNIA_E2E_CRASH_AT: "",
+    ZINNIA_E2E_JOURNAL: journalPathForProfile(profile.profileDir),
     ZINNIA_E2E: "1",
     ZINNIA_E2E_BINARY: e2eBinaryPath(),
     ZINNIA_E2E_APP_ARGS: JSON.stringify(appArgs),
@@ -597,7 +615,8 @@ async function runWdio(
   }
   const logFile = path.join(
     reportDir,
-    spec.includes("extract-window") ? "extract-window.log" : "main.log",
+    logName ??
+      (spec.includes("extract-window") ? "extract-window.log" : "main.log"),
   );
   let handoff;
   try {
@@ -861,6 +880,127 @@ function cleanupE2eProfile(profileDir) {
   }
 }
 
+/**
+ * Crash-recovery matrix and hazard scenarios. Each crash case is two launches
+ * on one fresh profile (crash, then clean relaunch); each scenario spec gets
+ * its own profile. Every launch is a suite entry in the result artifact.
+ */
+async function runRecoveryScenarios({ reportDir, suites, processCleanup }) {
+  const plan = loadRecoveryPlan();
+  if (expectedRecoverySuiteCount(plan) !== plan.suiteCount) {
+    throw new Error(
+      "e2e/recovery-plan.json suiteCount does not match its crash cases and scenario specs.",
+    );
+  }
+  const evidenceDir = path.join(reportDir, "evidence");
+  fs.rmSync(evidenceDir, { recursive: true, force: true });
+  fs.mkdirSync(evidenceDir, { recursive: true });
+  const runPhase = async (profile, spec, logName, envOverrides) => {
+    const webdriver = await reserveE2eWebdriverPort();
+    try {
+      await runWdio(
+        profile,
+        spec,
+        [],
+        reportDir,
+        {
+          ...envOverrides,
+          ZINNIA_E2E_EVIDENCE_DIR: evidenceDir,
+          // Without this the app and the service fall back to the default
+          // port 4445, which may be held by something else.
+          TAURI_WEBDRIVER_PORT: String(webdriver.port),
+        },
+        webdriver,
+        processCleanup,
+        logName,
+      );
+    } catch (error) {
+      error.logFile = path.join(reportDir, logName);
+      throw error;
+    }
+    suites.push({
+      spec,
+      status: "passed",
+      logFile: path.join(reportDir, logName),
+    });
+  };
+  try {
+    for (const testCase of plan.crashCases) {
+      const retries = [];
+      for (let attempt = 1; ; attempt += 1) {
+        const profile = createE2eProfile();
+        const logName =
+          attempt === 1
+            ? `recovery-${testCase.id}-crash.log`
+            : `recovery-${testCase.id}-crash-attempt${attempt}.log`;
+        try {
+          const info = prepareCrashCase(profile, testCase);
+          const caseEnv = { ZINNIA_E2E_CASE: JSON.stringify(info) };
+          await runPhase(profile, CRASH_SPEC, logName, {
+            ...caseEnv,
+            ZINNIA_E2E_CRASH_AT: testCase.point,
+            ZINNIA_E2E_CRASH_MARKER: info.marker,
+          });
+          if (retries.length > 0) {
+            fs.writeFileSync(
+              path.join(evidenceDir, `${testCase.id}.launch-retries.json`),
+              `${JSON.stringify({ scenario: testCase.id, phase: "launch-retries", retries }, null, 2)}\n`,
+            );
+          }
+          await runPhase(
+            profile,
+            RECOVERY_SPEC,
+            `recovery-${testCase.id}-restart.log`,
+            caseEnv,
+          );
+          break;
+        } catch (error) {
+          // Retry only a crash launch that never reached the main window: the
+          // before-all hook timed out waiting for #app, so no operation ran and
+          // no transaction state exists. Any other failure is final.
+          const log = error.logFile
+            ? fs.readFileSync(error.logFile, "utf8")
+            : "";
+          const startupOnly =
+            /element \("#app"\) still not existing/.test(log) &&
+            !/ZINNIA_E2E_EVIDENCE/.test(log);
+          if (!startupOnly || attempt >= CRASH_LAUNCH_ATTEMPTS) throw error;
+          retries.push({ attempt, log: path.basename(error.logFile) });
+        } finally {
+          cleanupE2eProfile(profile.profileDir);
+        }
+      }
+    }
+    for (const spec of plan.scenarioSpecs) {
+      const profile = createE2eProfile();
+      try {
+        const envOverrides =
+          spec === "./specs/newer-journal.spec.js"
+            ? { ZINNIA_E2E_CASE: JSON.stringify(prepareNewerJournal(profile)) }
+            : {};
+        await runPhase(
+          profile,
+          spec,
+          `${path.basename(spec, ".spec.js")}.log`,
+          envOverrides,
+        );
+      } finally {
+        cleanupE2eProfile(profile.profileDir);
+      }
+    }
+  } finally {
+    fs.writeFileSync(
+      path.join(reportDir, "recovery-scenarios.json"),
+      `${JSON.stringify({ schemaVersion: 1, scenarios: collectEvidence(evidenceDir) }, null, 2)}\n`,
+    );
+  }
+  if (suites.length !== plan.suiteCount) {
+    throw new Error(
+      `E2E ran ${suites.length} suites; e2e/recovery-plan.json expects ${plan.suiteCount}.`,
+    );
+  }
+}
+
 async function main() {
   if (process.env.SKIP_E2E === "1") {
     throw new Error(
@@ -971,6 +1111,7 @@ async function main() {
       processCleanup,
     );
     extractSuite.status = "passed";
+    await runRecoveryScenarios({ reportDir, suites, processCleanup });
     status = "passed";
   } catch (error) {
     failure = error instanceof Error ? error.message : String(error);
@@ -1010,9 +1151,6 @@ async function main() {
   if (runError) throw runError;
 }
 
-if (
-  process.argv[1] &&
-  fileURLToPath(import.meta.url) === path.resolve(process.argv[1])
-) {
+if (process.argv[1] && isDirectExecutionOf(import.meta.url)) {
   await main();
 }
