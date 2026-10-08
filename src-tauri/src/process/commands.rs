@@ -623,6 +623,10 @@ pub(crate) fn mask_password_arg_tokens(args: &mut [String]) {
             // string valid UTF-8 even when the password contained multibyte
             // characters. `as_bytes_mut` is safe here because only ASCII bytes
             // are written.
+            // SAFETY: the branch above checked that the first two bytes are the ASCII `-p` prefix.
+            // Every byte from index 2 on is overwritten with ASCII `*` before `arg` is used again,
+            // so the String is valid UTF-8 when the borrow ends. The `truncate(2)` below then lands
+            // on a char boundary.
             let bytes = unsafe { arg.as_bytes_mut() };
             for byte in bytes.iter_mut().skip(2) {
                 *byte = b'*';
@@ -830,8 +834,8 @@ pub(crate) fn apply_backend_link_switches(args: &mut Vec<String>) {
     }
 }
 
-/// Parsed bundled 7-Zip version from the last successful `probe_7z` (e.g. "26.03").
-pub(crate) const BUNDLED_7Z_VERSION: &str = "26.03";
+/// Bundled 7-Zip version, taken from `assets/7z-provenance.json` by `build.rs`.
+pub(crate) const BUNDLED_7Z_VERSION: &str = env!("ZINNIA_BUNDLED_7Z_VERSION");
 static PROBED_7Z_VERSION: Mutex<Option<String>> = Mutex::new(None);
 
 /// Refuse symlink/reparse *user input paths* for create/update. Nested links
@@ -1857,6 +1861,8 @@ pub async fn run_7z(
     match write_cleanup_journal(&app, &cleanup_plan) {
         Ok(active) => {
             journal_guard = CleanupJournalGuard::new(app.clone(), active);
+            #[cfg(feature = "e2e")]
+            crate::process::e2e_crash::crash_point("after-journal");
         }
         Err(error) => {
             return Err(finalize_preparation_error(
@@ -2266,6 +2272,8 @@ pub async fn run_7z(
                     current_file: Some("Finalizing…".to_string()),
                 },
             );
+            #[cfg(feature = "e2e")]
+            crate::process::e2e_crash::crash_point("before-promote");
             match commit_cleanup(&finalize_app, &finalize_plan) {
                 Ok(strategy) => {
                     if let Some(strategy) = strategy {
@@ -2279,7 +2287,7 @@ pub async fn run_7z(
                     if commit_failure_should_scrub_staging(&finalize_plan, &error) {
                         // Safe orphan scrub (add-mode / no recovery backups).
                         // Retract any partial publishes from the journal BEFORE
-                        // clearing it  -  clearing alone left destinations orphaned
+                        // clearing it; clearing alone left destinations orphaned
                         // when live retract during commit also failed.
                         match rollback_cleanup(&finalize_plan) {
                             Ok(()) => {

@@ -28,6 +28,8 @@ const MAX_POLL_MS: u64 = 2_000;
 const RENAME_EXCL: u32 = 0x0000_0004;
 static DRAIN_SCHEDULED: AtomicBool = AtomicBool::new(false);
 
+// SAFETY: these declarations match macOS <sys/stdio.h> (renameatx_np) and the thread-local errno
+// accessor __error(). Every call site passes live pointers; see the calls below.
 unsafe extern "C" {
     fn renameatx_np(
         fromfd: libc::c_int,
@@ -61,6 +63,8 @@ impl RequestDirectory {
     fn open(path: &std::path::Path) -> Result<Self, String> {
         let path = CString::new(path.as_os_str().as_bytes())
             .map_err(|_| "Finder request directory contains a NUL byte.".to_string())?;
+        // SAFETY: `path` is a live NUL-terminated CString for the call, and open only reads it.
+        // O_NOFOLLOW makes a symlinked final component fail instead of being followed.
         let fd = unsafe {
             libc::open(
                 path.as_ptr(),
@@ -70,6 +74,8 @@ impl RequestDirectory {
         if fd < 0 {
             return Err(std::io::Error::last_os_error().to_string());
         }
+        // SAFETY: `fd` is non-negative (checked above) and was just returned by open, so nothing
+        // else owns it. File takes sole ownership and closes it once.
         let file = unsafe { std::fs::File::from_raw_fd(fd) };
         let metadata = file.metadata().map_err(|error| error.to_string())?;
         if !metadata.is_dir() {
@@ -87,6 +93,9 @@ impl RequestDirectory {
         // making a second scan appear empty. Reopen `.` relative to the held
         // descriptor to get an independent stream without resolving a path.
         let dot = c".";
+        // SAFETY: `self.fd()` is the held request-directory descriptor and outlives this call.
+        // `dot` is a NUL-terminated c"" literal. O_DIRECTORY and O_NOFOLLOW keep the lookup inside
+        // that directory object.
         let scan_fd = unsafe {
             libc::openat(
                 self.fd(),
@@ -97,9 +106,14 @@ impl RequestDirectory {
         if scan_fd < 0 {
             return Err(std::io::Error::last_os_error().to_string());
         }
+        // SAFETY: `scan_fd` is a fresh descriptor (checked non-negative). On success fdopendir
+        // takes ownership, and closedir below closes it. On failure ownership stays with us, and
+        // the next lines close it.
         let directory = unsafe { libc::fdopendir(scan_fd) };
         if directory.is_null() {
             let error = std::io::Error::last_os_error();
+            // SAFETY: fdopendir failed, so it did not take ownership of `scan_fd`. This is the only
+            // close on this path.
             unsafe { libc::close(scan_fd) };
             return Err(error.to_string());
         }
@@ -107,9 +121,17 @@ impl RequestDirectory {
         let result = (|| {
             let mut names = Vec::new();
             loop {
+                // SAFETY: __error returns the calling thread's errno location, which stays valid
+                // for that thread. Clearing it before readdir lets a NULL return be told apart from
+                // end-of-directory.
                 unsafe { *__error() = 0 };
+                // SAFETY: `directory` is a live DIR* from fdopendir, not closed until after this
+                // loop. readdir returns NULL or a pointer valid until the next readdir on this
+                // stream.
                 let entry = unsafe { libc::readdir(directory) };
                 if entry.is_null() {
+                    // SAFETY: same thread-local errno location as the store above, read right after
+                    // readdir returned NULL.
                     let errno = unsafe { *__error() };
                     return if errno == 0 {
                         Ok(names)
@@ -117,6 +139,9 @@ impl RequestDirectory {
                         Err(std::io::Error::from_raw_os_error(errno).to_string())
                     };
                 }
+                // SAFETY: `entry` is non-null and points at a dirent valid until the next readdir.
+                // d_name is NUL-terminated. The CStr is used only in this iteration, and the name
+                // is copied before the next readdir.
                 let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) };
                 let Ok(name) = name.to_str() else {
                     continue;
@@ -126,12 +151,16 @@ impl RequestDirectory {
                 }
             }
         })();
+        // SAFETY: `directory` came from fdopendir and is closed exactly once, after the loop has
+        // finished reading it.
         unsafe { libc::closedir(directory) };
         result
     }
 
     fn open_regular_rw(&self, name: &str) -> Result<(std::fs::File, EntryIdentity), String> {
         let name = request_component(name)?;
+        // SAFETY: `self.fd()` is the live held directory descriptor and `name` is a live
+        // NUL-terminated CString. O_NOFOLLOW rejects a symlink in the final component.
         let fd = unsafe {
             libc::openat(
                 self.fd(),
@@ -142,13 +171,17 @@ impl RequestDirectory {
         if fd < 0 {
             return Err(std::io::Error::last_os_error().to_string());
         }
+        // SAFETY: `fd` is non-negative (checked above), was just returned by openat, and nothing
+        // else owns it. File takes sole ownership.
         let file = unsafe { std::fs::File::from_raw_fd(fd) };
         let metadata = file.metadata().map_err(|error| error.to_string())?;
         if !metadata.is_file() {
             return Err("Finder request entry is not a regular file.".to_string());
         }
+        // SAFETY: `file` is live, so its fd is valid. F_GETFL takes no pointer argument.
         let flags = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETFL) };
         if flags < 0
+            // SAFETY: same live fd. F_SETFL takes an integer value and no pointer.
             || unsafe { libc::fcntl(file.as_raw_fd(), libc::F_SETFL, flags & !libc::O_NONBLOCK) }
                 < 0
         {
@@ -164,6 +197,9 @@ impl RequestDirectory {
     fn named_identity(&self, name: &str) -> Result<EntryIdentity, String> {
         let name = request_component(name)?;
         let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+        // SAFETY: `name` is a live NUL-terminated CString for the call, and `self.fd()` is the held
+        // directory descriptor, which stays open. The statistics buffer is written only on success,
+        // and the struct is read after that check.
         let result = unsafe {
             libc::fstatat(
                 self.fd(),
@@ -175,6 +211,7 @@ impl RequestDirectory {
         if result != 0 {
             return Err(std::io::Error::last_os_error().to_string());
         }
+        // SAFETY: fstatat returned 0, so it fully initialized `stat`.
         let stat = unsafe { stat.assume_init() };
         if stat.st_mode & libc::S_IFMT != libc::S_IFREG {
             return Err("Finder request entry is not a regular file.".to_string());
@@ -193,6 +230,9 @@ impl RequestDirectory {
     fn rename_exclusive(&self, from: &str, to: &str) -> Result<(), String> {
         let from = request_component(from)?;
         let to = request_component(to)?;
+        // SAFETY: `from` and `to` are live NUL-terminated CStrings for the call, and both dirfds
+        // are `self.fd()`, held open for the call. RENAME_EXCL makes the rename fail rather than
+        // replace an existing target. The extern declaration matches macOS renameatx_np(2).
         let result = unsafe {
             renameatx_np(
                 self.fd(),
@@ -211,6 +251,8 @@ impl RequestDirectory {
 
     fn unlink(&self, name: &str) -> Result<(), String> {
         let name = request_component(name)?;
+        // SAFETY: `name` is a live NUL-terminated CString and `self.fd()` is the held directory.
+        // Flags are 0 (no AT_REMOVEDIR), so the call cannot remove a directory.
         if unsafe { libc::unlinkat(self.fd(), name.as_ptr(), 0) } == 0 {
             Ok(())
         } else {
@@ -262,6 +304,9 @@ fn group_container() -> Option<PathBuf> {
     }
     // Foundation returns a NUL-terminated UTF-8 buffer valid for the lifetime
     // of `path`, which is retained until this conversion completes.
+    // SAFETY: `utf8` is the UTF8String buffer of `path`, which is retained until the end of this
+    // function, so the NUL-terminated buffer is valid for this read. The bytes are copied into an
+    // owned PathBuf before `path` is dropped.
     unsafe { CStr::from_ptr(utf8) }
         .to_str()
         .ok()

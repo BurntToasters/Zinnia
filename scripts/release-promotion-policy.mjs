@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 const SHA_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
 const BETA_VERSION_PATTERN =
@@ -797,8 +798,7 @@ async function main() {
   );
 }
 
-const invokedPath = process.argv[1] ? resolve(process.argv[1]) : null;
-if (invokedPath && pathToFileURL(invokedPath).href === import.meta.url) {
+if (isDirectExecutionOf(import.meta.url)) {
   const execution = process.argv.includes("--revalidate-beta-tag")
     ? revalidateAcceptedBetaTag(readPullRequestEvent())
     : main();

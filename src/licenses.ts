@@ -1,4 +1,4 @@
-import { $, escapeHtml, safeHref, trapFocus, releaseFocusTrap } from "./utils";
+import { $, safeHref, trapFocus, releaseFocusTrap } from "./utils";
 
 export interface LicenseEntry {
   licenses: string;
@@ -45,7 +45,7 @@ async function renderLicenses() {
       loadTextFile("/7zip-license.txt"),
     ]);
     const data = { ...(npmLicenses ?? {}), ...(cargoLicenses ?? {}) };
-    container.innerHTML = "";
+    container.replaceChildren();
 
     const sevenZipCard = document.createElement("details");
     sevenZipCard.className = "license-card";
@@ -69,25 +69,35 @@ async function renderLicenses() {
       const card = document.createElement("details");
       card.className = "license-card";
 
-      const href = entry.repository
-        ? escapeHtml(safeHref(entry.repository))
-        : "";
-      const repoLink =
-        href && href !== "#"
-          ? `<a href="${href}" target="_blank" rel="noopener">${escapeHtml(entry.repository!)}</a>`
-          : "N/A";
+      const header = document.createElement("summary");
+      header.className = "license-card__header";
+      const name = document.createElement("strong");
+      name.textContent = key;
+      const tag = document.createElement("span");
+      tag.className = "license-card__tag";
+      tag.textContent = entry.licenses;
+      header.append(name, tag);
 
-      card.innerHTML =
-        `<summary class="license-card__header">` +
-        `<strong>${escapeHtml(key)}</strong><span class="license-card__tag">${escapeHtml(entry.licenses)}</span>` +
-        `</summary>` +
-        `<div class="license-card__body">${repoLink}</div>`;
+      const body = document.createElement("div");
+      body.className = "license-card__body";
+      const href = entry.repository ? safeHref(entry.repository) : "";
+      if (href && href !== "#") {
+        const repoLink = document.createElement("a");
+        repoLink.href = href;
+        repoLink.target = "_blank";
+        repoLink.rel = "noopener";
+        repoLink.textContent = entry.repository!;
+        body.appendChild(repoLink);
+      } else {
+        body.textContent = "N/A";
+      }
+      card.append(header, body);
       container.appendChild(card);
       if (entry.licenseText) {
         const pre = document.createElement("pre");
         pre.className = "license-card__text";
         pre.textContent = entry.licenseText;
-        card.querySelector(".license-card__body")?.appendChild(pre);
+        body.appendChild(pre);
       } else if (
         entry.licenseTextStatus === "not-packaged" ||
         entry.licenseTextStatus === "reviewed-omission"
@@ -97,7 +107,6 @@ async function renderLicenses() {
           entry.licenseTextStatus === "reviewed-omission"
             ? "This crate package and its exact reviewed source revision did not include license text. Declared SPDX terms: "
             : "This crate package did not include license text. Declared SPDX terms: ";
-        const body = card.querySelector(".license-card__body");
         for (const [index, reference] of (
           entry.licenseReferences ?? []
         ).entries()) {
@@ -109,7 +118,7 @@ async function renderLicenses() {
           link.textContent = reference.identifier;
           note.appendChild(link);
         }
-        body?.appendChild(note);
+        body.appendChild(note);
       }
     }
   } catch {

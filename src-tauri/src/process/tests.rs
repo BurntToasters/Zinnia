@@ -103,6 +103,9 @@ fn volume_guid_alias(path: &std::path::Path) -> Option<std::path::PathBuf> {
 
     let input: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
     let mut mount = vec![0u16; 32_768];
+    // SAFETY: `input` is a NUL-terminated UTF-16 buffer that outlives the call.
+    // `mount` is writable for `mount.len()` u16 units, and that length is passed
+    // as the capacity.
     if unsafe { GetVolumePathNameW(input.as_ptr(), mount.as_mut_ptr(), mount.len() as u32) } == 0 {
         return None;
     }
@@ -116,6 +119,9 @@ fn volume_guid_alias(path: &std::path::Path) -> Option<std::path::PathBuf> {
         .chain(Some(0))
         .collect();
     let mut volume = [0u16; 50];
+    // SAFETY: `mount_wide` is NUL-terminated and outlives the call. `volume` is
+    // writable for `volume.len()` u16 units, and that length is passed as the
+    // capacity.
     if unsafe {
         GetVolumeNameForVolumeMountPointW(
             mount_wide.as_ptr(),
@@ -2024,6 +2030,7 @@ fn extract_stage_placement_serializes_and_legacy_journals_remain_sibling_only() 
     let destination = std::path::PathBuf::from("root/destination");
     let stage = destination.join(".zinnia-extract-0123456789abcdef0123456789abcdef");
     let journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
         archive: false,
@@ -2066,6 +2073,7 @@ fn extract_stage_placement_serializes_and_legacy_journals_remain_sibling_only() 
         .expect("destination parent")
         .join(".zinnia-extract-fedcba9876543210fedcba9876543210");
     let mut legacy = serde_json::to_value(CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: sibling.clone(),
         destination: destination.clone(),
         archive: false,
@@ -2082,6 +2090,10 @@ fn extract_stage_placement_serializes_and_legacy_journals_remain_sibling_only() 
         archive_phase: None,
     })
     .expect("serialize legacy base");
+    legacy
+        .as_object_mut()
+        .expect("journal object")
+        .remove("format_version");
     legacy
         .as_object_mut()
         .expect("journal object")
@@ -2394,6 +2406,7 @@ fn sibling_extract_journal_validation_accepts_published_destination() {
     std::fs::write(stage.join("new.txt"), b"new").expect("staged file");
     let stage_identity = super::journal::path_identity(&stage).expect("stage identity");
     let journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
         archive: false,
@@ -4460,6 +4473,7 @@ fn archive_journal_committed_when_promote_finished_and_stage_empty() {
     std::fs::create_dir_all(&stage).expect("stage");
     std::fs::write(&destination, b"published").expect("dest");
     let journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
         archive: true,
@@ -4487,6 +4501,7 @@ fn explicit_extract_phase_controls_cleanup_only_recovery() {
     let destination = std::path::PathBuf::from("root/destination");
     let stage = destination.join(".zinnia-extract-0123456789abcdef0123456789abcdef");
     let mut journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage,
         destination,
         archive: false,
@@ -4521,6 +4536,7 @@ fn missing_new_destination_stage_preserves_ambiguous_destination() {
     std::fs::rename(&stage, &destination).expect("simulate whole-stage publish");
 
     let journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
         archive: false,
@@ -4556,6 +4572,7 @@ fn preserved_ack_predicate_only_accepts_ambiguous_sibling_publish() {
     let stage = root.join(".zinnia-extract-0123456789abcdef0123456789abcdef");
     std::fs::create_dir(&destination).expect("destination");
     let base = || CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
         archive: false,
@@ -4636,6 +4653,7 @@ fn missing_new_destination_stage_preserves_an_identity_mismatch() {
     std::fs::rename(&replacement, &destination).expect("install replacement destination");
 
     let journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
         archive: false,
@@ -4674,6 +4692,7 @@ fn missing_committed_extract_stage_preserves_the_destination() {
         super::journal::path_identity_with_fingerprint(&stage).expect("stage identity");
     std::fs::rename(&stage, &destination).expect("publish stage");
     let journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
         archive: false,
@@ -4709,6 +4728,7 @@ fn extraction_cleanup_preserves_stage_when_sidecar_cleanup_fails() {
     // file. Cleanup must fail before deleting the only remaining stage state.
     std::fs::create_dir(move_plan_path(&stage)).expect("invalid sidecar directory");
     let journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination,
         archive: false,
@@ -4768,6 +4788,7 @@ fn archive_journal_not_committed_while_staged_outputs_remain() {
     std::fs::write(stage.join("out.7z"), b"staged").expect("staged output");
     std::fs::write(&destination, b"partial").expect("partial dest");
     let journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
         archive: true,
@@ -4820,6 +4841,7 @@ fn scrub_retract_removes_partial_archive_publish() {
     std::fs::write(stage.join("out.7z"), b"staged").expect("staged output");
     std::fs::write(&destination, b"partial").expect("partial dest");
     let journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
         archive: true,
@@ -4860,6 +4882,7 @@ fn scrub_retract_ignores_non_archive_journals() {
     let stage = destination.join(".zinnia-extract-0123456789abcdef0123456789abcdef");
     std::fs::create_dir_all(&stage).expect("stage");
     let journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
         archive: false,
@@ -4895,6 +4918,7 @@ fn archive_journal_rollback_preserves_legacy_backup_without_identity() {
     std::fs::write(archive_backup_path(&stage, 0), b"old").expect("backup");
     std::fs::write(&destination, b"new-partial").expect("partial new");
     let journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
         archive: true,
@@ -4935,6 +4959,7 @@ fn archive_journal_rollback_restores_identity_verified_backup() {
     let published_identity =
         super::journal::regular_file_identity_with_fingerprint(&destination).unwrap();
     let journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
         archive: true,
@@ -4980,6 +5005,7 @@ fn archive_journal_rollback_rejects_same_inode_rewritten_backup() {
     let published_identity =
         super::journal::regular_file_identity_with_fingerprint(&destination).unwrap();
     let journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
         archive: true,
@@ -5024,6 +5050,7 @@ fn archive_journal_rollback_rejects_replaced_backup() {
     let published_identity =
         super::journal::regular_file_identity_with_fingerprint(&destination).unwrap();
     let journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
         archive: true,
@@ -5062,6 +5089,7 @@ fn committed_archive_cleanup_rejects_replaced_backup() {
     std::fs::write(&backup, b"attacker replacement").expect("replacement backup");
     std::fs::write(&destination, b"new-committed").expect("committed archive");
     let journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
         archive: true,
@@ -5107,6 +5135,7 @@ fn archive_journal_rollback_continues_after_unpublished_volume_identity() {
         super::journal::regular_file_identity_with_fingerprint(&second_backup).unwrap();
     std::fs::write(&first, b"new-1").expect("published first");
     let journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: root.join("out.7z"),
         archive: true,
@@ -5147,6 +5176,7 @@ fn archive_journal_rollback_preserves_published_volume_without_identity() {
     let backup_identity = super::journal::regular_file_identity_with_fingerprint(&backup).unwrap();
     std::fs::write(&destination, b"new-unrecorded").expect("published");
     let journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
         archive: true,
@@ -5185,6 +5215,7 @@ fn archive_journal_rollback_restores_backup_when_prerecorded_publish_is_missing(
     std::fs::write(&backup, b"old").expect("backup");
     let backup_identity = super::journal::regular_file_identity_with_fingerprint(&backup).unwrap();
     let journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
         archive: true,
@@ -5233,6 +5264,7 @@ fn archive_journal_rollback_preserves_a_replacement_output() {
         "replacement must not inherit the published file identity"
     );
     let journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
         archive: true,
@@ -5272,6 +5304,7 @@ fn archive_journal_rollback_preserves_an_output_modified_in_place() {
         super::journal::regular_file_identity_with_fingerprint(&destination).unwrap();
     std::fs::write(&destination, b"user edit").expect("in-place edit");
     let journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
         archive: true,
@@ -5303,6 +5336,7 @@ fn archive_journal_rollback_retracts_unfingerprinted_matching_output() {
     std::fs::write(&destination, b"published").expect("published output");
     let identity_only = super::journal::regular_file_identity(&destination).unwrap();
     let journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
         archive: true,
@@ -5341,6 +5375,7 @@ fn archive_journal_rollback_preserves_replaced_unfingerprinted_output() {
     std::fs::write(&replacement, b"user replacement").expect("replacement");
     std::fs::rename(&replacement, &destination).expect("replace destination");
     let journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: destination.clone(),
         archive: true,
@@ -5376,6 +5411,7 @@ fn explicit_archive_phase_controls_recovery_across_partial_backup_cleanup() {
     let second_backup_identity =
         super::journal::regular_file_identity_with_fingerprint(&second_backup).unwrap();
     let mut journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination: root.join("out.7z"),
         archive: true,
@@ -5534,6 +5570,7 @@ fn archive_stage_identity_mismatch_is_preserved_during_cleanup() {
     std::fs::create_dir(&stage).expect("replacement stage");
     std::fs::write(stage.join("user.txt"), b"replacement").expect("replacement content");
     let journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination,
         archive: true,
@@ -5570,6 +5607,7 @@ fn legacy_archive_stage_without_identity_fails_closed() {
     std::fs::create_dir_all(&stage).expect("legacy stage");
     std::fs::write(stage.join("legacy.txt"), b"legacy").expect("legacy content");
     let journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination,
         archive: true,
@@ -5642,6 +5680,7 @@ fn extract_stage_identity_mismatch_preserves_stage_and_sidecars() {
     let sidecar = move_plan_path(&stage);
     std::fs::write(&sidecar, b"replacement sidecar").expect("replacement sidecar");
     let journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage: stage.clone(),
         destination,
         archive: false,
@@ -5772,6 +5811,7 @@ fn artifact_extract_journal(
     move_identity_log_identity: Option<super::journal::FileIdentity>,
 ) -> CleanupJournal {
     CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
         stage,
         destination,
         archive: false,
@@ -6363,4 +6403,380 @@ fn slt_preflight_rejects_ambiguous_pathless_listings() {
         );
     }
     assert_slt_archive_members_safe("", "/tmp/empty.7z").expect("empty listing is empty archive");
+}
+
+// Journal format versioning. These tests cover the failure modes listed in the
+// change report: a newer format reaching recovery, scrub, writers, overwrite, or
+// acknowledgment; invalid version values; pre-versioned journals; and stamping.
+
+fn current_journal_format_version() -> u32 {
+    super::journal::CLEANUP_JOURNAL_FORMAT_VERSION
+}
+
+/// Partial archive publish with real stage and destination files. Returns the
+/// root, the journal path, and the journal (with the current format version).
+fn partial_archive_journal_fixture(
+    prefix: &str,
+) -> (std::path::PathBuf, std::path::PathBuf, CleanupJournal) {
+    let root = temp_root(prefix);
+    let stage = root.join(".zinnia-archive-abc");
+    let destination = root.join("out.7z");
+    std::fs::create_dir_all(&stage).expect("stage");
+    std::fs::write(stage.join("out.7z"), b"staged").expect("staged output");
+    std::fs::write(&destination, b"partial").expect("partial dest");
+    let journal = CleanupJournal {
+        format_version: current_journal_format_version(),
+        stage: stage.clone(),
+        destination: destination.clone(),
+        archive: true,
+        extract_stage_placement: None,
+        move_plan_sidecar: false,
+        move_plan_identity: None,
+        move_identity_log_identity: None,
+        previous_archive_family: Vec::new(),
+        previous_archive_identities: Vec::new(),
+        next_archive_family: vec![destination.clone()],
+        next_archive_identities: vec![Some(
+            super::journal::regular_file_identity_with_fingerprint(&destination).unwrap(),
+        )],
+        extract_stage_identity: Some(super::journal::path_identity(&stage).unwrap()),
+        extract_phase: None,
+        archive_phase: Some(ArchiveJournalPhase::InProgress),
+    };
+    let path = root.join("active-transaction.json");
+    (root, path, journal)
+}
+
+/// Write `journal` to `path`. `version` replaces the `format_version` key, and
+/// `None` removes it to simulate a journal written by a pre-versioned build.
+fn write_journal_file(
+    path: &std::path::Path,
+    journal: &CleanupJournal,
+    version: Option<serde_json::Value>,
+) {
+    let mut value = serde_json::to_value(journal).expect("serialize journal");
+    let object = value.as_object_mut().expect("journal object");
+    match version {
+        Some(version) => {
+            object.insert("format_version".to_string(), version);
+        }
+        None => {
+            object.remove("format_version");
+        }
+    }
+    std::fs::write(path, serde_json::to_string(&value).expect("journal json"))
+        .expect("write journal");
+}
+
+#[test]
+fn journal_format_version_missing_decodes_as_pre_versioned() {
+    let (root, _path, journal) = partial_archive_journal_fixture("zinnia-format-missing");
+    let mut value = serde_json::to_value(&journal).expect("serialize journal");
+    value
+        .as_object_mut()
+        .expect("journal object")
+        .remove("format_version");
+    let decoded: CleanupJournal =
+        serde_json::from_value(value).expect("decode pre-versioned journal");
+    assert_eq!(decoded.format_version, 0);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn legacy_journal_without_format_version_still_reads_from_disk() {
+    let (root, path, journal) = partial_archive_journal_fixture("zinnia-format-legacy-read");
+    write_journal_file(&path, &journal, None);
+    let read = super::journal::read_cleanup_journal_at(&path)
+        .expect("legacy journal must still read")
+        .expect("legacy journal present");
+    assert_eq!(read.format_version, 0);
+    assert!(read.archive);
+    assert_eq!(read.archive_phase, Some(ArchiveJournalPhase::InProgress));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn current_format_version_journal_reads_normally() {
+    let (root, path, journal) = partial_archive_journal_fixture("zinnia-format-current-read");
+    write_journal_file(
+        &path,
+        &journal,
+        Some(serde_json::json!(current_journal_format_version())),
+    );
+    let read = super::journal::read_cleanup_journal_at(&path)
+        .expect("current journal must read")
+        .expect("current journal present");
+    assert_eq!(read.format_version, current_journal_format_version());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn newer_journal_format_is_refused_without_touching_files() {
+    for version in [current_journal_format_version() + 1, u32::MAX] {
+        let (root, path, journal) = partial_archive_journal_fixture("zinnia-format-newer");
+        write_journal_file(&path, &journal, Some(serde_json::json!(version)));
+        let journal_before = std::fs::read(&path).expect("journal bytes");
+
+        let error = super::journal::read_cleanup_journal_at(&path)
+            .map(|_| ())
+            .expect_err("newer journal format must be refused");
+        assert!(
+            error.contains("newer Zinnia version"),
+            "unexpected error: {error}"
+        );
+        assert!(error.contains("was preserved"), "unexpected error: {error}");
+        assert_eq!(
+            std::fs::read(&path).expect("journal still present"),
+            journal_before,
+            "refused journal must not be rewritten or deleted"
+        );
+        assert_eq!(
+            std::fs::read(&journal.destination).expect("partial destination"),
+            b"partial"
+        );
+        assert!(journal.stage.join("out.7z").is_file());
+        let _ = std::fs::remove_dir_all(root);
+    }
+}
+
+#[test]
+fn newer_journal_format_is_refused_even_when_fields_look_legacy() {
+    let (root, path, mut journal) = partial_archive_journal_fixture("zinnia-format-newer-legacy");
+    journal.extract_stage_identity = None;
+    journal.archive_phase = None;
+    journal.next_archive_family = Vec::new();
+    journal.next_archive_identities = Vec::new();
+    write_journal_file(
+        &path,
+        &journal,
+        Some(serde_json::json!(current_journal_format_version() + 1)),
+    );
+    let error = super::journal::read_cleanup_journal_at(&path)
+        .map(|_| ())
+        .expect_err("legacy-looking newer journal must be refused");
+    assert!(
+        error.contains("newer Zinnia version"),
+        "unexpected error: {error}"
+    );
+    assert_eq!(
+        std::fs::read(&journal.destination).expect("partial destination"),
+        b"partial"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn invalid_format_version_values_fail_closed() {
+    let (root, path, journal) = partial_archive_journal_fixture("zinnia-format-invalid");
+    for version in [
+        serde_json::json!(-1),
+        serde_json::json!("2"),
+        serde_json::json!(4_294_967_296_u64),
+        serde_json::json!(1.5),
+    ] {
+        write_journal_file(&path, &journal, Some(version.clone()));
+        let error = super::journal::read_cleanup_journal_at(&path)
+            .map(|_| ())
+            .expect_err("invalid format_version must fail closed");
+        assert!(
+            error.contains("Could not parse recovery journal"),
+            "unexpected error for {version}: {error}"
+        );
+        assert!(path.is_file(), "invalid journal must remain for recovery");
+    }
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn scrub_retract_refuses_newer_journal_and_keeps_partial_outputs() {
+    let (root, path, journal) = partial_archive_journal_fixture("zinnia-format-scrub-newer");
+    write_journal_file(
+        &path,
+        &journal,
+        Some(serde_json::json!(current_journal_format_version() + 1)),
+    );
+    let error = retract_scrub_archive_journal_at(&path)
+        .expect_err("scrub must not retract outputs under a newer journal");
+    assert!(
+        error.contains("newer Zinnia version"),
+        "unexpected error: {error}"
+    );
+    assert_eq!(
+        std::fs::read(&journal.destination).expect("partial destination"),
+        b"partial"
+    );
+    assert!(journal.stage.join("out.7z").is_file());
+    assert!(path.is_file(), "newer journal must not be cleared by scrub");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn encoded_journal_always_stamps_current_format_version() {
+    let (root, _path, mut journal) = partial_archive_journal_fixture("zinnia-format-stamp");
+    journal.format_version = 0;
+    let json = super::journal::encode_cleanup_journal(&mut journal).expect("encode journal");
+    assert_eq!(journal.format_version, current_journal_format_version());
+    let value: serde_json::Value = serde_json::from_str(&json).expect("journal json");
+    assert_eq!(
+        value.get("format_version"),
+        Some(&serde_json::json!(current_journal_format_version()))
+    );
+    let decoded: CleanupJournal = serde_json::from_str(&json).expect("decode journal");
+    assert_eq!(decoded.format_version, current_journal_format_version());
+    assert_eq!(decoded.stage, journal.stage);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn acknowledgment_gate_accepts_newer_journal_without_file_access() {
+    // Paths deliberately do not exist: the newer-format branch must not inspect
+    // the filesystem, while an ordinary journal in the same state is refused.
+    let missing = std::path::PathBuf::from("missing-root/destination");
+    let base = |format_version: u32| CleanupJournal {
+        format_version,
+        stage: missing.join(".zinnia-extract-0123456789abcdef0123456789abcdef"),
+        destination: missing.clone(),
+        archive: false,
+        extract_stage_placement: Some(ExtractStagePlacement::Sibling),
+        move_plan_sidecar: true,
+        move_plan_identity: None,
+        move_identity_log_identity: None,
+        previous_archive_family: Vec::new(),
+        previous_archive_identities: Vec::new(),
+        next_archive_family: Vec::new(),
+        next_archive_identities: Vec::new(),
+        extract_stage_identity: Some(super::journal::FileIdentity::Unix {
+            device: 1,
+            inode: 2,
+            fingerprint: None,
+        }),
+        extract_phase: Some(ExtractJournalPhase::InProgress),
+        archive_phase: None,
+    };
+    let newer = base(current_journal_format_version() + 1);
+    assert!(super::recovery::journal_may_be_acknowledged(&newer).expect("newer gate"));
+    let ordinary = base(current_journal_format_version());
+    assert!(!super::recovery::journal_may_be_acknowledged(&ordinary).expect("ordinary gate"));
+}
+
+#[test]
+fn acknowledgment_reader_returns_newer_journal_for_clearing_only() {
+    let (root, path, journal) = partial_archive_journal_fixture("zinnia-format-ack-reader");
+    write_journal_file(
+        &path,
+        &journal,
+        Some(serde_json::json!(current_journal_format_version() + 1)),
+    );
+    let read = super::journal::read_cleanup_journal_any_version_at(&path)
+        .expect("any-version read")
+        .expect("journal present");
+    assert_eq!(read.format_version, current_journal_format_version() + 1);
+    assert!(super::journal::read_cleanup_journal_at(&path).is_err());
+    assert!(path.is_file());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn overwrite_guard_refuses_to_replace_newer_journal() {
+    let (root, path, journal) = partial_archive_journal_fixture("zinnia-format-overwrite");
+    let absent = root.join("absent-transaction.json");
+    super::journal::ensure_journal_path_writable_at(&absent)
+        .expect("absent journal allows a new transaction");
+
+    write_journal_file(
+        &path,
+        &journal,
+        Some(serde_json::json!(current_journal_format_version())),
+    );
+    super::journal::ensure_journal_path_writable_at(&path)
+        .expect("current journal may be replaced by this build");
+
+    write_journal_file(
+        &path,
+        &journal,
+        Some(serde_json::json!(current_journal_format_version() + 1)),
+    );
+    let before = std::fs::read(&path).expect("journal bytes");
+    let error = super::journal::ensure_journal_path_writable_at(&path)
+        .expect_err("newer journal must not be overwritten");
+    assert!(
+        error.contains("newer Zinnia version"),
+        "unexpected error: {error}"
+    );
+    assert_eq!(std::fs::read(&path).expect("journal still present"), before);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn clear_refuses_newer_journal_until_acknowledged() {
+    // The commit guard clears the active journal on write failure, so clearing
+    // must not delete a journal this build cannot read. Only acknowledgment may.
+    let (root, path, journal) = partial_archive_journal_fixture("zinnia-format-clear-newer");
+    write_journal_file(
+        &path,
+        &journal,
+        Some(serde_json::json!(current_journal_format_version() + 1)),
+    );
+    let before = std::fs::read(&path).expect("journal bytes");
+    let error = super::journal::clear_cleanup_journal_at(&path)
+        .expect_err("clear must refuse a newer journal");
+    assert!(
+        error.contains("newer Zinnia version"),
+        "unexpected error: {error}"
+    );
+    assert_eq!(std::fs::read(&path).expect("journal still present"), before);
+
+    super::journal::clear_acknowledged_cleanup_journal_at(&path)
+        .expect("acknowledged removal of newer journal");
+    assert!(!path.exists());
+
+    write_journal_file(
+        &path,
+        &journal,
+        Some(serde_json::json!(current_journal_format_version())),
+    );
+    super::journal::clear_cleanup_journal_at(&path).expect("current journal clears");
+    assert!(!path.exists());
+    super::journal::clear_cleanup_journal_at(&path).expect("absent journal clears as no-op");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+// Real `7z l -slt -ba` output (7-Zip 26.04). ZIP stores a symlink's target as
+// member data, so the listing shows only a Unix `l` mode in `Attributes`.
+const ZIP_SYMLINK_SLT: &str =
+    "Path = linkdir\nAttributes =  lrwxrwxrwx\n\nPath = rel\nAttributes =  lrwxrwxrwx\n";
+const ZIP_PLAIN_SLT: &str = "Path = plain.txt\nAttributes =  -rw-r--r--\nSize = 1\n\nPath = dosfile.txt\nAttributes = A\nSize = 1\n\nPath = sub\nAttributes = D drwxr-xr-x\n";
+
+#[test]
+fn zip_symlink_members_flagged_from_unix_mode_attributes() {
+    assert!(slt_manifest_has_links(ZIP_SYMLINK_SLT, "/tmp/sym.zip").expect("parse"));
+}
+
+#[test]
+fn zip_regular_dir_and_dos_members_are_not_links() {
+    assert!(!slt_manifest_has_links(ZIP_PLAIN_SLT, "/tmp/plain.zip").expect("parse"));
+}
+
+#[test]
+fn attribute_tokens_that_are_not_unix_modes_are_not_links() {
+    for attributes in [
+        "l",
+        "lrwx",
+        "lrwxrwxrwxx",
+        "-lrwxrwxrwx",
+        "AL",
+        "lzzzzzzzzz",
+    ] {
+        let slt = format!("Path = item\nAttributes = {attributes}\nSize = 1\n");
+        assert!(
+            !slt_manifest_has_links(&slt, "/tmp/a.zip").expect("parse"),
+            "{attributes:?} must not count as a symlink mode"
+        );
+    }
+}
+
+#[test]
+fn tar_symbolic_link_records_still_flag_links() {
+    let slt = "Path = l\nSymbolic Link = target.txt\n";
+    assert!(slt_manifest_has_links(slt, "/tmp/sym.tar").expect("parse"));
 }

@@ -1,0 +1,723 @@
+{
+  "schemaVersion": 1,
+  "description": "Canonical archive format list. Each layer is one hand-maintained list in the tree; scripts/check-archive-formats.mjs compares them. Membership true means the list contains the format's extension(s) or MIME on that platform. 'all' values are shorthand for all three platforms. A per-platform object is written only when platforms differ.",
+  "layers": {
+    "frontendArchiveExtensions": {
+      "description": "src/utils.ts ARCHIVE_EXTENSIONS (isArchiveFile): frontend 'is this an archive' check."
+    },
+    "basicPickerExtensions": {
+      "description": "src/basic/wire.ts BASIC_ARCHIVE_EXTENSIONS: file dialog filter (no leading dot; includes 001)."
+    },
+    "openRouting": {
+      "description": "src-tauri/src/launch/open_routing.rs looks_like_archive_extension: launch/open routing."
+    },
+    "splitVolumeDetection": {
+      "description": "Functional split-volume (.001) detection markers: open_routing.rs, dllmain.cpp, FinderSync.swift."
+    },
+    "extractFolderSuffixes": {
+      "description": "Suffixes stripped to derive an extract folder name (open_path.rs SUFFIXES, extract-path.ts). Longest first."
+    },
+    "compoundTarSuffixes": {
+      "description": "Compound TAR suffixes: rejected as create output and treated as streams for list/test (Rust + args.ts) and macOS Finder Sync."
+    },
+    "finderSyncArchiveExtensions": {
+      "description": "macOS FinderSync.swift archiveExtensions Set (single-extension matches)."
+    },
+    "windowsShellArchiveExtensions": {
+      "description": "Windows shell extension dllmain.cpp LooksLikeArchiveExtension kExts."
+    },
+    "windowsClassicArchiveVerbs": {
+      "description": "NSIS classic Extract verbs (register, legacy cleanup, uninstall unregister)."
+    },
+    "windowsProgIdOpenVerb": {
+      "description": "NSIS ZINNIA_REGISTER_PROGID_OPEN: 'Open with Zinnia' label on the ProgId open verb."
+    },
+    "win11ExtractMenuItemTypes": {
+      "description": "Windows 11 sparse package ExtractAppxManifest.xml.template desktop5:ItemType entries."
+    },
+    "fileAssociation": {
+      "description": "Per-platform bundle.fileAssociations (tauri.windows/macos/linux.conf.json). MIME must match."
+    },
+    "fileAssociationBase": {
+      "description": "Base src-tauri/tauri.conf.json bundle.fileAssociations (not used on supported OSes; see asymmetries)."
+    },
+    "linuxMimeTypes": {
+      "description": "Linux MIME type lists: run.rosie.zinnia.desktop, linux/desktop-template.hbs, metainfo mediatype entries."
+    },
+    "defaultHandlerTargets": {
+      "description": "src-tauri/src/platform/mod.rs ARCHIVE_DEFAULT_TARGETS: 'set default app' targets (extension + MIME)."
+    },
+    "splitBaseSuffixes": {
+      "description": "archive_snapshot.rs KNOWN_ARCHIVE_SUFFIXES: base names accepted before a numeric split suffix."
+    },
+    "createOutput": {
+      "description": "src/archive/args.ts OUTPUT_SUFFIXES: formats the app can create."
+    }
+  },
+  "formats": [
+    {
+      "id": "zip",
+      "extensions": [".zip"],
+      "mimeType": "application/zip",
+      "detectFamily": "zip",
+      "description": "ZIP archive.",
+      "layers": {
+        "frontendArchiveExtensions": true,
+        "basicPickerExtensions": true,
+        "openRouting": true,
+        "splitVolumeDetection": false,
+        "extractFolderSuffixes": true,
+        "compoundTarSuffixes": false,
+        "finderSyncArchiveExtensions": {
+          "windows": false,
+          "macos": true,
+          "linux": false
+        },
+        "windowsShellArchiveExtensions": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "windowsClassicArchiveVerbs": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "windowsProgIdOpenVerb": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "win11ExtractMenuItemTypes": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "fileAssociation": true,
+        "fileAssociationBase": true,
+        "linuxMimeTypes": {
+          "windows": false,
+          "macos": false,
+          "linux": true
+        },
+        "defaultHandlerTargets": true,
+        "splitBaseSuffixes": true,
+        "createOutput": true
+      }
+    },
+    {
+      "id": "7z",
+      "extensions": [".7z"],
+      "mimeType": "application/x-7z-compressed",
+      "detectFamily": "7z",
+      "description": "7-Zip archive.",
+      "layers": {
+        "frontendArchiveExtensions": true,
+        "basicPickerExtensions": true,
+        "openRouting": true,
+        "splitVolumeDetection": false,
+        "extractFolderSuffixes": true,
+        "compoundTarSuffixes": false,
+        "finderSyncArchiveExtensions": {
+          "windows": false,
+          "macos": true,
+          "linux": false
+        },
+        "windowsShellArchiveExtensions": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "windowsClassicArchiveVerbs": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "windowsProgIdOpenVerb": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "win11ExtractMenuItemTypes": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "fileAssociation": true,
+        "fileAssociationBase": true,
+        "linuxMimeTypes": {
+          "windows": false,
+          "macos": false,
+          "linux": true
+        },
+        "defaultHandlerTargets": true,
+        "splitBaseSuffixes": true,
+        "createOutput": true
+      }
+    },
+    {
+      "id": "tar",
+      "extensions": [".tar"],
+      "mimeType": "application/x-tar",
+      "detectFamily": "tar",
+      "description": "Uncompressed TAR archive.",
+      "layers": {
+        "frontendArchiveExtensions": true,
+        "basicPickerExtensions": true,
+        "openRouting": true,
+        "splitVolumeDetection": false,
+        "extractFolderSuffixes": true,
+        "compoundTarSuffixes": false,
+        "finderSyncArchiveExtensions": {
+          "windows": false,
+          "macos": true,
+          "linux": false
+        },
+        "windowsShellArchiveExtensions": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "windowsClassicArchiveVerbs": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "windowsProgIdOpenVerb": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "win11ExtractMenuItemTypes": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "fileAssociation": true,
+        "fileAssociationBase": true,
+        "linuxMimeTypes": {
+          "windows": false,
+          "macos": false,
+          "linux": true
+        },
+        "defaultHandlerTargets": true,
+        "splitBaseSuffixes": true,
+        "createOutput": true
+      }
+    },
+    {
+      "id": "gzip",
+      "extensions": [".gz"],
+      "mimeType": "application/gzip",
+      "detectFamily": "gzip",
+      "description": "Single-stream gzip file.",
+      "layers": {
+        "frontendArchiveExtensions": true,
+        "basicPickerExtensions": true,
+        "openRouting": true,
+        "splitVolumeDetection": false,
+        "extractFolderSuffixes": true,
+        "compoundTarSuffixes": false,
+        "finderSyncArchiveExtensions": {
+          "windows": false,
+          "macos": true,
+          "linux": false
+        },
+        "windowsShellArchiveExtensions": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "windowsClassicArchiveVerbs": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "windowsProgIdOpenVerb": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "win11ExtractMenuItemTypes": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "fileAssociation": true,
+        "fileAssociationBase": true,
+        "linuxMimeTypes": {
+          "windows": false,
+          "macos": false,
+          "linux": true
+        },
+        "defaultHandlerTargets": true,
+        "splitBaseSuffixes": true,
+        "createOutput": true
+      }
+    },
+    {
+      "id": "tgz",
+      "extensions": [".tgz"],
+      "mimeType": "application/x-compressed-tar",
+      "detectFamily": null,
+      "description": "gzip-compressed TAR, short extension.",
+      "layers": {
+        "frontendArchiveExtensions": true,
+        "basicPickerExtensions": true,
+        "openRouting": true,
+        "splitVolumeDetection": false,
+        "extractFolderSuffixes": true,
+        "compoundTarSuffixes": true,
+        "finderSyncArchiveExtensions": false,
+        "windowsShellArchiveExtensions": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "windowsClassicArchiveVerbs": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "windowsProgIdOpenVerb": false,
+        "win11ExtractMenuItemTypes": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "fileAssociation": true,
+        "fileAssociationBase": true,
+        "linuxMimeTypes": {
+          "windows": false,
+          "macos": false,
+          "linux": true
+        },
+        "defaultHandlerTargets": true,
+        "splitBaseSuffixes": false,
+        "createOutput": false
+      }
+    },
+    {
+      "id": "tar-gz",
+      "extensions": [".tar.gz"],
+      "mimeType": "application/x-compressed-tar",
+      "detectFamily": null,
+      "description": "gzip-compressed TAR, compound extension.",
+      "layers": {
+        "frontendArchiveExtensions": false,
+        "basicPickerExtensions": false,
+        "openRouting": false,
+        "splitVolumeDetection": false,
+        "extractFolderSuffixes": true,
+        "compoundTarSuffixes": true,
+        "finderSyncArchiveExtensions": false,
+        "windowsShellArchiveExtensions": false,
+        "windowsClassicArchiveVerbs": false,
+        "windowsProgIdOpenVerb": false,
+        "win11ExtractMenuItemTypes": false,
+        "fileAssociation": false,
+        "fileAssociationBase": false,
+        "linuxMimeTypes": false,
+        "defaultHandlerTargets": false,
+        "splitBaseSuffixes": false,
+        "createOutput": false
+      }
+    },
+    {
+      "id": "bzip2",
+      "extensions": [".bz2"],
+      "mimeType": "application/x-bzip2",
+      "detectFamily": "bzip2",
+      "description": "Single-stream bzip2 file.",
+      "layers": {
+        "frontendArchiveExtensions": true,
+        "basicPickerExtensions": true,
+        "openRouting": true,
+        "splitVolumeDetection": false,
+        "extractFolderSuffixes": true,
+        "compoundTarSuffixes": false,
+        "finderSyncArchiveExtensions": {
+          "windows": false,
+          "macos": true,
+          "linux": false
+        },
+        "windowsShellArchiveExtensions": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "windowsClassicArchiveVerbs": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "windowsProgIdOpenVerb": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "win11ExtractMenuItemTypes": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "fileAssociation": true,
+        "fileAssociationBase": true,
+        "linuxMimeTypes": {
+          "windows": false,
+          "macos": false,
+          "linux": true
+        },
+        "defaultHandlerTargets": true,
+        "splitBaseSuffixes": true,
+        "createOutput": true
+      }
+    },
+    {
+      "id": "tbz2",
+      "extensions": [".tbz2"],
+      "mimeType": "application/x-bzip2-compressed-tar",
+      "detectFamily": null,
+      "description": "bzip2-compressed TAR, short extension.",
+      "layers": {
+        "frontendArchiveExtensions": true,
+        "basicPickerExtensions": true,
+        "openRouting": true,
+        "splitVolumeDetection": false,
+        "extractFolderSuffixes": true,
+        "compoundTarSuffixes": true,
+        "finderSyncArchiveExtensions": false,
+        "windowsShellArchiveExtensions": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "windowsClassicArchiveVerbs": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "windowsProgIdOpenVerb": false,
+        "win11ExtractMenuItemTypes": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "fileAssociation": true,
+        "fileAssociationBase": true,
+        "linuxMimeTypes": {
+          "windows": false,
+          "macos": false,
+          "linux": true
+        },
+        "defaultHandlerTargets": true,
+        "splitBaseSuffixes": false,
+        "createOutput": false
+      }
+    },
+    {
+      "id": "tar-bz2",
+      "extensions": [".tar.bz2"],
+      "mimeType": "application/x-bzip2-compressed-tar",
+      "detectFamily": null,
+      "description": "bzip2-compressed TAR, compound extension.",
+      "layers": {
+        "frontendArchiveExtensions": false,
+        "basicPickerExtensions": false,
+        "openRouting": false,
+        "splitVolumeDetection": false,
+        "extractFolderSuffixes": true,
+        "compoundTarSuffixes": true,
+        "finderSyncArchiveExtensions": false,
+        "windowsShellArchiveExtensions": false,
+        "windowsClassicArchiveVerbs": false,
+        "windowsProgIdOpenVerb": false,
+        "win11ExtractMenuItemTypes": false,
+        "fileAssociation": false,
+        "fileAssociationBase": false,
+        "linuxMimeTypes": false,
+        "defaultHandlerTargets": false,
+        "splitBaseSuffixes": false,
+        "createOutput": false
+      }
+    },
+    {
+      "id": "xz",
+      "extensions": [".xz"],
+      "mimeType": "application/x-xz",
+      "detectFamily": "xz",
+      "description": "Single-stream xz file.",
+      "layers": {
+        "frontendArchiveExtensions": true,
+        "basicPickerExtensions": true,
+        "openRouting": true,
+        "splitVolumeDetection": false,
+        "extractFolderSuffixes": true,
+        "compoundTarSuffixes": false,
+        "finderSyncArchiveExtensions": {
+          "windows": false,
+          "macos": true,
+          "linux": false
+        },
+        "windowsShellArchiveExtensions": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "windowsClassicArchiveVerbs": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "windowsProgIdOpenVerb": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "win11ExtractMenuItemTypes": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "fileAssociation": true,
+        "fileAssociationBase": true,
+        "linuxMimeTypes": {
+          "windows": false,
+          "macos": false,
+          "linux": true
+        },
+        "defaultHandlerTargets": true,
+        "splitBaseSuffixes": true,
+        "createOutput": true
+      }
+    },
+    {
+      "id": "txz",
+      "extensions": [".txz"],
+      "mimeType": "application/x-xz-compressed-tar",
+      "detectFamily": null,
+      "description": "xz-compressed TAR, short extension.",
+      "layers": {
+        "frontendArchiveExtensions": true,
+        "basicPickerExtensions": true,
+        "openRouting": true,
+        "splitVolumeDetection": false,
+        "extractFolderSuffixes": true,
+        "compoundTarSuffixes": true,
+        "finderSyncArchiveExtensions": false,
+        "windowsShellArchiveExtensions": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "windowsClassicArchiveVerbs": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "windowsProgIdOpenVerb": false,
+        "win11ExtractMenuItemTypes": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "fileAssociation": true,
+        "fileAssociationBase": true,
+        "linuxMimeTypes": {
+          "windows": false,
+          "macos": false,
+          "linux": true
+        },
+        "defaultHandlerTargets": true,
+        "splitBaseSuffixes": false,
+        "createOutput": false
+      }
+    },
+    {
+      "id": "tar-xz",
+      "extensions": [".tar.xz"],
+      "mimeType": "application/x-xz-compressed-tar",
+      "detectFamily": null,
+      "description": "xz-compressed TAR, compound extension.",
+      "layers": {
+        "frontendArchiveExtensions": false,
+        "basicPickerExtensions": false,
+        "openRouting": false,
+        "splitVolumeDetection": false,
+        "extractFolderSuffixes": true,
+        "compoundTarSuffixes": true,
+        "finderSyncArchiveExtensions": false,
+        "windowsShellArchiveExtensions": false,
+        "windowsClassicArchiveVerbs": false,
+        "windowsProgIdOpenVerb": false,
+        "win11ExtractMenuItemTypes": false,
+        "fileAssociation": false,
+        "fileAssociationBase": false,
+        "linuxMimeTypes": false,
+        "defaultHandlerTargets": false,
+        "splitBaseSuffixes": false,
+        "createOutput": false
+      }
+    },
+    {
+      "id": "rar",
+      "extensions": [".rar"],
+      "mimeType": "application/vnd.rar",
+      "detectFamily": "rar",
+      "description": "RAR archive (read-only; 7-Zip cannot create RAR).",
+      "layers": {
+        "frontendArchiveExtensions": true,
+        "basicPickerExtensions": true,
+        "openRouting": true,
+        "splitVolumeDetection": false,
+        "extractFolderSuffixes": true,
+        "compoundTarSuffixes": false,
+        "finderSyncArchiveExtensions": {
+          "windows": false,
+          "macos": true,
+          "linux": false
+        },
+        "windowsShellArchiveExtensions": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "windowsClassicArchiveVerbs": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "windowsProgIdOpenVerb": false,
+        "win11ExtractMenuItemTypes": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "fileAssociation": true,
+        "fileAssociationBase": false,
+        "linuxMimeTypes": {
+          "windows": false,
+          "macos": false,
+          "linux": true
+        },
+        "defaultHandlerTargets": true,
+        "splitBaseSuffixes": false,
+        "createOutput": false
+      }
+    },
+    {
+      "id": "split-volume",
+      "extensions": [".001"],
+      "mimeType": null,
+      "detectFamily": null,
+      "description": "First volume of a split archive (name.7z.001, or bare name.001 with a sibling name.002).",
+      "layers": {
+        "frontendArchiveExtensions": false,
+        "basicPickerExtensions": true,
+        "openRouting": false,
+        "splitVolumeDetection": true,
+        "extractFolderSuffixes": false,
+        "compoundTarSuffixes": false,
+        "finderSyncArchiveExtensions": {
+          "windows": false,
+          "macos": true,
+          "linux": false
+        },
+        "windowsShellArchiveExtensions": false,
+        "windowsClassicArchiveVerbs": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "windowsProgIdOpenVerb": false,
+        "win11ExtractMenuItemTypes": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
+        "fileAssociation": false,
+        "fileAssociationBase": false,
+        "linuxMimeTypes": false,
+        "defaultHandlerTargets": false,
+        "splitBaseSuffixes": false,
+        "createOutput": false
+      }
+    }
+  ],
+  "asymmetries": [
+    {
+      "layer": "frontendArchiveExtensions",
+      "formats": ["tar-gz", "tar-bz2", "tar-xz"],
+      "note": "Compound forms are not listed. isArchiveFile uses endsWith, so .tar.gz is caught by .gz."
+    },
+    {
+      "layer": "frontendArchiveExtensions",
+      "formats": ["split-volume"],
+      "note": "Frontend isArchiveFile does not treat .001 as an archive. Split sets reach Zinnia through the picker and Rust routing."
+    },
+    {
+      "layer": "openRouting",
+      "formats": ["tar-gz", "tar-bz2", "tar-xz"],
+      "note": "Compound forms are not listed. endsWith on .gz/.bz2/.xz covers them. The split-volume check is separate (splitVolumeDetection)."
+    },
+    {
+      "layer": "openRouting",
+      "formats": ["rar"],
+      "note": "ARCHITECTURE.md says .rar routing is Windows-only. open_routing.rs has no platform gate, so .rar is routed on every OS. This records the code."
+    },
+    {
+      "layer": "fileAssociation",
+      "formats": ["tar-gz", "tar-bz2", "tar-xz"],
+      "note": "OS file associations use the short forms (.tgz/.tbz2/.txz). Compound .tar.* extensions are not registered."
+    },
+    {
+      "layer": "fileAssociation",
+      "formats": ["split-volume"],
+      "note": "No OS file association for .001 on any platform. Windows reaches split sets through the NSIS and Win11 verbs and the shell DLL."
+    },
+    {
+      "layer": "fileAssociationBase",
+      "formats": ["rar"],
+      "note": "Base tauri.conf.json omits .rar. Each platform file replaces the whole array (Tauri merges arrays by replacement) and includes .rar, so the base list is not used on a supported OS."
+    },
+    {
+      "layer": "windowsProgIdOpenVerb",
+      "formats": ["rar", "tgz", "tbz2", "txz", "split-volume"],
+      "note": "The NSIS ProgId macro writes the 'Open with Zinnia' label only for the six classic formats."
+    },
+    {
+      "layer": "finderSyncArchiveExtensions",
+      "formats": ["tgz", "tbz2", "txz"],
+      "note": "Not in the Set. They match only through the compoundTarSuffixes hasSuffix list in isArchiveURL."
+    },
+    {
+      "layer": "finderSyncArchiveExtensions",
+      "formats": ["tar-gz", "tar-bz2", "tar-xz"],
+      "note": "Not in the Set. pathExtension is gz/bz2/xz, which is in the Set, so they route as gzip/bzip2/xz."
+    },
+    {
+      "layer": "splitBaseSuffixes",
+      "formats": ["rar", "tar-gz", "tar-bz2", "tar-xz", "tgz", "tbz2", "txz"],
+      "note": "Base names with these suffixes are not accepted before a numeric volume suffix. RAR has its own part/legacy rules in the same file."
+    },
+    {
+      "layer": "createOutput",
+      "formats": [
+        "rar",
+        "tgz",
+        "tbz2",
+        "txz",
+        "tar-gz",
+        "tar-bz2",
+        "tar-xz",
+        "split-volume"
+      ],
+      "note": "Not creatable. RAR cannot be created with 7-Zip, and compound TAR output is rejected (compoundTarSuffixes)."
+    },
+    {
+      "layer": null,
+      "formats": ["tgz", "tbz2", "txz", "tar-gz", "tar-bz2", "tar-xz"],
+      "note": "detectFamily is null. archive_detect.rs has no explicit arm for these. The generic arm accepts any known signature or tar, so no family check runs."
+    }
+  ]
+}

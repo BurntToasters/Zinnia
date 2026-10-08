@@ -12,11 +12,11 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 pub(crate) fn open_directory_nofollow(path: &Path) -> io::Result<std::fs::File> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        let directory = std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(path)?;
+        use rustix::fs::OFlags;
+        let directory = open_unix_path(
+            path,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        )?;
         if !directory.metadata()?.is_dir() {
             return Err(io::Error::other("Staging path is not a directory."));
         }
@@ -145,6 +145,8 @@ struct NtObjectAttributes {
 
 #[cfg(windows)]
 #[link(name = "ntdll")]
+// SAFETY: these ntdll declarations mirror the documented NtCreateFile and RtlNtStatusToDosError
+// prototypes. Every call passes pointers to locals that live for the call; see the call sites.
 unsafe extern "system" {
     fn NtCreateFile(
         file_handle: *mut windows_sys::Win32::Foundation::HANDLE,
@@ -221,6 +223,12 @@ fn create_stage_directory_windows(
         information: 0,
     };
     let mut handle: HANDLE = std::ptr::null_mut();
+    // SAFETY: `object_attributes` points at `object_name`, which points at `name_wide`, a
+    // NUL-terminated buffer whose byte length is `byte_len`; all are locals that outlive the call.
+    // RootDirectory is `parent_directory`, an open handle owned by this function.
+    // `security_descriptor` is null or a live self-relative descriptor from the caller. `io_status`
+    // and `handle` are writable out-parameters of the declared types, and NtCreateFile keeps no
+    // pointer after returning.
     let status = unsafe {
         NtCreateFile(
             &mut handle,
@@ -237,6 +245,7 @@ fn create_stage_directory_windows(
         )
     };
     if status < 0 {
+        // SAFETY: RtlNtStatusToDosError takes the NTSTATUS by value and has no pointer arguments.
         let code = unsafe { RtlNtStatusToDosError(status) };
         return Err(io::Error::from_raw_os_error(code as i32));
     }
@@ -245,6 +254,8 @@ fn create_stage_directory_windows(
             "Windows created a staging directory without returning its handle.",
         ));
     }
+    // SAFETY: `handle` came from a successful NtCreateFile and was checked for null and
+    // INVALID_HANDLE_VALUE above. Nothing else owns it, so OwnedHandle closes it exactly once.
     let owned = unsafe { OwnedHandle::from_raw_handle(handle as _) };
     Ok(std::fs::File::from(owned))
 }
@@ -255,24 +266,21 @@ fn create_stage_directory_in_held_parent(
     name: &std::ffi::OsStr,
     mode: libc::mode_t,
 ) -> io::Result<std::fs::File> {
-    use std::os::fd::AsRawFd as _;
-    use std::os::unix::fs::OpenOptionsExt as _;
+    use rustix::fs::{Mode, OFlags};
 
-    let parent_directory = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
-        .open(parent)?;
+    let parent_directory = open_unix_path(
+        parent,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+    )?;
     let name = unix_component(name)?;
-    if unsafe { libc::mkdirat(parent_directory.as_raw_fd(), name.as_ptr(), mode) } != 0 {
-        return Err(io::Error::last_os_error());
-    }
+    rustix::fs::mkdirat(&parent_directory, &name, Mode::from_raw_mode(mode))?;
     // Directory creation has no portable create-and-return-handle operation.
     // Open immediately by one component relative to the still-held parent, then
     // prove that the public entry and returned handle identify the same object.
     // Ownership is recorded only from this handle, never from a later path stat.
-    let directory = open_directory_relative(parent_directory.as_raw_fd(), &name)?;
+    let directory = open_directory_relative(&parent_directory, &name)?;
     let opened = stat_open_file(&directory)?;
-    let named = stat_named_entry(parent_directory.as_raw_fd(), &name)?;
+    let named = stat_named_entry(&parent_directory, &name)?;
     if !same_unix_object(&opened, &named) || opened.st_mode & libc::S_IFMT != libc::S_IFDIR {
         return Err(io::Error::other(
             "New staging directory changed while its creation handle was acquired.",
@@ -346,55 +354,56 @@ pub(crate) fn create_inheriting_stage_dir_open_in(
 /// a private 0o700 stage does not leave a permanently restrictive directory.
 #[cfg(unix)]
 pub fn apply_parent_directory_mode(path: &Path) -> io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
+    use rustix::fs::{Mode, OFlags};
+    use std::os::unix::ffi::OsStrExt;
 
     let parent = path
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no parent"))?;
+    if path.as_os_str().as_bytes().contains(&0) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "path has interior NUL",
+        ));
+    }
     // Re-open the publish target with O_NOFOLLOW and read its mode from that
     // fd, so a symlink swap after the rename cannot redirect the chmod to an
     // outside victim. Compare device/inode to reject a swapped path.
-    use std::os::unix::ffi::OsStrExt;
-    let c_path = std::ffi::CString::new(path.as_os_str().as_bytes())
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path has interior NUL"))?;
-    let fd = unsafe {
-        libc::open(
-            c_path.as_ptr(),
-            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-        )
-    };
-    if fd < 0 {
-        return Err(io::Error::last_os_error());
+    let directory = rustix::fs::open(
+        path,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )?;
+    copy_parent_mode_to_held_directory(&directory, parent)
+}
+
+#[cfg(unix)]
+fn copy_parent_mode_to_held_directory(
+    directory: &rustix::fd::OwnedFd,
+    parent: &Path,
+) -> io::Result<()> {
+    use rustix::fs::Mode;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let st = rustix::fs::fstat(directory)?;
+    if st.st_mode & libc::S_IFMT != libc::S_IFDIR {
+        return Err(io::Error::other("publish target is not a directory"));
     }
-    let result = (|| -> io::Result<()> {
-        let mut st = unsafe { std::mem::zeroed::<libc::stat>() };
-        if unsafe { libc::fstat(fd, &mut st) } != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        if st.st_mode & libc::S_IFMT != libc::S_IFDIR {
-            return Err(io::Error::other("publish target is not a directory"));
-        }
-        let parent_metadata = std::fs::metadata(parent)?;
-        // Refuse if `path` and `parent` are the same inode (path == parent).
-        use std::os::unix::fs::MetadataExt;
-        if parent_metadata.dev() as u64 == st.st_dev as u64
-            && parent_metadata.ino() as u64 == st.st_ino as u64
-        {
-            return Err(io::Error::other(
-                "publish target and its parent are the same directory",
-            ));
-        }
-        let parent_mode = parent_metadata.permissions().mode();
-        // mode_t is u16 on macOS; u32::from is a no-op on Linux.
-        #[allow(clippy::useless_conversion)]
-        let mode = (parent_mode & 0o777) | (u32::from(st.st_mode) & 0o7000);
-        if unsafe { libc::fchmod(fd, mode as libc::mode_t) } != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(())
-    })();
-    unsafe { libc::close(fd) };
-    result
+    let parent_metadata = std::fs::metadata(parent)?;
+    // Refuse if `path` and `parent` are the same inode (path == parent).
+    if parent_metadata.dev() as u64 == st.st_dev as u64
+        && parent_metadata.ino() as u64 == st.st_ino as u64
+    {
+        return Err(io::Error::other(
+            "publish target and its parent are the same directory",
+        ));
+    }
+    let parent_mode = parent_metadata.permissions().mode();
+    // mode_t is u16 on macOS; u32::from is a no-op on Linux.
+    #[allow(clippy::useless_conversion)]
+    let mode = (parent_mode & 0o777) | (u32::from(st.st_mode) & 0o7000);
+    rustix::fs::fchmod(directory, Mode::from_raw_mode(mode as _))?;
+    Ok(())
 }
 
 #[cfg(not(unix))]
@@ -457,64 +466,45 @@ fn unix_component(value: &std::ffi::OsStr) -> io::Result<std::ffi::CString> {
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "file name contains NUL"))
 }
 
+/// Open a path-based entry with the exact flags supplied by the caller. A path
+/// containing NUL is rejected before any syscall, with the same error kind and
+/// message std uses for `OpenOptions::open`.
+#[cfg(unix)]
+fn open_unix_path(path: &Path, flags: rustix::fs::OFlags) -> io::Result<std::fs::File> {
+    use std::os::unix::ffi::OsStrExt as _;
+    if path.as_os_str().as_bytes().contains(&0) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "file name contained an unexpected NUL byte",
+        ));
+    }
+    let fd = rustix::fs::open(path, flags, rustix::fs::Mode::empty())?;
+    Ok(std::fs::File::from(fd))
+}
+
+/// Atomically rename one component to another inside one held directory with
+/// no-replace semantics: Linux `RENAME_NOREPLACE`, macOS `RENAME_EXCL`.
 #[cfg(unix)]
 fn rename_relative_no_replace(
-    directory_fd: std::os::fd::RawFd,
+    directory: &std::fs::File,
     source: &std::ffi::CStr,
     target: &std::ffi::CStr,
 ) -> io::Result<()> {
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "android"
+    ))]
     {
-        unsafe extern "C" {
-            fn renameatx_np(
-                fromfd: libc::c_int,
-                from: *const libc::c_char,
-                tofd: libc::c_int,
-                to: *const libc::c_char,
-                flags: libc::c_uint,
-            ) -> libc::c_int;
-        }
-        const RENAME_EXCL: libc::c_uint = 0x0000_0004;
-        if unsafe {
-            renameatx_np(
-                directory_fd,
-                source.as_ptr(),
-                directory_fd,
-                target.as_ptr(),
-                RENAME_EXCL,
-            )
-        } == 0
-        {
-            return Ok(());
-        }
-        Err(io::Error::last_os_error())
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    {
-        unsafe extern "C" {
-            fn renameat2(
-                olddirfd: libc::c_int,
-                oldpath: *const libc::c_char,
-                newdirfd: libc::c_int,
-                newpath: *const libc::c_char,
-                flags: libc::c_uint,
-            ) -> libc::c_int;
-        }
-        const RENAME_NOREPLACE: libc::c_uint = 1;
-        if unsafe {
-            renameat2(
-                directory_fd,
-                source.as_ptr(),
-                directory_fd,
-                target.as_ptr(),
-                RENAME_NOREPLACE,
-            )
-        } == 0
-        {
-            return Ok(());
-        }
-        Err(io::Error::last_os_error())
+        use rustix::fs::{renameat_with, RenameFlags};
+        Ok(renameat_with(
+            directory,
+            source,
+            directory,
+            target,
+            RenameFlags::NOREPLACE,
+        )?)
     }
 
     #[cfg(not(any(
@@ -524,7 +514,7 @@ fn rename_relative_no_replace(
         target_os = "android"
     )))]
     {
-        let _ = (directory_fd, source, target);
+        let _ = (directory, source, target);
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "exclusive descriptor-relative rename is unavailable",
@@ -533,37 +523,24 @@ fn rename_relative_no_replace(
 }
 
 #[cfg(unix)]
-fn stat_open_file(file: &std::fs::File) -> io::Result<libc::stat> {
-    use std::os::fd::AsRawFd as _;
-    let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
-    if unsafe { libc::fstat(file.as_raw_fd(), stat.as_mut_ptr()) } != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(unsafe { stat.assume_init() })
+fn stat_open_file(file: &std::fs::File) -> io::Result<rustix::fs::Stat> {
+    Ok(rustix::fs::fstat(file)?)
 }
 
 #[cfg(unix)]
 fn stat_named_entry(
-    directory_fd: std::os::fd::RawFd,
+    directory: &std::fs::File,
     name: &std::ffi::CStr,
-) -> io::Result<libc::stat> {
-    let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
-    if unsafe {
-        libc::fstatat(
-            directory_fd,
-            name.as_ptr(),
-            stat.as_mut_ptr(),
-            libc::AT_SYMLINK_NOFOLLOW,
-        )
-    } != 0
-    {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(unsafe { stat.assume_init() })
+) -> io::Result<rustix::fs::Stat> {
+    Ok(rustix::fs::statat(
+        directory,
+        name,
+        rustix::fs::AtFlags::SYMLINK_NOFOLLOW,
+    )?)
 }
 
 #[cfg(unix)]
-fn same_unix_object(left: &libc::stat, right: &libc::stat) -> bool {
+fn same_unix_object(left: &rustix::fs::Stat, right: &rustix::fs::Stat) -> bool {
     left.st_dev == right.st_dev
         && left.st_ino == right.st_ino
         && left.st_mode & libc::S_IFMT == right.st_mode & libc::S_IFMT
@@ -571,60 +548,50 @@ fn same_unix_object(left: &libc::stat, right: &libc::stat) -> bool {
 
 #[cfg(unix)]
 fn open_regular_relative(
-    directory_fd: std::os::fd::RawFd,
+    directory: &std::fs::File,
     name: &std::ffi::CStr,
 ) -> io::Result<std::fs::File> {
-    use std::os::fd::FromRawFd as _;
-    let fd = unsafe {
-        libc::openat(
-            directory_fd,
-            name.as_ptr(),
-            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK,
-        )
-    };
-    if fd < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    let file = unsafe { std::fs::File::from_raw_fd(fd) };
+    use rustix::fs::{Mode, OFlags};
+    let fd = rustix::fs::openat(
+        directory,
+        name,
+        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+        Mode::empty(),
+    )?;
+    let file = std::fs::File::from(fd);
     let stat = stat_open_file(&file)?;
     if stat.st_mode & libc::S_IFMT != libc::S_IFREG {
         return Err(io::Error::other("cleanup entry is not a regular file"));
     }
-    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-    if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags & !libc::O_NONBLOCK) } < 0 {
-        return Err(io::Error::last_os_error());
-    }
+    let flags = rustix::fs::fcntl_getfl(&file)?;
+    rustix::fs::fcntl_setfl(&file, flags.difference(OFlags::NONBLOCK))?;
     Ok(file)
 }
 
 #[cfg(unix)]
 fn open_directory_relative(
-    directory_fd: std::os::fd::RawFd,
+    directory: &std::fs::File,
     name: &std::ffi::CStr,
 ) -> io::Result<std::fs::File> {
-    use std::os::fd::FromRawFd as _;
-    let fd = unsafe {
-        libc::openat(
-            directory_fd,
-            name.as_ptr(),
-            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
-        )
-    };
-    if fd < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(unsafe { std::fs::File::from_raw_fd(fd) })
+    use rustix::fs::{Mode, OFlags};
+    let fd = rustix::fs::openat(
+        directory,
+        name,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+        Mode::empty(),
+    )?;
+    Ok(std::fs::File::from(fd))
 }
 
 #[cfg(unix)]
 fn restore_quarantine<T>(
-    directory_fd: std::os::fd::RawFd,
+    directory: &std::fs::File,
     quarantine: &std::ffi::CStr,
     original: &std::ffi::CStr,
     display_path: &Path,
     reason: &str,
 ) -> io::Result<T> {
-    match rename_relative_no_replace(directory_fd, quarantine, original) {
+    match rename_relative_no_replace(directory, quarantine, original) {
         Ok(()) => Err(io::Error::other(reason.to_string())),
         Err(restore_error) => Err(io::Error::other(format!(
             "{reason} The entry was preserved beside {} under {} because its original name could not be restored: {restore_error}",
@@ -646,8 +613,7 @@ where
 {
     #[cfg(unix)]
     {
-        use std::os::fd::AsRawFd as _;
-        use std::os::unix::fs::OpenOptionsExt as _;
+        use rustix::fs::{AtFlags, OFlags};
 
         let parent = path
             .parent()
@@ -657,11 +623,11 @@ where
             .file_name()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?;
         let original = unix_component(original_os)?;
-        let directory = std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(parent)?;
-        let source = match open_regular_relative(directory.as_raw_fd(), &original) {
+        let directory = open_unix_path(
+            parent,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        )?;
+        let source = match open_regular_relative(&directory, &original) {
             Ok(source) => source,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
             Err(error) => return Err(error),
@@ -670,12 +636,12 @@ where
 
         let quarantine_name = quarantine_component()?;
         let quarantine = unix_component(std::ffi::OsStr::new(&quarantine_name))?;
-        rename_relative_no_replace(directory.as_raw_fd(), &original, &quarantine)?;
-        let mut quarantined = match open_regular_relative(directory.as_raw_fd(), &quarantine) {
+        rename_relative_no_replace(&directory, &original, &quarantine)?;
+        let mut quarantined = match open_regular_relative(&directory, &quarantine) {
             Ok(file) => file,
             Err(error) => {
                 return restore_quarantine(
-                    directory.as_raw_fd(),
+                    &directory,
                     &quarantine,
                     &original,
                     path,
@@ -686,7 +652,7 @@ where
         let quarantine_stat = stat_open_file(&quarantined)?;
         if !same_unix_object(&source_stat, &quarantine_stat) {
             return restore_quarantine(
-                directory.as_raw_fd(),
+                &directory,
                 &quarantine,
                 &original,
                 path,
@@ -696,26 +662,24 @@ where
         drop(source);
         if !verify(&mut quarantined)? {
             return restore_quarantine(
-                directory.as_raw_fd(),
+                &directory,
                 &quarantine,
                 &original,
                 path,
                 "Quarantined cleanup entry did not match its recorded identity and was preserved.",
             );
         }
-        let named_stat = stat_named_entry(directory.as_raw_fd(), &quarantine)?;
+        let named_stat = stat_named_entry(&directory, &quarantine)?;
         if !same_unix_object(&quarantine_stat, &named_stat) {
             return restore_quarantine(
-                directory.as_raw_fd(),
+                &directory,
                 &quarantine,
                 &original,
                 path,
                 "Quarantined cleanup entry changed during verification and was preserved.",
             );
         }
-        if unsafe { libc::unlinkat(directory.as_raw_fd(), quarantine.as_ptr(), 0) } != 0 {
-            return Err(io::Error::last_os_error());
-        }
+        rustix::fs::unlinkat(&directory, &quarantine, AtFlags::empty())?;
         sync_file_best_effort(&directory).map_err(io::Error::other)?;
         Ok(true)
     }
@@ -808,54 +772,22 @@ where
 
 #[cfg(unix)]
 fn remove_directory_contents_relative(directory: &std::fs::File) -> io::Result<()> {
-    use std::os::fd::AsRawFd as _;
+    use rustix::fs::{AtFlags, Dir};
 
-    let duplicate = unsafe { libc::dup(directory.as_raw_fd()) };
-    if duplicate < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    let stream = unsafe { libc::fdopendir(duplicate) };
-    if stream.is_null() {
-        let error = io::Error::last_os_error();
-        unsafe { libc::close(duplicate) };
-        return Err(error);
-    }
-    let result = (|| loop {
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        unsafe {
-            *libc::__error() = 0;
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-        unsafe {
-            *libc::__errno_location() = 0;
-        }
-        let entry = unsafe { libc::readdir(stream) };
-        if entry.is_null() {
-            let errno = {
-                #[cfg(any(target_os = "macos", target_os = "ios"))]
-                unsafe {
-                    *libc::__error()
-                }
-                #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-                unsafe {
-                    *libc::__errno_location()
-                }
-            };
-            return if errno == 0 {
-                Ok(())
-            } else {
-                Err(io::Error::from_raw_os_error(errno))
-            };
-        }
-        let name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()) };
+    // `Dir::read_from` opens its own descriptor for the held directory, so the
+    // iteration state is independent of `directory` and closes on drop.
+    let entries = Dir::read_from(directory)?;
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name();
         if name.to_bytes() == b"." || name.to_bytes() == b".." {
             continue;
         }
-        let stat = stat_named_entry(directory.as_raw_fd(), name)?;
+        let stat = stat_named_entry(directory, name)?;
         if stat.st_mode & libc::S_IFMT == libc::S_IFDIR {
-            let child = open_directory_relative(directory.as_raw_fd(), name)?;
+            let child = open_directory_relative(directory, name)?;
             remove_directory_contents_relative(&child)?;
-            let named_after = stat_named_entry(directory.as_raw_fd(), name)?;
+            let named_after = stat_named_entry(directory, name)?;
             let opened = stat_open_file(&child)?;
             if !same_unix_object(&named_after, &opened) {
                 return Err(io::Error::other(
@@ -863,17 +795,12 @@ fn remove_directory_contents_relative(directory: &std::fs::File) -> io::Result<(
                 ));
             }
             drop(child);
-            if unsafe { libc::unlinkat(directory.as_raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR) }
-                != 0
-            {
-                return Err(io::Error::last_os_error());
-            }
-        } else if unsafe { libc::unlinkat(directory.as_raw_fd(), name.as_ptr(), 0) } != 0 {
-            return Err(io::Error::last_os_error());
+            rustix::fs::unlinkat(directory, name, AtFlags::REMOVEDIR)?;
+        } else {
+            rustix::fs::unlinkat(directory, name, AtFlags::empty())?;
         }
-    })();
-    unsafe { libc::closedir(stream) };
-    result
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -962,6 +889,9 @@ fn open_relative_for_cleanup(
     let mut handle: HANDLE = std::ptr::null_mut();
     // Keep the same minimal access as the root cleanup handle; recursion opens
     // every descendant separately with DELETE authority.
+    // SAFETY: `object_name` is NUL-terminated (`name_wide.push(0)`) and outlives the call;
+    // `object_attributes` and `io_status` are live locals. RootDirectory is `parent`'s handle,
+    // which stays alive for the call. `handle` is a writable out-parameter.
     let status = unsafe {
         NtCreateFile(
             &mut handle,
@@ -982,6 +912,7 @@ fn open_relative_for_cleanup(
         )
     };
     if status < 0 {
+        // SAFETY: RtlNtStatusToDosError takes the NTSTATUS by value and has no pointer arguments.
         let code = unsafe { RtlNtStatusToDosError(status) };
         return Err(io::Error::from_raw_os_error(code as i32));
     }
@@ -990,6 +921,8 @@ fn open_relative_for_cleanup(
             "Windows opened a cleanup entry without returning its handle.",
         ));
     }
+    // SAFETY: `handle` came from a successful NtCreateFile and was checked for null and
+    // INVALID_HANDLE_VALUE above. OwnedHandle takes sole ownership and closes it exactly once.
     let owned = unsafe { OwnedHandle::from_raw_handle(handle as _) };
     Ok(std::fs::File::from(owned))
 }
@@ -1016,6 +949,10 @@ fn list_directory_children(directory: &std::fs::File) -> io::Result<Vec<std::ffi
             } else {
                 FileIdBothDirectoryInfo
             };
+            // SAFETY: `handle` is the live handle of `directory`, borrowed for this call. `buffer`
+            // is a live allocation of exactly `buffer.len()` bytes, passed as the length, so the
+            // API writes only within it. The FileIdBothDirectory classes fill it with
+            // FILE_ID_BOTH_DIR_INFO records.
             let ok = unsafe {
                 GetFileInformationByHandleEx(
                     handle,
@@ -1042,20 +979,25 @@ fn list_directory_children(directory: &std::fs::File) -> io::Result<Vec<std::ffi
                 if remaining.len() < std::mem::size_of::<FILE_ID_BOTH_DIR_INFO>() {
                     break Err(io::Error::other("Directory listing entry was truncated."));
                 }
-                let info = remaining.as_ptr().cast::<FILE_ID_BOTH_DIR_INFO>();
-                let name_len = unsafe { (*info).FileNameLength as usize };
-                let name_offset = std::mem::offset_of!(FILE_ID_BOTH_DIR_INFO, FileName);
-                if remaining.len() < name_offset.saturating_add(name_len) || name_len % 2 != 0 {
-                    break Err(io::Error::other("Directory listing name was truncated."));
-                }
-                let name_units = unsafe {
-                    std::slice::from_raw_parts(
-                        remaining.as_ptr().add(name_offset).cast::<u16>(),
-                        name_len / 2,
-                    )
+                // SAFETY: the `remaining.len() >= size_of::<FILE_ID_BOTH_DIR_INFO>()` check above
+                // keeps the fixed header inside `buffer`. `read_unaligned` copies it out, so the
+                // byte buffer's alignment does not matter, and the struct is plain integers.
+                let info = unsafe {
+                    std::ptr::read_unaligned(remaining.as_ptr().cast::<FILE_ID_BOTH_DIR_INFO>())
                 };
-                names.push(std::ffi::OsString::from_wide(name_units));
-                let next = unsafe { (*info).NextEntryOffset as usize };
+                let name_len = info.FileNameLength as usize;
+                let name_offset = std::mem::offset_of!(FILE_ID_BOTH_DIR_INFO, FileName);
+                let Some(name_bytes) = name_offset
+                    .checked_add(name_len)
+                    .and_then(|name_end| remaining.get(name_offset..name_end))
+                    .filter(|bytes| bytes.len() % 2 == 0)
+                else {
+                    break Err(io::Error::other("Directory listing name was truncated."));
+                };
+                let (units, _) = name_bytes.as_chunks::<2>();
+                let name_units: Vec<u16> = units.iter().copied().map(u16::from_le_bytes).collect();
+                names.push(std::ffi::OsString::from_wide(&name_units));
+                let next = info.NextEntryOffset as usize;
                 if next == 0 {
                     break Ok(());
                 }
@@ -1095,6 +1037,8 @@ fn mark_handle_deleted(file: &std::fs::File) -> io::Result<()> {
             | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS
             | FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE,
     };
+    // SAFETY: `handle` is borrowed from `file` for this call. `posix` is a live
+    // FILE_DISPOSITION_INFO_EX whose size is passed; the API only reads it.
     if unsafe {
         SetFileInformationByHandle(
             handle,
@@ -1115,6 +1059,8 @@ fn mark_handle_deleted(file: &std::fs::File) -> io::Result<()> {
         } else {
             cleared
         };
+        // SAFETY: same live handle. `basic` is a live FILE_BASIC_INFO whose size is passed; the API
+        // only reads it.
         if unsafe {
             SetFileInformationByHandle(
                 handle,
@@ -1128,6 +1074,8 @@ fn mark_handle_deleted(file: &std::fs::File) -> io::Result<()> {
         }
     }
     let info = FILE_DISPOSITION_INFO { DeleteFile: true };
+    // SAFETY: same live handle. `info` is a live FILE_DISPOSITION_INFO whose size is passed; the
+    // API only reads it.
     if unsafe {
         SetFileInformationByHandle(
             handle,
@@ -1173,8 +1121,7 @@ where
 {
     #[cfg(unix)]
     {
-        use std::os::fd::AsRawFd as _;
-        use std::os::unix::fs::OpenOptionsExt as _;
+        use rustix::fs::{AtFlags, OFlags};
 
         let parent = path
             .parent()
@@ -1184,11 +1131,11 @@ where
             .file_name()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?;
         let original = unix_component(original_os)?;
-        let directory = std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(parent)?;
-        let source = match open_directory_relative(directory.as_raw_fd(), &original) {
+        let directory = open_unix_path(
+            parent,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        )?;
+        let source = match open_directory_relative(&directory, &original) {
             Ok(source) => source,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
             Err(error) => return Err(error),
@@ -1196,12 +1143,12 @@ where
         let source_stat = stat_open_file(&source)?;
         let quarantine_name = quarantine_component()?;
         let quarantine = unix_component(std::ffi::OsStr::new(&quarantine_name))?;
-        rename_relative_no_replace(directory.as_raw_fd(), &original, &quarantine)?;
-        let quarantined = match open_directory_relative(directory.as_raw_fd(), &quarantine) {
+        rename_relative_no_replace(&directory, &original, &quarantine)?;
+        let quarantined = match open_directory_relative(&directory, &quarantine) {
             Ok(file) => file,
             Err(error) => {
                 return restore_quarantine(
-                    directory.as_raw_fd(),
+                    &directory,
                     &quarantine,
                     &original,
                     path,
@@ -1212,7 +1159,7 @@ where
         let quarantine_stat = stat_open_file(&quarantined)?;
         if !same_unix_object(&source_stat, &quarantine_stat) || !verify(&quarantined)? {
             return restore_quarantine(
-                directory.as_raw_fd(),
+                &directory,
                 &quarantine,
                 &original,
                 path,
@@ -1221,7 +1168,7 @@ where
         }
         drop(source);
         remove_directory_contents_relative(&quarantined)?;
-        let named_stat = stat_named_entry(directory.as_raw_fd(), &quarantine)?;
+        let named_stat = stat_named_entry(&directory, &quarantine)?;
         let opened_stat = stat_open_file(&quarantined)?;
         if !same_unix_object(&named_stat, &opened_stat) {
             return Err(io::Error::other(
@@ -1229,16 +1176,7 @@ where
             ));
         }
         drop(quarantined);
-        if unsafe {
-            libc::unlinkat(
-                directory.as_raw_fd(),
-                quarantine.as_ptr(),
-                libc::AT_REMOVEDIR,
-            )
-        } != 0
-        {
-            return Err(io::Error::last_os_error());
-        }
+        rustix::fs::unlinkat(&directory, &quarantine, AtFlags::REMOVEDIR)?;
         sync_file_best_effort(&directory).map_err(io::Error::other)?;
         Ok(true)
     }
@@ -1415,11 +1353,8 @@ pub fn sync_directory(path: &Path) -> Result<(), String> {
 pub fn sync_directory_nofollow(path: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        let directory = std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
-            .open(path)
+        use rustix::fs::OFlags;
+        let directory = open_unix_path(path, OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW)
             .map_err(|error| error.to_string())?;
         let metadata = directory.metadata().map_err(|error| error.to_string())?;
         if !metadata.is_dir() {
@@ -1469,10 +1404,12 @@ pub(crate) fn is_unsupported_file_flush(error: &std::io::Error) -> bool {
     // `EOPNOTSUPP` are the same constant, which makes
     // `ENOTSUP | EOPNOTSUPP` an unreachable-pattern error under clippy.
     // On Darwin they are distinct (45 vs 102).
-    code == libc::ENOTTY
-        || code == libc::ENOTSUP
-        || code == libc::EOPNOTSUPP
-        || code == libc::EINVAL
+    use rustix::io::Errno;
+    let errno = Errno::from_raw_os_error(code);
+    errno == Errno::NOTTY
+        || errno == Errno::NOTSUP
+        || errno == Errno::OPNOTSUPP
+        || errno == Errno::INVAL
 }
 
 /// Flush file data with mount-tolerant fallbacks.
@@ -1490,19 +1427,11 @@ pub fn sync_file_best_effort(file: &std::fs::File) -> Result<(), String> {
         #[cfg(windows)]
         Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(()),
         #[cfg(unix)]
-        Err(_full_sync_error) => {
-            use std::os::fd::AsRawFd as _;
-            let rc = unsafe { libc::fsync(file.as_raw_fd()) };
-            if rc == 0 {
-                return Ok(());
-            }
-            let fsync_error = std::io::Error::last_os_error();
-            if is_unsupported_file_flush(&fsync_error) {
-                Ok(())
-            } else {
-                Err(fsync_error.to_string())
-            }
-        }
+        Err(_full_sync_error) => match rustix::fs::fsync(file).map_err(io::Error::from) {
+            Ok(()) => Ok(()),
+            Err(fsync_error) if is_unsupported_file_flush(&fsync_error) => Ok(()),
+            Err(fsync_error) => Err(fsync_error.to_string()),
+        },
         #[cfg(not(unix))]
         Err(error) => Err(error.to_string()),
     }
@@ -1699,6 +1628,10 @@ fn current_user_sid_from_token() -> Result<String, String> {
     use windows_sys::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
+    // SAFETY: OpenProcessToken writes a new token handle into the live `token` local, and
+    // GetCurrentProcess returns a pseudo-handle that needs no closing. The token is closed on every
+    // return path. TOKEN_USER is read from `buffer`, which is sized by GetTokenInformation's answer
+    // and aligned to TOKEN_USER by `align_offset`.
     unsafe {
         let mut token: HANDLE = ptr::null_mut();
         if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
@@ -1821,6 +1754,10 @@ pub(crate) fn assert_handle_owned_by_current_user(file: &std::fs::File) -> Resul
     })?;
     let descriptor = storage.as_ptr().cast_mut().cast();
     let owner = security_descriptor_owner(descriptor)?;
+    // SAFETY: `owner` is a SID inside `storage`, which is alive and was validated by
+    // security_descriptor_owner. ConvertSidToStringSidW returns a LocalAlloc'd NUL-terminated
+    // string in `sid_str`. It is read only up to that terminator and freed exactly once with
+    // LocalFree before any other return.
     unsafe {
         let mut sid_str: windows_sys::core::PWSTR = std::ptr::null_mut();
         if ConvertSidToStringSidW(owner, &mut sid_str) == 0 || sid_str.is_null() {
@@ -1872,12 +1809,16 @@ fn security_descriptor_owner(
 
     let mut owner: PSID = ptr::null_mut();
     let mut defaulted = 0;
+    // SAFETY: `descriptor` is a self-relative descriptor in live storage held by the caller;
+    // `owner` and `defaulted` are writable out-parameters.
     if unsafe { GetSecurityDescriptorOwner(descriptor, &mut owner, &mut defaulted) } == 0 {
         return Err(format!(
             "GetSecurityDescriptorOwner failed: {}",
             io::Error::last_os_error()
         ));
     }
+    // SAFETY: `owner` was returned by GetSecurityDescriptorOwner for the same live descriptor; the
+    // null check short-circuits first.
     if owner.is_null() || unsafe { IsValidSid(owner) } == 0 {
         return Err("Security descriptor has no valid owner SID.".to_string());
     }
@@ -1894,6 +1835,8 @@ fn security_descriptor_dacl(
     let mut present = 0;
     let mut dacl: *mut ACL = ptr::null_mut();
     let mut defaulted = 0;
+    // SAFETY: `descriptor` is live (as above); `present`, `dacl`, and `defaulted` are writable
+    // out-parameters.
     if unsafe { GetSecurityDescriptorDacl(descriptor, &mut present, &mut dacl, &mut defaulted) }
         == 0
     {
@@ -1906,6 +1849,8 @@ fn security_descriptor_dacl(
     if present == 0 || dacl.is_null() {
         return Err("Security descriptor has no non-NULL DACL.".to_string());
     }
+    // SAFETY: `dacl` is non-null (checked above) and points into the live descriptor returned by
+    // GetSecurityDescriptorDacl.
     if unsafe { IsValidAcl(dacl) } == 0 {
         return Err("Security descriptor contains an invalid DACL.".to_string());
     }
@@ -1926,6 +1871,8 @@ fn access_allowed_ace_view(
     use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
 
     let mut raw_ace: *mut c_void = ptr::null_mut();
+    // SAFETY: `dacl` was validated by IsValidAcl in a live descriptor. `raw_ace` is a writable
+    // out-pointer; GetAce returns a pointer into the ACL buffer, which is checked for null below.
     if unsafe { GetAce(dacl, index, &mut raw_ace) } == 0 || raw_ace.is_null() {
         return Err(format!(
             "GetAce({index}) failed: {}",
@@ -1933,6 +1880,9 @@ fn access_allowed_ace_view(
         ));
     }
 
+    // SAFETY: `raw_ace` is non-null and points at an ACE inside the validated ACL. ACE_HEADER is
+    // the 4-byte prefix every ACE begins with, so the reference is in bounds. ACEs are
+    // DWORD-aligned inside an ACL.
     let header = unsafe { &*raw_ace.cast::<ACE_HEADER>() };
     if header.AceType != ACCESS_ALLOWED_ACE_TYPE as u8 {
         return Ok(None);
@@ -1946,7 +1896,11 @@ fn access_allowed_ace_view(
     if ace_size < sid_offset + SID_FIXED_BYTES {
         return Err(format!("Allow ACE {index} is truncated."));
     }
+    // SAFETY: the check `ace_size >= sid_offset + SID_FIXED_BYTES` above keeps `sid_offset` inside
+    // the ACE.
     let sid_bytes = unsafe { raw_ace.cast::<u8>().add(sid_offset) };
+    // SAFETY: the 8 fixed SID bytes at `sid_offset` lie inside the ACE per the check above; byte 1
+    // is SubAuthorityCount.
     let sub_authority_count = unsafe { *sid_bytes.add(1) } as usize;
     let encoded_sid_length = SID_FIXED_BYTES + sub_authority_count * size_of::<u32>();
     if encoded_sid_length > ace_size - sid_offset {
@@ -1954,15 +1908,20 @@ fn access_allowed_ace_view(
     }
 
     let sid: PSID = sid_bytes.cast();
+    // SAFETY: `encoded_sid_length` was checked to fit in the bytes left in the ACE, so IsValidSid
+    // reads only ACE memory.
     if unsafe { IsValidSid(sid) } == 0 {
         return Err(format!("Allow ACE {index} has an invalid trustee SID."));
     }
+    // SAFETY: `sid` passed IsValidSid immediately above.
     if unsafe { GetLengthSid(sid) } as usize != encoded_sid_length {
         return Err(format!(
             "Allow ACE {index} has an inconsistent trustee SID."
         ));
     }
 
+    // SAFETY: ACCESS_ALLOWED_ACE is 12 bytes (header, mask, first SID dword). The ACE is at least
+    // 16 bytes by the check above, so the reference is in bounds. Only `Mask` is read.
     let ace = unsafe { &*raw_ace.cast::<ACCESS_ALLOWED_ACE>() };
     Ok(Some(AccessAllowedAceView {
         flags: header.AceFlags,
@@ -1978,7 +1937,11 @@ fn dacl_matches_expected(
 ) -> Result<bool, String> {
     use windows_sys::Win32::Security::EqualSid;
 
+    // SAFETY: `actual` is an ACL pointer returned by security_descriptor_dacl and validated with
+    // IsValidAcl; the ACL header lies at its start.
     let actual_count = unsafe { (*actual).AceCount } as u32;
+    // SAFETY: `expected` is an ACL pointer returned by security_descriptor_dacl and validated with
+    // IsValidAcl.
     let expected_count = unsafe { (*expected).AceCount } as u32;
     if actual_count != expected_count {
         return Ok(false);
@@ -2003,6 +1966,8 @@ fn dacl_matches_expected(
             };
             if actual_ace.flags == expected_ace.flags
                 && actual_ace.mask == expected_ace.mask
+                // SAFETY: both SIDs come from access_allowed_ace_view, which validated each one
+                // with IsValidSid inside a live DACL.
                 && unsafe { EqualSid(actual_ace.sid, expected_ace.sid) } != 0
             {
                 matched[actual_index as usize] = true;
@@ -2067,6 +2032,9 @@ fn read_directory_security_descriptor(directory: &std::fs::File) -> io::Result<V
     let requested = OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
     let mut needed = 0u32;
     let first =
+        // SAFETY: `handle` is the live handle of `directory`, borrowed for this call. The null
+        // buffer with length 0 is the documented size query and writes nothing; `needed` is a
+        // writable u32.
         unsafe { GetKernelObjectSecurity(handle, requested, ptr::null_mut(), 0, &mut needed) };
     let first_error = io::Error::last_os_error();
     if first != 0
@@ -2088,6 +2056,8 @@ fn read_directory_security_descriptor(directory: &std::fs::File) -> io::Result<V
         let capacity_u32 = u32::try_from(capacity)
             .map_err(|_| io::Error::other("Staging directory security descriptor is too large."))?;
         let mut returned = needed;
+        // SAFETY: `buffer` is a usize-aligned allocation whose byte length is `capacity_u32`,
+        // passed as nLength, so the API writes only inside it. `returned` is a writable u32.
         if unsafe {
             GetKernelObjectSecurity(
                 handle,
@@ -2122,17 +2092,22 @@ fn verify_private_directory_security(
         EqualSid, GetSecurityDescriptorControl, IsValidSecurityDescriptor, SE_DACL_PROTECTED,
     };
 
+    // SAFETY: `actual` points into the storage buffer that the caller holds alive for the whole
+    // comparison.
     if unsafe { IsValidSecurityDescriptor(actual) } == 0 {
         return Err(
             "Windows returned an invalid staging directory security descriptor.".to_string(),
         );
     }
+    // SAFETY: `expected` is the LocalAlloc'd descriptor from the SDDL conversion, which the caller
+    // frees only after this call.
     if unsafe { IsValidSecurityDescriptor(expected) } == 0 {
         return Err("The expected staging directory security descriptor is invalid.".to_string());
     }
 
     let mut control = 0u16;
     let mut revision = 0u32;
+    // SAFETY: `actual` was validated above; `control` and `revision` are writable out-parameters.
     if unsafe { GetSecurityDescriptorControl(actual, &mut control, &mut revision) } == 0 {
         return Err(format!(
             "GetSecurityDescriptorControl failed: {}",
@@ -2145,6 +2120,8 @@ fn verify_private_directory_security(
 
     let actual_owner = security_descriptor_owner(actual)?;
     let expected_owner = security_descriptor_owner(expected)?;
+    // SAFETY: the owners come from security_descriptor_owner, which validated each with IsValidSid
+    // inside a live descriptor.
     if unsafe { EqualSid(actual_owner, expected_owner) } == 0 {
         return Err("Staging directory owner is not the current user SID.".to_string());
     }
@@ -2218,6 +2195,9 @@ fn create_private_file_windows(path: &Path) -> io::Result<std::fs::File> {
     }
     path_wide.push(0);
     let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
+    // SAFETY: `sddl_wide` is NUL-terminated and `descriptor` is a writable out-parameter. On
+    // success Windows allocates the descriptor with LocalAlloc; the caller frees it with LocalFree
+    // on every path.
     if unsafe {
         ConvertStringSecurityDescriptorToSecurityDescriptorW(
             sddl_wide.as_ptr(),
@@ -2244,6 +2224,9 @@ fn create_private_file_windows(path: &Path) -> io::Result<std::fs::File> {
             lpSecurityDescriptor: descriptor,
             bInheritHandle: 0,
         };
+        // SAFETY: `path_wide` is NUL-terminated and alive for the call; `attributes` is a live
+        // SECURITY_ATTRIBUTES whose descriptor stays allocated until LocalFree after this closure
+        // returns.
         let handle = unsafe {
             CreateFileW(
                 path_wide.as_ptr(),
@@ -2258,10 +2241,14 @@ fn create_private_file_windows(path: &Path) -> io::Result<std::fs::File> {
         if handle.is_null() || handle == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
             return Err(io::Error::last_os_error());
         }
+        // SAFETY: `handle` was checked non-null and not INVALID_HANDLE_VALUE. CREATE_NEW returned
+        // it to this call alone, so OwnedHandle takes sole ownership.
         let owned = unsafe { OwnedHandle::from_raw_handle(handle as _) };
         Ok(std::fs::File::from(owned))
     })();
 
+    // SAFETY: `descriptor` was allocated by the SDDL conversion above and is freed exactly once,
+    // after the closure that borrows it has returned.
     unsafe {
         LocalFree(descriptor);
     }
@@ -2283,6 +2270,9 @@ fn create_private_dir_windows(path: &Path) -> io::Result<std::fs::File> {
     let sddl_wide: Vec<u16> = sddl.encode_utf16().chain(Some(0)).collect();
     let mut expected_descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
 
+    // SAFETY: `sddl_wide` is NUL-terminated and alive; `expected_descriptor` is a writable
+    // out-parameter that Windows allocates with LocalAlloc. It is freed with LocalFree on every
+    // path below.
     if unsafe {
         ConvertStringSecurityDescriptorToSecurityDescriptorW(
             sddl_wide.as_ptr(),
@@ -2334,6 +2324,8 @@ fn create_private_dir_windows(path: &Path) -> io::Result<std::fs::File> {
         Ok(directory)
     })();
 
+    // SAFETY: `expected_descriptor` is the LocalAlloc'd buffer from the SDDL conversion above. The
+    // closure that borrowed it has already returned, so this is the single free.
     unsafe {
         LocalFree(expected_descriptor);
     }
@@ -2599,6 +2591,8 @@ mod tests {
 
         let direct_owner = security_descriptor_owner(direct_descriptor).expect("direct owner");
         let staged_owner = security_descriptor_owner(staged_descriptor).expect("staged owner");
+        // SAFETY: test-only. Both owner SIDs come from descriptors kept alive by `direct_storage`
+        // and `staged_storage`.
         assert_ne!(unsafe { EqualSid(direct_owner, staged_owner) }, 0);
         let parent_dacl = security_descriptor_dacl(parent_descriptor).expect("parent DACL");
         let direct_dacl = security_descriptor_dacl(direct_descriptor).expect("direct DACL");

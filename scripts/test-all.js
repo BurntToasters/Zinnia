@@ -7,6 +7,7 @@ import {
   recordSuccessfulQualityGate,
 } from "./release-session.js";
 import { e2eWrapperTimeoutMs } from "./test-e2e.js";
+import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -588,7 +589,7 @@ function main({
 
 function isDirectExecution() {
   if (!process.argv[1]) return false;
-  return fileURLToPath(import.meta.url) === resolve(process.argv[1]);
+  return isDirectExecutionOf(import.meta.url);
 }
 
 if (isDirectExecution()) {

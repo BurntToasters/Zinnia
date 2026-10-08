@@ -6,8 +6,9 @@
  */
 import fs from "fs";
 import path from "path";
-import { fileURLToPath, pathToFileURL } from "url";
+import { fileURLToPath } from "url";
 import { isStableReleaseVersion } from "./release-policy.cjs";
+import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 export function validateChangelogForVersion(changelog, version) {
   const errors = [];
@@ -52,10 +53,7 @@ export function validateChangelogForVersion(changelog, version) {
 }
 
 function isDirectExecution() {
-  return Boolean(
-    process.argv[1] &&
-    pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url,
-  );
+  return Boolean(process.argv[1] && isDirectExecutionOf(import.meta.url));
 }
 
 function main() {

@@ -1,4 +1,5 @@
 import { ask } from "@tauri-apps/plugin-dialog";
+import { confirmWithE2eQueue } from "./e2e-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
@@ -62,6 +63,8 @@ import { installNativeWebviewContextMenuGuard } from "./webview-context-menu";
 
 let persistentAlertDismissWired = false;
 let preservedRecoveryAcknowledgementAvailable = false;
+/** The preserved journal came from a newer Zinnia build this one cannot read. */
+let preservedRecoveryFromNewerVersion = false;
 
 function showPersistentAlertBanner(message: string): void {
   const banner = document.getElementById("startup-recovery-banner");
@@ -77,27 +80,39 @@ function showPersistentAlertBanner(message: string): void {
   banner.hidden = false;
   if (/was preserved|were preserved/i.test(message)) {
     preservedRecoveryAcknowledgementAvailable = true;
+    preservedRecoveryFromNewerVersion = /newer Zinnia version/i.test(message);
   }
   if (acknowledge) {
     if (preservedRecoveryAcknowledgementAvailable) {
       acknowledge.hidden = false;
       acknowledge.onclick ??= async () => {
-        const proceed = await ask(
-          "Zinnia cannot prove whether it wrote the kept extraction result " +
-            "itself. Accepting leaves the files exactly as they are and only " +
-            "clears the recovery marker so archive jobs can run again.",
-          {
-            title: "Accept kept extraction result",
-            kind: "warning",
-            okLabel: "Accept and continue",
-            cancelLabel: "Keep blocked",
-          },
+        const proceed = await confirmWithE2eQueue(() =>
+          ask(
+            preservedRecoveryFromNewerVersion
+              ? "A newer Zinnia version left an unfinished archive job that this " +
+                  "version cannot read. Opening that newer version is the safest " +
+                  "way to finish it. Accepting here leaves the files exactly as " +
+                  "they are and only clears the recovery marker so archive jobs " +
+                  "can run again."
+              : "Zinnia cannot prove whether it wrote the kept extraction result " +
+                  "itself. Accepting leaves the files exactly as they are and only " +
+                  "clears the recovery marker so archive jobs can run again.",
+            {
+              title: preservedRecoveryFromNewerVersion
+                ? "Accept job from newer Zinnia"
+                : "Accept kept extraction result",
+              kind: "warning",
+              okLabel: "Accept and continue",
+              cancelLabel: "Keep blocked",
+            },
+          ),
         );
         if (!proceed) return;
         try {
           acknowledge.hidden = true;
           text.textContent = "";
           preservedRecoveryAcknowledgementAvailable = false;
+          preservedRecoveryFromNewerVersion = false;
           showPersistentAlertBanner(
             await invoke<string>("acknowledge_preserved_transaction"),
           );

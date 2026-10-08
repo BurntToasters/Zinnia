@@ -96,8 +96,24 @@ impl ExtractStagePlacement {
     }
 }
 
+/// Format version written into every cleanup journal by this build.
+///
+/// Rule: bump this constant whenever a change to `CleanupJournal` (a new field,
+/// or a change in the meaning of an existing one) would make an older reader
+/// misinterpret a journal it accepts, for example by treating a journal as
+/// legacy when it is not. Readers refuse any journal whose `format_version` is
+/// greater than this constant, so bumping it is what makes older builds fail
+/// closed instead of running recovery with wrong assumptions. Journals with no
+/// `format_version` are pre-versioned (version 0) and keep their legacy handling.
+pub(crate) const CLEANUP_JOURNAL_FORMAT_VERSION: u32 = 1;
+
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct CleanupJournal {
+    /// Serialized format version. Missing (0) identifies a pre-versioned journal
+    /// whose compatibility rules are inferred from missing fields. Versions above
+    /// `CLEANUP_JOURNAL_FORMAT_VERSION` are refused by every reader.
+    #[serde(default)]
+    pub(crate) format_version: u32,
     pub(crate) stage: std::path::PathBuf,
     pub(crate) destination: std::path::PathBuf,
     pub(crate) archive: bool,
@@ -612,7 +628,13 @@ fn file_identity_for_entry(
         BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ID_INFO,
     };
     let handle = file.as_raw_handle() as HANDLE;
+    // SAFETY: BY_HANDLE_FILE_INFORMATION is a plain C struct of integers and
+    // FILETIME fields, so the all-zero bit pattern is valid. It is only read after
+    // GetFileInformationByHandle reports success, and that call overwrites it.
     let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: `handle` is the raw handle of `file`, which the caller keeps open and
+    // which this call only borrows. `&mut info` is a valid, exclusive out-pointer
+    // to a struct of the type the API writes.
     let success = unsafe { GetFileInformationByHandle(handle, &mut info) };
     if success == 0 {
         return Err(std::io::Error::last_os_error().to_string());
@@ -620,7 +642,13 @@ fn file_identity_for_entry(
     if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 && !allow_symlink_reparse {
         return Err("Refusing a file identity for a link or reparse point.".to_string());
     }
+    // SAFETY: FILE_ID_INFO is a plain C struct of an integer and a 16-byte id, so
+    // the all-zero bit pattern is valid. It is only read when the call below
+    // reports success.
     let mut extended: FILE_ID_INFO = unsafe { std::mem::zeroed() };
+    // SAFETY: `handle` is the same open handle as above. The FileIdInfo class
+    // matches the FILE_ID_INFO buffer. The pointer refers to the local `extended`,
+    // and the size argument equals its size, so the API writes only within it.
     let has_extended_id = unsafe {
         GetFileInformationByHandleEx(
             handle,
@@ -1234,7 +1262,10 @@ pub(crate) fn cleanup_journal_path(app: &tauri::AppHandle) -> Result<std::path::
         .join("active-transaction.json"))
 }
 
-pub(crate) fn read_cleanup_journal_at(
+/// Parse a journal without enforcing the format gate. Only the acknowledgment
+/// path may use this, and it must check `format_version` before doing anything
+/// else. Every other reader uses `read_cleanup_journal_at`.
+pub(crate) fn read_cleanup_journal_any_version_at(
     path: &std::path::Path,
 ) -> Result<Option<CleanupJournal>, String> {
     let Some(json) = read_bounded_nofollow_text(path, MAX_RECOVERY_JOURNAL_BYTES)? else {
@@ -1243,6 +1274,48 @@ pub(crate) fn read_cleanup_journal_at(
     serde_json::from_str(&json)
         .map(Some)
         .map_err(|error| format!("Could not parse recovery journal: {error}"))
+}
+
+/// Refuse a journal written by a newer Zinnia build. The message says the
+/// journal was preserved so the startup banner offers acknowledgment.
+pub(crate) fn ensure_journal_format_supported(journal: &CleanupJournal) -> Result<(), String> {
+    if journal.format_version > CLEANUP_JOURNAL_FORMAT_VERSION {
+        return Err(format!(
+            "The recovery journal was written by a newer Zinnia version (journal format {}; \
+             this build supports up to {}). The journal was preserved and no files were \
+             changed. Recover it with that newer Zinnia version, or accept it here to clear \
+             the marker without changing files.",
+            journal.format_version, CLEANUP_JOURNAL_FORMAT_VERSION
+        ));
+    }
+    Ok(())
+}
+
+/// Read the active journal for recovery or mutation. Every caller that can
+/// touch files or rewrite the journal goes through this gate, so a newer format
+/// fails before any filesystem action.
+pub(crate) fn read_cleanup_journal_at(
+    path: &std::path::Path,
+) -> Result<Option<CleanupJournal>, String> {
+    let Some(journal) = read_cleanup_journal_any_version_at(path)? else {
+        return Ok(None);
+    };
+    ensure_journal_format_supported(&journal)?;
+    Ok(Some(journal))
+}
+
+/// Refuse to replace an existing journal this build cannot read. A missing
+/// journal is fine. Parse errors also fail closed, because recovery should
+/// already have resolved any such journal before a new transaction starts.
+pub(crate) fn ensure_journal_path_writable_at(path: &std::path::Path) -> Result<(), String> {
+    read_cleanup_journal_at(path).map(|_| ())
+}
+
+/// Serialize a journal in the format this build writes. Every write stamps the
+/// current format version, including rewrites of journals read from disk.
+pub(crate) fn encode_cleanup_journal(journal: &mut CleanupJournal) -> Result<String, String> {
+    journal.format_version = CLEANUP_JOURNAL_FORMAT_VERSION;
+    serde_json::to_string(journal).map_err(|error| error.to_string())
 }
 
 pub(crate) fn captured_plan_stage_identity(
@@ -1267,6 +1340,7 @@ pub(crate) fn write_cleanup_journal(
 ) -> Result<bool, String> {
     let journal = if let Some((stage, destination)) = &plan.staged_extract {
         Some(CleanupJournal {
+            format_version: CLEANUP_JOURNAL_FORMAT_VERSION,
             stage: stage.clone(),
             destination: destination.clone(),
             archive: false,
@@ -1305,6 +1379,7 @@ pub(crate) fn write_cleanup_journal(
             })
             .collect();
         Some(CleanupJournal {
+            format_version: CLEANUP_JOURNAL_FORMAT_VERSION,
             stage,
             destination: destination.clone(),
             archive: true,
@@ -1323,11 +1398,13 @@ pub(crate) fn write_cleanup_journal(
     } else {
         None
     };
-    let Some(journal) = journal else {
+    let Some(mut journal) = journal else {
         return Ok(false);
     };
-    let json = serde_json::to_string(&journal).map_err(|e| e.to_string())?;
-    crate::settings_store::atomic_write_text(&cleanup_journal_path(app)?, &json)?;
+    let journal_path = cleanup_journal_path(app)?;
+    ensure_journal_path_writable_at(&journal_path)?;
+    let json = encode_cleanup_journal(&mut journal)?;
+    crate::settings_store::atomic_write_text(&journal_path, &json)?;
     Ok(true)
 }
 
@@ -1366,7 +1443,8 @@ pub(crate) fn update_archive_journal(
         .iter()
         .map(|snapshot| snapshot.path.clone())
         .collect::<Vec<_>>();
-    let journal = CleanupJournal {
+    let mut journal = CleanupJournal {
+        format_version: CLEANUP_JOURNAL_FORMAT_VERSION,
         stage,
         destination: destination.clone(),
         archive: true,
@@ -1392,7 +1470,7 @@ pub(crate) fn update_archive_journal(
         extract_phase: None,
         archive_phase: Some(ArchiveJournalPhase::InProgress),
     };
-    let json = serde_json::to_string(&journal).map_err(|e| e.to_string())?;
+    let json = encode_cleanup_journal(&mut journal)?;
     crate::settings_store::atomic_write_text(&journal_path, &json)
 }
 
@@ -1463,7 +1541,7 @@ fn record_extract_artifact_identity(
     } else {
         journal.move_identity_log_identity = Some(identity.clone());
     }
-    let json = serde_json::to_string(&journal).map_err(|error| error.to_string())?;
+    let json = encode_cleanup_journal(&mut journal)?;
     crate::settings_store::atomic_write_text(&path, &json)?;
     if let Some(cache_dir) = &plan.cache_dir {
         if move_plan {
@@ -1518,7 +1596,7 @@ pub(crate) fn mark_extract_journal_committed(
         }
     }
     journal.extract_phase = Some(ExtractJournalPhase::Committed);
-    let json = serde_json::to_string(&journal).map_err(|error| error.to_string())?;
+    let json = encode_cleanup_journal(&mut journal)?;
     crate::settings_store::atomic_write_text(&path, &json)
 }
 
@@ -1572,7 +1650,7 @@ pub(crate) fn record_archive_journal_backup(
     // still-open handle afterward. Some FAT-family filesystems can change their
     // legacy file ID when a rename uses a longer directory entry.
     journal.previous_archive_identities[index] = Some(identity.clone());
-    let json = serde_json::to_string(&journal).map_err(|error| error.to_string())?;
+    let json = encode_cleanup_journal(&mut journal)?;
     crate::settings_store::atomic_write_text(&path, &json)?;
     if let Some(cache_dir) = &plan.cache_dir {
         record_pending_archive_backup_identity(
@@ -1632,7 +1710,7 @@ pub(crate) fn record_archive_journal_published(
     } else {
         journal.next_archive_identities[index] = Some(identity.clone());
     }
-    let json = serde_json::to_string(&journal).map_err(|error| error.to_string())?;
+    let json = encode_cleanup_journal(&mut journal)?;
     crate::settings_store::atomic_write_text(&path, &json)
 }
 
@@ -1666,15 +1744,35 @@ pub(crate) fn mark_archive_journal_committed(
     }
     ensure_path_identity(expected_stage, expected_stage_identity)?;
     journal.archive_phase = Some(ArchiveJournalPhase::Committed);
-    let json = serde_json::to_string(&journal).map_err(|e| e.to_string())?;
+    let json = encode_cleanup_journal(&mut journal)?;
     crate::settings_store::atomic_write_text(&path, &json)
 }
 
-pub(crate) fn clear_cleanup_journal(app: &tauri::AppHandle) -> Result<(), String> {
-    let path = cleanup_journal_path(app)?;
-    crate::fs_secure::remove_regular_file_nofollow_if_exists(&path)
+/// Remove the active journal after its transaction completed or was recovered.
+/// A journal from a newer format is refused, because removing it would discard
+/// state this build cannot interpret. Unreadable or corrupt journals are still
+/// removed, as before, since clearing is the conservative response to them.
+pub(crate) fn clear_cleanup_journal_at(path: &std::path::Path) -> Result<(), String> {
+    if let Ok(Some(journal)) = read_cleanup_journal_any_version_at(path) {
+        ensure_journal_format_supported(&journal)?;
+    }
+    remove_cleanup_journal_file(path)
+}
+
+/// Remove a journal that acknowledgment has already accepted as-is. This is the
+/// only removal path that may delete a newer-format journal.
+pub(crate) fn clear_acknowledged_cleanup_journal_at(path: &std::path::Path) -> Result<(), String> {
+    remove_cleanup_journal_file(path)
+}
+
+fn remove_cleanup_journal_file(path: &std::path::Path) -> Result<(), String> {
+    crate::fs_secure::remove_regular_file_nofollow_if_exists(path)
         .map(|_| ())
         .map_err(|error| error.to_string())
+}
+
+pub(crate) fn clear_cleanup_journal(app: &tauri::AppHandle) -> Result<(), String> {
+    clear_cleanup_journal_at(&cleanup_journal_path(app)?)
 }
 
 pub(crate) fn pending_stages_path(cache_dir: &std::path::Path) -> std::path::PathBuf {

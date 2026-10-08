@@ -7,6 +7,8 @@ mod archive_snapshot;
 mod commands;
 mod commit;
 mod compress_preflight;
+#[cfg(feature = "e2e")]
+mod e2e_crash;
 mod journal;
 mod quota;
 mod recovery;
@@ -104,7 +106,7 @@ pub(crate) use staging::{
     archive_output_family_token, assert_slt_archive_members_safe,
     assert_slt_declared_size_within_limit, extract_member_list_args,
     listing_preflight_exit_is_acceptable, operation_output_path, prepare_cleanup_plan,
-    random_token, ARCHIVE_OUTPUT_ABSENT_TOKEN,
+    random_token, slt_manifest_has_links, ARCHIVE_OUTPUT_ABSENT_TOKEN,
 };
 
 #[derive(serde::Serialize)]

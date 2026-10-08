@@ -215,9 +215,43 @@ fn load_checksums(path: &Path) -> std::collections::HashMap<String, String> {
     map
 }
 
-fn validate_provenance(path: &Path, checksums: &std::collections::HashMap<String, String>) {
+/// Read the top-level `"version": "NN.NN"` field. Fail closed on a missing,
+/// duplicated, or malformed value so a bad manifest cannot pick the version.
+fn provenance_version(contents: &str) -> String {
+    const KEY: &str = "\"version\":";
+    let mut matches = contents.match_indices(KEY);
+    let (index, _) = matches
+        .next()
+        .expect("7z-provenance.json must record a 7-Zip \"version\"");
+    assert!(
+        matches.next().is_none(),
+        "7z-provenance.json must record exactly one \"version\" field"
+    );
+    let value = contents[index + KEY.len()..]
+        .trim_start()
+        .strip_prefix('"')
+        .and_then(|rest| rest.split('"').next())
+        .expect("7z-provenance.json \"version\" must be a string");
+    let well_formed = value.split_once('.').is_some_and(|(major, minor)| {
+        !major.is_empty()
+            && !minor.is_empty()
+            && major.bytes().all(|b| b.is_ascii_digit())
+            && minor.bytes().all(|b| b.is_ascii_digit())
+    });
+    assert!(
+        well_formed,
+        "7z-provenance.json \"version\" must look like 26.04, got {value:?}"
+    );
+    value.to_string()
+}
+
+fn validate_provenance(
+    path: &Path,
+    checksums: &std::collections::HashMap<String, String>,
+) -> String {
     let contents = std::fs::read_to_string(path)
         .unwrap_or_else(|e| panic!("failed to read provenance manifest {}: {e}", path.display()));
+    let version = provenance_version(&contents);
     assert!(
         contents.contains("\"officialDownloadPage\": \"https://www.7-zip.org/download.html\""),
         "7z-provenance.json must identify the official download page"
@@ -232,6 +266,7 @@ fn validate_provenance(path: &Path, checksums: &std::collections::HashMap<String
             "7z-provenance.json has no record for {source}"
         );
     }
+    version
 }
 
 fn required_sidecar_for_target(target_triple: &str) -> Option<&'static str> {
@@ -267,7 +302,10 @@ fn prepare_7z_binaries() {
     println!("cargo:rerun-if-changed={}", provenance_path.display());
     println!("cargo:rerun-if-env-changed=TARGET");
     let checksums = load_checksums(&checksums_path);
-    validate_provenance(&provenance_path, &checksums);
+    let bundled_version = validate_provenance(&provenance_path, &checksums);
+    // `probe_7z` compares the sidecar banner against this. Provenance is the
+    // single source of truth, so `npm run 7z:update` cannot leave it stale.
+    println!("cargo:rustc-env=ZINNIA_BUNDLED_7Z_VERSION={bundled_version}");
 
     std::fs::create_dir_all(&out_dir).expect("failed to create src-tauri/binaries");
 

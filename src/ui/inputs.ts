@@ -296,7 +296,7 @@ export function renderInputs() {
     setBrowsePasswordFieldVisible(false);
   }
 
-  dom.inputList.innerHTML = "";
+  dom.inputList.replaceChildren();
   if (state.inputs.length === 0) {
     const empty = document.createElement("div");
     empty.textContent =
