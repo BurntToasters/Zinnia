@@ -30,9 +30,8 @@ const PWNED = "pwned\n";
  * `blockedBy` records which layer stopped the archive:
  * - "zinnia-preflight": Zinnia's member preflight rejects it with its own
  *   "unsafe" message, named by `expectedFragment`.
- * - "7zip-refusal": 7-Zip's `-slt` listing carries no link field for this
- *   member, so Zinnia's preflight passes it and 7-Zip refuses the write.
- *   See the skipped test at the end of this file.
+ * - "link-refusal": ZIP listings do not expose link targets. Either 7-Zip
+ *   refuses the write or Zinnia rejects the staged link before promotion.
  */
 const CASES = [
   {
@@ -56,7 +55,7 @@ const CASES = [
   {
     id: "symlink-absolute-zip",
     file: "symlink-absolute.zip",
-    blockedBy: "7zip-refusal",
+    blockedBy: "link-refusal",
     bytes: () =>
       buildStoredZip([
         { name: "linkdir", symlinkTarget: OUTSIDE },
@@ -66,7 +65,7 @@ const CASES = [
   {
     id: "symlink-relative-zip",
     file: "symlink-relative.zip",
-    blockedBy: "7zip-refusal",
+    blockedBy: "link-refusal",
     bytes: () =>
       buildStoredZip([
         { name: "nest/esc", symlinkTarget: "../../../outside" },
@@ -102,6 +101,12 @@ const FAILURE =
   /unsafe|could escape|escape the extract|Operation failed|Dangerous link path|Cannot open output file/i;
 const SEVENZIP_REFUSAL =
   /Dangerous link path was ignored|Cannot open output file/;
+// ZIP link targets are not visible to the listing preflight. Either 7-Zip
+// refuses the link (`-snld10`) or Zinnia's staged-tree check rejects it before
+// promotion. Which layer fires is platform-specific: Linux 7-Zip extracts an
+// absolute link into the stage, macOS 7-Zip refuses it.
+const STAGED_TREE_LINK_REFUSAL =
+  /Archive contains (an absolute symbolic link|a symbolic link or reparse point|a self-referential symbolic link)/;
 
 /** Every visible UI text line: status, toasts, banner, and the full log. */
 async function uiLines() {
@@ -181,8 +186,12 @@ describe("hostile archives", () => {
         );
       } else {
         assert.ok(
-          failures.some((line) => SEVENZIP_REFUSAL.test(line)),
-          `${testCase.id} was not refused by 7-Zip: ${JSON.stringify(failures)}`,
+          failures.some(
+            (line) =>
+              SEVENZIP_REFUSAL.test(line) ||
+              STAGED_TREE_LINK_REFUSAL.test(line),
+          ),
+          `${testCase.id} was not refused by 7-Zip or Zinnia's staged-tree check: ${JSON.stringify(failures)}`,
         );
       }
       assert.equal(
