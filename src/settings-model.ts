@@ -514,6 +514,8 @@ export function splitSettingsPayload(input: unknown): LoadSettingsResult {
   const extras: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(obj)) {
+    if (key === "__proto__" || key === "constructor" || key === "prototype")
+      continue;
     if (USER_SETTING_KEYS.has(key as keyof UserSettings)) {
       userOnly[key] = value;
     } else {

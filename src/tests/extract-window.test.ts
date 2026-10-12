@@ -95,6 +95,7 @@ async function setupAndRun(
   const invokeMock = vi.mocked(core.invoke);
   const progressUnlisten = vi.fn();
   const appWindow = {
+    label: "main",
     minimize: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
     destroy: vi.fn().mockResolvedValue(undefined),

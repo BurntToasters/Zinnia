@@ -171,6 +171,7 @@ pub(crate) struct ArchiveManifestSummary {
     pub(crate) path_bytes: u64,
     pub(crate) has_symbolic_links: bool,
     pub(crate) has_hard_links: bool,
+    pub(crate) declared_size_untrusted: bool,
 }
 
 impl ArchiveManifestSummary {

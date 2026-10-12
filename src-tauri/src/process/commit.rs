@@ -661,10 +661,23 @@ fn copy_tree_with_inherited_acl(
             ));
         }
         if metadata.is_dir() {
+            // Create restrictive first, then relax to the parent policy: never
+            // leave a brief world-readable window on shared parents.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt;
+                std::fs::DirBuilder::new()
+                    .mode(0o700)
+                    .create(&target_child)
+                    .map_err(|error| error.to_string())?;
+            }
+            #[cfg(not(unix))]
+            {
+                std::fs::create_dir(&target_child).map_err(|error| error.to_string())?;
+            }
             // Plain create inherits default ACL / setgid from `target`. Apply
             // parent mode before recursing so nested creates see the corrected
             // policy, not a brief umask-only mode.
-            std::fs::create_dir(&target_child).map_err(|error| error.to_string())?;
             #[cfg(unix)]
             crate::fs_secure::apply_parent_directory_mode(&target_child)
                 .map_err(|error| error.to_string())?;
@@ -2609,6 +2622,15 @@ where
     ensure_path_identity(staged, expected_stage_identity).map_err(|error| {
         format!("Extraction stage changed after creation and was preserved: {error}")
     })?;
+    // Fail closed on silent no-output: an exit-0 run that leaves an empty
+    // stage (skip-all, killed writer) must not promote as success.
+    {
+        let mut entries = std::fs::read_dir(staged)
+            .map_err(|error| format!("Could not inspect extraction stage: {error}"))?;
+        if entries.next().is_none() {
+            return Err("Extraction produced no files; output was not published.".to_string());
+        }
+    }
     // Always enforce the operation-specific limit immediately before publish,
     // and make every regular file plus directory entry durable before any
     // staged object becomes visible at the destination.

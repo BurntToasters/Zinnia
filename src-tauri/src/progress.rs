@@ -41,21 +41,28 @@ pub fn parse_progress_line(line: &str) -> Option<ProgressUpdate> {
     }
 }
 
-/// Locate the first valid `0…100%` token (supports `Progress: 45%` prefixes).
+/// Locate the last valid `0…100%` token (supports `Progress: 45%` prefixes).
+/// Tokens whose prefix contains path characters (`.`, `/`, `%`-names) are
+/// skipped rather than aborting the whole segment, and summary lines without
+/// a progress shape never match because they contain no `%` token.
 fn find_percent_token(segment: &str) -> Option<(u8, usize)> {
     let bytes = segment.as_bytes();
     let mut i = 0usize;
+    let mut found: Option<(u8, usize)> = None;
     while i < bytes.len() {
         if bytes[i].is_ascii_digit() {
             let start = i;
+            let prefix_ok = segment[..start]
+                .chars()
+                .all(|c| c.is_ascii_alphabetic() || c == ' ' || c == ':');
             while i < bytes.len() && bytes[i].is_ascii_digit() {
                 i += 1;
             }
-            if i < bytes.len() && bytes[i] == b'%' {
+            if prefix_ok && i < bytes.len() && bytes[i] == b'%' {
                 let percent_str = &segment[start..i];
                 if let Ok(percent) = percent_str.parse::<u16>() {
                     if percent <= 100 {
-                        return Some((percent as u8, i));
+                        found = Some((percent as u8, i));
                     }
                 }
             }
@@ -63,7 +70,7 @@ fn find_percent_token(segment: &str) -> Option<(u8, usize)> {
             i += 1;
         }
     }
-    None
+    found
 }
 
 fn parse_files_done<'a>(rest: &'a str, update: &mut ProgressUpdate) -> &'a str {
@@ -84,8 +91,11 @@ fn parse_current_file(rest: &str, update: &mut ProgressUpdate) {
     }
 
     // Strip a leading action marker (+ - = U).
-    let name = match trimmed.chars().next() {
-        Some(marker @ ('+' | '-' | '=' | 'U')) => trimmed[marker.len_utf8()..].trim_start(),
+    let mut chars = trimmed.chars();
+    let name = match (chars.next(), chars.next()) {
+        (Some('+' | '-' | '=' | 'U'), Some(next)) if next.is_whitespace() => {
+            trimmed[1..].trim_start()
+        }
         _ => trimmed,
     };
 

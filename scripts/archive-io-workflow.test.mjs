@@ -13,6 +13,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
+  captureWindowsProcessIdentity,
   waitForChild,
   waitForChildExit,
 } from "../e2e/helpers/archive-benchmark.js";
@@ -1406,6 +1407,7 @@ test("archive E2E timeout kills WDIO and descendant processes", async (t) => {
     detached: process.platform !== "win32",
     windowsHide: true,
   });
+  void captureWindowsProcessIdentity(child, { waitForSpawn: true });
   const childExit = waitForChild(child);
   childExit.catch(() => {});
   for (

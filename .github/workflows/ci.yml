@@ -119,6 +119,30 @@ jobs:
           if-no-files-found: warn
           retention-days: 90
 
+  e2e-runner-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install latest npm 12
+        run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - run: npm ci --ignore-scripts
+      - name: Windows E2E runner process cleanup tests
+        run: npm run test:e2e-runner
+      - name: Windows archive I/O workflow contract tests
+        run: npm run test:archive-io-workflow
+      - name: ACL schema drift gate (default vs e2e features)
+        shell: pwsh
+        run: |
+          cargo check --locked --manifest-path src-tauri/Cargo.toml
+          git diff --exit-code -- src-tauri/gen/schemas/acl-manifests.json src-tauri/gen/schemas/capabilities.json src-tauri/gen/schemas/desktop-schema.json src-tauri/gen/schemas/windows-schema.json src-tauri/gen/schemas/linux-schema.json src-tauri/gen/schemas/macOS-schema.json
+
   archive-io-benchmark:
     needs: quality-gate
     strategy:
@@ -588,6 +612,7 @@ jobs:
     needs:
       - commit-message-policy
       - quality-gate
+      - e2e-runner-windows
       - rust-check
       - updater-manifest
       - smoke-build
@@ -601,6 +626,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           COMMIT_MESSAGE_POLICY: ${{ needs.commit-message-policy.result }}
           QUALITY_GATE: ${{ needs.quality-gate.result }}
+          E2E_RUNNER_WINDOWS: ${{ needs.e2e-runner-windows.result }}
           RUST_CHECK: ${{ needs.rust-check.result }}
           UPDATER_MANIFEST: ${{ needs.updater-manifest.result }}
           SMOKE_BUILD: ${{ needs.smoke-build.result }}
@@ -613,6 +639,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$QUALITY_GATE" = success
+          test "$E2E_RUNNER_WINDOWS" = success
           test "$RUST_CHECK" = success
           test "$UPDATER_MANIFEST" = success
           test "$SMOKE_BUILD" = success

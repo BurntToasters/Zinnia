@@ -260,7 +260,7 @@ fn read_bounded_settings_file(path: &std::path::Path) -> Result<Option<String>, 
     Ok(Some(raw))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn load_settings(app: tauri::AppHandle) -> Result<String, String> {
     let _guard = lock_settings()?;
     let path = settings_path(&app)?;
@@ -286,7 +286,7 @@ pub fn load_settings(app: tauri::AppHandle) -> Result<String, String> {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_settings(app: tauri::AppHandle, json: String) -> Result<(), String> {
     let _guard = lock_settings()?;
     if json.len() > MAX_SETTINGS_BYTES {
@@ -333,7 +333,7 @@ pub fn save_settings(app: tauri::AppHandle, json: String) -> Result<(), String> 
     atomic_write_text(&path, &serialized)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn reset_settings(app: tauri::AppHandle) -> Result<(), String> {
     let _guard = lock_settings()?;
     let path = settings_path(&app)?;

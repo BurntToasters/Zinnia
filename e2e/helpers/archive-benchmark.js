@@ -1327,7 +1327,11 @@ export async function runArchiveBenchmarkBuildCommand(
           `Archive benchmark build launch fence could not capture its exact leader identity: ${command}`,
         );
       }
-      await Promise.race([fencedLaunch.release(), deadline, abortSignal]);
+      await Promise.race([
+        fencedLaunch.release(identity),
+        deadline,
+        abortSignal,
+      ]);
       launchReleased = true;
     }
     await Promise.race([childExit, deadline, abortSignal]);
@@ -1342,21 +1346,26 @@ export async function runArchiveBenchmarkBuildCommand(
   }
   let processTreeCleanup = { status: "verified" };
   if (child.pid) {
-    if (
-      !(await terminateAndWaitForProcessTree(child, {
-        ...windowsProcessOptions,
-        ...options.processTreeCleanupOptions,
-        platform: processPlatform,
-      }))
-    ) {
+    const jobCleanup = await fencedLaunch?.terminateJob();
+    const stopped = jobCleanup?.stopped
+      ? true
+      : (await terminateAndWaitForProcessTree(child, {
+          ...windowsProcessOptions,
+          ...options.processTreeCleanupOptions,
+          platform: processPlatform,
+        })) && !jobCleanup;
+    if (!stopped) {
       const reason =
+        jobCleanup?.reason ??
         windowsProcessCleanupFailure(child) ??
         "leader identity or descendant ownership could not be proven safely";
       // Same policy as the E2E runner. Warned statuses make the caller
       // refuse to stamp the binary as fresh.
       const status = classifyProcessTreeCleanup({
         stopped: false,
-        kind: windowsProcessCleanupFailureKind(child),
+        kind: jobCleanup
+          ? "survivors"
+          : windowsProcessCleanupFailureKind(child),
         commandFailed: Boolean(commandError),
         allowBuildCleanupWarning: options.allowBuildCleanupWarning,
       });

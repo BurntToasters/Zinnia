@@ -225,8 +225,10 @@ pub(crate) fn has_parent_dir_component(path: &str) -> bool {
     path.split(['/', '\\']).any(|component| component == "..")
 }
 
-/// True when a member path could escape an extract `-o` root. On Windows also
-/// rejects trailing-dot/space parents, NTFS streams, and device names.
+/// True when a member path could escape an extract `-o` root. Reserved-device,
+/// NTFS-stream, and trailing-dot/space rules are enforced on every platform so
+/// an archive created on Linux cannot smuggle a `CON` or `foo:bar` member that
+/// collides with a device or ADS when opened on Windows.
 pub(crate) fn archive_member_path_is_unsafe(path: &str) -> bool {
     if path.is_empty() {
         return false;
@@ -241,16 +243,13 @@ pub(crate) fn archive_member_path_is_unsafe(path: &str) -> bool {
     if bytes[0] == b'/' {
         return true;
     }
-    #[cfg(target_os = "windows")]
     if bytes[0] == b'\\' {
         return true;
     }
     // Windows drive-absolute: `C:\...` or `C:/...`
-    #[cfg(target_os = "windows")]
     if bytes.len() >= 2 && bytes[1] == b':' {
         return true;
     }
-    #[cfg(target_os = "windows")]
     for component in path.split(['/', '\\']) {
         if component.is_empty() {
             continue;
@@ -276,7 +275,6 @@ pub(crate) fn archive_member_path_is_unsafe(path: &str) -> bool {
 }
 
 /// Win32 device-name check on the dot-stem, case-insensitive, any extension.
-#[cfg(target_os = "windows")]
 fn is_win32_reserved_device_name(component: &str) -> bool {
     let stem = component.split('.').next().unwrap_or(component);
     let mut folded = String::with_capacity(stem.len());
@@ -1199,11 +1197,8 @@ mod tests {
         assert!(archive_member_path_is_unsafe("../sibling/file.txt"));
         assert!(archive_member_path_is_unsafe("a/../../b"));
         assert!(archive_member_path_is_unsafe("/etc/passwd"));
-        #[cfg(target_os = "windows")]
         assert!(archive_member_path_is_unsafe(r"C:\Windows\evil.dll"));
-        #[cfg(target_os = "windows")]
         assert!(archive_member_path_is_unsafe(r"\\server\share\file"));
-        #[cfg(target_os = "windows")]
         {
             assert!(archive_member_path_is_unsafe("sub/.. "));
             assert!(archive_member_path_is_unsafe("sub/.. ."));
@@ -1221,10 +1216,7 @@ mod tests {
             assert!(!archive_member_path_is_unsafe("name..bak.txt"));
             assert!(!archive_member_path_is_unsafe("dots...and..spaces.txt"));
         }
-        #[cfg(not(target_os = "windows"))]
         {
-            assert!(!archive_member_path_is_unsafe(r"a:b"));
-            assert!(!archive_member_path_is_unsafe(r"\literal-name"));
             // Backslash separators still carry `..` components on every OS.
             assert!(archive_member_path_is_unsafe(r"folder\..\literal"));
         }

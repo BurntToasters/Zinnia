@@ -92,13 +92,15 @@ pub fn append_limited_output(
 }
 
 pub fn sanitize_output(s: &str) -> String {
+    redact_sensitive_text(&strip_control_chars(s))
+}
+
+pub fn strip_control_chars(s: &str) -> String {
     // Keep `\r`: 7-Zip `-bsp1` rewrites progress on the same line with CR.
     // Stripping it merges updates and breaks raw `7z-progress` listeners.
-    let cleaned: String = s
-        .chars()
+    s.chars()
         .filter(|c| !c.is_control() || matches!(*c, '\n' | '\t' | '\r'))
-        .collect();
-    redact_sensitive_text(&cleaned)
+        .collect()
 }
 
 /// Redact 7-Zip `-p` passwords and common secret key=value forms from log/output text.

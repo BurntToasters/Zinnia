@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { listenToOwnWindow } from "./window-events";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { validateArchivePaths } from "./archive-rules";
 import { confirmExtractDestination } from "./extract-destination";
@@ -762,7 +762,7 @@ async function run() {
       return null;
     });
   const structuredListen = registerProgressListener(
-    listen<ProgressUpdate>("7z-progress-structured", (event) => {
+    listenToOwnWindow<ProgressUpdate>("7z-progress-structured", (event) => {
       if (!extractRunInFlight) return;
       const update = event.payload;
       if (update?.currentFile === "Working…") {
@@ -799,7 +799,7 @@ async function run() {
     }),
   );
   const rawListen = registerProgressListener(
-    listen<string>("7z-progress", (event) => {
+    listenToOwnWindow<string>("7z-progress", (event) => {
       if (!extractRunInFlight || sawStructuredPercent) return;
       const chunk = typeof event.payload === "string" ? event.payload : "";
       for (const line of chunk.split(/[\r\n]+/)) {

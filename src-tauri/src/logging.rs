@@ -161,6 +161,16 @@ fn publish_log_export(temp: &std::path::Path, destination: &std::path::Path) -> 
             let _ = std::fs::remove_file(temp);
             return Err("Destination path must be a file, not a directory.".to_string());
         }
+        // Never rename over a link: unlink the link itself first so the
+        // export cannot be redirected through a swapped symlink. `rename`
+        // onto a symlink would replace the link on Unix, but unlinking first
+        // closes the check-then-use window on all platforms.
+        Ok(metadata) if crate::path_safety::is_link_or_reparse(&metadata) => {
+            if let Err(error) = std::fs::remove_file(destination) {
+                let _ = std::fs::remove_file(temp);
+                return Err(format!("Could not replace the export destination: {error}"));
+            }
+        }
         Ok(_) => {}
     }
     std::fs::rename(temp, destination).map_err(|error| {
@@ -283,7 +293,7 @@ fn trim_log_file_if_needed(path: &std::path::Path) -> Result<(), String> {
     atomic_write_text(path, &clipped)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn append_local_log(
     app: tauri::AppHandle,
     line: String,
@@ -316,54 +326,58 @@ pub fn append_local_log(
     trim_log_file_if_needed(&path)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_log_dir(app: tauri::AppHandle) -> Result<String, String> {
     let dir = ensure_logs_dir(&app)?;
     Ok(dir.to_string_lossy().to_string())
 }
 
 #[tauri::command]
-pub fn export_logs(
-    app: tauri::AppHandle,
-    lock: tauri::State<'_, LogFileLock>,
-) -> Result<bool, String> {
+pub async fn export_logs(app: tauri::AppHandle) -> Result<bool, String> {
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
         let _ = app;
-        let _ = lock;
         return Err("Exporting logs is not supported on this platform.".to_string());
     }
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
-        let Some(file_path) = app
-            .dialog()
-            .file()
-            .set_title("Export local diagnostics log")
-            .set_file_name(LOG_EXPORT_FILE_NAME)
-            .blocking_save_file()
-        else {
+        let dialog_app = app.clone();
+        let chosen = tokio::task::spawn_blocking(move || {
+            dialog_app
+                .dialog()
+                .file()
+                .set_title("Export local diagnostics log")
+                .set_file_name(LOG_EXPORT_FILE_NAME)
+                .blocking_save_file()
+        })
+        .await
+        .map_err(|error| format!("Log export dialog failed: {error}"))?;
+        let Some(file_path) = chosen else {
             return Ok(false);
         };
         let destination = file_path.into_path().map_err(|e| e.to_string())?;
-        if destination.is_dir() {
-            return Err("Destination path must be a file, not a directory.".to_string());
-        }
-        if let Some(parent) = destination.parent() {
-            if !parent.as_os_str().is_empty() && !parent.exists() {
-                return Err("Destination parent directory does not exist.".to_string());
+        tokio::task::spawn_blocking(move || {
+            if destination.is_dir() {
+                return Err("Destination path must be a file, not a directory.".to_string());
             }
-        }
-
-        let _guard = lock_log_file(&lock)?;
-        let source = log_file_path(&app)?;
-        export_log_contents(&source, &destination)?;
-
-        Ok(true)
+            if let Some(parent) = destination.parent() {
+                if !parent.as_os_str().is_empty() && !parent.exists() {
+                    return Err("Destination parent directory does not exist.".to_string());
+                }
+            }
+            let lock = app.state::<LogFileLock>();
+            let _guard = lock_log_file(&lock)?;
+            let source = log_file_path(&app)?;
+            export_log_contents(&source, &destination)?;
+            Ok(true)
+        })
+        .await
+        .map_err(|error| format!("Log export worker failed: {error}"))?
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn clear_logs(
     app: tauri::AppHandle,
     lock: tauri::State<'_, LogFileLock>,
@@ -377,7 +391,7 @@ pub fn clear_logs(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[allow(deprecated)]
 pub fn open_log_dir(app: tauri::AppHandle) -> Result<(), String> {
     use tauri_plugin_shell::ShellExt;

@@ -22,7 +22,7 @@
     "dialog:allow-confirm",
     "dialog:allow-open",
     "dialog:allow-save",
-    "shell:default",
+    "shell:allow-open",
     "updater:allow-check",
     "updater:allow-download",
     "updater:allow-install",

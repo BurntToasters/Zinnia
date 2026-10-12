@@ -202,6 +202,16 @@ fn sanitize_extract_folder_name(folder: &str) -> String {
     if folder.ends_with('.') || folder.ends_with(' ') {
         return "_extracted".to_string();
     }
+    if folder.contains(':') {
+        return "_extracted".to_string();
+    }
+    // Never derive a Windows device name (CON, NUL, COM1, ...) even on
+    // Unix: the folder may later be opened on Windows.
+    for component in folder.split(['/', '\\']) {
+        if crate::validation::archive_member_path_is_unsafe(component) {
+            return "_extracted".to_string();
+        }
+    }
     folder.to_string()
 }
 
@@ -276,7 +286,7 @@ pub fn assert_extract_bound_archive(
     }
     Ok(())
 }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn register_extract_open_path(
     app: tauri::AppHandle,
     window: tauri::Window,
@@ -312,7 +322,7 @@ pub fn register_extract_open_path(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[allow(deprecated)]
 pub fn open_path(
     app: tauri::AppHandle,
@@ -371,9 +381,41 @@ pub fn open_path(
         }
     }
 
+    #[cfg(target_os = "macos")]
+    if canonical.extension().is_some() {
+        return reveal_in_finder(&canonical);
+    }
+
+    // Re-validate immediately before open: the path may have been swapped
+    // for a symlink between canonicalization and the allowlist check.
+    let re_meta =
+        std::fs::symlink_metadata(&canonical).map_err(|_| "Path does not exist.".to_string())?;
+    crate::path_safety::reject_link_or_reparse(&canonical, &re_meta)
+        .map_err(|_| "Symbolic links and reparse points cannot be opened directly.".to_string())?;
+    if !re_meta.is_dir() {
+        return Err("Only directories can be opened.".to_string());
+    }
     let normalized = normalize_shell_open_path(canonical);
     let path_str = normalized.to_string_lossy().to_string();
     app.shell().open(&path_str, None).map_err(|e| e.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn reveal_in_finder(path: &std::path::Path) -> Result<(), String> {
+    let status = std::process::Command::new("/usr/bin/open")
+        .arg("-R")
+        .arg("--")
+        .arg(path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|error| format!("Could not reveal the folder in Finder: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("Finder could not reveal the folder ({status})."))
+    }
 }
 
 #[tauri::command]

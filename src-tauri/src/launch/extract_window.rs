@@ -36,7 +36,7 @@ pub fn clear_extract_window_bindings(app: &tauri::AppHandle, label: &str) {
         }
     }
 }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn inspect_extract_destination(
     app: tauri::AppHandle,
     window: tauri::Window,

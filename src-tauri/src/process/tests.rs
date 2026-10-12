@@ -1970,6 +1970,7 @@ fn manifest_summary_classifies_bytes_entries_paths_and_links() {
         path_bytes: 27,
         has_symbolic_links: false,
         has_hard_links: false,
+        declared_size_untrusted: false,
     };
     assert_eq!(plain.declared_bytes, 12);
     assert_eq!(plain.entry_count, 2);

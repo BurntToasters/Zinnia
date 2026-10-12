@@ -64,6 +64,10 @@ function hasMinisignEnvelope(value) {
   );
 }
 
+const expectedManifestVersion = (
+  process.env.EXPECTED_UPDATER_VERSION || ""
+).trim();
+
 function validateManifest(filePath) {
   const raw = fs.readFileSync(filePath, "utf8");
   let data;
@@ -77,6 +81,15 @@ function validateManifest(filePath) {
   if (!data || typeof data !== "object" || Array.isArray(data)) {
     fail(`${filePath}: root must be an object`);
     return;
+  }
+  if (
+    expectedManifestVersion &&
+    data &&
+    data.version !== expectedManifestVersion
+  ) {
+    fail(
+      `${filePath}: version does not match required ${expectedManifestVersion}`,
+    );
   }
   if (!isNonEmptyString(data.version)) {
     fail(`${filePath}: missing string "version"`);

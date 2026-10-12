@@ -39,8 +39,11 @@ operations:
 
 - Create/update writes to a sibling staging basename. Only a successful process
   promotes the complete output family, including split volumes.
-- Extraction writes to a sibling staging directory beside the destination
-  (never inside the live user folder). Before extraction, Zinnia copies the
+- Extraction writes to a private staging directory. A new destination, or any
+  archive that contains links, stages beside the destination. A link-free
+  archive extracted into an existing folder stages in a hidden child of that
+  folder so output inherits its ACL; only finished, validated entries are moved
+  into place. Before extraction, Zinnia copies the
   complete input volume family into a private, recovery-tracked snapshot.
   Member listing and extraction both use that same snapshot, so an ordinary
   source-file replacement cannot change what is extracted after preflight.
@@ -90,13 +93,33 @@ operations:
   in Microsoft Edge should still show MOTW on extracted members. Backend-owned
   `-sns-` prevents archive members from replacing that stream. Zinnia does
   **not** strip MOTW.
+- On macOS extract, Zinnia copies the source archive's `com.apple.quarantine`
+  value onto every staged file and folder before publication, so Gatekeeper
+  still assesses extracted apps. Symbolic links are skipped. If the attribute
+  cannot be applied, the extraction is rolled back instead of publishing
+  unquarantined output. "Open destination" reveals a folder whose name has an
+  extension in Finder instead of opening it, so a folder named like an app
+  bundle is never launched.
 - Promotion resolves file/directory conflicts without overwriting unrelated
   destination content. A durable move plan and transaction journal allow an
   interrupted merge or split-archive promotion to be rolled back on restart.
+  An extraction that leaves an empty stage (exit 0 with no files written) is
+  rejected instead of promoted as success.
+- Member-path safety (parent traversal, absolute paths, Windows drive
+  prefixes, trailing dots/spaces, NTFS streams, and reserved device names
+  such as `CON`/`NUL`/`COM1`) is enforced on every platform, so an archive
+  created on Linux cannot smuggle a name that collides with a device or ADS
+  when opened on Windows. Derived destination folder names get the same
+  treatment.
 - Cancel/close keeps the global operation slot locked until the child has exited
   and staging cleanup has completed.
 - Extraction growth is limited by both expansion ratio and current free disk
-  space, with capacity reserved for the OS and other applications.
+  space, with capacity reserved for the OS and other applications. Free space
+  is polled throughout extraction. Live size scans are skipped only for
+  link-free archives whose listed sizes are well under the limits; single-stream
+  formats (gzip, bzip2, xz) are always scanned because their listed size comes
+  from data the archive author controls. The final pre-publication scan always
+  enforces the ratio limit.
 
 These checks are defense in depth around 7-Zip's own path sanitization. They do
 not make untrusted archives harmless: users should still keep Zinnia and its

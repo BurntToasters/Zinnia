@@ -66,7 +66,7 @@ pub async fn set_zinnia_default_archiver(
         .map_err(|error| format!("Default-archiver worker failed: {error}"))?
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn reset_preferred_archiver_to_system(
     app: tauri::AppHandle,
 ) -> Result<DefaultArchiverResult, String> {
@@ -105,7 +105,7 @@ pub fn reset_preferred_archiver_to_system(
     Err("System archiver reset is not available for this platform.".to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[allow(deprecated)]
 pub fn open_os_integration_settings(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "windows")]
@@ -145,7 +145,7 @@ pub fn open_os_integration_settings(app: tauri::AppHandle) -> Result<(), String>
 ///
 /// Zinnia also ships a **Finder Sync** appex for primary Finder context menus.
 /// Services remain available under Keyboard Shortcuts → Services → Files and Folders.
-#[tauri::command]
+#[tauri::command(async)]
 #[allow(deprecated)]
 pub fn open_finder_services_settings(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
@@ -167,7 +167,7 @@ pub fn open_finder_services_settings(app: tauri::AppHandle) -> Result<(), String
 }
 
 /// Opens System Settings → General → Login Items & Extensions for Finder Sync.
-#[tauri::command]
+#[tauri::command(async)]
 #[allow(deprecated)]
 pub fn open_finder_sync_settings(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]

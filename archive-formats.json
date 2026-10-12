@@ -279,7 +279,11 @@
           "macos": false,
           "linux": false
         },
-        "windowsProgIdOpenVerb": false,
+        "windowsProgIdOpenVerb": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
         "win11ExtractMenuItemTypes": {
           "windows": true,
           "macos": false,
@@ -397,7 +401,11 @@
           "macos": false,
           "linux": false
         },
-        "windowsProgIdOpenVerb": false,
+        "windowsProgIdOpenVerb": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
         "win11ExtractMenuItemTypes": {
           "windows": true,
           "macos": false,
@@ -515,7 +523,11 @@
           "macos": false,
           "linux": false
         },
-        "windowsProgIdOpenVerb": false,
+        "windowsProgIdOpenVerb": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
         "win11ExtractMenuItemTypes": {
           "windows": true,
           "macos": false,
@@ -587,7 +599,11 @@
           "macos": false,
           "linux": false
         },
-        "windowsProgIdOpenVerb": false,
+        "windowsProgIdOpenVerb": {
+          "windows": true,
+          "macos": false,
+          "linux": false
+        },
         "win11ExtractMenuItemTypes": {
           "windows": true,
           "macos": false,

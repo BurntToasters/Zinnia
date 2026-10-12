@@ -184,6 +184,7 @@ pub(crate) async fn monitor_extract_quota_with_manifest(
     // Keep free-space polling active; commit still validates actual output.
     let skip_recursive_scans = manifest.as_ref().is_some_and(|summary| {
         !summary.has_links()
+            && !summary.declared_size_untrusted
             && summary.declared_bytes <= max_bytes / 2
             && summary.entry_count <= MAX_EXTRACT_ENTRIES / 2
             && summary.path_bytes <= MAX_EXTRACT_PATH_BYTES / 2

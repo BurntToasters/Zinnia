@@ -42,8 +42,10 @@ Two more changes are in this tree, outside the list above:
 - The `check` command ignores the frontend `allowDowngrades` flag. Pristine
   2.10.1 lets the webview switch to "any version other than the current one",
   which allows rollback to an older signed release.
-- On Linux, `SSL_CERT_FILE` falls back to the Fedora/RHEL bundle path when the
-  Debian path is absent.
+- The Linux `SSL_CERT_FILE` / `SSL_CERT_DIR` override is removed, matching
+  upstream 2.13.0. It called `std::env::set_var` during an update check while
+  other threads could read the environment. `rustls-platform-verifier` already
+  finds the system certificate store through `openssl-probe`.
 
 Upstream status in 2.13.2: the macOS install path was rewritten (atomic swap,
 restore on failure, quoted shell command), and the Windows result check was
