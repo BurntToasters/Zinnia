@@ -97,20 +97,36 @@ operations:
   value onto every staged file and folder before publication, so Gatekeeper
   still assesses extracted apps. Symbolic links are skipped. If the attribute
   cannot be applied, the extraction is rolled back instead of publishing
-  unquarantined output. "Open destination" reveals a folder whose name has an
-  extension in Finder instead of opening it, so a folder named like an app
-  bundle is never launched.
+  unquarantined output. "Open destination" reveals a folder in Finder instead
+  of opening it when its extension is a launchable bundle or package type
+  (`.app`, `.pkg`, `.bundle`, and similar), so such a folder is never launched.
+  Other dotted folder names (`report.2026`) open normally. On Windows, a folder
+  whose path contains a braced GUID (`name.{GUID}`) is refused, because Windows
+  would open it as a shell namespace view instead of its contents.
+- Rewriting an archive produces a new file, which would shed its download
+  marker. Adding files to an existing archive writes the result into the stage;
+  the backend copies the original's quarantine value (macOS) or
+  `Zone.Identifier` (Windows) onto it before publication and rolls the update
+  back if it cannot. Converting copies the source archive's marker onto the
+  converted output (every volume of a split output) before reporting success;
+  if that copy fails, the conversion is reported as failed and the user is told
+  to delete the output before opening it.
 - Promotion resolves file/directory conflicts without overwriting unrelated
   destination content. A durable move plan and transaction journal allow an
   interrupted merge or split-archive promotion to be rolled back on restart.
   An extraction that leaves an empty stage (exit 0 with no files written) is
-  rejected instead of promoted as success.
-- Member-path safety (parent traversal, absolute paths, Windows drive
-  prefixes, trailing dots/spaces, NTFS streams, and reserved device names
-  such as `CON`/`NUL`/`COM1`) is enforced on every platform, so an archive
-  created on Linux cannot smuggle a name that collides with a device or ADS
-  when opened on Windows. Derived destination folder names get the same
-  treatment.
+  rejected instead of promoted as success, unless the archive's manifest
+  declares zero entries.
+- Member-path safety: parent traversal (`..` with either separator) and
+  leading `/` are rejected on every platform. Windows-only rules (drive
+  prefixes, rooted `\` paths, trailing dots/spaces, NTFS streams, and reserved
+  device names such as `CON`/`NUL`/`COM1`) apply when the extraction runs on
+  Windows, where those names escape or collide; a Unix host keeps them as
+  literal names. Derived destination folder names reject the Windows-only
+  names and braced GUIDs (`name.{GUID}`, which Windows resolves as shell
+  namespaces) on every platform, so an archive created on Linux cannot produce
+  a folder that collides with a device, an ADS, or a shell view when opened on
+  Windows.
 - Cancel/close keeps the global operation slot locked until the child has exited
   and staging cleanup has completed.
 - Extraction growth is limited by both expansion ratio and current free disk
@@ -222,6 +238,28 @@ resolved dependency tree and remove an ignore as soon as Tauri provides an
 upgrade path. In particular, the GTK `glib` `VariantStrIter` soundness advisory
 is not reached by Zinnia's code, but it remains a Linux runtime dependency and
 must not be treated as resolved merely because `cargo audit` allows it.
+
+### Vendored test-only plugin
+
+`src-tauri/vendor/tauri-plugin-wdio-webdriver` (and the crates.io
+`tauri-plugin-wdio`) are optional dependencies behind the `e2e` feature in
+`src-tauri/Cargo.toml`. They are never linked into release builds. The vendored
+crate's own `Cargo.lock` is not used by the build; the workspace resolves from
+`src-tauri/Cargo.lock`, which lists the wdio packages. `cargo audit` scans that
+lockfile, so these crates get no audit exemption. Before each stable release,
+confirm `e2e` is still the only feature that enables them.
+
+The direct `rustix` dependency (`fs` and `std` features, declared in
+`src-tauri/Cargo.toml`) backs `fs_secure` and is covered by the same audit.
+
+### TypeScript toolchain pin
+
+`package.json` pins two TypeScript majors: `typescript@^7.0.2`, installed under
+the alias `@typescript/native`, and `@typescript/typescript6@^6.0.2`, installed
+under the alias `typescript`. The resolved versions are recorded in
+`package-lock.json`. Do not let `scripts/npm-safe-update.mjs` move either range
+past the lockfile until TypeScript 7 is stable. Treat any TypeScript major bump
+as release-blocking and require a full `npm run typecheck` and E2E pass.
 
 ### Same-user filesystem race boundary
 

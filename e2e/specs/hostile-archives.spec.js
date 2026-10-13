@@ -32,6 +32,13 @@ const PWNED = "pwned\n";
  *   "unsafe" message, named by `expectedFragment`.
  * - "link-refusal": ZIP listings do not expose link targets. Either 7-Zip
  *   refuses the write or Zinnia rejects the staged link before promotion.
+ *
+ * Not a hostile case: a member whose name starts with a dash (for example
+ * "-pending.zip") is a legitimate file and must extract normally. That
+ * boundary is covered by the Rust argument test in
+ * src-tauri/src/process/commands.rs, which asserts the "--" separator keeps
+ * such members out of 7-Zip option parsing; it does not belong in this
+ * must-fail list.
  */
 const CASES = [
   {

@@ -2607,6 +2607,22 @@ pub(crate) fn rollback_persisted_move_plan(
     rollback_move_records_impl(staged, destination, &plan, true)
 }
 
+/// Fail closed on silent no-output: an exit-0 run that leaves an empty stage
+/// (skip-all, killed writer) must not publish as success. An archive whose
+/// manifest declares zero entries legitimately produces no files, so only a
+/// declared non-empty archive (or an unknown manifest) requires output.
+pub(crate) fn ensure_extract_stage_has_output(
+    staged: &std::path::Path,
+    manifest_entry_count: Option<u64>,
+) -> Result<(), String> {
+    let mut entries = std::fs::read_dir(staged)
+        .map_err(|error| format!("Could not inspect extraction stage: {error}"))?;
+    if entries.next().is_some() || manifest_entry_count == Some(0) {
+        return Ok(());
+    }
+    Err("Extraction produced no files; output was not published.".to_string())
+}
+
 fn merge_staged_extract_recorded<R, F>(
     staged: &std::path::Path,
     destination: &std::path::Path,
@@ -2622,15 +2638,6 @@ where
     ensure_path_identity(staged, expected_stage_identity).map_err(|error| {
         format!("Extraction stage changed after creation and was preserved: {error}")
     })?;
-    // Fail closed on silent no-output: an exit-0 run that leaves an empty
-    // stage (skip-all, killed writer) must not promote as success.
-    {
-        let mut entries = std::fs::read_dir(staged)
-            .map_err(|error| format!("Could not inspect extraction stage: {error}"))?;
-        if entries.next().is_none() {
-            return Err("Extraction produced no files; output was not published.".to_string());
-        }
-    }
     // Always enforce the operation-specific limit immediately before publish,
     // and make every regular file plus directory entry durable before any
     // staged object becomes visible at the destination.

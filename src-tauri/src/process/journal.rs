@@ -1208,13 +1208,14 @@ pub(crate) fn cleanup_transaction_artifacts(
     if present.move_plan_present {
         remove_recovery_regular_file_if_matches(
             &move_plan_path(stage),
-            move_plan_identity.expect("validated move-plan identity"),
+            move_plan_identity.ok_or_else(|| "validated move-plan identity missing".to_string())?,
         )?;
     }
     if present.move_identity_log_present {
         remove_recovery_regular_file_if_matches(
             &move_identity_log_path(stage),
-            move_identity_log_identity.expect("validated identity-log identity"),
+            move_identity_log_identity
+                .ok_or_else(|| "validated identity-log identity missing".to_string())?,
         )?;
     }
     for (index, is_present) in present.archive_backups_present.iter().enumerate() {
@@ -1223,14 +1224,15 @@ pub(crate) fn cleanup_transaction_artifacts(
                 &archive_backup_path(stage, index),
                 archive_backup_identities[index]
                     .as_ref()
-                    .expect("validated archive backup identity"),
+                    .ok_or_else(|| "validated archive backup identity missing".to_string())?,
             )?;
         }
     }
     if present.stage_present {
         remove_directory_if_matches(
             stage,
-            stage_identity.expect("validated transaction stage identity"),
+            stage_identity
+                .ok_or_else(|| "validated transaction stage identity missing".to_string())?,
         )?;
     }
     if let Some(parent) = stage.parent() {

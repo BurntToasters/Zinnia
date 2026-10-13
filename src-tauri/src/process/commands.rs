@@ -2277,6 +2277,12 @@ pub async fn run_7z(
     // off the async runtime so other Tauri tasks are not blocked.
     let finalize_app = app.clone();
     let finalize_plan = cleanup_plan.clone();
+    let finalize_entry_count = extract_manifest
+        .as_ref()
+        .map(|manifest| manifest.entry_count);
+    // `u` writes a complete new archive into the stage, which sheds the
+    // original's quarantine / Zone.Identifier unless it is carried over.
+    let finalize_carries_update_marker = args.first().map(String::as_str) == Some("u");
     let finalize_emit = emit_window.clone();
     let finalize_target = progress_target.clone();
     let finalization_publish_strategy = Arc::new(Mutex::new(None::<PublishStrategy>));
@@ -2296,6 +2302,37 @@ pub async fn run_7z(
                 Ok(Ok(()))
             }
         } else {
+            if let (true, Some((staged, destination))) = (
+                finalize_carries_update_marker,
+                finalize_plan.staged_archive.as_ref(),
+            ) {
+                if let Err(error) =
+                    crate::quarantine::copy_mark_of_the_web_to_family(destination, staged)
+                {
+                    return match rollback_cleanup(&finalize_plan) {
+                        Ok(()) => Ok(Err(format!(
+                            "{error} The update was rolled back so an unmarked archive was not published."
+                        ))),
+                        Err(rollback_error) => {
+                            Err(format!("{error}; rollback also failed: {rollback_error}"))
+                        }
+                    };
+                }
+            }
+            if let Some((stage, _)) = finalize_plan.staged_extract.as_ref() {
+                if let Err(error) =
+                    super::commit::ensure_extract_stage_has_output(stage, finalize_entry_count)
+                {
+                    return match rollback_cleanup(&finalize_plan) {
+                        Ok(()) => Ok(Err(format!(
+                            "{error} The extraction was rolled back so nothing was published."
+                        ))),
+                        Err(rollback_error) => {
+                            Err(format!("{error}; rollback also failed: {rollback_error}"))
+                        }
+                    };
+                }
+            }
             if let (Some(value), Some((stage, _))) =
                 (archive_quarantine.as_deref(), finalize_plan.staged_extract.as_ref())
             {

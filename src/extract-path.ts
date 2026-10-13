@@ -73,10 +73,52 @@ function stripKnownArchiveSuffix(fileName: string): string {
   return "";
 }
 
+// Win32 device names, matched on the dot-stem, case-insensitively, with the
+// superscript digits folded to ASCII. Mirrors validation.rs::is_win32_reserved_device_name.
+const WIN32_RESERVED_STEM =
+  /^(CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|CLOCK\$|COM[0-9]|LPT[0-9])$/;
+
+const SUPERSCRIPT_DIGITS: Record<string, string> = {
+  "¹": "1",
+  "²": "2",
+  "³": "3",
+};
+
+function isWin32ReservedDeviceName(component: string): boolean {
+  const stem = component
+    .split(".")[0]
+    .replace(/[¹²³]/g, (ch) => SUPERSCRIPT_DIGITS[ch])
+    .toUpperCase();
+  return WIN32_RESERVED_STEM.test(stem);
+}
+
+// Mirrors validation.rs::windows_component_name_is_unsafe.
+function windowsComponentNameIsUnsafe(component: string): boolean {
+  if (component.length === 0) return false;
+  if (component.endsWith(".") || component.endsWith(" ")) return true;
+  if (component.includes(":")) return true;
+  return isWin32ReservedDeviceName(component);
+}
+
+// Mirrors open_path.rs::contains_braced_clsid. Windows shell parsing resolves a
+// `name.{GUID}` folder to a namespace extension, so a derived name must not carry one.
+const BRACED_CLSID =
+  /\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}/i;
+
 function sanitizeExtractFolderName(folder: string): string {
   if (folder === "." || folder === "..") return "_extracted";
   if (folder.length > 0 && /^[.]+$/.test(folder)) return "_extracted";
   if (folder.endsWith(".") || folder.endsWith(" ")) return "_extracted";
+  if (folder.includes(":")) return "_extracted";
+  for (const component of folder.split(/[/\\]/)) {
+    if (
+      component === ".." ||
+      windowsComponentNameIsUnsafe(component) ||
+      BRACED_CLSID.test(component)
+    ) {
+      return "_extracted";
+    }
+  }
   return folder;
 }
 

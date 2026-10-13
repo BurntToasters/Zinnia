@@ -138,3 +138,176 @@ pub(crate) fn read_quarantine(_path: &std::path::Path) -> Result<Option<Vec<u8>>
 pub(crate) fn apply_quarantine_tree(_root: &std::path::Path, _value: &[u8]) -> Result<(), String> {
     Ok(())
 }
+
+/// Carries the source archive's download marker onto a conversion output. A
+/// conversion writes a new file, which would otherwise shed the macOS
+/// quarantine attribute or the Windows Zone.Identifier stream that Gatekeeper
+/// and SmartScreen use to warn about downloaded files.
+pub(crate) fn copy_mark_of_the_web(
+    source: &std::path::Path,
+    output: &std::path::Path,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    if let Some(value) = read_quarantine(source)? {
+        apply_quarantine_tree(output, &value)?;
+    }
+    #[cfg(windows)]
+    crate::process::copy_windows_zone_identifier(source, output)?;
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let _ = (source, output);
+    Ok(())
+}
+
+/// Frontend entry point used after a successful archive conversion. `output` is
+/// the requested archive path; a split conversion writes only `output.001`,
+/// `output.002`, ... so every member of that family is marked. All paths must
+/// be regular files; symbolic links and reparse points are refused so the
+/// marker cannot be redirected. Only ever adds a marker, never removes one.
+#[tauri::command]
+pub fn copy_archive_mark_of_the_web(source: String, output: String) -> Result<(), String> {
+    let source = validated_regular_file(&source, "source archive")?;
+    if output.is_empty() || output.contains('\0') {
+        return Err("The converted archive path is invalid.".to_string());
+    }
+    copy_mark_of_the_web_to_family(&source, std::path::Path::new(&output))
+}
+
+/// Marks every member of the archive output family at `output_base` (the base
+/// file and/or its `.001`, `.002`, ... volumes) with `source`'s download marker.
+/// Fails when the family is empty or contains a link or non-file.
+pub(crate) fn copy_mark_of_the_web_to_family(
+    source: &std::path::Path,
+    output_base: &std::path::Path,
+) -> Result<(), String> {
+    let family = crate::process::archive_family(output_base)
+        .map_err(|error| format!("The archive output cannot be marked: {error}"))?;
+    if family.is_empty() {
+        return Err("The archive output does not exist.".to_string());
+    }
+    for path in &family {
+        copy_mark_of_the_web(source, path)?;
+    }
+    Ok(())
+}
+
+fn validated_regular_file(raw: &str, label: &str) -> Result<std::path::PathBuf, String> {
+    if raw.is_empty() || raw.contains('\0') {
+        return Err(format!("The {label} path is invalid."));
+    }
+    let path = std::path::PathBuf::from(raw);
+    let meta =
+        std::fs::symlink_metadata(&path).map_err(|_| format!("The {label} does not exist."))?;
+    crate::path_safety::reject_link_or_reparse(&path, &meta)
+        .map_err(|_| format!("The {label} cannot be a symbolic link or reparse point."))?;
+    if !meta.is_file() {
+        return Err(format!("The {label} must be a file."));
+    }
+    Ok(path)
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::apply_quarantine_tree;
+    use super::{copy_archive_mark_of_the_web, copy_mark_of_the_web, read_quarantine};
+
+    fn scratch_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "zinnia-motw-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
+    #[test]
+    fn conversion_output_inherits_the_source_quarantine_marker() {
+        let dir = scratch_dir("carry");
+        let source = dir.join("download.rar");
+        let output = dir.join("converted.zip");
+        std::fs::write(&source, b"source").expect("source");
+        std::fs::write(&output, b"converted").expect("output");
+        let marker = b"0081;65f0a1b2;Safari;ABCD-1234".to_vec();
+        apply_quarantine_tree(&source, &marker).expect("mark source");
+
+        copy_mark_of_the_web(&source, &output).expect("carry marker");
+
+        assert_eq!(read_quarantine(&output).expect("read output"), Some(marker));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unmarked_source_leaves_conversion_output_unmarked() {
+        let dir = scratch_dir("clean");
+        let source = dir.join("local.rar");
+        let output = dir.join("converted.zip");
+        std::fs::write(&source, b"source").expect("source");
+        std::fs::write(&output, b"converted").expect("output");
+
+        copy_mark_of_the_web(&source, &output).expect("no-op");
+
+        assert_eq!(read_quarantine(&output).expect("read output"), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn split_conversion_output_marks_every_volume() {
+        // `-v<size>` writes `converted.7z.001`, `.002`, ... and never the base path.
+        let dir = scratch_dir("split");
+        let source = dir.join("download.rar");
+        let base = dir.join("converted.7z");
+        std::fs::write(&source, b"source").expect("source");
+        let volumes = [dir.join("converted.7z.001"), dir.join("converted.7z.002")];
+        for volume in &volumes {
+            std::fs::write(volume, b"volume").expect("volume");
+        }
+        let marker = b"0081;65f0a1b2;Safari;ABCD-5678".to_vec();
+        apply_quarantine_tree(&source, &marker).expect("mark source");
+
+        copy_archive_mark_of_the_web(
+            source.to_string_lossy().into(),
+            base.to_string_lossy().into(),
+        )
+        .expect("split output is a valid conversion result");
+
+        for volume in &volumes {
+            assert_eq!(
+                read_quarantine(volume).expect("read volume"),
+                Some(marker.clone())
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn command_rejects_missing_directory_and_symlink_paths() {
+        let dir = scratch_dir("reject");
+        let file = dir.join("file.zip");
+        std::fs::write(&file, b"x").expect("file");
+        let link = dir.join("link.zip");
+        std::os::unix::fs::symlink(&file, &link).expect("symlink");
+
+        assert!(copy_archive_mark_of_the_web(
+            dir.join("missing.rar").to_string_lossy().into(),
+            file.to_string_lossy().into(),
+        )
+        .is_err());
+        assert!(copy_archive_mark_of_the_web(
+            file.to_string_lossy().into(),
+            link.to_string_lossy().into(),
+        )
+        .is_err());
+        assert!(copy_archive_mark_of_the_web(
+            dir.to_string_lossy().into(),
+            file.to_string_lossy().into(),
+        )
+        .is_err());
+        assert!(
+            copy_archive_mark_of_the_web(String::new(), file.to_string_lossy().into()).is_err()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

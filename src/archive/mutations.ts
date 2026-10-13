@@ -405,6 +405,21 @@ export async function convertArchive(): Promise<void> {
       return;
     }
 
+    // Recompressing writes a new file, which would shed the source's download
+    // marker (macOS quarantine, Windows Zone.Identifier). Carry it over before
+    // reporting success. The backend only ever adds a marker.
+    try {
+      await invoke("copy_archive_mark_of_the_web", {
+        source: archive,
+        output: dest,
+      });
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `Converted archive was written to ${dest}, but its download marker could not be carried over (${detail}). Delete it before opening.`,
+      );
+    }
+
     setStatus("Done", 2000);
     if (isDebugEnabled()) {
       debugLog(`Converted archive to ${format.toUpperCase()}.`);

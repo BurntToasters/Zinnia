@@ -57,6 +57,17 @@ const RESULT_PATH = path.join(
 );
 
 const VERSION = "0.6.3-beta.90";
+// Release notes are the CHANGELOG section followed by a GUI E2E proof footer
+// (scripts/ensure-draft-release.cjs e2eProofFooter). Exact equality is too
+// strict now; the notes must start with the changelog and carry the footer.
+function releaseNotesHaveChangelogAndFooter(body, changelog) {
+  return (
+    typeof body === "string" &&
+    body.startsWith(changelog) &&
+    body.includes("GUI E2E:")
+  );
+}
+
 const TAG = `v${VERSION}`;
 const STABLE_VERSION = "0.6.2";
 const STABLE_TAG = `v${STABLE_VERSION}`;
@@ -548,7 +559,7 @@ async function scenarioHappyPathBeta(ctx) {
       draftPost.body.tag_name === TAG &&
       draftPost.body.target_commitish === ctx.shaB &&
       draftPost.body.prerelease === true &&
-      draftPost.body.body === changelogText,
+      releaseNotesHaveChangelogAndFooter(draftPost.body.body, changelogText),
     `body length=${draftPost?.body?.body?.length} expected=${changelogText.length}`,
   );
 
@@ -1312,8 +1323,10 @@ async function scenarioDraftPrereleaseFlagCorrected(ctx) {
     "the draft is patched with prerelease=true and the release notes",
     Boolean(patch) &&
       patch.body.tag_name === TAG &&
-      patch.body.body ===
+      releaseNotesHaveChangelogAndFooter(
+        patch.body.body,
         fs.readFileSync(path.join(ctx.root, "CHANGELOG.md"), "utf8"),
+      ),
     JSON.stringify(patch?.body ?? null).slice(0, 200),
   );
   ctx.check(

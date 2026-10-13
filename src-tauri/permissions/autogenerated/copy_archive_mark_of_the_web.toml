@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-copy-archive-mark-of-the-web"
+description = "Enables the copy_archive_mark_of_the_web command without any pre-configured scope."
+commands.allow = ["copy_archive_mark_of_the_web"]
+
+[[permission]]
+identifier = "deny-copy-archive-mark-of-the-web"
+description = "Denies the copy_archive_mark_of_the_web command without any pre-configured scope."
+commands.deny = ["copy_archive_mark_of_the_web"]

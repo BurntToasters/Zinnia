@@ -12,6 +12,7 @@ import { log, devLog, setStatus } from "./ui";
 import { state } from "./state";
 import { debugLog, isDebugEnabled } from "./debug-mode";
 import { showToast } from "./toast";
+import { compareVersions } from "./version-compare";
 
 let pendingUpdate: Update | null = null;
 let pendingVersion: string | null = null;
@@ -25,30 +26,6 @@ const UPDATE_CHECK_TIMEOUT_MS = 30_000;
 const UPDATE_DOWNLOAD_STALL_TIMEOUT_MS = 120_000;
 const UPDATE_INSTALL_WATCHDOG_MS = 180_000;
 const UPDATE_RESERVATION_HEARTBEAT_MS = 60_000;
-
-function compareVersions(a: string, b: string): number {
-  const parse = (v: string) =>
-    v
-      .split("+")[0]
-      .split("-")[0]
-      .split(".")
-      .map((part) => {
-        const n = Number.parseInt(part, 10);
-        return Number.isFinite(n) && n >= 0 ? n : 0;
-      });
-  const pa = parse(a);
-  const pb = parse(b);
-  const len = Math.max(pa.length, pb.length);
-  for (let i = 0; i < len; i++) {
-    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
-    if (diff !== 0) return diff > 0 ? 1 : -1;
-  }
-  // A release is newer than its own pre-releases (1.2.3 > 1.2.3-beta.1).
-  const aPre = a.includes("-");
-  const bPre = b.includes("-");
-  if (aPre !== bPre) return aPre ? -1 : 1;
-  return a < b ? -1 : a > b ? 1 : 0;
-}
 
 async function touchUpdateReservation(): Promise<void> {
   try {

@@ -76,6 +76,7 @@
     "allow-supports-workspace-window-fx",
     "allow-get-startup-recovery-status",
     "allow-acknowledge-preserved-transaction",
-    "allow-reserve-temp-extract-path"
+    "allow-reserve-temp-extract-path",
+    "allow-copy-archive-mark-of-the-web"
   ]
 }

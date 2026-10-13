@@ -205,14 +205,52 @@ fn sanitize_extract_folder_name(folder: &str) -> String {
     if folder.contains(':') {
         return "_extracted".to_string();
     }
-    // Never derive a Windows device name (CON, NUL, COM1, ...) even on
-    // Unix: the folder may later be opened on Windows.
+    // Never derive a Windows device name (CON, NUL, COM1, ...) or an NTFS
+    // stream name even on Unix: the folder may later be opened on Windows.
+    // A braced CLSID (`name.{GUID}`) is the same kind of hazard: Windows shell
+    // parsing resolves it to a namespace extension instead of the folder.
     for component in folder.split(['/', '\\']) {
-        if crate::validation::archive_member_path_is_unsafe(component) {
+        if component == ".."
+            || crate::validation::windows_component_name_is_unsafe(component)
+            || contains_braced_clsid(component)
+        {
             return "_extracted".to_string();
         }
     }
     folder.to_string()
+}
+
+/// True when `text` contains a braced GUID such as `{20D04FE0-3AEA-1069-A2D8-08002B30309D}`.
+fn contains_braced_clsid(text: &str) -> bool {
+    text.as_bytes().windows(38).any(is_braced_guid)
+}
+
+fn is_braced_guid(window: &[u8]) -> bool {
+    if window.len() != 38 || window[0] != b'{' || window[37] != b'}' {
+        return false;
+    }
+    window[1..37]
+        .iter()
+        .enumerate()
+        .all(|(index, &byte)| match index {
+            8 | 13 | 18 | 23 => byte == b'-',
+            _ => byte.is_ascii_hexdigit(),
+        })
+}
+
+/// True when any component of `path` carries a braced CLSID. Windows resolves
+/// such a folder to a shell namespace extension, so opening it does not show
+/// the folder's contents. Both separators split components.
+pub(crate) fn path_has_shell_namespace_component(path: &str) -> bool {
+    path.split(['/', '\\']).any(contains_braced_clsid)
+}
+
+/// Windows-only policy, with `windows` as a parameter so the decision is testable
+/// on every OS. Windows would open such a folder as a shell view, not its contents.
+fn shell_namespace_refusal(path: &str, windows: bool) -> Option<&'static str> {
+    (windows && path_has_shell_namespace_component(path)).then_some(
+        "This folder's name contains a Windows shell class ID ({GUID}), so Windows would open a shell view instead of the folder. Open it from File Explorer instead.",
+    )
 }
 
 pub(crate) fn derive_extract_folder_name(archive_name: &str) -> Option<String> {
@@ -382,7 +420,7 @@ pub fn open_path(
     }
 
     #[cfg(target_os = "macos")]
-    if canonical.extension().is_some() {
+    if macos_bundle_should_reveal(&canonical) {
         return reveal_in_finder(&canonical);
     }
 
@@ -395,9 +433,50 @@ pub fn open_path(
     if !re_meta.is_dir() {
         return Err("Only directories can be opened.".to_string());
     }
+    if let Some(message) = shell_namespace_refusal(&canonical.to_string_lossy(), cfg!(windows)) {
+        return Err(message.to_string());
+    }
     let normalized = normalize_shell_open_path(canonical);
     let path_str = normalized.to_string_lossy().to_string();
     app.shell().open(&path_str, None).map_err(|e| e.to_string())
+}
+
+/// Directory extensions that LaunchServices treats as launchable bundles or
+/// installable packages when handed to `open`. Those reveal in Finder instead
+/// of opening. Any other dotted folder name (`report.2026`) is an ordinary
+/// directory and opens normally.
+#[cfg(target_os = "macos")]
+const MACOS_BUNDLE_EXTENSIONS: &[&str] = &[
+    "app",
+    "bundle",
+    "framework",
+    "plugin",
+    "kext",
+    "appex",
+    "prefpane",
+    "saver",
+    "service",
+    "workflow",
+    "component",
+    "pkg",
+    "mpkg",
+    "xpc",
+    "rtfd",
+    "key",
+    "numbers",
+    "pages",
+    "photoslibrary",
+];
+
+#[cfg(target_os = "macos")]
+fn macos_bundle_should_reveal(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            MACOS_BUNDLE_EXTENSIONS
+                .iter()
+                .any(|known| extension.eq_ignore_ascii_case(known))
+        })
 }
 
 #[cfg(target_os = "macos")]
@@ -456,4 +535,153 @@ pub(crate) fn normalize_open_path_arg(arg: &str) -> Option<String> {
     }
 
     Some(arg.to_string())
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::macos_bundle_should_reveal;
+    use std::path::Path;
+
+    #[test]
+    fn dotted_folder_names_open_instead_of_revealing() {
+        assert!(!macos_bundle_should_reveal(Path::new(
+            "/Users/dev/Downloads/report.2026"
+        )));
+        assert!(!macos_bundle_should_reveal(Path::new(
+            "/Users/dev/Downloads/archive.v2"
+        )));
+        assert!(!macos_bundle_should_reveal(Path::new(
+            "/Users/dev/Downloads/Downloads"
+        )));
+        assert!(!macos_bundle_should_reveal(Path::new(
+            "/Users/dev/Downloads/notes."
+        )));
+    }
+
+    #[test]
+    fn launchable_bundles_and_packages_reveal_instead_of_opening() {
+        for name in [
+            "Tool.app",
+            "Tool.APP",
+            "Plugin.bundle",
+            "Lib.framework",
+            "Installer.pkg",
+            "Installer.MPKG",
+            "Doc.rtfd",
+            "Sheet.numbers",
+            "Library.photoslibrary",
+        ] {
+            let path = format!("/Users/dev/Downloads/{name}");
+            assert!(macos_bundle_should_reveal(Path::new(&path)), "{name}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod derived_folder_name_tests {
+    use super::derive_extract_folder_name;
+
+    #[test]
+    fn derived_folder_names_avoid_windows_devices_and_streams_on_every_platform() {
+        assert_eq!(
+            derive_extract_folder_name("CON.zip").as_deref(),
+            Some("_extracted")
+        );
+        assert_eq!(
+            derive_extract_folder_name("aux.tar.gz").as_deref(),
+            Some("_extracted")
+        );
+        assert_eq!(
+            derive_extract_folder_name("notes:ads.zip").as_deref(),
+            Some("_extracted")
+        );
+        assert_eq!(
+            derive_extract_folder_name("notes..zip").as_deref(),
+            Some("_extracted")
+        );
+        assert_eq!(
+            derive_extract_folder_name("console.zip").as_deref(),
+            Some("console")
+        );
+        assert_eq!(
+            derive_extract_folder_name("report.2026.zip").as_deref(),
+            Some("report.2026")
+        );
+    }
+}
+
+// Failure modes, written before the implementation:
+// 1. A `name.{CLSID}` folder opened on Windows resolves to a shell namespace
+//    extension (ILCreateFromPathW / explorer.exe parse display names), not the
+//    folder's contents. Such a path must be refused before the shell is called.
+// 2. A derived extract folder name carrying a braced CLSID must not be created,
+//    because Zinnia would later open it as the namespace above.
+// 3. Near-miss braces (wrong length, non-hex, missing braces) are ordinary names.
+// 4. Both separators split components.
+// 5. The check is pure, so it is testable on every OS; enforcement is Windows-only.
+#[cfg(test)]
+mod shell_namespace_tests {
+    use super::{derive_extract_folder_name, path_has_shell_namespace_component};
+
+    const GUID: &str = "{20D04FE0-3AEA-1069-A2D8-08002B30309D}";
+
+    #[test]
+    fn braced_clsid_components_are_shell_namespace_paths() {
+        assert!(path_has_shell_namespace_component(&format!(
+            r"C:\Users\dev\Downloads\Invoice.{GUID}"
+        )));
+        assert!(path_has_shell_namespace_component(&format!(
+            "/Users/dev/Downloads/Invoice.{GUID}/sub"
+        )));
+        assert!(path_has_shell_namespace_component(&format!(
+            r"C:\Users\dev\{GUID}\file"
+        )));
+        assert!(path_has_shell_namespace_component(&format!(
+            r"C:\Users\dev\{}\plain",
+            GUID.to_ascii_lowercase()
+        )));
+    }
+
+    #[test]
+    fn near_miss_braces_are_ordinary_names() {
+        assert!(!path_has_shell_namespace_component(
+            r"C:\Users\dev\draft{1}"
+        ));
+        assert!(!path_has_shell_namespace_component(
+            r"C:\Users\dev\{20D04FE0-3AEA-1069-A2D8-0800}"
+        ));
+        assert!(!path_has_shell_namespace_component(
+            r"C:\Users\dev\{ZZD04FE0-3AEA-1069-A2D8-08002B30309D}"
+        ));
+        assert!(!path_has_shell_namespace_component(
+            r"C:\Users\dev\20D04FE0-3AEA-1069-A2D8-08002B30309D"
+        ));
+        assert!(!path_has_shell_namespace_component(r"C:\Users\dev\plain"));
+    }
+
+    #[test]
+    fn windows_refuses_clsid_folders_and_other_platforms_keep_opening_them() {
+        let path = format!(r"C:\Users\dev\Downloads\Invoice.{GUID}");
+        assert!(super::shell_namespace_refusal(&path, true).is_some());
+        assert!(super::shell_namespace_refusal(&path, false).is_none());
+        let plain = r"C:\Users\dev\Downloads\Invoice";
+        assert!(super::shell_namespace_refusal(plain, true).is_none());
+        assert!(super::shell_namespace_refusal(plain, false).is_none());
+    }
+
+    #[test]
+    fn derived_extract_names_never_carry_a_braced_clsid() {
+        assert_eq!(
+            derive_extract_folder_name(&format!("Invoice.{GUID}.zip")).as_deref(),
+            Some("_extracted")
+        );
+        assert_eq!(
+            derive_extract_folder_name(&format!("{GUID}.zip")).as_deref(),
+            Some("_extracted")
+        );
+        assert_eq!(
+            derive_extract_folder_name("draft{1}.zip").as_deref(),
+            Some("draft{1}")
+        );
+    }
 }

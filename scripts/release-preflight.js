@@ -84,6 +84,10 @@ function runPreflight() {
   console.log(
     `release-preflight: ok (${version}, ${expectedBranch}@${head.slice(0, 12)})`,
   );
+  console.log(`release-preflight: release commit ${head}`);
+  console.log(
+    "release-preflight: manual gate (not checked by this script): confirm the hosted ci-gate workflow succeeded for this exact commit on GitHub, and that the beta tag ruleset (npm run repo:protect-beta-tags) is in place, before publishing.",
+  );
 }
 
 function isDirectExecution() {

@@ -1865,6 +1865,84 @@ describe("convertArchive", () => {
     });
   });
 
+  it("carries the source download marker onto the converted archive after recompressing", async () => {
+    const archive = uniqueArchivePath("convert-motw");
+    state.inputs = [archive];
+    saveMock.mockResolvedValueOnce("/tmp/converted-motw.7z");
+
+    setInvokeRouter((command, payload) => {
+      if (command === "validate_archive_paths") {
+        return pathsFromValidationPayload(payload).map((path) => ({
+          path,
+          valid: true,
+        }));
+      }
+      if (command === "probe_7z") return undefined;
+      if (command === "archive_output_selection_token") return "absent";
+      if (command === "reserve_temp_extract_path")
+        return "/tmp/zinnia-convert-motw";
+      if (command === "list_managed_temp_children")
+        return ["/tmp/zinnia-convert-motw/document.txt"];
+      if (command === "remove_managed_temp_dir") return undefined;
+      if (command === "run_7z") {
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      return undefined;
+    });
+
+    await convertArchive();
+
+    expect(invokeMock).toHaveBeenCalledWith("copy_archive_mark_of_the_web", {
+      source: archive,
+      output: "/tmp/converted-motw.7z",
+    });
+    const names = invokeMock.mock.calls.map(([name]) => name);
+    expect(names.lastIndexOf("copy_archive_mark_of_the_web")).toBeGreaterThan(
+      names.lastIndexOf("run_7z"),
+    );
+    expect(document.getElementById("toast-region")?.textContent).toContain(
+      "Converted archive to 7Z.",
+    );
+  });
+
+  it("reports failure instead of success when the download marker cannot be carried over", async () => {
+    const archive = uniqueArchivePath("convert-motw-fail");
+    state.inputs = [archive];
+    saveMock.mockResolvedValueOnce("/tmp/converted-motw-fail.7z");
+
+    setInvokeRouter((command, payload) => {
+      if (command === "validate_archive_paths") {
+        return pathsFromValidationPayload(payload).map((path) => ({
+          path,
+          valid: true,
+        }));
+      }
+      if (command === "probe_7z") return undefined;
+      if (command === "archive_output_selection_token") return "absent";
+      if (command === "reserve_temp_extract_path")
+        return "/tmp/zinnia-convert-motw-fail";
+      if (command === "list_managed_temp_children")
+        return ["/tmp/zinnia-convert-motw-fail/document.txt"];
+      if (command === "remove_managed_temp_dir") return undefined;
+      if (command === "run_7z") {
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      if (command === "copy_archive_mark_of_the_web") {
+        throw new Error("The converted archive does not exist.");
+      }
+      return undefined;
+    });
+
+    await convertArchive();
+
+    const toast = document.getElementById("toast-region")?.textContent ?? "";
+    expect(toast).toContain(
+      "/tmp/converted-motw-fail.7z, but its download marker could not be carried over",
+    );
+    expect(toast).toContain("Delete it before opening.");
+    expect(toast).not.toContain("Converted archive to");
+  });
+
   it("does not recompress conversion output after a warning exit", async () => {
     const archive = uniqueArchivePath("convert-warning");
     state.inputs = [archive];
