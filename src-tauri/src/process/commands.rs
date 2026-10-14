@@ -785,9 +785,12 @@ pub(crate) fn pin_existing_zip_output_type(args: &mut Vec<String>) {
         .iter()
         .position(|arg| arg == "--")
         .unwrap_or(args.len());
-    let has_password = args[1..separator]
-        .iter()
-        .any(|arg| arg.len() > 2 && arg[..2].eq_ignore_ascii_case("-p"));
+    let has_password = args[1..separator].iter().any(|arg| {
+        arg.len() > 2
+            && arg
+                .get(..2)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("-p"))
+    });
     if !has_password || !crate::validation::archive_type_switches(args).is_empty() {
         return;
     }

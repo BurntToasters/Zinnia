@@ -2629,7 +2629,10 @@ pub(crate) fn clear_staged_directory_shell_attributes(
             .map_err(|error| format!("Could not read {}: {error}", directory.display()))?
         {
             let entry = entry.map_err(|error| error.to_string())?;
-            pending.push(entry.path());
+            let file_type = entry.file_type().map_err(|error| error.to_string())?;
+            if file_type.is_dir() && !file_type.is_symlink() {
+                pending.push(entry.path());
+            }
         }
         let attributes = meta.file_attributes();
         if attributes & shell_bits == 0 {

@@ -25,7 +25,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Security - Encryption:** Adding files with a password to an existing ZIP archive that does not end in `.zip` now always uses AES-256 instead of the weaker ZipCrypto.
 - **Security - Paths:** Folder names that Zinnia derives from an archive name now avoid Windows device names (such as `CON` or `NUL`), `:` streams, and shell folder IDs (`name.{GUID}`) on every platform. On Windows, **Open destination** refuses folders with such names.
 - **Security - Updater:** Zinnia never installs an update whose version is not newer than the installed one. Update signatures with a non-standard encoding are now rejected.
-- **Security:** Each window can only use the features it needs, and progress updates (including file names) only reach the window that started the operation.
+- **Security:** Progress updates (including file names) and debug console output now only reach the window that started the operation, instead of every open window.
 - **Fix - Open destination (macOS):** Opening an extracted folder whose name looks like an app or package now shows it in Finder instead of launching it.
 - **Fix - Logs:** Exporting logs no longer freezes the app while the save dialog is open.
 - **Fix - Browse:** Archive entry names that contain text like `-p...` or `password=` are no longer altered in the file list, so selective extraction finds them.

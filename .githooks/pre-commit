@@ -33,3 +33,15 @@ if git diff --cached --name-only --diff-filter=ACMR | grep -qE '^src-tauri/.*\.r
   echo "pre-commit: archive-formats check"
   run_npm run --silent check:archive-formats
 fi
+
+if git diff --cached --name-only --diff-filter=ACMR | grep -qE '^src-tauri/gen/schemas/.*\.json$'; then
+  echo "pre-commit: generated schema e2e check"
+  git diff --cached --name-only --diff-filter=ACMR | grep -E '^src-tauri/gen/schemas/.*\.json$' | while IFS= read -r file; do
+    if git show ":$file" | grep -q 'wdio'; then
+      echo "pre-commit: $file contains WebDriver (wdio) entries." >&2
+      echo "The Tauri ACL schemas were generated from an e2e-feature build. Regenerate them without the e2e feature:" >&2
+      echo "  cargo check --manifest-path src-tauri/Cargo.toml" >&2
+      exit 1
+    fi
+  done
+fi

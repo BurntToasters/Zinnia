@@ -758,12 +758,40 @@ pub(crate) fn copy_windows_zone_identifier(
         eprintln!("Archive Mark-of-the-Web has an invalid format; skipping copy.");
         return Ok(());
     };
-    let mut destination_stream = std::fs::OpenOptions::new()
+    const ERROR_INVALID_FUNCTION: i32 = 1;
+    const ERROR_NOT_SUPPORTED: i32 = 50;
+    const ERROR_INVALID_PARAMETER: i32 = 87;
+    const ERROR_INVALID_NAME: i32 = 123;
+    let mut destination_stream = match std::fs::OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
         .open(stream_path(destination))
-        .map_err(|error| format!("Could not preserve archive Mark-of-the-Web: {error}"))?;
+    {
+        Ok(file) => file,
+        Err(error)
+            if matches!(
+                error.raw_os_error(),
+                Some(
+                    ERROR_INVALID_FUNCTION
+                        | ERROR_NOT_SUPPORTED
+                        | ERROR_INVALID_PARAMETER
+                        | ERROR_INVALID_NAME
+                )
+            ) =>
+        {
+            eprintln!(
+                "Skipping Mark-of-the-Web for {}: the destination volume does not support alternate data streams ({error}).",
+                destination.display()
+            );
+            return Ok(());
+        }
+        Err(error) => {
+            return Err(format!(
+                "Could not preserve archive Mark-of-the-Web: {error}"
+            ))
+        }
+    };
     destination_stream
         .write_all(&payload)
         .and_then(|()| destination_stream.sync_all())

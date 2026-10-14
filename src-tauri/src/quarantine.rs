@@ -66,9 +66,10 @@ mod macos {
         path: &std::path::Path,
         metadata: &std::fs::Metadata,
         value: &[u8],
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         match set_quarantine_nofollow(path, value) {
-            Ok(()) => Ok(()),
+            Ok(()) => Ok(true),
+            Err(error) if error.raw_os_error() == Some(libc::ENOTSUP) => Ok(false),
             Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
                 let original = metadata.permissions();
                 let mode = original.mode();
@@ -84,7 +85,7 @@ mod macos {
                 result.map_err(|retry_error| {
                     format!("Could not quarantine {}: {retry_error}", path.display())
                 })?;
-                restore.map_err(|restore_error| {
+                restore.map(|()| true).map_err(|restore_error| {
                     format!(
                         "Quarantined {} but could not restore its permissions: {restore_error}",
                         path.display()
@@ -120,7 +121,13 @@ mod macos {
                     pending.push(entry.path());
                 }
             }
-            apply_to_entry(&path, &metadata, value)?;
+            if !apply_to_entry(&path, &metadata, value)? {
+                eprintln!(
+                    "Skipping quarantine marker for {}: the destination volume does not support extended attributes.",
+                    root.display()
+                );
+                return Ok(());
+            }
         }
         Ok(())
     }

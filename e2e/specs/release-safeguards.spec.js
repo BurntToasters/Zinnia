@@ -130,7 +130,7 @@ describe("beta.5 release safeguards", () => {
     fs.mkdirSync(ROOT, { recursive: true });
   });
 
-  it("marks a converted archive with the source download marker before publishing it", async () => {
+  it("marks a converted archive with the source download marker before publishing it", async function () {
     const hello = path.join(ROOT, "hello.txt");
     fs.writeFileSync(hello, PAYLOAD);
     const source = path.join(ROOT, "downloaded.zip");
@@ -138,6 +138,14 @@ describe("beta.5 release safeguards", () => {
       cwd: ROOT,
     });
     const marker = setDownloadMarker(source);
+    if (marker === null) {
+      writeEvidence(EVIDENCE_DIR, "convert-download-marker", {
+        scenario: "convert-download-marker",
+        platform: process.platform,
+        skipped: "platform has no download marker",
+      });
+      this.skip();
+    }
     const dest = path.join(ROOT, "converted.7z");
 
     await openInBrowse(source, "hello.txt");
@@ -158,12 +166,8 @@ describe("beta.5 release safeguards", () => {
     await waitForArchiveIdle();
 
     const destMarker = readDownloadMarker(dest);
-    if (marker === null) {
-      assert.equal(destMarker, null);
-    } else {
-      assert.ok(destMarker, "converted archive has no download marker");
-      assert.equal(destMarker.trim(), marker.trim());
-    }
+    assert.ok(destMarker, "converted archive has no download marker");
+    assert.equal(destMarker.trim(), marker.trim());
     const members = [...listArchive(dest).matchAll(/^Path = (.+)$/gm)].map(
       (match) => match[1],
     );
@@ -177,12 +181,76 @@ describe("beta.5 release safeguards", () => {
     writeEvidence(EVIDENCE_DIR, "convert-download-marker", {
       scenario: "convert-download-marker",
       platform: process.platform,
-      sourceMarked: marker !== null,
+      sourceMarked: true,
       convertedMarker: destMarker,
-      markerMatches:
-        marker === null ? null : destMarker?.trim() === marker.trim(),
+      markerMatches: destMarker.trim() === marker.trim(),
       convertedSha256: sha256File(dest),
       members,
+    });
+  });
+
+  it("keeps the download marker on files extracted from a downloaded archive", async function () {
+    if (process.platform !== "darwin") {
+      writeEvidence(EVIDENCE_DIR, "extract-download-marker", {
+        scenario: "extract-download-marker",
+        platform: process.platform,
+        skipped: "macOS-only quarantine download marker",
+      });
+      this.skip();
+    }
+    const treeSource = path.join(ROOT, "download-tree-src");
+    fs.mkdirSync(path.join(treeSource, "inner"), { recursive: true });
+    fs.writeFileSync(path.join(treeSource, "inner", "hello.txt"), PAYLOAD);
+    fs.writeFileSync(path.join(treeSource, "top.txt"), "top level\n");
+    const archive = path.join(ROOT, "download-tree.zip");
+    run7z(
+      requireHostSidecar(),
+      ["a", "-tzip", archive, "--", "inner/hello.txt", "top.txt"],
+      { cwd: treeSource },
+    );
+    const marker = setDownloadMarker(archive);
+    const dest = path.join(ROOT, "download-tree-out");
+    const nestedFile = path.join(dest, "inner", "hello.txt");
+
+    await startPowerExtract(archive, dest);
+    await browser.waitUntil(() => fs.existsSync(nestedFile), {
+      timeout: 120_000,
+      interval: 250,
+      timeoutMsg: "extraction did not publish inner/hello.txt",
+    });
+    await waitForArchiveIdle();
+
+    const targets = {
+      ".": dest,
+      inner: path.join(dest, "inner"),
+      "top.txt": path.join(dest, "top.txt"),
+      "inner/hello.txt": nestedFile,
+    };
+    const markers = Object.fromEntries(
+      Object.entries(targets).map(([relative, target]) => [
+        relative,
+        readDownloadMarker(target)?.trim() ?? null,
+      ]),
+    );
+    const markersMatch = Object.values(markers).every(
+      (value) => value !== null && value === marker.trim(),
+    );
+    for (const [relative, value] of Object.entries(markers)) {
+      assert.ok(value, `${relative} has no download marker`);
+      assert.equal(value, marker.trim(), `${relative} marker differs`);
+    }
+    assert.deepEqual(
+      findLeftovers(ROOT).filter((name) => name.startsWith(".zinnia-")),
+      [],
+      "extraction left stage files",
+    );
+
+    writeEvidence(EVIDENCE_DIR, "extract-download-marker", {
+      scenario: "extract-download-marker",
+      platform: process.platform,
+      archiveMarker: marker.trim(),
+      markers,
+      markersMatch,
     });
   });
 
