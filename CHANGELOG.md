@@ -22,7 +22,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
 - **Security - Downloaded files:** On macOS, files extracted from a downloaded archive now keep the download warning (quarantine), so Gatekeeper still checks apps that came out of an archive. Converting or updating a downloaded archive now keeps its download warning on macOS and Windows. The new archive is marked before it is saved, so an unmarked copy is never left on disk.
 - **Security - Windows:** Extracted folders no longer keep the read-only or system attribute. An archive can no longer make Explorer apply its own `desktop.ini` (for example, a folder icon loaded from a network share) to the folders it creates.
-- **Security - Encryption:** Adding files with a password to an existing ZIP archive that does not end in `.zip` now always uses AES-256 instead of the weaker ZipCrypto.
+- **Security - Encryption:** As an extra safeguard, the backend now always uses AES-256 instead of the weaker ZipCrypto when files are added with a password to an existing ZIP archive, even one whose name does not end in `.zip`.
 - **Security - Paths:** Folder names that Zinnia derives from an archive name now avoid Windows device names (such as `CON` or `NUL`), `:` streams, and shell folder IDs (`name.{GUID}`) on every platform. On Windows, **Open destination** refuses folders with such names.
 - **Security - Updater:** Zinnia never installs an update whose version is not newer than the installed one. Update signatures with a non-standard encoding are now rejected.
 - **Security:** Progress updates (including file names) and debug console output now only reach the window that started the operation, instead of every open window.
