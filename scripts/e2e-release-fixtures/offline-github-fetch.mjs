@@ -39,3 +39,33 @@ if (fakeBase) {
     );
   };
 }
+
+const shims = {
+  gh: process.env.FAKE_GH_SHIM,
+  cargo: process.env.FAKE_CARGO_SHIM,
+};
+if (fakeBase && shims.gh && shims.cargo) {
+  const { createRequire, syncBuiltinESMExports } = await import("node:module");
+  const childProcess = createRequire(import.meta.url)("node:child_process");
+  const redirect = (command, args) => {
+    const name =
+      typeof command === "string"
+        ? command.replace(/\.(exe|cmd|bat)$/i, "").toLowerCase()
+        : "";
+    const shim = Object.hasOwn(shims, name) ? shims[name] : undefined;
+    if (!shim) return null;
+    return [process.execPath, [shim, ...(Array.isArray(args) ? args : [])]];
+  };
+  for (const method of ["spawn", "spawnSync", "execFile", "execFileSync"]) {
+    const original = childProcess[method];
+    childProcess[method] = function (command, args, ...rest) {
+      const target = redirect(command, args);
+      if (!target) return original.call(this, command, args, ...rest);
+      if (args !== undefined && !Array.isArray(args)) {
+        return original.call(this, target[0], target[1], args, ...rest);
+      }
+      return original.call(this, target[0], target[1], ...rest);
+    };
+  }
+  syncBuiltinESMExports();
+}

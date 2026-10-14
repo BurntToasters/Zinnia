@@ -186,6 +186,8 @@ struct Run7zRequest {
     expected_archive_identity: Option<String>,
     #[serde(default)]
     include_io_diagnostics: bool,
+    #[serde(default, deserialize_with = "deserialize_present_optional_string")]
+    mark_of_the_web_source: Option<String>,
 }
 
 /// Missing is allowed for non-mutating calls, but mutating commands (`x`, `a`,
@@ -219,6 +221,16 @@ fn parse_run_7z_request(request_json: &str) -> Result<Run7zRequest, String> {
     ) && request.expected_archive_identity.is_none()
     {
         return Err("Mutating archive operations require an archive identity token.".to_string());
+    }
+    if let Some(source) = request.mark_of_the_web_source.as_deref() {
+        if request.args.first().map(String::as_str) != Some("a") {
+            return Err(
+                "A download-marker source is only accepted for archive creation.".to_string(),
+            );
+        }
+        if source.is_empty() || source.len() > 8192 || source.contains('\0') {
+            return Err("The download-marker source path is invalid.".to_string());
+        }
     }
     Ok(request)
 }
@@ -763,6 +775,49 @@ pub(crate) fn spawn_7z_noninteractive(
         let _ = block_on(async move { tx.send(event).await });
     });
     Ok((rx, child, pending_password))
+}
+
+pub(crate) fn pin_existing_zip_output_type(args: &mut Vec<String>) {
+    if !matches!(args.first().map(String::as_str), Some("a" | "u")) {
+        return;
+    }
+    let separator = args
+        .iter()
+        .position(|arg| arg == "--")
+        .unwrap_or(args.len());
+    let has_password = args[1..separator]
+        .iter()
+        .any(|arg| arg.len() > 2 && arg[..2].eq_ignore_ascii_case("-p"));
+    if !has_password || !crate::validation::archive_type_switches(args).is_empty() {
+        return;
+    }
+    let Some(output) = args[1..separator]
+        .iter()
+        .rev()
+        .find(|arg| !arg.starts_with('-'))
+    else {
+        return;
+    };
+    if output.to_ascii_lowercase().ends_with(".zip") {
+        return;
+    }
+    let path = std::path::Path::new(output);
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return;
+    };
+    if !meta.is_file() || crate::path_safety::is_link_or_reparse(&meta) {
+        return;
+    }
+    let mut magic = [0u8; 4];
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return;
+    };
+    if std::io::Read::read_exact(&mut file, &mut magic).is_err() {
+        return;
+    }
+    if matches!(&magic, b"PK\x03\x04" | b"PK\x05\x06" | b"PK\x07\x08") {
+        args.insert(separator, "-tzip".to_string());
+    }
 }
 
 pub(crate) fn harden_7z_args(args: &mut Vec<String>) {
@@ -1586,8 +1641,16 @@ pub async fn run_7z(
         args,
         expected_archive_identity,
         include_io_diagnostics,
+        mark_of_the_web_source,
     } = parse_run_7z_request(&request_json)?;
     drop(request_json);
+    let mark_of_the_web_source = match mark_of_the_web_source {
+        Some(source) => Some(crate::quarantine::validated_regular_file(
+            &source,
+            "download-marker source",
+        )?),
+        None => None,
+    };
     let operation_started = std::time::Instant::now();
     let mut io_diagnostics = include_io_diagnostics.then(ArchiveIoDiagnostics::default);
 
@@ -1659,6 +1722,7 @@ pub async fn run_7z(
         }
     }
 
+    pin_existing_zip_output_type(&mut args);
     harden_7z_args(&mut args);
     apply_backend_link_switches(&mut args);
     let compound_tar_operation = is_compound_tar_operation(&args);
@@ -2283,6 +2347,7 @@ pub async fn run_7z(
     // `u` writes a complete new archive into the stage, which sheds the
     // original's quarantine / Zone.Identifier unless it is carried over.
     let finalize_carries_update_marker = args.first().map(String::as_str) == Some("u");
+    let finalize_marker_source = mark_of_the_web_source.clone();
     let finalize_emit = emit_window.clone();
     let finalize_target = progress_target.clone();
     let finalization_publish_strategy = Arc::new(Mutex::new(None::<PublishStrategy>));
@@ -2302,16 +2367,18 @@ pub async fn run_7z(
                 Ok(Ok(()))
             }
         } else {
-            if let (true, Some((staged, destination))) = (
-                finalize_carries_update_marker,
-                finalize_plan.staged_archive.as_ref(),
-            ) {
-                if let Err(error) =
-                    crate::quarantine::copy_mark_of_the_web_to_family(destination, staged)
-                {
+            if let Some((staged, destination)) = finalize_plan.staged_archive.as_ref() {
+                let marker_source = if finalize_carries_update_marker {
+                    Some(destination.as_path())
+                } else {
+                    finalize_marker_source.as_deref()
+                };
+                if let Some(Err(error)) = marker_source.map(|source| {
+                    crate::quarantine::copy_mark_of_the_web_to_family(source, staged)
+                }) {
                     return match rollback_cleanup(&finalize_plan) {
                         Ok(()) => Ok(Err(format!(
-                            "{error} The update was rolled back so an unmarked archive was not published."
+                            "{error} The archive was rolled back so an unmarked archive was not published."
                         ))),
                         Err(rollback_error) => {
                             Err(format!("{error}; rollback also failed: {rollback_error}"))
@@ -2340,6 +2407,18 @@ pub async fn run_7z(
                     return match rollback_cleanup(&finalize_plan) {
                         Ok(()) => Ok(Err(format!(
                             "{error} The extraction was rolled back so unquarantined files were not published."
+                        ))),
+                        Err(rollback_error) => Err(format!(
+                            "{error}; rollback also failed: {rollback_error}"
+                        )),
+                    };
+                }
+            }
+            if let Some((stage, _)) = finalize_plan.staged_extract.as_ref() {
+                if let Err(error) = super::commit::clear_staged_directory_shell_attributes(stage) {
+                    return match rollback_cleanup(&finalize_plan) {
+                        Ok(()) => Ok(Err(format!(
+                            "{error} The extraction was rolled back so nothing was published."
                         ))),
                         Err(rollback_error) => Err(format!(
                             "{error}; rollback also failed: {rollback_error}"

@@ -563,12 +563,12 @@ fn copy_windows_times_and_attributes(
         | FILE_ATTRIBUTE_ARCHIVE
         | FILE_ATTRIBUTE_NOT_CONTENT_INDEXED;
     let mut target_attributes = source_attributes & allowed;
+    if directory {
+        target_attributes &= !(FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_SYSTEM);
+    }
     if target_attributes == 0 {
         target_attributes = FILE_ATTRIBUTE_NORMAL;
     }
-    // A directory's read-only bit is shell metadata rather than an access
-    // control. Preserve it anyway because Explorer and archive users observe it.
-    let _ = directory;
     let target_wide: Vec<u16> = target_path
         .as_os_str()
         .encode_wide()
@@ -2605,6 +2605,62 @@ pub(crate) fn rollback_persisted_move_plan(
     }
     hydrate_move_plan_identities(log_bytes.as_deref(), &mut plan)?;
     rollback_move_records_impl(staged, destination, &plan, true)
+}
+
+#[cfg(windows)]
+pub(crate) fn clear_staged_directory_shell_attributes(
+    root: &std::path::Path,
+) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt as _;
+    use std::os::windows::fs::MetadataExt as _;
+    use windows_sys::Win32::Storage::FileSystem::{
+        SetFileAttributesW, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_SYSTEM,
+    };
+
+    let shell_bits = FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_SYSTEM;
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        let meta = std::fs::symlink_metadata(&directory)
+            .map_err(|error| format!("Could not inspect {}: {error}", directory.display()))?;
+        if crate::path_safety::is_link_or_reparse(&meta) || !meta.is_dir() {
+            continue;
+        }
+        for entry in std::fs::read_dir(&directory)
+            .map_err(|error| format!("Could not read {}: {error}", directory.display()))?
+        {
+            let entry = entry.map_err(|error| error.to_string())?;
+            pending.push(entry.path());
+        }
+        let attributes = meta.file_attributes();
+        if attributes & shell_bits == 0 {
+            continue;
+        }
+        let mut cleared = attributes & !shell_bits;
+        if cleared == 0 {
+            cleared = FILE_ATTRIBUTE_NORMAL;
+        }
+        let wide: Vec<u16> = directory
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        // SAFETY: `wide` is NUL-terminated (`chain(once(0))`) and alive for the call.
+        if unsafe { SetFileAttributesW(wide.as_ptr(), cleared) } == 0 {
+            return Err(format!(
+                "Could not clear folder attributes on {}: {}",
+                directory.display(),
+                std::io::Error::last_os_error()
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub(crate) fn clear_staged_directory_shell_attributes(
+    _root: &std::path::Path,
+) -> Result<(), String> {
+    Ok(())
 }
 
 /// Fail closed on silent no-output: an exit-0 run that leaves an empty stage

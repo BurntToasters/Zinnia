@@ -22,10 +22,13 @@ function u32(value) {
 }
 
 /**
- * entries: [{ name, data?: string|Buffer, symlinkTarget?: string }].
+ * entries: [{ name, data?: string|Buffer, symlinkTarget?: string, dosAttributes?: number }].
  * Symlink entries store their target as the content and set the Unix
  * symlink mode in the external attributes, which 7-Zip reports as
- * `Symbolic Link =`.
+ * `Symbolic Link =`. `dosAttributes` writes an MS-DOS host entry whose
+ * external attributes are those Windows attribute bits (for example
+ * read-only 0x01, system 0x04, directory 0x10); a name ending in `/` is a
+ * directory entry.
  */
 export function buildStoredZip(entries) {
   const locals = [];
@@ -39,6 +42,9 @@ export function buildStoredZip(entries) {
       : Buffer.from(entry.data ?? "", "utf8");
     const crc = zlib.crc32(data);
     const mode = isLink ? UNIX_SYMLINK_MODE : UNIX_FILE_MODE;
+    const dos = typeof entry.dosAttributes === "number";
+    const versionMadeBy = dos ? 20 : (3 << 8) | 20;
+    const external = dos ? entry.dosAttributes : (mode << 16) >>> 0;
     const local = Buffer.concat([
       u32(0x04034b50),
       u16(20),
@@ -56,7 +62,7 @@ export function buildStoredZip(entries) {
     ]);
     const central = Buffer.concat([
       u32(0x02014b50),
-      u16((3 << 8) | 20),
+      u16(versionMadeBy),
       u16(20),
       u16(0x0800),
       u16(0),
@@ -70,7 +76,7 @@ export function buildStoredZip(entries) {
       u16(0),
       u16(0),
       u16(0),
-      u32((mode << 16) >>> 0),
+      u32(external),
       u32(offset),
       name,
     ]);

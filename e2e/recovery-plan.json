@@ -62,7 +62,8 @@
     "./specs/newer-journal.spec.js",
     "./specs/cancel-extract.spec.js",
     "./specs/hostile-archives.spec.js",
-    "./specs/split-update.spec.js"
+    "./specs/split-update.spec.js",
+    "./specs/release-safeguards.spec.js"
   ],
-  "suiteCount": 22
+  "suiteCount": 23
 }

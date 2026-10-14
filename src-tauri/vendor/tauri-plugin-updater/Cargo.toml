@@ -88,7 +88,7 @@ version = "0.19"
 version = "0.4"
 
 [dependencies.minisign-verify]
-version = "0.2"
+version = "0.3"
 
 [dependencies.percent-encoding]
 version = "2.3"

@@ -29,7 +29,7 @@ fn is_stream_switch(arg: &str) -> bool {
     arg.eq_ignore_ascii_case("-bsp1")
 }
 
-fn archive_type_switches(args: &[String]) -> Vec<String> {
+pub(crate) fn archive_type_switches(args: &[String]) -> Vec<String> {
     let separator = args
         .iter()
         .position(|arg| arg == "--")

@@ -196,12 +196,14 @@ export function setSevenZipRunInFlight(active: boolean): void {
 export async function invokeGuardedRun7z(
   args: string[],
   expectedArchiveIdentity?: string,
+  markOfTheWebSource?: string,
 ): Promise<Run7zResult> {
   sevenZipRunInFlight = true;
   try {
     const result = await invokeRun7zRequest<unknown>({
       args,
       ...(expectedArchiveIdentity ? { expectedArchiveIdentity } : {}),
+      ...(markOfTheWebSource ? { markOfTheWebSource } : {}),
       ...(isDebugEnabled() ? { includeIoDiagnostics: true } : {}),
     });
     assertRunResult(result);

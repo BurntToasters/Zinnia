@@ -158,20 +158,6 @@ pub(crate) fn copy_mark_of_the_web(
     Ok(())
 }
 
-/// Frontend entry point used after a successful archive conversion. `output` is
-/// the requested archive path; a split conversion writes only `output.001`,
-/// `output.002`, ... so every member of that family is marked. All paths must
-/// be regular files; symbolic links and reparse points are refused so the
-/// marker cannot be redirected. Only ever adds a marker, never removes one.
-#[tauri::command]
-pub fn copy_archive_mark_of_the_web(source: String, output: String) -> Result<(), String> {
-    let source = validated_regular_file(&source, "source archive")?;
-    if output.is_empty() || output.contains('\0') {
-        return Err("The converted archive path is invalid.".to_string());
-    }
-    copy_mark_of_the_web_to_family(&source, std::path::Path::new(&output))
-}
-
 /// Marks every member of the archive output family at `output_base` (the base
 /// file and/or its `.001`, `.002`, ... volumes) with `source`'s download marker.
 /// Fails when the family is empty or contains a link or non-file.
@@ -190,7 +176,7 @@ pub(crate) fn copy_mark_of_the_web_to_family(
     Ok(())
 }
 
-fn validated_regular_file(raw: &str, label: &str) -> Result<std::path::PathBuf, String> {
+pub(crate) fn validated_regular_file(raw: &str, label: &str) -> Result<std::path::PathBuf, String> {
     if raw.is_empty() || raw.contains('\0') {
         return Err(format!("The {label} path is invalid."));
     }
@@ -208,7 +194,10 @@ fn validated_regular_file(raw: &str, label: &str) -> Result<std::path::PathBuf, 
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::apply_quarantine_tree;
-    use super::{copy_archive_mark_of_the_web, copy_mark_of_the_web, read_quarantine};
+    use super::{
+        copy_mark_of_the_web, copy_mark_of_the_web_to_family, read_quarantine,
+        validated_regular_file,
+    };
 
     fn scratch_dir(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -267,11 +256,8 @@ mod tests {
         let marker = b"0081;65f0a1b2;Safari;ABCD-5678".to_vec();
         apply_quarantine_tree(&source, &marker).expect("mark source");
 
-        copy_archive_mark_of_the_web(
-            source.to_string_lossy().into(),
-            base.to_string_lossy().into(),
-        )
-        .expect("split output is a valid conversion result");
+        copy_mark_of_the_web_to_family(&source, &base)
+            .expect("split output is a valid conversion result");
 
         for volume in &volumes {
             assert_eq!(
@@ -290,24 +276,13 @@ mod tests {
         let link = dir.join("link.zip");
         std::os::unix::fs::symlink(&file, &link).expect("symlink");
 
-        assert!(copy_archive_mark_of_the_web(
-            dir.join("missing.rar").to_string_lossy().into(),
-            file.to_string_lossy().into(),
-        )
-        .is_err());
-        assert!(copy_archive_mark_of_the_web(
-            file.to_string_lossy().into(),
-            link.to_string_lossy().into(),
-        )
-        .is_err());
-        assert!(copy_archive_mark_of_the_web(
-            dir.to_string_lossy().into(),
-            file.to_string_lossy().into(),
-        )
-        .is_err());
         assert!(
-            copy_archive_mark_of_the_web(String::new(), file.to_string_lossy().into()).is_err()
+            validated_regular_file(&dir.join("missing.rar").to_string_lossy(), "source").is_err()
         );
+        assert!(copy_mark_of_the_web_to_family(&file, &link).is_err());
+        assert!(validated_regular_file(&dir.to_string_lossy(), "source").is_err());
+        assert!(validated_regular_file(&link.to_string_lossy(), "source").is_err());
+        assert!(validated_regular_file("", "source").is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

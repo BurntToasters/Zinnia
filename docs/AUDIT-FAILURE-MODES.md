@@ -98,3 +98,43 @@ Failure cases considered before the fixes for the 0.6.3 codebase audit.
 - `.rar`/`.tgz` lack the ProgId open verb while classic verbs exist.
 - A Job Object without UI/die-on-exception limits lets a confined child show UI or swallow crashes.
 - A poisoned compress-preflight mutex panics a worker thread and, under `panic=abort`, kills the process.
+
+# 0.6.3-beta.5 audit fix failure inventory
+
+Failure cases considered before the fixes for the beta.5 release audit.
+
+## Conversion download marker
+
+- A converted archive is published before it carries the source archive's download marker, so a crash or IPC failure between publish and marking leaves an unmarked archive on disk.
+- The marker is copied from a path the webview chose freely, so a compromised window stamps or alters markers on unrelated files.
+- The marker source is a symbolic link or reparse point and redirects the read.
+- A split conversion marks only the base name and leaves `.001`, `.002`, ... volumes unmarked.
+- Marking fails and the conversion still reports success, or the unmarked archive is left in place.
+- An archive without a marker gains a fabricated one.
+- A marker source is accepted for commands other than create, and changes extract or update behavior.
+
+## Windows folder attributes
+
+- An extracted folder keeps the read-only or system attribute, so Explorer honors an archive-supplied `desktop.ini` (icon path on a remote share, shell CLSID) when the folder is viewed or opened.
+- Clearing attributes on folders also clears them on files, so read-only or hidden files lose their attributes.
+- Hidden folders stop being hidden.
+
+## Password ZIP update
+
+- Updating an existing ZIP whose name does not end in `.zip` and has no `-tzip` skips the AES-256 enforcement, so 7-Zip falls back to ZipCrypto.
+- The format probe follows a symbolic link or reads a different file than 7-Zip updates.
+- A non-ZIP archive is treated as ZIP and receives ZIP-only switches that make 7-Zip fail.
+- A missing archive (new output) is rejected instead of treated as a fresh create.
+
+## Release dry run on Windows
+
+- The `gh` and `cargo` stand-ins are POSIX scripts without an extension, so Windows resolves the real `gh.exe` and the dry run contacts the real GitHub repository.
+- The child keeps the operator's GitHub CLI configuration and authenticates with real credentials.
+- MSYS `gpg` from Git Bash receives a `C:\...` home directory and cannot create the throwaway key.
+- The fix changes behavior on macOS or Linux, where the POSIX stand-ins already work.
+
+## Branch reset guard
+
+- `npm run b` or `npm run r` repoints a local `beta` or `main` that holds unpushed commits, so those commits disappear from the branch.
+- The guard fails when the local branch does not exist yet or has no upstream.
+- The override hint only works in POSIX shells.

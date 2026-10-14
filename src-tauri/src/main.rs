@@ -430,8 +430,7 @@ fn main() {
             tempdir::remove_managed_temp_dir,
             tempdir::list_managed_temp_children,
             window_fx::set_workspace_window_fx,
-            window_fx::supports_workspace_window_fx,
-            quarantine::copy_archive_mark_of_the_web
+            window_fx::supports_workspace_window_fx
         ])
         .build(tauri::generate_context!())
         .expect("failed to initialize Tauri application");

@@ -468,7 +468,6 @@ fn main() {
         "list_managed_temp_children",
         "set_workspace_window_fx",
         "supports_workspace_window_fx",
-        "copy_archive_mark_of_the_web",
     ];
     tauri_build::try_build(
         tauri_build::Attributes::new()

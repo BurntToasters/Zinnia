@@ -1865,7 +1865,7 @@ describe("convertArchive", () => {
     });
   });
 
-  it("carries the source download marker onto the converted archive after recompressing", async () => {
+  it("asks the backend to mark the converted archive before it is published", async () => {
     const archive = uniqueArchivePath("convert-motw");
     state.inputs = [archive];
     saveMock.mockResolvedValueOnce("/tmp/converted-motw.7z");
@@ -1892,20 +1892,22 @@ describe("convertArchive", () => {
 
     await convertArchive();
 
-    expect(invokeMock).toHaveBeenCalledWith("copy_archive_mark_of_the_web", {
-      source: archive,
-      output: "/tmp/converted-motw.7z",
-    });
-    const names = invokeMock.mock.calls.map(([name]) => name);
-    expect(names.lastIndexOf("copy_archive_mark_of_the_web")).toBeGreaterThan(
-      names.lastIndexOf("run_7z"),
+    const runRequests = invokeMock.mock.calls
+      .filter(([name]) => name === "run_7z")
+      .map(([, payload]) => decodeRun7zInvokePayload(payload));
+    expect(runRequests.map((request) => request.markOfTheWebSource)).toEqual([
+      undefined,
+      archive,
+    ]);
+    expect(invokeMock.mock.calls.map(([name]) => name)).not.toContain(
+      "copy_archive_mark_of_the_web",
     );
     expect(document.getElementById("toast-region")?.textContent).toContain(
       "Converted archive to 7Z.",
     );
   });
 
-  it("reports failure instead of success when the download marker cannot be carried over", async () => {
+  it("reports failure instead of success when the backend cannot mark the converted archive", async () => {
     const archive = uniqueArchivePath("convert-motw-fail");
     state.inputs = [archive];
     saveMock.mockResolvedValueOnce("/tmp/converted-motw-fail.7z");
@@ -1925,10 +1927,13 @@ describe("convertArchive", () => {
         return ["/tmp/zinnia-convert-motw-fail/document.txt"];
       if (command === "remove_managed_temp_dir") return undefined;
       if (command === "run_7z") {
+        const request = decodeRun7zInvokePayload(payload);
+        if (request.markOfTheWebSource) {
+          throw new Error(
+            "Could not quarantine the archive. The archive was rolled back so an unmarked archive was not published.",
+          );
+        }
         return { stdout: "", stderr: "", code: 0 };
-      }
-      if (command === "copy_archive_mark_of_the_web") {
-        throw new Error("The converted archive does not exist.");
       }
       return undefined;
     });
@@ -1936,10 +1941,7 @@ describe("convertArchive", () => {
     await convertArchive();
 
     const toast = document.getElementById("toast-region")?.textContent ?? "";
-    expect(toast).toContain(
-      "/tmp/converted-motw-fail.7z, but its download marker could not be carried over",
-    );
-    expect(toast).toContain("Delete it before opening.");
+    expect(toast).toContain("an unmarked archive was not published");
     expect(toast).not.toContain("Converted archive to");
   });
 

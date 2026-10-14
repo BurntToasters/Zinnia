@@ -5,6 +5,7 @@ export interface Run7zRequest {
   expectedArchiveIdentity?: string;
   /** Request redacted phase timings from the backend only while debug mode is active. */
   includeIoDiagnostics?: boolean;
+  markOfTheWebSource?: string;
 }
 
 /** Stable phase names shared by the Rust run_7z diagnostics payload. */

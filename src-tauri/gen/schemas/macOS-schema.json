@@ -429,12 +429,6 @@
           "markdownDescription": "Enables the close_extract_window command without any pre-configured scope."
         },
         {
-          "description": "Enables the copy_archive_mark_of_the_web command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-copy-archive-mark-of-the-web",
-          "markdownDescription": "Enables the copy_archive_mark_of_the_web command without any pre-configured scope."
-        },
-        {
           "description": "Enables the debug_console_window_open command without any pre-configured scope.",
           "type": "string",
           "const": "allow-debug-console-window-open",
@@ -739,12 +733,6 @@
           "type": "string",
           "const": "deny-close-extract-window",
           "markdownDescription": "Denies the close_extract_window command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the copy_archive_mark_of_the_web command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-copy-archive-mark-of-the-web",
-          "markdownDescription": "Denies the copy_archive_mark_of_the_web command without any pre-configured scope."
         },
         {
           "description": "Denies the debug_console_window_open command without any pre-configured scope.",
