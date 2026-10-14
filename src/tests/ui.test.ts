@@ -319,6 +319,7 @@ describe("workspace and density", () => {
 
   it("resizes to the basic portrait window size", async () => {
     const appWindow = {
+      label: "main",
       onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
       setSize: vi.fn().mockResolvedValue(undefined),
       setResizable: vi.fn().mockResolvedValue(undefined),
@@ -340,6 +341,7 @@ describe("workspace and density", () => {
 
   it("unmaximizes before locking the basic window size", async () => {
     const appWindow = {
+      label: "main",
       onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
       setSize: vi.fn().mockResolvedValue(undefined),
       setResizable: vi.fn().mockResolvedValue(undefined),
@@ -358,6 +360,7 @@ describe("workspace and density", () => {
 
   it("clamps restored power window size before resizing", async () => {
     const appWindow = {
+      label: "main",
       onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
       setSize: vi.fn().mockResolvedValue(undefined),
       setResizable: vi.fn().mockResolvedValue(undefined),
@@ -385,6 +388,7 @@ describe("workspace and density", () => {
     maxBtn.id = "titlebar-max";
     document.body.appendChild(maxBtn);
     const appWindow = {
+      label: "main",
       onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
       setSize: vi.fn().mockResolvedValue(undefined),
       setResizable: vi.fn().mockResolvedValue(undefined),
@@ -403,6 +407,7 @@ describe("workspace and density", () => {
 
   it("logs and continues when workspace resizing fails", async () => {
     const appWindow = {
+      label: "main",
       onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
       setSize: vi.fn().mockRejectedValue(new Error("permission denied")),
       setResizable: vi.fn().mockResolvedValue(undefined),

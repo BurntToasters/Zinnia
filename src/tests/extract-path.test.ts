@@ -102,6 +102,56 @@ describe("deriveExtractFolderName", () => {
     expect(deriveExtractFolderName("notes. .zip")).toBe("_extracted");
     expect(deriveExtractFolderName("notes..zip")).toBe("_extracted");
   });
+
+  // Mirrors launch/open_path.rs::sanitize_extract_folder_name so the frontend
+  // and backend derive the same destination on every platform.
+  it("rewrites stems containing a colon (NTFS alternate data stream)", () => {
+    expect(deriveExtractFolderName("notes:ads.zip")).toBe("_extracted");
+    expect(deriveExtractFolderName("a:b.7z")).toBe("_extracted");
+  });
+
+  it("rewrites Win32 reserved device-name stems on every platform", () => {
+    expect(deriveExtractFolderName("CON.zip")).toBe("_extracted");
+    expect(deriveExtractFolderName("aux.tar.gz")).toBe("_extracted");
+    expect(deriveExtractFolderName("com1.7z")).toBe("_extracted");
+    expect(deriveExtractFolderName("LPT9.zip")).toBe("_extracted");
+    expect(deriveExtractFolderName("COM¹.zip")).toBe("_extracted");
+    expect(deriveExtractFolderName("conin$.zip")).toBe("_extracted");
+    expect(deriveExtractFolderName("CON.txt.zip")).toBe("_extracted");
+  });
+
+  it("keeps near-miss names that are not reserved device names", () => {
+    expect(deriveExtractFolderName("console.zip")).toBe("console");
+    expect(deriveExtractFolderName("COM10.zip")).toBe("COM10");
+    expect(deriveExtractFolderName("nullable.zip")).toBe("nullable");
+    expect(deriveExtractFolderName("notes.v2.zip")).toBe("notes.v2");
+  });
+
+  // Failure modes, written before the implementation:
+  // - a braced CLSID in a derived folder makes Windows shell parsing open a namespace view
+  // - the CLSID check must apply on every platform, not only on Windows
+  // - near-miss braces (wrong length, non-hex, no braces) stay ordinary names
+  it("rewrites folder stems carrying a braced CLSID on every platform", () => {
+    const guid = "{20D04FE0-3AEA-1069-A2D8-08002B30309D}";
+    expect(deriveExtractFolderName(`Invoice.${guid}.zip`)).toBe("_extracted");
+    expect(deriveExtractFolderName(`${guid}.zip`)).toBe("_extracted");
+    expect(deriveExtractFolderName(`Invoice.${guid.toLowerCase()}.7z`)).toBe(
+      "_extracted",
+    );
+  });
+
+  it("keeps near-miss brace names that are not braced CLSIDs", () => {
+    expect(deriveExtractFolderName("draft{1}.zip")).toBe("draft{1}");
+    expect(deriveExtractFolderName("x{20D04FE0-3AEA-1069-A2D8-0800}.zip")).toBe(
+      "x{20D04FE0-3AEA-1069-A2D8-0800}",
+    );
+    expect(
+      deriveExtractFolderName("x{ZZD04FE0-3AEA-1069-A2D8-08002B30309D}.zip"),
+    ).toBe("x{ZZD04FE0-3AEA-1069-A2D8-08002B30309D}");
+    expect(
+      deriveExtractFolderName("x20D04FE0-3AEA-1069-A2D8-08002B30309D.zip"),
+    ).toBe("x20D04FE0-3AEA-1069-A2D8-08002B30309D");
+  });
 });
 
 describe("shouldAutofillExtractDestination", () => {

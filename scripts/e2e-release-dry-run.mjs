@@ -57,6 +57,17 @@ const RESULT_PATH = path.join(
 );
 
 const VERSION = "0.6.3-beta.90";
+// Release notes are the CHANGELOG section followed by a GUI E2E proof footer
+// (scripts/ensure-draft-release.cjs e2eProofFooter). Exact equality is too
+// strict now; the notes must start with the changelog and carry the footer.
+function releaseNotesHaveChangelogAndFooter(body, changelog) {
+  return (
+    typeof body === "string" &&
+    body.startsWith(changelog) &&
+    body.includes("GUI E2E:")
+  );
+}
+
 const TAG = `v${VERSION}`;
 const STABLE_VERSION = "0.6.2";
 const STABLE_TAG = `v${STABLE_VERSION}`;
@@ -115,6 +126,18 @@ function runChecked(command, args, options = {}) {
   return result;
 }
 
+function gpgPathFor(home) {
+  if (process.platform !== "win32") return home;
+  const probe = spawnSync("gpg", ["--version"], { encoding: "utf8" });
+  const homeLine = (probe.stdout ?? "")
+    .split(/\r?\n/)
+    .find((line) => line.startsWith("Home:"));
+  if (!homeLine?.slice(5).trim().startsWith("/")) return home;
+  return home
+    .replace(/^([A-Za-z]):[\\/]/, (_, drive) => `/${drive.toLowerCase()}/`)
+    .replace(/\\/g, "/");
+}
+
 function createGpgHome() {
   // Short, private GNUPGHOME: gpg-agent sockets must stay under the unix path limit.
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "zd-gpg-"));
@@ -124,9 +147,10 @@ function createGpgHome() {
     "allow-loopback-pinentry\n",
   );
   const passphrase = crypto.randomBytes(24).toString("hex");
+  const gpgHome = gpgPathFor(home);
   runChecked("gpg", [
     "--homedir",
-    home,
+    gpgHome,
     "--batch",
     "--pinentry-mode",
     "loopback",
@@ -140,7 +164,7 @@ function createGpgHome() {
   ]);
   const listing = runChecked("gpg", [
     "--homedir",
-    home,
+    gpgHome,
     "--batch",
     "--with-colons",
     "--list-keys",
@@ -151,13 +175,14 @@ function createGpgHome() {
   if (!fingerprintLine) throw new Error("throwaway gpg key was not created");
   return {
     home,
+    gpgHome,
     passphrase,
     fingerprint: fingerprintLine.split(":")[9],
   };
 }
 
 function destroyGpgHome(gpg) {
-  spawnSync("gpgconf", ["--homedir", gpg.home, "--kill", "gpg-agent"], {
+  spawnSync("gpgconf", ["--homedir", gpg.gpgHome, "--kill", "gpg-agent"], {
     stdio: "ignore",
   });
   fs.rmSync(gpg.home, { recursive: true, force: true });
@@ -210,6 +235,7 @@ class DryRunContext {
     this.root = path.join(this.work, "zinnia");
     this.originPath = path.join(this.work, "origin.git");
     this.binDir = path.join(this.work, "bin");
+    this.ghConfigDir = path.join(this.work, "gh-config");
     this.cargoLogPath = path.join(this.work, "cargo-verifier.jsonl");
     this.steps = [];
     this.checks = [];
@@ -220,6 +246,7 @@ class DryRunContext {
   async start() {
     await this.server.start();
     fs.mkdirSync(this.binDir);
+    fs.mkdirSync(this.ghConfigDir);
     writeExecutable(
       path.join(this.binDir, "gh"),
       `#!/bin/sh\nexec "${process.execPath}" "${GH_SHIM}" "$@"\n`,
@@ -247,7 +274,10 @@ class DryRunContext {
       NODE_OPTIONS: `--import=${pathToFileURL(OFFLINE_PRELOAD).href}`,
       FAKE_GITHUB_BASE_URL: this.server.baseUrl,
       FAKE_CARGO_LOG: this.cargoLogPath,
-      GNUPGHOME: this.gpg.home,
+      GNUPGHOME: this.gpg.gpgHome,
+      GH_CONFIG_DIR: this.ghConfigDir,
+      FAKE_GH_SHIM: GH_SHIM,
+      FAKE_CARGO_SHIM: CARGO_SHIM,
       GPG_KEY_ID: this.gpg.fingerprint,
       GPG_PASSPHRASE: this.gpg.passphrase,
       ...extra,
@@ -548,7 +578,7 @@ async function scenarioHappyPathBeta(ctx) {
       draftPost.body.tag_name === TAG &&
       draftPost.body.target_commitish === ctx.shaB &&
       draftPost.body.prerelease === true &&
-      draftPost.body.body === changelogText,
+      releaseNotesHaveChangelogAndFooter(draftPost.body.body, changelogText),
     `body length=${draftPost?.body?.body?.length} expected=${changelogText.length}`,
   );
 
@@ -1312,8 +1342,10 @@ async function scenarioDraftPrereleaseFlagCorrected(ctx) {
     "the draft is patched with prerelease=true and the release notes",
     Boolean(patch) &&
       patch.body.tag_name === TAG &&
-      patch.body.body ===
+      releaseNotesHaveChangelogAndFooter(
+        patch.body.body,
         fs.readFileSync(path.join(ctx.root, "CHANGELOG.md"), "utf8"),
+      ),
     JSON.stringify(patch?.body ?? null).slice(0, 200),
   );
   ctx.check(

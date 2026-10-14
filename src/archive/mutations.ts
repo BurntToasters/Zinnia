@@ -241,12 +241,18 @@ export async function convertArchive(): Promise<void> {
   }
   const { password: compressPassword, encryptHeaders } =
     normalizeCompressionSecurityOptions(format, rawPassword, rawEncryptHeaders);
-  const picked = await runMutationDialog(() =>
-    save({
+  const picked = await runMutationDialog(() => {
+    const queued = takeE2eDialogResult();
+    if (queued) {
+      return Promise.resolve(
+        typeof queued.result === "string" ? queued.result : null,
+      );
+    }
+    return save({
       title: "Convert archive to",
       defaultPath: `converted.${format === "gzip" ? "gz" : format === "bzip2" ? "bz2" : format}`,
-    }),
-  );
+    });
+  });
   if (!picked) return;
   const dest = picked.value;
   if (!dest) {
@@ -390,7 +396,11 @@ export async function convertArchive(): Promise<void> {
     compress.push(dest, "--", ...children);
 
     debugLogCommand(compress);
-    const result = await invokeGuardedRun7z(compress, outputSelectionToken);
+    const result = await invokeGuardedRun7z(
+      compress,
+      outputSelectionToken,
+      archive,
+    );
     if (state.cancelRequested && result.code !== 0) {
       setStatus("Cancelled", 2000);
       return;

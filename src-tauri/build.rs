@@ -463,7 +463,6 @@ fn main() {
         "get_cpu_count",
         "is_flatpak",
         "is_packaged",
-        "create_temp_extract_dir",
         "reserve_temp_extract_path",
         "remove_managed_temp_dir",
         "list_managed_temp_children",

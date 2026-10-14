@@ -563,12 +563,12 @@ fn copy_windows_times_and_attributes(
         | FILE_ATTRIBUTE_ARCHIVE
         | FILE_ATTRIBUTE_NOT_CONTENT_INDEXED;
     let mut target_attributes = source_attributes & allowed;
+    if directory {
+        target_attributes &= !(FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_SYSTEM);
+    }
     if target_attributes == 0 {
         target_attributes = FILE_ATTRIBUTE_NORMAL;
     }
-    // A directory's read-only bit is shell metadata rather than an access
-    // control. Preserve it anyway because Explorer and archive users observe it.
-    let _ = directory;
     let target_wide: Vec<u16> = target_path
         .as_os_str()
         .encode_wide()
@@ -661,10 +661,23 @@ fn copy_tree_with_inherited_acl(
             ));
         }
         if metadata.is_dir() {
+            // Create restrictive first, then relax to the parent policy: never
+            // leave a brief world-readable window on shared parents.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt;
+                std::fs::DirBuilder::new()
+                    .mode(0o700)
+                    .create(&target_child)
+                    .map_err(|error| error.to_string())?;
+            }
+            #[cfg(not(unix))]
+            {
+                std::fs::create_dir(&target_child).map_err(|error| error.to_string())?;
+            }
             // Plain create inherits default ACL / setgid from `target`. Apply
             // parent mode before recursing so nested creates see the corrected
             // policy, not a brief umask-only mode.
-            std::fs::create_dir(&target_child).map_err(|error| error.to_string())?;
             #[cfg(unix)]
             crate::fs_secure::apply_parent_directory_mode(&target_child)
                 .map_err(|error| error.to_string())?;
@@ -2592,6 +2605,81 @@ pub(crate) fn rollback_persisted_move_plan(
     }
     hydrate_move_plan_identities(log_bytes.as_deref(), &mut plan)?;
     rollback_move_records_impl(staged, destination, &plan, true)
+}
+
+#[cfg(windows)]
+pub(crate) fn clear_staged_directory_shell_attributes(
+    root: &std::path::Path,
+) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt as _;
+    use std::os::windows::fs::MetadataExt as _;
+    use windows_sys::Win32::Storage::FileSystem::{
+        SetFileAttributesW, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_SYSTEM,
+    };
+
+    let shell_bits = FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_SYSTEM;
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        let meta = std::fs::symlink_metadata(&directory)
+            .map_err(|error| format!("Could not inspect {}: {error}", directory.display()))?;
+        if crate::path_safety::is_link_or_reparse(&meta) || !meta.is_dir() {
+            continue;
+        }
+        for entry in std::fs::read_dir(&directory)
+            .map_err(|error| format!("Could not read {}: {error}", directory.display()))?
+        {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let file_type = entry.file_type().map_err(|error| error.to_string())?;
+            if file_type.is_dir() && !file_type.is_symlink() {
+                pending.push(entry.path());
+            }
+        }
+        let attributes = meta.file_attributes();
+        if attributes & shell_bits == 0 {
+            continue;
+        }
+        let mut cleared = attributes & !shell_bits;
+        if cleared == 0 {
+            cleared = FILE_ATTRIBUTE_NORMAL;
+        }
+        let wide: Vec<u16> = directory
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        // SAFETY: `wide` is NUL-terminated (`chain(once(0))`) and alive for the call.
+        if unsafe { SetFileAttributesW(wide.as_ptr(), cleared) } == 0 {
+            return Err(format!(
+                "Could not clear folder attributes on {}: {}",
+                directory.display(),
+                std::io::Error::last_os_error()
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub(crate) fn clear_staged_directory_shell_attributes(
+    _root: &std::path::Path,
+) -> Result<(), String> {
+    Ok(())
+}
+
+/// Fail closed on silent no-output: an exit-0 run that leaves an empty stage
+/// (skip-all, killed writer) must not publish as success. An archive whose
+/// manifest declares zero entries legitimately produces no files, so only a
+/// declared non-empty archive (or an unknown manifest) requires output.
+pub(crate) fn ensure_extract_stage_has_output(
+    staged: &std::path::Path,
+    manifest_entry_count: Option<u64>,
+) -> Result<(), String> {
+    let mut entries = std::fs::read_dir(staged)
+        .map_err(|error| format!("Could not inspect extraction stage: {error}"))?;
+    if entries.next().is_some() || manifest_entry_count == Some(0) {
+        return Ok(());
+    }
+    Err("Extraction produced no files; output was not published.".to_string())
 }
 
 fn merge_staged_extract_recorded<R, F>(

@@ -157,7 +157,7 @@ function e2eSourceRecords(root = REPO_ROOT, inputPaths = E2E_INPUT_PATHS) {
         if (
           entry.isDirectory() &&
           (IGNORED_INPUT_DIRECTORIES.has(entry.name) ||
-            IGNORED_INPUT_PATHS.has(childPath))
+            IGNORED_INPUT_PATHS.has(childPath.replaceAll("\\", "/")))
         ) {
           continue;
         }
@@ -357,7 +357,7 @@ export async function runBoundedCommand(command, args, options = {}) {
           `${command} Windows launch fence could not capture its exact leader identity.`,
         );
       }
-      await fencedLaunch.release();
+      await fencedLaunch.release(identity);
       launchReleased = true;
     }
     await Promise.race([childExit, deadline]);
@@ -373,14 +373,17 @@ export async function runBoundedCommand(command, args, options = {}) {
   let processTreeCleanup = { status: "verified" };
   let cleanupVerified = true;
   if (child.pid) {
-    const stopped = await terminateAndWaitForProcessTree(child, {
-      ...windowsProcessOptions,
-      ...options.processTreeCleanupOptions,
-      platform: processPlatform,
-    });
+    const jobCleanup = await fencedLaunch?.terminateJob();
+    const stopped = jobCleanup?.stopped
+      ? true
+      : (await terminateAndWaitForProcessTree(child, {
+          ...windowsProcessOptions,
+          ...options.processTreeCleanupOptions,
+          platform: processPlatform,
+        })) && !jobCleanup;
     if (!stopped) {
       cleanupVerified = false;
-      const detail = windowsProcessCleanupFailure(child);
+      const detail = jobCleanup?.reason ?? windowsProcessCleanupFailure(child);
       const reason =
         detail ??
         "leader identity or descendant ownership could not be proven safely";
@@ -390,7 +393,9 @@ export async function runBoundedCommand(command, args, options = {}) {
       // and warned. Failed commands and surviving session processes stay strict.
       const status = classifyProcessTreeCleanup({
         stopped: false,
-        kind: windowsProcessCleanupFailureKind(child),
+        kind: jobCleanup
+          ? "survivors"
+          : windowsProcessCleanupFailureKind(child),
         commandFailed: Boolean(commandError),
         allowBuildCleanupWarning: options.allowBuildCleanupWarning,
       });
@@ -570,6 +575,18 @@ async function buildE2eBinary(reportDir, processCleanup) {
     throw new Error(
       `E2E app inputs changed during build (${changedInputs.join(", ")}); rerun the suite.`,
     );
+  }
+  // Mirror archive-benchmark: never stamp a binary built with unproven
+  // cleanup. A leaked toolchain helper must be visible, not silently reused.
+  const buildCleanupUnproven = processCleanup.some(
+    (record) => record && record.status && record.status !== "verified",
+  );
+  if (buildCleanupUnproven) {
+    fs.rmSync(e2eStampPath(), { force: true });
+    console.warn(
+      "Warning: E2E build process cleanup was not verified; refusing to stamp the binary as fresh.",
+    );
+    return;
   }
   writeE2eStamp({ buildInputSnapshot: sourceAfterBuild });
 }
@@ -826,11 +843,20 @@ export function writeE2eArtifact({
       windowsCleanupUnproven)
       ? "failed"
       : status;
+  const evidenceFailed =
+    !inputsUnchanged || missingRequiredEvidence || !suiteProofComplete;
   const finalFailure =
     finalStatus === "failed" && status === "passed"
-      ? windowsCleanupUnproven
-        ? "Windows E2E process cleanup was not verified."
-        : `E2E evidence ${missingRequiredEvidence || !suiteProofComplete ? "is incomplete" : "changed during run"}.`
+      ? [
+          evidenceFailed
+            ? `E2E evidence ${missingRequiredEvidence || !suiteProofComplete ? "is incomplete" : "changed during run"}.`
+            : null,
+          windowsCleanupUnproven
+            ? "Windows E2E process cleanup was not verified."
+            : null,
+        ]
+          .filter(Boolean)
+          .join(" ")
       : failure;
   const artifact = {
     schemaVersion: 1,

@@ -114,7 +114,7 @@ describe("Tauri capability policy", () => {
         "dialog:allow-confirm",
         "dialog:allow-open",
         "dialog:allow-save",
-        "shell:default",
+        "shell:allow-open",
         "updater:allow-check",
         "updater:allow-download",
         "updater:allow-install",
@@ -161,7 +161,7 @@ describe("Tauri capability policy", () => {
     expect(new Set(generated.default?.permissions ?? [])).toEqual(
       new Set(permissions),
     );
-    expect(generated.default?.permissions).toContain("shell:default");
+    expect(generated.default?.permissions).toContain("shell:allow-open");
   });
 
   // Failure modes covered: host-only checks hide stale schemas on other

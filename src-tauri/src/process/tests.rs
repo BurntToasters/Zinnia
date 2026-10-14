@@ -1970,6 +1970,7 @@ fn manifest_summary_classifies_bytes_entries_paths_and_links() {
         path_bytes: 27,
         has_symbolic_links: false,
         has_hard_links: false,
+        declared_size_untrusted: false,
     };
     assert_eq!(plain.declared_bytes, 12);
     assert_eq!(plain.entry_count, 2);
@@ -6783,4 +6784,94 @@ fn attribute_tokens_that_are_not_unix_modes_are_not_links() {
 fn tar_symbolic_link_records_still_flag_links() {
     let slt = "Path = l\nSymbolic Link = target.txt\n";
     assert!(slt_manifest_has_links(slt, "/tmp/sym.tar").expect("parse"));
+}
+
+#[test]
+fn empty_extract_stage_publishes_when_archive_has_no_entries() {
+    let root = temp_root("zinnia-empty-archive");
+    let staged = root.join("staged");
+    let destination = root.join("destination");
+    std::fs::create_dir_all(&staged).expect("empty stage");
+
+    super::commit::ensure_extract_stage_has_output(&staged, Some(0))
+        .expect("an archive that declares zero entries legitimately produces no files");
+    merge_staged_extract(&staged, &destination, MAX_EXTRACTED_BYTES)
+        .expect("an empty stage must publish for an empty archive");
+    assert!(destination.is_dir());
+    assert!(!staged.exists());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn silent_no_output_fails_closed_when_archive_has_entries() {
+    let root = temp_root("zinnia-silent-no-output");
+    let staged = root.join("staged");
+    std::fs::create_dir_all(&staged).expect("empty stage");
+
+    let error = super::commit::ensure_extract_stage_has_output(&staged, Some(3))
+        .expect_err("declared entries with an empty stage must not succeed");
+    assert!(error.contains("produced no files"));
+    super::commit::ensure_extract_stage_has_output(&staged, None)
+        .expect_err("a missing manifest requires output");
+
+    std::fs::write(staged.join("file.txt"), b"x").expect("staged file");
+    super::commit::ensure_extract_stage_has_output(&staged, Some(3))
+        .expect("a non-empty stage always passes");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn separate_output_update_regains_the_source_archive_quarantine() {
+    let Some(binary) = bundled_7z_test_binary() else {
+        eprintln!("skipping: bundled 7z binary not found (run npm run prepare:7z)");
+        return;
+    };
+    let root = temp_root("zinnia-update-marker");
+    std::fs::create_dir_all(&root).expect("test root");
+    let first = root.join("a.txt");
+    let second = root.join("b.txt");
+    std::fs::write(&first, b"first").expect("first input");
+    std::fs::write(&second, b"second").expect("second input");
+    let original = root.join("download.zip");
+    let created = std::process::Command::new(&binary)
+        .args(["a", "-bso0", "-bsp0"])
+        .arg(&original)
+        .arg("--")
+        .arg(&first)
+        .status()
+        .expect("run 7z a");
+    assert!(created.success());
+    let marker = b"0081;65f0a1b2;Safari;UPDATE-1234".to_vec();
+    crate::quarantine::apply_quarantine_tree(&original, &marker).expect("mark original");
+
+    let staged = root.join(".zinnia-update-result.zip");
+    let mut args = vec![
+        "u".to_string(),
+        original.to_string_lossy().to_string(),
+        "--".to_string(),
+        second.to_string_lossy().to_string(),
+    ];
+    super::staging::rewrite_archive_update_output(&mut args, &staged)
+        .expect("rewrite separate-output update");
+    let updated = std::process::Command::new(&binary)
+        .args(&args)
+        .stdout(std::process::Stdio::null())
+        .status()
+        .expect("run 7z u");
+    assert!(updated.success());
+    assert_eq!(
+        crate::quarantine::read_quarantine(&staged).expect("read staged"),
+        None,
+        "7-Zip writes the update result as a new file without the source marker"
+    );
+
+    crate::quarantine::copy_mark_of_the_web_to_family(&original, &staged)
+        .expect("carry the marker before publication");
+
+    assert_eq!(
+        crate::quarantine::read_quarantine(&staged).expect("read staged"),
+        Some(marker)
+    );
+    let _ = std::fs::remove_dir_all(&root);
 }

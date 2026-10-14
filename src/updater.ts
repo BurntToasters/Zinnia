@@ -12,6 +12,7 @@ import { log, devLog, setStatus } from "./ui";
 import { state } from "./state";
 import { debugLog, isDebugEnabled } from "./debug-mode";
 import { showToast } from "./toast";
+import { compareVersions } from "./version-compare";
 
 let pendingUpdate: Update | null = null;
 let pendingVersion: string | null = null;
@@ -311,27 +312,45 @@ async function runUpdateCheck(interactive: boolean): Promise<void> {
     if (isDebugEnabled()) {
       debugLog(`Update available: ${checkedUpdate.version}`);
     }
+    // Defence in depth: the vendored plugin already refuses downgrades, but
+    // never install a manifest version at or below the installed version.
+    const candidate = checkedUpdate;
+    try {
+      const current = await getVersion();
+      if (compareVersions(candidate.version, current) <= 0) {
+        devLog(
+          `Ignoring update ${candidate.version}: not newer than installed ${current}.`,
+        );
+        await candidate.close().catch(() => {});
+        checkedUpdate = null;
+        if (interactive) {
+          showToast("You are running the latest version.", "success");
+          setStatus("Idle");
+        }
+        return;
+      }
+    } catch (err) {
+      devLog(
+        `Version comparison failed; deferring to plugin policy: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     if (!interactive) {
       await notifyIfAlreadyGranted(
         "Zinnia Update Available",
-        `Version ${checkedUpdate.version} is available. Downloading in the background...`,
+        `Version ${candidate.version} is available. Downloading in the background...`,
       );
     }
     setStatus("Downloading update");
-    await checkedUpdate.download(undefined, {
+    await candidate.download(undefined, {
       timeout: UPDATE_DOWNLOAD_STALL_TIMEOUT_MS,
     });
     if (generation !== updateGeneration) {
-      await checkedUpdate.close().catch(() => {});
+      await candidate.close().catch(() => {});
       return;
     }
     pendingTarget = target;
-    log(`Update ${checkedUpdate.version} downloaded and ready to install.`);
-    await promptInstallAndRestart(
-      checkedUpdate.version,
-      checkedUpdate,
-      generation,
-    );
+    log(`Update ${candidate.version} downloaded and ready to install.`);
+    await promptInstallAndRestart(candidate.version, candidate, generation);
     checkedUpdate = null;
   } catch (err) {
     if (checkedUpdate && checkedUpdate !== pendingUpdate) {

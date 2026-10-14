@@ -112,9 +112,12 @@ async function renderLicenses() {
         ).entries()) {
           if (index > 0) note.append(", ");
           const link = document.createElement("a");
-          link.href = safeHref(reference.url);
-          link.target = "_blank";
-          link.rel = "noopener";
+          const refHref = safeHref(reference.url);
+          if (refHref !== "#") {
+            link.href = refHref;
+            link.target = "_blank";
+            link.rel = "noopener";
+          }
           link.textContent = reference.identifier;
           note.appendChild(link);
         }

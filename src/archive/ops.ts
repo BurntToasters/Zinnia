@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { confirmWithE2eQueue } from "../e2e-dialog";
-import { listen } from "@tauri-apps/api/event";
+import { listenToOwnWindow } from "../window-events";
 import { $, splitArgs } from "../utils";
 import { state } from "../state";
 import {
@@ -218,6 +218,7 @@ export async function runBatchExtract() {
   state.cancelRequested = false;
   setRunning(true);
   let unlistenProgress: (() => void) | null = null;
+  const passwordCarry = { value: "" };
   try {
     if (!(await ensureRuntimeReady())) return;
     if (state.batchCancelled || state.cancelRequested) {
@@ -266,11 +267,11 @@ export async function runBatchExtract() {
     let current = 0;
     let archiveStartedAt = Date.now();
     let sawPercent = false;
-    const passwordCarry = { value: password };
+    passwordCarry.value = password;
 
     // Live progress for the whole batch: show percent of the current archive,
     // which file it's on, and an ETA, alongside the N-of-M counter.
-    unlistenProgress = await listen<ProgressUpdate>(
+    unlistenProgress = await listenToOwnWindow<ProgressUpdate>(
       "7z-progress-structured",
       (event) => {
         if (!isSevenZipRunInFlight()) return;
@@ -405,6 +406,7 @@ export async function runBatchExtract() {
     }
   } finally {
     if (unlistenProgress) unlistenProgress();
+    passwordCarry.value = "";
     clearPasswordFields();
     $<HTMLInputElement>("extract-path").disabled = false;
     $<HTMLInputElement>("extract-password").disabled = false;

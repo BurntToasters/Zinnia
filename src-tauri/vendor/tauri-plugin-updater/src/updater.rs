@@ -390,24 +390,6 @@ impl Updater {
             headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
         }
 
-        // Set SSL certs for linux if they aren't available.
-        #[cfg(target_os = "linux")]
-        {
-            if std::env::var_os("SSL_CERT_FILE").is_none() {
-                for candidate in [
-                    "/etc/ssl/certs/ca-certificates.crt",
-                    "/etc/pki/tls/certs/ca-bundle.crt",
-                ] {
-                    if std::path::Path::new(candidate).is_file() {
-                        std::env::set_var("SSL_CERT_FILE", candidate);
-                        break;
-                    }
-                }
-            }
-            if std::env::var_os("SSL_CERT_DIR").is_none() {
-                std::env::set_var("SSL_CERT_DIR", "/etc/ssl/certs");
-            }
-        }
         let target = if let Some(target) = &self.target {
             target
         } else {

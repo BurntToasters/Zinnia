@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { browser, $, expect } from "@wdio/globals";
@@ -503,6 +504,43 @@ describe("Zinnia main window", () => {
           "nested zip browse listing did not include nested/hello.txt",
       },
     );
+  });
+
+  it("lists member names that look like secrets without redacting them", async () => {
+    const sidecar = requireHostSidecar();
+    const work = fs.mkdtempSync(path.join(os.tmpdir(), "zinnia-e2e-names-"));
+    const names = ["-pdf-notes.txt", "Report -print.txt", "token=value.txt"];
+    try {
+      for (const name of names) {
+        fs.writeFileSync(path.join(work, name), `${name}\n`);
+      }
+      const archive = path.join(work, "secret-looking-names.7z");
+      const created = run7z(
+        sidecar,
+        ["a", "-t7z", archive, "--", ...names.map((name) => `./${name}`)],
+        { cwd: work },
+      );
+      assert.equal(created.code, 0, created.stderr || created.stdout);
+      await waitForArchiveIdle();
+      await applyIncomingPaths([archive], "");
+      const tbody = await $("#browse-tbody");
+      await tbody.waitForDisplayed({ timeout: 20_000 });
+      await browser.waitUntil(
+        async () => {
+          const text = await tbody.getText();
+          return names.every((name) => text.includes(name));
+        },
+        {
+          timeout: 20_000,
+          timeoutMsg: `browse listing redacted a member name: ${await uiDiagnostics()}`,
+        },
+      );
+      const text = await tbody.getText();
+      assert.ok(!text.includes("-p***"), text);
+      assert.ok(!text.includes("token=***"), text);
+    } finally {
+      fs.rmSync(work, { recursive: true, force: true });
+    }
   });
 
   it("keeps a ZIP custom preset after the window reloads", async () => {

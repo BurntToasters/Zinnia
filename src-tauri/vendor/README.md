@@ -37,20 +37,25 @@ fixes:
   total timeout. A server that keeps trickling bytes can hold a download open
   longer than the configured value.
 
-Two more changes are in this tree, outside the list above:
+Three more changes are in this tree, outside the list above:
 
 - The `check` command ignores the frontend `allowDowngrades` flag. Pristine
   2.10.1 lets the webview switch to "any version other than the current one",
   which allows rollback to an older signed release.
-- On Linux, `SSL_CERT_FILE` falls back to the Fedora/RHEL bundle path when the
-  Debian path is absent.
+- The Linux `SSL_CERT_FILE` / `SSL_CERT_DIR` override is removed, matching
+  upstream 2.13.0. It called `std::env::set_var` during an update check while
+  other threads could read the environment. `rustls-platform-verifier` already
+  finds the system certificate store through `openssl-probe`.
+- `minisign-verify` is 0.3, matching upstream 2.13.3. It rejects signatures
+  with a non-canonical Ed25519 `S` value. The API is unchanged.
 
-Upstream status in 2.13.2: the macOS install path was rewritten (atomic swap,
+Upstream status in 2.13.3 (checked 2026-10-13): the macOS install path was rewritten (atomic swap,
 restore on failure, quoted shell command), and the Windows result check was
 added. Tar extraction, Linux helper resolution, the `sudo` drain and timeout,
 and the total-transfer download timeout are unchanged upstream, so the patch
 stays. The `SSL_CERT_FILE` code and the frontend downgrade flag were removed
-upstream.
+upstream. 2.13.3 only adds the `minisign-verify` 0.3 update, which is
+backported here.
 
 Do not drop the path patch without an equivalent upstream fix.
 

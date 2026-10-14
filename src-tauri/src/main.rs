@@ -15,6 +15,7 @@ mod path_safety;
 mod platform;
 mod process;
 mod progress;
+mod quarantine;
 mod settings_store;
 mod tempdir;
 mod validation;
@@ -425,7 +426,6 @@ fn main() {
             platform::get_cpu_count,
             platform::is_flatpak,
             platform::is_packaged,
-            tempdir::create_temp_extract_dir,
             tempdir::reserve_temp_extract_path,
             tempdir::remove_managed_temp_dir,
             tempdir::list_managed_temp_children,

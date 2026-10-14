@@ -678,6 +678,7 @@ fn parse_pathless_single_stream_record(
     let size = size.ok_or_else(unparsed)?;
     let mut summary = ArchiveManifestSummary {
         entry_count: 1,
+        declared_size_untrusted: true,
         ..ArchiveManifestSummary::default()
     };
     // The derived output name is at most the archive's own file name.
@@ -825,7 +826,14 @@ pub(crate) async fn assert_extract_archive_members_safe_with_summary(
             format!("Could not list archive members for path safety: {detail}")
         });
     }
-    let manifest = parse_slt_archive_manifest(&collected.stdout, &archive, max_declared_bytes)?;
+    let mut manifest = parse_slt_archive_manifest(&collected.stdout, &archive, max_declared_bytes)?;
+    let lower = archive.to_ascii_lowercase();
+    if [".gz", ".bz2", ".xz", ".tgz", ".tbz2", ".txz"]
+        .iter()
+        .any(|suffix| lower.ends_with(suffix))
+    {
+        manifest.declared_size_untrusted = true;
+    }
     Ok((archive_path, identity, manifest))
 }
 

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { listenToOwnWindow } from "../window-events";
+import { redactSensitiveText } from "../utils";
 import { state } from "../state";
 import {
   getWorkspaceMode,
@@ -58,7 +59,9 @@ export function showOperationError(
 ): void {
   if (isDebugEnabled()) {
     debugLog(
-      `Operation error (exit ${code}): ${describe7zError(stdout, stderr) || "(no hint)"}${stderr.trim() ? `\nstderr: ${stderr.trim().slice(0, 2000)}` : ""}`,
+      redactSensitiveText(
+        `Operation error (exit ${code}): ${describe7zError(stdout, stderr) || "(no hint)"}${stderr.trim() ? `\nstderr: ${stderr.trim().slice(0, 2000)}` : ""}`,
+      ),
     );
   }
   if (getWorkspaceMode() === "basic") return;
@@ -193,12 +196,14 @@ export function setSevenZipRunInFlight(active: boolean): void {
 export async function invokeGuardedRun7z(
   args: string[],
   expectedArchiveIdentity?: string,
+  markOfTheWebSource?: string,
 ): Promise<Run7zResult> {
   sevenZipRunInFlight = true;
   try {
     const result = await invokeRun7zRequest<unknown>({
       args,
       ...(expectedArchiveIdentity ? { expectedArchiveIdentity } : {}),
+      ...(markOfTheWebSource ? { markOfTheWebSource } : {}),
       ...(isDebugEnabled() ? { includeIoDiagnostics: true } : {}),
     });
     assertRunResult(result);
@@ -218,7 +223,7 @@ export async function invokeGuardedRun7z(
 export async function withLiveProgress<T>(fn: () => Promise<T>): Promise<T> {
   const startedAt = Date.now();
   let sawPercent = false;
-  const unlisten = await listen<ProgressUpdate>(
+  const unlisten = await listenToOwnWindow<ProgressUpdate>(
     "7z-progress-structured",
     (event) => {
       if (!sevenZipRunInFlight) return;

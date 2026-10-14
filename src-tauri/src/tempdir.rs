@@ -172,6 +172,12 @@ fn sweep_stale_7z_list_dirs() {
         if !name.starts_with(PREFIX) {
             continue;
         }
+        // Require the exact `<prefix><32 hex>` shape we create; anything else
+        // (e.g. a planted `zinnia-7z-list-victim`) is left alone.
+        let suffix = &name[PREFIX.len()..];
+        if suffix.len() != 32 || !suffix.chars().all(|c| c.is_ascii_hexdigit()) {
+            continue;
+        }
         let path = entry.path();
         let Ok(metadata) = std::fs::symlink_metadata(&path) else {
             continue;
@@ -195,6 +201,20 @@ fn sweep_stale_7z_list_dirs() {
                 continue;
             }
         }
+        // Only delete if the directory contains at most our own `items.txt`.
+        if let Ok(children) = std::fs::read_dir(&path) {
+            let mut only_ours = true;
+            for child in children.flatten() {
+                let child_name = child.file_name();
+                if child_name.to_str() != Some("items.txt") {
+                    only_ours = false;
+                    break;
+                }
+            }
+            if !only_ours {
+                continue;
+            }
+        }
         if let Err(error) = crate::fs_secure::remove_dir_all_for_cleanup(&path) {
             if error.kind() != std::io::ErrorKind::NotFound {
                 eprintln!(
@@ -213,21 +233,6 @@ pub fn sweep_stale_launch_temp_files() {
     #[cfg(windows)]
     sweep_stale_shell_handoffs();
     sweep_stale_7z_list_dirs();
-}
-
-#[tauri::command]
-pub fn create_temp_extract_dir(app: tauri::AppHandle) -> Result<String, String> {
-    let path = reserve_temp_extract_path_blocking(&app)?;
-    if let Err(error) = crate::fs_secure::create_private_dir(&path) {
-        if let Ok(mut paths) = reserved_temp_extract_paths().lock() {
-            paths.remove(&path);
-        }
-        return Err(error.to_string());
-    }
-    if let Ok(mut paths) = reserved_temp_extract_paths().lock() {
-        paths.remove(&path);
-    }
-    Ok(path.to_string_lossy().to_string())
 }
 
 fn reserve_temp_extract_path_blocking(
@@ -267,7 +272,7 @@ fn reserve_temp_extract_path_blocking(
 
 /// Reserve a managed conversion destination without creating it. Extraction
 /// can then use the normal absent-destination whole-stage publication path.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn reserve_temp_extract_path(app: tauri::AppHandle) -> Result<String, String> {
     Ok(reserve_temp_extract_path_blocking(&app)?
         .to_string_lossy()
@@ -344,7 +349,7 @@ pub async fn remove_managed_temp_dir(app: tauri::AppHandle, path: String) -> Res
 }
 
 /// List direct children of a managed conversion temp dir (includes dotfiles).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_managed_temp_children(
     app: tauri::AppHandle,
     path: String,

@@ -27,4 +27,23 @@ Failure cases considered before the process-capture changes:
 - A Windows success artifact has no verified process-cleanup record, CI accepts it, or archive benchmark freshness is stamped after unproven build cleanup.
 - A fast Windows command detaches a grandchild; runner claims verified while the grandchild remains and the test profile cannot be removed.
 
-Windows command cleanup uses a launch-fenced Node wrapper and repeated PID plus creation-time ancestry snapshots. It does not use a kernel Job Object. A descendant that escapes observation because its parent exits between snapshots cannot be safely adopted or killed by PID alone; cleanup must remain unproven when the process inventory exposes that gap. The hosted Windows live test is required to exercise this boundary, and native Windows behavior remains unverified from non-Windows development hosts.
+- On Windows, the E2E source digest walks `src-tauri\binaries` because the ignored path uses `/` while `path.join` uses `\`.
+- Artifact tests that do not pass a platform inherit the host platform, so Windows hosts fail on fail-closed cleanup policy rather than the evidence under test.
+- An artifact that fails for both changed evidence and unproven Windows cleanup reports only the cleanup reason.
+- `cargo test` without the `e2e` feature rewrites the tracked `acl-manifests.json` and dirties the working tree.
+- Windows-only runner tests never run in CI because `test:e2e-runner` runs only on Linux.
+- The archive WDIO timeout test never starts Windows identity capture, so cleanup refuses to kill and the test fails on Windows hosts.
+
+Windows Job Object confinement failure cases considered before the change:
+
+- The fenced wrapper exits, or its PID is reused, between identity capture and job assignment, and an unrelated process is assigned to the job.
+- The job helper cannot start, cannot compile its native bindings, or cannot assign the wrapper, but the command still starts without confinement.
+- Nested jobs are not supported, or the wrapper is already in a job that rejects nesting, and assignment silently fails.
+- A descendant uses detached or breakaway creation flags and leaves the job.
+- The job helper exits or the runner crashes while the command runs, and the command tree is left alive.
+- Job termination returns but processes remain because the kill is pending or denied, yet cleanup reports verified.
+- The job helper stops responding during termination, and cleanup waits past its deadline.
+- Job confinement replaces snapshot cleanup even when the job was never assigned, so simulated capture failures report verified.
+- Disposing a fenced launch leaves its job helper process running.
+
+Windows fenced commands run inside a kernel Job Object. A PowerShell helper creates the job with kill-on-close and no breakaway permission. It assigns the fenced wrapper only after it opens the wrapper by PID and matches the captured creation time, and only then does the wrapper start the real command. Cleanup terminates the job and reports verified only when the job's active process count reaches zero. If the job cannot be assigned, the command does not start. When no job is assigned, cleanup falls back to the PID plus creation-time snapshot path, which stays fail-closed.

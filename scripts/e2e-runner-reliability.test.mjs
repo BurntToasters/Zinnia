@@ -18,6 +18,7 @@ import test from "node:test";
 import * as e2eRunner from "./test-e2e.js";
 import * as archiveBenchmark from "../e2e/helpers/archive-benchmark.js";
 import * as testAll from "./test-all.js";
+import { startWindowsFencedCommand } from "../e2e/helpers/windows-fenced-launcher.js";
 
 // Failure scenarios and regressions covered here: scripts/e2e-runner-failure-modes.md.
 
@@ -837,6 +838,118 @@ test(
 );
 
 test(
+  "Windows fenced launch confines a successful command's detached descendants",
+  { skip: process.platform !== "win32", timeout: 30_000 },
+  async () => {
+    const root = temporaryRoot();
+    const pidFile = join(root, "grandchild.pid");
+    const commandSource = [
+      'const {spawn}=require("node:child_process");',
+      'const fs=require("node:fs");',
+      'const grandchild=spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore",windowsHide:true,detached:true});',
+      "grandchild.unref();",
+      "fs.writeFileSync(process.argv[1],String(grandchild.pid));",
+      "process.exit(0);",
+    ].join(" ");
+    let grandchildPid = null;
+    try {
+      const result = await e2eRunner.runBoundedCommand(
+        process.execPath,
+        ["-e", commandSource, pidFile],
+        { cwd: root, timeoutMs: 10_000 },
+      );
+      assert.equal(result.processTreeCleanup.status, "verified");
+      grandchildPid = Number(readFileSync(pidFile, "utf8"));
+      assert.ok(grandchildPid > 0);
+      await assertStopped(grandchildPid);
+    } finally {
+      if (grandchildPid && processIsAlive(grandchildPid)) {
+        process.kill(grandchildPid, "SIGKILL");
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "Windows fenced launch refuses to start when the wrapper identity does not match",
+  { skip: process.platform !== "win32", timeout: 30_000 },
+  async () => {
+    const root = temporaryRoot();
+    const markerFile = join(root, "started");
+    const launch = await startWindowsFencedCommand(
+      process.execPath,
+      [
+        "-e",
+        'require("node:fs").writeFileSync(process.argv[1],"x")',
+        markerFile,
+      ],
+      { cwd: root, stdio: "ignore" },
+    );
+    try {
+      await assert.rejects(
+        launch.release({
+          pid: launch.child.pid,
+          created: "20000101000000.000000+000",
+        }),
+        /creation time/,
+      );
+      assert.equal(launch.jobAssigned, false);
+      await launch.abort();
+      await assertStopped(launch.child.pid);
+      assert.equal(existsSync(markerFile), false, "command never started");
+    } finally {
+      await launch.dispose();
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "disposing a Windows fenced launch kills its confined job",
+  { skip: process.platform !== "win32", timeout: 30_000 },
+  async () => {
+    const root = temporaryRoot();
+    const pidFile = join(root, "grandchild.pid");
+    const commandSource = [
+      'const {spawn}=require("node:child_process");',
+      'const fs=require("node:fs");',
+      'const grandchild=spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore",windowsHide:true,detached:true});',
+      "grandchild.unref();",
+      "fs.writeFileSync(process.argv[1],String(grandchild.pid));",
+      "setInterval(()=>{},1000);",
+    ].join(" ");
+    const launch = await startWindowsFencedCommand(
+      process.execPath,
+      ["-e", commandSource, pidFile],
+      { cwd: root, stdio: "ignore" },
+    );
+    let grandchildPid = null;
+    try {
+      const identity = await archiveBenchmark.captureWindowsProcessIdentity(
+        launch.child,
+        { waitForSpawn: true },
+      );
+      await launch.release(identity);
+      assert.equal(launch.jobAssigned, true);
+      for (let attempt = 0; attempt < 200 && !existsSync(pidFile); attempt++) {
+        await delay(25);
+      }
+      grandchildPid = Number(readFileSync(pidFile, "utf8"));
+      await launch.dispose();
+      await assertStopped(grandchildPid);
+      await assertStopped(launch.child.pid);
+    } finally {
+      await launch.dispose();
+      if (grandchildPid && processIsAlive(grandchildPid)) {
+        process.kill(grandchildPid, "SIGKILL");
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   "Windows cleanup catches a resistant descendant created after its first snapshot",
   { skip: process.platform !== "win32", timeout: 30_000 },
   async () => {
@@ -1170,6 +1283,7 @@ test("E2E artifact records suite outcomes and verifiable hashes", () => {
       fixtureManifest: manifest,
       commit: evidence.commit,
       evidence,
+      platform: "linux",
       status: "passed",
       suites: [{ spec: "./specs/main.spec.js", status: "passed", logFile }],
     });
@@ -1298,12 +1412,28 @@ test("E2E artifact cannot pass if the tested binary changes mid-run", () => {
       fixtureFiles: { "hello.7z": fixture },
       commit: evidence.commit,
       evidence,
+      platform: "linux",
       status: "passed",
       suites: [{ spec: "./specs/main.spec.js", status: "passed", logFile }],
     });
     assert.equal(artifact.status, "failed");
     assert.equal(artifact.verification.inputsUnchanged, false);
     assert.match(artifact.failure, /changed during run/);
+    const windowsArtifact = e2eRunner.writeE2eArtifact({
+      reportDir,
+      root,
+      binary,
+      fixtureManifest: manifest,
+      fixtureFiles: { "hello.7z": fixture },
+      commit: evidence.commit,
+      evidence,
+      platform: "win32",
+      status: "passed",
+      suites: [{ spec: "./specs/main.spec.js", status: "passed", logFile }],
+    });
+    assert.equal(windowsArtifact.status, "failed");
+    assert.match(windowsArtifact.failure, /changed during run/);
+    assert.match(windowsArtifact.failure, /process cleanup was not verified/);
     assert.equal(
       artifact.fixtures.files["hello.7z"],
       createHash("sha256").update("archive fixture v1\n").digest("hex"),

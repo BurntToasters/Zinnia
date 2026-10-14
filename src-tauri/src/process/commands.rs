@@ -186,6 +186,8 @@ struct Run7zRequest {
     expected_archive_identity: Option<String>,
     #[serde(default)]
     include_io_diagnostics: bool,
+    #[serde(default, deserialize_with = "deserialize_present_optional_string")]
+    mark_of_the_web_source: Option<String>,
 }
 
 /// Missing is allowed for non-mutating calls, but mutating commands (`x`, `a`,
@@ -219,6 +221,16 @@ fn parse_run_7z_request(request_json: &str) -> Result<Run7zRequest, String> {
     ) && request.expected_archive_identity.is_none()
     {
         return Err("Mutating archive operations require an archive identity token.".to_string());
+    }
+    if let Some(source) = request.mark_of_the_web_source.as_deref() {
+        if request.args.first().map(String::as_str) != Some("a") {
+            return Err(
+                "A download-marker source is only accepted for archive creation.".to_string(),
+            );
+        }
+        if source.is_empty() || source.len() > 8192 || source.contains('\0') {
+            return Err("The download-marker source path is invalid.".to_string());
+        }
     }
     Ok(request)
 }
@@ -293,7 +305,17 @@ impl Drop for ManagedListFile {
             }
         }
         if let Some(parent) = self.0.parent() {
-            let _ = std::fs::remove_dir(parent);
+            // Only remove the private parent we created: exact prefix shape,
+            // plain directory, not a link. Anything else is left alone.
+            let name = parent.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if !name.starts_with("zinnia-7z-list-") {
+                return;
+            }
+            if let Ok(meta) = std::fs::symlink_metadata(parent) {
+                if meta.is_dir() && !crate::path_safety::is_link_or_reparse(&meta) {
+                    let _ = std::fs::remove_dir(parent);
+                }
+            }
         }
     }
 }
@@ -363,8 +385,11 @@ fn prepare_managed_listfile(args: &mut Vec<String>) -> Result<Option<ManagedList
     crate::fs_secure::create_private_dir(&private_dir)
         .map_err(|error| format!("Could not secure the 7-Zip list directory: {error}"))?;
     let listfile = ManagedListFile(private_dir.join("items.txt"));
-    let selected =
-        rewrite_args_for_managed_listfile(args, format!("@{}", listfile.0.to_string_lossy()))?;
+    let listfile_str = listfile
+        .0
+        .to_str()
+        .ok_or_else(|| "Temporary 7-Zip list path is not valid UTF-8.".to_string())?;
+    let selected = rewrite_args_for_managed_listfile(args, format!("@{listfile_str}"))?;
     if selected.iter().any(|path| path.contains(['\r', '\n'])) {
         return Err(
             "A selected path contains a line break and cannot be placed in a managed 7-Zip list file."
@@ -750,6 +775,52 @@ pub(crate) fn spawn_7z_noninteractive(
         let _ = block_on(async move { tx.send(event).await });
     });
     Ok((rx, child, pending_password))
+}
+
+pub(crate) fn pin_existing_zip_output_type(args: &mut Vec<String>) {
+    if !matches!(args.first().map(String::as_str), Some("a" | "u")) {
+        return;
+    }
+    let separator = args
+        .iter()
+        .position(|arg| arg == "--")
+        .unwrap_or(args.len());
+    let has_password = args[1..separator].iter().any(|arg| {
+        arg.len() > 2
+            && arg
+                .get(..2)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("-p"))
+    });
+    if !has_password || !crate::validation::archive_type_switches(args).is_empty() {
+        return;
+    }
+    let Some(output) = args[1..separator]
+        .iter()
+        .rev()
+        .find(|arg| !arg.starts_with('-'))
+    else {
+        return;
+    };
+    if output.to_ascii_lowercase().ends_with(".zip") {
+        return;
+    }
+    let path = std::path::Path::new(output);
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return;
+    };
+    if !meta.is_file() || crate::path_safety::is_link_or_reparse(&meta) {
+        return;
+    }
+    let mut magic = [0u8; 4];
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return;
+    };
+    if std::io::Read::read_exact(&mut file, &mut magic).is_err() {
+        return;
+    }
+    if matches!(&magic, b"PK\x03\x04" | b"PK\x05\x06" | b"PK\x07\x08") {
+        args.insert(separator, "-tzip".to_string());
+    }
 }
 
 pub(crate) fn harden_7z_args(args: &mut Vec<String>) {
@@ -1459,8 +1530,8 @@ impl CollectedOutput {
             self.exit_code()
         };
         RunResult {
-            stdout: sanitize_output(&self.stdout),
-            stderr: sanitize_output(&self.stderr),
+            stdout: crate::output::strip_control_chars(&self.stdout),
+            stderr: crate::output::strip_control_chars(&self.stderr),
             code,
             warning_code: if was_cancelled { None } else { warning_code },
             stdout_truncated: self.stdout_truncated,
@@ -1573,8 +1644,16 @@ pub async fn run_7z(
         args,
         expected_archive_identity,
         include_io_diagnostics,
+        mark_of_the_web_source,
     } = parse_run_7z_request(&request_json)?;
     drop(request_json);
+    let mark_of_the_web_source = match mark_of_the_web_source {
+        Some(source) => Some(crate::quarantine::validated_regular_file(
+            &source,
+            "download-marker source",
+        )?),
+        None => None,
+    };
     let operation_started = std::time::Instant::now();
     let mut io_diagnostics = include_io_diagnostics.then(ArchiveIoDiagnostics::default);
 
@@ -1646,6 +1725,7 @@ pub async fn run_7z(
         }
     }
 
+    pin_existing_zip_output_type(&mut args);
     harden_7z_args(&mut args);
     apply_backend_link_switches(&mut args);
     let compound_tar_operation = is_compound_tar_operation(&args);
@@ -1654,6 +1734,7 @@ pub async fn run_7z(
     // stale browse/test result; keeping the initial token here also lets the
     // backend fail closed when a caller omitted the optional precondition.
     let mut non_mutating_archive_proof: Option<(std::path::PathBuf, String)> = None;
+    let mut archive_quarantine: Option<Vec<u8>> = None;
 
     if let Some("x" | "l" | "t") = args.first().map(String::as_str) {
         let separator = match args.iter().position(|arg| arg == "--") {
@@ -1676,6 +1757,15 @@ pub async fn run_7z(
             return Err(validation
                 .reason
                 .unwrap_or_else(|| "Archive path failed validation.".to_string()));
+        }
+        if args.first().map(String::as_str) == Some("x") {
+            match crate::quarantine::read_quarantine(std::path::Path::new(archive)) {
+                Ok(value) => archive_quarantine = value,
+                Err(error) => {
+                    release_prepare_slot_best_effort(&state);
+                    return Err(error);
+                }
+            }
         }
         if matches!(args.first().map(String::as_str), Some("l" | "t")) {
             let archive_path = std::path::PathBuf::from(archive);
@@ -2112,6 +2202,8 @@ pub async fn run_7z(
 
     let emit_window = window.clone();
     let heartbeat_window = window.clone();
+    let progress_target = tauri::EventTarget::webview_window(window.label());
+    let heartbeat_target = progress_target.clone();
     let last_progress_activity =
         std::sync::Arc::new(std::sync::Mutex::new(std::time::Instant::now()));
     let heartbeat_activity = last_progress_activity.clone();
@@ -2130,7 +2222,8 @@ pub async fn run_7z(
             if !is_quiet {
                 continue;
             }
-            let _ = heartbeat_window.emit(
+            let _ = heartbeat_window.emit_to(
+                heartbeat_target.clone(),
                 "7z-progress-structured",
                 crate::progress::ProgressUpdate {
                     percent: None,
@@ -2176,7 +2269,11 @@ pub async fn run_7z(
         // progress than extracting. Structured state is still emitted as
         // soon as it is available.
         if last_raw_progress_emit.elapsed() >= std::time::Duration::from_millis(75) {
-            let _ = emit_window.emit("7z-progress", crate::output::sanitize_output(chunk));
+            let _ = emit_window.emit_to(
+                progress_target.clone(),
+                "7z-progress",
+                crate::output::strip_control_chars(chunk),
+            );
             last_raw_progress_emit = std::time::Instant::now();
             if let Ok(mut activity) = last_progress_activity.lock() {
                 *activity = last_raw_progress_emit;
@@ -2184,7 +2281,8 @@ pub async fn run_7z(
         }
         if let Some(update) = parse_progress_line(chunk) {
             if last_structured_progress_emit.elapsed() >= std::time::Duration::from_millis(75) {
-                let _ = emit_window.emit("7z-progress-structured", update);
+                let _ =
+                    emit_window.emit_to(progress_target.clone(), "7z-progress-structured", update);
                 last_structured_progress_emit = std::time::Instant::now();
                 if let Ok(mut activity) = last_progress_activity.lock() {
                     *activity = last_structured_progress_emit;
@@ -2246,7 +2344,15 @@ pub async fn run_7z(
     // off the async runtime so other Tauri tasks are not blocked.
     let finalize_app = app.clone();
     let finalize_plan = cleanup_plan.clone();
+    let finalize_entry_count = extract_manifest
+        .as_ref()
+        .map(|manifest| manifest.entry_count);
+    // `u` writes a complete new archive into the stage, which sheds the
+    // original's quarantine / Zone.Identifier unless it is carried over.
+    let finalize_carries_update_marker = args.first().map(String::as_str) == Some("u");
+    let finalize_marker_source = mark_of_the_web_source.clone();
     let finalize_emit = emit_window.clone();
+    let finalize_target = progress_target.clone();
     let finalization_publish_strategy = Arc::new(Mutex::new(None::<PublishStrategy>));
     let publish_strategy_slot = finalization_publish_strategy.clone();
     let finalization_started = std::time::Instant::now();
@@ -2264,7 +2370,67 @@ pub async fn run_7z(
                 Ok(Ok(()))
             }
         } else {
-            let _ = finalize_emit.emit(
+            if let Some((staged, destination)) = finalize_plan.staged_archive.as_ref() {
+                let marker_source = if finalize_carries_update_marker {
+                    Some(destination.as_path())
+                } else {
+                    finalize_marker_source.as_deref()
+                };
+                if let Some(Err(error)) = marker_source.map(|source| {
+                    crate::quarantine::copy_mark_of_the_web_to_family(source, staged)
+                }) {
+                    return match rollback_cleanup(&finalize_plan) {
+                        Ok(()) => Ok(Err(format!(
+                            "{error} The archive was rolled back so an unmarked archive was not published."
+                        ))),
+                        Err(rollback_error) => {
+                            Err(format!("{error}; rollback also failed: {rollback_error}"))
+                        }
+                    };
+                }
+            }
+            if let Some((stage, _)) = finalize_plan.staged_extract.as_ref() {
+                if let Err(error) =
+                    super::commit::ensure_extract_stage_has_output(stage, finalize_entry_count)
+                {
+                    return match rollback_cleanup(&finalize_plan) {
+                        Ok(()) => Ok(Err(format!(
+                            "{error} The extraction was rolled back so nothing was published."
+                        ))),
+                        Err(rollback_error) => {
+                            Err(format!("{error}; rollback also failed: {rollback_error}"))
+                        }
+                    };
+                }
+            }
+            if let (Some(value), Some((stage, _))) =
+                (archive_quarantine.as_deref(), finalize_plan.staged_extract.as_ref())
+            {
+                if let Err(error) = crate::quarantine::apply_quarantine_tree(stage, value) {
+                    return match rollback_cleanup(&finalize_plan) {
+                        Ok(()) => Ok(Err(format!(
+                            "{error} The extraction was rolled back so unquarantined files were not published."
+                        ))),
+                        Err(rollback_error) => Err(format!(
+                            "{error}; rollback also failed: {rollback_error}"
+                        )),
+                    };
+                }
+            }
+            if let Some((stage, _)) = finalize_plan.staged_extract.as_ref() {
+                if let Err(error) = super::commit::clear_staged_directory_shell_attributes(stage) {
+                    return match rollback_cleanup(&finalize_plan) {
+                        Ok(()) => Ok(Err(format!(
+                            "{error} The extraction was rolled back so nothing was published."
+                        ))),
+                        Err(rollback_error) => Err(format!(
+                            "{error}; rollback also failed: {rollback_error}"
+                        )),
+                    };
+                }
+            }
+            let _ = finalize_emit.emit_to(
+                finalize_target,
                 "7z-progress-structured",
                 crate::progress::ProgressUpdate {
                     percent: Some(100),
@@ -2436,11 +2602,7 @@ pub async fn probe_7z(
                 return Err("7z probe output exceeded its safety limit.".to_string());
             }
             let combined = format!("{}\n{}", collected.stdout, collected.stderr);
-            if code == 0
-                || collected.accepts_exit_one_with(|stdout, stderr| {
-                    parse_7z_version(&format!("{stdout}\n{stderr}")).is_some()
-                })
-            {
+            if code == 0 {
                 let version = parse_7z_version(&combined).unwrap_or_else(|| "unknown".to_string());
                 if let Err(error) = assert_probed_version_matches_bundle(&version) {
                     store_probed_7z_version(None);

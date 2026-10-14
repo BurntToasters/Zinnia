@@ -317,12 +317,12 @@ pub(crate) fn linux_desktop_session_available() -> bool {
         || std::env::var_os("XDG_CURRENT_DESKTOP").is_some()
         || std::env::var_os("DESKTOP_SESSION").is_some()
 }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn is_flatpak() -> bool {
     std::env::var("FLATPAK_ID").is_ok() || std::path::Path::new("/.flatpak-info").exists()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn is_packaged() -> bool {
     let exe = match std::env::current_exe() {
         Ok(p) => p.to_string_lossy().to_string(),

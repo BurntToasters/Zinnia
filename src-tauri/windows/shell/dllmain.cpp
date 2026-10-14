@@ -42,6 +42,17 @@ static constexpr size_t kMaxPathsPerRequest = 4'096;
 static constexpr size_t kMaxHandoffBytes = 4 * 1024 * 1024;
 
 static void AddRefModule() { InterlockedIncrement(&g_moduleRefs); }
+
+template <typename Body>
+static HRESULT GuardedCall(Body&& body) noexcept {
+  try {
+    return body();
+  } catch (const std::bad_alloc&) {
+    return E_OUTOFMEMORY;
+  } catch (...) {
+    return E_FAIL;
+  }
+}
 static void ReleaseModule() { InterlockedDecrement(&g_moduleRefs); }
 
 static bool EndsWithIgnoreCase(const std::wstring& value, const wchar_t* suffix) {
@@ -449,7 +460,7 @@ static HRESULT LaunchZinnia(const wchar_t* flag,
   return hr;
 }
 
-class ExplorerCommand : public IExplorerCommand, public IObjectWithSite {
+class ExplorerCommand final : public IExplorerCommand, public IObjectWithSite {
  public:
   ExplorerCommand(CommandKind kind) : kind_(kind) { AddRefModule(); }
   ~ExplorerCommand() {
@@ -503,27 +514,29 @@ class ExplorerCommand : public IExplorerCommand, public IObjectWithSite {
 
   IFACEMETHODIMP GetTitle(IShellItemArray*, LPWSTR* name) override {
     if (!name) return E_POINTER;
-    const wchar_t* title = L"Zinnia";
-    switch (kind_) {
-      case CommandKind::ExtractTop:
-        title = L"Extract with Zinnia";
-        break;
-      case CommandKind::Extract:
-        title = L"Extract";
-        break;
-      case CommandKind::Compress:
-        title = L"Compress";
-        break;
-      case CommandKind::Root:
-      default:
-        title = L"Zinnia";
-        break;
-    }
-    return SHStrDupW(title, name);
+    return GuardedCall([&]() -> HRESULT {
+      const wchar_t* title = L"Zinnia";
+      switch (kind_) {
+        case CommandKind::ExtractTop:
+          title = L"Extract with Zinnia";
+          break;
+        case CommandKind::Extract:
+          title = L"Extract";
+          break;
+        case CommandKind::Compress:
+          title = L"Compress";
+          break;
+        case CommandKind::Root:
+        default:
+          title = L"Zinnia";
+          break;
+      }
+      return SHStrDupW(title, name);
+    });
   }
 
   IFACEMETHODIMP GetIcon(IShellItemArray*, LPWSTR* icon) override {
-    return GetZinniaIconRef(icon);
+    return GuardedCall([&]() -> HRESULT { return GetZinniaIconRef(icon); });
   }
 
   IFACEMETHODIMP GetToolTip(IShellItemArray*, LPWSTR* tip) override {
@@ -534,34 +547,36 @@ class ExplorerCommand : public IExplorerCommand, public IObjectWithSite {
 
   IFACEMETHODIMP GetCanonicalName(GUID* guid) override {
     if (!guid) return E_POINTER;
-    switch (kind_) {
-      case CommandKind::Root:
-        *guid = CLSID_ZinniaRoot;
-        break;
-      case CommandKind::ExtractTop:
-        *guid = CLSID_ZinniaExtractTop;
-        break;
-      case CommandKind::Extract: {
-        // Distinct from ExtractTop so Explorer does not merge the two commands.
-        static const GUID kExtractSub = {
-            0xb7e2a91c,
-            0x6d4f,
-            0x4a3e,
-            {0x9c, 0x1b, 0x8f, 0x0e, 0x2d, 0x3a, 0x4b, 0x5f}};
-        *guid = kExtractSub;
-        break;
+    return GuardedCall([&]() -> HRESULT {
+      switch (kind_) {
+        case CommandKind::Root:
+          *guid = CLSID_ZinniaRoot;
+          break;
+        case CommandKind::ExtractTop:
+          *guid = CLSID_ZinniaExtractTop;
+          break;
+        case CommandKind::Extract: {
+          // Distinct from ExtractTop so Explorer does not merge the two commands.
+          static const GUID kExtractSub = {
+              0xb7e2a91c,
+              0x6d4f,
+              0x4a3e,
+              {0x9c, 0x1b, 0x8f, 0x0e, 0x2d, 0x3a, 0x4b, 0x5f}};
+          *guid = kExtractSub;
+          break;
+        }
+        case CommandKind::Compress: {
+          static const GUID kCompress = {
+              0xb7e2a91c,
+              0x6d4f,
+              0x4a3e,
+              {0x9c, 0x1b, 0x8f, 0x0e, 0x2d, 0x3a, 0x4b, 0x5e}};
+          *guid = kCompress;
+          break;
+        }
       }
-      case CommandKind::Compress: {
-        static const GUID kCompress = {
-            0xb7e2a91c,
-            0x6d4f,
-            0x4a3e,
-            {0x9c, 0x1b, 0x8f, 0x0e, 0x2d, 0x3a, 0x4b, 0x5e}};
-        *guid = kCompress;
-        break;
-      }
-    }
-    return S_OK;
+      return S_OK;
+    });
   }
 
   HRESULT ResolvePaths(IShellItemArray* selection,
@@ -588,6 +603,12 @@ class ExplorerCommand : public IExplorerCommand, public IObjectWithSite {
   IFACEMETHODIMP GetState(IShellItemArray* selection, BOOL, EXPCMDSTATE* state) override {
     if (!state) return E_POINTER;
     *state = ECS_ENABLED;
+    const HRESULT hr = GuardedCall([&]() -> HRESULT { return ComputeState(selection, state); });
+    if (FAILED(hr)) *state = ECS_DISABLED;
+    return S_OK;
+  }
+
+  HRESULT ComputeState(IShellItemArray* selection, EXPCMDSTATE* state) {
     DWORD selectionCount = 0;
     if (selection && SUCCEEDED(selection->GetCount(&selectionCount)) &&
         selectionCount > kMaxPathsPerRequest) {
@@ -626,6 +647,10 @@ class ExplorerCommand : public IExplorerCommand, public IObjectWithSite {
   }
 
   IFACEMETHODIMP Invoke(IShellItemArray* selection, IBindCtx*) override {
+    return GuardedCall([&]() -> HRESULT { return InvokeSelection(selection); });
+  }
+
+  HRESULT InvokeSelection(IShellItemArray* selection) {
     std::vector<std::wstring> paths;
     HRESULT hr = ResolvePaths(selection, &paths);
     if (FAILED(hr)) return hr;
@@ -644,8 +669,10 @@ class ExplorerCommand : public IExplorerCommand, public IObjectWithSite {
 
   IFACEMETHODIMP GetFlags(EXPCMDFLAGS* flags) override {
     if (!flags) return E_POINTER;
-    *flags = (kind_ == CommandKind::Root) ? ECF_HASSUBCOMMANDS : ECF_DEFAULT;
-    return S_OK;
+    return GuardedCall([&]() -> HRESULT {
+      *flags = (kind_ == CommandKind::Root) ? ECF_HASSUBCOMMANDS : ECF_DEFAULT;
+      return S_OK;
+    });
   }
 
   IFACEMETHODIMP EnumSubCommands(IEnumExplorerCommand** enumCommands) override;
@@ -656,7 +683,7 @@ class ExplorerCommand : public IExplorerCommand, public IObjectWithSite {
   IUnknown* site_ = nullptr;
 };
 
-class EnumCommands : public IEnumExplorerCommand {
+class EnumCommands final : public IEnumExplorerCommand {
  public:
   EnumCommands() { AddRefModule(); }
 
@@ -739,20 +766,22 @@ class EnumCommands : public IEnumExplorerCommand {
 IFACEMETHODIMP ExplorerCommand::EnumSubCommands(
     IEnumExplorerCommand** enumCommands) {
   if (!enumCommands) return E_POINTER;
-  *enumCommands = nullptr;
-  if (kind_ != CommandKind::Root) return E_NOTIMPL;
-  auto* commands = new (std::nothrow) EnumCommands();
-  if (!commands) return E_OUTOFMEMORY;
-  HRESULT hr = commands->Initialize(site_);
-  if (FAILED(hr)) {
-    commands->Release();
-    return hr;
-  }
-  *enumCommands = commands;
-  return S_OK;
+  return GuardedCall([&]() -> HRESULT {
+    *enumCommands = nullptr;
+    if (kind_ != CommandKind::Root) return E_NOTIMPL;
+    auto* commands = new (std::nothrow) EnumCommands();
+    if (!commands) return E_OUTOFMEMORY;
+    HRESULT hr = commands->Initialize(site_);
+    if (FAILED(hr)) {
+      commands->Release();
+      return hr;
+    }
+    *enumCommands = commands;
+    return S_OK;
+  });
 }
 
-class ClassFactory : public IClassFactory {
+class ClassFactory final : public IClassFactory {
  public:
   ClassFactory(CommandKind kind) : kind_(kind) { AddRefModule(); }
   ~ClassFactory() { ReleaseModule(); }
@@ -778,11 +807,13 @@ class ClassFactory : public IClassFactory {
   IFACEMETHODIMP CreateInstance(IUnknown* outer, REFIID riid,
                                 void** ppv) override {
     if (outer) return CLASS_E_NOAGGREGATION;
-    ExplorerCommand* cmd = new (std::nothrow) ExplorerCommand(kind_);
-    if (!cmd) return E_OUTOFMEMORY;
-    HRESULT hr = cmd->QueryInterface(riid, ppv);
-    cmd->Release();
-    return hr;
+    return GuardedCall([&]() -> HRESULT {
+      ExplorerCommand* cmd = new (std::nothrow) ExplorerCommand(kind_);
+      if (!cmd) return E_OUTOFMEMORY;
+      HRESULT hr = cmd->QueryInterface(riid, ppv);
+      cmd->Release();
+      return hr;
+    });
   }
   IFACEMETHODIMP LockServer(BOOL lock) override {
     if (lock) AddRefModule();
@@ -808,17 +839,19 @@ STDAPI DllCanUnloadNow() {
 }
 
 STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv) {
-  CommandKind kind;
-  if (IsEqualCLSID(rclsid, CLSID_ZinniaRoot)) {
-    kind = CommandKind::Root;
-  } else if (IsEqualCLSID(rclsid, CLSID_ZinniaExtractTop)) {
-    kind = CommandKind::ExtractTop;
-  } else {
-    return CLASS_E_CLASSNOTAVAILABLE;
-  }
-  ClassFactory* factory = new (std::nothrow) ClassFactory(kind);
-  if (!factory) return E_OUTOFMEMORY;
-  HRESULT hr = factory->QueryInterface(riid, ppv);
-  factory->Release();
-  return hr;
+  return GuardedCall([&]() -> HRESULT {
+    CommandKind kind;
+    if (IsEqualCLSID(rclsid, CLSID_ZinniaRoot)) {
+      kind = CommandKind::Root;
+    } else if (IsEqualCLSID(rclsid, CLSID_ZinniaExtractTop)) {
+      kind = CommandKind::ExtractTop;
+    } else {
+      return CLASS_E_CLASSNOTAVAILABLE;
+    }
+    ClassFactory* factory = new (std::nothrow) ClassFactory(kind);
+    if (!factory) return E_OUTOFMEMORY;
+    HRESULT hr = factory->QueryInterface(riid, ppv);
+    factory->Release();
+    return hr;
+  });
 }

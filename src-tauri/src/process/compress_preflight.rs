@@ -141,16 +141,18 @@ impl MetadataProbePool {
             scope.spawn(move || loop {
                 let job = {
                     let (lock, wake) = &*queue;
-                    let mut jobs = lock
-                        .lock()
-                        .expect("metadata probe worker queue lock poisoned");
+                    let mut jobs = match lock.lock() {
+                        Ok(guard) => guard,
+                        Err(_) => return,
+                    };
                     loop {
                         if let Some(job) = jobs.pop_front() {
                             break job;
                         }
-                        jobs = wake
-                            .wait(jobs)
-                            .expect("metadata probe worker queue lock poisoned");
+                        jobs = match wake.wait(jobs) {
+                            Ok(guard) => guard,
+                            Err(_) => return,
+                        };
                     }
                 };
                 let Some(job) = job else {

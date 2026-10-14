@@ -60,6 +60,7 @@ pub(crate) use archive_snapshot::archive_identity_token_from_open_file;
 #[cfg(windows)]
 pub(crate) use archive_snapshot::copy_windows_zone_identifier;
 pub(crate) use archive_snapshot::release_snapshot_handles;
+pub(crate) use commit::archive_family;
 pub(crate) use journal::unregister_pending_stage;
 pub(crate) use quota::available_space_for_path;
 pub(crate) use staging::create_private_stage_dir;
@@ -171,6 +172,7 @@ pub(crate) struct ArchiveManifestSummary {
     pub(crate) path_bytes: u64,
     pub(crate) has_symbolic_links: bool,
     pub(crate) has_hard_links: bool,
+    pub(crate) declared_size_untrusted: bool,
 }
 
 impl ArchiveManifestSummary {

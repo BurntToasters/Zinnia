@@ -353,7 +353,8 @@ describe("release script safeguards", () => {
     };
     const changelog = fs.readFileSync("CHANGELOG.md", "utf8");
     const body = readChangelogReleaseBody();
-    expect(body).toBe(changelog);
+    expect(body.startsWith(changelog)).toBe(true);
+    expect(body).toContain("GUI E2E:");
     expect(body).toContain("# ⬇️ Downloads");
     expect(body).toContain(`## Changes in \`v${pkg.version}:\``);
     expect(body).toContain("## ℹ️ Release Info");
@@ -379,7 +380,8 @@ describe("release script safeguards", () => {
     fs.writeFileSync(mixed, mixedContents);
     try {
       const extracted = readChangelogReleaseBody(mixed, "9.9.9");
-      expect(extracted).toBe(mixedContents);
+      expect(extracted.startsWith(mixedContents)).toBe(true);
+      expect(extracted).toContain("GUI E2E:");
       expect(extracted).toContain("current notes");
       expect(extracted).toContain("historical notes still ship");
       expect(extracted).toContain("# Downloads");

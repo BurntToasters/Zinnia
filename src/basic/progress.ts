@@ -1,4 +1,4 @@
-import { listen } from "@tauri-apps/api/event";
+import { listenToOwnWindow } from "../window-events";
 import { isSevenZipRunInFlight } from "../archive/runtime";
 import { state } from "../state";
 import { log, getWorkspaceMode, getMode, triggerIconRefresh } from "../ui";
@@ -233,7 +233,7 @@ export function updateBasicRunningState(active: boolean): void {
     showBasicProgress(section);
     resetBasicBar(section);
     // Listen for structured progress events to show determinate progress.
-    void listen<{ percent?: number; currentFile?: string }>(
+    void listenToOwnWindow<{ percent?: number; currentFile?: string }>(
       "7z-progress-structured",
       (event) => {
         if (!isSevenZipRunInFlight()) return;

@@ -57,6 +57,7 @@ async function setupAndRun(options?: {
   vi.mocked(eventApi.emit).mockResolvedValue(undefined);
 
   const appWindow = {
+    label: "main",
     minimize: vi.fn().mockResolvedValue(undefined),
     maximize: vi.fn().mockResolvedValue(undefined),
     unmaximize: vi.fn().mockResolvedValue(undefined),
