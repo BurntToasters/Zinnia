@@ -46,11 +46,12 @@ function releaseAssetUploadArgs(uploadUrl, filePath) {
   ];
 }
 
-function runGitHub(args, { input } = {}) {
+function runGitHub(args, { input, cwd } = {}) {
   const result = spawnSync("gh", args, {
     encoding: "utf8",
     env: githubCliEnvironment(),
     input,
+    cwd,
     stdio: ["pipe", "pipe", "pipe"],
     maxBuffer: 16 * 1024 * 1024,
   });

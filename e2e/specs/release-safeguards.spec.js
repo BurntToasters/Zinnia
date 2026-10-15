@@ -7,7 +7,6 @@ import { requireHostSidecar, run7z } from "../../scripts/archive-fixtures.js";
 import {
   applyIncomingPaths,
   queueDialogResult,
-  setInputValue,
   startPowerExtract,
   switchToPowerWorkspace,
   waitForArchiveIdle,
@@ -254,7 +253,7 @@ describe("beta.5 release safeguards", () => {
     });
   });
 
-  it("encrypts files added with a password to a ZIP without a .zip name using AES-256", async () => {
+  it("encrypts files added over IPC with a password to a ZIP without a .zip name using AES-256", async () => {
     const hello = path.join(ROOT, "legacy-hello.txt");
     fs.writeFileSync(hello, PAYLOAD);
     const archive = path.join(ROOT, "legacy.bin");
@@ -267,21 +266,38 @@ describe("beta.5 release safeguards", () => {
     fs.writeFileSync(added, "added with a password\n");
     const password = "Zinnia-E2E-Secret-5";
 
-    await openInBrowse(archive, "legacy-hello.txt");
-    await setInputValue("#browse-password", password);
-    await queueDialogResult([added]);
-    await browser.execute(() => {
-      document.getElementById("browse-add-files")?.click();
-    });
-    await browser.waitUntil(
-      () => listArchive(archive).includes("secret-added.txt"),
-      {
-        timeout: 120_000,
-        interval: 250,
-        timeoutMsg: "update did not add secret-added.txt",
-      },
-    );
     await waitForArchiveIdle();
+    const token = await browser.execute(
+      (target) =>
+        window.__TAURI_INTERNALS__.invoke("archive_output_selection_token", {
+          path: target,
+        }),
+      archive,
+    );
+    assert.ok(token && token !== "absent", "no output token for the archive");
+    const result = await browser.execute(
+      (requestJson) =>
+        window.__TAURI_INTERNALS__.invoke("run_7z", { requestJson }),
+      JSON.stringify({
+        args: [
+          "u",
+          "-sse",
+          "-snl",
+          "-snh",
+          "-spd",
+          `-p${password}`,
+          archive,
+          "--",
+          added,
+        ],
+        expectedArchiveIdentity: token,
+      }),
+    );
+    assert.equal(result.code, 0, `run_7z update failed: ${result.stderr}`);
+    assert.ok(
+      listArchive(archive).includes("secret-added.txt"),
+      "update did not add secret-added.txt",
+    );
 
     const methods = memberMethods(listArchive(archive, password));
     const method = methods.get("secret-added.txt") ?? "";

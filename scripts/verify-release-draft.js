@@ -25,7 +25,7 @@ const {
   githubApi,
   githubApiRaw,
   assertGitHubCliAuthenticated,
-  githubCliEnvironment,
+  runGitHub,
 } = require("./github-cli.cjs");
 const { isExplicitTruthy } = require("./release-policy.cjs");
 const {
@@ -376,12 +376,11 @@ function currentHeadCommit() {
 }
 
 function githubAuthToken() {
-  return execSync("gh auth token --hostname github.com", {
-    cwd: root,
-    encoding: "utf8",
-    env: githubCliEnvironment(),
-    stdio: ["ignore", "pipe", "pipe"],
-  }).trim();
+  return String(
+    runGitHub(["auth", "token", "--hostname", "github.com"], {
+      cwd: root,
+    }).stdout || "",
+  ).trim();
 }
 
 async function downloadDraftAsset(
