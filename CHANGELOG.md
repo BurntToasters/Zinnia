@@ -20,62 +20,38 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
 ## Changes in `v0.6.3:`
 
-- **Fix:** (add release notes)
-
-## Changes in `v0.6.3-beta.5:`
-
 - **Security - Downloaded files:** On macOS, files extracted from a downloaded archive now keep the download warning (quarantine), so Gatekeeper still checks apps that came out of an archive. Converting or updating a downloaded archive now keeps its download warning on macOS and Windows. The new archive is marked before it is saved, so an unmarked copy is never left on disk.
 - **Security - Windows:** Extracted folders no longer keep the read-only or system attribute. An archive can no longer make Explorer apply its own `desktop.ini` (for example, a folder icon loaded from a network share) to the folders it creates.
-- **Security - Encryption:** As an extra safeguard, the backend now always uses AES-256 instead of the weaker ZipCrypto when files are added with a password to an existing ZIP archive, even one whose name does not end in `.zip`.
+- **Security - Encryption:** The backend always uses AES-256 instead of the weaker ZipCrypto when files are added with a password to an existing ZIP archive, even one whose name does not end in `.zip`.
 - **Security - Paths:** Folder names that Zinnia derives from an archive name now avoid Windows device names (such as `CON` or `NUL`), `:` streams, and shell folder IDs (`name.{GUID}`) on every platform. On Windows, **Open destination** refuses folders with such names.
-- **Security - Updater:** Zinnia never installs an update whose version is not newer than the installed one. Update signatures with a non-standard encoding are now rejected.
-- **Security:** Progress updates (including file names) and debug console output now only reach the window that started the operation, instead of every open window.
-- **Fix - Open destination (macOS):** Opening an extracted folder whose name looks like an app or package now shows it in Finder instead of launching it.
-- **Fix - Logs:** Exporting logs no longer freezes the app while the save dialog is open.
-- **Fix - Browse:** Archive entry names that contain text like `-p...` or `password=` are no longer altered in the file list, so selective extraction finds them.
-- **Fix - Performance:** Settings and log writes no longer freeze the window on slow or network drives.
-- **Tests:** The release dry run now works on Windows and never contacts the real GitHub repository. `npm run b` and `npm run r` now also refuse to run when the local `beta` or `main` branch has commits that were never pushed.
-
-## Changes in `v0.6.3-beta.4:`
-
-- **Fix - Quick extract:** The extract window now reliably closes when its auto-close countdown ends. Previously, mouse events the system sends without any real movement, or pressing `Alt` to switch away with `Alt+Tab`, could silently cancel the countdown and leave the window open.
-- **Change - Quick extract:** Moving the mouse over the extract window now pauses the countdown and shows **Close (paused)**. Moving the mouse out of the window, or switching to another window, restarts it. Pressing a key (other than `Alt`, `Ctrl`, `Shift`, or the Windows/Command key) or clicking still cancels it. The countdown also stays on time when the window is covered or in the background.
-- **Fix - Updater:** Large updates no longer fail on slow connections. Downloads were limited to 120 seconds in total; they now fail only if the connection stalls for 120 seconds.
-- **Fix - Recovery:** If a newer Zinnia version leaves an unfinished archive job and you open an older version, the older version now leaves the files alone and explains how to finish the job, instead of guessing at it. You can still clear it with **Accept**.
-- **Security - Extraction:** ZIP archives that contain symbolic links are now always handled with Zinnia's extra link safety checks. Previously some ZIP links were not recognized up front; 7-Zip still refused any link pointing outside the destination.
-- **Security:** Release and maintenance scripts no longer skip their work silently when run through a symbolic-linked path. Bundled 7-Zip updates now require identical downloads from both official sources (7-zip.org and GitHub).
-- **PKG:** Updated packages, including Tauri 2.12, TypeScript 7, and Vitest 5.
-- **Tests:** End-to-end tests now cover the extract-window auto-close countdown and run again on Windows after the Tauri 2.12 update. The WebDriver test plugin is patched to match Tauri 2.12's WebView2 bindings. New end-to-end tests cover crash recovery at every stage of extracting and creating an archive, cancelling, unsafe archives, split archives, adding files to an archive, and the release process. CI now also runs them on ARM Windows and ARM Linux.
-- **7-Zip:** Updated bundled 7-Zip to `26.04`.
-
-## Changes in `v0.6.3-beta.3:`
-
+- **Security - Extraction:** ZIP archives that contain symbolic links are always handled with Zinnia's extra link safety checks. 7-Zip still refuses any link pointing outside the destination.
+- **Security - Updater:** Zinnia never installs an update whose version is not newer than the installed one. Update signatures with a non-standard encoding are rejected.
+- **Security:** Progress updates (including file names) and debug console output only reach the window that started the operation, instead of every open window.
+- **Security:** Release and maintenance scripts no longer skip their work silently when run through a symbolic-linked path. Bundled 7-Zip updates require identical downloads from both official sources (7-zip.org and GitHub).
+- **NEW - Archive I/O diagnostics:** Optional archive I/O phase diagnostics in the Debug Console. Diagnostics are disabled outside debug mode and redact archive paths and passwords.
+- **Performance:** Reduced avoidable archive and destination copies, added stable snapshots and bounded metadata/finalization workers, and combined final validation, quota, durability, and fingerprint passes while preserving containment, rollback, cancellation, MOTW, and crash recovery. Settings and log writes no longer freeze the window on slow or network drives.
+- **Compatibility:** Expanded operation and output verification across ZIP, 7z, and TAR, with separate reporting for encrypted, split, link-bearing, RAR, and unsupported filesystem or custom-ACL cases.
+- **Benchmarking:** Added cross-platform Zinnia archive benchmarks for PR smoke and nightly/manual x64 and ARM64 runs. Reports compare Zinnia with bundled 7-Zip without letting timing ratios block CI.
+- **Fix - Quick extract:** The extract window reliably closes when its auto-close countdown ends. Previously, mouse events without real movement, or pressing `Alt` to switch away with `Alt+Tab`, could silently cancel the countdown and leave the window open.
+- **Change - Quick extract:** Moving the mouse over the extract window pauses the countdown and shows **Close (paused)**. Moving the mouse out of the window, or switching to another window, restarts it. Pressing a key (other than `Alt`, `Ctrl`, `Shift`, or the Windows/Command key) or clicking still cancels it. The countdown stays on time when the window is covered or in the background.
+- **Fix - Quick extract (macOS):** Opening Settings, Check for Updates, or another app-menu item during a quick extract keeps the main window open after the extract window closes.
+- **Fix - Updater:** Large updates no longer fail on slow connections. Downloads now fail only if the connection stalls for 120 seconds, instead of after 120 seconds in total.
+- **Fix - Recovery:** A crash at one specific point during extraction no longer leaves a recovery state that blocks later archive operations; recovery still refuses anything it cannot verify. If a newer Zinnia version leaves an unfinished archive job and you open an older version, the older version leaves the files alone and explains how to finish the job. You can still clear it with **Accept**.
 - **Fix - Extraction:** `.bz2` and `.xz` files that store no file name inside (the usual case) now extract instead of failing with "Could not parse archive member paths from 7-Zip listing."
-- **Fix - Recovery:** A crash at one specific point during extraction no longer leaves a recovery state that blocks every later archive operation. Recovery still refuses anything it cannot verify.
-- **Fix - Basic mode:** Choosing a different archive from the Extract or Browse archive card now updates the shown archive name and the automatic destination. Previously, Extract could write the new archive into the old archive's folder. A destination you typed yourself is kept.
+- **Fix - Open destination (macOS):** Opening an extracted folder whose name looks like an app or package shows it in Finder instead of launching it.
+- **Fix - Browse:** Archive entry names containing text like `-p...` or `password=` are no longer altered in the file list, so selective extraction finds them.
+- **Fix - Logs:** Exporting logs no longer freezes the app while the save dialog is open.
+- **Fix - Basic mode:** Choosing a different archive from the Extract or Browse archive card updates the shown archive name and the automatic destination. A destination you typed yourself is kept.
 - **Fix - Basic mode:** Form fields are locked while an operation runs, so the completion message and Recents always show the archive that was actually created.
 - **Fix - Presets:** Custom presets with default (empty) options, such as most ZIP presets, no longer disappear after restarting Zinnia.
-- **Fix - macOS:** Opening Settings, Check for Updates, or another app-menu item during a quick extract now keeps the main window open after the extract window closes.
-- **Fix - Command line:** Relative paths passed to an already-running Zinnia (for example `zinnia --compress ./file.txt` from another folder) now resolve against the folder you ran the command from.
+- **Fix - Command line:** Relative paths passed to an already-running Zinnia (for example `zinnia --compress ./file.txt` from another folder) resolve against the folder you ran the command from.
 - **Fix - Windows:** Read-only archives are snapshotted by copy instead of hard link, so cleanup can no longer clear the read-only flag on your original file.
-- **Fix - Debug Mode:** Fixed an issue where popping out the debug mode console would cause a white screen and an unresponsive console.
-- **Release:** Publishing now refuses a release whose existing tag points at a different commit, and replacing an existing release asset uploads the new file before removing the old one. `ALLOW_ASSET_REPLACE=true` now works as documented.
-- **CI:** Stable promotion now requires exact-commit CI evidence, an accepted immutable beta tag, and six-platform release-scale archive benchmarks against that beta. The Rust toolchain is pinned to 1.98.1.
-- **Benchmarks:** Archive I/O benchmarks now run on macOS (sidecar signing no longer invalidates the build stamp) and long sessions are no longer cut off after 2 minutes.
-- **Tests:** Added end-to-end coverage for the fixes above, including real `.bz2`/`.xz` extraction, Basic archive replacement, field locking, and preset persistence across a reload.
-
-## Changes in `v0.6.3-beta.2:`
-
-- **Fix - Windows 11 Context-menu integration:** Added better error handling for the Windows appx updater step.
-  - The `.appx` package would update correctly but show an error if the `DLL` was already loaded.
-
-## Changes in `v0.6.3-beta.1:`
-
-- **Performance:** Reduced avoidable archive and destination copies, added stable snapshots and bounded metadata/finalization workers, and combined final validation, quota, durability, and fingerprint passes while preserving containment, rollback, cancellation, MOTW, and crash recovery.
-- **Diagnostics:** Added optional archive I/O phase diagnostics for the Debug Console; diagnostics are disabled outside debug mode and redact archive paths and passwords.
-- **Benchmarking:** Added real cross-platform Zinnia archive benchmarks for PR smoke and nightly/manual x64 and ARM64 runs. Reports compare Zinnia with bundled 7-Zip and classify performance targets without making timing ratios block CI.
-- **Compatibility:** Expanded operation and output verification across ZIP, 7z, and TAR, with separate reporting for encrypted, split, link-bearing, RAR, and unsupported filesystem or custom-ACL cases.
-- **PKG:** Updated packages and raised the minimum npm version to 12.0.2.
+- **Fix - Debug Mode:** Popping out the debug mode console no longer causes a white screen and an unresponsive console.
+- **Release:** Publishing refuses a release whose existing tag points at a different commit. Replacing an existing release asset uploads the new file before removing the old one.
+- **Codebase:** `npm run b` and `npm run r` refuse to run when the local `beta` or `main` branch has commits that were never pushed.
+- **Testing:** End-to-end coverage for the extract-window countdown, crash recovery at each stage of extracting and creating archives, cancelling, unsafe archives, split archives, adding files, and the release process. CI runs these on ARM Windows and ARM Linux.
+- **PKG:** Updated packages, including Tauri 2.12, TypeScript 7, Vitest 5, and minimum npm 12.0.2.
+- **7-Zip:** Updated bundled 7-Zip to `26.04`.
 
 ## Changes in `v0.6.2:`
 
