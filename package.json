@@ -72,7 +72,8 @@
     "vi": "node scripts/vi.js",
     "b": "node scripts/guard-clean-tree.mjs --branch beta && git fetch origin && git reset --hard && git clean -fd && git switch -C beta origin/beta && git reset --hard origin/beta && git clean -fd && npm run vi",
     "r": "node scripts/guard-clean-tree.mjs --branch main && git fetch origin && git reset --hard && git clean -fd && git switch -C main origin/main && git reset --hard origin/main && git clean -fd && npm run vi && npm run gitprune:force",
-    "u": "node scripts/npm-safe-update.mjs && node scripts/cargo-safe-update.mjs --manifest-path src-tauri/Cargo.toml && node scripts/sync-version.js && node scripts/update-metainfo.js",
+    "u": "node scripts/npm-safe-update.mjs && node scripts/cargo-safe-update.mjs --manifest-path src-tauri/Cargo.toml && node scripts/sync-version.js && node scripts/update-metainfo.js && npm run check:tauri-alignment",
+    "check:tauri-alignment": "node scripts/check-tauri-alignment.mjs",
     "u2": "node scripts/npm-safe-update.mjs && node scripts/cargo-safe-update.mjs --manifest-path src-tauri/Cargo.toml && node scripts/sync-version.js && node scripts/update-metainfo.js",
     "win-compiler:x64": "powershell -NoProfile -ExecutionPolicy Bypass -NoExit -File scripts/launch-vs-devshell.ps1 -Arch x64",
     "win-compiler:arm64": "powershell -NoProfile -ExecutionPolicy Bypass -NoExit -File scripts/launch-vs-devshell.ps1 -Arch arm64",
@@ -143,16 +144,16 @@
     "test:release-dry-run": "node scripts/e2e-release-dry-run.mjs"
   },
   "dependencies": {
-    "@tauri-apps/api": "~2.12.1",
-    "@tauri-apps/plugin-dialog": "~2.8.1",
-    "@tauri-apps/plugin-notification": "~2.6.0",
-    "@tauri-apps/plugin-process": "~2.4.0",
-    "@tauri-apps/plugin-shell": "~2.5.0",
+    "@tauri-apps/api": "^2.12.1",
+    "@tauri-apps/plugin-dialog": "^2.8.1",
+    "@tauri-apps/plugin-notification": "^2.6.0",
+    "@tauri-apps/plugin-process": "^2.4.0",
+    "@tauri-apps/plugin-shell": "^2.5.0",
     "@tauri-apps/plugin-updater": "2.10.1",
     "lucide": "^1.52.0"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "~2.12.1",
+    "@tauri-apps/cli": "^2.12.1",
     "@types/node": "^24.19.1",
     "@typescript-eslint/eslint-plugin": "^8.57.1",
     "@typescript-eslint/parser": "^8.57.1",
