@@ -7,8 +7,80 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = path.resolve(__dirname, "..", "..");
 export const ZIPS_DIR = path.join(REPO_ROOT, "zips");
 export const APP_ID = "run.rosie.zinnia";
-export const E2E_WEBVIEW2_BROWSER_ARGS =
-  "--disable-gpu --disable-features=CalculateNativeWinOcclusion,RendererCodeIntegrity";
+const permanentDisabledFeatures = [
+  "CalculateNativeWinOcclusion",
+  "RendererCodeIntegrity",
+];
+// TEMP_WEBVIEW2_LOCKOUT_WORKAROUND: TEMPORARY UPSTREAM WORKAROUND, REMOVE after
+// the fixed stable WebView2 runtime is verified to no longer log Event 4625 on
+// fresh environment creation; see e2e/webview2-lockout.failure-modes.md.
+// Cause: a fresh WebView2 environment can generate a failed Windows interactive
+// logon, and repeated E2E launches increment the bad-password counter (lockout).
+// Tracking: MicrosoftEdge/WebView2Feedback #5722, Chromium #562403601.
+// Chromium runs the probe when either feature is enabled
+// (chrome_autofill_client.cc).
+const temporaryRegressionWorkarounds = [
+  "AutofillAiWalletPrivatePasses",
+  "AutofillAmbientAutofill",
+];
+export const E2E_WEBVIEW2_BROWSER_ARGS = `--disable-gpu --disable-features=${[
+  ...permanentDisabledFeatures,
+  ...temporaryRegressionWorkarounds,
+].join(",")}`;
+
+const WEBVIEW2_FEATURE_SWITCH_PREFIXES = [
+  "--disable-features=",
+  "--enable-features=",
+];
+
+/**
+ * Merges WebView2 browser-argument strings. Each --disable-features= and
+ * --enable-features= is folded into one switch; other switches are kept once.
+ * Order follows first occurrence. Empty and non-string inputs are skipped.
+ */
+export function mergeWebView2BrowserArgs(...argStrings) {
+  const entries = [];
+  const featureLists = new Map();
+  const seenSwitches = new Set();
+  for (const argString of argStrings) {
+    if (typeof argString !== "string" || argString.trim() === "") continue;
+    for (const token of argString.trim().split(/\s+/)) {
+      const prefix = WEBVIEW2_FEATURE_SWITCH_PREFIXES.find((candidate) =>
+        token.startsWith(candidate),
+      );
+      if (prefix) {
+        let list = featureLists.get(prefix);
+        if (!list) {
+          list = { features: [], seen: new Set() };
+          featureLists.set(prefix, list);
+          entries.push({ prefix });
+        }
+        for (const part of token.slice(prefix.length).split(",")) {
+          const feature = part.trim();
+          if (feature && !list.seen.has(feature)) {
+            list.seen.add(feature);
+            list.features.push(feature);
+          }
+        }
+      } else if (!seenSwitches.has(token)) {
+        seenSwitches.add(token);
+        entries.push({ token });
+      }
+    }
+  }
+  const merged = [];
+  for (const entry of entries) {
+    if (entry.token !== undefined) {
+      merged.push(entry.token);
+      continue;
+    }
+    const { features } = featureLists.get(entry.prefix);
+    if (features.length > 0) {
+      merged.push(`${entry.prefix}${features.join(",")}`);
+    }
+  }
+  return merged.join(" ");
+}
 
 export function loadArchiveManifest(repoRoot = REPO_ROOT) {
   return JSON.parse(
@@ -169,7 +241,10 @@ export function createE2eProfile(
   };
   if (windowsPaths) {
     env.WEBVIEW2_USER_DATA_FOLDER = windowsPaths.webview2;
-    env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = E2E_WEBVIEW2_BROWSER_ARGS;
+    env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = mergeWebView2BrowserArgs(
+      process.env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS,
+      E2E_WEBVIEW2_BROWSER_ARGS,
+    );
     if (process.platform === "win32") {
       Object.assign(env, windowsHomeDriveAndPath(home));
     }
