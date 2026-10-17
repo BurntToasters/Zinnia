@@ -29,7 +29,7 @@ fn is_stream_switch(arg: &str) -> bool {
     arg.eq_ignore_ascii_case("-bsp1")
 }
 
-fn archive_type_switches(args: &[String]) -> Vec<String> {
+pub(crate) fn archive_type_switches(args: &[String]) -> Vec<String> {
     let separator = args
         .iter()
         .position(|arg| arg == "--")
@@ -225,58 +225,68 @@ pub(crate) fn has_parent_dir_component(path: &str) -> bool {
     path.split(['/', '\\']).any(|component| component == "..")
 }
 
-/// True when a member path could escape an extract `-o` root. On Windows also
-/// rejects trailing-dot/space parents, NTFS streams, and device names.
+/// True when an archive member path could escape an extract `-o` root.
+///
+/// Platform-neutral rules: any `..` component (either separator) and a leading
+/// `/`. Windows-only rules (rooted and drive paths, trailing dot/space, NTFS
+/// streams, reserved device names) apply only on Windows hosts. A Unix host
+/// keeps those names literal, so a Linux archive containing `report:2026.txt`
+/// still extracts there; the same archive is re-checked when opened on Windows.
 pub(crate) fn archive_member_path_is_unsafe(path: &str) -> bool {
     if path.is_empty() {
         return false;
     }
     // Normalize both separators on every platform so ZIP members that use
     // Windows-style `\` cannot smuggle `..` past a POSIX-only splitter.
-    let has_parent = path.split(['/', '\\']).any(|component| component == "..");
-    if has_parent {
+    if path.split(['/', '\\']).any(|component| component == "..") {
         return true;
     }
+    if path.as_bytes().first() == Some(&b'/') {
+        return true;
+    }
+    windows_member_path_is_unsafe(path)
+}
+
+/// Win32 member-path rules: backslash-rooted and drive-absolute paths, plus
+/// per-component naming rules. Enforced only where Windows interprets the path.
+#[cfg(windows)]
+fn windows_member_path_is_unsafe(path: &str) -> bool {
     let bytes = path.as_bytes();
-    if bytes[0] == b'/' {
+    if bytes.first() == Some(&b'\\') {
         return true;
     }
-    #[cfg(target_os = "windows")]
-    if bytes[0] == b'\\' {
-        return true;
-    }
-    // Windows drive-absolute: `C:\...` or `C:/...`
-    #[cfg(target_os = "windows")]
+    // Drive-absolute: `C:\...` or `C:/...`
     if bytes.len() >= 2 && bytes[1] == b':' {
         return true;
     }
-    #[cfg(target_os = "windows")]
-    for component in path.split(['/', '\\']) {
-        if component.is_empty() {
-            continue;
-        }
-        // Win32 strips trailing dots/spaces, so `.. ` and `...` escape, and
-        // `notes.txt.` collides with `notes.txt`.
-        if component.ends_with('.') || component.ends_with(' ') {
-            return true;
-        }
-        let normalized = component.trim_end_matches(['.', ' ']);
-        if normalized == ".." || (normalized.is_empty() && !component.is_empty()) {
-            return true;
-        }
-        // Any other colon opens an NTFS alternate data stream.
-        if component.contains(':') {
-            return true;
-        }
-        if is_win32_reserved_device_name(component) {
-            return true;
-        }
-    }
+    path.split(['/', '\\'])
+        .any(windows_component_name_is_unsafe)
+}
+
+#[cfg(not(windows))]
+fn windows_member_path_is_unsafe(_path: &str) -> bool {
     false
 }
 
+/// Win32 naming rules for one path component: Win32 strips trailing dots and
+/// spaces (so `...` and `.. ` resolve to `..`, and `notes.txt.` collides with
+/// `notes.txt`), any other colon opens an NTFS alternate data stream, and
+/// reserved device names resolve to devices. Applied on every platform to
+/// derived folder names, which may later be opened on Windows.
+pub(crate) fn windows_component_name_is_unsafe(component: &str) -> bool {
+    if component.is_empty() {
+        return false;
+    }
+    if component.ends_with('.') || component.ends_with(' ') {
+        return true;
+    }
+    if component.contains(':') {
+        return true;
+    }
+    is_win32_reserved_device_name(component)
+}
+
 /// Win32 device-name check on the dot-stem, case-insensitive, any extension.
-#[cfg(target_os = "windows")]
 fn is_win32_reserved_device_name(component: &str) -> bool {
     let stem = component.split('.').next().unwrap_or(component);
     let mut folded = String::with_capacity(stem.len());
@@ -1199,12 +1209,17 @@ mod tests {
         assert!(archive_member_path_is_unsafe("../sibling/file.txt"));
         assert!(archive_member_path_is_unsafe("a/../../b"));
         assert!(archive_member_path_is_unsafe("/etc/passwd"));
-        #[cfg(target_os = "windows")]
-        assert!(archive_member_path_is_unsafe(r"C:\Windows\evil.dll"));
-        #[cfg(target_os = "windows")]
-        assert!(archive_member_path_is_unsafe(r"\\server\share\file"));
-        #[cfg(target_os = "windows")]
+        // Backslash separators still carry `..` components on every OS.
+        assert!(archive_member_path_is_unsafe(r"folder\..\literal"));
+        assert!(!archive_member_path_is_unsafe("folder/normal.txt"));
+        assert!(!archive_member_path_is_unsafe("name..bak.txt"));
+        assert!(!archive_member_path_is_unsafe("dots...and..spaces.txt"));
+        // Windows-only rules: a Unix host keeps these as literal names, which
+        // are harmless locally and only matter on the Windows side.
+        #[cfg(windows)]
         {
+            assert!(archive_member_path_is_unsafe(r"C:\Windows\evil.dll"));
+            assert!(archive_member_path_is_unsafe(r"\\server\share\file"));
             assert!(archive_member_path_is_unsafe("sub/.. "));
             assert!(archive_member_path_is_unsafe("sub/.. ."));
             assert!(archive_member_path_is_unsafe("..."));
@@ -1217,22 +1232,37 @@ mod tests {
             assert!(archive_member_path_is_unsafe("COM¹.txt"));
             assert!(archive_member_path_is_unsafe("notes.txt."));
             assert!(archive_member_path_is_unsafe("notes.txt "));
-            assert!(!archive_member_path_is_unsafe("folder/normal.txt"));
-            assert!(!archive_member_path_is_unsafe("name..bak.txt"));
-            assert!(!archive_member_path_is_unsafe("dots...and..spaces.txt"));
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(not(windows))]
         {
-            assert!(!archive_member_path_is_unsafe(r"a:b"));
-            assert!(!archive_member_path_is_unsafe(r"\literal-name"));
-            // Backslash separators still carry `..` components on every OS.
-            assert!(archive_member_path_is_unsafe(r"folder\..\literal"));
+            assert!(!archive_member_path_is_unsafe(r"C:\Windows\evil.dll"));
+            assert!(!archive_member_path_is_unsafe(r"\\server\share\file"));
+            assert!(!archive_member_path_is_unsafe("notes.txt:evil"));
+            assert!(!archive_member_path_is_unsafe("folder/CON"));
+            assert!(!archive_member_path_is_unsafe("folder/aux.c"));
+            assert!(!archive_member_path_is_unsafe("COM1.txt"));
+            assert!(!archive_member_path_is_unsafe("notes.txt."));
+            assert!(!archive_member_path_is_unsafe("notes.txt "));
         }
         assert!(!is_allowed_method_switch("-mx=../evil"));
         assert!(!is_allowed_method_switch("-md=/tmp"));
         assert!(!is_allowed_method_switch(r"-mmt=4\x"));
         assert!(is_allowed_method_switch("-mx=9"));
         assert!(is_allowed_method_switch("-mmt=4"));
+    }
+
+    #[test]
+    fn windows_component_name_is_unsafe_applies_on_every_platform() {
+        // Derived folder names use this check on every OS: the folder may later
+        // be opened on Windows, where these names collide with devices or ADS.
+        assert!(windows_component_name_is_unsafe("CON"));
+        assert!(windows_component_name_is_unsafe("aux.c"));
+        assert!(windows_component_name_is_unsafe("COM¹.txt"));
+        assert!(windows_component_name_is_unsafe("notes.txt."));
+        assert!(windows_component_name_is_unsafe("notes.txt "));
+        assert!(windows_component_name_is_unsafe("a:b"));
+        assert!(!windows_component_name_is_unsafe("normal"));
+        assert!(!windows_component_name_is_unsafe("name..bak.txt"));
     }
 
     #[test]

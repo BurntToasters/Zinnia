@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { listenToOwnWindow } from "../window-events";
+import { redactSensitiveText } from "../utils";
 import { state } from "../state";
 import {
   getWorkspaceMode,
@@ -10,7 +11,10 @@ import {
   setCancelAvailable,
   setStatus,
 } from "../ui";
-import { formatCommandOutputForLogs } from "../output-logging";
+import {
+  formatArchiveIoDiagnosticsForDebug,
+  formatCommandOutputForLogs,
+} from "../output-logging";
 import {
   describe7zError,
   looksLikePasswordRequiredError,
@@ -20,20 +24,16 @@ import { withPassword } from "./args";
 import { basename } from "../path-display";
 import { formatEta, type ProgressUpdate } from "../progress-update";
 import { debugLog, isDebugEnabled } from "../debug-mode";
-import { invokeRun7z as invokeRun7zRequest } from "./backend-ipc";
+import {
+  invokeRun7z as invokeRun7zRequest,
+  type RunResult,
+} from "./backend-ipc";
 import { showToast } from "../toast";
 import { assertRunResult } from "../utils";
 
 export const formatBatchEta = formatEta;
 
-export interface Run7zResult {
-  stdout: string;
-  stderr: string;
-  code: number;
-  warning_code?: number;
-  stdout_truncated?: boolean;
-  stderr_truncated?: boolean;
-}
+export type Run7zResult = RunResult;
 
 const OUTPUT_TRUNCATION_LIMIT_MIB = 10;
 const RUNTIME_PROBE_TIMEOUT_MS = 7000;
@@ -59,7 +59,9 @@ export function showOperationError(
 ): void {
   if (isDebugEnabled()) {
     debugLog(
-      `Operation error (exit ${code}): ${describe7zError(stdout, stderr) || "(no hint)"}${stderr.trim() ? `\nstderr: ${stderr.trim().slice(0, 2000)}` : ""}`,
+      redactSensitiveText(
+        `Operation error (exit ${code}): ${describe7zError(stdout, stderr) || "(no hint)"}${stderr.trim() ? `\nstderr: ${stderr.trim().slice(0, 2000)}` : ""}`,
+      ),
     );
   }
   if (getWorkspaceMode() === "basic") return;
@@ -194,15 +196,25 @@ export function setSevenZipRunInFlight(active: boolean): void {
 export async function invokeGuardedRun7z(
   args: string[],
   expectedArchiveIdentity?: string,
+  markOfTheWebSource?: string,
 ): Promise<Run7zResult> {
   sevenZipRunInFlight = true;
   try {
     const result = await invokeRun7zRequest<unknown>({
       args,
       ...(expectedArchiveIdentity ? { expectedArchiveIdentity } : {}),
+      ...(markOfTheWebSource ? { markOfTheWebSource } : {}),
+      ...(isDebugEnabled() ? { includeIoDiagnostics: true } : {}),
     });
     assertRunResult(result);
-    return result;
+    const typedResult = result as Run7zResult;
+    if (isDebugEnabled() && typedResult.ioDiagnostics) {
+      const summary = formatArchiveIoDiagnosticsForDebug(
+        typedResult.ioDiagnostics,
+      );
+      if (summary) debugLog(summary);
+    }
+    return typedResult;
   } finally {
     sevenZipRunInFlight = false;
   }
@@ -211,7 +223,7 @@ export async function invokeGuardedRun7z(
 export async function withLiveProgress<T>(fn: () => Promise<T>): Promise<T> {
   const startedAt = Date.now();
   let sawPercent = false;
-  const unlisten = await listen<ProgressUpdate>(
+  const unlisten = await listenToOwnWindow<ProgressUpdate>(
     "7z-progress-structured",
     (event) => {
       if (!sevenZipRunInFlight) return;

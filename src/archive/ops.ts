@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { confirm } from "@tauri-apps/plugin-dialog";
-import { listen } from "@tauri-apps/api/event";
+import { confirmWithE2eQueue } from "../e2e-dialog";
+import { listenToOwnWindow } from "../window-events";
 import { $, splitArgs } from "../utils";
 import { state } from "../state";
 import {
@@ -116,14 +117,16 @@ export async function runAction() {
         expectedArchiveIdentity.length > 0 &&
         expectedArchiveIdentity !== "absent"
       ) {
-        const replace = await confirm(
-          `An archive already exists at ${outputPath}. Replace its contents?`,
-          {
-            title: "Replace archive",
-            kind: "warning",
-            okLabel: "Replace",
-            cancelLabel: "Cancel",
-          },
+        const replace = await confirmWithE2eQueue(() =>
+          confirm(
+            `An archive already exists at ${outputPath}. Replace its contents?`,
+            {
+              title: "Replace archive",
+              kind: "warning",
+              okLabel: "Replace",
+              cancelLabel: "Cancel",
+            },
+          ),
         );
         if (!replace) {
           setStatus("Cancelled", 2000);
@@ -215,6 +218,7 @@ export async function runBatchExtract() {
   state.cancelRequested = false;
   setRunning(true);
   let unlistenProgress: (() => void) | null = null;
+  const passwordCarry = { value: "" };
   try {
     if (!(await ensureRuntimeReady())) return;
     if (state.batchCancelled || state.cancelRequested) {
@@ -263,11 +267,11 @@ export async function runBatchExtract() {
     let current = 0;
     let archiveStartedAt = Date.now();
     let sawPercent = false;
-    const passwordCarry = { value: password };
+    passwordCarry.value = password;
 
     // Live progress for the whole batch: show percent of the current archive,
     // which file it's on, and an ETA, alongside the N-of-M counter.
-    unlistenProgress = await listen<ProgressUpdate>(
+    unlistenProgress = await listenToOwnWindow<ProgressUpdate>(
       "7z-progress-structured",
       (event) => {
         if (!isSevenZipRunInFlight()) return;
@@ -402,6 +406,7 @@ export async function runBatchExtract() {
     }
   } finally {
     if (unlistenProgress) unlistenProgress();
+    passwordCarry.value = "";
     clearPasswordFields();
     $<HTMLInputElement>("extract-path").disabled = false;
     $<HTMLInputElement>("extract-password").disabled = false;
@@ -421,7 +426,7 @@ export async function runBatchExtract() {
 export async function cancelAction() {
   if (!state.running) return;
   // Always record user intent. Idle cancel_7z (password gap / between batch
-  // items) returns false  -  clearing flags here made Cancel a no-op and left
+  // items) returns false; clearing flags here made Cancel a no-op and left
   // password-retry / batch loops running.
   state.batchCancelled = true;
   state.cancelRequested = true;

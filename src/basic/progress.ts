@@ -1,4 +1,4 @@
-import { listen } from "@tauri-apps/api/event";
+import { listenToOwnWindow } from "../window-events";
 import { isSevenZipRunInFlight } from "../archive/runtime";
 import { state } from "../state";
 import { log, getWorkspaceMode, getMode, triggerIconRefresh } from "../ui";
@@ -57,9 +57,12 @@ export function showBasicCompletion(
   const pathEl = document.getElementById(`basic-${section}-completion-path`);
 
   if (iconEl) {
-    iconEl.innerHTML = success
-      ? '<i data-lucide="check" class="lucide-icon text-success"></i>'
-      : '<i data-lucide="alert-triangle" class="lucide-icon text-danger"></i>';
+    const icon = document.createElement("i");
+    icon.setAttribute("data-lucide", success ? "check" : "alert-triangle");
+    icon.className = success
+      ? "lucide-icon text-success"
+      : "lucide-icon text-danger";
+    iconEl.replaceChildren(icon);
   }
   if (titleEl) titleEl.textContent = title;
   if (msgEl) msgEl.textContent = message;
@@ -130,15 +133,21 @@ export function resetBasicBar(section: "compress" | "extract"): void {
   progressbar.setAttribute("aria-valuemax", "100");
 }
 
-const disabledBeforeBasicLock = new Map<HTMLButtonElement, boolean>();
+type BasicLockableControl =
+  | HTMLButtonElement
+  | HTMLInputElement
+  | HTMLSelectElement
+  | HTMLTextAreaElement;
+
+const disabledBeforeBasicLock = new Map<BasicLockableControl, boolean>();
 const basicCancelIds = new Set([
   "basic-compress-cancel",
   "basic-extract-cancel",
   "basic-browse-cancel",
 ]);
 
-function setButtonInteractionLock(
-  button: HTMLButtonElement,
+function setControlInteractionLock(
+  button: BasicLockableControl,
   active: boolean,
 ): void {
   if (active) {
@@ -169,7 +178,18 @@ function updateBasicInteractionLock(active: boolean): void {
       if (button.matches("[data-workspace-mode-btn]")) return;
       const keepCancelAvailable =
         active && state.running && basicCancelIds.has(button.id);
-      setButtonInteractionLock(button, active && !keepCancelAvailable);
+      setControlInteractionLock(button, active && !keepCancelAvailable);
+    });
+  // Completion and recent archives describe the submitted operation. Form
+  // fields stay read-only until it ends so the two cannot diverge.
+  document
+    .querySelectorAll<
+      HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+    >(
+      "#basic-workspace input, #basic-workspace select, #basic-workspace textarea",
+    )
+    .forEach((control) => {
+      setControlInteractionLock(control, active);
     });
 
   const dropzone = document.getElementById("basic-dropzone");
@@ -213,7 +233,7 @@ export function updateBasicRunningState(active: boolean): void {
     showBasicProgress(section);
     resetBasicBar(section);
     // Listen for structured progress events to show determinate progress.
-    void listen<{ percent?: number; currentFile?: string }>(
+    void listenToOwnWindow<{ percent?: number; currentFile?: string }>(
       "7z-progress-structured",
       (event) => {
         if (!isSevenZipRunInFlight()) return;

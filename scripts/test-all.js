@@ -6,6 +6,8 @@ import {
   clearQualityGateProof,
   recordSuccessfulQualityGate,
 } from "./release-session.js";
+import { e2eWrapperTimeoutMs } from "./test-e2e.js";
+import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -42,7 +44,14 @@ const colors = {
 };
 const defaultTimeoutMs = 300_000;
 const rustTimeoutMs = process.platform === "win32" ? 1_200_000 : 600_000;
-const e2eTimeoutMs = process.platform === "win32" ? 1_200_000 : 900_000;
+const E2E_AGGREGATE_CLEANUP_GRACE_MS = 60_000;
+
+export function e2eAggregateTimeoutMs(
+  env = process.env,
+  platform = process.platform,
+) {
+  return e2eWrapperTimeoutMs(env, platform) + E2E_AGGREGATE_CLEANUP_GRACE_MS;
+}
 
 function createInitialResults() {
   return {
@@ -539,7 +548,7 @@ function main({
       console.log(`${colors.blue}Skipping E2E (--skip-e2e).${colors.reset}\n`);
     } else {
       runner("e2e", npm, ["run", "test:e2e"], null, results, {
-        timeout: e2eTimeoutMs,
+        timeout: e2eAggregateTimeoutMs(),
       });
     }
   } else {
@@ -555,9 +564,20 @@ function main({
 
   const exitCode = printSummary(results);
   if (exitCode === 0) {
-    const qualityGate = recordProof(root);
+    if (skipE2e && !requireCleanProof) {
+      console.error(
+        `${colors.red}Release quality-gate proof NOT recorded because E2E was skipped.${colors.reset}`,
+      );
+      return 0;
+    }
+    const qualityGate = recordProof(root, {
+      e2e: skipE2e ? "skipped" : "passed",
+    });
     if (qualityGate.recorded) {
       console.log("Release quality-gate proof recorded for this clean commit.");
+      if (skipE2e) {
+        console.log("GUI E2E was skipped; release proof records e2e=skipped.");
+      }
     } else {
       console.error(
         `${colors.red}Release quality-gate proof NOT recorded because the working tree is dirty. Commit generated files (e.g. run.rosie.zinnia.metainfo.xml from workspace:bootstrap) and re-run test:all before any release step.${colors.reset}`,
@@ -574,7 +594,7 @@ function main({
 
 function isDirectExecution() {
   if (!process.argv[1]) return false;
-  return fileURLToPath(import.meta.url) === resolve(process.argv[1]);
+  return isDirectExecutionOf(import.meta.url);
 }
 
 if (isDirectExecution()) {

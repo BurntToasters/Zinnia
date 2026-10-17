@@ -12,10 +12,12 @@ export interface ReleaseIdentity {
 export interface ReleaseSession extends ReleaseIdentity {
   qualityGateCompletedAt: number;
   startedAt: number;
+  e2e?: "passed" | "skipped" | "unknown";
 }
 
 export interface QualityGateProof extends ReleaseIdentity {
   completedAt: number;
+  e2e?: "passed" | "skipped";
 }
 
 export const DEFAULT_MAX_AGE_MS: number;
@@ -27,7 +29,10 @@ export function porcelainPaths(statusText: string): string[];
 export function isIgnorableReleaseDirtyPath(filePath: string): boolean;
 export function createReleaseSession(root?: string): ReleaseSession;
 export function clearQualityGateProof(root?: string): void;
-export function recordSuccessfulQualityGate(root?: string): {
+export function recordSuccessfulQualityGate(
+  root?: string,
+  options?: { e2e?: "passed" | "skipped" },
+): {
   recorded: boolean;
   dirtyFiles: string | null;
 };

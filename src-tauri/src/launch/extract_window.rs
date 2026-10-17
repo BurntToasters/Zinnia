@@ -36,7 +36,7 @@ pub fn clear_extract_window_bindings(app: &tauri::AppHandle, label: &str) {
         }
     }
 }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn inspect_extract_destination(
     app: tauri::AppHandle,
     window: tauri::Window,
@@ -127,9 +127,12 @@ pub fn restore_foreground_activation(app: &tauri::AppHandle) {
 
 pub(crate) fn open_main_from_extract_warm(app: &tauri::AppHandle) {
     EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);
+    // An explicit user request keeps the main window. It must not stay a
+    // disposable macOS fallback that a later Extract destroys.
+    MAC_FALLBACK_MAIN_PENDING.store(false, Ordering::SeqCst);
     leave_extract_warm(app);
     if let Err(error) = show_main_window(app) {
-        eprintln!("Failed to open main window from warm tray: {error}");
+        eprintln!("Failed to open main window: {error}");
     }
 }
 
@@ -472,6 +475,10 @@ pub fn spawn_extract_window(app: &tauri::AppHandle, paths: Vec<String>) -> Resul
     .resizable(false)
     .minimizable(true)
     .maximizable(false)
+    // macOS 14+ suspends timers in occluded webviews, which would hold the
+    // auto-close countdown until the window is visible again. Windows/Linux
+    // ignore this and only throttle; the countdown is deadline-based.
+    .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled)
     .initialization_script(init_script)
     .initialization_script(super::webview_context_menu::NATIVE_CONTEXT_MENU_GUARD_SCRIPT);
 

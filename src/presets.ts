@@ -135,7 +135,7 @@ export function updateCompressionOptionsForFormat(format: string) {
 
   const methods = validMethods[format] || [];
 
-  methodSelect.innerHTML = "";
+  methodSelect.replaceChildren();
   if (methods.length > 0) {
     methods.forEach((m) => {
       const opt = document.createElement("option");

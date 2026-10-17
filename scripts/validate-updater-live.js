@@ -23,9 +23,10 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { fileURLToPath, pathToFileURL } from "url";
+import { fileURLToPath } from "url";
 import { spawnSync } from "child_process";
 import { verifyUpdaterSignatures } from "./updater-signature-verifier.js";
+import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
@@ -421,10 +422,7 @@ async function run() {
 }
 
 function isDirectExecution() {
-  return Boolean(
-    process.argv[1] &&
-    pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url,
-  );
+  return Boolean(process.argv[1] && isDirectExecutionOf(import.meta.url));
 }
 
 if (isDirectExecution()) {

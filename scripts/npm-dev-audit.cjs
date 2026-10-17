@@ -13,6 +13,8 @@ const REVIEWED_ADVISORIES = new Map([
   ["GHSA-7PQW-9J4J-H8Q3", "extract-zip"],
   ["GHSA-5C6J-R48X-RMVQ", "serialize-javascript"],
   ["GHSA-QJ8W-GFJ5-8C6V", "serialize-javascript"],
+  ["GHSA-C475-QRG2-PJ4R", "basic-ftp"],
+  ["GHSA-VFJ7-8CJW-P6XM", "braces"],
 ]);
 
 function advisoryId(via) {
@@ -185,10 +187,19 @@ function main() {
   console.warn(
     `[npm-dev-audit] Proven dev-only advisories (${details}); these do not ship to users.`,
   );
+  if (unreviewed.length > 0) {
+    for (const [id, pkg] of unreviewed)
+      console.error(
+        `[npm-dev-audit] FAILED: unreviewed advisory ${id} (${pkg})`,
+      );
+    process.exitCode = 1;
+    return;
+  }
   if (reviewExpired && reviewed.length > 0) {
-    console.warn(
-      `[npm-dev-audit] Review date ${REVIEW_EXPIRES} has passed; re-evaluate the WDIO/Mocha dependency graph when a compatible patched chain is available.`,
+    console.error(
+      `[npm-dev-audit] FAILED: review date ${REVIEW_EXPIRES} has passed; re-evaluate the WDIO/Mocha dependency graph when a compatible patched chain is available.`,
     );
+    process.exitCode = 1;
   }
 }
 

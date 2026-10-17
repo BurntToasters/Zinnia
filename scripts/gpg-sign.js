@@ -5,7 +5,7 @@ import path from "path";
 import crypto from "crypto";
 import { execSync, spawnSync } from "child_process";
 import os from "os";
-import { fileURLToPath, pathToFileURL } from "url";
+import { fileURLToPath } from "url";
 import {
   normalizeUpdaterSignature,
   verifyUpdaterSignatures,
@@ -14,6 +14,7 @@ import { verifyReleaseSession } from "./release-session.js";
 import githubCli from "./github-cli.cjs";
 import { assertStableReleaseOverridesAllowed } from "./release-policy.cjs";
 import draftMetadata from "./release-draft-metadata.cjs";
+import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 const { assertGitHubCliAuthenticated, githubApi, uploadReleaseAsset } =
   githubCli;
@@ -1325,11 +1326,9 @@ async function uploadAssetWithReplace(
       );
     }
 
-    await ghRequest(
-      "DELETE",
-      `/repos/${REPO_OWNER}/${REPO_NAME}/releases/assets/${existing.id}`,
-    );
-    await uploadAsset(release.upload_url, filePath);
+    // Upload the new bytes under a staging name, then swap names. A failed
+    // upload leaves the live asset untouched instead of deleting it first.
+    await replaceReleaseAssetsTransactionally(release, [filePath]);
   }
 }
 
@@ -1684,7 +1683,9 @@ async function main() {
     signatureFiles: ascFiles,
   });
   for (const f of everything) {
-    await uploadAssetWithReplace(release, f);
+    await uploadAssetWithReplace(release, f, {
+      allowPublishedReplace: ALLOW_ASSET_REPLACE,
+    });
     console.log(`  ^ ${path.basename(f)}`);
   }
   // Beta clients poll /releases/latest for latest-*-beta-*.json. Sync those
@@ -1742,10 +1743,7 @@ async function syncBetaManifestsAfterPublish() {
 }
 
 function isDirectExecution() {
-  return Boolean(
-    process.argv[1] &&
-    pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url,
-  );
+  return Boolean(process.argv[1] && isDirectExecutionOf(import.meta.url));
 }
 
 if (isDirectExecution()) {

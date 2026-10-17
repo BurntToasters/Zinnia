@@ -84,6 +84,18 @@ native build runs.
 - Updater is already configured in `src-tauri/tauri.conf.json`.
 - CI runs tests and checks on Linux, Windows, and macOS. It never builds release
   binaries, publishes releases, or consumes release signing secrets.
+- On each release VM, run `npm run b` before its platform release command. This
+  destructively resets that VM to the exact `origin/beta` tip. Then run
+  `npm run release:win`, `npm run release:mac`, `npm run release:linux`, or
+  `npm run release:linux:arm64` as appropriate.
+- The `main` and `beta` branches intentionally have no branch protection.
+  Operators may delete and recreate `beta`. Pull request review and hosted CI
+  checks are release-process requirements enforced by operators, not branch
+  rules. Beta release preflight still requires a clean local `beta` checkout
+  exactly matching `origin/beta`. Operators confirm hosted `ci-gate` success
+  on the exact release commit; preflight does not check it.
+- `npm run repo:protect-beta-tags` installs the optional immutable beta-tag
+  ruleset. It protects beta release tags, not the `main` or `beta` branches.
 - Signed releases are intentionally explicit: run the platform-specific
   `release:win`, `release:mac`, and `release:linux` scripts for the same version.
   `release:linux` is x64; run `release:linux:arm64` only from a suitable ARM64
@@ -107,10 +119,12 @@ native build runs.
 - GitHub may temporarily expose an unpublished draft under an `untagged-*`
   identifier. Release scripts accept it only when the draft name and target
   commit match exactly, then set the intended `vX.Y.Z` tag during publication.
-- Each full release command prepares and runs every non-E2E quality gate once.
-  Native E2E is skipped for local release commands because CI runs it on Linux,
-  Windows, and macOS; a direct `npm run test:all` still includes E2E. If
-  `release:prepare` was already run separately on the same VM, use the matching
+- Each full release command prepares and runs the local quality gate once.
+  GUI E2E is temporarily skipped on signing VMs; the quality-gate proof and
+  release session explicitly record `e2e: "skipped"`. Normal `test:all` and CI
+  still run GUI E2E. See [Windows E2E limitations](CONTRIBUTING.md#windows-gui-e2e).
+  If `release:prepare` was already run separately
+  on the same VM, use the matching
   `release:*:resume` command; its build session is bound to the exact commit,
   lockfiles, platform, architecture, and Node/Rust toolchain and expires after
   24 hours.

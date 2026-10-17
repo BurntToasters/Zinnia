@@ -24,6 +24,9 @@ import {
   updateBasicSplitCustomVisibility,
   setBasicBrowsePasswordVisible,
   renderBasicInputs,
+  refreshBasicArchiveInfo,
+  syncBasicExtractToPower,
+  syncPowerToBasicExtract,
 } from "./sync";
 import {
   hideBasicCompletion,
@@ -48,6 +51,7 @@ import { wireBasicBrowseEvents } from "./browse-events";
 import { wireBasicKeyboardEvents } from "./keyboard-events";
 import { wireBasicExtractEvents } from "./extract-events";
 import { showToast } from "../toast";
+import { takeE2eDialogResult } from "../e2e-dialog";
 
 export { wireBasicBrowseEvents } from "./browse-events";
 export { wireBasicKeyboardEvents } from "./keyboard-events";
@@ -56,6 +60,8 @@ export { wireBasicExtractEvents } from "./extract-events";
 async function openBasicDialog(
   options: Parameters<typeof open>[0],
 ): Promise<string | string[] | null> {
+  const queued = takeE2eDialogResult();
+  if (queued) return queued.result;
   try {
     return await open(options);
   } catch (err) {
@@ -200,8 +206,12 @@ export function initBasicWorkspace(): void {
       }
       const path = typeof selection === "string" ? selection : selection[0];
       if (path) {
+        // Hand the visible destination to Power first so its autofill keeps a
+        // typed choice and replaces only the previous archive's default.
+        syncBasicExtractToPower();
         state.inputs = [path];
         renderInputs();
+        syncPowerToBasicExtract();
       }
     };
     extractArchiveInfo.addEventListener("click", chooseExtractArchive);
@@ -293,7 +303,10 @@ export function initBasicWorkspace(): void {
   }
 
   registerBasicHooks({
-    onRenderInputs: () => renderBasicInputs(),
+    onRenderInputs: () => {
+      renderBasicInputs();
+      refreshBasicArchiveInfo();
+    },
     onSetRunning: (active) => updateBasicRunningState(active),
     onSetStatus: (text, errorDetail) => updateBasicStatus(text, errorDetail),
   });

@@ -13,12 +13,14 @@ import {
 } from "../archive";
 import {
   isSevenZipRunInFlight,
+  invokeGuardedRun7z,
   runWithPasswordRetry,
   setSevenZipRunInFlight,
   withLiveProgress,
 } from "../archive/runtime";
 import { decodeRun7zInvokePayload } from "./backend-ipc-test-utils";
 import { state } from "../state";
+import { clearDebugConsole, setDebugEnabled } from "../debug-mode";
 
 vi.mock("../prompt-modal", () => ({
   promptInput: vi.fn().mockResolvedValue(null),
@@ -289,6 +291,7 @@ describe("runWithPasswordRetry", () => {
         stdout: "Everything is Ok",
         stderr: "",
         code: 0,
+        archiveIdentityAfter: "archive-identity",
       });
     promptMock.mockResolvedValueOnce("secret");
 
@@ -300,6 +303,7 @@ describe("runWithPasswordRetry", () => {
     );
 
     expect(result.code).toBe(0);
+    expect(result.archiveIdentityAfter).toBe("archive-identity");
     expect(invokeMock.mock.calls[1]?.[0]).toBe("run_7z");
     expect(decodeRun7zInvokePayload(invokeMock.mock.calls[1]?.[1])).toEqual({
       args: ["x", "-o/tmp/out", "-psecret", "--", "/tmp/headers.7z"],
@@ -372,6 +376,89 @@ describe("runWithPasswordRetry", () => {
     const cancelled = await result;
     expect(cancelled.code).toBe(-1);
     expect(state.cancelRequested).toBe(true);
+  });
+});
+
+describe("run_7z I/O diagnostics", () => {
+  it("requests diagnostics only in debug mode and redacts path-like strategy values", async () => {
+    const invokeMock = vi.mocked(invoke);
+    invokeMock.mockReset();
+    clearDebugConsole();
+    setDebugEnabled(true, { banner: false });
+    invokeMock.mockResolvedValue({
+      stdout: "",
+      stderr: "",
+      code: 0,
+      ioDiagnostics: {
+        phaseTimes: {
+          validation: 1,
+          recovery: 2,
+          inputScan: 3,
+          snapshot: 4,
+          memberPreflight: 5,
+          sevenZipExecution: 6,
+          quotaMonitoring: 7,
+          finalization: 8,
+          total: 36,
+        },
+        strategies: {
+          inputScan: "regular-files-bypass",
+          snapshot: "CopyFile2",
+          stage: "C:\\private\\archive-stage",
+        },
+      },
+    });
+
+    await invokeGuardedRun7z(["l", "--", "C:\\private\\archive.zip"]);
+
+    expect(decodeRun7zInvokePayload(invokeMock.mock.calls[0]?.[1])).toEqual({
+      args: ["l", "--", "C:\\private\\archive.zip"],
+      includeIoDiagnostics: true,
+    });
+    const text =
+      document.getElementById("debug-console-log")?.textContent ?? "";
+    expect(text).toContain("I/O diagnostics:");
+    expect(text).toContain("total=36.0ms");
+    expect(text).toContain("snapshot=CopyFile2");
+    expect(text).toContain("inputScan=regular-files-bypass");
+    expect(text).not.toContain("private\\archive-stage");
+
+    setDebugEnabled(false);
+  });
+
+  it("does not request or display diagnostics when debug mode is disabled", async () => {
+    const invokeMock = vi.mocked(invoke);
+    invokeMock.mockReset();
+    clearDebugConsole();
+    setDebugEnabled(false);
+    invokeMock.mockResolvedValue({
+      stdout: "",
+      stderr: "",
+      code: 0,
+      ioDiagnostics: {
+        phaseTimes: {
+          validation: 1,
+          recovery: 1,
+          inputScan: 1,
+          snapshot: 1,
+          memberPreflight: 1,
+          sevenZipExecution: 1,
+          quotaMonitoring: 1,
+          finalization: 1,
+          total: 8,
+        },
+        strategies: { snapshot: "CopyFile2" },
+      },
+    });
+
+    await invokeGuardedRun7z(["l", "--", "archive.zip"]);
+
+    expect(decodeRun7zInvokePayload(invokeMock.mock.calls[0]?.[1])).toEqual({
+      args: ["l", "--", "archive.zip"],
+    });
+    expect(
+      document.getElementById("debug-console-log")?.textContent ?? "",
+    ).toBe("");
   });
 });
 

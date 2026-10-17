@@ -26,6 +26,7 @@ import process from "node:process";
 import { createServer } from "node:http";
 import { URL, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 export const CARGO_SAFE_UPDATE_POLICY_VERSION = 5;
 export const CARGO_SAFE_UPDATE_VERSION = 5;
@@ -980,9 +981,7 @@ async function main() {
   }
 }
 
-const isMainModule =
-  process.argv[1] &&
-  pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url;
+const isMainModule = process.argv[1] && isDirectExecutionOf(import.meta.url);
 if (isMainModule) {
   main().catch((error) => {
     console.error(`cargo-safe-update: ${error.message}`);

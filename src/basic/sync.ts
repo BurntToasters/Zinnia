@@ -331,13 +331,20 @@ export function updateBasicBrowseInfo(): void {
   if (metaEl) metaEl.textContent = ext;
 }
 
+/** Keep the visible archive card in step with inputs replaced in place. */
+export function refreshBasicArchiveInfo(): void {
+  if (getWorkspaceMode() !== "basic") return;
+  if (currentBasicView === "extract") updateBasicExtractInfo();
+  else if (currentBasicView === "browse") updateBasicBrowseInfo();
+}
+
 export function renderBasicInputs(): void {
   if (getWorkspaceMode() !== "basic") return;
 
   const list = document.getElementById("basic-input-list");
   if (!list) return;
 
-  list.innerHTML = "";
+  list.replaceChildren();
 
   if (state.inputs.length === 0) {
     const empty = document.createElement("button");

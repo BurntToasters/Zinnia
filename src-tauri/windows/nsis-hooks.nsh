@@ -259,6 +259,10 @@
   !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".gz"
   !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".bz2"
   !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".xz"
+  !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".rar"
+  !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".tgz"
+  !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".tbz2"
+  !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".txz"
   !insertmacro ZINNIA_REGISTER_COMPRESS_VERBS
   !insertmacro ZINNIA_REGISTER_WIN11_CONTEXT_MENU
   IntCmp $R6 1 zinnia_postinstall_win11_ok 0 0

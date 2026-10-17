@@ -1,0 +1,10 @@
+{
+  "productName": "Zinnia",
+  "version": "__VERSION__",
+  "plugins": {
+    "updater": {
+      "endpoints": [],
+      "pubkey": "__UPDATER_PUBKEY__"
+    }
+  }
+}

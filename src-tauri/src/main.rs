@@ -1,4 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![warn(clippy::undocumented_unsafe_blocks)]
 
 mod app_menu;
 mod archive_detect;
@@ -14,6 +15,7 @@ mod path_safety;
 mod platform;
 mod process;
 mod progress;
+mod quarantine;
 mod settings_store;
 mod tempdir;
 mod validation;
@@ -222,7 +224,9 @@ fn main() {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         if production_integrations_enabled() {
-            builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _| {
+            builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+                // Relative paths belong to the sender's working directory.
+                let argv = launch::resolve_open_args_against_cwd(argv, &cwd);
                 // Invalidate extract warm-idle before the deferred main-thread
                 // dispatch so an in-flight idle-exit cannot destroy the window
                 // that this second-instance open is about to reuse.
@@ -422,7 +426,7 @@ fn main() {
             platform::get_cpu_count,
             platform::is_flatpak,
             platform::is_packaged,
-            tempdir::create_temp_extract_dir,
+            tempdir::reserve_temp_extract_path,
             tempdir::remove_managed_temp_dir,
             tempdir::list_managed_temp_children,
             window_fx::set_workspace_window_fx,

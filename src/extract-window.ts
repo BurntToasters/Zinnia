@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { listenToOwnWindow } from "./window-events";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { validateArchivePaths } from "./archive-rules";
 import { confirmExtractDestination } from "./extract-destination";
@@ -20,8 +20,15 @@ import {
 } from "./progress-update";
 import { redactSensitiveText, assertRunResult } from "./utils";
 import { sanitizeCommandArgsForPreview } from "./archive/command-sanitize";
-import { invokeRun7z, type Run7zRequest } from "./archive/backend-ipc";
-import { formatCommandOutputForLogs } from "./output-logging";
+import {
+  invokeRun7z,
+  type ArchiveIoDiagnostics,
+  type Run7zRequest,
+} from "./archive/backend-ipc";
+import {
+  formatArchiveIoDiagnosticsForDebug,
+  formatCommandOutputForLogs,
+} from "./output-logging";
 import {
   installNativeWebviewContextMenuGuard,
   setNativeWebviewContextMenuAllowed,
@@ -36,6 +43,7 @@ interface Run7zResult {
   warning_code?: number;
   stdout_truncated?: boolean;
   stderr_truncated?: boolean;
+  ioDiagnostics?: ArchiveIoDiagnostics;
 }
 
 interface InjectedExtractSession {
@@ -92,10 +100,16 @@ function readInjectedExtractSession(): InjectedExtractSession | null {
 /** True only while this window's `run_7z` invoke is in flight. */
 let extractRunInFlight = false;
 
-async function invokeExtractRun(args: Run7zRequest): Promise<Run7zResult> {
+async function invokeExtractRun(
+  args: Run7zRequest,
+  includeIoDiagnostics = false,
+): Promise<Run7zResult> {
   extractRunInFlight = true;
   try {
-    const result = await invokeRun7z<unknown>(args);
+    const result = await invokeRun7z<unknown>({
+      ...args,
+      ...(includeIoDiagnostics ? { includeIoDiagnostics: true } : {}),
+    });
     assertRunResult(result);
     return result;
   } finally {
@@ -104,12 +118,23 @@ async function invokeExtractRun(args: Run7zRequest): Promise<Run7zResult> {
 }
 
 const EXTRACT_PASSWORD_PROMPT_CANCELLED = "EXTRACT_PASSWORD_PROMPT_CANCELLED";
+const AUTO_CLOSE_POINTER_SLOP_PX = 4;
+const AUTO_CLOSE_IGNORED_KEYS = new Set([
+  "Alt",
+  "AltGraph",
+  "Control",
+  "Meta",
+  "OS",
+  "Shift",
+  "Unidentified",
+]);
 
 async function runWithPasswordRetry(
   args: string[],
   shouldAbort: () => boolean,
   expectedArchiveIdentity?: string,
   signal?: AbortSignal,
+  includeIoDiagnostics = false,
 ): Promise<Run7zResult> {
   const invokeArgs = {
     args,
@@ -117,7 +142,7 @@ async function runWithPasswordRetry(
   };
   let result: Run7zResult;
   try {
-    result = await invokeExtractRun(invokeArgs);
+    result = await invokeExtractRun(invokeArgs, includeIoDiagnostics);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     // Header encryption can make backend safety listing request a password
@@ -152,10 +177,13 @@ async function runWithPasswordRetry(
       throw new Error(EXTRACT_PASSWORD_PROMPT_CANCELLED);
     }
     startIndeterminateProgress();
-    result = await invokeExtractRun({
-      args: withPassword(args, password),
-      ...(expectedArchiveIdentity ? { expectedArchiveIdentity } : {}),
-    });
+    result = await invokeExtractRun(
+      {
+        args: withPassword(args, password),
+        ...(expectedArchiveIdentity ? { expectedArchiveIdentity } : {}),
+      },
+      includeIoDiagnostics,
+    );
   }
   return result;
 }
@@ -342,24 +370,114 @@ async function run() {
   setNativeWebviewContextMenuAllowed(debugMode);
 
   let autoCloseInterval: ReturnType<typeof setInterval> | null = null;
-  const autoCloseAbortEvents = ["mousemove", "keydown", "click"] as const;
-  let autoCloseAbortListener: (() => void) | null = null;
+  let autoCloseDeadline = 0;
+  let autoClosePaused = false;
+  let autoCloseListening = false;
+  let autoClosePointer: { x: number; y: number } | null = null;
+  const autoCloseCancelEvents = ["keydown", "click"] as const;
 
-  const removeAutoCloseAbortListeners = () => {
-    if (!autoCloseAbortListener) return;
-    for (const eventName of autoCloseAbortEvents) {
-      window.removeEventListener(eventName, autoCloseAbortListener);
-    }
-    autoCloseAbortListener = null;
-  };
-
-  const abortAutoClose = () => {
-    removeAutoCloseAbortListeners();
+  const stopAutoCloseTimer = () => {
     if (autoCloseInterval !== null) {
       clearInterval(autoCloseInterval);
       autoCloseInterval = null;
-      closeBtn.textContent = "Close";
     }
+  };
+
+  const renderAutoCloseCountdown = () => {
+    const remainingMs = autoCloseDeadline - Date.now();
+    if (remainingMs <= 0) {
+      cancelAutoClose();
+      closeBtn.textContent = "Closing…";
+      void closeWindowSafely().then(() => {
+        closeBtn.textContent = "Close";
+      });
+      return;
+    }
+    closeBtn.textContent = `Close (${Math.ceil(remainingMs / 1000)}s)`;
+  };
+
+  const startAutoCloseCountdown = () => {
+    stopAutoCloseTimer();
+    autoClosePaused = false;
+    autoCloseDeadline = Date.now() + autoCloseDelay * 1000;
+    renderAutoCloseCountdown();
+    if (autoCloseListening) {
+      autoCloseInterval = setInterval(renderAutoCloseCountdown, 100);
+    }
+  };
+
+  const pauseAutoClose = () => {
+    stopAutoCloseTimer();
+    autoClosePaused = true;
+    closeBtn.textContent = "Close (paused)";
+  };
+
+  const onAutoClosePointerMove = (event: MouseEvent) => {
+    const point = { x: event.screenX, y: event.screenY };
+    if (!autoClosePointer) {
+      autoClosePointer = point;
+      return;
+    }
+    const moved = Math.max(
+      Math.abs(point.x - autoClosePointer.x),
+      Math.abs(point.y - autoClosePointer.y),
+    );
+    if (moved < AUTO_CLOSE_POINTER_SLOP_PX) return;
+    autoClosePointer = point;
+    if (!autoClosePaused) pauseAutoClose();
+  };
+
+  const onAutoClosePointerLeave = () => {
+    autoClosePointer = null;
+    if (autoClosePaused) startAutoCloseCountdown();
+  };
+
+  const onAutoCloseCancel = (event: Event) => {
+    if (
+      event instanceof KeyboardEvent &&
+      AUTO_CLOSE_IGNORED_KEYS.has(event.key)
+    ) {
+      return;
+    }
+    cancelAutoClose(true);
+  };
+
+  const removeAutoCloseListeners = () => {
+    if (!autoCloseListening) return;
+    window.removeEventListener("mousemove", onAutoClosePointerMove);
+    for (const eventName of autoCloseCancelEvents) {
+      window.removeEventListener(eventName, onAutoCloseCancel);
+    }
+    document.documentElement.removeEventListener(
+      "mouseleave",
+      onAutoClosePointerLeave,
+    );
+    window.removeEventListener("blur", onAutoClosePointerLeave);
+    autoCloseListening = false;
+  };
+
+  const cancelAutoClose = (resetLabel = false) => {
+    const wasActive = autoCloseListening;
+    removeAutoCloseListeners();
+    stopAutoCloseTimer();
+    autoClosePaused = false;
+    autoClosePointer = null;
+    if (resetLabel && wasActive) closeBtn.textContent = "Close";
+  };
+
+  const beginAutoClose = () => {
+    autoCloseListening = true;
+    window.addEventListener("mousemove", onAutoClosePointerMove);
+    for (const eventName of autoCloseCancelEvents) {
+      window.addEventListener(eventName, onAutoCloseCancel);
+    }
+    document.documentElement.addEventListener(
+      "mouseleave",
+      onAutoClosePointerLeave,
+    );
+    // Alt+Tab away with the pointer resting inside fires no mouseleave.
+    window.addEventListener("blur", onAutoClosePointerLeave);
+    startAutoCloseCountdown();
   };
 
   const finish = (
@@ -401,25 +519,7 @@ async function run() {
         return;
       }
 
-      let remaining = autoCloseDelay;
-      closeBtn.textContent = `Close (${Math.ceil(remaining)}s)`;
-
-      autoCloseAbortListener = () => abortAutoClose();
-      for (const eventName of autoCloseAbortEvents) {
-        window.addEventListener(eventName, autoCloseAbortListener, {
-          once: true,
-        });
-      }
-
-      autoCloseInterval = setInterval(() => {
-        remaining -= 0.1;
-        if (remaining <= 0) {
-          abortAutoClose();
-          void closeWindowSafely();
-        } else {
-          closeBtn.textContent = `Close (${Math.ceil(remaining)}s)`;
-        }
-      }, 100);
+      beginAutoClose();
     }
   };
 
@@ -448,7 +548,11 @@ async function run() {
 
   const showError = (
     detail: string,
-    debugDump?: { args?: string[]; result?: Run7zResult; extra?: string },
+    debugDump?: {
+      args?: string[];
+      result?: Run7zResult;
+      extra?: string;
+    },
   ) => {
     $("extract-error").hidden = false;
     const detailEl = $("error-detail");
@@ -469,6 +573,12 @@ async function run() {
         );
         for (const entry of streams) parts.push(entry.text);
         if (streams.length === 0) parts.push("(empty stdout/stderr)");
+        if (debugDump.result.ioDiagnostics) {
+          const summary = formatArchiveIoDiagnosticsForDebug(
+            debugDump.result.ioDiagnostics,
+          );
+          if (summary) parts.push(summary);
+        }
       }
       if (debugDump.extra) parts.push(debugDump.extra);
       text = redactSensitiveText(parts.join("\n"));
@@ -652,7 +762,7 @@ async function run() {
       return null;
     });
   const structuredListen = registerProgressListener(
-    listen<ProgressUpdate>("7z-progress-structured", (event) => {
+    listenToOwnWindow<ProgressUpdate>("7z-progress-structured", (event) => {
       if (!extractRunInFlight) return;
       const update = event.payload;
       if (update?.currentFile === "Working…") {
@@ -689,7 +799,7 @@ async function run() {
     }),
   );
   const rawListen = registerProgressListener(
-    listen<string>("7z-progress", (event) => {
+    listenToOwnWindow<string>("7z-progress", (event) => {
       if (!extractRunInFlight || sawStructuredPercent) return;
       const chunk = typeof event.payload === "string" ? event.payload : "";
       for (const line of chunk.split(/[\r\n]+/)) {
@@ -747,6 +857,7 @@ async function run() {
       () => cancelRequested,
       expectedArchiveIdentity,
       extractAbort.signal,
+      debugMode,
     );
     await removeProgressListeners();
 

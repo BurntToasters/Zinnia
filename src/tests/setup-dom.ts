@@ -25,6 +25,7 @@ vi.mock("@tauri-apps/api/app", () => ({
 }));
 vi.mock("@tauri-apps/api/webviewWindow", () => ({
   getCurrentWebviewWindow: vi.fn().mockReturnValue({
+    label: "main",
     onDragDropEvent: vi.fn().mockResolvedValue(() => {}),
     setSize: vi.fn().mockResolvedValue(undefined),
     setResizable: vi.fn().mockResolvedValue(undefined),

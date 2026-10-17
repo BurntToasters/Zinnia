@@ -113,7 +113,28 @@ function readChangelogReleaseBody(
   }
   // GitHub notes are the full CHANGELOG.md (downloads, prior versions,
   // release info). Slice above only proves this version's section has notes.
-  return body;
+  return body + e2eProofFooter();
+}
+
+function e2eProofFooter(
+  proofPath = path.join(REPOSITORY_ROOT, "coverage", ".release-quality.json"),
+) {
+  let e2e = "unknown";
+  try {
+    const proof = JSON.parse(fs.readFileSync(proofPath, "utf8"));
+    if (proof && (proof.e2e === "passed" || proof.e2e === "skipped")) {
+      e2e = proof.e2e;
+    }
+  } catch {
+    // No local quality-gate proof: report unknown rather than guessing.
+  }
+  const note =
+    e2e === "passed"
+      ? "GUI E2E: passed in the release quality gate."
+      : e2e === "skipped"
+        ? "GUI E2E: skipped on the release machine (recorded in the quality-gate proof); this is not GUI verification. Normal test runs and CI still require GUI E2E."
+        : "GUI E2E: not recorded for this release (no local quality-gate proof found).";
+  return "\n\n---\n\n" + note + "\n";
 }
 
 function singleDraftRelease(matching) {

@@ -45,7 +45,7 @@ test("main scopes --skip-check to the release continuation", () => {
   assert.ok(calls.slice(0, -1).every(([, , envOverrides]) => !envOverrides));
 });
 
-test("main always skips local e2e while keeping the other release gates", () => {
+test("main runs local proof without GUI e2e before release continuation", () => {
   const calls = [];
   main(["win"], (...args) => calls.push(args));
 

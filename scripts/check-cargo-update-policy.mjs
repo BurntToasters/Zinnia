@@ -8,6 +8,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 export const CARGO_UPDATE_POLICY_SCANNER_VERSION = 5;
 export const CARGO_UPDATE_SCANNER_VERSION = 5;
@@ -488,9 +489,7 @@ function main() {
   }
 }
 
-const isMainModule =
-  process.argv[1] &&
-  pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url;
+const isMainModule = process.argv[1] && isDirectExecutionOf(import.meta.url);
 if (isMainModule) main();
 
 export { runPolicyCheck as checkCargoUpdatePolicy };

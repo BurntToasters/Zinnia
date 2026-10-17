@@ -1,6 +1,8 @@
 export interface DecodedRun7zRequest {
   args: string[];
   expectedArchiveIdentity?: string;
+  includeIoDiagnostics?: boolean;
+  markOfTheWebSource?: string;
 }
 
 export function decodeRun7zInvokePayload(
@@ -22,7 +24,17 @@ export function decodeRun7zInvokePayload(
     !record.args.every((argument) => typeof argument === "string") ||
     (record.expectedArchiveIdentity !== undefined &&
       typeof record.expectedArchiveIdentity !== "string") ||
-    keys.some((key) => key !== "args" && key !== "expectedArchiveIdentity")
+    (record.includeIoDiagnostics !== undefined &&
+      typeof record.includeIoDiagnostics !== "boolean") ||
+    (record.markOfTheWebSource !== undefined &&
+      typeof record.markOfTheWebSource !== "string") ||
+    keys.some(
+      (key) =>
+        key !== "args" &&
+        key !== "expectedArchiveIdentity" &&
+        key !== "includeIoDiagnostics" &&
+        key !== "markOfTheWebSource",
+    )
   ) {
     throw new Error("run_7z test payload has an invalid JSON request");
   }
@@ -30,6 +42,12 @@ export function decodeRun7zInvokePayload(
     args: record.args as string[],
     ...(typeof record.expectedArchiveIdentity === "string"
       ? { expectedArchiveIdentity: record.expectedArchiveIdentity }
+      : {}),
+    ...(typeof record.includeIoDiagnostics === "boolean"
+      ? { includeIoDiagnostics: record.includeIoDiagnostics }
+      : {}),
+    ...(typeof record.markOfTheWebSource === "string"
+      ? { markOfTheWebSource: record.markOfTheWebSource }
       : {}),
   };
 }

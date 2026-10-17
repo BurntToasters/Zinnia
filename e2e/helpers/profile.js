@@ -53,6 +53,26 @@ export function seedE2eSettings(settingsDir) {
   );
 }
 
+export function updateE2eSettings(
+  profileDir,
+  overrides,
+  platform = process.platform,
+) {
+  const dirs = [settingsDirForProfile(profileDir, platform)];
+  if (platform === "win32") {
+    dirs.push(windowsProfilePaths(path.join(profileDir, "home")).settingsLocal);
+  }
+  for (const dir of dirs) {
+    const file = path.join(dir, "settings.json");
+    if (!fs.existsSync(file)) continue;
+    const current = JSON.parse(fs.readFileSync(file, "utf8"));
+    fs.writeFileSync(
+      file,
+      `${JSON.stringify({ ...current, ...overrides }, null, 2)}\n`,
+    );
+  }
+}
+
 export function settingsDirForProfile(profileDir, platform = process.platform) {
   if (platform === "darwin") {
     return path.join(

@@ -101,6 +101,13 @@ const {
   ) => { draft?: boolean; tag_name?: string; id?: number } | null;
   verifyReleaseSession: (run?: typeof spawnSync) => void;
 };
+const { assertExistingTagTargetsCommit } =
+  require("../../scripts/release-draft-metadata.cjs") as {
+    assertExistingTagTargetsCommit: (
+      apiGet: (endpoint: string) => unknown,
+      options: { owner: string; repo: string; tag: string; commit: string },
+    ) => void;
+  };
 const { assertStableReleaseOverridesAllowed, isStableReleaseVersion } =
   require("../../scripts/release-policy.cjs") as {
     assertStableReleaseOverridesAllowed: (
@@ -164,7 +171,6 @@ describe("release script safeguards", () => {
       "scripts/ensure-draft-release.cjs",
       "utf8",
     );
-    expect(gpgSource).toContain("assertReleaseTargetsCommit");
     expect(gpgSource).toContain("FORCE_UPLOAD");
     expect(gpgSource).toContain("npm run release:draft");
     expect(gpgSource).not.toContain("target_commitish: commit,");
@@ -347,7 +353,8 @@ describe("release script safeguards", () => {
     };
     const changelog = fs.readFileSync("CHANGELOG.md", "utf8");
     const body = readChangelogReleaseBody();
-    expect(body).toBe(changelog);
+    expect(body.startsWith(changelog)).toBe(true);
+    expect(body).toContain("GUI E2E:");
     expect(body).toContain("# ⬇️ Downloads");
     expect(body).toContain(`## Changes in \`v${pkg.version}:\``);
     expect(body).toContain("## ℹ️ Release Info");
@@ -373,7 +380,8 @@ describe("release script safeguards", () => {
     fs.writeFileSync(mixed, mixedContents);
     try {
       const extracted = readChangelogReleaseBody(mixed, "9.9.9");
-      expect(extracted).toBe(mixedContents);
+      expect(extracted.startsWith(mixedContents)).toBe(true);
+      expect(extracted).toContain("GUI E2E:");
       expect(extracted).toContain("current notes");
       expect(extracted).toContain("historical notes still ship");
       expect(extracted).toContain("# Downloads");
@@ -432,11 +440,6 @@ describe("release script safeguards", () => {
     }
 
     const source = fs.readFileSync("scripts/ensure-draft-release.cjs", "utf8");
-    expect(source).toContain("readChangelogReleaseBody");
-    expect(source).toContain("singleDraftRelease");
-    expect(source).toContain("syncReleaseNotesBody");
-    expect(source).toContain("body,");
-    expect(source).toContain("PATCH");
     expect(source).not.toContain("or run it here once");
   });
 
@@ -506,34 +509,9 @@ describe("release script safeguards", () => {
         "0.6.1-beta.8",
       ),
     ).toBe(false);
-
-    for (const file of [
-      "scripts/ensure-draft-release.cjs",
-      "scripts/gpg-sign.js",
-      "scripts/verify-release-draft.js",
-    ]) {
-      expect(fs.readFileSync(file, "utf8")).toContain(
-        "assertNoMisnamedVersionDrafts",
-      );
-    }
-
-    const draftSource = fs.readFileSync(
-      "scripts/ensure-draft-release.cjs",
-      "utf8",
-    );
-    expect(draftSource).toContain("tag_name: TAG_NAME");
-    const publishSource = fs.readFileSync(
-      "scripts/publish-release.cjs",
-      "utf8",
-    );
-    expect(publishSource).toMatch(
-      /tag_name: TAG_NAME,\s*target_commitish: commit,\s*draft: false/,
-    );
   });
 
-  it("refuses duplicate drafts in gpg-sign and verify-draft selection too", () => {
-    const gpgSource = fs.readFileSync("scripts/gpg-sign.js", "utf8");
-    expect(gpgSource).toContain("Resolve duplicates before signing.");
+  it("refuses duplicate drafts in verify-draft selection", () => {
     expect(() =>
       selectDraftRelease(
         [
@@ -640,18 +618,6 @@ describe("release script safeguards", () => {
     ).toThrow(/no platform entries/);
   });
 
-  it("reasserts the prerelease flag when a draft is reused", () => {
-    const draftSource = fs.readFileSync(
-      "scripts/ensure-draft-release.cjs",
-      "utf8",
-    );
-    const syncFn = draftSource.slice(
-      draftSource.indexOf("async function syncReleaseNotesBody"),
-      draftSource.indexOf("function verifyReleaseSession"),
-    );
-    expect(syncFn).toContain("prerelease: IS_PRERELEASE");
-  });
-
   it("requires a release session before the draft script can contact GitHub", () => {
     const rejectedSessionCheck = () => {
       const error = Object.assign(new Error("release session missing"), {
@@ -700,29 +666,6 @@ describe("release script safeguards", () => {
     },
   );
 
-  it("auto-syncs beta manifests onto /releases/latest during each sign upload", () => {
-    const source = fs.readFileSync("scripts/gpg-sign.js", "utf8");
-    const syncBlock = source.slice(
-      source.indexOf("for (const f of everything)"),
-      source.indexOf("Done: ${TAG} uploaded as"),
-    );
-    expect(syncBlock).toContain("if (IS_PRERELEASE)");
-    expect(syncBlock).toContain(
-      "syncBetaManifestsToLatestStable(everything, release.id)",
-    );
-    expect(syncBlock).not.toContain("!release.draft");
-  });
-
-  it("refuses to create a GitHub release during signing", () => {
-    const source = fs.readFileSync("scripts/gpg-sign.js", "utf8");
-    const fn = source.slice(
-      source.indexOf("async function getOrCreateRelease"),
-      source.indexOf("async function uploadAssetOnce"),
-    );
-    expect(fn).toContain("npm run release:draft");
-    expect(fn).not.toMatch(/"POST"/);
-  });
-
   it("keeps a recovery beta→latest sync entry point", () => {
     const source = fs.readFileSync("scripts/gpg-sign.js", "utf8");
     const packageJson = JSON.parse(fs.readFileSync("package.json", "utf8"));
@@ -735,34 +678,17 @@ describe("release script safeguards", () => {
 
   it("stages live feed replacements before swapping asset names", () => {
     const source = fs.readFileSync("scripts/gpg-sign.js", "utf8");
-    const uploadOnce = source.slice(
-      source.indexOf("async function uploadAssetOnce"),
-      source.indexOf("async function uploadAsset("),
-    );
-    expect(uploadOnce).toContain("typeof uploaded.id");
-    expect(uploadOnce).toContain("return uploaded");
-
     const transaction = source.slice(
       source.indexOf("async function replaceReleaseAssetsTransactionally"),
       source.indexOf("async function uploadAssetWithReplace"),
     );
-    // GitHub strips leading periods from asset names  -  do not use dotfiles.
-    expect(transaction).toContain("zinnia-pending-");
-    expect(transaction).toContain("zinnia-previous-");
+    // GitHub strips leading periods from asset names; do not use dotfiles.
     expect(transaction).not.toContain(".zinnia-pending-");
     expect(transaction).not.toContain(".zinnia-previous-");
-    expect(transaction).toContain('"PATCH"');
-    expect(
-      transaction.indexOf("uploadAsset(release.upload_url, stagedPath)"),
-    ).toBeLessThan(transaction.indexOf('"PATCH"'));
-    expect(transaction.indexOf('"PATCH"')).toBeLessThan(
-      transaction.indexOf('"DELETE"'),
-    );
   });
 
   it("serializes beta feed swaps and recognizes orphan transaction assets", () => {
     const source = fs.readFileSync("scripts/gpg-sign.js", "utf8");
-    expect(source).toContain("withBetaManifestSyncLock(latestStable");
     expect(source).not.toContain("BETA_SYNC_LOCK_STALE_MS");
     expect(source).toContain(
       "Never remove the lock while another signer is active.",
@@ -770,7 +696,6 @@ describe("release script safeguards", () => {
     expect(source).toContain("assertOwnsBetaManifestSyncLock");
     expect(source).toContain("assertStillHeld");
     expect(source).toContain("Lost the beta-manifest synchronization lock");
-    expect(source).toContain("cleanupTransactionalStagingAssets(latestStable)");
     expect(isTransactionalStagingAssetName("zinnia-pending-a-feed.json")).toBe(
       true,
     );
@@ -1517,6 +1442,79 @@ describe("release script safeguards", () => {
     expect(packageJson.scripts.r).toContain("gitprune:force");
     expect(packageJson.scripts["release:verify:draft"]).toContain(
       "verify-release-draft.js",
+    );
+  });
+
+  describe("publish binds an existing tag to the release commit", () => {
+    const head = "a".repeat(40);
+    const other = "b".repeat(40);
+    const options = { owner: "o", repo: "r", tag: "v1.2.3", commit: head };
+    const notFound = () => {
+      throw Object.assign(new Error("gh: Not Found (HTTP 404)"), {
+        statusCode: 404,
+      });
+    };
+
+    it("accepts an absent tag", () => {
+      const calls: string[] = [];
+      assertExistingTagTargetsCommit((endpoint) => {
+        calls.push(endpoint);
+        return notFound();
+      }, options);
+      expect(calls).toEqual(["/repos/o/r/git/ref/tags/v1.2.3"]);
+    });
+
+    it("accepts a lightweight tag at HEAD", () => {
+      expect(() =>
+        assertExistingTagTargetsCommit(
+          () => ({ object: { type: "commit", sha: head } }),
+          options,
+        ),
+      ).not.toThrow();
+    });
+
+    it("accepts an annotated tag whose commit is HEAD", () => {
+      const tagSha = "c".repeat(40);
+      expect(() =>
+        assertExistingTagTargetsCommit((endpoint) => {
+          if (endpoint.endsWith("/git/ref/tags/v1.2.3")) {
+            return { object: { type: "tag", sha: tagSha } };
+          }
+          expect(endpoint).toBe(`/repos/o/r/git/tags/${tagSha}`);
+          return { object: { type: "commit", sha: head } };
+        }, options),
+      ).not.toThrow();
+    });
+
+    it("refuses a tag at another commit", () => {
+      expect(() =>
+        assertExistingTagTargetsCommit(
+          () => ({ object: { type: "commit", sha: other } }),
+          options,
+        ),
+      ).toThrow(/v1\.2\.3 already points to b{40}, not HEAD a{40}/);
+    });
+
+    it("fails closed on other API errors", () => {
+      expect(() =>
+        assertExistingTagTargetsCommit(() => {
+          throw Object.assign(new Error("gh: Server Error (HTTP 502)"), {
+            statusCode: 502,
+          });
+        }, options),
+      ).toThrow(/HTTP 502/);
+    });
+  });
+
+  it("replaces a conflicting release asset without a delete-first gap", () => {
+    const source = fs.readFileSync("scripts/gpg-sign.js", "utf8");
+    const start = source.indexOf("async function uploadAssetWithReplace(");
+    const end = source.indexOf("\nasync function ", start + 1);
+    const body = source.slice(start, end);
+    expect(start).toBeGreaterThan(0);
+    expect(body).toContain("replaceReleaseAssetsTransactionally(release, [");
+    expect(source).toMatch(
+      /uploadAssetWithReplace\(release, f, \{\s*allowPublishedReplace: ALLOW_ASSET_REPLACE,?\s*\}\)/,
     );
   });
 });

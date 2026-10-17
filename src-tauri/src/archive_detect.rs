@@ -440,6 +440,34 @@ pub async fn validate_archive_paths(
 mod tests {
     use super::*;
 
+    struct ArchiveProbeTempDir {
+        path: std::path::PathBuf,
+    }
+
+    impl ArchiveProbeTempDir {
+        fn new(prefix: &str) -> Self {
+            use std::sync::atomic::{AtomicU64, Ordering};
+
+            static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+            loop {
+                let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+                let path =
+                    std::env::temp_dir().join(format!("{prefix}-{}-{id}", std::process::id()));
+                match std::fs::create_dir(&path) {
+                    Ok(()) => return Self { path },
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(error) => panic!("temp directory should be created: {error}"),
+                }
+            }
+        }
+    }
+
+    impl Drop for ArchiveProbeTempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
     #[test]
     fn detect_archive_signature_recognizes_known_headers() {
         assert_eq!(
@@ -532,23 +560,37 @@ mod tests {
     }
 
     #[test]
+    fn archive_probe_temp_directories_are_unique_under_parallel_creation() {
+        let directories = std::thread::scope(|scope| {
+            let handles = (0..16)
+                .map(|_| scope.spawn(|| ArchiveProbeTempDir::new("zinnia-archive-probe")))
+                .collect::<Vec<_>>();
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle
+                        .join()
+                        .expect("temp directory creation should not panic")
+                })
+                .collect::<Vec<_>>()
+        });
+        let unique = directories
+            .iter()
+            .map(|directory| &directory.path)
+            .collect::<std::collections::HashSet<_>>();
+
+        assert_eq!(unique.len(), directories.len());
+    }
+
+    #[test]
     fn validate_archive_path_accepts_extensionless_zip_signature() {
-        let base = std::env::temp_dir().join(format!(
-            "zinnia-archive-probe-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("time should work")
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&base).expect("temp directory should be created");
-        let file_path = base.join("archive-without-extension");
+        let base = ArchiveProbeTempDir::new("zinnia-archive-probe");
+        let file_path = base.path.join("archive-without-extension");
         std::fs::write(&file_path, [0x50, 0x4B, 0x03, 0x04, 0x14, 0x00])
             .expect("probe file should be written");
 
         let path = file_path.to_string_lossy().to_string();
         assert!(validate_archive_path(&path).valid);
-
-        let _ = std::fs::remove_dir_all(base);
     }
 
     #[cfg(unix)]
@@ -576,15 +618,8 @@ mod tests {
 
     #[test]
     fn validate_archive_path_rejects_mislabeled_zip_file() {
-        let base = std::env::temp_dir().join(format!(
-            "zinnia-archive-probe-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("time should work")
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&base).expect("temp directory should be created");
-        let file_path = base.join("not-an-archive.zip");
+        let base = ArchiveProbeTempDir::new("zinnia-archive-probe");
+        let file_path = base.path.join("not-an-archive.zip");
         std::fs::write(&file_path, b"this is plain text").expect("probe file should be written");
 
         let path = file_path.to_string_lossy().to_string();
@@ -594,8 +629,6 @@ mod tests {
             .reason
             .unwrap_or_default()
             .contains("Extension indicates zip"));
-
-        let _ = std::fs::remove_dir_all(base);
     }
 
     #[test]

@@ -63,10 +63,14 @@ fn windows_reparse_tag(path: &Path) -> Option<u32> {
         .chain(std::iter::once(0))
         .collect();
     let mut data = WIN32_FIND_DATAW::default();
+    // SAFETY: `wide` is NUL-terminated and alive for the call; `data` is a writable
+    // WIN32_FIND_DATAW that FindFirstFileW fills on success.
     let handle = unsafe { FindFirstFileW(wide.as_ptr(), &mut data) };
     if handle == INVALID_HANDLE_VALUE {
         return None;
     }
+    // SAFETY: `handle` is a find handle from FindFirstFileW, already checked against
+    // INVALID_HANDLE_VALUE, and it is closed exactly once here.
     unsafe {
         FindClose(handle);
     }
@@ -385,39 +389,39 @@ pub fn assert_real_file(path: &Path) -> Result<(), String> {
 pub fn open_regular_file_nofollow(path: &Path) -> Result<std::fs::File, String> {
     #[cfg(unix)]
     {
-        use std::os::fd::FromRawFd;
+        use rustix::fs::{Mode, OFlags};
         use std::os::unix::ffi::OsStrExt;
 
-        let c_path = std::ffi::CString::new(path.as_os_str().as_bytes())
-            .map_err(|_| "Path contains interior null bytes.".to_string())?;
+        if path.as_os_str().as_bytes().contains(&0) {
+            return Err("Path contains interior null bytes.".to_string());
+        }
         // O_NONBLOCK prevents `open` itself from blocking forever on a FIFO
         // with no writer (a same-user TOCTOU swap of the target between an
         // earlier `is_file()`-style check and this open could otherwise hang
         // every caller of this function indefinitely). It is cleared again
         // right after the metadata check confirms a regular file, so normal
         // reads from the returned handle behave exactly as before.
-        let flags = libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK;
-        let fd = unsafe { libc::open(c_path.as_ptr(), flags) };
-        if fd < 0 {
-            return Err(format!(
+        let flags = OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK;
+        let fd = rustix::fs::open(path, flags, Mode::empty()).map_err(|error| {
+            format!(
                 "Could not open {}: {}",
                 path.display(),
-                std::io::Error::last_os_error()
-            ));
-        }
-        let file = unsafe { std::fs::File::from_raw_fd(fd) };
+                std::io::Error::from(error)
+            )
+        })?;
+        let file = std::fs::File::from(fd);
         let meta = file.metadata().map_err(|e| e.to_string())?;
         if !meta.is_file() {
             return Err(format!("Path is not a regular file: {}", path.display()));
         }
-        let current_flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-        if current_flags < 0
-            || unsafe { libc::fcntl(fd, libc::F_SETFL, current_flags & !libc::O_NONBLOCK) } < 0
-        {
+        let cleared = rustix::fs::fcntl_getfl(&file).and_then(|current| {
+            rustix::fs::fcntl_setfl(&file, current.difference(OFlags::NONBLOCK))
+        });
+        if let Err(error) = cleared {
             return Err(format!(
                 "Could not clear O_NONBLOCK on {}: {}",
                 path.display(),
-                std::io::Error::last_os_error()
+                std::io::Error::from(error)
             ));
         }
         Ok(file)
@@ -479,6 +483,8 @@ fn open_regular_file_nofollow_windows(
         .encode_wide()
         .chain(std::iter::once(0))
         .collect();
+    // SAFETY: `wide` is NUL-terminated and alive for the call. Security attributes are null
+    // (default), and the returned handle is checked against INVALID_HANDLE_VALUE before any use.
     let handle = unsafe {
         CreateFileW(
             wide.as_ptr(),
@@ -497,16 +503,23 @@ fn open_regular_file_nofollow_windows(
             std::io::Error::last_os_error()
         ));
     }
+    // SAFETY: BY_HANDLE_FILE_INFORMATION holds only integers, so all-zero is a valid value.
+    // GetFileInformationByHandle overwrites it on success.
     let mut info = unsafe { std::mem::zeroed::<BY_HANDLE_FILE_INFORMATION>() };
+    // SAFETY: `handle` is open here (it is closed only on the error paths below), and `info` is a
+    // live, writable struct of the type the API fills.
     let ok = unsafe { GetFileInformationByHandle(handle, &mut info) };
     if ok == 0 {
         let err = std::io::Error::last_os_error();
+        // SAFETY: `handle` is the valid handle from CreateFileW, closed exactly once on this error
+        // path before returning.
         unsafe {
             CloseHandle(handle);
         }
         return Err(format!("Could not inspect {}: {err}", path.display()));
     }
     if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        // SAFETY: `handle` is valid and this reject path closes it exactly once before returning.
         unsafe {
             CloseHandle(handle);
         }
@@ -516,11 +529,14 @@ fn open_regular_file_nofollow_windows(
         ));
     }
     if info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
+        // SAFETY: `handle` is valid and this reject path closes it exactly once before returning.
         unsafe {
             CloseHandle(handle);
         }
         return Err(format!("Path is not a regular file: {}", path.display()));
     }
+    // SAFETY: `handle` is valid (checked against INVALID_HANDLE_VALUE), has not been closed on this
+    // success path, and is not owned elsewhere, so File takes sole ownership.
     Ok(unsafe { std::fs::File::from_raw_handle(handle) })
 }
 
@@ -533,7 +549,8 @@ mod tests {
 
     fn temp_root(tag: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
-            "zinnia-path-safety-{tag}-{}",
+            "zinnia-path-safety-{tag}-{}-{}",
+            std::process::id(),
             TEMP_COUNTER.fetch_add(1, Ordering::SeqCst)
         ))
     }

@@ -8,6 +8,7 @@ const { execFileSync, spawnSync } = require("child_process");
 const { assertGitHubCliAuthenticated, githubApi } = require("./github-cli.cjs");
 const { assertStableReleaseOverridesAllowed } = require("./release-policy.cjs");
 const {
+  assertExistingTagTargetsCommit,
   assertExpectedRelease,
   assertReleaseTagName,
   isExpectedRelease,
@@ -90,6 +91,12 @@ async function main() {
       `Draft ${TAG_NAME} targets ${draft.target_commitish}, not HEAD ${commit}.`,
     );
   }
+  assertExistingTagTargetsCommit((endpoint) => githubApi("GET", endpoint), {
+    owner: REPO_OWNER,
+    repo: REPO_NAME,
+    tag: TAG_NAME,
+    commit,
+  });
 
   const published = githubApi(
     "PATCH",

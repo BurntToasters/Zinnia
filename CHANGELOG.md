@@ -2,10 +2,10 @@
 
 | <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                                          | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux        |
 | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------- |
-| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.2/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.2/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.2/Zinnia-macOS.dmg)**   | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.2/Zinnia-Linux-x64.AppImage) |
-| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>-->                     | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.2/Zinnia-macOS.zip)**   | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.2/Zinnia-Linux-x64.deb)           |
-|                                                                                                                                                                                                                            |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.2/Zinnia-Linux-x64.rpm)           |
-|                                                                                                                                                                                                                            |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.2/Zinnia-Linux-x64.flatpak)   |
+| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.3/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.3/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.3/Zinnia-macOS.dmg)**   | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.3/Zinnia-Linux-x64.AppImage) |
+| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>-->                     | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.3/Zinnia-macOS.zip)**   | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.3/Zinnia-Linux-x64.deb)           |
+|                                                                                                                                                                                                                            |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.3/Zinnia-Linux-x64.rpm)           |
+|                                                                                                                                                                                                                            |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.6.3/Zinnia-Linux-x64.flatpak)   |
 
 > macOS downloads require macOS 26 or later.
 
@@ -18,14 +18,40 @@
 
 Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
-## Changes in `v0.6.2:`
+## Changes in `v0.6.3:`
 
-- **Windows:** Win11 sparse context-menu registration now recovers from an already-registered exact package version (`0x80073CFB`) and defers when Explorer still has the prior shell extension loaded (`0x80073D02`). Deferred installs keep classic Extract/Compress verbs until the modern menu finishes; a restored prior payload is no longer treated as a current-version success that would drop those fallbacks.
-- **UI:** Creating an archive over an existing file now asks to replace it instead of overwriting silently.
-- **Fix:** Cancelled 7-Zip jobs no longer report as Done after rollback. Convert, Test, Browse, Add, and batch extract honor Cancel between steps, and batch extract keeps Cancel available while a volume is running. Settings Reset waits for any in-flight settings write so a stale snapshot cannot come back after the reset. A broken 7-Zip output stream is treated as a failed run instead of a successful child exit.
-- **Security:** Updating an existing archive re-checks the selected file after path resolve so a swapped or case-aliased target cannot be staged in that gap.
-- **Updater:** A failed notification-permission check no longer aborts a background update. macOS privileged install reports AppleScript failures instead of panicking if compile or the main-thread callback does not complete.
-- **PKG:** Updated packages.
+- **Security - Downloaded files:** On macOS, files extracted from a downloaded archive now keep the download warning (quarantine), so Gatekeeper still checks apps that came out of an archive. Converting or updating a downloaded archive now keeps its download warning on macOS and Windows. The new archive is marked before it is saved, so an unmarked copy is never left on disk.
+- **Security - Windows:** Extracted folders no longer keep the read-only or system attribute. An archive can no longer make Explorer apply its own `desktop.ini` (for example, a folder icon loaded from a network share) to the folders it creates.
+- **Security - Encryption:** The backend always uses AES-256 instead of the weaker ZipCrypto when files are added with a password to an existing ZIP archive, even one whose name does not end in `.zip`.
+- **Security - Paths:** Folder names that Zinnia derives from an archive name now avoid Windows device names (such as `CON` or `NUL`), `:` streams, and shell folder IDs (`name.{GUID}`) on every platform. On Windows, **Open destination** refuses folders with such names.
+- **Security - Extraction:** ZIP archives that contain symbolic links are always handled with Zinnia's extra link safety checks. 7-Zip still refuses any link pointing outside the destination.
+- **Security - Updater:** Zinnia never installs an update whose version is not newer than the installed one. Update signatures with a non-standard encoding are rejected.
+- **Security:** Progress updates (including file names) and debug console output only reach the window that started the operation, instead of every open window.
+- **Security:** Release and maintenance scripts no longer skip their work silently when run through a symbolic-linked path. Bundled 7-Zip updates require identical downloads from both official sources (7-zip.org and GitHub).
+- **NEW - Archive I/O diagnostics:** Optional archive I/O phase diagnostics in the Debug Console. Diagnostics are disabled outside debug mode and redact archive paths and passwords.
+- **Performance:** Reduced avoidable archive and destination copies, added stable snapshots and bounded metadata/finalization workers, and combined final validation, quota, durability, and fingerprint passes while preserving containment, rollback, cancellation, MOTW, and crash recovery. Settings and log writes no longer freeze the window on slow or network drives.
+- **Compatibility:** Expanded operation and output verification across ZIP, 7z, and TAR, with separate reporting for encrypted, split, link-bearing, RAR, and unsupported filesystem or custom-ACL cases.
+- **Benchmarking:** Added cross-platform Zinnia archive benchmarks for PR smoke and nightly/manual x64 and ARM64 runs. Reports compare Zinnia with bundled 7-Zip without letting timing ratios block CI.
+- **Fix - Quick extract:** The extract window reliably closes when its auto-close countdown ends. Previously, mouse events without real movement, or pressing `Alt` to switch away with `Alt+Tab`, could silently cancel the countdown and leave the window open.
+- **Change - Quick extract:** Moving the mouse over the extract window pauses the countdown and shows **Close (paused)**. Moving the mouse out of the window, or switching to another window, restarts it. Pressing a key (other than `Alt`, `Ctrl`, `Shift`, or the Windows/Command key) or clicking still cancels it. The countdown stays on time when the window is covered or in the background.
+- **Fix - Quick extract (macOS):** Opening Settings, Check for Updates, or another app-menu item during a quick extract keeps the main window open after the extract window closes.
+- **Fix - Updater:** Large updates no longer fail on slow connections. Downloads now fail only if the connection stalls for 120 seconds, instead of after 120 seconds in total.
+- **Fix - Recovery:** A crash at one specific point during extraction no longer leaves a recovery state that blocks later archive operations; recovery still refuses anything it cannot verify. If a newer Zinnia version leaves an unfinished archive job and you open an older version, the older version leaves the files alone and explains how to finish the job. You can still clear it with **Accept**.
+- **Fix - Extraction:** `.bz2` and `.xz` files that store no file name inside (the usual case) now extract instead of failing with "Could not parse archive member paths from 7-Zip listing."
+- **Fix - Open destination (macOS):** Opening an extracted folder whose name looks like an app or package shows it in Finder instead of launching it.
+- **Fix - Browse:** Archive entry names containing text like `-p...` or `password=` are no longer altered in the file list, so selective extraction finds them.
+- **Fix - Logs:** Exporting logs no longer freezes the app while the save dialog is open.
+- **Fix - Basic mode:** Choosing a different archive from the Extract or Browse archive card updates the shown archive name and the automatic destination. A destination you typed yourself is kept.
+- **Fix - Basic mode:** Form fields are locked while an operation runs, so the completion message and Recents always show the archive that was actually created.
+- **Fix - Presets:** Custom presets with default (empty) options, such as most ZIP presets, no longer disappear after restarting Zinnia.
+- **Fix - Command line:** Relative paths passed to an already-running Zinnia (for example `zinnia --compress ./file.txt` from another folder) resolve against the folder you ran the command from.
+- **Fix - Windows:** Read-only archives are snapshotted by copy instead of hard link, so cleanup can no longer clear the read-only flag on your original file.
+- **Fix - Debug Mode:** Popping out the debug mode console no longer causes a white screen and an unresponsive console.
+- **Release:** Publishing refuses a release whose existing tag points at a different commit. Replacing an existing release asset uploads the new file before removing the old one.
+- **Codebase:** `npm run b` and `npm run r` refuse to run when the local `beta` or `main` branch has commits that were never pushed.
+- **Testing:** End-to-end coverage for the extract-window countdown, crash recovery at each stage of extracting and creating archives, cancelling, unsafe archives, split archives, adding files, and the release process. CI runs these on ARM Windows and ARM Linux.
+- **PKG:** Updated packages, including Tauri 2.12, TypeScript 7, Vitest 5, and minimum npm 12.0.2.
+- **7-Zip:** Updated bundled 7-Zip to `26.04`.
 
 ## Changes in `v0.6.0:`
 

@@ -40,9 +40,10 @@ test("package.json scripts define cargo safe update test and policy check", () =
     "node scripts/check-rustsec-ignore-policy.mjs",
   );
   assert.equal(
-    scripts["repo:protect-release-branches"],
+    scripts["repo:protect-beta-tags"],
     "node scripts/release-branch-protection.cjs --apply",
   );
+  assert.equal(scripts["repo:protect-release-branches"], undefined);
   assert.equal(scripts["test:archives"], "node scripts/test-archives.js");
   assert.equal(scripts["test:e2e"], "node scripts/test-e2e.js");
 });
@@ -131,14 +132,16 @@ test("main records quality-gate proof when all checks pass", () => {
   assert.equal(exitCode, 0);
 });
 
-test("main skips e2e and still records quality-gate proof for --skip-e2e", () => {
+test("main records explicitly skipped e2e in release proof mode", () => {
   const calls = [];
   const resultsSeen = [];
   const exitCode = main({
     root: repoRoot,
     skipE2e: true,
+    requireCleanProof: true,
     clearProof: () => calls.push("clearProof"),
-    recordProof: () => {
+    recordProof: (_root, options) => {
+      assert.deepEqual(options, { e2e: "skipped" });
       calls.push("recordProof");
       return { recorded: true };
     },
@@ -158,6 +161,52 @@ test("main skips e2e and still records quality-gate proof for --skip-e2e", () =>
   assert.equal(resultsSeen.at(-1)?.e2e.status, "skipped");
   assert.ok(calls.includes("recordProof"));
   assert.equal(exitCode, 0);
+});
+
+test("standalone e2e skip does not record release proof", () => {
+  let recorded = false;
+  const exitCode = main({
+    skipE2e: true,
+    clearProof: () => {},
+    recordProof: () => {
+      recorded = true;
+      return { recorded: true };
+    },
+    parseCoverage: (results) => {
+      results.coverage.status = "passed";
+    },
+    runner: (name, _cmd, _args, _parser, results) => {
+      assert.notEqual(name, "e2e");
+      results[name].status = "passed";
+      return true;
+    },
+  });
+  assert.equal(exitCode, 0);
+  assert.equal(recorded, false);
+});
+
+test("release e2e skip preserves failures and dirty-tree proof refusal", () => {
+  for (const failedCheck of ["cargoSafeUpdate", "rust", null]) {
+    let recorded = false;
+    const exitCode = main({
+      skipE2e: true,
+      requireCleanProof: true,
+      clearProof: () => {},
+      recordProof: () => {
+        recorded = true;
+        return { recorded: false, dirtyFiles: " M source.ts" };
+      },
+      parseCoverage: (results) => {
+        results.coverage.status = "passed";
+      },
+      runner: (name, _cmd, _args, _parser, results) => {
+        results[name].status = name === failedCheck ? "failed" : "passed";
+        return name !== failedCheck;
+      },
+    });
+    assert.equal(exitCode, 1);
+    assert.equal(recorded, failedCheck === null);
+  }
 });
 
 test("main keeps generic test:all green when proof cannot be recorded", () => {

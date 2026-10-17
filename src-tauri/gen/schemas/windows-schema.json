@@ -429,12 +429,6 @@
           "markdownDescription": "Enables the close_extract_window command without any pre-configured scope."
         },
         {
-          "description": "Enables the create_temp_extract_dir command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-create-temp-extract-dir",
-          "markdownDescription": "Enables the create_temp_extract_dir command without any pre-configured scope."
-        },
-        {
           "description": "Enables the debug_console_window_open command without any pre-configured scope.",
           "type": "string",
           "const": "allow-debug-console-window-open",
@@ -645,6 +639,12 @@
           "markdownDescription": "Enables the remove_managed_temp_dir command without any pre-configured scope."
         },
         {
+          "description": "Enables the reserve_temp_extract_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-reserve-temp-extract-path",
+          "markdownDescription": "Enables the reserve_temp_extract_path command without any pre-configured scope."
+        },
+        {
           "description": "Enables the reset_preferred_archiver_to_system command without any pre-configured scope.",
           "type": "string",
           "const": "allow-reset-preferred-archiver-to-system",
@@ -733,12 +733,6 @@
           "type": "string",
           "const": "deny-close-extract-window",
           "markdownDescription": "Denies the close_extract_window command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the create_temp_extract_dir command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-create-temp-extract-dir",
-          "markdownDescription": "Denies the create_temp_extract_dir command without any pre-configured scope."
         },
         {
           "description": "Denies the debug_console_window_open command without any pre-configured scope.",
@@ -951,6 +945,12 @@
           "markdownDescription": "Denies the remove_managed_temp_dir command without any pre-configured scope."
         },
         {
+          "description": "Denies the reserve_temp_extract_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-reserve-temp-extract-path",
+          "markdownDescription": "Denies the reserve_temp_extract_path command without any pre-configured scope."
+        },
+        {
           "description": "Denies the reset_preferred_archiver_to_system command without any pre-configured scope.",
           "type": "string",
           "const": "deny-reset-preferred-archiver-to-system",
@@ -1033,6 +1033,12 @@
           "type": "string",
           "const": "core:app:allow-default-window-icon",
           "markdownDescription": "Enables the default_window_icon command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the exit command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:app:allow-exit",
+          "markdownDescription": "Enables the exit command without any pre-configured scope."
         },
         {
           "description": "Enables the fetch_data_store_identifiers command without any pre-configured scope.",
@@ -1123,6 +1129,12 @@
           "type": "string",
           "const": "core:app:deny-default-window-icon",
           "markdownDescription": "Denies the default_window_icon command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the exit command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:app:deny-exit",
+          "markdownDescription": "Denies the exit command without any pre-configured scope."
         },
         {
           "description": "Denies the fetch_data_store_identifiers command without any pre-configured scope.",
@@ -2385,6 +2397,12 @@
           "markdownDescription": "Enables the set_fullscreen command without any pre-configured scope."
         },
         {
+          "description": "Enables the set_fullscreen_on_monitor command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:window:allow-set-fullscreen-on-monitor",
+          "markdownDescription": "Enables the set_fullscreen_on_monitor command without any pre-configured scope."
+        },
+        {
           "description": "Enables the set_icon command without any pre-configured scope.",
           "type": "string",
           "const": "core:window:allow-set-icon",
@@ -2853,6 +2871,12 @@
           "markdownDescription": "Denies the set_fullscreen command without any pre-configured scope."
         },
         {
+          "description": "Denies the set_fullscreen_on_monitor command without any pre-configured scope.",
+          "type": "string",
+          "const": "core:window:deny-set-fullscreen-on-monitor",
+          "markdownDescription": "Denies the set_fullscreen_on_monitor command without any pre-configured scope."
+        },
+        {
           "description": "Denies the set_icon command without any pre-configured scope.",
           "type": "string",
           "const": "core:window:deny-set-icon",
@@ -3081,10 +3105,10 @@
           "markdownDescription": "Denies the save command without any pre-configured scope."
         },
         {
-          "description": "This permission set configures which\nnotification features are by default exposed.\n\n#### Granted Permissions\n\nIt allows all notification related features.\n\n\n#### This default permission set includes:\n\n- `allow-is-permission-granted`\n- `allow-request-permission`\n- `allow-notify`\n- `allow-register-action-types`\n- `allow-register-listener`\n- `allow-cancel`\n- `allow-get-pending`\n- `allow-remove-active`\n- `allow-get-active`\n- `allow-check-permissions`\n- `allow-show`\n- `allow-batch`\n- `allow-list-channels`\n- `allow-delete-channel`\n- `allow-create-channel`\n- `allow-permission-state`",
+          "description": "This permission set configures which\nnotification features are by default exposed.\n\n#### Granted Permissions\n\nIt allows all notification related features.\n\n\n#### This default permission set includes:\n\n- `allow-is-permission-granted`\n- `allow-request-permission`\n- `allow-notify`\n- `allow-register-action-types`\n- `allow-register-listener`\n- `allow-remove-listener`\n- `allow-cancel`\n- `allow-get-pending`\n- `allow-remove-active`\n- `allow-get-active`\n- `allow-check-permissions`\n- `allow-show`\n- `allow-batch`\n- `allow-list-channels`\n- `allow-delete-channel`\n- `allow-create-channel`\n- `allow-permission-state`",
           "type": "string",
           "const": "notification:default",
-          "markdownDescription": "This permission set configures which\nnotification features are by default exposed.\n\n#### Granted Permissions\n\nIt allows all notification related features.\n\n\n#### This default permission set includes:\n\n- `allow-is-permission-granted`\n- `allow-request-permission`\n- `allow-notify`\n- `allow-register-action-types`\n- `allow-register-listener`\n- `allow-cancel`\n- `allow-get-pending`\n- `allow-remove-active`\n- `allow-get-active`\n- `allow-check-permissions`\n- `allow-show`\n- `allow-batch`\n- `allow-list-channels`\n- `allow-delete-channel`\n- `allow-create-channel`\n- `allow-permission-state`"
+          "markdownDescription": "This permission set configures which\nnotification features are by default exposed.\n\n#### Granted Permissions\n\nIt allows all notification related features.\n\n\n#### This default permission set includes:\n\n- `allow-is-permission-granted`\n- `allow-request-permission`\n- `allow-notify`\n- `allow-register-action-types`\n- `allow-register-listener`\n- `allow-remove-listener`\n- `allow-cancel`\n- `allow-get-pending`\n- `allow-remove-active`\n- `allow-get-active`\n- `allow-check-permissions`\n- `allow-show`\n- `allow-batch`\n- `allow-list-channels`\n- `allow-delete-channel`\n- `allow-create-channel`\n- `allow-permission-state`"
         },
         {
           "description": "Enables the batch command without any pre-configured scope.",
@@ -3169,6 +3193,12 @@
           "type": "string",
           "const": "notification:allow-remove-active",
           "markdownDescription": "Enables the remove_active command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the remove_listener command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:allow-remove-listener",
+          "markdownDescription": "Enables the remove_listener command without any pre-configured scope."
         },
         {
           "description": "Enables the request_permission command without any pre-configured scope.",
@@ -3265,6 +3295,12 @@
           "type": "string",
           "const": "notification:deny-remove-active",
           "markdownDescription": "Denies the remove_active command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the remove_listener command without any pre-configured scope.",
+          "type": "string",
+          "const": "notification:deny-remove-listener",
+          "markdownDescription": "Denies the remove_listener command without any pre-configured scope."
         },
         {
           "description": "Denies the request_permission command without any pre-configured scope.",

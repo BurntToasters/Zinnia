@@ -1,10 +1,13 @@
 # GitHub Copilot Instructions
-Spec version: 1.0.0
+Spec version: 1.1.0
 - (This is an identifier for the user maintaining these specialized instructions)
+- Canonical commit rules: BCLS STANDARD.md §16. If this file drifts, STANDARD.md wins.
 
 ## Commit messages
 
-When generating Git commit messages, follow these rules.
+When generating Git commit messages, follow BCLS kind `commit` (STANDARD.md §16).
+
+Do **not** use Conventional Commits (`feat:`, `fix:`, `chore:`, lowercase `docs:`, etc.).
 
 Use this format:
 
@@ -29,12 +32,12 @@ Keep commit messages brief and informative.
 - Do not add `Co-authored-by`, `Signed-off-by`, or other git trailers.
 - In GitHub Desktop, leave the description field empty unless the summary cannot capture the change.
 
-Use these BCLS-derived categories when applicable:
+Use these BCLS categories when applicable (STANDARD.md §5.4):
 
 - `PKG` - dependencies and packages.
 - `Electron` - Electron changes.
 - `Tauri` - Tauri changes.
-- `TypeScript` - TypeScript changes.
+- `Typescript` - TypeScript changes.
 - `Codebase` - refactoring, cleanup, scripts, or internal changes.
 - `Testing` - tests and test infrastructure.
 - `UI` - user interface or interaction changes.
@@ -46,6 +49,7 @@ Use these BCLS-derived categories when applicable:
 - `macOS` - macOS-specific changes.
 - `Windows` - Windows-specific changes.
 - `Linux` - Linux-specific changes.
+- `Docs` - documentation / copy / docs-site content.
 - `Misc` - only when no more specific category fits.
 - `NEW - <Feature>` - a genuinely new capability.
 
@@ -58,5 +62,7 @@ Examples:
 `PKG: Update packages.`
 
 `Codebase: Remove obsolete migration logic.`
+
+`Docs: Document web release kind.`
 
 `NEW - Search: Add fuzzy result matching.`

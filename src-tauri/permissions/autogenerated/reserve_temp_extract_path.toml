@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reserve-temp-extract-path"
+description = "Enables the reserve_temp_extract_path command without any pre-configured scope."
+commands.allow = ["reserve_temp_extract_path"]
+
+[[permission]]
+identifier = "deny-reserve-temp-extract-path"
+description = "Denies the reserve_temp_extract_path command without any pre-configured scope."
+commands.deny = ["reserve_temp_extract_path"]

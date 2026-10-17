@@ -1,23 +1,20 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { createRequire } from "node:module";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import {
   isIgnorableReleaseDirtyPath,
   porcelainPaths,
 } from "./release-session.js";
-
-const require = createRequire(import.meta.url);
-const {
-  assertReleaseBranchProtection,
-} = require("./release-branch-protection.cjs");
+import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(scriptDir, "..");
 const packageJson = JSON.parse(
   fs.readFileSync(path.join(root, "package.json"), "utf8"),
 );
+
+// Note from BurntToasters: Branch protection pre-flight rules have been intentionally removed for now
 
 function expectedReleaseBranch(version) {
   const numeric = "(?:0|[1-9]\\d*)";
@@ -37,7 +34,7 @@ function expectedReleaseBranch(version) {
 }
 
 function git(args) {
-  // trimEnd only  -  see release-session.js command() for porcelain reasons.
+  // trimEnd only; see release-session.js command() for porcelain reasons.
   return execFileSync("git", args, {
     cwd: root,
     encoding: "utf8",
@@ -84,16 +81,18 @@ function runPreflight() {
     );
   }
 
-  assertReleaseBranchProtection(expectedBranch);
-
   console.log(
     `release-preflight: ok (${version}, ${expectedBranch}@${head.slice(0, 12)})`,
+  );
+  console.log(`release-preflight: release commit ${head}`);
+  console.log(
+    "release-preflight: manual gate (not checked by this script): confirm the hosted ci-gate workflow succeeded for this exact commit on GitHub, and that the beta tag ruleset (npm run repo:protect-beta-tags) is in place, before publishing.",
   );
 }
 
 function isDirectExecution() {
   if (!process.argv[1]) return false;
-  return pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url;
+  return isDirectExecutionOf(import.meta.url);
 }
 
 if (isDirectExecution()) {

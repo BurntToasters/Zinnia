@@ -1,3 +1,5 @@
+import type { ArchiveIoDiagnostics } from "./archive/backend-ipc";
+
 export type OutputLogVerbosity = "info" | "debug";
 export type OutputLogEntry = { level: "info" | "error"; text: string };
 
@@ -62,4 +64,56 @@ export function formatCommandOutputForLogs(
     });
   }
   return entries;
+}
+
+const IO_PHASES = [
+  ["validation", "validation"],
+  ["recovery", "recovery"],
+  ["inputScan", "input scan"],
+  ["snapshot", "snapshot"],
+  ["memberPreflight", "member preflight"],
+  ["sevenZipExecution", "7-Zip"],
+  ["quotaMonitoring", "quota"],
+  ["finalization", "finalization"],
+  ["total", "total"],
+] as const;
+
+/**
+ * Format backend I/O timings for Debug Console. Keep this allow-listed and
+ * path-free: diagnostics are operational metadata, not command output.
+ */
+export function formatArchiveIoDiagnosticsForDebug(
+  diagnostics: ArchiveIoDiagnostics,
+): string {
+  const phaseTimes = diagnostics?.phaseTimes;
+  const phaseSummary = phaseTimes
+    ? IO_PHASES.map(([key, label]) => {
+        const value = phaseTimes[key];
+        return typeof value === "number" && Number.isFinite(value)
+          ? `${label}=${Math.max(0, value).toFixed(1)}ms`
+          : null;
+      })
+        .filter((part): part is string => part !== null)
+        .join(", ")
+    : "";
+
+  const strategySummary = Object.entries(diagnostics?.strategies ?? {})
+    .filter(
+      ([key, value]) =>
+        ["inputScan", "snapshot", "stage", "publish", "quota"].includes(key) &&
+        typeof value === "string",
+    )
+    .map(([key, value]) => {
+      // Strategy labels come from backend enums. Redact unexpected path-like
+      // data instead of copying it into the user-visible debug console.
+      const safe = /^[A-Za-z0-9_. -]{1,80}$/.test(value) ? value : "(redacted)";
+      return `${key}=${safe}`;
+    })
+    .join(", ");
+
+  const parts = [
+    phaseSummary ? `phases: ${phaseSummary}` : "",
+    strategySummary ? `strategies: ${strategySummary}` : "",
+  ].filter(Boolean);
+  return parts.length > 0 ? `I/O diagnostics: ${parts.join("; ")}` : "";
 }

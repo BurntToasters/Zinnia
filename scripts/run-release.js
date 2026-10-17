@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { usesWindowsCmdShell } from "./npm-safe-update.mjs";
+import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -20,7 +21,7 @@ function npmCommand() {
 
 export function parseReleaseArgs(argv) {
   const flags = argv.filter((arg) => arg.startsWith("-"));
-  // Keep the former opt-in flag as a no-op so old operator commands still work.
+  // GUI E2E is temporarily skipped for releases, so the legacy flag is a no-op.
   const knownFlags = new Set(["--skip-e2e", "--skip-check"]);
   const unknown = flags.filter((flag) => !knownFlags.has(flag));
   if (unknown.length > 0) {
@@ -63,7 +64,7 @@ export function main(argv = process.argv.slice(2), runner = runNpm) {
 
 function isDirectExecution() {
   if (!process.argv[1]) return false;
-  return fileURLToPath(import.meta.url) === resolve(process.argv[1]);
+  return isDirectExecutionOf(import.meta.url);
 }
 
 if (isDirectExecution()) {

@@ -11,20 +11,21 @@ import { execSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import {
   normalizeUpdaterSignature,
   verifyUpdaterSignatures,
 } from "./updater-signature-verifier.js";
 import { resolveUpdaterTargets } from "./gpg-sign.js";
+import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 const require = createRequire(import.meta.url);
 const {
   githubApi,
   githubApiRaw,
   assertGitHubCliAuthenticated,
-  githubCliEnvironment,
+  runGitHub,
 } = require("./github-cli.cjs");
 const { isExplicitTruthy } = require("./release-policy.cjs");
 const {
@@ -375,12 +376,11 @@ function currentHeadCommit() {
 }
 
 function githubAuthToken() {
-  return execSync("gh auth token --hostname github.com", {
-    cwd: root,
-    encoding: "utf8",
-    env: githubCliEnvironment(),
-    stdio: ["ignore", "pipe", "pipe"],
-  }).trim();
+  return String(
+    runGitHub(["auth", "token", "--hostname", "github.com"], {
+      cwd: root,
+    }).stdout || "",
+  ).trim();
 }
 
 async function downloadDraftAsset(
@@ -569,10 +569,7 @@ async function main() {
 }
 
 function isDirectExecution() {
-  return Boolean(
-    process.argv[1] &&
-    pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url,
-  );
+  return Boolean(process.argv[1] && isDirectExecutionOf(import.meta.url));
 }
 
 if (isDirectExecution()) {

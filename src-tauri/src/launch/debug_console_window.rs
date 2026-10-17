@@ -18,7 +18,7 @@ fn attach_destroy_notifier(app: &tauri::AppHandle, window: &tauri::WebviewWindow
 }
 
 #[tauri::command]
-pub fn open_debug_console_window(app: tauri::AppHandle) -> Result<(), String> {
+pub async fn open_debug_console_window(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(existing) = app.get_webview_window(DEBUG_CONSOLE_LABEL) {
         existing.show().map_err(|e| e.to_string())?;
         existing.set_focus().map_err(|e| e.to_string())?;
@@ -71,7 +71,11 @@ pub fn close_debug_console_window(app: tauri::AppHandle) -> Result<(), String> {
 pub fn relay_debug_console_line(app: tauri::AppHandle, line: String) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(DEBUG_CONSOLE_LABEL) {
         window
-            .emit("zinnia-debug-log", line)
+            .emit_to(
+                tauri::EventTarget::webview_window(DEBUG_CONSOLE_LABEL),
+                "zinnia-debug-log",
+                line,
+            )
             .map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -82,7 +86,11 @@ pub fn relay_debug_console_line(app: tauri::AppHandle, line: String) -> Result<(
 pub fn relay_debug_console_seed(app: tauri::AppHandle, lines: Vec<String>) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(DEBUG_CONSOLE_LABEL) {
         window
-            .emit("zinnia-debug-seed", lines)
+            .emit_to(
+                tauri::EventTarget::webview_window(DEBUG_CONSOLE_LABEL),
+                "zinnia-debug-seed",
+                lines,
+            )
             .map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -92,7 +100,11 @@ pub fn relay_debug_console_seed(app: tauri::AppHandle, lines: Vec<String>) -> Re
 pub fn relay_debug_console_clear(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(DEBUG_CONSOLE_LABEL) {
         window
-            .emit("zinnia-debug-clear", ())
+            .emit_to(
+                tauri::EventTarget::webview_window(DEBUG_CONSOLE_LABEL),
+                "zinnia-debug-clear",
+                (),
+            )
             .map_err(|e| e.to_string())?;
     }
     Ok(())

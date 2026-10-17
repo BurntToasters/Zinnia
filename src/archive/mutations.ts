@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { takeE2eDialogResult } from "../e2e-dialog";
 import { $, parseThreads } from "../utils";
 import { SETTING_DEFAULTS, state } from "../state";
 import { devLog, getMode, log, setRunning, setStatus } from "../ui";
@@ -97,9 +98,12 @@ export async function addFilesToArchive(): Promise<void> {
     return;
   }
 
-  const picked = await runMutationDialog(() =>
-    open({ multiple: true, directory: false }),
-  );
+  const picked = await runMutationDialog(() => {
+    const queued = takeE2eDialogResult();
+    return queued
+      ? Promise.resolve(queued.result)
+      : open({ multiple: true, directory: false });
+  });
   if (!picked) return;
   const selection = picked.value;
   const files = Array.isArray(selection)
@@ -237,12 +241,18 @@ export async function convertArchive(): Promise<void> {
   }
   const { password: compressPassword, encryptHeaders } =
     normalizeCompressionSecurityOptions(format, rawPassword, rawEncryptHeaders);
-  const picked = await runMutationDialog(() =>
-    save({
+  const picked = await runMutationDialog(() => {
+    const queued = takeE2eDialogResult();
+    if (queued) {
+      return Promise.resolve(
+        typeof queued.result === "string" ? queued.result : null,
+      );
+    }
+    return save({
       title: "Convert archive to",
       defaultPath: `converted.${format === "gzip" ? "gz" : format === "bzip2" ? "bz2" : format}`,
-    }),
-  );
+    });
+  });
   if (!picked) return;
   const dest = picked.value;
   if (!dest) {
@@ -301,7 +311,10 @@ export async function convertArchive(): Promise<void> {
     if (!validation?.identity) {
       throw new Error("Could not capture a stable archive identity.");
     }
-    tempDir = await invoke<string>("create_temp_extract_dir");
+    // Reserve a managed leaf without creating it. The extraction backend can
+    // then publish the completed stage by rename instead of copying into an
+    // already-created empty conversion directory.
+    tempDir = await invoke<string>("reserve_temp_extract_path");
 
     const browsePassword = $<HTMLInputElement>("browse-password").value;
     const extractPassword = $<HTMLInputElement>("extract-password").value;
@@ -383,7 +396,11 @@ export async function convertArchive(): Promise<void> {
     compress.push(dest, "--", ...children);
 
     debugLogCommand(compress);
-    const result = await invokeGuardedRun7z(compress, outputSelectionToken);
+    const result = await invokeGuardedRun7z(
+      compress,
+      outputSelectionToken,
+      archive,
+    );
     if (state.cancelRequested && result.code !== 0) {
       setStatus("Cancelled", 2000);
       return;

@@ -2,7 +2,8 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { execFileSync } from "child_process";
-import { fileURLToPath, pathToFileURL } from "url";
+import { fileURLToPath } from "url";
+import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const defaultRoot = path.resolve(scriptDirectory, "..");
@@ -15,6 +16,18 @@ const QUALITY_GATE_RELATIVE_PATH = path.join(
   ".release-quality.json",
 );
 const DEFAULT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+// Native Tauri builds rewrite these tracked outputs. Keep the allowlist exact:
+// a new or unexpected file under gen/ must still invalidate release proof.
+const GENERATED_TAURI_SCHEMA_PATHS = new Set(
+  [
+    "acl-manifests.json",
+    "capabilities.json",
+    "desktop-schema.json",
+    "linux-schema.json",
+    "macOS-schema.json",
+    "windows-schema.json",
+  ].map((name) => `src-tauri/gen/schemas/${name}`),
+);
 
 function command(commandName, args, root) {
   // trimEnd only: git porcelain uses " M path" / "M  path". trim() would turn
@@ -32,12 +45,10 @@ function porcelainPaths(statusText) {
     .split("\n")
     .map((line) => line.replace(/\r$/, ""))
     .filter(Boolean)
-    .map((line) => {
+    .flatMap((line) => {
       // XY PATH  or  XY ORIG -> PATH  (XY is always two status columns)
       const pathPart = line.length >= 3 ? line.slice(3) : line;
-      return pathPart.includes(" -> ")
-        ? pathPart.split(" -> ").at(-1)
-        : pathPart;
+      return pathPart.includes(" -> ") ? pathPart.split(" -> ") : [pathPart];
     });
 }
 
@@ -51,9 +62,7 @@ function isIgnorableReleaseDirtyPath(filePath) {
   );
   const qualityGatePath = QUALITY_GATE_RELATIVE_PATH.replaceAll("\\", "/");
   return (
-    normalizedPath.startsWith("src-tauri/gen/schemas/") ||
-    normalizedPath === "src-tauri/gen/" ||
-    normalizedPath === "src-tauri/gen/schemas/" ||
+    GENERATED_TAURI_SCHEMA_PATHS.has(normalizedPath) ||
     normalizedPath === releaseSessionPath ||
     normalizedPath === qualityGatePath
   );
@@ -145,7 +154,10 @@ function clearQualityGateProof(root = defaultRoot) {
   fs.rmSync(path.join(root, QUALITY_GATE_RELATIVE_PATH), { force: true });
 }
 
-function recordSuccessfulQualityGate(root = defaultRoot) {
+function recordSuccessfulQualityGate(
+  root = defaultRoot,
+  { e2e = "passed" } = {},
+) {
   let status;
   try {
     status = command(
@@ -168,7 +180,7 @@ function recordSuccessfulQualityGate(root = defaultRoot) {
   fs.mkdirSync(path.dirname(proofPath), { recursive: true });
   fs.writeFileSync(
     proofPath,
-    `${JSON.stringify({ ...currentReleaseIdentity(root), completedAt: Date.now() })}\n`,
+    `${JSON.stringify({ ...currentReleaseIdentity(root), completedAt: Date.now(), e2e })}\n`,
     { mode: 0o600 },
   );
   return { recorded: true, dirtyFiles: null };
@@ -216,6 +228,7 @@ function createReleaseSession(root = defaultRoot) {
   return {
     ...currentReleaseIdentity(root),
     qualityGateCompletedAt: qualityGate.completedAt,
+    e2e: qualityGate.e2e ?? "unknown",
     startedAt: Date.now(),
   };
 }
@@ -241,7 +254,7 @@ function verifyReleaseSession(root = defaultRoot, options) {
 
 function isDirectExecution() {
   if (!process.argv[1]) return false;
-  return pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url;
+  return isDirectExecutionOf(import.meta.url);
 }
 
 if (isDirectExecution()) {

@@ -69,6 +69,13 @@ pub(crate) fn kill_command_process_tree(pid: u32, child: &mut std::process::Chil
     #[cfg(unix)]
     {
         // Negative PID signals the process group created via `process_group(0)`.
+        // SAFETY: kill takes no pointers. `pid` is the id of a child this process spawned with
+        // process_group(0), so -pid names that child's process group. The stdout/stderr error
+        // paths call this after try_wait reaped the leader, to stop grandchildren that still hold
+        // the pipes. POSIX does not reuse a pid while a process group with that id has members,
+        // so -pid still names our group then. If the group is already empty the call returns
+        // ESRCH; it can only reach another group if the pid was reused by a new group leader in
+        // that window.
         let _ = unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
     }
     #[cfg(windows)]

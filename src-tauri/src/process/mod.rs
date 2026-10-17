@@ -7,6 +7,8 @@ mod archive_snapshot;
 mod commands;
 mod commit;
 mod compress_preflight;
+#[cfg(feature = "e2e")]
+mod e2e_crash;
 mod journal;
 mod quota;
 mod recovery;
@@ -57,6 +59,8 @@ pub(crate) use archive_snapshot::archive_identity_token;
 pub(crate) use archive_snapshot::archive_identity_token_from_open_file;
 #[cfg(windows)]
 pub(crate) use archive_snapshot::copy_windows_zone_identifier;
+pub(crate) use archive_snapshot::release_snapshot_handles;
+pub(crate) use commit::archive_family;
 pub(crate) use journal::unregister_pending_stage;
 pub(crate) use quota::available_space_for_path;
 pub(crate) use staging::create_private_stage_dir;
@@ -103,7 +107,7 @@ pub(crate) use staging::{
     archive_output_family_token, assert_slt_archive_members_safe,
     assert_slt_declared_size_within_limit, extract_member_list_args,
     listing_preflight_exit_is_acceptable, operation_output_path, prepare_cleanup_plan,
-    random_token, ARCHIVE_OUTPUT_ABSENT_TOKEN,
+    random_token, slt_manifest_has_links, ARCHIVE_OUTPUT_ABSENT_TOKEN,
 };
 
 #[derive(serde::Serialize)]
@@ -115,6 +119,66 @@ pub struct RunResult {
     pub warning_code: Option<i32>,
     pub stdout_truncated: bool,
     pub stderr_truncated: bool,
+    #[serde(
+        rename = "archiveIdentityAfter",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub archive_identity_after: Option<String>,
+    #[serde(rename = "ioDiagnostics", skip_serializing_if = "Option::is_none")]
+    pub io_diagnostics: Option<ArchiveIoDiagnostics>,
+}
+
+/// Optional, redacted archive I/O telemetry. Keep fields numeric and strategy
+/// labels only: paths, passwords, and archive content never enter diagnostics.
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct ArchiveIoDiagnostics {
+    #[serde(rename = "phaseTimes")]
+    pub phase_times: ArchiveIoPhaseTimes,
+    pub strategies: ArchiveIoStrategies,
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArchiveIoPhaseTimes {
+    pub validation: u64,
+    pub recovery: u64,
+    pub input_scan: u64,
+    pub snapshot: u64,
+    pub member_preflight: u64,
+    pub seven_zip_execution: u64,
+    pub quota_monitoring: u64,
+    pub finalization: u64,
+    pub total: u64,
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct ArchiveIoStrategies {
+    #[serde(rename = "inputScan", skip_serializing_if = "Option::is_none")]
+    pub input_scan: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stage: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub publish: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quota: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ArchiveManifestSummary {
+    pub(crate) declared_bytes: u64,
+    pub(crate) entry_count: u64,
+    pub(crate) path_bytes: u64,
+    pub(crate) has_symbolic_links: bool,
+    pub(crate) has_hard_links: bool,
+    pub(crate) declared_size_untrusted: bool,
+}
+
+impl ArchiveManifestSummary {
+    pub(crate) fn has_links(&self) -> bool {
+        self.has_symbolic_links || self.has_hard_links
+    }
 }
 
 pub struct ProcessState {
@@ -137,9 +201,9 @@ pub struct ProcessState {
 
 #[derive(Clone, Debug)]
 pub(crate) struct CleanupPlan {
-    // Every extraction is directed to a contained sibling staging directory
-    // first (never inside the user destination). Existing destinations still
-    // receive destination ACL/mode via target-local publish / parent-mode apply.
+    // Extraction starts in contained sibling staging. Link-free extracts into
+    // existing destinations may relocate empty stage inside destination after
+    // member preflight; link-bearing/new destinations stay sibling-staged.
     pub(crate) staged_extract: Option<(std::path::PathBuf, std::path::PathBuf)>,
     // Create/update output is written to a sibling staging basename. This also
     // covers split-volume families (`.001`, `.002`, ...).
@@ -151,6 +215,10 @@ pub(crate) struct CleanupPlan {
     /// Private snapshot used by both member preflight and extraction. This
     /// avoids reopening a user-controlled source path between the two steps.
     pub(crate) staged_input_archive: Option<std::path::PathBuf>,
+    /// Actual input snapshot mechanism selected during preparation. This is
+    /// in-memory telemetry only; recovery journals retain paths/identities,
+    /// not strategy labels.
+    pub(crate) snapshot_strategy: Option<archive_snapshot::SnapshotStrategy>,
     /// App cache dir used to register pending stage paths for orphan cleanup.
     pub(crate) cache_dir: Option<std::path::PathBuf>,
     /// Creation-held identities for every transaction-owned stage root. Paths
@@ -159,6 +227,10 @@ pub(crate) struct CleanupPlan {
     pub(crate) stage_identities: Vec<(std::path::PathBuf, journal::FileIdentity)>,
     pub(crate) max_extract_bytes: Option<u64>,
     pub(crate) min_free_bytes: Option<u64>,
+    /// Captured before stage creation. This remains part of every plan so the
+    /// production extraction-stage optimization and its rollback paths compile
+    /// and can be exercised by the same unit-test build.
+    pub(crate) extract_destination_preexisting: bool,
 }
 
 impl CleanupPlan {

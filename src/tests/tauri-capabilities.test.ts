@@ -114,7 +114,7 @@ describe("Tauri capability policy", () => {
         "dialog:allow-confirm",
         "dialog:allow-open",
         "dialog:allow-save",
-        "shell:default",
+        "shell:allow-open",
         "updater:allow-check",
         "updater:allow-download",
         "updater:allow-install",
@@ -161,7 +161,59 @@ describe("Tauri capability policy", () => {
     expect(new Set(generated.default?.permissions ?? [])).toEqual(
       new Set(permissions),
     );
-    expect(generated.default?.permissions).toContain("shell:default");
+    expect(generated.default?.permissions).toContain("shell:allow-open");
+  });
+
+  // Failure modes covered: host-only checks hide stale schemas on other
+  // release platforms; a new invoke lacks a generated permission; or E2E-only
+  // WDIO dependencies leak test-plugin filesystem permissions into production.
+  it("keeps every checked-in platform schema production-only and aligned with handlers", () => {
+    const mainRs = fs.readFileSync(
+      path.resolve(process.cwd(), "src-tauri", "src", "main.rs"),
+      "utf8",
+    );
+    const handlerMatch = mainRs.match(/generate_handler!\[([\s\S]*?)\]\)/);
+    expect(handlerMatch?.[1]).toBeDefined();
+    const handlerCommands = [
+      ...(handlerMatch?.[1].matchAll(/::(\w+),?/g) ?? []),
+    ].map((match) => match[1]);
+
+    for (const schemaName of ["desktop", "linux", "macOS", "windows"]) {
+      const schemaPath = path.resolve(
+        process.cwd(),
+        "src-tauri",
+        "gen",
+        "schemas",
+        `${schemaName}-schema.json`,
+      );
+      const schema = JSON.parse(fs.readFileSync(schemaPath, "utf8")) as {
+        definitions?: {
+          Identifier?: { oneOf?: Array<{ const?: string }> };
+        };
+      };
+      const permissionIds = new Set(
+        schema.definitions?.Identifier?.oneOf
+          ?.map((permission) => permission.const)
+          .filter((permission): permission is string => Boolean(permission)),
+      );
+
+      for (const command of handlerCommands) {
+        expect(
+          permissionIds,
+          `${schemaName} schema has the permission for ${command}`,
+        ).toContain(`allow-${command.replaceAll("_", "-")}`);
+      }
+      expect(
+        [...permissionIds]
+          .filter((permission) => permission.startsWith("allow-"))
+          .sort(),
+        `${schemaName} schema has no stale custom command permissions`,
+      ).toEqual(handlerCommands.map(allowPermission).sort());
+      expect(
+        [...permissionIds].filter((permission) => permission.startsWith("fs:")),
+        `${schemaName} schema excludes optional E2E filesystem plugin permissions`,
+      ).toEqual([]);
+    }
   });
 
   it("grants every import-transitive invoke used by extract-window.ts, and no extra allow-*", () => {

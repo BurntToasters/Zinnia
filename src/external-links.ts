@@ -5,9 +5,10 @@ import { log } from "./ui";
 /**
  * Open an http(s) URL in the system browser.
  *
- * Prefer `<a href="…" target="_blank">` for in-UI links  -  with `shell:default`,
- * the shell plugin already intercepts those. Use this helper only for
- * programmatic opens (app menu, etc.) so clicks are not opened twice.
+ * Prefer `<a href="…" target="_blank">` for in-UI links. The shell plugin
+ * intercepts those under `shell:allow-open`, the only permission the
+ * `shell:default` set grants. Use this helper only for programmatic opens
+ * (app menu, etc.) so clicks are not opened twice.
  */
 export async function openExternalUrl(url: string): Promise<void> {
   const href = safeHref(url);

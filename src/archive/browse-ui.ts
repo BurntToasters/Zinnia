@@ -1,11 +1,5 @@
 import { confirm } from "@tauri-apps/plugin-dialog";
-import {
-  $,
-  escapeHtml,
-  formatSize,
-  trapFocus,
-  releaseFocusTrap,
-} from "../utils";
+import { $, formatSize, trapFocus, releaseFocusTrap } from "../utils";
 import { state, cacheSelection, clearBrowseCache } from "../state";
 import {
   log,
@@ -44,25 +38,30 @@ import {
   truncateForDialog,
 } from "./runtime";
 
-let browseArchiveLoader: (() => Promise<ArchiveInfo | null>) | null = null;
+let browseArchiveLoader:
+  ((expectedArchiveIdentity?: string) => Promise<ArchiveInfo | null>) | null =
+  null;
 const MAX_RENDERED_BROWSE_ROWS = 1_000;
 const MAX_RENDERED_SELECTIVE_ROWS = 1_000;
 const SELECTIVE_SEARCH_DEBOUNCE_MS = 120;
 let selectiveSearchTimer: number | undefined;
 
 export function registerBrowseArchiveLoader(
-  loader: () => Promise<ArchiveInfo | null>,
+  loader: (expectedArchiveIdentity?: string) => Promise<ArchiveInfo | null>,
 ): void {
   browseArchiveLoader = loader;
 }
 import { clearPasswordFields, showOperationError } from "./runtime";
+
+// Matches the rendered output of the former " &nbsp;·&nbsp; " HTML separator.
+const BROWSE_SUMMARY_SEPARATOR = " \u00a0\u00b7\u00a0 ";
 
 function renderBrowseRows(
   tbody: HTMLElement,
   entries: BrowseEntry[],
   folderClass: string,
 ): void {
-  tbody.innerHTML = "";
+  tbody.replaceChildren();
   const fragment = document.createDocumentFragment();
   if (entries.length === 0) {
     const tr = document.createElement("tr");
@@ -81,8 +80,12 @@ function renderBrowseRows(
 
     const tdName = document.createElement("td");
     const iconName = entry.isFolder ? "folder" : "file";
-    tdName.innerHTML = `<i data-lucide="${iconName}" class="lucide-icon lucide-icon--inline"></i><span></span>`;
-    tdName.querySelector("span")!.textContent = entry.path;
+    const icon = document.createElement("i");
+    icon.setAttribute("data-lucide", iconName);
+    icon.className = "lucide-icon lucide-icon--inline";
+    const label = document.createElement("span");
+    label.textContent = entry.path;
+    tdName.replaceChildren(icon, label);
     tdName.title = entry.path;
     tdName.classList.add("cell-break");
 
@@ -122,16 +125,23 @@ export function renderBrowseTable(info: ArchiveInfo) {
     const totalPacked = info.entries.reduce((sum, e) => sum + e.packedSize, 0);
     const fileCount = info.entries.filter((e) => !e.isFolder).length;
     const folderCount = info.entries.filter((e) => e.isFolder).length;
-    const parts: string[] = [];
-    parts.push(`<strong>${escapeHtml(info.type || "Archive")}</strong>`);
-    if (info.method) parts.push(`Method: ${escapeHtml(info.method)}`);
+    const parts: Array<string | HTMLElement> = [];
+    const typeEl = document.createElement("strong");
+    typeEl.textContent = info.type || "Archive";
+    parts.push(typeEl);
+    if (info.method) parts.push(`Method: ${info.method}`);
     if (info.solid) parts.push("Solid");
     if (info.encrypted) parts.push("Encrypted");
     parts.push(
       `${fileCount} file${fileCount !== 1 ? "s" : ""}${folderCount > 0 ? `, ${folderCount} folder${folderCount !== 1 ? "s" : ""}` : ""}`,
     );
     parts.push(`${formatSize(totalSize)} \u2192 ${formatSize(totalPacked)}`);
-    summary.innerHTML = parts.join(" &nbsp;\u00b7&nbsp; ");
+    const nodes: Array<string | HTMLElement> = [];
+    parts.forEach((part, index) => {
+      if (index > 0) nodes.push(BROWSE_SUMMARY_SEPARATOR);
+      nodes.push(part);
+    });
+    summary.replaceChildren(...nodes);
   }
 
   const tbody = document.getElementById("browse-tbody");
@@ -145,7 +155,9 @@ export function renderBrowseTable(info: ArchiveInfo) {
 
   const basicSummary = document.getElementById("basic-browse-summary");
   if (basicSummary && summary) {
-    basicSummary.innerHTML = summary.innerHTML;
+    basicSummary.replaceChildren(
+      ...Array.from(summary.childNodes, (node) => node.cloneNode(true)),
+    );
   }
   triggerIconRefresh();
 }
@@ -452,7 +464,7 @@ function renderSelectiveEntryList(
   const focusedPath = list.contains(activeRow ?? null)
     ? activeRow?.dataset.memberPath
     : undefined;
-  list.innerHTML = "";
+  list.replaceChildren();
   list.removeAttribute("role");
   list.removeAttribute("aria-label");
   list.removeAttribute("aria-multiselectable");
@@ -598,25 +610,30 @@ function syncSelectiveDestinationWithExtractInput(): void {
 
 async function ensureArchiveInfoForPicker(
   archive: string,
+  validatedIdentity?: string,
 ): Promise<ArchiveInfo | null> {
   if (state.inputs[0] !== archive) return null;
-  const [validation] = await ensureArchivePaths(
-    [archive],
-    "browse",
-    undefined,
-    true,
-  );
-  if (state.inputs[0] !== archive || !validation?.identity) return null;
+  let identity = validatedIdentity;
+  if (!identity) {
+    const [validation] = await ensureArchivePaths(
+      [archive],
+      "browse",
+      undefined,
+      true,
+    );
+    identity = validation?.identity;
+  }
+  if (state.inputs[0] !== archive || !identity) return null;
   const cached = getCachedArchiveInfo(archive);
   const cachedIdentity = state.browseArchiveIdentityByPath.get(archive);
-  if (cached && cachedIdentity === validation.identity) return cached;
+  if (cached && cachedIdentity === identity) return cached;
   if (cached || cachedIdentity) {
     clearBrowseCache(archive);
   }
   if (!browseArchiveLoader) {
     throw new Error("Archive browsing is not initialized.");
   }
-  return await browseArchiveLoader();
+  return await browseArchiveLoader(identity);
 }
 
 export function closeSelectiveExtractModal(): void {
@@ -719,8 +736,18 @@ async function openSelectiveExtractModalOnce(): Promise<void> {
     return;
   }
 
+  let validatedIdentity: string | undefined;
   try {
-    await ensureArchivePaths([archive], "browse");
+    const [validation] = await ensureArchivePaths(
+      [archive],
+      "browse",
+      undefined,
+      true,
+    );
+    validatedIdentity = validation?.identity;
+    if (!validatedIdentity) {
+      throw new Error("Could not capture a stable archive identity.");
+    }
     if (!requestIsCurrent()) return;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -728,7 +755,7 @@ async function openSelectiveExtractModalOnce(): Promise<void> {
     return;
   }
 
-  const info = await ensureArchiveInfoForPicker(archive);
+  const info = await ensureArchiveInfoForPicker(archive, validatedIdentity);
   if (!info || !requestIsCurrent()) return;
 
   ensureExtractDestinationDefaultFromArchive(archive);

@@ -23,7 +23,12 @@ describe("bundled 7-Zip provenance", () => {
       artifacts: Record<string, { source: string; member: string }>;
     };
 
-    expect(provenance.version).toBe("26.03");
+    // build.rs embeds this as the runtime version gate; keep it the only copy.
+    expect(provenance.version).toMatch(/^\d+\.\d+$/);
+    const compact = provenance.version.replace(".", "");
+    for (const source of Object.values(provenance.sourceArchives)) {
+      expect(source.url).toContain(`7z${compact}-`);
+    }
     expect(provenance.officialDownloadPage).toBe(
       "https://www.7-zip.org/download.html",
     );

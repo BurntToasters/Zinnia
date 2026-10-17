@@ -49,7 +49,7 @@ which points git at the tracked [`.githooks`](.githooks) directory.
 - Enable manually: `git config core.hooksPath .githooks`
 - Bypass once: `git commit --no-verify`
 
-## CI and merge protection
+## CI and merge expectations
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on PRs to `main` and
 `beta`, then runs again on pushes to those branches to prove the exact
@@ -57,19 +57,24 @@ post-merge tip. Feature-branch pushes with an open PR are not run twice. The
 workflow includes Windows/macOS Rust checks, every supported platform/CPU
 compile smoke, and `npm audit`/`cargo audit` security checks.
 
-Release branches must require the source-bound `ci-gate` check, which aggregates
-every independent proof job. A repository admin can apply the project policy to
-both `main` and `beta` with:
+The `main` and `beta` branches intentionally have no branch protection. The
+`beta` branch may be deleted and recreated. Pull request review and hosted CI
+checks remain mandatory release-process requirements, and operators must verify
+them before merging; branch rules do not enforce them. The source-bound
+`ci-gate` check aggregates every independent proof job. Before releasing,
+confirm a successful hosted `ci-gate` for the exact `main` or `beta` commit;
+release preflight does not check it.
+
+A repository admin can install the immutable beta release-tag ruleset (optional
+for now; release preflight and the release-policy check do not require it) with:
 
 ```sh
-npm run repo:protect-release-branches
+npm run repo:protect-beta-tags
 ```
 
-The command requires strict status checks, keeps the intentional administrator
-bypass enabled, and disables force pushes and branch deletion. Release
-preflight verifies the required protection while allowing that bypass.
-Additional checks such as `rust-check` and `security-audit` may also be required
-in repository settings.
+This ruleset protects `v*-beta.*` tags from updates and deletions. It does not
+protect `main` or `beta`; a deleted `beta` branch can be recreated while its
+published beta tags remain immutable.
 
 ## Cutting a stable release
 
@@ -92,10 +97,33 @@ the publish/verify ordering. Follow `docs/RELEASE-STABLE.md`.
   binary with `--features e2e` and never belongs in release/signed builds.
   The WebDriver capability is inlined in [`src-tauri/tauri.e2e.conf.json`](src-tauri/tauri.e2e.conf.json)
   so production ACL generation never sees `wdio-webdriver`. Linux CI uses xvfb.
-  `SKIP_E2E=1` is refused (exit 1) so quality-gate proof cannot skip the suite.
+  `SKIP_E2E=1` is refused (exit 1). Release commands temporarily use
+  `test:all -- --require-clean-proof --skip-e2e`; their proof explicitly records
+  `e2e: "skipped"`. Normal `test:all` and CI still require GUI E2E.
   `ZINNIA_E2E_REBUILD=1` forces a rebuild of the
   debug app.
 - See [ARCHITECTURE.md](ARCHITECTURE.md) for the module map.
+
+### Windows GUI E2E
+
+A Windows release-machine run failed before WebDriver became ready. The app
+exited with code 101 during the Tauri setup hook because WebView2 creation
+returned `HRESULT(0x80070578): Invalid window handle.` The build succeeded.
+
+An SSH or service session without an interactive desktop is a suspected cause,
+not a confirmed diagnosis. Tauri users report the same error over SSH and a
+successful launch from the Windows desktop in
+[discussion #6008](https://github.com/orgs/tauri-apps/discussions/6008).
+Run `npm run test:e2e` from PowerShell inside a logged-in Windows desktop to
+verify GUI behavior. Backend startup logs are in `logs/wdio-*.log`;
+`coverage/e2e/result.json` records the suite result and verification evidence.
+
+For now, `release:prepare` and all platform release commands skip GUI E2E while
+running the remaining checks. Their quality-gate proof and release session
+record `e2e: "skipped"`; this is not GUI verification. Resume and continuation
+commands still verify the release session. `workspace:prepare`, normal
+`test:all`, and hosted CI continue to run GUI E2E. Remove the temporary release
+skip after Windows desktop E2E succeeds in the supported release environment.
 
 ### Where to put new code
 

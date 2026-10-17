@@ -96,8 +96,24 @@ impl ExtractStagePlacement {
     }
 }
 
+/// Format version written into every cleanup journal by this build.
+///
+/// Rule: bump this constant whenever a change to `CleanupJournal` (a new field,
+/// or a change in the meaning of an existing one) would make an older reader
+/// misinterpret a journal it accepts, for example by treating a journal as
+/// legacy when it is not. Readers refuse any journal whose `format_version` is
+/// greater than this constant, so bumping it is what makes older builds fail
+/// closed instead of running recovery with wrong assumptions. Journals with no
+/// `format_version` are pre-versioned (version 0) and keep their legacy handling.
+pub(crate) const CLEANUP_JOURNAL_FORMAT_VERSION: u32 = 1;
+
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct CleanupJournal {
+    /// Serialized format version. Missing (0) identifies a pre-versioned journal
+    /// whose compatibility rules are inferred from missing fields. Versions above
+    /// `CLEANUP_JOURNAL_FORMAT_VERSION` are refused by every reader.
+    #[serde(default)]
+    pub(crate) format_version: u32,
     pub(crate) stage: std::path::PathBuf,
     pub(crate) destination: std::path::PathBuf,
     pub(crate) archive: bool,
@@ -214,6 +230,14 @@ pub(crate) fn identity_with_fingerprint_from(
         .ok_or_else(|| "Expected content fingerprint is missing.".to_string())?;
     identity.set_fingerprint(fingerprint);
     Ok(identity)
+}
+
+pub(crate) fn identity_with_object_fingerprint(
+    mut identity: FileIdentity,
+    fingerprint: ObjectFingerprint,
+) -> FileIdentity {
+    identity.set_fingerprint(fingerprint);
+    identity
 }
 
 /// Attach a regular-file content fingerprint to an inode/file-id identity.
@@ -507,6 +531,91 @@ pub(crate) fn read_bounded_nofollow_bytes_if_matches(
     Ok(Some(bytes))
 }
 
+/// The extraction publisher appends and fsyncs one identity record, then
+/// journals the grown log's fingerprint. A crash between those two durable
+/// writes leaves exactly one record (or a torn part of one) after the
+/// journaled length. Its object has not been published yet, because
+/// publication waits for the journal update.
+///
+/// Return the identity that describes the log as it is on disk when, and only
+/// when, the journaled prefix is intact and the unjournaled suffix has that
+/// shape. Otherwise return `expected` unchanged so the caller's strict check
+/// fails closed. The suffix remains bounded by the move-plan checks applied
+/// when records are hydrated.
+pub(crate) fn effective_move_identity_log_identity(
+    stage: &std::path::Path,
+    expected: Option<&FileIdentity>,
+) -> Result<Option<FileIdentity>, String> {
+    use sha2::Digest as _;
+    use std::io::Read as _;
+
+    let Some(expected) = expected else {
+        return Ok(None);
+    };
+    let unchanged = Ok(Some(expected.clone()));
+    let Some(ObjectFingerprint::File {
+        len: expected_len,
+        sha256: expected_sha256,
+    }) = expected.fingerprint()
+    else {
+        return unchanged;
+    };
+    let path = move_identity_log_path(stage);
+    match std::fs::symlink_metadata(&path) {
+        Ok(metadata)
+            if !crate::path_safety::is_link_or_reparse(&metadata) && metadata.is_file() => {}
+        Ok(_) => return unchanged,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return unchanged,
+        Err(error) => return Err(error.to_string()),
+    }
+    let mut file = crate::path_safety::open_regular_file_nofollow(&path)?;
+    let before_identity = file_identity(&file)?;
+    let before = file.metadata().map_err(|error| error.to_string())?;
+    if !file_identities_match(&before_identity, expected)
+        || before.len() <= *expected_len
+        || before.len() > MAX_MOVE_IDENTITY_LOG_BYTES
+    {
+        return unchanged;
+    }
+    let mut bytes = Vec::with_capacity(usize::try_from(before.len()).unwrap_or(0));
+    file.by_ref()
+        .take(MAX_MOVE_IDENTITY_LOG_BYTES.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    let after = file.metadata().map_err(|error| error.to_string())?;
+    if bytes.len() as u64 != before.len()
+        || after.len() != before.len()
+        || after.modified().ok() != before.modified().ok()
+    {
+        return unchanged;
+    }
+    let Ok(prefix_len) = usize::try_from(*expected_len) else {
+        return unchanged;
+    };
+    let (prefix, suffix) = bytes.split_at(prefix_len);
+    if sha2::Sha256::digest(prefix).as_slice() != expected_sha256
+        || prefix.last().is_some_and(|byte| *byte != b'\n')
+    {
+        return unchanged;
+    }
+    // At most one record can be unjournaled: either torn (no newline yet) or
+    // complete (exactly one newline, at the end).
+    let newlines = suffix.iter().filter(|byte| **byte == b'\n').count();
+    let one_record = match newlines {
+        0 => true,
+        1 => suffix.last() == Some(&b'\n'),
+        _ => false,
+    };
+    if !one_record || suffix.len() > MAX_MOVE_IDENTITY_RECORD_BYTES.saturating_add(1) {
+        return unchanged;
+    }
+    Ok(Some(identity_with_file_content(
+        before_identity,
+        before.len(),
+        sha2::Sha256::digest(&bytes).into(),
+    )))
+}
+
 #[cfg(windows)]
 fn file_identity_for_entry(
     file: &std::fs::File,
@@ -519,7 +628,13 @@ fn file_identity_for_entry(
         BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ID_INFO,
     };
     let handle = file.as_raw_handle() as HANDLE;
+    // SAFETY: BY_HANDLE_FILE_INFORMATION is a plain C struct of integers and
+    // FILETIME fields, so the all-zero bit pattern is valid. It is only read after
+    // GetFileInformationByHandle reports success, and that call overwrites it.
     let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: `handle` is the raw handle of `file`, which the caller keeps open and
+    // which this call only borrows. `&mut info` is a valid, exclusive out-pointer
+    // to a struct of the type the API writes.
     let success = unsafe { GetFileInformationByHandle(handle, &mut info) };
     if success == 0 {
         return Err(std::io::Error::last_os_error().to_string());
@@ -527,7 +642,13 @@ fn file_identity_for_entry(
     if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 && !allow_symlink_reparse {
         return Err("Refusing a file identity for a link or reparse point.".to_string());
     }
+    // SAFETY: FILE_ID_INFO is a plain C struct of an integer and a 16-byte id, so
+    // the all-zero bit pattern is valid. It is only read when the call below
+    // reports success.
     let mut extended: FILE_ID_INFO = unsafe { std::mem::zeroed() };
+    // SAFETY: `handle` is the same open handle as above. The FileIdInfo class
+    // matches the FILE_ID_INFO buffer. The pointer refers to the local `extended`,
+    // and the size argument equals its size, so the API writes only within it.
     let has_extended_id = unsafe {
         GetFileInformationByHandleEx(
             handle,
@@ -563,6 +684,10 @@ fn os_value_bytes(value: &std::ffi::OsStr) -> Vec<u8> {
     {
         value.to_string_lossy().as_bytes().to_vec()
     }
+}
+
+pub(crate) fn fingerprint_path_bytes(value: &std::ffi::OsStr) -> Vec<u8> {
+    os_value_bytes(value)
 }
 
 fn hash_regular_file(path: &std::path::Path) -> Result<ObjectFingerprint, String> {
@@ -603,17 +728,12 @@ fn hash_regular_file(path: &std::path::Path) -> Result<ObjectFingerprint, String
 }
 
 fn path_fingerprint(path: &std::path::Path) -> Result<ObjectFingerprint, String> {
-    use sha2::Digest as _;
-
     let root_metadata = std::fs::symlink_metadata(path).map_err(|error| error.to_string())?;
     if root_metadata.is_file() && !crate::path_safety::is_link_or_reparse(&root_metadata) {
         return hash_regular_file(path);
     }
     if root_metadata.file_type().is_symlink() {
-        let target = std::fs::read_link(path).map_err(|error| error.to_string())?;
-        return Ok(ObjectFingerprint::Symlink {
-            sha256: sha2::Sha256::digest(os_value_bytes(target.as_os_str())).into(),
-        });
+        return fingerprint_symlink(path);
     }
     if !root_metadata.is_dir() || crate::path_safety::is_link_or_reparse(&root_metadata) {
         return Err(format!(
@@ -648,10 +768,7 @@ fn path_fingerprint(path: &std::path::Path) -> Result<ObjectFingerprint, String>
             let len = metadata.len();
             let modified = metadata.modified().ok();
             let fingerprint = if metadata.file_type().is_symlink() {
-                let target = std::fs::read_link(&entry_path).map_err(|error| error.to_string())?;
-                ObjectFingerprint::Symlink {
-                    sha256: sha2::Sha256::digest(os_value_bytes(target.as_os_str())).into(),
-                }
+                fingerprint_symlink(&entry_path)?
             } else if metadata.is_file() && !crate::path_safety::is_link_or_reparse(&metadata) {
                 hash_regular_file(&entry_path)?
             } else if metadata.is_dir() && !crate::path_safety::is_link_or_reparse(&metadata) {
@@ -683,6 +800,23 @@ fn path_fingerprint(path: &std::path::Path) -> Result<ObjectFingerprint, String>
         }
     }
 
+    Ok(fingerprint_records(records))
+}
+
+pub(crate) fn fingerprint_symlink(path: &std::path::Path) -> Result<ObjectFingerprint, String> {
+    use sha2::Digest as _;
+
+    let target = std::fs::read_link(path).map_err(|error| error.to_string())?;
+    Ok(ObjectFingerprint::Symlink {
+        sha256: sha2::Sha256::digest(os_value_bytes(target.as_os_str())).into(),
+    })
+}
+
+pub(crate) fn fingerprint_records(
+    mut records: Vec<(Vec<u8>, ObjectFingerprint)>,
+) -> ObjectFingerprint {
+    use sha2::Digest as _;
+
     records.sort_by(|left, right| left.0.cmp(&right.0));
     let mut hasher = sha2::Sha256::new();
     for (relative, fingerprint) in records {
@@ -701,9 +835,9 @@ fn path_fingerprint(path: &std::path::Path) -> Result<ObjectFingerprint, String>
             }
         }
     }
-    Ok(ObjectFingerprint::Directory {
+    ObjectFingerprint::Directory {
         sha256: hasher.finalize().into(),
-    })
+    }
 }
 
 pub(crate) fn path_identity_with_fingerprint(
@@ -1061,6 +1195,9 @@ pub(crate) fn cleanup_transaction_artifacts(
     move_identity_log_identity: Option<&FileIdentity>,
     archive_backup_identities: &[Option<FileIdentity>],
 ) -> Result<(), String> {
+    let move_identity_log_identity =
+        effective_move_identity_log_identity(stage, move_identity_log_identity)?;
+    let move_identity_log_identity = move_identity_log_identity.as_ref();
     let present = validate_transaction_artifacts(
         stage,
         stage_identity,
@@ -1071,13 +1208,14 @@ pub(crate) fn cleanup_transaction_artifacts(
     if present.move_plan_present {
         remove_recovery_regular_file_if_matches(
             &move_plan_path(stage),
-            move_plan_identity.expect("validated move-plan identity"),
+            move_plan_identity.ok_or_else(|| "validated move-plan identity missing".to_string())?,
         )?;
     }
     if present.move_identity_log_present {
         remove_recovery_regular_file_if_matches(
             &move_identity_log_path(stage),
-            move_identity_log_identity.expect("validated identity-log identity"),
+            move_identity_log_identity
+                .ok_or_else(|| "validated identity-log identity missing".to_string())?,
         )?;
     }
     for (index, is_present) in present.archive_backups_present.iter().enumerate() {
@@ -1086,14 +1224,15 @@ pub(crate) fn cleanup_transaction_artifacts(
                 &archive_backup_path(stage, index),
                 archive_backup_identities[index]
                     .as_ref()
-                    .expect("validated archive backup identity"),
+                    .ok_or_else(|| "validated archive backup identity missing".to_string())?,
             )?;
         }
     }
     if present.stage_present {
         remove_directory_if_matches(
             stage,
-            stage_identity.expect("validated transaction stage identity"),
+            stage_identity
+                .ok_or_else(|| "validated transaction stage identity missing".to_string())?,
         )?;
     }
     if let Some(parent) = stage.parent() {
@@ -1125,7 +1264,10 @@ pub(crate) fn cleanup_journal_path(app: &tauri::AppHandle) -> Result<std::path::
         .join("active-transaction.json"))
 }
 
-pub(crate) fn read_cleanup_journal_at(
+/// Parse a journal without enforcing the format gate. Only the acknowledgment
+/// path may use this, and it must check `format_version` before doing anything
+/// else. Every other reader uses `read_cleanup_journal_at`.
+pub(crate) fn read_cleanup_journal_any_version_at(
     path: &std::path::Path,
 ) -> Result<Option<CleanupJournal>, String> {
     let Some(json) = read_bounded_nofollow_text(path, MAX_RECOVERY_JOURNAL_BYTES)? else {
@@ -1134,6 +1276,48 @@ pub(crate) fn read_cleanup_journal_at(
     serde_json::from_str(&json)
         .map(Some)
         .map_err(|error| format!("Could not parse recovery journal: {error}"))
+}
+
+/// Refuse a journal written by a newer Zinnia build. The message says the
+/// journal was preserved so the startup banner offers acknowledgment.
+pub(crate) fn ensure_journal_format_supported(journal: &CleanupJournal) -> Result<(), String> {
+    if journal.format_version > CLEANUP_JOURNAL_FORMAT_VERSION {
+        return Err(format!(
+            "The recovery journal was written by a newer Zinnia version (journal format {}; \
+             this build supports up to {}). The journal was preserved and no files were \
+             changed. Recover it with that newer Zinnia version, or accept it here to clear \
+             the marker without changing files.",
+            journal.format_version, CLEANUP_JOURNAL_FORMAT_VERSION
+        ));
+    }
+    Ok(())
+}
+
+/// Read the active journal for recovery or mutation. Every caller that can
+/// touch files or rewrite the journal goes through this gate, so a newer format
+/// fails before any filesystem action.
+pub(crate) fn read_cleanup_journal_at(
+    path: &std::path::Path,
+) -> Result<Option<CleanupJournal>, String> {
+    let Some(journal) = read_cleanup_journal_any_version_at(path)? else {
+        return Ok(None);
+    };
+    ensure_journal_format_supported(&journal)?;
+    Ok(Some(journal))
+}
+
+/// Refuse to replace an existing journal this build cannot read. A missing
+/// journal is fine. Parse errors also fail closed, because recovery should
+/// already have resolved any such journal before a new transaction starts.
+pub(crate) fn ensure_journal_path_writable_at(path: &std::path::Path) -> Result<(), String> {
+    read_cleanup_journal_at(path).map(|_| ())
+}
+
+/// Serialize a journal in the format this build writes. Every write stamps the
+/// current format version, including rewrites of journals read from disk.
+pub(crate) fn encode_cleanup_journal(journal: &mut CleanupJournal) -> Result<String, String> {
+    journal.format_version = CLEANUP_JOURNAL_FORMAT_VERSION;
+    serde_json::to_string(journal).map_err(|error| error.to_string())
 }
 
 pub(crate) fn captured_plan_stage_identity(
@@ -1158,6 +1342,7 @@ pub(crate) fn write_cleanup_journal(
 ) -> Result<bool, String> {
     let journal = if let Some((stage, destination)) = &plan.staged_extract {
         Some(CleanupJournal {
+            format_version: CLEANUP_JOURNAL_FORMAT_VERSION,
             stage: stage.clone(),
             destination: destination.clone(),
             archive: false,
@@ -1196,6 +1381,7 @@ pub(crate) fn write_cleanup_journal(
             })
             .collect();
         Some(CleanupJournal {
+            format_version: CLEANUP_JOURNAL_FORMAT_VERSION,
             stage,
             destination: destination.clone(),
             archive: true,
@@ -1214,11 +1400,13 @@ pub(crate) fn write_cleanup_journal(
     } else {
         None
     };
-    let Some(journal) = journal else {
+    let Some(mut journal) = journal else {
         return Ok(false);
     };
-    let json = serde_json::to_string(&journal).map_err(|e| e.to_string())?;
-    crate::settings_store::atomic_write_text(&cleanup_journal_path(app)?, &json)?;
+    let journal_path = cleanup_journal_path(app)?;
+    ensure_journal_path_writable_at(&journal_path)?;
+    let json = encode_cleanup_journal(&mut journal)?;
+    crate::settings_store::atomic_write_text(&journal_path, &json)?;
     Ok(true)
 }
 
@@ -1257,7 +1445,8 @@ pub(crate) fn update_archive_journal(
         .iter()
         .map(|snapshot| snapshot.path.clone())
         .collect::<Vec<_>>();
-    let journal = CleanupJournal {
+    let mut journal = CleanupJournal {
+        format_version: CLEANUP_JOURNAL_FORMAT_VERSION,
         stage,
         destination: destination.clone(),
         archive: true,
@@ -1283,7 +1472,7 @@ pub(crate) fn update_archive_journal(
         extract_phase: None,
         archive_phase: Some(ArchiveJournalPhase::InProgress),
     };
-    let json = serde_json::to_string(&journal).map_err(|e| e.to_string())?;
+    let json = encode_cleanup_journal(&mut journal)?;
     crate::settings_store::atomic_write_text(&journal_path, &json)
 }
 
@@ -1354,7 +1543,7 @@ fn record_extract_artifact_identity(
     } else {
         journal.move_identity_log_identity = Some(identity.clone());
     }
-    let json = serde_json::to_string(&journal).map_err(|error| error.to_string())?;
+    let json = encode_cleanup_journal(&mut journal)?;
     crate::settings_store::atomic_write_text(&path, &json)?;
     if let Some(cache_dir) = &plan.cache_dir {
         if move_plan {
@@ -1409,7 +1598,7 @@ pub(crate) fn mark_extract_journal_committed(
         }
     }
     journal.extract_phase = Some(ExtractJournalPhase::Committed);
-    let json = serde_json::to_string(&journal).map_err(|error| error.to_string())?;
+    let json = encode_cleanup_journal(&mut journal)?;
     crate::settings_store::atomic_write_text(&path, &json)
 }
 
@@ -1463,7 +1652,7 @@ pub(crate) fn record_archive_journal_backup(
     // still-open handle afterward. Some FAT-family filesystems can change their
     // legacy file ID when a rename uses a longer directory entry.
     journal.previous_archive_identities[index] = Some(identity.clone());
-    let json = serde_json::to_string(&journal).map_err(|error| error.to_string())?;
+    let json = encode_cleanup_journal(&mut journal)?;
     crate::settings_store::atomic_write_text(&path, &json)?;
     if let Some(cache_dir) = &plan.cache_dir {
         record_pending_archive_backup_identity(
@@ -1523,7 +1712,7 @@ pub(crate) fn record_archive_journal_published(
     } else {
         journal.next_archive_identities[index] = Some(identity.clone());
     }
-    let json = serde_json::to_string(&journal).map_err(|error| error.to_string())?;
+    let json = encode_cleanup_journal(&mut journal)?;
     crate::settings_store::atomic_write_text(&path, &json)
 }
 
@@ -1557,15 +1746,35 @@ pub(crate) fn mark_archive_journal_committed(
     }
     ensure_path_identity(expected_stage, expected_stage_identity)?;
     journal.archive_phase = Some(ArchiveJournalPhase::Committed);
-    let json = serde_json::to_string(&journal).map_err(|e| e.to_string())?;
+    let json = encode_cleanup_journal(&mut journal)?;
     crate::settings_store::atomic_write_text(&path, &json)
 }
 
-pub(crate) fn clear_cleanup_journal(app: &tauri::AppHandle) -> Result<(), String> {
-    let path = cleanup_journal_path(app)?;
-    crate::fs_secure::remove_regular_file_nofollow_if_exists(&path)
+/// Remove the active journal after its transaction completed or was recovered.
+/// A journal from a newer format is refused, because removing it would discard
+/// state this build cannot interpret. Unreadable or corrupt journals are still
+/// removed, as before, since clearing is the conservative response to them.
+pub(crate) fn clear_cleanup_journal_at(path: &std::path::Path) -> Result<(), String> {
+    if let Ok(Some(journal)) = read_cleanup_journal_any_version_at(path) {
+        ensure_journal_format_supported(&journal)?;
+    }
+    remove_cleanup_journal_file(path)
+}
+
+/// Remove a journal that acknowledgment has already accepted as-is. This is the
+/// only removal path that may delete a newer-format journal.
+pub(crate) fn clear_acknowledged_cleanup_journal_at(path: &std::path::Path) -> Result<(), String> {
+    remove_cleanup_journal_file(path)
+}
+
+fn remove_cleanup_journal_file(path: &std::path::Path) -> Result<(), String> {
+    crate::fs_secure::remove_regular_file_nofollow_if_exists(path)
         .map(|_| ())
         .map_err(|error| error.to_string())
+}
+
+pub(crate) fn clear_cleanup_journal(app: &tauri::AppHandle) -> Result<(), String> {
+    clear_cleanup_journal_at(&cleanup_journal_path(app)?)
 }
 
 pub(crate) fn pending_stages_path(cache_dir: &std::path::Path) -> std::path::PathBuf {
