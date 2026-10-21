@@ -158,24 +158,6 @@ function recordSuccessfulQualityGate(
   root = defaultRoot,
   { e2e = "passed" } = {},
 ) {
-  let status;
-  try {
-    status = command(
-      "git",
-      ["status", "--porcelain=v1", "--untracked-files=all"],
-      root,
-    );
-  } catch {
-    return { recorded: false, dirtyFiles: null };
-  }
-  if (status) {
-    const dirtyPaths = porcelainPaths(status).filter(
-      (filePath) => !isIgnorableReleaseDirtyPath(filePath),
-    );
-    if (dirtyPaths.length > 0) {
-      return { recorded: false, dirtyFiles: status };
-    }
-  }
   const proofPath = path.join(root, QUALITY_GATE_RELATIVE_PATH);
   fs.mkdirSync(path.dirname(proofPath), { recursive: true });
   fs.writeFileSync(
@@ -184,30 +166,6 @@ function recordSuccessfulQualityGate(
     { mode: 0o600 },
   );
   return { recorded: true, dirtyFiles: null };
-}
-
-function assertReleaseTreeClean(root = defaultRoot) {
-  let status;
-  try {
-    status = command(
-      "git",
-      ["status", "--porcelain=v1", "--untracked-files=all"],
-      root,
-    );
-  } catch (error) {
-    throw new Error(
-      `Could not inspect the release working tree: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  if (!status) return;
-  const dirtyPaths = porcelainPaths(status).filter(
-    (filePath) => !isIgnorableReleaseDirtyPath(filePath),
-  );
-  if (dirtyPaths.length > 0) {
-    throw new Error(
-      `Release working tree changed after the quality gate; run test:all again before continuing:\n${status}`,
-    );
-  }
 }
 
 function verifyQualityGate(root = defaultRoot, options) {
@@ -248,7 +206,6 @@ function verifyReleaseSession(root = defaultRoot, options) {
     currentReleaseIdentity(root),
     options,
   );
-  assertReleaseTreeClean(root);
   return validated;
 }
 
@@ -275,7 +232,6 @@ export {
   DEFAULT_MAX_AGE_MS,
   QUALITY_GATE_RELATIVE_PATH,
   RELEASE_SESSION_RELATIVE_PATH,
-  assertReleaseTreeClean,
   clearQualityGateProof,
   createReleaseSession,
   currentReleaseIdentity,

@@ -2,10 +2,6 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  isIgnorableReleaseDirtyPath,
-  porcelainPaths,
-} from "./release-session.js";
 import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -50,18 +46,6 @@ function runPreflight() {
     throw new Error(
       `${version} must be released from ${expectedBranch}, not ${branch || "detached HEAD"}.`,
     );
-  }
-
-  const dirty = git(["status", "--porcelain=v1", "--untracked-files=all"]);
-  if (dirty) {
-    const dirtyPaths = porcelainPaths(dirty).filter(
-      (filePath) => !isIgnorableReleaseDirtyPath(filePath),
-    );
-    if (dirtyPaths.length > 0) {
-      throw new Error(
-        `Working tree is not clean. Commit and push the exact release source first:\n${dirty}`,
-      );
-    }
   }
 
   git(["fetch", "--quiet", "origin"]);

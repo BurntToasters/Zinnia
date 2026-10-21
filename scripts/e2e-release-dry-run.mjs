@@ -1378,22 +1378,56 @@ async function scenarioNoReleaseSession(ctx) {
   );
 }
 
-async function scenarioPreflightRefusesDirtyTree(ctx) {
+// Failure inventory: tracked generated changes or untracked files must not block
+// proof recording, preflight, session verification, or draft creation. Identity
+// and failed-check enforcement remain covered by the other release scenarios.
+async function scenarioPreflightAllowsDirtyTree(ctx) {
   await createStandardFixture(ctx);
+  const generated = path.join(ctx.root, "run.rosie.zinnia.metainfo.xml");
+  fs.writeFileSync(generated, "original\n");
+  ctx.git(["add", "run.rosie.zinnia.metainfo.xml"]);
+  ctx.git(["commit", "-q", "-m", "fixture generated metadata"]);
+  ctx.git(["push", "-q", "origin", "beta"]);
+  fs.writeFileSync(generated, "regenerated\n");
   fs.writeFileSync(path.join(ctx.root, "scratch-notes.txt"), "uncommitted\n");
   const preflight = await ctx.runScript(
     "release:preflight (release-preflight.js)",
     "scripts/release-preflight.js",
   );
   ctx.check(
-    "release-preflight refuses an uncommitted file (exit 1)",
-    preflight.exitCode === 1,
-    `exit=${preflight.exitCode}`,
+    "release-preflight accepts tracked and untracked changes",
+    preflight.exitCode === 0,
+    preflight.stderrTail,
+  );
+  ctx.prepareReleaseSession();
+  fs.appendFileSync(generated, "after quality gate\n");
+  const session = await ctx.runScript(
+    "release:session:verify",
+    "scripts/release-session.js",
   );
   ctx.check(
-    "the refusal says the tree is not clean",
-    preflight.stderrTail.includes("Working tree is not clean"),
-    preflight.stderrTail.slice(-300),
+    "session verification accepts workspace changes",
+    session.exitCode === 0,
+    session.stderrTail,
+  );
+  const ensure = await ctx.ensureDraft();
+  ctx.check(
+    "draft creation accepts the dirty workspace",
+    ensure.exitCode === 0,
+    ensure.stderrTail,
+  );
+  const flatpak = await ctx.runScript(
+    "flatpak source export",
+    "scripts/prepare-flatpak-source.js",
+  );
+  ctx.check(
+    "Flatpak committed-source export accepts workspace changes",
+    flatpak.exitCode === 0,
+    flatpak.stderrTail,
+  );
+  ctx.check(
+    "generated metadata is preserved",
+    fs.readFileSync(generated, "utf8") === "regenerated\nafter quality gate\n",
   );
 }
 
@@ -1476,8 +1510,8 @@ const SCENARIOS = [
   },
   {
     id: "preflight-dirty-tree",
-    title: "Preflight refuses an uncommitted file",
-    run: scenarioPreflightRefusesDirtyTree,
+    title: "Release accepts uncommitted generated metadata and untracked files",
+    run: scenarioPreflightAllowsDirtyTree,
   },
 ];
 
