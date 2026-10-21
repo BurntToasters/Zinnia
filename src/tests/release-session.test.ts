@@ -176,7 +176,7 @@ describe("release build session", () => {
   // occasionally exceed vitest's 5s default under the full suite's ~55
   // concurrent jsdom worker load (same class of flake fixed for the macOS
   // 7-Zip compatibility test).
-  it("binds a recorded clean-tree quality gate to the release session", () => {
+  it("binds a recorded quality gate to the release session", () => {
     const root = fs.mkdtempSync(
       path.join(os.tmpdir(), "zinnia-release-session-"),
     );
@@ -263,11 +263,10 @@ describe("release build session", () => {
       fs.writeFileSync(path.join(schemaDir, "linux-schema.json"), "dirty\n");
       expect(recordSuccessfulQualityGate(root).recorded).toBe(true);
 
-      // Only Tauri's known generated outputs may be ignored. Otherwise a new
-      // file can hide unexpected source drift beneath the generated directory.
+      // Untracked files no longer block quality proof recording.
       const unexpectedSchema = path.join(schemaDir, "unexpected.json");
       fs.writeFileSync(unexpectedSchema, "not a Tauri output\n");
-      expect(recordSuccessfulQualityGate(root).recorded).toBe(false);
+      expect(recordSuccessfulQualityGate(root).recorded).toBe(true);
       fs.rmSync(unexpectedSchema);
       expect(recordSuccessfulQualityGate(root).recorded).toBe(true);
 
@@ -285,7 +284,7 @@ describe("release build session", () => {
         path.join(root, ".gitignore"),
         "/coverage/*\n# edited\n",
       );
-      expect(() => verifyReleaseSession(root)).toThrow(/working tree changed/);
+      expect(verifyReleaseSession(root).commit).toBe(session.commit);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

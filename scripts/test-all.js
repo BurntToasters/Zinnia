@@ -574,18 +574,14 @@ function main({
       e2e: skipE2e ? "skipped" : "passed",
     });
     if (qualityGate.recorded) {
-      console.log("Release quality-gate proof recorded for this clean commit.");
+      console.log("Release quality-gate proof recorded for this checkout.");
       if (skipE2e) {
         console.log("GUI E2E was skipped; release proof records e2e=skipped.");
       }
     } else {
       console.error(
-        `${colors.red}Release quality-gate proof NOT recorded because the working tree is dirty. Commit generated files (e.g. run.rosie.zinnia.metainfo.xml from workspace:bootstrap) and re-run test:all before any release step.${colors.reset}`,
+        `${colors.red}Release quality-gate proof could not be recorded.${colors.reset}`,
       );
-      if (qualityGate.dirtyFiles) {
-        console.log("Dirty files:");
-        console.log(qualityGate.dirtyFiles);
-      }
       if (requireCleanProof) return 1;
     }
   }

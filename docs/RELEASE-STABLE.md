@@ -3,8 +3,13 @@
 This runbook covers the final transition from an accepted beta to its stable
 release. In commands below, replace `X.Y.Z` with the stable version and `N`
 with the accepted beta number. Do not use it to bypass a failed candidate or
-`main` gate. Every command below is expected to run from a clean checkout of
-the canonical repository.
+`main` gate. Run these commands from the canonical repository. Uncommitted
+files do not block quality-gate proof recording or release scripts. Proof still
+checks the commit, lockfiles, environment, and completion time; it does not
+identify arbitrary workspace edits. Flatpak source export continues to use
+`git archive HEAD`, so local edits are excluded from that bundle.
+The legacy `--require-clean-proof` flag requires proof recording, without a
+clean-working-tree requirement.
 
 ## 1. One-time beta-tag enforcement
 

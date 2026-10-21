@@ -38,13 +38,7 @@ for (const rel of required) {
 const sourceExporter = path.join(root, "scripts", "prepare-flatpak-source.js");
 if (fs.existsSync(sourceExporter)) {
   const source = fs.readFileSync(sourceExporter, "utf8");
-  for (const marker of [
-    "git",
-    "archive",
-    "--porcelain=v1",
-    ".zinnia-source-commit",
-    "src-tauri/gen/schemas/",
-  ]) {
+  for (const marker of ["git", "archive", ".zinnia-source-commit"]) {
     if (!source.includes(marker)) {
       console.error(`flatpak-dry-run: source exporter missing ${marker}`);
       failed = true;

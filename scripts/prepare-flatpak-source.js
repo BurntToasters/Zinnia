@@ -27,36 +27,7 @@ function run(command, args, options = {}) {
   return result.stdout.replace(/\r?\n$/, "");
 }
 
-function porcelainPaths(statusText) {
-  return statusText
-    .split("\n")
-    .map((line) => line.replace(/\r$/, ""))
-    .filter(Boolean)
-    .map((line) => {
-      // XY PATH  or  XY ORIG -> PATH  (XY is always two status columns)
-      const pathPart = line.length >= 3 ? line.slice(3) : line;
-      return pathPart.includes(" -> ")
-        ? pathPart.split(" -> ").at(-1)
-        : pathPart;
-    });
-}
-
-const dirtyEntries = run("git", [
-  "status",
-  "--porcelain=v1",
-  "--untracked-files=all",
-]);
-// `tauri build` rewrites generated ACL schemas under src-tauri/gen/schemas/.
-// Flatpak exports `git archive HEAD`, so those dirty generated files never enter
-// the bundle; only refuse unexpected workspace dirt.
-const blockingDirty = porcelainPaths(dirtyEntries).filter(
-  (filePath) => !filePath.startsWith("src-tauri/gen/schemas/"),
-);
-if (blockingDirty.length) {
-  throw new Error(
-    `Flatpak source export requires a clean committed tree:\n${blockingDirty.join("\n")}`,
-  );
-}
+// Export HEAD regardless of local changes; workspace edits do not enter the bundle.
 const commit = run("git", ["rev-parse", "--verify", "HEAD"]);
 const temporaryDirectory = fs.mkdtempSync(
   path.join(os.tmpdir(), "zinnia-flatpak-source-"),
