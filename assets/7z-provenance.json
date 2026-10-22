@@ -1,34 +1,29 @@
 {
   "schemaVersion": 1,
   "product": "7-Zip",
-  "version": "26.04",
-  "recordedOn": "2026-10-08",
+  "version": "26.05",
+  "recordedOn": "2026-10-22",
   "officialDownloadPage": "https://www.7-zip.org/download.html",
   "sourceArchives": {
     "linux-arm64": {
-      "url": "https://www.7-zip.org/a/7z2604-linux-arm64.tar.xz",
-      "sha256": "5b0ac3aa91c1e3499f011d6af69d7f6b4de3ef2f011d9e2ff44c58ebd04aa388",
-      "mirrorUrl": "https://github.com/ip7z/7zip/releases/download/26.04/7z2604-linux-arm64.tar.xz"
+      "url": "https://github.com/ip7z/7zip/releases/download/26.05/7z2605-linux-arm64.tar.xz",
+      "sha256": "0b71f6cfc34669b3bf69f2347efd3429f77020665003a13b9cdc53b784270421"
     },
     "linux-x64": {
-      "url": "https://www.7-zip.org/a/7z2604-linux-x64.tar.xz",
-      "sha256": "fc0327ba27e89bd086cf426dff17d77de582953cdbbc10a6576540a06853ffcd",
-      "mirrorUrl": "https://github.com/ip7z/7zip/releases/download/26.04/7z2604-linux-x64.tar.xz"
+      "url": "https://github.com/ip7z/7zip/releases/download/26.05/7z2605-linux-x64.tar.xz",
+      "sha256": "22cf82fcc6eb7474f1d5bb4f02c0f8ebd573a718089d6833dc30f8350a3b232e"
     },
     "mac": {
-      "url": "https://www.7-zip.org/a/7z2604-mac.tar.xz",
-      "sha256": "bee04358cbcbc7106273cee0e8d72916db2696c48067a3538c34d8cd6fd16578",
-      "mirrorUrl": "https://github.com/ip7z/7zip/releases/download/26.04/7z2604-mac.tar.xz"
+      "url": "https://github.com/ip7z/7zip/releases/download/26.05/7z2605-mac.tar.xz",
+      "sha256": "12ef6830317743cfd3f0ab1724bde43fcc270d8b6d8564f8c12c2a2b7f993570"
     },
     "windows-arm64-installer": {
-      "url": "https://github.com/ip7z/7zip/releases/download/26.04/7z2604-arm64.exe",
-      "sha256": "d4117b95495b0e925334ae7b5bddf2853513274603de15dee6acf03999fbc09c",
-      "mirrorUrl": "https://www.7-zip.org/a/7z2604-arm64.exe"
+      "url": "https://github.com/ip7z/7zip/releases/download/26.05/7z2605-arm64.exe",
+      "sha256": "86d5790d5dd84cab4636c3bb7fab10d3ed7cd3e57e6119401bd2769e28165268"
     },
     "windows-x64-installer": {
-      "url": "https://github.com/ip7z/7zip/releases/download/26.04/7z2604-x64.exe",
-      "sha256": "d54bf805f9f3704d1e8db2fa3498ae7ef2df0312b40b558e7c71c734430a665d",
-      "mirrorUrl": "https://www.7-zip.org/a/7z2604-x64.exe"
+      "url": "https://github.com/ip7z/7zip/releases/download/26.05/7z2605-x64.exe",
+      "sha256": "fd99e86f57d8f429ef5ed045bf98315af962e2309b0f1ba87a147a44c71647d0"
     }
   },
   "licenseNotices": {

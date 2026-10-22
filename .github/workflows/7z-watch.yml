@@ -100,7 +100,7 @@ jobs:
 
              npm run 7z:update -- --trusted-7z <path>
 
-          3. Review the diff in `assets/`, `CHANGELOG.md`, and `src-tauri/binaries/`. Confirm `assets/7z-provenance.json` lists `url` and `mirrorUrl` for every archive, and that the bundled version matches the title.
+          3. Review the diff in `assets/`, `CHANGELOG.md`, and `src-tauri/binaries/`. Confirm `assets/7z-provenance.json` lists the official GitHub `url` and `sha256` for every archive, and that the bundled version matches the title.
           4. Run the normal release checks and open a PR. Close this issue when the update lands.
           EOF
           } > "$body_file"

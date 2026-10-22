@@ -11,7 +11,3 @@ export function syncChangelog7zVersion(
   appVersion: string,
   sevenZipVersion: string,
 ): string;
-export function mirrorOverrideFor(
-  sourceName: string,
-  env?: Record<string, string | undefined>,
-): string | undefined;
