@@ -299,7 +299,7 @@ export function normalizeAutoCloseDelay(
   return asAutoCloseDelay(value, fallback);
 }
 
-const MAX_CUSTOM_PRESETS = 50;
+export const MAX_CUSTOM_PRESETS = 50;
 
 function optionalPresetField<T extends string>(
   value: unknown,

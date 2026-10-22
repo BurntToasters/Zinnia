@@ -2184,13 +2184,57 @@ fn prepare_planned_links(
     destination: &std::path::Path,
     plan: &[MoveRecord],
 ) -> Result<(), String> {
+    struct PlannedLinkRewrite {
+        link: std::path::PathBuf,
+        original_target: std::path::PathBuf,
+        rewritten_target: std::path::PathBuf,
+        #[cfg(windows)]
+        was_directory_link: bool,
+    }
+
+    // Resolve and validate every link against the untouched staged tree. A
+    // link can point through another staged link, so rewriting one while this
+    // pass is still discovering targets would change the meaning of later
+    // links in the plan.
+    let mut rewrites = Vec::new();
     for record in plan {
         let mut pending = vec![record.source.clone()];
-        let mut links = Vec::new();
         while let Some(path) = pending.pop() {
             let metadata = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
             if crate::path_safety::is_link_or_reparse(&metadata) {
-                links.push(path);
+                let original_target =
+                    std::fs::read_link(&path).map_err(|error| error.to_string())?;
+                let source_target = resolve_staged_symlink_target(staged, &path)?;
+                if std::fs::read_link(&path).map_err(|error| error.to_string())? != original_target
+                {
+                    return Err(format!(
+                        "Extraction link changed while its publish target was being planned: {}",
+                        path.display()
+                    ));
+                }
+                let final_target =
+                    final_path_for_staged_source(staged, destination, plan, &source_target)?;
+                crate::path_safety::assert_path_resolves_within_root_or_missing(
+                    destination,
+                    &final_target,
+                )?;
+                let final_link = final_path_for_staged_source(staged, destination, plan, &path)?;
+                let final_parent = final_link
+                    .parent()
+                    .ok_or_else(|| "Archive symbolic link target has no parent.".to_string())?;
+                let rewritten_target = relative_path_between(final_parent, &final_target)?;
+                if original_target != rewritten_target {
+                    rewrites.push(PlannedLinkRewrite {
+                        link: path,
+                        original_target,
+                        rewritten_target,
+                        #[cfg(windows)]
+                        was_directory_link: {
+                            use std::os::windows::fs::FileTypeExt as _;
+                            metadata.file_type().is_symlink_dir()
+                        },
+                    });
+                }
                 continue;
             }
             if metadata.is_dir() {
@@ -2199,47 +2243,55 @@ fn prepare_planned_links(
                 }
             }
         }
-        for link in links {
-            let source_target = resolve_staged_symlink_target(staged, &link)?;
-            let final_target =
-                final_path_for_staged_source(staged, destination, plan, &source_target)?;
-            crate::path_safety::assert_path_resolves_within_root_or_missing(
-                destination,
-                &final_target,
-            )?;
-            let final_link = final_path_for_staged_source(staged, destination, plan, &link)?;
-            let final_parent = final_link
-                .parent()
-                .ok_or_else(|| "Archive symbolic link target has no parent.".to_string())?;
-            let rewritten_target = relative_path_between(final_parent, &final_target)?;
-            if std::fs::read_link(&link).map_err(|e| e.to_string())? != rewritten_target {
-                #[cfg(windows)]
-                let was_directory_link = {
-                    use std::os::windows::fs::FileTypeExt as _;
-                    std::fs::symlink_metadata(&link)
-                        .map_err(|error| error.to_string())?
-                        .file_type()
-                        .is_symlink_dir()
-                };
-                #[cfg(unix)]
-                std::fs::remove_file(&link).map_err(|e| e.to_string())?;
-                #[cfg(windows)]
-                if was_directory_link {
-                    std::fs::remove_dir(&link).map_err(|e| e.to_string())?;
-                } else {
-                    std::fs::remove_file(&link).map_err(|e| e.to_string())?;
-                }
-                #[cfg(unix)]
-                std::os::unix::fs::symlink(&rewritten_target, &link).map_err(|e| e.to_string())?;
-                #[cfg(windows)]
-                if was_directory_link {
-                    std::os::windows::fs::symlink_dir(&rewritten_target, &link)
-                        .map_err(|e| e.to_string())?;
-                } else {
-                    std::os::windows::fs::symlink_file(&rewritten_target, &link)
-                        .map_err(|e| e.to_string())?;
-                }
+    }
+
+    // Only mutate after every source target and final destination has passed
+    // the same containment and mapping checks used by the original publish.
+    for rewrite in rewrites {
+        if std::fs::read_link(&rewrite.link).map_err(|error| error.to_string())?
+            != rewrite.original_target
+        {
+            return Err(format!(
+                "Extraction link changed before it could be rewritten: {}",
+                rewrite.link.display()
+            ));
+        }
+        let metadata =
+            std::fs::symlink_metadata(&rewrite.link).map_err(|error| error.to_string())?;
+        if !crate::path_safety::is_link_or_reparse(&metadata) {
+            return Err(format!(
+                "Extraction link changed before it could be rewritten: {}",
+                rewrite.link.display()
+            ));
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::FileTypeExt as _;
+            if metadata.file_type().is_symlink_dir() != rewrite.was_directory_link {
+                return Err(format!(
+                    "Extraction link type changed before it could be rewritten: {}",
+                    rewrite.link.display()
+                ));
             }
+        }
+        #[cfg(unix)]
+        std::fs::remove_file(&rewrite.link).map_err(|error| error.to_string())?;
+        #[cfg(windows)]
+        if rewrite.was_directory_link {
+            std::fs::remove_dir(&rewrite.link).map_err(|error| error.to_string())?;
+        } else {
+            std::fs::remove_file(&rewrite.link).map_err(|error| error.to_string())?;
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&rewrite.rewritten_target, &rewrite.link)
+            .map_err(|error| error.to_string())?;
+        #[cfg(windows)]
+        if rewrite.was_directory_link {
+            std::os::windows::fs::symlink_dir(&rewrite.rewritten_target, &rewrite.link)
+                .map_err(|error| error.to_string())?;
+        } else {
+            std::os::windows::fs::symlink_file(&rewrite.rewritten_target, &rewrite.link)
+                .map_err(|error| error.to_string())?;
         }
     }
     Ok(())

@@ -1,7 +1,7 @@
 import { $ } from "./utils";
 import { getCompressionSecuritySupport } from "./compression-security";
 import { state } from "./state";
-import type { CustomPreset } from "./settings-model";
+import { MAX_CUSTOM_PRESETS, type CustomPreset } from "./settings-model";
 
 export interface PresetConfig {
   format: string;
@@ -262,11 +262,22 @@ export function saveCustomPreset(name: string): CustomPreset {
     throw new Error(`"${trimmed}" is a built-in preset name. Choose another.`);
   }
 
+  const customPresets = state.currentSettings.customPresets;
+  const existingIndex = customPresets.findIndex((p) => p.name === trimmed);
+  if (existingIndex < 0 && customPresets.length >= MAX_CUSTOM_PRESETS) {
+    throw new Error(
+      `You can save up to ${MAX_CUSTOM_PRESETS} custom presets. Delete one or use an existing name to replace it.`,
+    );
+  }
+
   const preset: CustomPreset = { name: trimmed, ...currentConfig() };
-  const existing = state.currentSettings.customPresets.filter(
-    (p) => p.name !== trimmed,
-  );
-  state.currentSettings.customPresets = [...existing, preset];
+  const updated = [...customPresets];
+  if (existingIndex >= 0) {
+    updated[existingIndex] = preset;
+  } else {
+    updated.push(preset);
+  }
+  state.currentSettings.customPresets = updated;
   return preset;
 }
 

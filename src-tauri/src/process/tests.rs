@@ -1,5 +1,23 @@
 //! Unit tests for the process module.
 
+// Regression failure modes recorded before adding coverage:
+//
+// * Planned-link rewriting can resolve a later link through an earlier link
+//   that has already been rewritten. A collision-renamed target can then
+//   redirect the later link to a different staged file. Compute every target
+//   from the original staged tree before mutating any link.
+// * Missing relative targets are valid when their lexical destination remains
+//   inside the extraction root; external targets must still fail containment
+//   checks, and a failed publication must retain the existing rollback path.
+// * A child can exit before either pipe-reader thread is scheduled. If the wait
+//   thread emits Terminated before joining both readers, the collector stops
+//   early and drops final stdout/stderr records. A bounded channel also means
+//   joining readers is safe only while collection keeps draining it.
+// * Stream errors and reader panics must invalidate a successful exit without
+//   stopping the sibling reader from draining. Cancellation and deferred
+//   password writes must retain their existing child-registration ordering;
+//   stream setup failures must not orphan the child.
+
 use super::archive_snapshot::{
     archive_file_identity, archive_input_family, assert_archive_identity_unchanged,
     stage_extract_input, SnapshotStrategy,
@@ -842,6 +860,11 @@ fn stream_error_keeps_collecting_until_termination() {
         ))
         .await
         .expect("send trailing output");
+        tx.send(tauri_plugin_shell::process::CommandEvent::Stderr(
+            b"stderr tail\n".to_vec(),
+        ))
+        .await
+        .expect("send trailing stderr");
         tx.send(tauri_plugin_shell::process::CommandEvent::Terminated(
             tauri_plugin_shell::process::TerminatedPayload {
                 code: Some(1),
@@ -860,7 +883,170 @@ fn stream_error_keeps_collecting_until_termination() {
             "a stream failure must invalidate an otherwise successful child exit"
         );
         assert_eq!(collected.stdout, "tail\n");
+        assert_eq!(
+            collected.stderr,
+            "7-Zip process error: broken pipe\nstderr tail\n"
+        );
     });
+}
+
+#[test]
+fn cancelled_output_keeps_drained_streams_but_never_reports_success() {
+    tauri::async_runtime::block_on(async {
+        let (tx, mut rx) =
+            tauri::async_runtime::channel::<tauri_plugin_shell::process::CommandEvent>(4);
+        tx.send(tauri_plugin_shell::process::CommandEvent::Stdout(
+            b"partial stdout\n".to_vec(),
+        ))
+        .await
+        .expect("send stdout");
+        tx.send(tauri_plugin_shell::process::CommandEvent::Stderr(
+            b"partial stderr\n".to_vec(),
+        ))
+        .await
+        .expect("send stderr");
+        tx.send(tauri_plugin_shell::process::CommandEvent::Terminated(
+            tauri_plugin_shell::process::TerminatedPayload {
+                code: Some(0),
+                signal: None,
+            },
+        ))
+        .await
+        .expect("send termination");
+        drop(tx);
+
+        let collected = collect_command_output(&mut rx, 1024, |_| {}).await;
+        assert_eq!(collected.stdout, "partial stdout\n");
+        assert_eq!(collected.stderr, "partial stderr\n");
+        let result = collected.into_run_result(true, None);
+        assert_eq!(result.code, -1);
+        assert_eq!(result.stdout, "partial stdout\n");
+        assert_eq!(result.stderr, "partial stderr\n");
+    });
+}
+
+fn fast_output_command() -> std::process::Command {
+    #[cfg(unix)]
+    let mut command = {
+        let mut command = std::process::Command::new("sh");
+        command.args(["-c", "printf 'stdout-tail'; printf 'stderr-tail' >&2"]);
+        command
+    };
+    #[cfg(windows)]
+    let mut command = {
+        let mut command = std::process::Command::new("cmd");
+        command.args(["/C", "echo stdout-tail & echo stderr-tail 1>&2"]);
+        command
+    };
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    command
+}
+
+#[test]
+fn fast_child_waits_for_both_pipe_readers_before_termination() {
+    let reader_gate =
+        std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+    let mut command = fast_output_command();
+    // This test-only seam pauses both actual output readers while allowing the
+    // child waiter to observe process exit. It makes the old scheduling race
+    // deterministic without constructing a Tauri AppHandle or sidecar.
+    let (mut rx, _child, child_waited, _output_finished) =
+        super::commands::spawn_child_output_for_test(
+            &mut command,
+            Some(reader_gate.clone()),
+            false,
+        )
+        .expect("spawn output fixture");
+    child_waited
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("child wait should finish");
+
+    let early_event = tauri::async_runtime::block_on(async {
+        tokio::time::timeout(std::time::Duration::from_millis(150), rx.recv()).await
+    });
+    let terminated_while_readers_were_gated = matches!(
+        early_event,
+        Ok(Some(tauri_plugin_shell::process::CommandEvent::Terminated(
+            _
+        )))
+    );
+
+    let (released, changed) = &*reader_gate;
+    *released.lock().expect("reader gate") = true;
+    changed.notify_all();
+
+    let collected = tauri::async_runtime::block_on(async {
+        collect_command_output(&mut rx, 1024, |_| {}).await
+    });
+    assert!(
+        !terminated_while_readers_were_gated,
+        "waiter emitted Terminated before both pipe readers drained"
+    );
+    assert!(collected.output_is_complete());
+    assert_eq!(collected.exit_code(), 0);
+    assert!(collected.stdout.contains("stdout-tail"));
+    assert!(collected.stderr.contains("stderr-tail"));
+}
+
+#[test]
+fn reader_panic_is_a_stream_error_before_termination() {
+    let mut command = fast_output_command();
+    let (mut rx, _child, _child_waited, _output_finished) =
+        super::commands::spawn_child_output_for_test(&mut command, None, true)
+            .expect("spawn panic fixture");
+    let collected = tauri::async_runtime::block_on(async {
+        collect_command_output(&mut rx, 1024, |_| {}).await
+    });
+
+    assert!(
+        collected.exit.is_some(),
+        "reader panic must not hide child exit"
+    );
+    assert!(
+        collected
+            .stream_error
+            .as_deref()
+            .is_some_and(|error| error.contains("reader")),
+        "reader panic must invalidate output: {:?}",
+        collected.stream_error
+    );
+    assert_eq!(collected.exit_code(), -1);
+    assert!(!collected.output_is_complete());
+    assert!(collected.stderr.contains("stderr-tail"));
+}
+
+#[test]
+fn closed_output_receiver_does_not_block_pipe_readers_or_child_wait() {
+    #[cfg(unix)]
+    let mut command = {
+        let mut command = std::process::Command::new("sh");
+        command.args([
+            "-c",
+            "i=0; while [ $i -lt 10000 ]; do printf 'line\\n'; i=$((i+1)); done",
+        ]);
+        command
+    };
+    #[cfg(windows)]
+    let mut command = {
+        let mut command = std::process::Command::new("cmd");
+        command.args(["/C", "for /L %i in (1,1,10000) do @echo line"]);
+        command
+    };
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let (rx, _child, _child_waited, output_finished) =
+        super::commands::spawn_child_output_for_test(&mut command, None, false)
+            .expect("spawn chatty child");
+    drop(rx);
+    output_finished
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("closed receiver must not strand pipe draining or reader joins");
 }
 
 #[test]
@@ -3611,6 +3797,74 @@ fn merge_rewrites_relative_symlink_when_target_is_auto_renamed() {
         b"new"
     );
     assert_eq!(std::fs::read(destination.join("payload")).unwrap(), b"old");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn merge_rewrites_chained_symlinks_from_original_targets() {
+    let root = temp_root("zinnia-chained-link-conflict-map");
+    let staged = root.join("staged");
+    let destination = root.join("destination");
+    std::fs::create_dir_all(&staged).expect("staged tree");
+    std::fs::create_dir_all(&destination).expect("destination tree");
+
+    // Keep the staged records in the adversarial order: b maps to b_1, then
+    // b_1 maps to b_1_1. Link a is rewritten before c resolves its target.
+    std::fs::write(staged.join("b"), b"new1").expect("first staged target");
+    std::fs::write(staged.join("b_1"), b"new2").expect("second staged target");
+    std::fs::write(destination.join("b"), b"old").expect("existing destination");
+    let a = staged.join("a");
+    let c = staged.join("c");
+    let dangling = staged.join("dangling");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        symlink("b", &a).expect("a link");
+        symlink("a", &c).expect("c link");
+        symlink("generated-later", &dangling).expect("contained dangling link");
+    }
+    #[cfg(windows)]
+    {
+        for (target, link) in [("b", &a), ("a", &c), ("generated-later", &dangling)] {
+            if let Err(error) = try_windows_symlink_file(target, link) {
+                if std::env::var_os("ZINNIA_REQUIRE_WINDOWS_SYMLINK_TESTS").is_some() {
+                    panic!("could not create test symlink: {error}");
+                }
+                eprintln!("skipping chained-link regression: {error}");
+                let _ = std::fs::remove_dir_all(root);
+                return;
+            }
+        }
+    }
+
+    merge_staged_extract(&staged, &destination, MAX_EXTRACTED_BYTES)
+        .expect("safe chained links should merge");
+
+    assert_eq!(
+        std::fs::read(destination.join("a")).expect("a target"),
+        b"new1"
+    );
+    assert_eq!(
+        std::fs::read(destination.join("c")).expect("c target"),
+        b"new1"
+    );
+    assert_eq!(
+        std::fs::read(destination.join("b")).expect("old destination preserved"),
+        b"old"
+    );
+    assert_eq!(
+        std::fs::read(destination.join("b_1")).expect("first staged target published"),
+        b"new1"
+    );
+    assert_eq!(
+        std::fs::read(destination.join("b_1_1")).expect("second staged target published"),
+        b"new2"
+    );
+    assert_eq!(
+        std::fs::read_link(destination.join("dangling")).expect("dangling link preserved"),
+        std::path::PathBuf::from("generated-later")
+    );
     let _ = std::fs::remove_dir_all(root);
 }
 

@@ -4,7 +4,7 @@ use shared_child::SharedChild;
 use std::{
     io::Write,
     process::Stdio,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, Mutex},
 };
 use tauri::async_runtime::{block_on, channel, Receiver, Sender};
 use tauri::{Emitter, Manager};
@@ -553,6 +553,205 @@ type Spawned7z = (
     Option<PendingPassword>,
 );
 
+struct SpawnOutputConfig {
+    listfile: Option<ManagedListFile>,
+    #[cfg(test)]
+    test_hooks: Option<OutputReaderTestHooks>,
+}
+
+#[cfg(test)]
+struct OutputReaderTestHooks {
+    reader_gate: Option<Arc<(Mutex<bool>, std::sync::Condvar)>>,
+    panic_stdout_reader: bool,
+    child_waited: std::sync::mpsc::Sender<()>,
+    output_finished: std::sync::mpsc::Sender<()>,
+}
+
+fn send_command_event(tx: &Sender<CommandEvent>, event: CommandEvent) {
+    let tx = tx.clone();
+    let _ = block_on(async move { tx.send(event).await });
+}
+
+fn spawn_child_output(
+    command: &mut std::process::Command,
+    state: &RunningProcess,
+    options: SpawnOutputConfig,
+) -> Result<(Receiver<CommandEvent>, Arc<SharedChild>), String> {
+    let SpawnOutputConfig {
+        listfile,
+        #[cfg(test)]
+        test_hooks,
+    } = options;
+
+    let child = Arc::new(SharedChild::spawn(command).map_err(|error| error.to_string())?);
+    let setup = (|| {
+        let stdout = child
+            .take_stdout()
+            .ok_or_else(|| "Could not capture 7-Zip stdout.".to_string())?;
+        let stderr = child
+            .take_stderr()
+            .ok_or_else(|| "Could not capture 7-Zip stderr.".to_string())?;
+        Ok::<_, String>((stdout, stderr))
+    })();
+    let (stdout, stderr) = match setup {
+        Ok(streams) => streams,
+        Err(error) => {
+            return Err(match terminate_registered_child(state, &child) {
+                Ok(()) => error,
+                Err(termination_error) => {
+                    format!("{error}; also could not stop 7-Zip: {termination_error}")
+                }
+            });
+        }
+    };
+
+    // This bounded channel accommodates ordinary banners and prompts while
+    // password input is written. The caller drains it as the child runs; if
+    // the receiver closes, readers still continue draining their pipes.
+    let (tx, rx) = channel(512);
+    let mut readers: Vec<(&'static str, std::thread::JoinHandle<()>)> = Vec::with_capacity(2);
+    let streams = [
+        (
+            "stdout",
+            Box::new(stdout) as Box<dyn std::io::Read + Send>,
+            CommandEvent::Stdout as fn(Vec<u8>) -> CommandEvent,
+        ),
+        (
+            "stderr",
+            Box::new(stderr) as Box<dyn std::io::Read + Send>,
+            CommandEvent::Stderr as fn(Vec<u8>) -> CommandEvent,
+        ),
+    ];
+    for (name, reader, wrap) in streams {
+        let reader_tx = tx.clone();
+        #[cfg(test)]
+        let reader_gate = test_hooks
+            .as_ref()
+            .and_then(|hooks| hooks.reader_gate.clone());
+        #[cfg(test)]
+        let panic_reader = name == "stdout"
+            && test_hooks
+                .as_ref()
+                .is_some_and(|hooks| hooks.panic_stdout_reader);
+        let reader = std::thread::spawn(move || {
+            #[cfg(test)]
+            if let Some(reader_gate) = reader_gate {
+                let (released, changed) = &*reader_gate;
+                let mut released = released
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                while !*released {
+                    released = changed
+                        .wait(released)
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                }
+            }
+            #[cfg(test)]
+            if panic_reader {
+                panic!("test-only 7-Zip stdout reader panic");
+            }
+            read_command_stream(reader, reader_tx, wrap);
+        });
+        readers.push((name, reader));
+    }
+
+    let wait_child = child.clone();
+    let wait_tx = tx.clone();
+    std::thread::spawn(move || {
+        let wait_result = wait_child.wait();
+        #[cfg(test)]
+        if let Some(hooks) = &test_hooks {
+            let _ = hooks.child_waited.send(());
+        }
+
+        let status = match wait_result {
+            Ok(status) => Some(status),
+            Err(error) => {
+                send_command_event(
+                    &wait_tx,
+                    CommandEvent::Error(format!("Could not wait for 7-Zip: {error}")),
+                );
+                if let Err(termination_error) = terminate_child(&wait_child) {
+                    send_command_event(
+                        &wait_tx,
+                        CommandEvent::Error(format!(
+                            "Could not stop 7-Zip after wait failed: {termination_error}"
+                        )),
+                    );
+                }
+                None
+            }
+        };
+
+        for (stream, reader) in readers {
+            if reader.join().is_err() {
+                send_command_event(
+                    &wait_tx,
+                    CommandEvent::Error(format!("7-Zip {stream} reader thread panicked.")),
+                );
+            }
+        }
+
+        // Keep the managed listfile alive until the child has exited and both
+        // output streams have been drained.
+        drop(listfile);
+
+        #[cfg(unix)]
+        let signal = {
+            use std::os::unix::process::ExitStatusExt;
+            status.as_ref().and_then(|status| status.signal())
+        };
+        #[cfg(windows)]
+        let signal = None;
+        send_command_event(
+            &wait_tx,
+            CommandEvent::Terminated(TerminatedPayload {
+                code: status.as_ref().and_then(|status| status.code()),
+                signal,
+            }),
+        );
+        #[cfg(test)]
+        if let Some(hooks) = test_hooks {
+            let _ = hooks.output_finished.send(());
+        }
+    });
+    drop(tx);
+    Ok((rx, child))
+}
+
+#[cfg(test)]
+pub(crate) fn spawn_child_output_for_test(
+    command: &mut std::process::Command,
+    reader_gate: Option<Arc<(Mutex<bool>, std::sync::Condvar)>>,
+    panic_stdout_reader: bool,
+) -> Result<
+    (
+        Receiver<CommandEvent>,
+        Arc<SharedChild>,
+        std::sync::mpsc::Receiver<()>,
+        std::sync::mpsc::Receiver<()>,
+    ),
+    String,
+> {
+    let state = RunningProcess::new();
+    let (child_waited_tx, child_waited_rx) = std::sync::mpsc::channel();
+    let (output_finished_tx, output_finished_rx) = std::sync::mpsc::channel();
+    let (rx, child) = spawn_child_output(
+        command,
+        &state,
+        SpawnOutputConfig {
+            listfile: None,
+            test_hooks: Some(OutputReaderTestHooks {
+                reader_gate,
+                panic_stdout_reader,
+                child_waited: child_waited_tx,
+                output_finished: output_finished_tx,
+            }),
+        },
+    )?;
+    Ok((rx, child, child_waited_rx, output_finished_rx))
+}
+
 /// Blocking implementation: write the deferred password after
 /// `RunningProcess.child` is set so cancel can kill 7-Zip if the stdin write
 /// blocks (e.g. an unexpectedly full pipe on Windows' smaller default pipe
@@ -702,78 +901,17 @@ pub(crate) fn spawn_7z_noninteractive(
         })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let child = Arc::new(SharedChild::spawn(&mut command).map_err(|error| error.to_string())?);
-    // Take stdout/stderr and start drain threads before writing the password.
-    // Writing first can fill the stdin pipe while 7-Zip blocks on a full
-    // stdout/stderr pipe (especially on Windows ~4 KiB defaults), deadlocking.
-    let setup = (|| {
-        let stdout = child
-            .take_stdout()
-            .ok_or_else(|| "Could not capture 7-Zip stdout.".to_string())?;
-        let stderr = child
-            .take_stderr()
-            .ok_or_else(|| "Could not capture 7-Zip stderr.".to_string())?;
-        Ok::<_, String>((stdout, stderr))
-    })();
-    let (stdout, stderr) = match setup {
-        Ok(streams) => streams,
-        Err(error) => {
-            if let Err(term) = terminate_registered_child(state, &child) {
-                return Err(format!("{error}; also could not stop 7-Zip: {term}"));
-            }
-            return Err(error);
-        }
-    };
-    // Capacity must exceed a typical 7-Zip banner plus prompt on both streams.
-    // A size-1 channel lets drain threads block on send while this function still
-    // writes the password, filling OS pipes and deadlocking before cancel can run.
-    let (tx, rx) = channel(512);
-    let readers = Arc::new(RwLock::new(()));
-    for (reader, wrap) in [
-        (
-            Box::new(stdout) as Box<dyn std::io::Read + Send>,
-            CommandEvent::Stdout as fn(Vec<u8>) -> CommandEvent,
-        ),
-        (
-            Box::new(stderr) as Box<dyn std::io::Read + Send>,
-            CommandEvent::Stderr as fn(Vec<u8>) -> CommandEvent,
-        ),
-    ] {
-        let tx = tx.clone();
-        let readers = readers.clone();
-        std::thread::spawn(move || {
-            let _guard = readers
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            read_command_stream(reader, tx, wrap);
-        });
-    }
-    let wait_child = child.clone();
-    std::thread::spawn(move || {
-        let event = match wait_child.wait() {
-            Ok(status) => {
-                // Wait for both pipe readers to finish before termination, so
-                // collection never drops the final stdout/stderr records.
-                let _guard = readers
-                    .write()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                #[cfg(unix)]
-                let signal = {
-                    use std::os::unix::process::ExitStatusExt;
-                    status.signal()
-                };
-                #[cfg(windows)]
-                let signal = None;
-                CommandEvent::Terminated(TerminatedPayload {
-                    code: status.code(),
-                    signal,
-                })
-            }
-            Err(error) => CommandEvent::Error(error.to_string()),
-        };
-        drop(listfile);
-        let _ = block_on(async move { tx.send(event).await });
-    });
+    // The shared helper starts pipe readers before returning, so deferred
+    // password transport can begin only after stdout/stderr are being drained.
+    let (rx, child) = spawn_child_output(
+        &mut command,
+        state,
+        SpawnOutputConfig {
+            listfile,
+            #[cfg(test)]
+            test_hooks: None,
+        },
+    )?;
     Ok((rx, child, pending_password))
 }
 
@@ -1605,7 +1743,7 @@ where
                 break;
             }
             CommandEvent::Error(error) => {
-                let detail = format!("7-Zip process error: {error}");
+                let detail = format!("7-Zip process error: {error}\n");
                 append_limited_output(
                     &mut out.stderr,
                     &detail,

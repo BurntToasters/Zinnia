@@ -65,6 +65,39 @@ pub fn is_cross_device(err: &std::io::Error) -> bool {
     }
 }
 
+/// Error returned when no AppImage temp directory could be selected.
+#[derive(Debug)]
+pub(crate) enum SameDeviceTempDirError<E> {
+    /// Every candidate failed, so retain the last useful creation or metadata error.
+    Candidate(E),
+    /// No candidate was created on the same device as the live AppImage.
+    NoSameDeviceCandidate,
+}
+
+/// Return the first successfully created candidate on `extract_device`.
+/// Failed candidates and candidates on another device are skipped. A temp
+/// directory carried by a cross-device candidate is dropped before continuing.
+pub(crate) fn select_same_device_temp_dir<T, E>(
+    extract_device: u64,
+    candidates: impl IntoIterator<Item = Option<PathBuf>>,
+    mut attempt: impl FnMut(&Path) -> Result<(T, u64), E>,
+) -> Result<T, SameDeviceTempDirError<E>> {
+    let mut last_candidate_error = None;
+
+    for candidate in candidates.into_iter().flatten() {
+        match attempt(&candidate) {
+            Ok((temp_dir, device)) if device == extract_device => return Ok(temp_dir),
+            Ok((_temp_dir, _device)) => {}
+            Err(error) => last_candidate_error = Some(error),
+        }
+    }
+
+    match last_candidate_error {
+        Some(error) => Err(SameDeviceTempDirError::Candidate(error)),
+        None => Err(SameDeviceTempDirError::NoSameDeviceCandidate),
+    }
+}
+
 /// Skip the archive's first path component (Tauri `.app.tar.gz` wrapper), then
 /// reject `Prefix` / `RootDir` / `ParentDir`. Remaining components must be
 /// relative and contained.
@@ -507,6 +540,137 @@ mod tests {
         assert!(!unix_directory_entry_is_trusted_helper(501, 0o777, true));
         assert!(!unix_directory_entry_is_trusted_helper(0, 0o777, false));
         assert!(!unix_directory_entry_is_trusted_helper(0, 0o775, false));
+    }
+
+    // AppImage temp-directory fallback failure cases, recorded before any
+    // production change:
+    // - a missing/unwritable first candidate must not prevent a later usable one;
+    // - a temp directory on another device and an unavailable cache location
+    //   must still allow a same-device app-directory sibling;
+    // - candidates on other devices must never be accepted;
+    // - if every candidate fails, selection must return a useful last error
+    //   without reaching the install callback or changing the live app.
+
+    #[test]
+    fn appimage_tempdir_falls_back_after_first_candidate_fails() {
+        let first = PathBuf::from("missing-temp-parent");
+        let second = PathBuf::from("usable-cache-parent");
+        let mut attempts = Vec::new();
+
+        let selected = select_same_device_temp_dir(
+            7,
+            [Some(first.clone()), Some(second.clone())],
+            |candidate| {
+                attempts.push(candidate.to_path_buf());
+                if candidate == first {
+                    Err("first candidate is unavailable")
+                } else {
+                    Ok((candidate.to_path_buf(), 7))
+                }
+            },
+        )
+        .expect("a failed first candidate must not block a suitable fallback");
+
+        assert_eq!(attempts, vec![first, second.clone()]);
+        assert_eq!(selected, second);
+    }
+
+    #[test]
+    fn appimage_tempdir_skips_cross_device_temp_and_missing_cache() {
+        let system_temp = PathBuf::from("system-temp");
+        let missing_cache = PathBuf::from("missing-cache-parent");
+        let app_sibling = PathBuf::from("app-sibling");
+        let mut attempts = Vec::new();
+
+        let selected = select_same_device_temp_dir(
+            1,
+            [
+                Some(system_temp.clone()),
+                Some(missing_cache.clone()),
+                Some(app_sibling.clone()),
+            ],
+            |candidate| {
+                attempts.push(candidate.to_path_buf());
+                if candidate == system_temp {
+                    Ok::<_, &str>((candidate.to_path_buf(), 2))
+                } else if candidate == missing_cache {
+                    Err("cache candidate path does not exist")
+                } else {
+                    Ok((candidate.to_path_buf(), 1))
+                }
+            },
+        )
+        .expect("a same-device app sibling must remain eligible after cache is unavailable");
+
+        assert_eq!(
+            attempts,
+            vec![system_temp, missing_cache, app_sibling.clone()]
+        );
+        assert_eq!(selected, app_sibling);
+    }
+
+    #[test]
+    fn appimage_tempdir_uses_last_useful_error_and_does_not_touch_live_app() {
+        let app =
+            std::env::temp_dir().join(format!("zinnia-appimage-fallback-{}", std::process::id()));
+        let _ = std::fs::remove_file(&app);
+        struct RemoveOnDrop(PathBuf);
+        impl Drop for RemoveOnDrop {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(&self.0);
+            }
+        }
+        let _cleanup = RemoveOnDrop(app.clone());
+        std::fs::write(&app, b"original app").unwrap();
+        let first = PathBuf::from("system-temp");
+        let last = PathBuf::from("app-sibling");
+        let mut install_reached = false;
+
+        let result = select_same_device_temp_dir(
+            1,
+            [Some(first.clone()), None, Some(last.clone())],
+            |candidate| {
+                if candidate == first {
+                    Ok((candidate.to_path_buf(), 2))
+                } else {
+                    Err("app sibling is unavailable")
+                }
+            },
+        )
+        .map(|selected| {
+            install_reached = true;
+            let _ = selected;
+            std::fs::write(&app, b"updated app").unwrap();
+        });
+
+        assert!(matches!(
+            result,
+            Err(SameDeviceTempDirError::Candidate(
+                "app sibling is unavailable"
+            ))
+        ));
+        assert!(
+            !install_reached,
+            "install work must wait for a suitable temp directory"
+        );
+        assert_eq!(std::fs::read(&app).unwrap(), b"original app");
+    }
+
+    #[test]
+    fn appimage_tempdir_rejects_all_cross_device_candidates() {
+        let selected = select_same_device_temp_dir(
+            1,
+            [
+                Some(PathBuf::from("system-temp")),
+                Some(PathBuf::from("app-sibling")),
+            ],
+            |candidate| Ok::<_, &str>((candidate.to_path_buf(), 2)),
+        );
+
+        assert!(matches!(
+            selected,
+            Err(SameDeviceTempDirError::NoSameDeviceCandidate)
+        ));
     }
 
     #[cfg(unix)]
