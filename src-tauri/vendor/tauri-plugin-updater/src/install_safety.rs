@@ -10,17 +10,12 @@
 
 use std::path::{Component, Path, PathBuf};
 
-/// AppleScript used for privileged macOS bundle replacement.
-///
-/// Paths are handler arguments, then quoted with `quoted form of`. The live
-/// bundle is renamed to a sibling backup *before* the new bundle is moved into
-/// place. A leftover backup is deleted only when the live path already has
-/// `Contents`. Failure removes a partial new tree at `$SRC` (never the live
-/// copy, which is at `$BAK`) and restores the backup. `mv` onto an existing
-/// directory would nest the backup, so restore always clears `$SRC` first.
+/// Privileged replacement keeps the outer `.app` directory in place so Dock
+/// bookmarks do not follow the running app into the rollback directory.
+/// Both new and legacy backups store the original `Contents` under `$BAK`.
 pub const MACOS_PRIVILEGED_INSTALL_SCRIPT: &str = r#"
 on installUpdate(srcPath, newPath, backupPath)
-  do shell script "NEW=" & quoted form of newPath & "; SRC=" & quoted form of srcPath & "; BAK=" & quoted form of backupPath & "; /bin/test -d \"$NEW/Contents\" || exit 1; if /bin/test ! -d \"$SRC/Contents\"; then if /bin/test -d \"$BAK/Contents\"; then if /bin/test -e \"$SRC\"; then /bin/rm -rf \"$SRC\"; fi; /bin/mv -f \"$BAK\" \"$SRC\" || exit 1; fi; fi; /bin/test -d \"$SRC/Contents\" || exit 1; if /bin/test -e \"$BAK\"; then /bin/rm -rf \"$BAK\"; fi; /bin/mv -f \"$SRC\" \"$BAK\" || exit 1; if /bin/mv -f \"$NEW\" \"$SRC\" && /bin/test -d \"$SRC/Contents\"; then /bin/rm -rf \"$BAK\"; exit 0; fi; if /bin/test -e \"$SRC\"; then /bin/rm -rf \"$SRC\"; fi; /bin/mv -f \"$BAK\" \"$SRC\"; exit 1" with administrator privileges
+  do shell script "NEW=" & quoted form of newPath & "; SRC=" & quoted form of srcPath & "; BAK=" & quoted form of backupPath & "; /bin/test -d \"$NEW/Contents\" || exit 1; if /bin/test ! -d \"$SRC/Contents\"; then if /bin/test -d \"$BAK/Contents\"; then /bin/mkdir -p \"$SRC\" || exit 1; if /bin/test -e \"$SRC/Contents\"; then /bin/rm -rf \"$SRC/Contents\" || exit 1; fi; /bin/mv -f \"$BAK/Contents\" \"$SRC/Contents\" || exit 1; fi; fi; /bin/test -d \"$SRC/Contents\" || exit 1; if /bin/test -e \"$BAK\"; then /bin/rm -rf \"$BAK\"; fi; /bin/mkdir \"$BAK\" || exit 1; /bin/mv -f \"$SRC/Contents\" \"$BAK/Contents\" || exit 1; if /bin/mv -f \"$NEW/Contents\" \"$SRC/Contents\" && /bin/test -d \"$SRC/Contents\"; then /bin/rm -rf \"$BAK\"; exit 0; fi; if /bin/test -e \"$SRC/Contents\"; then /bin/rm -rf \"$SRC/Contents\"; fi; /bin/mv -f \"$BAK/Contents\" \"$SRC/Contents\"; exit 1" with administrator privileges
 end installUpdate
 "#;
 
@@ -47,6 +42,62 @@ pub fn macos_update_backup_path(extract_path: &Path) -> Option<PathBuf> {
     extract_path
         .parent()
         .map(|parent| parent.join(".zinnia-update-backup"))
+}
+
+/// Replace only `Contents`; the installed `.app` inode is the Dock identity.
+/// The caller recovers/removes any previous sibling backup before entering.
+pub fn install_macos_app_contents(stage: &Path, app: &Path, backup: &Path) -> std::io::Result<()> {
+    install_macos_app_contents_with(stage, app, backup, move_dir_replacing)
+}
+
+fn install_macos_app_contents_with(
+    stage: &Path,
+    app: &Path,
+    backup: &Path,
+    move_contents: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    if !macos_app_bundle_complete(stage) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "staged app is missing Contents",
+        ));
+    }
+    // create_dir deliberately refuses an existing backup: never overwrite the
+    // only recoverable copy when the caller has not completed recovery.
+    std::fs::create_dir(backup)?;
+    let live = app.join("Contents");
+    let saved = backup.join("Contents");
+    if let Err(error) = std::fs::rename(&live, &saved) {
+        let _ = std::fs::remove_dir(backup);
+        return Err(error);
+    }
+    let installed = move_contents(&stage.join("Contents"), &live).and_then(|()| {
+        if live.is_dir() {
+            Ok(())
+        } else {
+            Err(std::io::Error::other(
+                "new app is missing Contents after install",
+            ))
+        }
+    });
+    if let Err(error) = installed {
+        let restore = (|| -> std::io::Result<()> {
+            if live.exists() {
+                std::fs::remove_dir_all(&live)?;
+            }
+            std::fs::rename(&saved, &live)
+        })();
+        if let Err(restore_error) = restore {
+            return Err(std::io::Error::other(format!(
+                "{error}; could not restore app Contents: {restore_error}; backup retained at {}",
+                backup.display()
+            )));
+        }
+        let _ = std::fs::remove_dir(backup);
+        return Err(error);
+    }
+    let _ = std::fs::remove_dir_all(backup);
+    Ok(())
 }
 
 /// ShellExecuteW returns a value `<= 32` on failure (Win32).
@@ -378,19 +429,20 @@ mod tests {
         assert!(MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("backupPath"));
         assert!(MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("/bin/test -d \\\"$NEW/Contents\\\""));
         assert!(MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("/bin/test -d \\\"$SRC/Contents\\\""));
-        assert!(MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("/bin/mv -f \\\"$BAK\\\" \\\"$SRC\\\""));
+        assert!(MACOS_PRIVILEGED_INSTALL_SCRIPT
+            .contains("/bin/mv -f \\\"$BAK/Contents\\\" \\\"$SRC/Contents\\\""));
         assert!(
             MACOS_PRIVILEGED_INSTALL_SCRIPT
-                .contains("/bin/rm -rf \\\"$SRC\\\"; fi; /bin/mv -f \\\"$BAK\\\" \\\"$SRC\\\""),
+                .contains("/bin/rm -rf \\\"$SRC/Contents\\\"; fi; /bin/mv -f \\\"$BAK/Contents\\\" \\\"$SRC/Contents\\\""),
             "failed swap must remove the incomplete new tree before restoring the backup"
         );
         let swap_at = MACOS_PRIVILEGED_INSTALL_SCRIPT
-            .find("/bin/mv -f \\\"$SRC\\\" \\\"$BAK\\\"")
-            .expect("live bundle must be renamed to the sibling backup first");
+            .find("/bin/mv -f \\\"$SRC/Contents\\\" \\\"$BAK/Contents\\\"")
+            .expect("live Contents must be renamed to the sibling backup first");
         let stale_backup_rm = MACOS_PRIVILEGED_INSTALL_SCRIPT
             .find(concat!(
-                "if /bin/test -e \\\"$BAK\\\"; then /bin/rm -rf \\\"$BAK\\\"; fi; ",
-                "/bin/mv -f \\\"$SRC\\\" \\\"$BAK\\\""
+                "if /bin/test -e \\\"$BAK\\\"; then /bin/rm -rf \\\"$BAK\\\"; fi; /bin/mkdir \\\"$BAK\\\" || exit 1; ",
+                "/bin/mv -f \\\"$SRC/Contents\\\" \\\"$BAK/Contents\\\""
             ))
             .expect(
                 "stale backup may be removed only after live Contents exists and immediately before the swap",
@@ -419,6 +471,127 @@ mod tests {
             macos_update_backup_path(app).as_deref(),
             Some(Path::new("/Applications/.zinnia-update-backup"))
         );
+    }
+
+    #[cfg(unix)]
+    fn macos_fixture() -> (
+        std::path::PathBuf,
+        std::path::PathBuf,
+        std::path::PathBuf,
+        std::path::PathBuf,
+    ) {
+        static NEXT_FIXTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "zinnia-dock-{}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+            NEXT_FIXTURE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let app = root.join("Zinnia.app");
+        let stage = root.join("stage");
+        let backup = root.join("backup");
+        for (bundle, value) in [(&app, "old"), (&stage, "new")] {
+            std::fs::create_dir_all(bundle.join("Contents")).unwrap();
+            std::fs::write(bundle.join("Contents/version"), value).unwrap();
+        }
+        (root, app, stage, backup)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn macos_update_preserves_outer_app_identity() {
+        use std::os::unix::fs::MetadataExt;
+        let (root, app, stage, backup) = macos_fixture();
+        let inode = std::fs::metadata(&app).unwrap().ino();
+        std::fs::write(app.join("root-marker"), "preserved").unwrap();
+        install_macos_app_contents(&stage, &app, &backup).unwrap();
+        assert_eq!(std::fs::metadata(&app).unwrap().ino(), inode);
+        assert_eq!(
+            std::fs::read_to_string(app.join("Contents/version")).unwrap(),
+            "new"
+        );
+        assert!(app.join("root-marker").is_file());
+        assert!(!backup.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn macos_missing_stage_keeps_live_contents() {
+        let (root, app, stage, backup) = macos_fixture();
+        std::fs::remove_dir_all(stage.join("Contents")).unwrap();
+        assert!(install_macos_app_contents(&stage, &app, &backup).is_err());
+        assert_eq!(
+            std::fs::read_to_string(app.join("Contents/version")).unwrap(),
+            "old"
+        );
+        assert!(!backup.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn macos_failed_contents_move_restores_without_nesting() {
+        use std::os::unix::fs::MetadataExt;
+        let (root, app, stage, backup) = macos_fixture();
+        let inode = std::fs::metadata(&app).unwrap().ino();
+        let error = install_macos_app_contents_with(&stage, &app, &backup, |_, dest| {
+            std::fs::create_dir(dest)?;
+            std::fs::write(dest.join("partial"), "incomplete")?;
+            Err(std::io::Error::other("injected copy failure"))
+        })
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("injected copy failure"),
+            "{error}"
+        );
+        assert_eq!(std::fs::metadata(&app).unwrap().ino(), inode);
+        assert_eq!(
+            std::fs::read_to_string(app.join("Contents/version")).unwrap(),
+            "old"
+        );
+        assert!(!app.join("Contents/partial").exists());
+        assert!(!app.join("Contents/Contents").exists());
+        assert!(!backup.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn macos_failed_rollback_preserves_backup() {
+        let (root, app, stage, backup) = macos_fixture();
+        let error = install_macos_app_contents_with(&stage, &app, &backup, |_, dest| {
+            std::fs::write(dest, "blocks directory restoration")?;
+            Err(std::io::Error::other("injected move failure"))
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("restore"));
+        assert_eq!(
+            std::fs::read_to_string(backup.join("Contents/version")).unwrap(),
+            "old"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn macos_existing_backup_is_not_overwritten() {
+        let (root, app, stage, backup) = macos_fixture();
+        std::fs::create_dir_all(backup.join("Contents")).unwrap();
+        std::fs::write(backup.join("Contents/version"), "recovery").unwrap();
+        assert!(install_macos_app_contents(&stage, &app, &backup).is_err());
+        assert_eq!(
+            std::fs::read_to_string(app.join("Contents/version")).unwrap(),
+            "old"
+        );
+        assert_eq!(
+            std::fs::read_to_string(backup.join("Contents/version")).unwrap(),
+            "recovery"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

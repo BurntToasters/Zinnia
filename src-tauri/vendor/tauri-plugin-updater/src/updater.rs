@@ -1297,8 +1297,8 @@ impl Update {
     /// └── ...
     fn install_inner(&self, bytes: &[u8]) -> Result<()> {
         use crate::install_safety::{
-            is_cross_device, macos_app_bundle_complete, macos_update_backup_path,
-            move_dir_replacing, MACOS_PRIVILEGED_INSTALL_SCRIPT,
+            install_macos_app_contents, is_cross_device, macos_app_bundle_complete,
+            macos_update_backup_path, MACOS_PRIVILEGED_INSTALL_SCRIPT,
         };
 
         let app_parent = self
@@ -1331,10 +1331,18 @@ impl Update {
 
         if !macos_app_bundle_complete(&self.extract_path) && macos_app_bundle_complete(&backup_path)
         {
-            if self.extract_path.exists() {
-                let _ = std::fs::remove_dir_all(&self.extract_path);
-            }
-            if let Err(err) = std::fs::rename(&backup_path, &self.extract_path) {
+            // New backups and legacy whole-bundle backups both contain
+            // Contents. Recover it without moving the outer app directory.
+            let restore = (|| -> std::io::Result<()> {
+                std::fs::create_dir_all(&self.extract_path)?;
+                let contents = self.extract_path.join("Contents");
+                if contents.exists() {
+                    std::fs::remove_file(&contents)?;
+                }
+                std::fs::rename(backup_path.join("Contents"), contents)?;
+                std::fs::remove_dir_all(&backup_path)
+            })();
+            if let Err(err) = restore {
                 if err.kind() != std::io::ErrorKind::PermissionDenied {
                     return Err(err.into());
                 }
@@ -1343,36 +1351,11 @@ impl Update {
             let _ = std::fs::remove_dir_all(&backup_path);
         }
 
-        let unprivileged = (|| -> std::io::Result<()> {
-            std::fs::rename(&self.extract_path, &backup_path)?;
-            match move_dir_replacing(tmp_extract_dir.path(), &self.extract_path) {
-                Ok(()) => {
-                    if !macos_app_bundle_complete(&self.extract_path) {
-                        if self.extract_path.exists() {
-                            let _ = std::fs::remove_dir_all(&self.extract_path);
-                        }
-                        std::fs::rename(&backup_path, &self.extract_path)?;
-                        return Err(std::io::Error::other(
-                            "new app bundle is missing Contents after install",
-                        ));
-                    }
-                    let _ = std::fs::remove_dir_all(&backup_path);
-                    Ok(())
-                }
-                Err(err) => {
-                    if self.extract_path.exists() {
-                        let _ = std::fs::remove_dir_all(&self.extract_path);
-                    }
-                    let _ = std::fs::rename(&backup_path, &self.extract_path);
-                    Err(err)
-                }
-            }
-        })();
+        let unprivileged =
+            install_macos_app_contents(tmp_extract_dir.path(), &self.extract_path, &backup_path);
 
         match unprivileged {
-            Ok(()) => {
-                let _ = tmp_extract_dir.keep();
-            }
+            Ok(()) => {}
             Err(err)
                 if err.kind() == std::io::ErrorKind::PermissionDenied || is_cross_device(&err) =>
             {
@@ -1426,7 +1409,6 @@ impl Update {
                         "Failed to move the new app into place",
                     )));
                 }
-                let _ = tmp_extract_dir.keep();
             }
             Err(err) => return Err(err.into()),
         }
