@@ -196,27 +196,23 @@ function compactVersion(version) {
 }
 
 /**
- * Each official file is published on two hosts: www.7-zip.org/a/ and the
- * ip7z/7zip GitHub release. `url` keeps the historical primary host and
- * `mirrorUrl` is the second host. Both must return identical bytes.
+ * Use the official GitHub release assets linked from the 7-Zip download page.
+ * New releases may not publish every platform archive on www.7-zip.org/a/.
  */
 function sourceDefinitions(version) {
   const compact = compactVersion(version);
-  const siteUrl = (file) => `https://www.7-zip.org/a/${file}`;
   const releaseUrl = (file) =>
     `https://github.com/ip7z/7zip/releases/download/${version}/${file}`;
   return [
     {
       name: "linux-arm64",
-      url: siteUrl(`7z${compact}-linux-arm64.tar.xz`),
-      mirrorUrl: releaseUrl(`7z${compact}-linux-arm64.tar.xz`),
+      url: releaseUrl(`7z${compact}-linux-arm64.tar.xz`),
       format: "tar.xz",
       artifacts: [{ asset: "linux/arm64/7zzs", member: "7zzs" }],
     },
     {
       name: "linux-x64",
-      url: siteUrl(`7z${compact}-linux-x64.tar.xz`),
-      mirrorUrl: releaseUrl(`7z${compact}-linux-x64.tar.xz`),
+      url: releaseUrl(`7z${compact}-linux-x64.tar.xz`),
       format: "tar.xz",
       artifacts: [{ asset: "linux/x64/7zzs", member: "7zzs" }],
       license: {
@@ -227,15 +223,13 @@ function sourceDefinitions(version) {
     },
     {
       name: "mac",
-      url: siteUrl(`7z${compact}-mac.tar.xz`),
-      mirrorUrl: releaseUrl(`7z${compact}-mac.tar.xz`),
+      url: releaseUrl(`7z${compact}-mac.tar.xz`),
       format: "tar.xz",
       artifacts: [{ asset: "mac/7zz", member: "7zz" }],
     },
     {
       name: "windows-arm64-installer",
       url: releaseUrl(`7z${compact}-arm64.exe`),
-      mirrorUrl: siteUrl(`7z${compact}-arm64.exe`),
       format: "7z",
       artifacts: [
         { asset: "win/arm64/7z.dll", member: "7z.dll" },
@@ -245,7 +239,6 @@ function sourceDefinitions(version) {
     {
       name: "windows-x64-installer",
       url: releaseUrl(`7z${compact}-x64.exe`),
-      mirrorUrl: siteUrl(`7z${compact}-x64.exe`),
       format: "7z",
       artifacts: [
         { asset: "win/x64/7z.dll", member: "7z.dll" },
@@ -258,37 +251,6 @@ function sourceDefinitions(version) {
       },
     },
   ];
-}
-
-/**
- * Test-only mirror override: ZINNIA_7Z_MIRROR_OVERRIDE_<SOURCE>, where <SOURCE>
- * is the source name upper-cased with "-" replaced by "_" (for example
- * ZINNIA_7Z_MIRROR_OVERRIDE_WINDOWS_X64_INSTALLER). It only takes effect when
- * set, and only to a plain http:// loopback URL, so it can never point a
- * release run at a third-party host. Used by the E2E harness to prove that a
- * mismatched mirror is rejected.
- */
-export function mirrorOverrideFor(sourceName, env = process.env) {
-  const name = `ZINNIA_7Z_MIRROR_OVERRIDE_${sourceName
-    .toUpperCase()
-    .replace(/-/g, "_")}`;
-  const value = env[name];
-  if (value === undefined || value === "") return undefined;
-  let parsed;
-  try {
-    parsed = new URL(value);
-  } catch {
-    throw new Error(`${name} must be a URL, got ${JSON.stringify(value)}.`);
-  }
-  if (
-    parsed.protocol !== "http:" ||
-    !["127.0.0.1", "localhost"].includes(parsed.hostname)
-  ) {
-    throw new Error(
-      `${name} is test-only and must be an http://127.0.0.1 or http://localhost URL.`,
-    );
-  }
-  return value;
 }
 
 async function fetchLatestVersion() {
@@ -333,42 +295,16 @@ async function downloadFile(url, destination) {
   );
 }
 
-/**
- * Download one official archive from both hosts and require identical bytes.
- * Nothing is extracted or staged unless the two sha256 values match.
- */
-async function downloadMirroredArchive(source, downloadDirectory) {
+/** Download an official release archive and record its SHA-256 for provenance. */
+async function downloadArchive(source, downloadDirectory) {
   const archiveName = path.basename(new URL(source.url).pathname);
-  const mirrorUrl = source.mirrorUrl;
-  // Separate directories: both hosts serve the same file name.
-  const archivePath = path.join(
-    downloadDirectory,
-    source.name,
-    "primary",
-    archiveName,
-  );
-  const mirrorPath = path.join(
-    downloadDirectory,
-    source.name,
-    "mirror",
-    archiveName,
-  );
+  const archivePath = path.join(downloadDirectory, source.name, archiveName);
   fs.mkdirSync(path.dirname(archivePath), { recursive: true });
-  fs.mkdirSync(path.dirname(mirrorPath), { recursive: true });
-  console.log(
-    `Downloading ${archiveName} from ${source.url} and ${mirrorUrl}...`,
-  );
+  console.log(`Downloading ${archiveName} from ${source.url}...`);
   await downloadFile(source.url, archivePath);
-  await downloadFile(mirrorUrl, mirrorPath);
   const sha256 = sha256File(archivePath);
-  const mirrorSha256 = sha256File(mirrorPath);
-  if (sha256 !== mirrorSha256) {
-    throw new Error(
-      `Mirror mismatch for ${archiveName}: ${source.url} sha256 ${sha256} does not match ${mirrorUrl} sha256 ${mirrorSha256}. Refusing to update.`,
-    );
-  }
-  console.log(`Verified ${archiveName}: both mirrors sha256 ${sha256}.`);
-  return { archivePath, sha256, mirrorUrl };
+  console.log(`Downloaded ${archiveName}: sha256 ${sha256}.`);
+  return { archivePath, sha256 };
 }
 
 function run(command, args, { inherit = false } = {}) {
@@ -488,14 +424,7 @@ async function update(version) {
     appVersion,
     version,
   );
-  // Resolve every test-only mirror override before the first download, so a
-  // bad override fails with nothing fetched.
-  const sources = sourceDefinitions(version).map((source) => {
-    const override = mirrorOverrideFor(source.name);
-    if (!override) return source;
-    console.warn(`TEST OVERRIDE: ${source.name} mirror set to ${override}`);
-    return { ...source, mirrorUrl: override };
-  });
+  const sources = sourceDefinitions(version);
   const temporaryDirectory = fs.mkdtempSync(
     path.join(os.tmpdir(), "zinnia-7z-update-"),
   );
@@ -512,12 +441,11 @@ async function update(version) {
   try {
     const extractor = resolveTrustedExtractor();
     for (const source of sources) {
-      const archive = await downloadMirroredArchive(source, downloadDirectory);
+      const archive = await downloadArchive(source, downloadDirectory);
       const archivePath = archive.archivePath;
       sourceArchives[source.name] = {
         url: source.url,
         sha256: archive.sha256,
-        mirrorUrl: archive.mirrorUrl,
       };
 
       const extracted = path.join(extractionDirectory, source.name);
@@ -587,7 +515,6 @@ async function update(version) {
           {
             url: source.url,
             sha256: source.sha256,
-            mirrorUrl: source.mirrorUrl,
           },
         ]),
       ),
