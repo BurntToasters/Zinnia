@@ -7,7 +7,7 @@
 |                                                                                                                                                                                                                            |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.1/Zinnia-Linux-x64.rpm)           |
 |                                                                                                                                                                                                                            |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.1/Zinnia-Linux-x64.flatpak)   |
 
-> macOS downloads require macOS 26 or later.
+> macOS downloads require macOS 15 or later.
 
 > [!IMPORTANT]
 > The `.sig` files in this repo are NOT normal gpg signatures they are for Tauri V2's updater to verify the integrity of updates before downloading and installing.
@@ -20,7 +20,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
 ## Changes in `v0.7.0-beta.1:`
 
-- **Fix:** (add release notes)
+- **macOS:** Minimum supported version is macOS 15.0; Finder Sync uses the app's configured deployment target.
 
 ### FULL CHANGELOG:
 

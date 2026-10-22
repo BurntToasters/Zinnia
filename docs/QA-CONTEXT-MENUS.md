@@ -6,19 +6,35 @@ Record the package hash, OS build, CPU architecture, install/upgrade/uninstall
 result, archive association result, and one successful compress/extract cycle
 for every applicable row:
 
-| Platform     | Architecture                       | Required artifact/integration                                             |
-| ------------ | ---------------------------------- | ------------------------------------------------------------------------- |
-| macOS 26+    | Apple silicon                      | Universal DMG and ZIP; Gatekeeper, notarization, Finder Services, updater |
-| macOS 26+    | Intel, while supported by macOS 26 | Universal DMG and ZIP; launch, Finder Services, updater                   |
-| Windows 11   | x64                                | Signed NSIS, modern and classic Explorer menus, updater                   |
-| Windows 11   | ARM64                              | Signed ARM64 NSIS, native shell DLL, modern and classic menus, updater    |
-| Windows 10   | x64                                | Signed NSIS, classic Explorer verbs, updater                              |
-| Ubuntu 24.04 | x64                                | AppImage, DEB, sideload Flatpak; Wayland and X11                          |
-| Debian 13    | x64                                | Ubuntu-built AppImage and DEB                                             |
-| Fedora 43    | x64                                | RPM and AppImage                                                          |
+| Platform     | Architecture                      | Required artifact/integration                                              |
+| ------------ | --------------------------------- | -------------------------------------------------------------------------- |
+| macOS 15     | Apple silicon and supported Intel | Universal DMG/ZIP; minimum floor, launch, Gatekeeper, Finder Sync/Services, updater, archive cycle |
+| macOS 26     | Apple silicon and supported Intel | Universal DMG/ZIP; launch, Gatekeeper, Finder Sync/Services, updater, archive cycle |
+| macOS 27     | Apple silicon and supported Intel | Universal DMG/ZIP; launch, Gatekeeper, Finder Sync/Services, updater, archive cycle |
+| Windows 11   | x64                               | Signed NSIS, modern and classic Explorer menus, updater                    |
+| Windows 11   | ARM64                             | Signed ARM64 NSIS, native shell DLL, modern and classic menus, updater     |
+| Windows 10   | x64                               | Signed NSIS, classic Explorer verbs, updater                               |
+| Ubuntu 24.04 | x64                               | AppImage, DEB, sideload Flatpak; Wayland and X11                           |
+| Debian 13    | x64                               | Ubuntu-built AppImage and DEB                                              |
+| Fedora 43    | x64                               | RPM and AppImage                                                           |
 
 The release scripts remain platform-local. This matrix is the packaged OS
 integration gate that compile smoke tests cannot replace.
+
+Zinnia declares macOS 15.0 as its minimum. Run every macOS row separately and
+keep an evidence record per OS and architecture with:
+
+- `sw_vers -productVersion`, `sw_vers -buildVersion`, `uname -m`, the exact
+  artifact name, and `shasum -a 256` output.
+- `spctl --assess --type execute --verbose=4` and `codesign -dvvv` results for
+  the installed app, Finder Sync extension, and bundled `7z`; retain the
+  `pluginkit` / `pbs` results from the checklists below.
+- The release packager's `scripts/zip-macos.js` output for that universal
+  artifact. It checks both architecture slices of the app executable, Finder
+  Sync executable, and bundled `7z` against the declared 15.0 minimum.
+
+A green package check does not replace launch and Finder integration runs on
+clean macOS 15, 26, and 27 systems.
 
 **CI scope:** GitHub Actions runs quality gates, unit/coverage tests, and
 unsigned `--no-bundle` smoke builds only. It does **not** produce signed NSIS,
@@ -89,7 +105,7 @@ Zinnia**. A dirty developer Mac's Launch Services database is not evidence.
 Items & Extensions → **Zinnia Finder**. Settings **Enabled** means election, not
 "menus are visible."
 
-> **Release gate:** On a clean macOS 26+ machine, install the signed and
+> **Release gate:** On clean macOS 15, 26, and 27 machines, install the signed and
 > notarized universal artifact; verify Finder Sync primary-menu items, Finder Services,
 > archive Open With, a signed updater check, and `spctl --assess` before publishing.
 

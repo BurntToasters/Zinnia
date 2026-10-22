@@ -24,8 +24,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md), [CONTRIBUTING.md](CONTRIBUTING.md), and
 
 ## System requirements
 
-- macOS 26 or later. The universal build supports Intel and Apple silicon Macs
-  that can run macOS 26+.
+- macOS 15 or later. The universal build supports Intel and Apple silicon Macs
+  that can run macOS 15+.
 - Windows 10 version 2004 (build 19041) or later, on x64 or ARM64. The modern
   Explorer integration requires a signed NSIS install.
 - Linux x64: Ubuntu 24.04+, Debian 13+, or Fedora 43+ (or a compatible

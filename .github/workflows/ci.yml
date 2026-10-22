@@ -396,7 +396,8 @@ jobs:
     needs: quality-gate
     strategy:
       matrix:
-        # Pin macos-26: bundled 7-Zip / minimumSystemVersion require 26.0+.
+        # Pin macos-26 for the hosted smoke/E2E environment; the package floor is 15.0.
+        # scripts/zip-macos.js checks every app, Finder Sync, and 7-Zip slice against it.
         # macos-latest still resolves to macOS 15 arm64 on GitHub-hosted runners.
         # ARM entries run the same unpackaged GUI E2E as x64, not only a smoke build.
         os: [windows-latest, macos-26, ubuntu-24.04-arm, windows-11-arm]

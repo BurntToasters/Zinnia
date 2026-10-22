@@ -131,7 +131,7 @@
     "macOS": {
       "entitlements": "macos/build/Zinnia.entitlements",
       "hardenedRuntime": true,
-      "minimumSystemVersion": "26.0",
+      "minimumSystemVersion": "15.0",
       "bundleVersion": "0.7.3001",
       "files": {
         "PlugIns/ZinniaFinderSync.appex": "macos/build/ZinniaFinderSync.appex"
