@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
+import { compareVersions } from "../version-compare";
 import {
   macBundleVersionFromSemver,
   macMarketingVersionFromSemver,
@@ -41,13 +42,24 @@ describe("macOS compatibility", () => {
   it.runIf(process.platform === "darwin")(
     "keeps every official 7-Zip slice compatible with the declared macOS floor",
     () => {
+      const config = JSON.parse(
+        fs.readFileSync(
+          path.resolve(process.cwd(), "src-tauri", "tauri.conf.json"),
+          "utf8",
+        ),
+      );
+      const requiredMacOS = config.bundle.macOS.minimumSystemVersion;
       const sidecar = path.resolve(process.cwd(), "assets", "mac", "7zz");
       for (const arch of ["x86_64", "arm64"]) {
         const output = execFileSync("otool", ["-arch", arch, "-l", sidecar], {
           encoding: "utf8",
         });
         const match = output.match(/\bminos\s+(\d+(?:\.\d+)*)/);
-        expect(match?.[1]).toBe("26.0");
+        expect(match, `Missing minos for ${arch}`).not.toBeNull();
+        expect(
+          compareVersions(match![1], requiredMacOS),
+          `${arch} minimum macOS must not exceed ${requiredMacOS}`,
+        ).toBeLessThanOrEqual(0);
       }
     },
     // Two synchronous `execFileSync` spawns are fast in isolation (tens of
