@@ -72,7 +72,7 @@ if (fs.existsSync(manifest)) {
     !yaml.includes("3 days ago")
   ) {
     console.error(
-      "flatpak-dry-run: node22 SDK npm 10.x must be upgraded to the packageManager-pinned npm with a 3-day --before age gate before npm ci",
+      "flatpak-dry-run: node24 SDK npm 11.x must be upgraded to the packageManager-pinned npm with a 3-day --before age gate before npm ci",
     );
     failed = true;
   }

@@ -3,7 +3,7 @@ runtime: org.gnome.Platform
 runtime-version: "50"
 sdk: org.gnome.Sdk
 sdk-extensions:
-  - org.freedesktop.Sdk.Extension.node22
+  - org.freedesktop.Sdk.Extension.node24
   - org.freedesktop.Sdk.Extension.rust-stable
 command: zinnia
 separate-locales: false
@@ -36,7 +36,7 @@ modules:
       # sources come from the clean commit export prepared by the host script.
       build-args:
         - --share=network
-      append-path: /run/build/zinnia/npm-global/bin:/usr/lib/sdk/node22/bin:/usr/lib/sdk/rust-stable/bin
+      append-path: /run/build/zinnia/npm-global/bin:/usr/lib/sdk/node24/bin:/usr/lib/sdk/rust-stable/bin
       env:
         CARGO_HOME: /run/build/zinnia/cargo
         npm_config_cache: /run/build/zinnia/npm-cache
@@ -45,9 +45,9 @@ modules:
       # The Flatpak rust-stable SDK extension installs rustc/cargo directly,
       # not through rustup. Fail closed if that extension drifts from our pin.
       - test "$(rustc --version | cut -d' ' -f2)" = 1.98.1
-      # node22 SDK ships npm 10.x, which does not support --min-release-age.
+      # node24 SDK ships npm 11.x, which does not support --min-release-age.
       # Match packageManager and CI exactly. --before retains the age gate.
-      - npm install --global npm@12.0.2 --ignore-scripts --engine-strict=false --before="$(date -u -d '3 days ago' +%Y-%m-%dT%H:%M:%SZ)" --prefix /run/build/zinnia/npm-global
+      - npm install --global npm@12.2.1 --ignore-scripts --engine-strict=false --before="$(date -u -d '3 days ago' +%Y-%m-%dT%H:%M:%SZ)" --prefix /run/build/zinnia/npm-global
       - npm ci --engine-strict=false
       - npm run sync-version
       - npm run prepare:7z:all

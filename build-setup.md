@@ -11,14 +11,14 @@
   **Desktop development with C++** includes **C++ CMake tools for Windows** (updates can drop
   optional components; an old VS 2022 `cmake` on PATH stops working when 2022 is removed).
 - **Windows SDK** (`makeappx.exe`) for Win11 sparse context-menu packages
-- Node.js `^22.22.2 || ^24.15.0 || >=26` (`engines.node` in package.json)
+- Node.js `^24.22.1 || >=26.13.0` (`engines.node` in package.json)
 - Rust (rustup) + Visual Studio Build Tools (clang: x64 and arm64)
 
 ## macOS
 
 - macOS 26 or later
 - Xcode Command Line Tools
-- Node.js `^22.22.2 || ^24.15.0 || >=26` (`engines.node` in package.json)
+- Node.js `^24.22.1 || >=26.13.0` (`engines.node` in package.json)
 - Rust (rustup)
 
 ## Linux
@@ -30,7 +30,7 @@
 - Build and test RPM artifacts on Fedora 43. Test the DEB/AppImage on Debian
   13 and the RPM on Fedora 43; these distributions are runtime targets, not
   interchangeable AppImage build baselines.
-- Node.js `^22.22.2 || ^24.15.0 || >=26` (`engines.node` in package.json)
+- Node.js `^24.22.1 || >=26.13.0` (`engines.node` in package.json)
 - Rust (rustup)
 - Build essentials (gcc, g++, make)
 - AppImage, rpm, deb tooling if building those bundles
