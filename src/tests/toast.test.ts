@@ -73,7 +73,7 @@ describe("showToast", () => {
 
   it("keeps success and error tints over the opaque toast surface", () => {
     const css = fs.readFileSync(
-      path.resolve(process.cwd(), "src/styles/main-mid.css"),
+      path.resolve(process.cwd(), "src/styles/main-mid-overlay-toast.css"),
       "utf8",
     );
     expect(css.match(/\.toast\s*{([\s\S]*?)}/)?.[1]).toContain(

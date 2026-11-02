@@ -597,12 +597,6 @@
           "markdownDescription": "Enables the probe_7z command without any pre-configured scope."
         },
         {
-          "description": "Enables the probe_compress_inputs command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-probe-compress-inputs",
-          "markdownDescription": "Enables the probe_compress_inputs command without any pre-configured scope."
-        },
-        {
           "description": "Enables the register_extract_open_path command without any pre-configured scope.",
           "type": "string",
           "const": "allow-register-extract-open-path",
@@ -901,12 +895,6 @@
           "type": "string",
           "const": "deny-probe-7z",
           "markdownDescription": "Denies the probe_7z command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the probe_compress_inputs command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-probe-compress-inputs",
-          "markdownDescription": "Denies the probe_compress_inputs command without any pre-configured scope."
         },
         {
           "description": "Denies the register_extract_open_path command without any pre-configured scope.",

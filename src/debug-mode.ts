@@ -16,6 +16,49 @@ let seedInFlight = false;
 let reseedRequested = false;
 let pendingRelayLines: string[] = [];
 
+const MAX_DEBUG_CONSOLE_PAYLOAD_BYTES = 256 * 1024;
+const MAX_DEBUG_CONSOLE_LINE_UTF8_BYTES = 16 * 1024;
+const MAX_DEBUG_CONSOLE_SEED_UTF8_BYTES =
+  MAX_DEBUG_CONSOLE_PAYLOAD_BYTES - MAX_DEBUG_CONSOLE_LINE_UTF8_BYTES;
+
+const debugConsoleTextEncoder = new TextEncoder();
+
+function truncateUtf8ByBytes(text: string, maxBytes: number): string {
+  if (debugConsoleTextEncoder.encode(text).byteLength <= maxBytes) {
+    return text;
+  }
+  let low = 0;
+  let high = text.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (
+      debugConsoleTextEncoder.encode(text.slice(0, mid)).byteLength <= maxBytes
+    ) {
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return text.slice(0, low);
+}
+
+function capDebugConsoleLine(line: string): string {
+  return truncateUtf8ByBytes(line, MAX_DEBUG_CONSOLE_LINE_UTF8_BYTES);
+}
+
+function seedLinesWithinByteCap(): string[] {
+  const selected: string[] = [];
+  let totalBytes = 0;
+  for (let i = lineBuffer.length - 1; i >= 0; i -= 1) {
+    const line = capDebugConsoleLine(lineBuffer[i] ?? "");
+    const lineBytes = debugConsoleTextEncoder.encode(line).byteLength;
+    if (totalBytes + lineBytes > MAX_DEBUG_CONSOLE_SEED_UTF8_BYTES) break;
+    selected.unshift(line);
+    totalBytes += lineBytes;
+  }
+  return selected;
+}
+
 function persistPopOutPreference(next: boolean): Promise<void> {
   if (state.currentSettings.debugConsolePoppedOut === next) {
     return Promise.resolve();
@@ -73,7 +116,7 @@ function trimDebugLog(logEl: HTMLElement): void {
 }
 
 function pushBufferedLine(line: string): void {
-  lineBuffer.push(line);
+  lineBuffer.push(capDebugConsoleLine(line));
   if (lineBuffer.length > MAX_LOG_LINES) {
     lineBuffer = lineBuffer.slice(lineBuffer.length - MAX_LOG_LINES);
   }
@@ -91,7 +134,9 @@ function flushPendingRelays(): void {
   const queued = pendingRelayLines;
   pendingRelayLines = [];
   for (const line of queued) {
-    void invoke("relay_debug_console_line", { line }).catch(() => undefined);
+    void invoke("relay_debug_console_line", {
+      line: capDebugConsoleLine(line),
+    }).catch(() => undefined);
   }
 }
 
@@ -101,7 +146,9 @@ function relayLine(line: string): void {
     pendingRelayLines.push(line);
     return;
   }
-  void invoke("relay_debug_console_line", { line }).catch(() => {
+  void invoke("relay_debug_console_line", {
+    line: capDebugConsoleLine(line),
+  }).catch(() => {
     // Window may have closed between checks.
   });
 }
@@ -129,7 +176,9 @@ async function seedPoppedOutConsole(): Promise<void> {
   // Keep any lines queued while a prior open was settling; they are flushed
   // after this seed replaces the pop-out buffer.
   try {
-    await invoke("relay_debug_console_seed", { lines: [...lineBuffer] });
+    await invoke("relay_debug_console_seed", {
+      lines: seedLinesWithinByteCap(),
+    });
   } catch {
     // Window may have closed before seed completed.
   } finally {

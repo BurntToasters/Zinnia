@@ -22,7 +22,10 @@ import { confirmExtractDestination } from "../extract-destination";
 import { debugLog, debugLogCommand, isDebugEnabled } from "../debug-mode";
 import { buildArgs, buildExtractArgsFor } from "./args";
 import { sanitizeCommandArgsForPreview } from "./preview";
-import { confirmZipSymlinkRisk } from "./compress-fidelity";
+import {
+  userFacing7zErrorDetail,
+  userFacingBackendError,
+} from "../error-hints";
 import { basename } from "../path-display";
 import type { ProgressUpdate } from "../progress-update";
 import {
@@ -99,13 +102,6 @@ export async function runAction() {
         return;
       }
     } else {
-      const format = (
-        document.getElementById("format") as HTMLSelectElement | null
-      )?.value;
-      if (format && !(await confirmZipSymlinkRisk(format, state.inputs))) {
-        setStatus("Cancelled", 2000);
-        return;
-      }
       args = buildArgs();
       const outputPath = $<HTMLInputElement>("output-path").value;
       expectedArchiveIdentity = await invoke<string>(
@@ -181,7 +177,11 @@ export async function runAction() {
       if (isDebugEnabled()) {
         debugLog(`${mode} operation failed with exit code ${result.code}.`);
       }
-      setStatus("Error", 3000, result.stderr || "Operation failed.");
+      setStatus(
+        "Error",
+        3000,
+        userFacing7zErrorDetail(result.stdout, result.stderr),
+      );
       hideProgress();
       showOperationError(result.code, result.stdout, result.stderr);
     }
@@ -193,9 +193,10 @@ export async function runAction() {
       return;
     }
 
-    const messageText = err instanceof Error ? err.message : String(err);
-    log(`Error: ${messageText}`);
-    if (isDebugEnabled()) debugLog(`${mode} operation threw: ${messageText}`);
+    const raw = err instanceof Error ? err.message : String(err);
+    log(`Error: ${raw}`);
+    if (isDebugEnabled()) debugLog(`${mode} operation threw: ${raw}`);
+    const messageText = userFacingBackendError(raw);
     setStatus("Error", 3000, messageText);
     hideProgress();
     // Basic mode already shows the in-app completion panel for failures.
@@ -393,8 +394,9 @@ export async function runBatchExtract() {
       }
     }
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log(`Error: ${msg}`);
+    const raw = err instanceof Error ? err.message : String(err);
+    log(`Error: ${raw}`);
+    const msg = userFacingBackendError(raw);
     setStatus("Error", 3000, msg);
     hideProgress();
     if (getWorkspaceMode() !== "basic") {
@@ -439,8 +441,8 @@ export async function cancelAction() {
       devLog("Cancel requested while 7z was idle; aborting in-flight UI flow.");
     }
   } catch (err) {
-    const messageText = err instanceof Error ? err.message : String(err);
-    log(`Cancel failed: ${messageText}`, "error");
-    setStatus("Cancelling...", 3000, messageText);
+    const raw = err instanceof Error ? err.message : String(err);
+    log(`Cancel failed: ${raw}`, "error");
+    setStatus("Cancelling...", 3000, userFacingBackendError(raw));
   }
 }

@@ -33,7 +33,10 @@ import {
   truncateForDialog,
   showOperationError,
 } from "./runtime";
-import { confirmZipSymlinkRisk } from "./compress-fidelity";
+import {
+  userFacing7zErrorDetail,
+  userFacingBackendError,
+} from "../error-hints";
 
 let mutationDialogOpen = false;
 
@@ -163,11 +166,6 @@ export async function addFilesToArchive(): Promise<void> {
     if (zipDest) args.push("-mcu=on");
     if (threads) args.push(`-mmt=${threads}`);
     args.push(archive, "--", ...files);
-    if (zipDest && !(await confirmZipSymlinkRisk("zip", files))) {
-      setStatus("Cancelled", 2000);
-      return;
-    }
-
     setStatus("Adding files");
     devLog(`7z ${sanitizeCommandArgsForPreview(args).join(" ")}`);
     debugLogCommand(args);
@@ -184,7 +182,11 @@ export async function addFilesToArchive(): Promise<void> {
     logCommandResult(result.stdout, result.stderr, result.code);
 
     if (result.code !== 0) {
-      setStatus("Error", 3000, result.stderr || "Operation failed.");
+      setStatus(
+        "Error",
+        3000,
+        userFacing7zErrorDetail(result.stdout, result.stderr),
+      );
       if (isDebugEnabled()) {
         debugLog(`Add files failed with exit code ${result.code}.`);
       }
@@ -202,9 +204,10 @@ export async function addFilesToArchive(): Promise<void> {
     );
     refreshAfterRun = true;
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log(`Error: ${msg}`, "error");
-    if (isDebugEnabled()) debugLog(`Add files threw: ${msg}`);
+    const raw = err instanceof Error ? err.message : String(err);
+    log(`Error: ${raw}`, "error");
+    if (isDebugEnabled()) debugLog(`Add files threw: ${raw}`);
+    const msg = userFacingBackendError(raw);
     setStatus("Error", 3000, msg);
     showToast(
       `Add-files operation failed: ${truncateForDialog(msg, 1000)}`,
@@ -282,7 +285,9 @@ export async function convertArchive(): Promise<void> {
     );
   } catch (err) {
     picked.release();
-    const msg = err instanceof Error ? err.message : String(err);
+    const raw = err instanceof Error ? err.message : String(err);
+    log(`Conversion setup failed: ${raw}`, "error");
+    const msg = userFacingBackendError(raw);
     showToast(
       `Conversion setup failed: ${truncateForDialog(msg, 1000)}`,
       "error",
@@ -344,7 +349,11 @@ export async function convertArchive(): Promise<void> {
     }
     logCommandResult(extract.stdout, extract.stderr, extract.code);
     if (extract.code !== 0) {
-      setStatus("Error", 3000, extract.stderr || "Extraction failed.");
+      setStatus(
+        "Error",
+        3000,
+        userFacing7zErrorDetail(extract.stdout, extract.stderr),
+      );
       if (isDebugEnabled()) {
         debugLog(`Convert extract failed with exit code ${extract.code}.`);
       }
@@ -385,10 +394,6 @@ export async function convertArchive(): Promise<void> {
         "GZIP, BZIP2, and XZ can contain exactly one file. Convert this archive to TAR or 7z instead.",
       );
     }
-    if (!(await confirmZipSymlinkRisk(format, children))) {
-      setStatus("Cancelled", 2000);
-      return;
-    }
     if (state.cancelRequested || state.batchCancelled) {
       setStatus("Cancelled", 2000);
       return;
@@ -407,7 +412,11 @@ export async function convertArchive(): Promise<void> {
     }
     logCommandResult(result.stdout, result.stderr, result.code);
     if (result.code !== 0) {
-      setStatus("Error", 3000, result.stderr || "Conversion failed.");
+      setStatus(
+        "Error",
+        3000,
+        userFacing7zErrorDetail(result.stdout, result.stderr),
+      );
       if (isDebugEnabled()) {
         debugLog(`Convert failed with exit code ${result.code}.`);
       }
@@ -422,9 +431,10 @@ export async function convertArchive(): Promise<void> {
     showToast(`Converted archive to ${format.toUpperCase()}.`, "success");
     clearPasswordFields();
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log(`Error: ${msg}`, "error");
-    if (isDebugEnabled()) debugLog(`Convert threw: ${msg}`);
+    const raw = err instanceof Error ? err.message : String(err);
+    log(`Error: ${raw}`, "error");
+    if (isDebugEnabled()) debugLog(`Convert threw: ${raw}`);
+    const msg = userFacingBackendError(raw);
     setStatus("Error", 3000, msg);
     showToast(`Conversion failed: ${truncateForDialog(msg, 1000)}`, "error", 0);
   } finally {

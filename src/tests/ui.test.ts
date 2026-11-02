@@ -25,6 +25,7 @@ import {
   toggleActivity,
   registerBasicHooks,
   persistSettingsImmediately,
+  awaitInFlightSettingsPersistence,
   flushPendingSettingsPersistence,
   syncWorkspaceWindowFx,
 } from "../ui";
@@ -139,8 +140,49 @@ describe("settings persistence queue", () => {
     await Promise.resolve();
     expect(barrierFinished).toBe(false);
     releaseSave?.();
-    await Promise.all([pendingSave, barrier]);
+    await expect(pendingSave).rejects.toMatchObject({
+      name: "SettingsPersistSupersededError",
+    });
+    await barrier;
     expect(barrierFinished).toBe(true);
+  });
+
+  it("rejects when a newer save supersedes a queued write", async () => {
+    const invokeMock = vi.mocked(invoke);
+    invokeMock.mockResolvedValue(undefined);
+
+    const first = persistSettingsImmediately(
+      { ...state.currentSettings, theme: "dark" },
+      state.settingsExtras,
+    );
+    const second = persistSettingsImmediately(
+      { ...state.currentSettings, theme: "light" },
+      state.settingsExtras,
+    );
+    await expect(first).rejects.toMatchObject({
+      name: "SettingsPersistSupersededError",
+    });
+    await expect(second).resolves.toBeUndefined();
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets awaitInFlightSettingsPersistence follow a superseded write", async () => {
+    const invokeMock = vi.mocked(invoke);
+    invokeMock.mockResolvedValue(undefined);
+
+    const first = persistSettingsImmediately(
+      { ...state.currentSettings, theme: "dark" },
+      state.settingsExtras,
+    );
+    const second = persistSettingsImmediately(
+      { ...state.currentSettings, theme: "light" },
+      state.settingsExtras,
+    );
+    await expect(first).rejects.toMatchObject({
+      name: "SettingsPersistSupersededError",
+    });
+    await awaitInFlightSettingsPersistence();
+    await expect(second).resolves.toBeUndefined();
   });
 });
 

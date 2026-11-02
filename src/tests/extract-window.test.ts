@@ -494,7 +494,12 @@ describe("extract-window", () => {
     ).toBe(false);
     expect(
       (document.getElementById("error-detail") as HTMLElement).textContent,
-    ).toContain("minor warning");
+    ).toContain(
+      "7-Zip stopped with warnings (exit code 1). Extraction was not completed.",
+    );
+    expect(
+      (document.getElementById("error-detail") as HTMLElement).textContent,
+    ).not.toContain("minor warning");
   });
 
   it("includes copyable debug dump on extract failure when settings.debug is true", async () => {
@@ -588,7 +593,7 @@ describe("extract-window", () => {
         invokeMock.mock.calls.filter(([name]) => name === "run_7z"),
       ).toHaveLength(2);
       expect(document.getElementById("extract-status")?.textContent).toBe(
-        "Done",
+        "Closing in 1 s",
       );
     });
   });
@@ -646,7 +651,9 @@ describe("extract-window", () => {
     ).toBe("Failed");
     expect(
       (document.getElementById("error-detail") as HTMLElement).textContent,
-    ).toBe("fatal extraction error");
+    ).toBe(
+      "Extraction failed (exit code 2). Check the application log for details.",
+    );
   });
 
   it("keeps successful extraction visible until the user acts", async () => {
@@ -656,7 +663,7 @@ describe("extract-window", () => {
 
     expect(
       (document.getElementById("extract-status") as HTMLElement).textContent,
-    ).toBe("Done");
+    ).toBe("Closing in 2 s");
 
     vi.advanceTimersByTime(1201);
     await flushAsync();
@@ -940,7 +947,9 @@ describe("sanitizeStatusFileName", () => {
     expect(warning).toHaveBeenCalledWith(
       expect.stringContaining("Could not drain quick-extract launch queue"),
     );
-    expect(document.getElementById("extract-status")?.textContent).toBe("Done");
+    expect(document.getElementById("extract-status")?.textContent).toBe(
+      "Closing in 2 s",
+    );
     warning.mockRestore();
   });
 

@@ -3,7 +3,11 @@ import { describe, expect, it } from "vitest";
 import { ALLOWED_METHOD_PREFIXES, validateExtraArgs } from "../archive-rules";
 
 function rustSource(): string {
-  return fs.readFileSync("src-tauri/src/validation.rs", "utf8");
+  const root = "src-tauri/src/validation";
+  return (
+    fs.readFileSync("src-tauri/src/validation.rs", "utf8") +
+    fs.readFileSync(`${root}/switches.rs`, "utf8")
+  );
 }
 
 function rustMethodPrefixes(src: string): string[] {

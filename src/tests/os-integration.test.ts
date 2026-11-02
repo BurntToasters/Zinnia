@@ -491,7 +491,7 @@ describe("OS integration UI", () => {
 
     invokeMock.mockReset();
     invokeMock
-      .mockResolvedValueOnce("")
+      .mockRejectedValueOnce(new Error("pluginkit -e use failed"))
       .mockResolvedValueOnce({
         platform: "macos",
         packaged: true,

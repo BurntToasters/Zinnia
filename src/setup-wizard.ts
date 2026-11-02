@@ -1,4 +1,3 @@
-import { isE2eFrontend } from "./e2e-env";
 import { saveSettings, applyTheme } from "./settings";
 import { state } from "./state";
 import {
@@ -68,11 +67,7 @@ function showStep(step: number, visibleSteps: readonly number[]): void {
 }
 
 export function shouldShowSetupWizard(): boolean {
-  if (isE2eFrontend()) return false;
-  const setupMarkedComplete =
-    state.currentSettings.setupComplete === true ||
-    state.settingsExtras._setupComplete === true;
-  if (!setupMarkedComplete) {
+  if (state.currentSettings.setupComplete !== true) {
     return true;
   }
 
@@ -82,7 +77,6 @@ export function shouldShowSetupWizard(): boolean {
 
 export async function markSetupComplete(): Promise<void> {
   state.currentSettings.setupComplete = true;
-  state.settingsExtras._setupComplete = true;
   state.settingsExtras._setupWizardVersion = SETUP_WIZARD_VERSION;
   try {
     await saveSettings(state.currentSettings, state.settingsExtras);

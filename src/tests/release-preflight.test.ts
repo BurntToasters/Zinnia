@@ -41,8 +41,7 @@ describe("release preflight policy", () => {
     expect(workspacePrepare).toContain("test:all");
     expect(workspacePrepare.match(/test:all/g)).toHaveLength(1);
     // Update entry points only mutate lockfiles; dependency code runs later.
-    expect(packageJson.scripts.u2).toBe(packageJson.scripts.u);
-    for (const command of [packageJson.scripts.u, packageJson.scripts.u2]) {
+    for (const command of [packageJson.scripts.u]) {
       expect(command).toContain("node scripts/npm-safe-update.mjs");
       expect(command).toContain("node scripts/cargo-safe-update.mjs");
       expect(command).not.toContain("workspace:");
@@ -91,13 +90,10 @@ describe("release preflight policy", () => {
 
     expect(packageJson.scripts["build:win"]).toContain("build:win:prepared");
     expect(packageJson.scripts["build:win"].match(/licenses/g)).toHaveLength(1);
-    // Branch/clean-tree gates stay on publish entry points only, not u/u2.
+    // Branch/clean-tree gates stay on publish entry points only, not u.
     expect(packageJson.scripts.u).not.toContain("workspace:bootstrap");
     expect(packageJson.scripts.u).not.toContain("release:prepare");
-    expect(packageJson.scripts.u2).not.toContain("workspace:bootstrap");
-    expect(packageJson.scripts.u2).not.toContain("release:prepare");
     expect(packageJson.scripts.u).not.toContain("release:preflight");
-    expect(packageJson.scripts.u2).not.toContain("release:preflight");
     expect(packageJson.scripts["release:win"]).toBe(
       "node scripts/run-release.js win",
     );

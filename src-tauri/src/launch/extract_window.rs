@@ -3,7 +3,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::Manager;
 
-use crate::process::{terminate_registered_child, RunningProcess};
+use crate::process::{terminate_registered_child_async, RunningProcess};
 
 use super::open_path::derive_extract_destination_path;
 use super::{
@@ -385,9 +385,11 @@ pub async fn cancel_owner_and_wait(
         }
     };
     if let Some(child) = child {
-        terminate_registered_child(&state, &child).map_err(|error| {
-            format!("Could not stop the archive operation before closing this window: {error}")
-        })?;
+        terminate_registered_child_async(app, &child)
+            .await
+            .map_err(|error| {
+                format!("Could not stop the archive operation before closing this window: {error}")
+            })?;
     }
 
     // `run_7z` owns termination collection and filesystem finalization.

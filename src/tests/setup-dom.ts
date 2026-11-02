@@ -189,15 +189,12 @@ const DICT_OPTIONS = ["", "16m", "32m", "64m", "128m", "256m", "512m"];
 const WORD_SIZE_OPTIONS = ["", "16", "32", "64", "128", "256"];
 const SOLID_OPTIONS = ["off", "4g", "16g", "solid"];
 const FORMAT_OPTIONS = ["7z", "zip", "tar", "gzip", "bzip2", "xz"];
-const PATH_MODE_OPTIONS = ["relative", "absolute"];
-
 addSelect("format", FORMAT_OPTIONS);
 addSelect("level", LEVEL_OPTIONS);
 addSelect("method", METHOD_OPTIONS);
 addSelect("dict", DICT_OPTIONS);
 addSelect("word-size", WORD_SIZE_OPTIONS);
 addSelect("solid", SOLID_OPTIONS);
-addSelect("path-mode", PATH_MODE_OPTIONS);
 addSelect("preset", ["store", "quick", "balanced", "high", "ultra", "custom"]);
 addEl("button", "save-preset");
 addEl("button", "delete-preset");
@@ -209,8 +206,6 @@ addEl("input", "password");
 addEl("input", "extra-args");
 const encryptHeaders = addEl("input", "encrypt-headers") as HTMLInputElement;
 encryptHeaders.type = "checkbox";
-const sfxInput = addEl("input", "sfx") as HTMLInputElement;
-sfxInput.type = "checkbox";
 const updateModeInput = addEl("input", "update-mode") as HTMLInputElement;
 updateModeInput.type = "checkbox";
 const storeTimestampsInput = addEl(
@@ -218,8 +213,6 @@ const storeTimestampsInput = addEl(
   "store-timestamps",
 ) as HTMLInputElement;
 storeTimestampsInput.type = "checkbox";
-const deleteAfter = addEl("input", "delete-after") as HTMLInputElement;
-deleteAfter.type = "checkbox";
 addEl("button", "toggle-password");
 addSelect("split-size", ["", "100m", "700m", "1g", "4g", "custom"]);
 addEl("div", "split-custom-field");
@@ -239,7 +232,6 @@ addSelect("s-method", METHOD_OPTIONS);
 addSelect("s-dict", DICT_OPTIONS);
 addSelect("s-word-size", WORD_SIZE_OPTIONS);
 addSelect("s-solid", SOLID_OPTIONS);
-addSelect("s-path-mode", PATH_MODE_OPTIONS);
 addSelect("s-update-channel", ["auto", "stable", "beta"]);
 addSelect("s-log-verbosity", ["info", "debug"]);
 addSelect("s-workspace-mode", ["basic", "power"]);
@@ -247,12 +239,8 @@ addSelect("s-ui-density", ["comfortable", "compact"]);
 
 // Settings modal inputs
 addEl("input", "s-threads");
-const ssfx = addEl("input", "s-sfx") as HTMLInputElement;
-ssfx.type = "checkbox";
 const seh = addEl("input", "s-encrypt-headers") as HTMLInputElement;
 seh.type = "checkbox";
-const sda = addEl("input", "s-delete-after") as HTMLInputElement;
-sda.type = "checkbox";
 const sacu = addEl("input", "s-auto-check-updates") as HTMLInputElement;
 sacu.type = "checkbox";
 const sll = addEl("input", "s-local-logging") as HTMLInputElement;

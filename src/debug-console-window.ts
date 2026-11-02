@@ -5,6 +5,7 @@ import {
   installNativeWebviewContextMenuGuard,
   setNativeWebviewContextMenuAllowed,
 } from "./webview-context-menu";
+import { parseSettingsRaw } from "./settings-model";
 
 const MAX_LOG_LINES = 1000;
 
@@ -41,16 +42,9 @@ async function syncThemeAndFx(): Promise<void> {
   let themePref = "system";
   try {
     const raw = await invoke<string>("load_settings");
-    const parsed = JSON.parse(raw) as {
-      basicWindowEffects?: unknown;
-      theme?: unknown;
-    };
-    if (typeof parsed.basicWindowEffects === "boolean") {
-      effectsEnabled = parsed.basicWindowEffects;
-    }
-    if (typeof parsed.theme === "string") {
-      themePref = parsed.theme;
-    }
+    const { settings } = parseSettingsRaw(raw);
+    effectsEnabled = settings.basicWindowEffects;
+    themePref = settings.theme;
   } catch {
     // Defaults match SETTING_DEFAULTS.
   }

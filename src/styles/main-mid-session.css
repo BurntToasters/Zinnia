@@ -1,0 +1,101 @@
+.session-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: var(--session-card-pad-y) var(--session-card-pad-x);
+  display: flex;
+  flex-direction: column;
+  gap: var(--session-card-gap);
+  box-shadow: 0 1px 3px var(--shadow);
+}
+
+.session-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.session-card__title h3 {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.session-card__title p {
+  margin: 2px 0 0;
+  color: var(--text-secondary);
+  font-size: 0.625rem;
+  line-height: 1.35;
+}
+
+.session-inline-actions {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+.field-grid--triple {
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+}
+
+.session-advanced-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.session-details {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.session-details > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--text);
+  list-style: none;
+  user-select: none;
+  transition: background var(--transition);
+}
+
+.session-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.session-details > summary::after {
+  content: "\276F";
+  font-size: 0.625rem;
+  color: var(--text-secondary);
+  transition: transform var(--transition);
+  transform: rotate(90deg);
+}
+
+.session-details[open] > summary::after {
+  transform: rotate(-90deg);
+}
+
+.session-details > summary:hover {
+  background: var(--surface-alt);
+}
+
+.session-details__body {
+  padding: 8px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+}

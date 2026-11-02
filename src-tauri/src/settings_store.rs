@@ -1,4 +1,4 @@
-//! Settings persistence with atomic writes; preserves reserved `_`-prefixed keys.
+//! Settings persistence with atomic writes; only `_setupWizardVersion` is merged from disk.
 
 use tauri::Manager;
 
@@ -88,11 +88,11 @@ pub fn quick_extract_warm_prefs(app: &tauri::AppHandle) -> QuickExtractWarmPrefs
 }
 
 fn is_frontend_writable_reserved_key(key: &str) -> bool {
-    key == "_setupComplete" || key == "_setupWizardVersion"
+    key == "_setupWizardVersion"
 }
 
-/// Drop backend-owned `_` keys from an incoming save so a first-run or hostile
-/// payload cannot plant integration state.
+/// Drop untrusted `_` keys from an incoming save so a first-run or hostile
+/// payload cannot plant reserved state.
 pub fn strip_untrusted_reserved_settings(
     incoming: &mut serde_json::Map<String, serde_json::Value>,
 ) {
@@ -115,16 +115,11 @@ pub fn merge_reserved_settings(
         if !key.starts_with('_') {
             continue;
         }
-        // Setup wizard keys are intentionally frontend-writable. Other `_`
-        // reserved keys stay owned by the on-disk copy so a buggy save cannot
-        // clobber backend-managed integration state.
-        if is_frontend_writable_reserved_key(key) {
-            if !incoming.contains_key(key) {
-                incoming.insert(key.clone(), value.clone());
-            }
-            continue;
+        // Only `_setupWizardVersion` is carried forward from disk when absent
+        // from the incoming payload. Other legacy `_` keys are dropped on save.
+        if is_frontend_writable_reserved_key(key) && !incoming.contains_key(key) {
+            incoming.insert(key.clone(), value.clone());
         }
-        incoming.insert(key.clone(), value.clone());
     }
 }
 
@@ -200,18 +195,6 @@ pub fn atomic_write_text(path: &std::path::Path, contents: &str) -> Result<(), S
         }
         e.to_string()
     })?;
-    // Best-effort: remove a `.bak` file that may have been left by an older
-    // Zinnia version's two-step replace. The rename above already promoted the
-    // new settings, so a leftover backup is stale recovery material only.
-    let backup = backup_path(path);
-    if let Err(error) = std::fs::remove_file(&backup) {
-        if error.kind() != std::io::ErrorKind::NotFound {
-            eprintln!(
-                "Settings saved, but could not remove a stale backup file {}: {error}",
-                backup.display()
-            );
-        }
-    }
     sync_parent_directory(path)
 }
 
@@ -266,23 +249,7 @@ pub fn load_settings(app: tauri::AppHandle) -> Result<String, String> {
     let path = settings_path(&app)?;
     match read_bounded_settings_file(&path)? {
         Some(contents) => Ok(contents),
-        None => {
-            let backup = backup_path(&path);
-            match read_bounded_settings_file(&backup)? {
-                Some(contents) => {
-                    // Recover the visible settings path when a Windows
-                    // two-step replace was interrupted between renames.
-                    std::fs::rename(&backup, &path).map_err(|e| {
-                        format!("Settings backup exists but could not be restored: {e}")
-                    })?;
-                    // Durably record the restore so a second crash cannot make
-                    // the primary disappear again behind the backup.
-                    let _ = sync_parent_directory(&path);
-                    Ok(contents)
-                }
-                None => Ok("{}".to_string()),
-            }
-        }
+        None => Ok("{}".to_string()),
     }
 }
 
@@ -304,23 +271,11 @@ pub fn save_settings(app: tauri::AppHandle, json: String) -> Result<(), String> 
         match parse_json_object(&existing_raw) {
             Ok(existing) => merge_reserved_settings(&existing, &mut incoming),
             Err(parse_error) => {
-                // Prefer a readable backup over bricking every future save on a
-                // one-time corrupt primary file.
-                let backup = backup_path(&path);
-                match read_bounded_settings_file(&backup)
-                    .ok()
-                    .flatten()
-                    .and_then(|raw| parse_json_object(&raw).ok())
-                {
-                    Some(existing) => merge_reserved_settings(&existing, &mut incoming),
-                    None => {
-                        return Err(format!(
-                            "Existing settings file is corrupt ({parse_error}). \
-                             Refusing to overwrite to avoid losing reserved keys. \
-                             Delete the file manually to reset."
-                        ));
-                    }
-                }
+                return Err(format!(
+                    "Existing settings file is corrupt ({parse_error}). \
+                     Refusing to overwrite to avoid losing reserved keys. \
+                     Delete the file manually to reset."
+                ));
             }
         }
     } else {
@@ -382,8 +337,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&base).expect("temp directory should be created");
         let file_path = base.join("settings.json");
-        std::fs::write(&file_path, r#"{"_setupComplete":true}"#)
-            .expect("seed settings should be written");
+        std::fs::write(&file_path, r#"{"theme":"dark"}"#).expect("seed settings should be written");
 
         reset_settings_file(&file_path).expect("settings reset should delete file");
         assert!(!file_path.exists());
@@ -440,21 +394,21 @@ mod tests {
     #[test]
     fn strip_untrusted_reserved_settings_drops_planted_backend_keys() {
         let mut incoming = parse_json_object(
-            r#"{"theme":"light","_integrationAutoEnabled":true,"_setupComplete":true}"#,
+            r#"{"theme":"light","_integrationAutoEnabled":true,"_setupWizardVersion":2}"#,
         )
         .expect("incoming object should parse");
         strip_untrusted_reserved_settings(&mut incoming);
         assert!(incoming.get("_integrationAutoEnabled").is_none());
         assert_eq!(
-            incoming.get("_setupComplete"),
-            Some(&serde_json::Value::Bool(true))
+            incoming.get("_setupWizardVersion"),
+            Some(&serde_json::Value::Number(2.into()))
         );
     }
 
     #[test]
-    fn merge_reserved_settings_preserves_internal_keys() {
+    fn merge_reserved_settings_drops_legacy_reserved_keys_from_existing() {
         let existing = parse_json_object(
-            r#"{"theme":"dark","_integrationAutoEnabled":true,"_integrationUserDisabled":true}"#,
+            r#"{"theme":"dark","_integrationAutoEnabled":true,"_integrationUserDisabled":true,"_setupComplete":true}"#,
         )
         .expect("existing object should parse");
         let mut incoming =
@@ -467,40 +421,36 @@ mod tests {
             incoming.get("theme"),
             Some(&serde_json::Value::String("light".to_string()))
         );
-        assert_eq!(
-            incoming.get("_integrationAutoEnabled"),
-            Some(&serde_json::Value::Bool(true))
-        );
-        assert_eq!(
-            incoming.get("_integrationUserDisabled"),
-            Some(&serde_json::Value::Bool(true))
-        );
+        assert!(incoming.get("_integrationAutoEnabled").is_none());
+        assert!(incoming.get("_integrationUserDisabled").is_none());
+        assert!(incoming.get("_setupComplete").is_none());
     }
 
     #[test]
-    fn merge_reserved_settings_keeps_backend_keys_over_incoming() {
-        let existing = parse_json_object(
-            r#"{"_integrationAutoEnabled":true,"_setupComplete":false,"_setupWizardVersion":1}"#,
-        )
-        .expect("existing object should parse");
-        let mut incoming = parse_json_object(
-            r#"{"_integrationAutoEnabled":false,"_setupComplete":true,"_setupWizardVersion":3}"#,
-        )
-        .expect("incoming object should parse");
+    fn merge_reserved_settings_carries_setup_wizard_version_only() {
+        let existing =
+            parse_json_object(r#"{"_integrationAutoEnabled":true,"_setupWizardVersion":1}"#)
+                .expect("existing object should parse");
+        let mut incoming_with_version =
+            parse_json_object(r#"{"theme":"system","_setupWizardVersion":3}"#)
+                .expect("incoming object should parse");
 
-        merge_reserved_settings(&existing, &mut incoming);
+        merge_reserved_settings(&existing, &mut incoming_with_version);
 
+        assert!(incoming_with_version
+            .get("_integrationAutoEnabled")
+            .is_none());
         assert_eq!(
-            incoming.get("_integrationAutoEnabled"),
-            Some(&serde_json::Value::Bool(true))
-        );
-        assert_eq!(
-            incoming.get("_setupComplete"),
-            Some(&serde_json::Value::Bool(true))
-        );
-        assert_eq!(
-            incoming.get("_setupWizardVersion"),
+            incoming_with_version.get("_setupWizardVersion"),
             Some(&serde_json::Value::Number(3.into()))
+        );
+
+        let mut incoming_without_version =
+            parse_json_object(r#"{"theme":"system"}"#).expect("incoming object should parse");
+        merge_reserved_settings(&existing, &mut incoming_without_version);
+        assert_eq!(
+            incoming_without_version.get("_setupWizardVersion"),
+            Some(&serde_json::Value::Number(1.into()))
         );
     }
 }

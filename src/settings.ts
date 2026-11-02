@@ -62,12 +62,8 @@ export function applySettingsToForm() {
   $<HTMLSelectElement>("word-size").value = state.currentSettings.wordSize;
   $<HTMLSelectElement>("solid").value = state.currentSettings.solid;
   $<HTMLInputElement>("threads").value = String(state.currentSettings.threads);
-  $<HTMLInputElement>("path-mode").value = "relative";
-  $<HTMLInputElement>("sfx").checked = false;
-  $<HTMLInputElement>("sfx").disabled = true;
   $<HTMLInputElement>("encrypt-headers").checked =
     state.currentSettings.encryptHeaders;
-  $<HTMLInputElement>("delete-after").checked = false;
 }
 
 function liveOrFallback(live: string | undefined, fallback: string): string {
@@ -126,12 +122,8 @@ export function populateSettingsModal() {
     liveThreads?.value,
     String(state.currentSettings.threads),
   );
-  $<HTMLInputElement>("s-path-mode").value = "relative";
-  $<HTMLInputElement>("s-sfx").checked = false;
-  $<HTMLInputElement>("s-sfx").disabled = true;
   $<HTMLInputElement>("s-encrypt-headers").checked =
     liveHeaders?.checked ?? state.currentSettings.encryptHeaders;
-  $<HTMLInputElement>("s-delete-after").checked = false;
   $<HTMLInputElement>("s-auto-check-updates").checked =
     state.currentSettings.autoCheckUpdates;
   $<HTMLSelectElement>("s-update-channel").value =
@@ -200,14 +192,9 @@ export function readSettingsModal(): UserSettings {
       $<HTMLInputElement>("s-threads").value,
       SETTING_DEFAULTS.threads,
     ),
-    // Absolute member paths make archives non-relocatable and fail Zinnia's
-    // secure extraction preflight. Preserve the setting only for migration.
-    pathMode: "relative",
-    sfx: false,
     encryptHeaders:
       securitySupport.encryptHeaders &&
       $<HTMLInputElement>("s-encrypt-headers").checked,
-    deleteAfter: $<HTMLInputElement>("s-delete-after").checked,
     autoCheckUpdates: $<HTMLInputElement>("s-auto-check-updates").checked,
     updateChannel: $<HTMLSelectElement>("s-update-channel")
       .value as UserSettings["updateChannel"],

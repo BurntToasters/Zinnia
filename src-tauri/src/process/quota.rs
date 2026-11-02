@@ -3,7 +3,8 @@
 use tauri::Manager;
 
 use super::{
-    commands::terminate_registered_child, lock_process, ArchiveManifestSummary, RunningProcess,
+    commands::terminate_registered_child_async, lock_process, ArchiveManifestSummary,
+    RunningProcess,
 };
 
 // Large SDK/source/app archives routinely exceed 25k entries. Keep a high
@@ -157,19 +158,6 @@ pub(crate) fn staged_tree_usage(
     Ok((files, bytes))
 }
 
-#[cfg(test)]
-#[allow(dead_code)]
-pub(crate) async fn monitor_extract_quota(
-    app: tauri::AppHandle,
-    staged: std::path::PathBuf,
-    max_bytes: u64,
-    min_free_bytes: u64,
-    finished: std::sync::Arc<std::sync::atomic::AtomicBool>,
-) {
-    monitor_extract_quota_with_manifest(app, staged, max_bytes, min_free_bytes, finished, None)
-        .await;
-}
-
 pub(crate) async fn monitor_extract_quota_with_manifest(
     app: tauri::AppHandle,
     staged: std::path::PathBuf,
@@ -222,7 +210,7 @@ pub(crate) async fn monitor_extract_quota_with_manifest(
             Ok(Ok(_)) => None,
         };
         if let Some(reason) = low_space_reason {
-            stop_extract_for_quota(&app, reason);
+            stop_extract_for_quota(&app, reason).await;
             break;
         }
         if skip_recursive_scans || std::time::Instant::now() < next_tree_scan {
@@ -276,13 +264,13 @@ pub(crate) async fn monitor_extract_quota_with_manifest(
             }
         };
         if let Some(reason) = reason {
-            stop_extract_for_quota(&app, reason);
+            stop_extract_for_quota(&app, reason).await;
             break;
         }
     }
 }
 
-pub(crate) fn stop_extract_for_quota(app: &tauri::AppHandle, reason: String) {
+pub(crate) async fn stop_extract_for_quota(app: &tauri::AppHandle, reason: String) {
     let state = app.state::<RunningProcess>();
     let child = match lock_process(&state) {
         Ok(mut process) => {
@@ -293,7 +281,7 @@ pub(crate) fn stop_extract_for_quota(app: &tauri::AppHandle, reason: String) {
         Err(_) => None,
     };
     if let Some(child) = child {
-        if let Err(error) = terminate_registered_child(&state, &child) {
+        if let Err(error) = terminate_registered_child_async(app, &child).await {
             if let Ok(mut process) = lock_process(&state) {
                 let prior = process.abort_reason.take().unwrap_or_default();
                 process.abort_reason = Some(if prior.is_empty() {

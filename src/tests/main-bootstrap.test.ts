@@ -142,25 +142,29 @@ vi.mock("../settings", () => ({
     mocks.settings.syncSettingsSecurityControlsForFormat,
 }));
 
-vi.mock("../ui", () => ({
-  log: mocks.ui.log,
-  devLog: mocks.ui.devLog,
-  toggleActivity: mocks.ui.toggleActivity,
-  renderInputs: mocks.ui.renderInputs,
-  setMode: mocks.ui.setMode,
-  setActivityPanelVisible: mocks.ui.setActivityPanelVisible,
-  setWorkspaceMode: mocks.ui.setWorkspaceMode,
-  getWorkspaceMode: mocks.ui.getWorkspaceMode,
-  setUiDensity: mocks.ui.setUiDensity,
-  getMode: mocks.ui.getMode,
-  setBrowsePasswordFieldVisible: mocks.ui.setBrowsePasswordFieldVisible,
-  persistSettingsImmediately: mocks.ui.persistSettingsImmediately,
-  flushPendingSettingsPersistence: mocks.ui.flushPendingSettingsPersistence,
-  triggerIconRefresh: mocks.ui.triggerIconRefresh,
-  registerIconRefreshHook: mocks.ui.registerIconRefreshHook,
-  resizeWorkspaceWindow: mocks.ui.resizeWorkspaceWindow,
-  syncWorkspaceWindowFx: mocks.ui.syncWorkspaceWindowFx,
-}));
+vi.mock("../ui", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../ui")>();
+  return {
+    ...actual,
+    log: mocks.ui.log,
+    devLog: mocks.ui.devLog,
+    toggleActivity: mocks.ui.toggleActivity,
+    renderInputs: mocks.ui.renderInputs,
+    setMode: mocks.ui.setMode,
+    setActivityPanelVisible: mocks.ui.setActivityPanelVisible,
+    setWorkspaceMode: mocks.ui.setWorkspaceMode,
+    getWorkspaceMode: mocks.ui.getWorkspaceMode,
+    setUiDensity: mocks.ui.setUiDensity,
+    getMode: mocks.ui.getMode,
+    setBrowsePasswordFieldVisible: mocks.ui.setBrowsePasswordFieldVisible,
+    persistSettingsImmediately: mocks.ui.persistSettingsImmediately,
+    flushPendingSettingsPersistence: mocks.ui.flushPendingSettingsPersistence,
+    triggerIconRefresh: mocks.ui.triggerIconRefresh,
+    registerIconRefreshHook: mocks.ui.registerIconRefreshHook,
+    resizeWorkspaceWindow: mocks.ui.resizeWorkspaceWindow,
+    syncWorkspaceWindowFx: mocks.ui.syncWorkspaceWindowFx,
+  };
+});
 vi.mock("../window-fx", () => ({
   syncWorkspaceWindowFx: mocks.ui.syncWorkspaceWindowFx,
 }));
@@ -728,7 +732,6 @@ describe("main bootstrap", () => {
     expect(state.currentSettings.autoCheckUpdates).toBe(false);
     expect(state.currentSettings.basicWindowEffects).toBe(false);
     expect(state.currentSettings.setupComplete).toBe(true);
-    expect(state.settingsExtras._setupComplete).toBe(true);
     expect(state.settingsExtras._setupWizardVersion).toBe(3);
     expect(mocks.updater.autoCheckUpdates).not.toHaveBeenCalled();
   });

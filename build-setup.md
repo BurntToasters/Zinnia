@@ -16,7 +16,9 @@
 
 ## macOS
 
-- macOS 26 or later
+- Build host: macOS 26 or later (Xcode / SDK used to compile the app)
+- Zinnia itself requires macOS 15.0 or later at runtime (`minimumSystemVersion` in
+  `src-tauri/tauri.conf.json`; see README)
 - Xcode Command Line Tools
 - Node.js `^24.22.1 || >=26.13.0` (`engines.node` in package.json)
 - Rust (rustup)

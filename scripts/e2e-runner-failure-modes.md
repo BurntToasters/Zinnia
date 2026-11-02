@@ -47,3 +47,14 @@ Windows Job Object confinement failure cases considered before the change:
 - Disposing a fenced launch leaves its job helper process running.
 
 Windows fenced commands run inside a kernel Job Object. A PowerShell helper creates the job with kill-on-close and no breakaway permission. It assigns the fenced wrapper only after it opens the wrapper by PID and matches the captured creation time, and only then does the wrapper start the real command. Cleanup terminates the job and reports verified only when the job's active process count reaches zero. If the job cannot be assigned, the command does not start. When no job is assigned, cleanup falls back to the PID plus creation-time snapshot path, which stays fail-closed.
+
+## Local spec filter
+
+Failure cases considered before `--only` / `ZINNIA_E2E_ONLY`:
+
+- A filtered run writes `status: "passed"` and is accepted as release or CI proof.
+- `npm run test:all` forwards the filter or runs fewer E2E suites while still recording full proof.
+- An unknown spec name runs nothing and still exits zero or writes a passing artifact.
+- The filter skips build, profile setup, fixture preparation, or teardown that the selected spec still needs.
+- Selecting only `crash-recovery` or a recovery phase without the matching crash launch leaves the profile without the expected transaction state.
+- Spec files under `e2e/specs/` that are not part of the recovery plan (for example `archive-io-benchmark`) cannot be selected; only names listed in the unknown-spec error are valid.

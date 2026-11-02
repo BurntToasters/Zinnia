@@ -197,7 +197,6 @@ export function buildArgs() {
   if (inputShapeError) throw new Error(inputShapeError);
   const rawPassword = $<HTMLInputElement>("password").value;
   const rawEncryptHeaders = $<HTMLInputElement>("encrypt-headers").checked;
-  const deleteAfter = $<HTMLInputElement>("delete-after").checked;
   const storeTimestamps = $<HTMLInputElement>("store-timestamps").checked;
 
   const validationError = validateCompressionSecurityOptions(
@@ -230,11 +229,6 @@ export function buildArgs() {
   if (storeTimestamps) switches.push("-mtc=on", "-mta=on");
   // Modification time is stored by default (-mtm=on). -mtc/-mta add creation
   // and access; 7-Zip has no separate portable "birth" switch beyond -mtc.
-  if (deleteAfter) {
-    throw new Error(
-      "Delete after compression is unavailable because source deletion cannot be rolled back safely. Delete the sources manually after testing the archive.",
-    );
-  }
 
   // 7-Zip does not support -v (split volumes) with the "u" update command;
   // Rust's validate_run_7z_args also rejects it there. Previously the UI

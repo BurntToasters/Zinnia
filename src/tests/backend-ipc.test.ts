@@ -5,11 +5,6 @@ import {
   invokeRun7z,
   run7zInvokeArgs,
 } from "../archive/backend-ipc";
-import {
-  compressInputProbeInvokeArgs,
-  encodeCompressInputProbe,
-  invokeCompressInputProbe,
-} from "../archive/compress-probe-ipc";
 
 const invokeMock = vi.mocked(invoke);
 
@@ -41,25 +36,6 @@ describe("bounded archive IPC envelopes", () => {
     expect(run7zInvokeArgs(request)).toEqual(expected);
     await invokeRun7z(request);
     expect(invokeMock).toHaveBeenCalledWith("run_7z", expected);
-    expect(Object.keys(invokeMock.mock.calls[0]?.[1] ?? {})).toEqual([
-      "requestJson",
-    ]);
-  });
-
-  it("encodes compress probe roots as one aggregate JSON string", () => {
-    expect(JSON.parse(encodeCompressInputProbe(["/tmp/a", "/tmp/b"]))).toEqual([
-      "/tmp/a",
-      "/tmp/b",
-    ]);
-  });
-
-  it("builds and invokes the exact camelCase probe Tauri argument object", async () => {
-    const paths = ["/tmp/a", "/tmp/b"];
-    const expected = { requestJson: JSON.stringify(paths) };
-
-    expect(compressInputProbeInvokeArgs(paths)).toEqual(expected);
-    await invokeCompressInputProbe(paths);
-    expect(invokeMock).toHaveBeenCalledWith("probe_compress_inputs", expected);
     expect(Object.keys(invokeMock.mock.calls[0]?.[1] ?? {})).toEqual([
       "requestJson",
     ]);

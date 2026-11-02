@@ -2,10 +2,16 @@ import { invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { log } from "./ui";
 import { showToast } from "./toast";
+import { confirmWithE2eQueue, takeE2eDialogResult } from "./e2e-dialog";
 
 export async function exportLocalLogs(): Promise<void> {
   try {
-    const exported = await invoke<boolean>("export_logs");
+    const queued = takeE2eDialogResult();
+    const destinationPath =
+      typeof queued?.result === "string" ? queued.result : undefined;
+    const exported = destinationPath
+      ? await invoke<boolean>("export_logs", { destinationPath })
+      : await invoke<boolean>("export_logs");
     if (!exported) return;
     log("Logs exported successfully.");
     showToast("Logs exported successfully.", "success");
@@ -28,14 +34,13 @@ export async function openLogsFolder(): Promise<void> {
 }
 
 export async function clearLocalLogs(): Promise<void> {
-  const confirmed = await ask(
-    "Clear local diagnostics logs? This cannot be undone.",
-    {
+  const confirmed = await confirmWithE2eQueue(() =>
+    ask("Clear local diagnostics logs? This cannot be undone.", {
       title: "Clear logs",
       kind: "warning",
       okLabel: "Clear logs",
       cancelLabel: "Cancel",
-    },
+    }),
   );
   if (!confirmed) return;
 

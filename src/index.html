@@ -735,33 +735,11 @@
                         value="8"
                       />
                     </div>
-                    <!-- Compatibility state for settings saved before 0.6.0-beta.4.
-                         Zinnia now creates only safely relocatable archives. -->
-                    <input id="s-path-mode" type="hidden" value="relative" />
                   </div>
                 </section>
 
                 <section class="settings-section">
                   <h3 class="settings-section__title">Options</h3>
-                  <div class="setting-item">
-                    <div class="setting-info">
-                      <span class="setting-title" id="title-sfx"
-                        >Self-extracting archives</span
-                      >
-                      <span class="setting-desc"
-                        >Not bundled in this build.</span
-                      >
-                    </div>
-                    <label class="switch">
-                      <input
-                        type="checkbox"
-                        id="s-sfx"
-                        aria-labelledby="title-sfx"
-                        disabled
-                      />
-                      <span class="switch__track"></span>
-                    </label>
-                  </div>
                   <div class="setting-item">
                     <div class="setting-info">
                       <span class="setting-title" id="title-encrypt-headers"
@@ -773,26 +751,6 @@
                         type="checkbox"
                         id="s-encrypt-headers"
                         aria-labelledby="title-encrypt-headers"
-                      />
-                      <span class="switch__track"></span>
-                    </label>
-                  </div>
-                  <div class="setting-item">
-                    <div class="setting-info">
-                      <span class="setting-title" id="title-delete-after"
-                        >Delete after compression</span
-                      >
-                      <span class="setting-desc"
-                        >Unavailable: delete sources manually after testing the
-                        archive.</span
-                      >
-                    </div>
-                    <label class="switch">
-                      <input
-                        type="checkbox"
-                        id="s-delete-after"
-                        aria-labelledby="title-delete-after"
-                        disabled
                       />
                       <span class="switch__track"></span>
                     </label>
@@ -2075,6 +2033,13 @@
                 aria-live="polite"
                 aria-atomic="true"
               ></div>
+              <div
+                class="basic-browse-summary"
+                id="basic-browse-status"
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+              ></div>
               <div class="basic-browse-table-wrap">
                 <table>
                   <thead>
@@ -2477,7 +2442,7 @@
                           type="button"
                           class="btn btn--ghost btn--sm"
                           id="toggle-extract-password"
-                          aria-label="Toggle password visibility"
+                          aria-label="Show password"
                           aria-pressed="false"
                         >
                           Show
@@ -2541,7 +2506,7 @@
                       type="button"
                       class="btn btn--ghost btn--sm"
                       id="toggle-browse-password"
-                      aria-label="Toggle password visibility"
+                      aria-label="Show password"
                       aria-pressed="false"
                     >
                       Show
@@ -2676,9 +2641,6 @@
                           value="8"
                         />
                       </div>
-                      <!-- Absolute archive members cannot be extracted safely.
-                           Keep this state holder while migrating saved settings. -->
-                      <input id="path-mode" type="hidden" value="relative" />
                     </div>
                     <div class="grid-split">
                       <div class="field">
@@ -2718,22 +2680,8 @@
                           existing archive</label
                         >
                         <label class="toggle"
-                          ><input type="checkbox" id="sfx" disabled />SFX
-                          unavailable</label
-                        >
-                        <label class="toggle"
                           ><input type="checkbox" id="encrypt-headers" />Encrypt
                           file names</label
-                        >
-                        <label
-                          class="toggle"
-                          title="Unavailable because source deletion cannot be rolled back safely"
-                          ><input
-                            type="checkbox"
-                            id="delete-after"
-                            disabled
-                          />Delete files manually after testing the
-                          archive</label
                         >
                         <label
                           class="toggle"
@@ -2756,7 +2704,7 @@
                           type="button"
                           class="btn btn--ghost btn--sm"
                           id="toggle-password"
-                          aria-label="Toggle password visibility"
+                          aria-label="Show password"
                           aria-pressed="false"
                         >
                           Show

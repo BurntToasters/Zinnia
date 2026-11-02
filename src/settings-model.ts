@@ -2,7 +2,6 @@ import { parseThreads } from "./utils.ts";
 
 export type ThemePreference = "system" | "light" | "dark";
 export type ArchiveFormat = "7z" | "zip" | "tar" | "gzip" | "bzip2" | "xz";
-export type PathMode = "relative";
 export type LogVerbosity = "info" | "debug";
 export type UpdateChannel = "auto" | "stable" | "beta";
 export type WorkingMode = "add" | "extract" | "browse";
@@ -34,10 +33,7 @@ export interface UserSettings {
   wordSize: string;
   solid: string;
   threads: number;
-  pathMode: PathMode;
-  sfx: boolean;
   encryptHeaders: boolean;
-  deleteAfter: boolean;
   autoCheckUpdates: boolean;
   updateChannel: UpdateChannel;
   localLoggingEnabled: boolean;
@@ -83,10 +79,7 @@ export const SETTING_DEFAULTS: UserSettings = {
   wordSize: "64",
   solid: "16g",
   threads: 8,
-  pathMode: "relative",
-  sfx: false,
   encryptHeaders: false,
-  deleteAfter: false,
   autoCheckUpdates: true,
   updateChannel: "auto",
   localLoggingEnabled: false,
@@ -152,7 +145,6 @@ const FORMATS = new Set<ArchiveFormat>([
   "bzip2",
   "xz",
 ]);
-const PATH_MODES = new Set<PathMode>(["relative"]);
 const LOG_VERBOSITY = new Set<LogVerbosity>(["info", "debug"]);
 const UPDATE_CHANNELS = new Set<UpdateChannel>(["auto", "stable", "beta"]);
 const WORKING_MODES = new Set<WorkingMode>(["add", "extract", "browse"]);
@@ -234,10 +226,7 @@ const USER_SETTING_KEYS = new Set<keyof UserSettings>([
   "wordSize",
   "solid",
   "threads",
-  "pathMode",
-  "sfx",
   "encryptHeaders",
-  "deleteAfter",
   "autoCheckUpdates",
   "updateChannel",
   "localLoggingEnabled",
@@ -428,10 +417,7 @@ export function normalizeUserSettings(
       String(settings.threads ?? fallback.threads),
       fallback.threads,
     ),
-    pathMode: asSetValue(settings.pathMode, PATH_MODES, fallback.pathMode),
-    sfx: asBoolean(settings.sfx, fallback.sfx),
     encryptHeaders: asBoolean(settings.encryptHeaders, fallback.encryptHeaders),
-    deleteAfter: asBoolean(settings.deleteAfter, fallback.deleteAfter),
     autoCheckUpdates: asBoolean(
       settings.autoCheckUpdates,
       fallback.autoCheckUpdates,
@@ -496,17 +482,13 @@ export function normalizeUserSettings(
   };
 }
 
-export function parseSettingsJson(
-  raw: string,
-  fallback: UserSettings = SETTING_DEFAULTS,
-): UserSettings {
-  try {
-    const parsed = JSON.parse(raw);
-    return normalizeUserSettings(parsed, fallback);
-  } catch {
-    return { ...fallback };
-  }
-}
+/** Legacy user keys and extras dropped on load and omitted on save. */
+const DROPPED_SETTINGS_KEYS = new Set([
+  "pathMode",
+  "sfx",
+  "deleteAfter",
+  "_setupComplete",
+]);
 
 export function splitSettingsPayload(input: unknown): LoadSettingsResult {
   const obj = asRecord(input);
@@ -516,11 +498,16 @@ export function splitSettingsPayload(input: unknown): LoadSettingsResult {
   for (const [key, value] of Object.entries(obj)) {
     if (key === "__proto__" || key === "constructor" || key === "prototype")
       continue;
+    if (DROPPED_SETTINGS_KEYS.has(key)) continue;
     if (USER_SETTING_KEYS.has(key as keyof UserSettings)) {
       userOnly[key] = value;
     } else {
       extras[key] = value;
     }
+  }
+
+  if (obj._setupComplete === true && userOnly.setupComplete !== true) {
+    userOnly.setupComplete = true;
   }
 
   return {
@@ -558,5 +545,10 @@ export function mergeSettingsPayload(
   settings: UserSettings,
   extras: Record<string, unknown> = {},
 ): Record<string, unknown> {
-  return { ...extras, ...settings };
+  const cleanedExtras: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(extras)) {
+    if (DROPPED_SETTINGS_KEYS.has(key)) continue;
+    cleanedExtras[key] = value;
+  }
+  return { ...cleanedExtras, ...settings };
 }

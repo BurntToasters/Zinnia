@@ -67,6 +67,7 @@ function ensureArchiveDom(): void {
   ensureElement("browse-tbody", () => document.createElement("tbody"));
   ensureElement("basic-browse-tbody", () => document.createElement("tbody"));
   ensureElement("basic-browse-summary", () => document.createElement("div"));
+  ensureElement("basic-browse-status", () => document.createElement("div"));
   ensureElement("browse-password", () => document.createElement("input"));
   ensureElement("toggle-browse-password", () =>
     document.createElement("button"),
@@ -582,7 +583,7 @@ describe("archive test/browse/selective flows", () => {
     expect(result).toBeNull();
     expect(messageMock).not.toHaveBeenCalled();
     expect(document.getElementById("toast-region")?.textContent).toContain(
-      "appears to be encrypted",
+      "Wrong or missing password",
     );
   });
 
@@ -1299,36 +1300,6 @@ describe("archive test/browse/selective flows", () => {
     );
   });
 
-  it("rejects runAction when delete-after is checked", async () => {
-    const app = document.getElementById("app") as HTMLElement;
-    app.dataset.mode = "add";
-    app.dataset.workspaceMode = "power";
-    state.inputs = ["/tmp/input.txt"];
-    (document.getElementById("output-path") as HTMLInputElement).value =
-      "/tmp/output.7z";
-    (document.getElementById("delete-after") as HTMLInputElement).checked =
-      true;
-
-    setInvokeRouter((command) => {
-      if (command === "probe_7z") return undefined;
-      if (command === "run_7z") {
-        throw new Error("run_7z should not run when delete-after is checked");
-      }
-      return undefined;
-    });
-
-    await runAction();
-
-    expect(confirmMock).not.toHaveBeenCalled();
-    expect(invokeMock.mock.calls.some(([name]) => name === "run_7z")).toBe(
-      false,
-    );
-    expect(messageMock).not.toHaveBeenCalled();
-    expect(document.getElementById("toast-region")?.textContent).toContain(
-      "Operation failed: Delete after compression is unavailable",
-    );
-  });
-
   it("asks before replacing an existing archive in create mode", async () => {
     const app = document.getElementById("app") as HTMLElement;
     app.dataset.mode = "add";
@@ -1336,8 +1307,6 @@ describe("archive test/browse/selective flows", () => {
     state.inputs = ["/tmp/input.txt"];
     (document.getElementById("output-path") as HTMLInputElement).value =
       "/tmp/existing.7z";
-    (document.getElementById("delete-after") as HTMLInputElement).checked =
-      false;
     (document.getElementById("format") as HTMLSelectElement).value = "7z";
     confirmMock.mockResolvedValueOnce(false);
 
@@ -1371,8 +1340,6 @@ describe("archive test/browse/selective flows", () => {
     state.inputs = ["/tmp/input.txt"];
     (document.getElementById("output-path") as HTMLInputElement).value =
       "/tmp/output.7z";
-    (document.getElementById("delete-after") as HTMLInputElement).checked =
-      false;
     setInvokeRouter((command) => {
       if (command === "probe_7z") throw new Error("missing sidecar");
       return undefined;
@@ -1394,8 +1361,6 @@ describe("archive test/browse/selective flows", () => {
     state.inputs = ["/tmp/input.txt"];
     (document.getElementById("output-path") as HTMLInputElement).value =
       "/tmp/output.7z";
-    (document.getElementById("delete-after") as HTMLInputElement).checked =
-      false;
 
     setInvokeRouter((command) => {
       if (command === "probe_7z") return undefined;
@@ -1617,8 +1582,6 @@ describe("archive test/browse/selective flows", () => {
     state.inputs = ["/tmp/input.txt"];
     (document.getElementById("output-path") as HTMLInputElement).value =
       "/tmp/output.7z";
-    (document.getElementById("delete-after") as HTMLInputElement).checked =
-      false;
 
     setInvokeRouter((command) => {
       if (command === "probe_7z") return undefined;
@@ -2082,14 +2045,6 @@ describe("convertArchive", () => {
       if (command === "list_managed_temp_children") {
         return ["/tmp/zinnia-convert-zip/Demo.app"];
       }
-      if (command === "probe_compress_inputs") {
-        return {
-          nestedSymlinks: 1,
-          appBundles: 1,
-          nestedReparsePoints: 0,
-          examples: ["/tmp/zinnia-convert-zip/Demo.app"],
-        };
-      }
       if (command === "remove_managed_temp_dir") return undefined;
       if (command === "run_7z") {
         const args = decodeRun7zInvokePayload(payload).args;
@@ -2138,14 +2093,6 @@ describe("convertArchive", () => {
         return "/tmp/zinnia-convert-options";
       if (command === "list_managed_temp_children") {
         return ["/tmp/zinnia-convert-options/document.txt"];
-      }
-      if (command === "probe_compress_inputs") {
-        return {
-          nestedSymlinks: 0,
-          appBundles: 0,
-          nestedReparsePoints: 0,
-          examples: [],
-        };
       }
       if (command === "remove_managed_temp_dir") return undefined;
       if (command === "run_7z") {

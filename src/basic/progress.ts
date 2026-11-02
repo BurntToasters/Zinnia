@@ -2,6 +2,7 @@ import { listenToOwnWindow } from "../window-events";
 import { isSevenZipRunInFlight } from "../archive/runtime";
 import { state } from "../state";
 import { log, getWorkspaceMode, getMode, triggerIconRefresh } from "../ui";
+import { getBasicView } from "./sync";
 import {
   setProgressIndeterminateClass,
   setProgressPercentClass,
@@ -218,7 +219,18 @@ export function updateBasicRunningState(active: boolean): void {
     "basic-browse-cancel",
   ) as HTMLButtonElement | null;
   if (browseCancel) browseCancel.hidden = !active || !browsing;
+  const browseStatus = document.getElementById("basic-browse-status");
   if (browsing) {
+    if (browseStatus) {
+      browseStatus.classList.toggle("is-loading", active);
+      browseStatus.toggleAttribute("aria-busy", active);
+      if (active && !browseStatus.classList.contains("is-error")) {
+        browseStatus.textContent = "Working…";
+      } else if (!active) {
+        browseStatus.classList.remove("is-loading");
+        browseStatus.removeAttribute("aria-busy");
+      }
+    }
     if (basicProgressUnlisten) {
       basicProgressUnlisten();
       basicProgressUnlisten = null;
@@ -310,10 +322,75 @@ export function updateBasicRunningState(active: boolean): void {
   }
 }
 
+type BasicProgressSection = "compress" | "extract" | "browse";
+
+function resolveBasicProgressSection(): BasicProgressSection {
+  if (getBasicView() === "browse") return "browse";
+  return getMode() === "extract" ? "extract" : "compress";
+}
+
+function setBasicBrowseStatusMessage(
+  message: string,
+  tone: "idle" | "loading" | "error" | "success",
+): void {
+  const statusEl = document.getElementById("basic-browse-status");
+  if (!statusEl) return;
+  statusEl.textContent = message;
+  statusEl.classList.remove("is-loading", "is-error", "is-success");
+  if (tone === "loading") {
+    statusEl.classList.add("is-loading");
+    statusEl.setAttribute("aria-busy", "true");
+  } else {
+    statusEl.removeAttribute("aria-busy");
+  }
+  if (tone === "error") statusEl.classList.add("is-error");
+  if (tone === "success") statusEl.classList.add("is-success");
+}
+
 export function updateBasicStatus(text: string, errorDetail?: string): void {
   if (getWorkspaceMode() !== "basic") return;
 
-  const section = getMode() === "extract" ? "extract" : "compress";
+  const section = resolveBasicProgressSection();
+  if (section === "browse") {
+    const runningLike =
+      text === "Running" ||
+      text.startsWith("Listing") ||
+      text.startsWith("Testing") ||
+      text === "Adding files";
+    if (text === "Done" || text.startsWith("Integrity test passed")) {
+      setBasicBrowseStatusMessage(
+        text.startsWith("Integrity test passed") ? text : "Archive loaded",
+        "success",
+      );
+      return;
+    }
+    if (text === "Cancelled") {
+      setBasicBrowseStatusMessage("", "idle");
+      return;
+    }
+    if (text === "Error") {
+      let detail = errorDetail?.trim();
+      // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+      if (!detail) {
+        detail = "Something went wrong. Check the activity log for details.";
+      }
+      setBasicBrowseStatusMessage(detail, "error");
+      return;
+    }
+    if (runningLike) {
+      setBasicBrowseStatusMessage(text, "loading");
+      return;
+    }
+    if (errorDetail?.trim()) {
+      setBasicBrowseStatusMessage(errorDetail.trim(), "error");
+      return;
+    }
+    if (text && text !== "Idle") {
+      setBasicBrowseStatusMessage(text, "idle");
+    }
+    return;
+  }
+
   const statusEl = document.getElementById(`basic-${section}-status`);
   if (statusEl) statusEl.textContent = text;
 
@@ -356,10 +433,9 @@ export function updateBasicStatus(text: string, errorDetail?: string): void {
   } else if (text === "Error") {
     hideBasicProgress(section);
     let detail = errorDetail?.trim();
-    // Empty user-visible detail needs the fallback too, not only null/undefined.
     // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
     if (!detail) {
-      detail = "Something went wrong. Check the error message for details.";
+      detail = "Something went wrong. Check the activity log for details.";
     }
     showBasicCompletion(section, false, "Operation failed", detail);
   } else if (text === "Cancelled") {

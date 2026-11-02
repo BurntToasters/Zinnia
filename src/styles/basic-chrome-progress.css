@@ -1,0 +1,186 @@
+.basic-extract-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.basic-progress {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  background: var(--basic-glass-bg) !important;
+  border: 1px solid var(--basic-glass-border) !important;
+  backdrop-filter: blur(24px) saturate(145%) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(145%) !important;
+  box-shadow: var(--basic-glass-shadow) !important;
+  border-radius: var(--basic-radius) !important;
+}
+
+.basic-progress.is-active {
+  display: flex;
+}
+
+.basic-progress__bar-track {
+  height: 8px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent) !important;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.basic-progress__bar-fill {
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    var(--accent),
+    var(--accent-hover)
+  ) !important;
+  border-radius: 4px;
+  width: 0%;
+  transition: width 300ms cubic-bezier(0.16, 1, 0.3, 1) !important;
+  box-shadow: 0 0 12px var(--accent-shadow) !important;
+}
+
+.basic-progress__bar-fill.is-indeterminate {
+  width: 60%;
+  animation: basic-progress-indeterminate 1.8s ease-in-out infinite;
+}
+
+.basic-progress__bar-fill.is-determinate {
+  animation: none;
+  margin-left: 0;
+}
+
+@keyframes basic-progress-indeterminate {
+  0% {
+    margin-left: 0%;
+    width: 30%;
+  }
+  50% {
+    margin-left: 40%;
+    width: 60%;
+  }
+  100% {
+    margin-left: 100%;
+    width: 30%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .basic-progress__bar-fill {
+    transition: none !important;
+  }
+
+  .basic-progress__bar-fill.is-indeterminate {
+    width: 60%;
+    margin-left: 0;
+    animation: none;
+  }
+
+  .basic-completion {
+    animation: none !important;
+  }
+}
+
+.basic-progress__status {
+  font-size: var(--basic-font);
+  color: var(--text-secondary);
+  text-align: left;
+}
+
+.basic-progress__actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+
+@keyframes basic-completion-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.basic-completion {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 16px;
+  background: var(--basic-glass-bg) !important;
+  border: 1px solid var(--basic-glass-border) !important;
+  backdrop-filter: blur(24px) saturate(145%) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(145%) !important;
+  box-shadow: var(--basic-glass-shadow) !important;
+  border-radius: var(--basic-radius) !important;
+  text-align: center;
+  position: relative;
+  animation: basic-completion-slide-up 350ms cubic-bezier(0.16, 1, 0.3, 1)
+    forwards !important;
+}
+
+.basic-completion.is-active {
+  display: flex;
+}
+
+.basic-completion__icon {
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.basic-completion__title {
+  font-size: var(--basic-subheading);
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.basic-completion__message {
+  font-size: var(--basic-font);
+  color: var(--text-secondary);
+  margin: 0;
+  word-break: break-word;
+}
+
+.basic-completion__path {
+  max-width: 100%;
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: var(--basic-radius-input);
+  color: var(--text-secondary);
+  background: var(--surface);
+  font-size: var(--basic-label);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.basic-completion__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.basic-completion--success {
+  border-color: var(--success-border) !important;
+  background: color-mix(
+    in srgb,
+    var(--success) 6%,
+    var(--basic-glass-bg)
+  ) !important;
+  border-left: 3px solid var(--success) !important;
+}
+
+.basic-completion--error {
+  border-color: var(--danger-border) !important;
+  background: color-mix(
+    in srgb,
+    var(--danger-fg) 6%,
+    var(--basic-glass-bg)
+  ) !important;
+  border-left: 3px solid var(--danger-fg) !important;
+}

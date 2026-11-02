@@ -103,16 +103,27 @@ fn force_exit_after_busy_teardown(app: tauri::AppHandle) {
                 process.child.clone()
             };
             if let Some(child) = child {
-                if let Err(error) = process::terminate_child(&child) {
-                    eprintln!("Could not stop archive process during forced exit: {error}");
-                    if let Err(retry_error) = process::terminate_child_with_timeout(
-                        &child,
-                        std::time::Duration::from_secs(5),
-                    ) {
+                let child_for_term = child.clone();
+                let terminate_failed = tokio::task::spawn_blocking(move || {
+                    if let Err(error) = process::terminate_child(&child_for_term) {
                         eprintln!(
-                            "Retry stop during forced exit also failed: {retry_error}. A leftover 7-Zip process may hold staging locks until the next recovery pass."
+                            "Could not stop archive process during forced exit: {error}"
                         );
+                        if let Err(retry_error) = process::terminate_child_with_timeout(
+                            &child_for_term,
+                            std::time::Duration::from_secs(5),
+                        ) {
+                            eprintln!(
+                                "Retry stop during forced exit also failed: {retry_error}. A leftover 7-Zip process may hold staging locks until the next recovery pass."
+                            );
+                        }
+                        return true;
                     }
+                    false
+                })
+                .await
+                .unwrap_or(true);
+                if terminate_failed {
                     {
                         let mut process = match state.0.lock() {
                             Ok(guard) => guard,
@@ -384,7 +395,6 @@ fn main() {
             process::cancel_7z,
             process::is_7z_running,
             process::probe_7z,
-            process::probe_compress_inputs,
             process::archive_output_selection_token,
             process::get_startup_recovery_status,
             process::acknowledge_preserved_transaction,

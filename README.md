@@ -128,9 +128,9 @@ native build runs.
   `release:*:resume` command; its build session is bound to the exact commit,
   lockfiles, platform, architecture, and Node/Rust toolchain and expires after
   24 hours.
-- After editing `package.json` `version`, run `npm run u` / `u2`. They copy
+- After editing `package.json` `version`, run `npm run u`. It copies
   that version through native manifests, changelog download URLs, and
-  AppStream, then refresh lockfiles. They still do not install packages or
+  AppStream, then refreshes lockfiles. It still does not install packages or
   execute dependency code. `release:prepare` / `workspace:bootstrap` also write
   AppStream. You can run `sync-version` and the metainfo script alone.
   `--check` remains available if you only want validation.

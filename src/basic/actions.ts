@@ -44,13 +44,15 @@ import {
 import { setRecentArchiveHandler } from "./recent";
 import { showToast } from "../toast";
 import { waitUntilIncomingPathsApplyingClear } from "../incoming-paths";
+import { confirmWithE2eQueue, takeE2eDialogResult } from "../e2e-dialog";
+import { userFacingBackendError } from "../error-hints";
 
 async function confirmBasicDrop(
   text: string,
   options: Parameters<typeof confirm>[1],
 ): Promise<boolean | null> {
   try {
-    return await confirm(text, options);
+    return await confirmWithE2eQueue(() => confirm(text, options));
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Could not open Basic confirmation dialog: ${msg}`, "error");
@@ -368,11 +370,16 @@ async function handleBasicCompressActionOnce(
   ) as HTMLInputElement | null;
   let output: string | null = basicOutputPath?.value ?? null;
   if (!output) {
+    const queued = takeE2eDialogResult();
+    const queuedPath =
+      queued && typeof queued.result === "string" ? queued.result : null;
     try {
-      output = await save({
-        title: "Choose output archive",
-        defaultPath,
-      });
+      output =
+        queuedPath ??
+        (await save({
+          title: "Choose output archive",
+          defaultPath,
+        }));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log(`Could not open the save-archive dialog: ${msg}`, "error");
@@ -494,11 +501,7 @@ export async function isArchiveEncrypted(
     const args = ["l", "-slt", "-spd", "--", archivePath];
     const result = await invokeGuardedRun7z(args);
     if (result.code > 1) {
-      // Fail closed: only return false when the listing is clearly unencrypted.
-      // Unknown failures must not skip the password prompt.
-      return looksLikePasswordRequiredError(result.stdout, result.stderr)
-        ? true
-        : null;
+      return looksLikePasswordRequiredError(result.stdout, result.stderr);
     }
     if (result.stdout_truncated || result.stderr_truncated) {
       return null;
@@ -532,13 +535,27 @@ async function handleBasicExtractActionOnce(
   // password requirement is never silently skipped.
   const encryptionCheck = await isArchiveEncrypted(archive);
   if (!isBasicPreparationCurrent(preparation)) return;
-  const isEncrypted = encryptionCheck ?? true;
   if (encryptionCheck === null) {
+    const [validation] = await validateArchivePaths([archive]);
+    if (!isBasicPreparationCurrent(preparation)) return;
+    if (!validation?.valid) {
+      showBasicCompletion(
+        "extract",
+        false,
+        "Operation failed",
+        userFacingBackendError(
+          validation?.reason?.trim() ??
+            "This archive path is not supported for extraction.",
+        ),
+      );
+      return;
+    }
     log(
       "Could not determine whether this archive is encrypted; treating it as encrypted.",
       "debug",
     );
   }
+  const isEncrypted = encryptionCheck ?? true;
   let password = "";
 
   if (isEncrypted) {
@@ -586,12 +603,19 @@ async function handleBasicExtractActionOnce(
   ) as HTMLInputElement | null;
   let output: string | null = basicExtractPath?.value ?? null;
   if (!output) {
+    const queued = takeE2eDialogResult();
+    const queuedPath =
+      queued && typeof queued.result === "string" ? queued.result : null;
     try {
-      const selected = await open({
-        title: "Choose destination folder",
-        directory: true,
-      });
-      output = typeof selected === "string" ? selected : null;
+      if (queuedPath) {
+        output = queuedPath;
+      } else {
+        const selected = await open({
+          title: "Choose destination folder",
+          directory: true,
+        });
+        output = typeof selected === "string" ? selected : null;
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log(`Could not open the destination-folder dialog: ${msg}`, "error");
@@ -664,20 +688,20 @@ export function togglePasswordVisibility(inputId: string, btnId: string): void {
     if (isIconOnly) {
       const icon = btn.querySelector<HTMLElement>("[data-lucide]");
       icon?.setAttribute("data-lucide", "eye-off");
-      btn.setAttribute("aria-label", "Hide password");
     } else {
       btn.textContent = "Hide";
     }
+    btn.setAttribute("aria-label", "Hide password");
     btn.setAttribute("aria-pressed", "true");
   } else {
     input.type = "password";
     if (isIconOnly) {
       const icon = btn.querySelector<HTMLElement>("[data-lucide]");
       icon?.setAttribute("data-lucide", "eye");
-      btn.setAttribute("aria-label", "Show password");
     } else {
       btn.textContent = "Show";
     }
+    btn.setAttribute("aria-label", "Show password");
     btn.setAttribute("aria-pressed", "false");
   }
   if (isIconOnly) triggerIconRefresh();

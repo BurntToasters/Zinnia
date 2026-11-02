@@ -32,6 +32,7 @@ import {
   loadRecoveryPlan,
   prepareCrashCase,
   prepareNewerJournal,
+  prepareOlderJournal,
 } from "../e2e/helpers/recovery-harness.js";
 export { reserveE2eWebdriverPort };
 
@@ -96,6 +97,111 @@ const IGNORED_INPUT_DIRECTORIES = new Set([
 const IGNORED_INPUT_PATHS = new Set(["src-tauri/binaries"]);
 // Keep in sync with the E2E proof validators in .github/workflows/ci.yml.
 const ACCEPTED_CLEANUP_STATUSES = ["verified", "build-unproven", "capture-gap"];
+
+/** Names accepted by `--only` / `ZINNIA_E2E_ONLY` for error messages and validation. */
+export function listE2eOnlyAvailableNames(root = REPO_ROOT) {
+  const plan = loadRecoveryPlan(path.join(root, "e2e", "recovery-plan.json"));
+  const names = [
+    "main",
+    "extract-window",
+    "crash-injection",
+    "crash-recovery",
+    ...plan.crashCases.map((testCase) => testCase.id),
+    ...plan.scenarioSpecs.map((spec) => path.basename(spec, ".spec.js")),
+  ];
+  return [...new Set(names)].sort((left, right) => left.localeCompare(right));
+}
+
+export function parseE2eOnlyTokens(argv = process.argv, env = process.env) {
+  const tokens = [];
+  const args = argv.slice(2);
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg.startsWith("--only=")) {
+      for (const piece of arg.slice("--only=".length).split(",")) {
+        const trimmed = piece.trim();
+        if (trimmed) tokens.push(trimmed);
+      }
+      continue;
+    }
+    if (arg === "--only") {
+      const next = args[index + 1];
+      if (next === undefined || next.startsWith("-")) {
+        throw new Error("--only requires a spec name.");
+      }
+      for (const piece of next.split(",")) {
+        const trimmed = piece.trim();
+        if (trimmed) tokens.push(trimmed);
+      }
+      index += 1;
+    }
+  }
+  const fromEnv = env.ZINNIA_E2E_ONLY?.trim();
+  if (fromEnv) {
+    for (const piece of fromEnv.split(",")) {
+      const trimmed = piece.trim();
+      if (trimmed) tokens.push(trimmed);
+    }
+  }
+  return tokens.length > 0 ? tokens : null;
+}
+
+function normalizeE2eOnlyToken(token) {
+  const trimmed = token.trim();
+  const withoutSpecSuffix = trimmed.replace(/\.spec\.js$/i, "");
+  return withoutSpecSuffix.replace(/^\.\/specs\//, "");
+}
+
+export function resolveE2eOnlySelection(tokens, root = REPO_ROOT) {
+  const plan = loadRecoveryPlan();
+  const available = listE2eOnlyAvailableNames(root);
+  const selection = {
+    filter: [...tokens],
+    runMain: false,
+    runExtractWindow: false,
+    crashCaseIds: new Set(),
+    runAllCrashLaunches: false,
+    runAllCrashRecoveries: false,
+    scenarioSpecs: new Set(),
+  };
+  for (const token of tokens) {
+    const bare = normalizeE2eOnlyToken(token);
+    if (bare === "main") {
+      selection.runMain = true;
+      continue;
+    }
+    if (bare === "extract-window") {
+      selection.runExtractWindow = true;
+      continue;
+    }
+    const crashCase = plan.crashCases.find(
+      (testCase) => testCase.id === bare || testCase.id === token.trim(),
+    );
+    if (crashCase) {
+      selection.crashCaseIds.add(crashCase.id);
+      continue;
+    }
+    if (bare === "crash-injection") {
+      selection.runAllCrashLaunches = true;
+      continue;
+    }
+    if (bare === "crash-recovery") {
+      selection.runAllCrashRecoveries = true;
+      continue;
+    }
+    const scenario = plan.scenarioSpecs.find(
+      (spec) => path.basename(spec, ".spec.js") === bare,
+    );
+    if (scenario) {
+      selection.scenarioSpecs.add(scenario);
+      continue;
+    }
+    throw new Error(
+      `Unknown E2E spec filter ${JSON.stringify(token)}. Available: ${available.join(", ")}`,
+    );
+  }
+  return selection;
+}
 
 function positiveTimeout(value, fallback) {
   const parsed = Number(value);
@@ -760,6 +866,7 @@ export function writeE2eArtifact({
   failure = null,
   processCleanup = [],
   platform = process.platform,
+  filter = null,
 }) {
   fs.mkdirSync(reportDir, { recursive: true });
   const current = captureE2eEvidence({
@@ -835,18 +942,17 @@ export function writeE2eArtifact({
   const windowsCleanupUnproven =
     platform === "win32" &&
     !ACCEPTED_CLEANUP_STATUSES.includes(processCleanupStatus);
+  const evidenceFailed =
+    !inputsUnchanged ||
+    missingRequiredEvidence ||
+    !suiteProofComplete ||
+    windowsCleanupUnproven;
   const finalStatus =
-    status === "passed" &&
-    (!inputsUnchanged ||
-      missingRequiredEvidence ||
-      !suiteProofComplete ||
-      windowsCleanupUnproven)
+    (status === "passed" || status === "partial") && evidenceFailed
       ? "failed"
       : status;
-  const evidenceFailed =
-    !inputsUnchanged || missingRequiredEvidence || !suiteProofComplete;
   const finalFailure =
-    finalStatus === "failed" && status === "passed"
+    finalStatus === "failed" && (status === "passed" || status === "partial")
       ? [
           evidenceFailed
             ? `E2E evidence ${missingRequiredEvidence || !suiteProofComplete ? "is incomplete" : "changed during run"}.`
@@ -880,6 +986,7 @@ export function writeE2eArtifact({
     nodeVersion: process.version,
     suites: recordedSuites,
     replay: { command: "npm run test:e2e" },
+    ...(filter ? { filter } : {}),
     ...(finalFailure ? { failure: finalFailure } : {}),
   };
   fs.writeFileSync(
@@ -911,7 +1018,12 @@ function cleanupE2eProfile(profileDir) {
  * on one fresh profile (crash, then clean relaunch); each scenario spec gets
  * its own profile. Every launch is a suite entry in the result artifact.
  */
-async function runRecoveryScenarios({ reportDir, suites, processCleanup }) {
+async function runRecoveryScenarios({
+  reportDir,
+  suites,
+  processCleanup,
+  only = null,
+}) {
   const plan = loadRecoveryPlan();
   if (expectedRecoverySuiteCount(plan) !== plan.suiteCount) {
     throw new Error(
@@ -952,6 +1064,14 @@ async function runRecoveryScenarios({ reportDir, suites, processCleanup }) {
   };
   try {
     for (const testCase of plan.crashCases) {
+      const runCrash =
+        !only || only.runAllCrashLaunches || only.crashCaseIds.has(testCase.id);
+      const runRecovery =
+        !only ||
+        only.runAllCrashRecoveries ||
+        only.crashCaseIds.has(testCase.id);
+      if (only && !runCrash && !runRecovery) continue;
+
       const retries = [];
       for (let attempt = 1; ; attempt += 1) {
         const profile = createE2eProfile();
@@ -962,23 +1082,27 @@ async function runRecoveryScenarios({ reportDir, suites, processCleanup }) {
         try {
           const info = prepareCrashCase(profile, testCase);
           const caseEnv = { ZINNIA_E2E_CASE: JSON.stringify(info) };
-          await runPhase(profile, CRASH_SPEC, logName, {
-            ...caseEnv,
-            ZINNIA_E2E_CRASH_AT: testCase.point,
-            ZINNIA_E2E_CRASH_MARKER: info.marker,
-          });
-          if (retries.length > 0) {
-            fs.writeFileSync(
-              path.join(evidenceDir, `${testCase.id}.launch-retries.json`),
-              `${JSON.stringify({ scenario: testCase.id, phase: "launch-retries", retries }, null, 2)}\n`,
+          if (runCrash) {
+            await runPhase(profile, CRASH_SPEC, logName, {
+              ...caseEnv,
+              ZINNIA_E2E_CRASH_AT: testCase.point,
+              ZINNIA_E2E_CRASH_MARKER: info.marker,
+            });
+            if (retries.length > 0) {
+              fs.writeFileSync(
+                path.join(evidenceDir, `${testCase.id}.launch-retries.json`),
+                `${JSON.stringify({ scenario: testCase.id, phase: "launch-retries", retries }, null, 2)}\n`,
+              );
+            }
+          }
+          if (runRecovery) {
+            await runPhase(
+              profile,
+              RECOVERY_SPEC,
+              `recovery-${testCase.id}-restart.log`,
+              caseEnv,
             );
           }
-          await runPhase(
-            profile,
-            RECOVERY_SPEC,
-            `recovery-${testCase.id}-restart.log`,
-            caseEnv,
-          );
           break;
         } catch (error) {
           // Retry only a crash launch that never reached the main window: the
@@ -998,12 +1122,19 @@ async function runRecoveryScenarios({ reportDir, suites, processCleanup }) {
       }
     }
     for (const spec of plan.scenarioSpecs) {
+      if (only && !only.scenarioSpecs.has(spec)) continue;
       const profile = createE2eProfile();
       try {
-        const envOverrides =
-          spec === "./specs/newer-journal.spec.js"
-            ? { ZINNIA_E2E_CASE: JSON.stringify(prepareNewerJournal(profile)) }
-            : {};
+        let envOverrides = {};
+        if (spec === "./specs/newer-journal.spec.js") {
+          envOverrides = {
+            ZINNIA_E2E_CASE: JSON.stringify(prepareNewerJournal(profile)),
+          };
+        } else if (spec === "./specs/older-journal.spec.js") {
+          envOverrides = {
+            ZINNIA_E2E_CASE: JSON.stringify(prepareOlderJournal(profile)),
+          };
+        }
         await runPhase(
           profile,
           spec,
@@ -1020,11 +1151,21 @@ async function runRecoveryScenarios({ reportDir, suites, processCleanup }) {
       `${JSON.stringify({ schemaVersion: 1, scenarios: collectEvidence(evidenceDir) }, null, 2)}\n`,
     );
   }
-  if (suites.length !== plan.suiteCount) {
+  if (!only && suites.length !== plan.suiteCount) {
     throw new Error(
       `E2E ran ${suites.length} suites; e2e/recovery-plan.json expects ${plan.suiteCount}.`,
     );
   }
+}
+
+function recoveryScenariosScheduled(only) {
+  if (!only) return true;
+  return (
+    only.runAllCrashLaunches ||
+    only.runAllCrashRecoveries ||
+    only.crashCaseIds.size > 0 ||
+    only.scenarioSpecs.size > 0
+  );
 }
 
 async function main() {
@@ -1033,6 +1174,8 @@ async function main() {
       "SKIP_E2E=1 is not allowed. Unset it and run the unpackaged WebdriverIO suite.",
     );
   }
+  const onlyTokens = parseE2eOnlyTokens();
+  const only = onlyTokens ? resolveE2eOnlySelection(onlyTokens) : null;
   if (await reexecUnderXvfb()) return;
   const reportDir = path.resolve(
     process.env.ZINNIA_E2E_REPORT_DIR ||
@@ -1092,53 +1235,61 @@ async function main() {
     if (evidence.fixtureManifestSha256 !== manifestAtProfileStart) {
       throw new Error("E2E fixture manifest changed before suite startup.");
     }
-    const mainWebdriver = await reserveE2eWebdriverPort();
-    const mainSuite = {
-      spec: "./specs/main.spec.js",
-      status: "failed",
-      logFile: path.join(reportDir, "main.log"),
-    };
-    suites.push(mainSuite);
-    await runWdio(
-      profile,
-      mainSuite.spec,
-      [],
-      reportDir,
-      {
-        TAURI_WEBDRIVER_PORT: String(mainWebdriver.port),
-      },
-      mainWebdriver,
-      processCleanup,
-    );
-    mainSuite.status = "passed";
+    const runMain = !only || only.runMain;
+    const runExtractWindow = !only || only.runExtractWindow;
+    if (runMain) {
+      const mainWebdriver = await reserveE2eWebdriverPort();
+      const mainSuite = {
+        spec: "./specs/main.spec.js",
+        status: "failed",
+        logFile: path.join(reportDir, "main.log"),
+      };
+      suites.push(mainSuite);
+      await runWdio(
+        profile,
+        mainSuite.spec,
+        [],
+        reportDir,
+        {
+          TAURI_WEBDRIVER_PORT: String(mainWebdriver.port),
+        },
+        mainWebdriver,
+        processCleanup,
+      );
+      mainSuite.status = "passed";
+    }
     updateE2eSettings(profile.profileDir, {
       extractAutoCloseSeconds: EXTRACT_WINDOW_AUTO_CLOSE_SECONDS,
     });
-    const extractWebdriver = await reserveE2eWebdriverPort();
-    const extractSuite = {
-      spec: "./specs/extract-window.spec.js",
-      status: "failed",
-      logFile: path.join(reportDir, "extract-window.log"),
-    };
-    suites.push(extractSuite);
-    await runWdio(
-      profile,
-      extractSuite.spec,
-      ["--extract", extractWindowArchive],
-      reportDir,
-      {
-        ZINNIA_E2E_HELLO_7Z: extractWindowArchive,
-        ZINNIA_E2E_AUTO_CLOSE_SECONDS: String(
-          EXTRACT_WINDOW_AUTO_CLOSE_SECONDS,
-        ),
-        TAURI_WEBDRIVER_PORT: String(extractWebdriver.port),
-      },
-      extractWebdriver,
-      processCleanup,
-    );
-    extractSuite.status = "passed";
-    await runRecoveryScenarios({ reportDir, suites, processCleanup });
-    status = "passed";
+    if (runExtractWindow) {
+      const extractWebdriver = await reserveE2eWebdriverPort();
+      const extractSuite = {
+        spec: "./specs/extract-window.spec.js",
+        status: "failed",
+        logFile: path.join(reportDir, "extract-window.log"),
+      };
+      suites.push(extractSuite);
+      await runWdio(
+        profile,
+        extractSuite.spec,
+        ["--extract", extractWindowArchive],
+        reportDir,
+        {
+          ZINNIA_E2E_HELLO_7Z: extractWindowArchive,
+          ZINNIA_E2E_AUTO_CLOSE_SECONDS: String(
+            EXTRACT_WINDOW_AUTO_CLOSE_SECONDS,
+          ),
+          TAURI_WEBDRIVER_PORT: String(extractWebdriver.port),
+        },
+        extractWebdriver,
+        processCleanup,
+      );
+      extractSuite.status = "passed";
+    }
+    if (recoveryScenariosScheduled(only)) {
+      await runRecoveryScenarios({ reportDir, suites, processCleanup, only });
+    }
+    status = only ? "partial" : "passed";
   } catch (error) {
     failure = error instanceof Error ? error.message : String(error);
     runError = error;
@@ -1154,11 +1305,15 @@ async function main() {
         suites,
         failure,
         processCleanup,
+        ...(only ? { filter: only.filter } : {}),
       });
       console.log(
         `E2E result artifact: ${path.join(reportDir, "result.json")} (${artifact.status})`,
       );
-      if (status === "passed" && artifact.status !== "passed") {
+      if (
+        (status === "passed" || status === "partial") &&
+        artifact.status !== status
+      ) {
         runError = new Error(
           `E2E suites passed, but ${artifact.failure ?? "evidence verification failed"}`,
         );

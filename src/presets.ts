@@ -94,6 +94,7 @@ function updateSecurityControlsForFormat(format: string) {
     passwordInput.type = "password";
     passwordToggle.textContent = "Show";
     passwordToggle.setAttribute("aria-pressed", "false");
+    passwordToggle.setAttribute("aria-label", "Show password");
   }
 
   if (!support.encryptHeaders) {

@@ -1,11 +1,4 @@
 export {
-  confirmZipSymlinkRisk,
-  formatWeakForSymlinks,
-  probeCompressInputs,
-  type CompressInputProbe,
-} from "./compress-fidelity";
-
-export {
   looksLikePasswordRequiredError,
   describe7zError,
 } from "../error-hints";
@@ -33,16 +26,17 @@ export {
 
 export {
   renderBrowseTable,
-  renderSelectiveExtractModal,
   closeSelectiveExtractModal,
   setSelectiveExtractSearch,
   selectAllVisibleInPicker,
   clearPickerSelection,
   openSelectiveExtractModal,
-  runSelectiveExtractFromModal,
   syncSelectiveDestinationAfterBrowseChoice,
   syncDestinationWhilePickerOpen,
 } from "./browse-ui";
+
+export { renderSelectiveExtractModal } from "./selective-tree-ui";
+export { runSelectiveExtractFromModal } from "./selective-run";
 
 export {
   truncateForDialog,

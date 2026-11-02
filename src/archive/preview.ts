@@ -2,6 +2,8 @@ import { trapFocus, releaseFocusTrap } from "../utils";
 import { buildArgs } from "./args";
 import { buildCommandPreviewText } from "./command-sanitize";
 import { showToast } from "../toast";
+import { userFacingBackendError } from "../error-hints";
+import { log } from "../ui";
 
 export {
   sanitizeCommandArgsForPreview,
@@ -96,7 +98,8 @@ export async function previewCommand(trigger?: HTMLElement) {
     const modal = overlay.querySelector<HTMLElement>(".modal");
     if (modal) trapFocus(modal);
   } catch (err) {
-    const messageText = err instanceof Error ? err.message : String(err);
-    showToast(messageText, "error", 0);
+    const raw = err instanceof Error ? err.message : String(err);
+    log(`Command preview failed: ${raw}`, "error");
+    showToast(userFacingBackendError(raw), "error", 0);
   }
 }

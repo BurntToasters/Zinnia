@@ -26,7 +26,8 @@ describe("loadSettingsWithMetadata", () => {
     const result = await loadSettingsWithMetadata();
 
     expect(result.settings.theme).toBe("dark");
-    expect(result.extras._setupComplete).toBe(true);
+    expect(result.settings.setupComplete).toBe(true);
+    expect(result.extras._setupComplete).toBeUndefined();
     expect(result.malformed).toBe(false);
     expect(result.warning).toBeUndefined();
   });
@@ -70,8 +71,9 @@ describe("saveSettings", () => {
       {
         ...SETTING_DEFAULTS,
         workspaceMode: "power",
+        setupComplete: true,
       },
-      { _setupComplete: true },
+      { _setupComplete: true, pathMode: "absolute" },
     );
 
     expect(invokeMock).toHaveBeenCalledOnce();
@@ -82,6 +84,8 @@ describe("saveSettings", () => {
 
     const decoded = JSON.parse(typedPayload?.json as string);
     expect(decoded.workspaceMode).toBe("power");
-    expect(decoded._setupComplete).toBe(true);
+    expect(decoded.setupComplete).toBe(true);
+    expect(decoded._setupComplete).toBeUndefined();
+    expect(decoded.pathMode).toBeUndefined();
   });
 });

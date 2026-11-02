@@ -20,25 +20,11 @@
   WriteRegStr HKCU "Software\Classes\SystemFileAssociations\${EXT}\shell\ZinniaExtract\command" "" '"$INSTDIR\zinnia.exe" --extract "%1"'
 !macroend
 
-!macro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS EXT
-  ; Always purge classic archive verbs on install/upgrade. Earlier betas left
-  ; ZinniaOpen beside the ProgId open verb; beta.20 could leave Extract after a
-  ; failed cleanup path. Win11 packages re-provide Extract when registered.
-  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\${EXT}\shell\ZinniaOpen"
-  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\${EXT}\shell\ZinniaExtract"
-  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\${EXT}\shell\Zinnia.Extract"
-!macroend
-
 !macro ZINNIA_UNREGISTER_ARCHIVE_VERBS EXT
-  !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS "${EXT}"
-  DeleteRegKey HKCU "Software\Classes\${EXT}\OpenWithProgids\Zinnia.Archive"
+  DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\${EXT}\shell\ZinniaExtract"
 !macroend
 
 !macro ZINNIA_REGISTER_COMPRESS_VERBS
-  DeleteRegKey HKCU "Software\Classes\*\shell\Zinnia"
-  DeleteRegKey HKCU "Software\Classes\Directory\shell\Zinnia"
-  DeleteRegKey HKCU "Software\Classes\Directory\Background\shell\Zinnia"
-
   WriteRegStr HKCU "Software\Classes\*\shell\ZinniaCompress" "MUIVerb" "Compress with Zinnia"
   WriteRegStr HKCU "Software\Classes\*\shell\ZinniaCompress" "Icon" "$INSTDIR\zinnia.exe"
   WriteRegStr HKCU "Software\Classes\*\shell\ZinniaCompress" "MultiSelectModel" "Player"
@@ -57,19 +43,6 @@
   DeleteRegKey HKCU "Software\Classes\*\shell\ZinniaCompress"
   DeleteRegKey HKCU "Software\Classes\Directory\shell\ZinniaCompress"
   DeleteRegKey HKCU "Software\Classes\Directory\Background\shell\ZinniaCompress"
-  DeleteRegKey HKCU "Software\Classes\*\shell\Zinnia"
-  DeleteRegKey HKCU "Software\Classes\Directory\shell\Zinnia"
-  DeleteRegKey HKCU "Software\Classes\Directory\Background\shell\Zinnia"
-!macroend
-
-!macro ZINNIA_CLEAN_LEGACY_SHELL_PAYLOAD
-  ; Beta 11/13 placed these directly in $INSTDIR. Keep cleanup available on
-  ; both update and uninstall in case a mapped DLL survived the first attempt.
-  Delete /REBOOTOK "$INSTDIR\zinnia_shell.dll"
-  Delete /REBOOTOK "$INSTDIR\zinnia_extract_shell.dll"
-  Delete /REBOOTOK "$INSTDIR\ZinniaContextMenu.msix"
-  Delete /REBOOTOK "$INSTDIR\ZinniaExtractContextMenu.msix"
-  Delete /REBOOTOK "$INSTDIR\register-windows-context-menu.ps1"
 !macroend
 
 !macro ZINNIA_REGISTER_WIN11_CONTEXT_MENU
@@ -239,20 +212,6 @@
 
 !macro NSIS_HOOK_POSTINSTALL
   SetOverwrite on
-  ; Drop leftover classic archive verbs from earlier betas before writing new
-  ; state. Win11 sparse packages also appear under Show more options, so classic
-  ; Extract/Compress must not stack on top of them when registration succeeds.
-  !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".7z"
-  !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".zip"
-  !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".tar"
-  !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".gz"
-  !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".bz2"
-  !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".xz"
-  !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".rar"
-  !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".tgz"
-  !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".tbz2"
-  !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".txz"
-  !insertmacro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS ".001"
   !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".7z"
   !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".zip"
   !insertmacro ZINNIA_REGISTER_PROGID_OPEN ".tar"
@@ -273,7 +232,6 @@
   zinnia_postinstall_win11_ok:
   DetailPrint "Removing classic Extract/Compress verbs; Win11 packages cover legacy menu too."
   !insertmacro ZINNIA_UNREGISTER_COMPRESS_VERBS
-  !insertmacro ZINNIA_CLEAN_LEGACY_SHELL_PAYLOAD
   !insertmacro ZINNIA_CLEAN_SHELL_PAYLOADS "shell-${VERSION}" zinnia_update_shell_cleanup
   zinnia_postinstall_verbs_done:
   Goto zinnia_postinstall_done
@@ -316,7 +274,6 @@
   ; PREUNINSTALL already unregistered packages (or aborted). Clean payloads and
   ; classic verbs now that no AppX identity still points at $INSTDIR.
   !insertmacro ZINNIA_CLEAN_SHELL_PAYLOADS "" zinnia_uninstall_shell_cleanup
-  !insertmacro ZINNIA_CLEAN_LEGACY_SHELL_PAYLOAD
   Delete /REBOOTOK "$INSTDIR\zinnia-context-menu-register.log"
   !insertmacro ZINNIA_UNREGISTER_COMPRESS_VERBS
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".7z"
@@ -330,6 +287,5 @@
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".tbz2"
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".txz"
   !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".001"
-  DeleteRegKey HKCU "Software\Classes\Zinnia.Archive"
   RMDir /REBOOTOK "$INSTDIR"
 !macroend

@@ -426,7 +426,7 @@ const LOCATIONS = [
   },
   {
     id: "staging-rs-compound",
-    file: "src-tauri/src/process/staging.rs",
+    file: "src-tauri/src/process/staging/plan.rs",
     layer: "compoundTarSuffixes",
     platforms: ALL,
     comments: "c",
@@ -439,7 +439,7 @@ const LOCATIONS = [
   },
   {
     id: "commands-rs-compound",
-    file: "src-tauri/src/process/commands.rs",
+    file: "src-tauri/src/process/commands/run.rs",
     layer: "compoundTarSuffixes",
     platforms: ALL,
     comments: "c",
@@ -564,15 +564,6 @@ const LOCATIONS = [
     extract: nsisCallsExtract("ZINNIA_REGISTER_CLASSIC_EXTRACT"),
   },
   {
-    id: "nsis-classic-cleanup",
-    file: "src-tauri/windows/nsis-hooks.nsh",
-    layer: "windowsClassicArchiveVerbs",
-    platforms: WIN,
-    comments: "none",
-    kind: "ext",
-    extract: nsisCallsExtract("ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS"),
-  },
-  {
     id: "nsis-classic-unregister",
     file: "src-tauri/windows/nsis-hooks.nsh",
     layer: "windowsClassicArchiveVerbs",
@@ -683,14 +674,14 @@ const LOCATIONS = [
   },
   {
     id: "archive-snapshot-split-bases",
-    file: "src-tauri/src/process/archive_snapshot.rs",
+    file: "src-tauri/src/process/archive_snapshot/volumes.rs",
     layer: "splitBaseSuffixes",
     platforms: ALL,
     comments: "c",
     kind: "ext",
     extract: listExtract({
       within: {
-        anchor: /pub\(super\) fn archive_input_family\(/,
+        anchor: /pub\(crate\) fn archive_input_family\(/,
         label: "fn archive_input_family",
       },
       anchor: /const KNOWN_ARCHIVE_SUFFIXES: &\[&str\] = /,

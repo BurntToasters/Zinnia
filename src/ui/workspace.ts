@@ -19,6 +19,17 @@ const BASIC_WINDOW_HEIGHT = 650;
 let workingContextPersistTimer: number | undefined;
 let settingsPersistQueue: Promise<void> = Promise.resolve();
 let settingsPersistGeneration = 0;
+
+export class SettingsPersistSupersededError extends Error {
+  constructor() {
+    super("Settings save was superseded by a newer save.");
+    this.name = "SettingsPersistSupersededError";
+  }
+}
+
+export function isSettingsPersistSupersededError(err: unknown): boolean {
+  return err instanceof SettingsPersistSupersededError;
+}
 let workspaceResizeQueue: Promise<void> = Promise.resolve();
 let workspaceResizeGeneration = 0;
 
@@ -34,11 +45,14 @@ function enqueueSettingsPersist(
   const operation = settingsPersistQueue
     .catch(() => undefined)
     .then(async () => {
-      if (generation < settingsPersistGeneration) return;
-      await saveSettings(snapshot, extras);
-      if (generation === settingsPersistGeneration) {
-        state.lastPersistedSettings = { ...snapshot };
+      if (generation < settingsPersistGeneration) {
+        throw new SettingsPersistSupersededError();
       }
+      await saveSettings(snapshot, extras);
+      if (generation !== settingsPersistGeneration) {
+        throw new SettingsPersistSupersededError();
+      }
+      state.lastPersistedSettings = { ...snapshot };
     });
   settingsPersistQueue = operation.catch(() => undefined);
   return operation;
@@ -61,6 +75,14 @@ export async function persistSettingsImmediately(
  * Reset-settings uses this barrier before deleting backend settings so a stale
  * frontend snapshot cannot be written back after the reset completes.
  */
+/**
+ * Wait for queued or in-flight settings writes without bumping generation
+ * (unlike flushPendingSettingsPersistence, which cancels stale snapshots).
+ */
+export async function awaitInFlightSettingsPersistence(): Promise<void> {
+  await settingsPersistQueue.catch(() => undefined);
+}
+
 export async function flushPendingSettingsPersistence(): Promise<void> {
   if (workingContextPersistTimer !== undefined) {
     clearTimeout(workingContextPersistTimer);
@@ -80,6 +102,7 @@ export function queuePersistWorkingContext(): void {
   workingContextPersistTimer = window.setTimeout(() => {
     workingContextPersistTimer = undefined;
     void enqueueSettingsPersist(snapshot, extras, generation).catch((err) => {
+      if (isSettingsPersistSupersededError(err)) return;
       const msg = err instanceof Error ? err.message : String(err);
       devLog(`Failed to persist working context: ${msg}`);
     });

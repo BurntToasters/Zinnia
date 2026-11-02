@@ -138,3 +138,111 @@ Failure cases considered before the fixes for the beta.5 release audit.
 - `npm run b` or `npm run r` repoints a local `beta` or `main` that holds unpushed commits, so those commits disappear from the branch.
 - The guard fails when the local branch does not exist yet or has no upstream.
 - The override hint only works in POSIX shells.
+
+# 0.7.0 audit fix failure inventory
+
+Failure cases considered before the fixes for the 0.7.0 pre-1.0 audit. Legacy
+compatibility removal is intentional in this release; the cases below cover how
+that removal could hurt users who upgrade.
+
+## Cancel and recovery threading
+
+- `cancel_7z` waits for the child on the main thread, so the UI freezes for up to five seconds while 7-Zip shuts down.
+- Moving the wait off the main thread lets a second cancel, or the next `run_7z`, start before the first child has exited.
+- Cancel returns before the operation slot leaves the cancelling state, so a new operation sees a stale busy slot.
+- A cancel from a window that does not own the operation succeeds after the command becomes async.
+- The second recovery pass inside `run_7z` walks or rolls back a large tree on an async worker and stalls other IPC.
+- Moving that pass into `spawn_blocking` drops its error, or runs it after the operation slot is already claimed.
+
+## Password ZIP probe
+
+- The probe checks `symlink_metadata`, then `File::open` follows a symlink swapped in between, and `-tzip` is added based on another file.
+- A no-follow open refuses a regular archive that the old probe accepted, so password ZIP updates lose AES-256 enforcement.
+- A missing output (new archive) is treated as an error instead of a fresh create.
+
+## Download markers
+
+- An unreadable, oversized, or malformed Zone.Identifier stream is reported as copied, and an archive from the internet publishes without Mark-of-the-Web.
+- Returning an error for an absent stream, or for a volume without alternate data streams, makes every local or FAT32 extraction fail.
+- The marker source is swapped for a symlink after validation, and the quarantine or zone data is read from a different file.
+- The identity check at copy time compares against the wrong snapshot and rejects every legitimate marker source.
+
+## Dead IPC and small command fixes
+
+- `probe_compress_inputs` stays registered with no caller, so a future capability can grant it without review.
+- Removing the command also removes the shared compress preflight that `run_7z` still needs.
+- Removing the command leaves generated ACL schemas or permissions out of sync, and the schema drift check fails.
+- Debug-console relay commands run on the main thread with an unbounded payload, so a large log line freezes the UI.
+- `enable_finder_sync` reports success when `pluginkit` fails, so the UI shows Finder Sync as enabled when it is not.
+- The 7-Zip `b` benchmark command is rejected and the Settings CPU benchmark stops working.
+
+## Legacy journal removal
+
+- A version 0 journal from 0.6.2 or earlier is parsed as a current journal, and missing fields drive destructive recovery.
+- Refusing a version 0 journal deletes its stage or destination instead of preserving them.
+- A refused journal blocks every later operation with no visible explanation.
+- An extract journal without `move_plan_sidecar` reads an in-payload `move-plan.json` that the archive itself supplied.
+- A bare-string `pending-stages.json` entry makes the whole registry unreadable, orphan cleanup fails, and a directory is deleted without an identity record.
+- Removing the settings `.bak` restore loses settings for a user whose last save crashed between the two old rename steps.
+- The live Unix publish path without `publish_temp` is removed along with the legacy comment.
+
+## Error surfacing
+
+- The Basic failure panel and the quick extract window show raw 7-Zip stderr, including paths and internal switches, instead of a recovery hint.
+- Hiding stderr removes the only detail a user can report, because it is no longer in the log or the debug dump either.
+- A wrong password and a corrupt archive show the same hint.
+- Browse and test status in Basic is written to the hidden compress panel, so the user sees no progress or error.
+- Malformed settings in the extract window disable auto-close entirely instead of using the default.
+
+## Settings, presets, and legacy keys
+
+- A second Save click supersedes the first write, the first handler reports success, and the modal closes over unsaved settings.
+- Save stays disabled forever after a failed write.
+- Delete preset removes a custom preset with no confirmation.
+- Settings or custom presets that still contain `sfx`, `deleteAfter`, or `pathMode` fail validation and reset everything to defaults.
+- Removing those keys lets `-sfx` reach 7-Zip.
+- Dropping `_setupComplete` shows the setup wizard again to users who finished it.
+
+## Accessibility
+
+- The Power password toggle keeps one accessible name while its state changes.
+- The auto-close countdown is visible but not announced.
+- Indeterminate progress announces 0 percent.
+- Tree expand buttons all have the same name.
+- Basic icon buttons are hard to hit on touch screens, and a larger hit area shifts the layout.
+
+## Installer and tooling cleanup
+
+- Removing the v0.5.x verb cleanup leaves duplicate Open/Extract entries for users who skip from 0.5.3 directly to 0.7.0.
+- Removing the 0.6.0 beta root DLL cleanup leaves a mapped `zinnia_shell.dll` in the install root of those beta users.
+- The removal also deletes the classic-verb fallback that Windows 10 and failed Win11 registrations still need.
+- A removed npm script is still named in README or another script.
+
+## Module splits
+
+- A moved function changes visibility or module path, and a `#[tauri::command]` path or `__cmd__` re-export no longer resolves.
+- Windows-only or Unix-only code moves without its imports and only fails on that platform.
+- A split reorders rollback steps, lock scope, or cancellation checks.
+- A CSS split changes cascade order and visibly changes the UI.
+- A TS split changes listener registration order or registers a listener twice.
+- Moved files fall outside coverage gates that name file paths.
+
+## E2E runner filter
+
+- A filtered run writes `status: "passed"` and is accepted as release or CI proof.
+- `npm run test:all` forwards the filter and silently runs fewer suites.
+- An unknown spec name runs nothing and still passes.
+- The filter skips the main suite that the selected spec depends on for its build or profile.
+
+## Pass 2 hardening failure inventory
+
+- Closing a window or quitting while 7-Zip is active calls `terminate_registered_child` or `terminate_child` synchronously on a Tokio runtime thread, blocking async progress/UI work for up to 5 seconds.
+- A journal with `format_version == 1` but missing `archive_phase`, `extract_phase`, or `extract_stage_placement` falls back to legacy heuristics instead of failing closed.
+- Accepting a preserved older-format journal in the startup banner shows the "Accept kept extraction result" prompt instead of explaining that the journal came from an older Zinnia version.
+- `openFinderSyncSettings` aborts on a non-zero `pluginkit -e use` exit and never opens System Settings -> Login Items & Extensions for manual approval.
+- Basic extraction on a corrupt or non-archive file treats a failed `7z l -slt` probe as an encrypted archive and prompts for a password instead of surfacing the archive validation/corruption error.
+- Seeding a popped-out Debug Console with a full 1,000-line buffer exceeds the 256 KiB IPC cap and silently leaves the popped-out console blank.
+- Clearing or resetting a Power password field resets the button text to "Show" while leaving `aria-label="Hide password"`.
+- `e2e-archive-benchmark.ts` or `basic/sync.ts` accesses removed `#delete-after` or `#path-mode` DOM nodes and throws at runtime once `setup-dom.ts` stops faking them.
+- `export_logs` in E2E cannot be exercised end-to-end because the save dialog blocks headless automation unless E2E mode can supply a queued destination path.
+

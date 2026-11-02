@@ -16,8 +16,7 @@ mod staging;
 
 #[cfg(windows)]
 pub(crate) use commit::rename_file_no_replace;
-#[cfg(windows)]
-pub(crate) use journal::{file_identities_match, file_identity};
+pub(crate) use journal::{file_identities_match, file_identity, FileIdentity};
 
 #[cfg(test)]
 mod tests;
@@ -26,7 +25,7 @@ mod tests;
 #[allow(unused_imports)] // re-exported for main.rs / invoke_handler
 pub use commands::{
     archive_output_selection_token, cancel_7z, is_7z_running, is_non_running_kill_error,
-    parse_7z_version, probe_7z, probe_compress_inputs, probed_7z_version, run_7z,
+    parse_7z_version, probe_7z, run_7z,
 };
 #[allow(unused_imports)]
 pub use journal::cleanup_orphan_stages;
@@ -41,10 +40,9 @@ pub use recovery::{
 #[doc(hidden)]
 pub use commands::{
     __cmd__archive_output_selection_token, __cmd__cancel_7z, __cmd__is_7z_running, __cmd__probe_7z,
-    __cmd__probe_compress_inputs, __cmd__run_7z,
-    __tauri_command_name_archive_output_selection_token, __tauri_command_name_cancel_7z,
-    __tauri_command_name_is_7z_running, __tauri_command_name_probe_7z,
-    __tauri_command_name_probe_compress_inputs, __tauri_command_name_run_7z,
+    __cmd__run_7z, __tauri_command_name_archive_output_selection_token,
+    __tauri_command_name_cancel_7z, __tauri_command_name_is_7z_running,
+    __tauri_command_name_probe_7z, __tauri_command_name_run_7z,
 };
 #[doc(hidden)]
 pub use recovery::{
@@ -57,16 +55,18 @@ pub use recovery::{
 #[cfg(test)]
 pub(crate) use archive_snapshot::archive_identity_token;
 pub(crate) use archive_snapshot::archive_identity_token_from_open_file;
-#[cfg(windows)]
-pub(crate) use archive_snapshot::copy_windows_zone_identifier;
 pub(crate) use archive_snapshot::release_snapshot_handles;
+#[cfg(windows)]
+pub(crate) use archive_snapshot::{
+    copy_windows_zone_identifier, copy_windows_zone_identifier_with_identity,
+};
 pub(crate) use commit::archive_family;
 pub(crate) use journal::unregister_pending_stage;
 pub(crate) use quota::available_space_for_path;
 pub(crate) use staging::create_private_stage_dir;
 
 pub(crate) use commands::{
-    terminate_child, terminate_child_with_timeout, terminate_registered_child,
+    terminate_child, terminate_child_with_timeout, terminate_registered_child_async,
 };
 
 #[cfg(test)]

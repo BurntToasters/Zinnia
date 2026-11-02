@@ -1,0 +1,230 @@
+.modal-overlay[hidden] {
+  display: none;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--overlay);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10050;
+  animation: overlay-in 150ms ease;
+}
+
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  width: 520px;
+  max-width: calc(100vw - 40px);
+  max-height: calc(100vh - 60px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 8px 32px var(--shadow-heavy);
+  animation: modal-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.modal__header h2 {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.modal__body {
+  padding: 18px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+}
+
+.command-preview-code {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  min-height: 70px;
+  max-height: 340px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: "Cascadia Code", "SF Mono", "Fira Code", "Consolas", monospace;
+  user-select: text;
+}
+
+.debug-console {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  max-height: min(240px, 35vh);
+  border-top: 1px solid var(--border);
+  background: var(--surface-alt, var(--bg));
+  min-height: 0;
+}
+
+.debug-console[hidden] {
+  display: none !important;
+}
+
+.debug-console__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.debug-console__title {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.debug-console__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.debug-console__log {
+  margin: 0;
+  padding: 8px 12px;
+  overflow: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: "Cascadia Code", "SF Mono", "Fira Code", "Consolas", monospace;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  user-select: text;
+  color: var(--text-secondary);
+}
+
+.toast-region {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 10070;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(360px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  cursor: pointer;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.8125rem;
+  box-shadow: var(--shadow);
+  animation: toast-in 0.18s ease-out;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.toast-message {
+  flex: 1;
+  min-width: 0;
+}
+
+.toast-dismiss {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+}
+
+.toast--leaving {
+  opacity: 0;
+  transform: translateY(6px);
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+}
+
+.toast--success {
+  border-color: var(--success-border);
+  color: var(--success);
+  background-image: linear-gradient(var(--success-bg), var(--success-bg));
+}
+
+.toast--error {
+  border-color: var(--danger-border);
+  color: var(--danger-fg);
+  background-image: linear-gradient(var(--danger-bg), var(--danger-bg));
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+  .toast--leaving {
+    transition: none;
+  }
+}

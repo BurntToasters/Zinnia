@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   $,
-  escapeHtml,
   parseThreads,
   formatSize,
   splitArgs,
@@ -102,26 +101,6 @@ describe("isArchiveFile", () => {
     expect(isArchiveFile("C:/tmp/file.txt")).toBe(false);
     expect(isArchiveFile("file.pdf")).toBe(false);
     expect(isArchiveFile("file")).toBe(false);
-  });
-});
-
-describe("escapeHtml", () => {
-  it("escapes special HTML characters", () => {
-    expect(escapeHtml('<script>"test"</script>')).toBe(
-      "&lt;script&gt;&quot;test&quot;&lt;/script&gt;",
-    );
-  });
-
-  it("escapes single quotes", () => {
-    expect(escapeHtml("it's")).toBe("it&#39;s");
-  });
-
-  it("escapes ampersands", () => {
-    expect(escapeHtml("A & B")).toBe("A &amp; B");
-  });
-
-  it("returns empty string unchanged", () => {
-    expect(escapeHtml("")).toBe("");
   });
 });
 

@@ -17,37 +17,9 @@ static STARTUP_RECOVERY_DONE: std::sync::atomic::AtomicBool =
 /// Last startup recovery failure (cleared when recovery succeeds or was a no-op).
 static STARTUP_RECOVERY_ERROR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
-pub(crate) fn archive_journal_has_backups(journal: &CleanupJournal) -> bool {
-    journal
-        .previous_archive_family
-        .iter()
-        .enumerate()
-        .any(|(index, _)| archive_backup_path(&journal.stage, index).is_file())
-}
-
-pub(crate) fn archive_journal_stage_retains_outputs(journal: &CleanupJournal) -> bool {
-    journal.next_archive_family.iter().any(|destination| {
-        destination
-            .file_name()
-            .map(|name| journal.stage.join(name).is_file())
-            .unwrap_or(false)
-    })
-}
-
-/// Promote finished successfully when next outputs are recorded, no backups remain,
-/// and the stage no longer holds unpublished archive members. Leftover empty stage
-/// dirs must not trigger destructive rollback of the published archive.
+/// Archive publish crossed its durable commit point when phase metadata says so.
 pub(crate) fn archive_journal_is_committed(journal: &CleanupJournal) -> bool {
-    match journal.archive_phase {
-        Some(ArchiveJournalPhase::Committed) => true,
-        Some(ArchiveJournalPhase::InProgress) => false,
-        None => {
-            // Compatibility with pre-phase journals written by older betas.
-            !journal.next_archive_family.is_empty()
-                && !archive_journal_has_backups(journal)
-                && !archive_journal_stage_retains_outputs(journal)
-        }
-    }
+    matches!(journal.archive_phase, Some(ArchiveJournalPhase::Committed))
 }
 
 pub(crate) fn extract_journal_is_committed(journal: &CleanupJournal) -> bool {
@@ -95,8 +67,7 @@ pub(crate) fn recover_missing_extract_stage(journal: &CleanupJournal) -> Result<
     })?;
     if journal.extract_phase.is_none() {
         return Err(
-            "Refusing destructive recovery of a legacy extraction journal without an explicit phase."
-                .to_string(),
+            "Refusing extraction recovery because the journal has no explicit phase.".to_string(),
         );
     }
 
@@ -104,7 +75,6 @@ pub(crate) fn recover_missing_extract_stage(journal: &CleanupJournal) -> Result<
         rollback_persisted_move_plan(
             &journal.stage,
             &journal.destination,
-            !journal.move_plan_sidecar,
             journal.move_plan_identity.as_ref(),
             journal.move_identity_log_identity.as_ref(),
         )?;
@@ -155,7 +125,7 @@ pub(crate) fn recover_missing_extract_stage(journal: &CleanupJournal) -> Result<
             cleanup_extract_journal_artifacts(journal)
         }
         None => Err(
-            "Refusing recovery of a legacy extraction journal without recorded stage placement."
+            "Refusing extraction recovery because the journal has no recorded stage placement."
                 .to_string(),
         ),
     }
@@ -370,7 +340,7 @@ pub(crate) fn journal_is_preserved_ambiguous_publish(
 /// every file as it is. This check does not inspect the filesystem. Any other
 /// journal must be a preserved ambiguous publish.
 pub(crate) fn journal_may_be_acknowledged(journal: &CleanupJournal) -> Result<bool, String> {
-    if journal.format_version > super::journal::CLEANUP_JOURNAL_FORMAT_VERSION {
+    if super::journal::ensure_journal_format_supported(journal).is_err() {
         return Ok(true);
     }
     journal_is_preserved_ambiguous_publish(journal)
@@ -393,15 +363,26 @@ fn acknowledge_preserved_transaction_at(app: &tauri::AppHandle) -> Result<String
                 .to_string(),
         );
     }
-    let newer_format = journal.format_version > super::journal::CLEANUP_JOURNAL_FORMAT_VERSION;
     clear_acknowledged_cleanup_journal_at(&path)?;
     set_startup_recovery_error(None);
-    Ok(if newer_format {
-        "Recovery journal from a newer Zinnia version accepted; files were left unchanged and the recovery journal was cleared."
+    Ok(
+        if journal.format_version > super::journal::CLEANUP_JOURNAL_FORMAT_VERSION {
+            "Recovery journal from a newer Zinnia version accepted; files were left unchanged and the recovery journal was cleared."
             .to_string()
-    } else {
-        "Preserved extraction destination accepted; the recovery journal was cleared.".to_string()
-    })
+        } else if journal.format_version < super::journal::CLEANUP_JOURNAL_FORMAT_VERSION {
+            "Recovery journal from an older Zinnia version accepted; files were left unchanged and the recovery journal was cleared."
+            .to_string()
+        } else if !journal.archive && !journal.move_plan_sidecar {
+            "Recovery journal without a durable move plan accepted; files were left unchanged and the recovery journal was cleared."
+            .to_string()
+        } else if super::journal::ensure_journal_format_supported(&journal).is_err() {
+            "Recovery journal with incomplete phase metadata accepted; files were left unchanged and the recovery journal was cleared."
+                .to_string()
+        } else {
+            "Preserved extraction destination accepted; the recovery journal was cleared."
+                .to_string()
+        },
+    )
 }
 
 #[tauri::command]
@@ -475,7 +456,7 @@ pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), Str
         journal
             .extract_stage_placement
             .map(|placement| placement.matches_paths(&journal.stage, &journal.destination))
-            .unwrap_or_else(|| journal.stage.parent() == journal.destination.parent())
+            .unwrap_or(false)
     };
     if !placement_is_valid || !is_safe_stage_dir_name(stage_name) {
         return Err("Refusing unsafe interrupted-transaction recovery path.".to_string());
@@ -528,7 +509,6 @@ pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), Str
         rollback_persisted_move_plan(
             &journal.stage,
             &journal.destination,
-            !journal.move_plan_sidecar,
             journal.move_plan_identity.as_ref(),
             journal.move_identity_log_identity.as_ref(),
         )?;

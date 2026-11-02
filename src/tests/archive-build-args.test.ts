@@ -33,14 +33,11 @@ beforeEach(() => {
   setSelectValue("dict", "64m");
   setSelectValue("word-size", "64");
   setSelectValue("solid", "off");
-  setSelectValue("path-mode", "relative");
   setInputValue("output-path", "");
   setInputValue("threads", "");
   setInputValue("password", "");
   setInputValue("extra-args", "");
   setChecked("encrypt-headers", false);
-  setChecked("sfx", false);
-  setChecked("delete-after", false);
   setChecked("update-mode", false);
   setChecked("store-timestamps", false);
   setSelectValue("split-size", "");
@@ -160,17 +157,6 @@ describe("buildArgs (add mode)", () => {
     expect(args).toContain("new.txt");
   });
 
-  it("omits SFX in update mode", () => {
-    state.inputs = ["new.txt"];
-    setInputValue("output-path", "existing.7z");
-    setChecked("update-mode", true);
-    setChecked("sfx", true);
-
-    const args = buildArgs();
-    expect(args).not.toContain("-sfx");
-    expect(args.some((a) => a.startsWith("-v"))).toBe(false);
-  });
-
   it("rejects a chosen split size in update mode instead of silently dropping it", () => {
     state.inputs = ["new.txt"];
     setInputValue("output-path", "existing.7z");
@@ -219,15 +205,6 @@ describe("buildArgs (add mode)", () => {
     expect(args).toContain("-mta=on");
   });
 
-  it("always creates relocatable archives without absolute member paths", () => {
-    state.inputs = ["a.txt"];
-    setInputValue("output-path", "out.7z");
-    setSelectValue("path-mode", "relative");
-
-    const args = buildArgs();
-    expect(args).not.toContain("-spf");
-  });
-
   it("includes password switch", () => {
     state.inputs = ["a.txt"];
     setInputValue("output-path", "out.7z");
@@ -247,21 +224,12 @@ describe("buildArgs (add mode)", () => {
     expect(args).toContain("-mhe=on");
   });
 
-  it("does not emit an unavailable sfx switch", () => {
+  it("never emits -sfx from buildArgs", () => {
     state.inputs = ["a.txt"];
     setInputValue("output-path", "out.7z");
-    setChecked("sfx", true);
 
     const args = buildArgs();
     expect(args).not.toContain("-sfx");
-  });
-
-  it("rejects non-transactional delete-after compression", () => {
-    state.inputs = ["a.txt"];
-    setInputValue("output-path", "out.7z");
-    setChecked("delete-after", true);
-
-    expect(() => buildArgs()).toThrow(/cannot be rolled back safely/i);
   });
 
   it("throws when output path is empty", () => {

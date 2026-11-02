@@ -27,23 +27,12 @@
     ],
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; frame-src 'none'; worker-src 'none'",
-      "capabilities": [
-        "default",
-        "extract-window",
-        "debug-console-window"
-      ]
+      "capabilities": ["default", "extract-window", "debug-console-window"]
     }
   },
   "bundle": {
     "active": true,
-    "targets": [
-      "dmg",
-      "app",
-      "nsis",
-      "appimage",
-      "deb",
-      "rpm"
-    ],
+    "targets": ["dmg", "app", "nsis", "appimage", "deb", "rpm"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -52,72 +41,57 @@
       "icons/icon.ico",
       "icons/icon.icns"
     ],
-    "externalBin": [
-      "binaries/7z"
-    ],
+    "externalBin": ["binaries/7z"],
     "fileAssociations": [
       {
-        "ext": [
-          "7z"
-        ],
+        "ext": ["7z"],
         "mimeType": "application/x-7z-compressed",
         "description": "7-Zip Archive"
       },
       {
-        "ext": [
-          "zip"
-        ],
+        "ext": ["zip"],
         "mimeType": "application/zip",
         "description": "ZIP Archive"
       },
       {
-        "ext": [
-          "tar"
-        ],
+        "ext": ["tar"],
         "mimeType": "application/x-tar",
         "description": "TAR Archive"
       },
       {
-        "ext": [
-          "gz"
-        ],
+        "ext": ["gz"],
         "mimeType": "application/gzip",
         "description": "Gzip Archive"
       },
       {
-        "ext": [
-          "tgz"
-        ],
+        "ext": ["tgz"],
         "mimeType": "application/x-compressed-tar",
         "description": "Gzip Compressed TAR Archive"
       },
       {
-        "ext": [
-          "bz2"
-        ],
+        "ext": ["bz2"],
         "mimeType": "application/x-bzip2",
         "description": "Bzip2 Archive"
       },
       {
-        "ext": [
-          "tbz2"
-        ],
+        "ext": ["tbz2"],
         "mimeType": "application/x-bzip2-compressed-tar",
         "description": "Bzip2 Compressed TAR Archive"
       },
       {
-        "ext": [
-          "xz"
-        ],
+        "ext": ["xz"],
         "mimeType": "application/x-xz",
         "description": "XZ Archive"
       },
       {
-        "ext": [
-          "txz"
-        ],
+        "ext": ["txz"],
         "mimeType": "application/x-xz-compressed-tar",
         "description": "XZ Compressed TAR Archive"
+      },
+      {
+        "ext": ["rar"],
+        "mimeType": "application/vnd.rar",
+        "description": "RAR Archive"
       }
     ],
     "createUpdaterArtifacts": true,

@@ -4,6 +4,17 @@ use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 pub const DEBUG_CONSOLE_LABEL: &str = "debug-console";
 
+const MAX_DEBUG_CONSOLE_PAYLOAD_BYTES: usize = 256 * 1024;
+
+fn reject_oversized_debug_console_payload(byte_len: usize) -> Result<(), String> {
+    if byte_len > MAX_DEBUG_CONSOLE_PAYLOAD_BYTES {
+        return Err(format!(
+            "Debug console payload exceeds the {MAX_DEBUG_CONSOLE_PAYLOAD_BYTES}-byte limit."
+        ));
+    }
+    Ok(())
+}
+
 pub fn debug_console_is_open(app: &tauri::AppHandle) -> bool {
     app.get_webview_window(DEBUG_CONSOLE_LABEL).is_some()
 }
@@ -67,8 +78,9 @@ pub fn close_debug_console_window(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 /// Forward a single debug line to the popped-out console when it exists.
-#[tauri::command]
-pub fn relay_debug_console_line(app: tauri::AppHandle, line: String) -> Result<(), String> {
+#[tauri::command(async)]
+pub async fn relay_debug_console_line(app: tauri::AppHandle, line: String) -> Result<(), String> {
+    reject_oversized_debug_console_payload(line.len())?;
     if let Some(window) = app.get_webview_window(DEBUG_CONSOLE_LABEL) {
         window
             .emit_to(
@@ -82,8 +94,13 @@ pub fn relay_debug_console_line(app: tauri::AppHandle, line: String) -> Result<(
 }
 
 /// Seed the popped-out console with the current buffer in one IPC round-trip.
-#[tauri::command]
-pub fn relay_debug_console_seed(app: tauri::AppHandle, lines: Vec<String>) -> Result<(), String> {
+#[tauri::command(async)]
+pub async fn relay_debug_console_seed(
+    app: tauri::AppHandle,
+    lines: Vec<String>,
+) -> Result<(), String> {
+    let byte_len = lines.iter().map(String::len).sum::<usize>();
+    reject_oversized_debug_console_payload(byte_len)?;
     if let Some(window) = app.get_webview_window(DEBUG_CONSOLE_LABEL) {
         window
             .emit_to(

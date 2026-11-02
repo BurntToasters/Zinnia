@@ -1,0 +1,139 @@
+.grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  flex: 1;
+  min-height: 0;
+}
+.grid.show-activity {
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 340px);
+}
+
+.panel.panel--log {
+  display: none;
+}
+
+.grid.show-activity .panel--log {
+  display: flex;
+}
+
+.panel {
+  background: var(--bg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.panel > .panel__body {
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--panel-header-pad-y) var(--panel-header-pad-x);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.panel__header h2 {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.panel__body {
+  padding: var(--panel-body-pad-y) var(--panel-body-pad-x)
+    calc(var(--panel-body-pad-y) + 2px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.panel__body--session {
+  gap: 8px;
+  width: 100%;
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.segmented {
+  display: inline-flex;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px;
+  gap: 2px;
+}
+
+.segmented__btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  padding: 5px 18px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: 16px;
+  transition: all var(--transition);
+}
+
+.segmented__btn:hover {
+  color: var(--text);
+  background: var(--surface-alt);
+}
+
+.segmented__btn.is-active {
+  background: var(--accent);
+  color: var(--text-on-accent);
+  font-weight: 600;
+  box-shadow: 0 1px 3px var(--shadow);
+}
+
+.segmented--workspace {
+  padding: 2px;
+}
+
+.segmented--workspace .segmented__btn {
+  padding: 4px 12px;
+  font-size: 0.6875rem;
+}
+
+.quick-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--quick-actions-gap);
+  padding: var(--quick-actions-pad-y) var(--quick-actions-pad-x);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.quick-actions__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.quick-actions__label {
+  font-size: 0.625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.quick-actions__feedback {
+  font-size: 0.6875rem;
+  color: var(--danger-fg);
+  min-height: 14px;
+}
+
+.quick-actions__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}

@@ -263,6 +263,7 @@ function mountBasicDom(): void {
   addEl(root, "div", "basic-browse-archive-name");
   addEl(root, "div", "basic-browse-archive-meta");
   addEl(root, "div", "basic-browse-summary");
+  addEl(root, "div", "basic-browse-status");
   addEl(root, "div", "basic-compress-status");
   addEl(root, "div", "basic-extract-status");
 
@@ -405,6 +406,7 @@ beforeEach(() => {
 
   uiMocks.runtime.workspaceMode = "basic";
   uiMocks.runtime.mode = "add";
+  setBasicView("home");
 
   state.inputs = [];
   state.running = false;
@@ -947,14 +949,12 @@ describe("basic-ui state transitions", () => {
     ).toBe("secret");
   });
 
-  it("forces relative path-mode and disables update-mode for basic compress runs", () => {
+  it("disables update-mode for basic compress runs", () => {
     uiMocks.runtime.workspaceMode = "basic";
     uiMocks.runtime.mode = "add";
     (document.getElementById("update-mode") as HTMLInputElement).checked = true;
     (document.getElementById("store-timestamps") as HTMLInputElement).checked =
       true;
-    (document.getElementById("path-mode") as HTMLSelectElement).value =
-      "absolute";
     (document.getElementById("extra-args") as HTMLInputElement).value = "-bb3";
     (document.getElementById("extract-extra-args") as HTMLInputElement).value =
       "-bsp1";
@@ -967,9 +967,6 @@ describe("basic-ui state transitions", () => {
     expect(
       (document.getElementById("store-timestamps") as HTMLInputElement).checked,
     ).toBe(false);
-    expect(
-      (document.getElementById("path-mode") as HTMLSelectElement).value,
-    ).toBe("relative");
     expect(
       (document.getElementById("extra-args") as HTMLInputElement).value,
     ).toBe("");
@@ -1276,7 +1273,7 @@ describe("basic-ui drag and init wiring", () => {
     ).toBe(false);
   });
 
-  it("forces relative path-mode for basic compress and syncs extract/browse passwords", () => {
+  it("syncs extract/browse passwords for basic compress runs", () => {
     uiMocks.runtime.workspaceMode = "basic";
     uiMocks.runtime.mode = "extract";
     (

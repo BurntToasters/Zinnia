@@ -21,6 +21,25 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 ## Changes in `v0.7.0-beta.1:`
 
 - **macOS:** Minimum supported version is macOS 15.0; Finder Sync uses the app's configured deployment target.
+- **Breaking:** Removed legacy Windows installer cleanup for v0.5.x context-menu registration.
+- **Breaking:** Settings no longer restore from `.bak` sidecars; legacy keys (`sfx`, `deleteAfter`, `pathMode`, `_setupComplete`, `_integration*`) are stripped on load and save.
+- **Breaking:** Cleanup journals from before `format_version` 1 are refused fail-closed (files preserved); recover with 0.6.2 or acknowledge the recovery banner to clear the marker.
+- **Breaking:** Format-version 1 cleanup journals must include explicit `archive_phase`, `extract_phase`, and `extract_stage_placement`; incomplete v1 journals are refused fail-closed like pre-v1 journals.
+- **Fix:** Base `tauri.conf.json` `fileAssociations` now includes `.rar`, matching every platform bundle config.
+- **Fix:** 7-Zip child termination and password stdin waits run off the async runtime via `spawn_blocking`.
+- **Breaking:** Removed SFX, delete-after-archive, and path-mode compression options from settings and UI.
+- **Fix:** Cancel no longer blocks the UI thread; recovery runs off the main thread.
+- **Fix:** ZIP password probe and download-marker reads use no-follow opens with identity checks.
+- **Fix:** Mark-of-the-Web copy errors are reported to the user.
+- **Fix:** Raw 7-Zip output is no longer shown in toasts, Basic UI, or the extract window (friendly hints instead; raw text stays in the activity log).
+- **Fix:** Wrong password on header-encrypted archives shows the password hint; the retry prompt states the password was incorrect.
+- **Fix:** Settings Save is disabled while saving; superseded saves retry automatically.
+- **Fix:** Preset delete and settings reset ask for confirmation.
+- **Fix:** Finder Sync enable reports `pluginkit` errors.
+- **Fix:** Stdout reader panic no longer drops stderr.
+- **Accessibility:** Password toggle labels, extract countdown announcements, progress valuetext, folder twisty labels, 44px hit areas, Basic browse loading/error status.
+- **Codebase:** Large Rust, TypeScript, and CSS modules split without behavior change.
+- **Testing:** Expanded E2E (compress, extract, settings, UI surfaces, older journals) and `--only` filter for the E2E runner.
 
 ### FULL CHANGELOG:
 

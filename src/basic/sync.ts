@@ -485,10 +485,6 @@ export function syncBasicBeforeRun(): void {
     "store-timestamps",
   ) as HTMLInputElement | null;
   if (storeTimestamps) storeTimestamps.checked = false;
-  const pathMode = document.getElementById(
-    "path-mode",
-  ) as HTMLInputElement | null;
-  if (pathMode) pathMode.value = "relative";
   const extraArgs = document.getElementById(
     "extra-args",
   ) as HTMLInputElement | null;

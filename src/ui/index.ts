@@ -9,6 +9,8 @@ export { buildLogFragments, shouldPersistLevel, log, devLog } from "./log";
 
 export {
   persistSettingsImmediately,
+  isSettingsPersistSupersededError,
+  awaitInFlightSettingsPersistence,
   flushPendingSettingsPersistence,
   getWorkspaceMode,
   resizeWorkspaceWindow,

@@ -520,7 +520,9 @@ fn rollback_cleanup_reports_pending_registry_failure() {
 
     let error = rollback_cleanup(&plan).expect_err("registry failure must retain ownership");
     assert!(
-        error.contains("expected a sequence") || error.contains("invalid type"),
+        error.contains("Pending-stage recovery record disappeared before cleanup")
+            || error.contains("expected a sequence")
+            || error.contains("invalid type"),
         "unexpected error: {error}"
     );
     assert!(
@@ -639,7 +641,7 @@ fn compound_tar_outer_extract_args_harden_and_link_policy() {
         assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-snz")));
         assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-sns-")));
     }
-    let source = include_str!("commands.rs");
+    let source = include_str!("commands/run.rs");
     assert!(source.contains("compound_tar_outer_extract_args(&snapshot, &outer_stage)"));
     assert!(
         source.contains("compound_tar_outer_unpack_ok(code, &collected.stdout, &collected.stderr)")
@@ -2213,7 +2215,7 @@ fn extract_stage_placement_rejects_mismatched_layouts() {
 }
 
 #[test]
-fn extract_stage_placement_serializes_and_legacy_journals_remain_sibling_only() {
+fn extract_stage_placement_serializes_and_missing_fields_decode_as_defaults() {
     let destination = std::path::PathBuf::from("root/destination");
     let stage = destination.join(".zinnia-extract-0123456789abcdef0123456789abcdef");
     let journal = CleanupJournal {
@@ -2307,8 +2309,14 @@ fn extract_stage_placement_serializes_and_legacy_journals_remain_sibling_only() 
     assert_eq!(decoded.extract_stage_identity, None);
     assert_eq!(decoded.move_plan_identity, None);
     assert_eq!(decoded.move_identity_log_identity, None);
-    assert_eq!(decoded.stage.parent(), decoded.destination.parent());
-    assert_ne!(decoded.stage.parent(), Some(decoded.destination.as_path()));
+    assert_eq!(decoded.format_version, 0);
+    assert!(!decoded.move_plan_sidecar);
+    let error = super::journal::ensure_journal_format_supported(&decoded)
+        .expect_err("missing format_version must be refused");
+    assert!(
+        error.contains("older Zinnia version"),
+        "unexpected error: {error}"
+    );
 }
 
 #[test]
@@ -3206,14 +3214,8 @@ fn persisted_move_plan_rolls_back_a_partial_merge() {
     }];
     let move_plan_identity = write_move_plan(&staged, &plan).expect("durable move plan");
 
-    rollback_persisted_move_plan(
-        &staged,
-        &destination,
-        false,
-        Some(&move_plan_identity),
-        None,
-    )
-    .expect("rollback plan");
+    rollback_persisted_move_plan(&staged, &destination, Some(&move_plan_identity), None)
+        .expect("rollback plan");
 
     assert_eq!(
         std::fs::read(&source).expect("restored source"),
@@ -3244,14 +3246,8 @@ fn inside_destination_move_plan_rolls_back_a_partial_merge() {
     }];
     let move_plan_identity = write_move_plan(&staged, &plan).expect("durable sidecar move plan");
 
-    rollback_persisted_move_plan(
-        &staged,
-        &destination,
-        false,
-        Some(&move_plan_identity),
-        None,
-    )
-    .expect("rollback inside-destination plan");
+    rollback_persisted_move_plan(&staged, &destination, Some(&move_plan_identity), None)
+        .expect("rollback inside-destination plan");
 
     assert_eq!(
         std::fs::read(&source).expect("restored staged source"),
@@ -3285,14 +3281,9 @@ fn persisted_move_plan_preserves_a_target_modified_in_place() {
     }];
     let move_plan_identity = write_move_plan(&staged, &plan).expect("move plan");
 
-    let error = rollback_persisted_move_plan(
-        &staged,
-        &destination,
-        false,
-        Some(&move_plan_identity),
-        None,
-    )
-    .expect_err("modified target must be preserved");
+    let error =
+        rollback_persisted_move_plan(&staged, &destination, Some(&move_plan_identity), None)
+            .expect_err("modified target must be preserved");
     assert!(error.contains("changed after publication"));
     assert_eq!(std::fs::read(&target).unwrap(), b"user edit");
     let _ = std::fs::remove_file(move_plan_path(&staged));
@@ -3321,14 +3312,8 @@ fn persisted_move_plan_preserves_a_published_directory_with_edited_children() {
     }];
     let move_plan_identity = write_move_plan(&staged, &plan).expect("move plan");
 
-    rollback_persisted_move_plan(
-        &staged,
-        &destination,
-        false,
-        Some(&move_plan_identity),
-        None,
-    )
-    .expect_err("modified directory must be preserved");
+    rollback_persisted_move_plan(&staged, &destination, Some(&move_plan_identity), None)
+        .expect_err("modified directory must be preserved");
     assert_eq!(
         std::fs::read(target.join("child.txt")).unwrap(),
         b"user edit"
@@ -3509,14 +3494,8 @@ fn target_local_publish_recovery_removes_only_verified_copies() {
     }];
     let move_plan_identity = write_move_plan(&staged, &plan).expect("target-local move plan");
 
-    rollback_persisted_move_plan(
-        &staged,
-        &destination,
-        false,
-        Some(&move_plan_identity),
-        None,
-    )
-    .expect("remove verified partial copy");
+    rollback_persisted_move_plan(&staged, &destination, Some(&move_plan_identity), None)
+        .expect("remove verified partial copy");
 
     assert_eq!(std::fs::read(&source).unwrap(), b"staged source");
     assert!(!publish_temp.exists());
@@ -3573,7 +3552,6 @@ fn target_local_recovery_hydrates_append_only_identity_log() {
     rollback_persisted_move_plan(
         &staged,
         &destination,
-        false,
         Some(&move_plan_identity),
         Some(&move_identity_log_identity),
     )
@@ -3640,7 +3618,6 @@ fn identity_log_hydration_uses_latest_record_per_index() {
     rollback_persisted_move_plan(
         &staged,
         &destination,
-        false,
         Some(&move_plan_identity),
         Some(&move_identity_log_identity),
     )
@@ -3703,7 +3680,6 @@ fn identity_log_hydration_uses_latest_record_with_publish_temp() {
     rollback_persisted_move_plan(
         &staged,
         &destination,
-        false,
         Some(&move_plan_identity),
         Some(&move_identity_log_identity),
     )
@@ -3741,14 +3717,8 @@ fn target_local_publish_recovery_preserves_replacement_target() {
     }];
     let move_plan_identity = write_move_plan(&staged, &plan).expect("target-local move plan");
 
-    rollback_persisted_move_plan(
-        &staged,
-        &destination,
-        false,
-        Some(&move_plan_identity),
-        None,
-    )
-    .expect("leave replacement target untouched");
+    rollback_persisted_move_plan(&staged, &destination, Some(&move_plan_identity), None)
+        .expect("leave replacement target untouched");
 
     assert_eq!(std::fs::read(&source).unwrap(), b"staged source");
     assert_eq!(std::fs::read(&target).unwrap(), b"replacement");
@@ -3853,13 +3823,42 @@ fn merge_rewrites_chained_symlinks_from_original_targets() {
         std::fs::read(destination.join("b")).expect("old destination preserved"),
         b"old"
     );
+    let mut published_conflicts = Vec::new();
+    for entry in std::fs::read_dir(&destination).expect("destination entries") {
+        let entry = entry.expect("destination entry");
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if matches!(name.as_str(), "a" | "b" | "c" | "dangling") {
+            continue;
+        }
+        let bytes = std::fs::read(entry.path()).expect("conflict payload");
+        if bytes == b"new1" || bytes == b"new2" {
+            published_conflicts.push((name, bytes));
+        }
+    }
+    published_conflicts.sort_by(|left, right| left.0.cmp(&right.0));
+    assert_eq!(published_conflicts.len(), 2);
+    let mut conflict_payloads = published_conflicts
+        .iter()
+        .map(|(_, bytes)| bytes.clone())
+        .collect::<Vec<_>>();
+    conflict_payloads.sort();
+    assert_eq!(conflict_payloads, vec![b"new1".to_vec(), b"new2".to_vec()]);
+    let new1_name = published_conflicts
+        .iter()
+        .find(|(_, bytes)| bytes == b"new1")
+        .map(|(name, _)| name.clone())
+        .expect("new1 conflict name");
+    let link_a = destination.join("a");
+    let link_c = destination.join("c");
+    let link_target = std::fs::read_link(&link_a).expect("link a target");
     assert_eq!(
-        std::fs::read(destination.join("b_1")).expect("first staged target published"),
+        std::fs::read(destination.join(&link_target)).expect("link a resolves to new1"),
         b"new1"
     );
+    assert_eq!(link_target, std::path::PathBuf::from(new1_name));
     assert_eq!(
-        std::fs::read(destination.join("b_1_1")).expect("second staged target published"),
-        b"new2"
+        std::fs::read_link(&link_c).expect("link c target"),
+        link_target
     );
     assert_eq!(
         std::fs::read_link(destination.join("dangling")).expect("dangling link preserved"),
@@ -3891,14 +3890,8 @@ fn persisted_move_plan_rolls_back_a_promoted_symlink() {
     }];
     let move_plan_identity = write_move_plan(&staged, &plan).expect("move plan");
 
-    rollback_persisted_move_plan(
-        &staged,
-        &destination,
-        false,
-        Some(&move_plan_identity),
-        None,
-    )
-    .expect("rollback link");
+    rollback_persisted_move_plan(&staged, &destination, Some(&move_plan_identity), None)
+        .expect("rollback link");
 
     assert!(source.symlink_metadata().unwrap().file_type().is_symlink());
     assert!(!target.exists());
@@ -4744,7 +4737,7 @@ fn archive_journal_committed_when_promote_finished_and_stage_empty() {
         )],
         extract_stage_identity: None,
         extract_phase: None,
-        archive_phase: None,
+        archive_phase: Some(ArchiveJournalPhase::Committed),
     };
     assert!(archive_journal_is_committed(&journal));
     assert_eq!(std::fs::read(&destination).unwrap(), b"published");
@@ -5024,7 +5017,7 @@ fn extraction_recovery_rejects_a_symlinked_move_plan_sidecar() {
     std::fs::write(&outside, b"not a move plan").expect("outside file");
     symlink(&outside, move_plan_path(&stage)).expect("symlink sidecar");
 
-    let error = rollback_persisted_move_plan(&stage, &destination, false, None, None)
+    let error = rollback_persisted_move_plan(&stage, &destination, None, None)
         .expect_err("symlinked sidecar must be rejected");
     assert!(error.contains("sidecar") || error.contains("link"));
     assert_eq!(
@@ -5059,7 +5052,7 @@ fn archive_journal_not_committed_while_staged_outputs_remain() {
         )],
         extract_stage_identity: Some(super::journal::path_identity(&stage).unwrap()),
         extract_phase: None,
-        archive_phase: None,
+        archive_phase: Some(ArchiveJournalPhase::InProgress),
     };
     assert!(!archive_journal_is_committed(&journal));
     rollback_archive_journal(&journal).expect("rollback partial new archive");
@@ -6018,15 +6011,18 @@ fn legacy_pending_stage_record_preserves_present_directory() {
         .expect("legacy registry json");
     std::fs::write(cache.join("pending-stages.json"), legacy_json).expect("legacy registry");
 
-    cleanup_orphan_stages_at(&cache).expect("fail-closed legacy cleanup");
+    cleanup_orphan_stages_at(&cache).expect("legacy bare-string entry is ignored");
 
     assert_eq!(
         std::fs::read(stage.join("legacy.txt")).expect("preserved legacy stage"),
         b"legacy"
     );
-    assert_eq!(
-        read_pending_stages(&cache).expect("retained legacy record"),
-        vec![stage.to_string_lossy().to_string()]
+    assert!(read_pending_stages(&cache)
+        .expect("registry read")
+        .is_empty());
+    assert!(
+        cache.join("pending-stages.json").is_file(),
+        "unreadable registry file stays in place until rewritten"
     );
     let _ = std::fs::remove_dir_all(cache);
 }
@@ -6485,7 +6481,6 @@ fn rollback_unjournaled_fixture(fixture: &UnjournaledLogFixture) -> Result<(), S
     rollback_persisted_move_plan(
         &fixture.staged,
         &fixture.destination,
-        false,
         Some(&fixture.move_plan_identity),
         Some(&fixture.journaled_log_identity),
     )
@@ -6742,15 +6737,26 @@ fn journal_format_version_missing_decodes_as_pre_versioned() {
 }
 
 #[test]
-fn legacy_journal_without_format_version_still_reads_from_disk() {
+fn pre_versioned_journal_is_refused_without_touching_files() {
     let (root, path, journal) = partial_archive_journal_fixture("zinnia-format-legacy-read");
     write_journal_file(&path, &journal, None);
-    let read = super::journal::read_cleanup_journal_at(&path)
-        .expect("legacy journal must still read")
-        .expect("legacy journal present");
-    assert_eq!(read.format_version, 0);
-    assert!(read.archive);
-    assert_eq!(read.archive_phase, Some(ArchiveJournalPhase::InProgress));
+    let journal_before = std::fs::read(&path).expect("journal bytes");
+    let error = super::journal::read_cleanup_journal_at(&path)
+        .map(|_| ())
+        .expect_err("pre-versioned journal must be refused");
+    assert!(
+        error.contains("older Zinnia version"),
+        "unexpected error: {error}"
+    );
+    assert!(error.contains("was preserved"), "unexpected error: {error}");
+    assert_eq!(
+        std::fs::read(&path).expect("journal still present"),
+        journal_before
+    );
+    assert_eq!(
+        std::fs::read(&journal.destination).expect("partial destination"),
+        b"partial"
+    );
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -6914,6 +6920,8 @@ fn acknowledgment_gate_accepts_newer_journal_without_file_access() {
     };
     let newer = base(current_journal_format_version() + 1);
     assert!(super::recovery::journal_may_be_acknowledged(&newer).expect("newer gate"));
+    let older = base(0);
+    assert!(super::recovery::journal_may_be_acknowledged(&older).expect("older gate"));
     let ordinary = base(current_journal_format_version());
     assert!(!super::recovery::journal_may_be_acknowledged(&ordinary).expect("ordinary gate"));
 }

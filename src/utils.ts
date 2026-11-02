@@ -14,15 +14,6 @@ export const ARCHIVE_EXTENSIONS = new Set([
   ".rar",
 ]);
 
-export function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
 export function $<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
   if (!el) throw new Error(`Element #${id} not found`);

@@ -63,7 +63,12 @@
     "./specs/cancel-extract.spec.js",
     "./specs/hostile-archives.spec.js",
     "./specs/split-update.spec.js",
-    "./specs/release-safeguards.spec.js"
+    "./specs/release-safeguards.spec.js",
+    "./specs/compress-flows.spec.js",
+    "./specs/extract-flows.spec.js",
+    "./specs/settings-flows.spec.js",
+    "./specs/ui-surfaces.spec.js",
+    "./specs/older-journal.spec.js"
   ],
-  "suiteCount": 23
+  "suiteCount": 28
 }

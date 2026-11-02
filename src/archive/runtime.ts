@@ -312,7 +312,10 @@ export async function runWithPasswordRetry(
     try {
       password = await promptInput({
         title: "Password required",
-        label: "This archive is encrypted. Enter password:",
+        label:
+          effectiveArgs === args && !hasPasswordSwitch
+            ? "This archive is encrypted. Enter password:"
+            : "Incorrect password. Enter the archive password:",
         password: true,
         confirmLabel,
         signal: abort.signal,

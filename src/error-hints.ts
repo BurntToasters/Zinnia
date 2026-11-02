@@ -61,3 +61,40 @@ export function describe7zError(stdout: string, stderr: string): string {
   }
   return "";
 }
+
+/** User-visible failure text for Basic and toasts; never raw 7-Zip stderr. */
+export function userFacing7zErrorDetail(
+  stdout: string,
+  stderr: string,
+  fallback = "Something went wrong. Check the activity log for details.",
+): string {
+  const hint = describe7zError(stdout, stderr);
+  return hint || fallback;
+}
+
+function looksLikeRaw7zOutput(detail: string): boolean {
+  if (detail.includes("7-Zip (")) return true;
+  for (const line of detail.split(/\r?\n/)) {
+    const trimmed = line.trimStart();
+    if (
+      trimmed.startsWith("ERROR:") ||
+      trimmed.startsWith("WARNING:") ||
+      trimmed.startsWith("Open ERROR") ||
+      trimmed.startsWith("Can not open") ||
+      trimmed.startsWith("Cannot open")
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** User-visible text for a rejected backend `invoke`; never raw 7-Zip output. */
+export function userFacingBackendError(detail: string): string {
+  const hint = describe7zError("", detail);
+  if (hint) return hint;
+  if (looksLikeRaw7zOutput(detail)) {
+    return "Something went wrong. Check the activity log for details.";
+  }
+  return detail;
+}

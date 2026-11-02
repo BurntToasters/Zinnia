@@ -14,7 +14,12 @@ import {
   setStatus,
 } from "../ui";
 import { ensureArchivePaths } from "../archive-rules";
-import { looksLikePasswordRequiredError } from "../error-hints";
+import {
+  describe7zError,
+  looksLikePasswordRequiredError,
+  userFacing7zErrorDetail,
+  userFacingBackendError,
+} from "../error-hints";
 import { parseArchiveListing } from "./listing";
 import { registerBrowseArchiveLoader, renderBrowseTable } from "./browse-ui";
 import {
@@ -75,8 +80,9 @@ export async function testArchive(): Promise<ArchiveTestResult> {
       }
       expectedArchiveIdentity = validation.identity;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      showToast(msg, "error", 0);
+      const raw = err instanceof Error ? err.message : String(err);
+      log(`Test archive validation failed: ${raw}`, "error");
+      showToast(userFacingBackendError(raw), "error", 0);
       return "failed";
     }
 
@@ -124,33 +130,41 @@ export async function testArchive(): Promise<ArchiveTestResult> {
       return "passed";
     }
     if (result.code === 1) {
-      setStatus("Integrity test failed with warnings", 3000);
+      const warnHint = describe7zError(result.stdout, result.stderr);
+      setStatus(
+        "Error",
+        3000,
+        warnHint ||
+          "Archive integrity test stopped with warnings (exit code 1).",
+      );
       log("Archive integrity test: FAILED WITH WARNINGS (exit code 1)");
-      const warningDetails = result.stderr
-        ? `\n\n${truncateForDialog(result.stderr.trim(), 1000)}`
-        : "";
+      const warningHint = describe7zError(result.stdout, result.stderr);
+      const warningHintLine = warningHint ? `\n\n${warningHint}` : "";
       showToast(
-        `Archive integrity test stopped with warnings (exit code 1) and is not considered a pass.${warningDetails}`,
+        `Archive integrity test stopped with warnings (exit code 1) and is not considered a pass.${warningHintLine}`,
         "error",
         0,
       );
       return "failed";
     }
 
-    setStatus("Integrity test failed", 3000);
     log(`Archive integrity test: FAILED (exit code ${result.code})`);
-    const errorDetails = result.stderr
-      ? `\n\n${truncateForDialog(result.stderr.trim(), 1000)}`
-      : "";
+    const failHint = userFacing7zErrorDetail(
+      result.stdout,
+      result.stderr,
+      `Operation failed with exit code ${result.code}.`,
+    );
+    setStatus("Error", 3000, failHint);
     showToast(
-      `Archive integrity test failed (exit code ${result.code}).${errorDetails}`,
+      `Archive integrity test failed (exit code ${result.code}).\n\n${failHint}`,
       "error",
       0,
     );
     return "failed";
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log(`Test error: ${msg}`);
+    const raw = err instanceof Error ? err.message : String(err);
+    log(`Test error: ${raw}`);
+    const msg = userFacingBackendError(raw);
     setStatus("Error", 3000, msg);
     hideProgress();
     showToast(
@@ -199,8 +213,9 @@ export async function browseArchive(
         throw new Error("Could not capture a stable archive identity.");
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      showToast(msg, "error", 0);
+      const raw = err instanceof Error ? err.message : String(err);
+      log(`Browse archive validation failed: ${raw}`, "error");
+      showToast(userFacingBackendError(raw), "error", 0);
       return null;
     }
 
@@ -237,17 +252,18 @@ export async function browseArchive(
       );
       setBrowsePasswordFieldVisible(needsPassword);
       logCommandResult(result.stdout, result.stderr, result.code);
-      setStatus("Failed to list archive", 3000);
+      const listHint = userFacing7zErrorDetail(
+        result.stdout,
+        result.stderr,
+        needsPassword
+          ? "This archive appears to be encrypted. Enter the archive password and try again."
+          : `Failed to list archive contents (exit code ${result.code}).`,
+      );
+      setStatus("Error", 3000, listHint);
       if (needsPassword)
         log("Archive appears to be encrypted. Enter a password and try again.");
-      const passwordHint = needsPassword
-        ? "\n\nThis archive appears to be encrypted. Enter the archive password and try again."
-        : "";
-      const errorDetails = result.stderr
-        ? `\n\n${truncateForDialog(result.stderr.trim(), 1000)}`
-        : "";
       showToast(
-        `Failed to list archive contents (exit code ${result.code}).${passwordHint}${errorDetails}`,
+        `Failed to list archive contents (exit code ${result.code}).\n\n${listHint}`,
         "error",
         0,
       );
@@ -297,9 +313,10 @@ export async function browseArchive(
     }
     return info;
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log(`Browse error: ${msg}`);
-    if (isDebugEnabled()) debugLog(`Browse error: ${msg}`);
+    const raw = err instanceof Error ? err.message : String(err);
+    log(`Browse error: ${raw}`);
+    if (isDebugEnabled()) debugLog(`Browse error: ${raw}`);
+    const msg = userFacingBackendError(raw);
     setStatus("Error", 3000, msg);
     showToast(`Browse failed: ${truncateForDialog(msg, 1000)}`, "error", 0);
     return null;

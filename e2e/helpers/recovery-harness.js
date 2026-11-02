@@ -200,6 +200,40 @@ export function prepareCrashCase(profile, testCase) {
  * Seed a journal from a newer Zinnia build (format_version 99) that points at
  * real files, so any file touch by recovery would be visible in the manifests.
  */
+/**
+ * Seed a journal from an older Zinnia build (format_version 0) that points at
+ * real files, so any file touch by recovery would be visible in the manifests.
+ */
+export function prepareOlderJournal(profile) {
+  const root = path.join(profile.work, "older-journal");
+  const stage = path.join(root, `.zinnia-extract-${"b".repeat(32)}`);
+  const destination = path.join(root, "destination");
+  fs.mkdirSync(stage, { recursive: true });
+  fs.writeFileSync(path.join(stage, "staged.txt"), "staged by older build\n");
+  fs.mkdirSync(destination, { recursive: true });
+  fs.writeFileSync(path.join(destination, "keep.txt"), "keep-me\n");
+  const journal = {
+    format_version: 0,
+    stage,
+    destination,
+    archive: false,
+    extract_stage_placement: "inside_destination",
+    move_plan_sidecar: true,
+    previous_archive_family: [],
+    extract_phase: "in_progress",
+  };
+  const file = journalPathForProfile(profile.profileDir);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(journal, null, 2)}\n`);
+  return {
+    root,
+    stage,
+    destination,
+    journal: file,
+    preManifest: treeManifest(root),
+  };
+}
+
 export function prepareNewerJournal(profile) {
   const root = path.join(profile.work, "newer-journal");
   const stage = path.join(root, `.zinnia-extract-${"a".repeat(32)}`);

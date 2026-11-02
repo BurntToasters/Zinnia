@@ -333,30 +333,54 @@ pub fn get_log_dir(app: tauri::AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn export_logs(app: tauri::AppHandle) -> Result<bool, String> {
+pub async fn export_logs(
+    app: tauri::AppHandle,
+    destination_path: Option<String>,
+) -> Result<bool, String> {
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
-        let _ = app;
+        let _ = (app, destination_path);
         return Err("Exporting logs is not supported on this platform.".to_string());
     }
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
-        let dialog_app = app.clone();
-        let chosen = tokio::task::spawn_blocking(move || {
-            dialog_app
-                .dialog()
-                .file()
-                .set_title("Export local diagnostics log")
-                .set_file_name(LOG_EXPORT_FILE_NAME)
-                .blocking_save_file()
-        })
-        .await
-        .map_err(|error| format!("Log export dialog failed: {error}"))?;
-        let Some(file_path) = chosen else {
-            return Ok(false);
+        let destination = {
+            #[cfg(feature = "e2e")]
+            if crate::launch::e2e_session_active() {
+                if let Some(path) = destination_path.as_deref().filter(|path| !path.is_empty()) {
+                    Some(std::path::PathBuf::from(path))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+            #[cfg(not(feature = "e2e"))]
+            let _: Option<String> = destination_path;
+            #[cfg(not(feature = "e2e"))]
+            None::<std::path::PathBuf>
         };
-        let destination = file_path.into_path().map_err(|e| e.to_string())?;
+        let destination = match destination {
+            Some(path) => path,
+            None => {
+                let dialog_app = app.clone();
+                let chosen = tokio::task::spawn_blocking(move || {
+                    dialog_app
+                        .dialog()
+                        .file()
+                        .set_title("Export local diagnostics log")
+                        .set_file_name(LOG_EXPORT_FILE_NAME)
+                        .blocking_save_file()
+                })
+                .await
+                .map_err(|error| format!("Log export dialog failed: {error}"))?;
+                let Some(file_path) = chosen else {
+                    return Ok(false);
+                };
+                file_path.into_path().map_err(|e| e.to_string())?
+            }
+        };
         tokio::task::spawn_blocking(move || {
             if destination.is_dir() {
                 return Err("Destination path must be a file, not a directory.".to_string());

@@ -19,6 +19,7 @@ import {
 } from "./incoming-paths";
 import { MAX_ARCHIVE_PATHS } from "./archive-rules";
 import { showToast } from "./toast";
+import { takeE2eDialogResult } from "./e2e-dialog";
 
 export type AddPathsOptions = {
   /**
@@ -62,11 +63,17 @@ export async function chooseOutputIfCurrent(isCurrent: () => boolean) {
   const format = $<HTMLSelectElement>("format").value;
   try {
     const derived = deriveOutputArchivePath(state.inputs, format);
-    const output = await save({
-      title: "Choose output archive",
-      defaultPath:
-        derived ?? `zinnia.${archiveExtensionForFormat(format.toLowerCase())}`,
-    });
+    const queued = takeE2eDialogResult();
+    const queuedPath =
+      queued && typeof queued.result === "string" ? queued.result : null;
+    const output =
+      queuedPath ??
+      (await save({
+        title: "Choose output archive",
+        defaultPath:
+          derived ??
+          `zinnia.${archiveExtensionForFormat(format.toLowerCase())}`,
+      }));
     if (
       output &&
       isCurrent() &&
@@ -99,10 +106,17 @@ export async function chooseExtractIfCurrent(isCurrent: () => boolean) {
   }
   const session = captureInputDialogSession();
   try {
-    const output = await open({
-      title: "Choose destination folder",
-      directory: true,
-    });
+    const queued = takeE2eDialogResult();
+    const queuedPath =
+      queued && typeof queued.result === "string" ? queued.result : null;
+    let output: string | null = queuedPath;
+    if (!output) {
+      const selected = await open({
+        title: "Choose destination folder",
+        directory: true,
+      });
+      output = typeof selected === "string" ? selected : null;
+    }
     if (
       output &&
       typeof output === "string" &&
@@ -184,10 +198,13 @@ export async function addFilesIfCurrent(
   const session = captureInputDialogSession();
 
   try {
-    const selection = await open({
-      title: "Add files",
-      multiple: true,
-    });
+    const queued = takeE2eDialogResult();
+    const selection = queued
+      ? queued.result
+      : await open({
+          title: "Add files",
+          multiple: true,
+        });
     if (!selection || !isCurrent() || !inputDialogSessionIsCurrent(session)) {
       return;
     }
@@ -223,10 +240,17 @@ export async function addFolderIfCurrent(
   const session = captureInputDialogSession();
 
   try {
-    const selection = await open({
-      title: "Add folder",
-      directory: true,
-    });
+    const queued = takeE2eDialogResult();
+    let selection: string | null = null;
+    if (queued && typeof queued.result === "string") {
+      selection = queued.result;
+    } else if (!queued) {
+      const picked = await open({
+        title: "Add folder",
+        directory: true,
+      });
+      selection = typeof picked === "string" ? picked : null;
+    }
     if (
       !selection ||
       typeof selection !== "string" ||

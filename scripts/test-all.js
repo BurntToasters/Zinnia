@@ -26,7 +26,7 @@ const criticalCoverageThresholds = {
   "archive/": { lines: 80, branches: 62, functions: 88 },
   "basic/": { lines: 60, branches: 44, functions: 44 },
   "basic/extract-events.ts": { lines: 70, branches: 50, functions: 70 },
-  "extract-window.ts": { lines: 72, branches: 53, functions: 66 },
+  "extract-window/": { lines: 72, branches: 53, functions: 66 },
   "app-init.ts": { lines: 70, branches: 50, functions: 52 },
   "updater.ts": { lines: 76, branches: 62, functions: 68 },
   // Peeled from power-events.ts; keep these high so boot helpers stay tested.
@@ -428,6 +428,12 @@ function main({
   if (process.env.SKIP_E2E === "1") {
     console.error(
       `${colors.red}SKIP_E2E=1 is not allowed for npm run test:all. Unset it so the unpackaged WebdriverIO suite runs.${colors.reset}`,
+    );
+    return 1;
+  }
+  if (process.env.ZINNIA_E2E_ONLY?.trim()) {
+    console.error(
+      `${colors.red}ZINNIA_E2E_ONLY is not allowed for npm run test:all. Unset it and run the full unpackaged WebdriverIO suite, or use npm run test:e2e -- --only=<spec> for local iteration.${colors.reset}`,
     );
     return 1;
   }

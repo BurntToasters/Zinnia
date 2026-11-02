@@ -27,7 +27,7 @@
       "description": "Windows shell extension dllmain.cpp LooksLikeArchiveExtension kExts."
     },
     "windowsClassicArchiveVerbs": {
-      "description": "NSIS classic Extract verbs (register, legacy cleanup, uninstall unregister)."
+      "description": "NSIS classic Extract verbs (register and uninstall unregister)."
     },
     "windowsProgIdOpenVerb": {
       "description": "NSIS ZINNIA_REGISTER_PROGID_OPEN: 'Open with Zinnia' label on the ProgId open verb."
@@ -610,7 +610,7 @@
           "linux": false
         },
         "fileAssociation": true,
-        "fileAssociationBase": false,
+        "fileAssociationBase": true,
         "linuxMimeTypes": {
           "windows": false,
           "macos": false,
@@ -679,7 +679,7 @@
     {
       "layer": "openRouting",
       "formats": ["rar"],
-      "note": "ARCHITECTURE.md says .rar routing is Windows-only. open_routing.rs has no platform gate, so .rar is routed on every OS. This records the code."
+      "note": "ARCHITECTURE.md and open_routing.rs treat .rar as recognized and routed on every platform; there is no Windows-only gate in routing."
     },
     {
       "layer": "fileAssociation",
@@ -693,13 +693,13 @@
     },
     {
       "layer": "fileAssociationBase",
-      "formats": ["rar"],
-      "note": "Base tauri.conf.json omits .rar. Each platform file replaces the whole array (Tauri merges arrays by replacement) and includes .rar, so the base list is not used on a supported OS."
+      "formats": ["tar-gz", "tar-bz2", "tar-xz", "split-volume"],
+      "note": "Matches fileAssociation: OS file associations use the short forms (.tgz/.tbz2/.txz) and do not register compound .tar.* or .001."
     },
     {
       "layer": "windowsProgIdOpenVerb",
-      "formats": ["rar", "tgz", "tbz2", "txz", "split-volume"],
-      "note": "The NSIS ProgId macro writes the 'Open with Zinnia' label only for the six classic formats."
+      "formats": ["tar-gz", "tar-bz2", "tar-xz", "split-volume"],
+      "note": "The NSIS ProgId macro writes the 'Open with Zinnia' label for every format that has a Windows fileAssociation ProgId; compound .tar.* and .001 have no ProgId."
     },
     {
       "layer": "finderSyncArchiveExtensions",

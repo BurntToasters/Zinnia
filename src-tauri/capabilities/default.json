@@ -70,7 +70,6 @@
     "allow-is-packaged",
     "allow-remove-managed-temp-dir",
     "allow-list-managed-temp-children",
-    "allow-probe-compress-inputs",
     "allow-archive-output-selection-token",
     "allow-set-workspace-window-fx",
     "allow-supports-workspace-window-fx",

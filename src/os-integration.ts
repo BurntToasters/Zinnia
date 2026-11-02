@@ -474,7 +474,12 @@ export async function openFinderSyncSettings(): Promise<void> {
     latestStatus.finderSyncEnabled !== true;
   try {
     if (needsEnable) {
-      await invoke("enable_finder_sync");
+      try {
+        await invoke("enable_finder_sync");
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`Finder Sync pluginkit enable did not succeed: ${msg}`);
+      }
       await refreshOsIntegrationStatus();
       if (latestStatus?.finderSyncEnabled) {
         showToast(FINDER_SYNC_ENABLED_MESSAGE, "success", 0);
