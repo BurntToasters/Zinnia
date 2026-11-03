@@ -110,6 +110,13 @@ pub(crate) fn extract_session_init_script(
 
 #[cfg(target_os = "macos")]
 pub(crate) fn set_macos_activation_policy(app: &tauri::AppHandle, policy: tauri::ActivationPolicy) {
+    // Background E2E runs stay Accessory so no window puts the app in the Dock or activates it.
+    #[cfg(feature = "e2e")]
+    let policy = if super::e2e_background() {
+        tauri::ActivationPolicy::Accessory
+    } else {
+        policy
+    };
     if let Err(error) = app.set_activation_policy(policy) {
         eprintln!("Failed to set macOS activation policy: {error}");
     }
@@ -332,6 +339,9 @@ pub fn show_main_window(app: &tauri::AppHandle) -> Result<(), String> {
     window.set_title("").map_err(|e| e.to_string())?;
 
     window.show().map_err(|e| e.to_string())?;
+    if !super::window_may_take_focus() {
+        return Ok(());
+    }
     window.set_focus().map_err(|e| e.to_string())
 }
 

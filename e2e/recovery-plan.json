@@ -68,7 +68,10 @@
     "./specs/extract-flows.spec.js",
     "./specs/settings-flows.spec.js",
     "./specs/ui-surfaces.spec.js",
-    "./specs/older-journal.spec.js"
+    "./specs/older-journal.spec.js",
+    "./specs/pending-registry.spec.js",
+    "./specs/cancel-race.spec.js",
+    "./specs/cancel-race-compound.spec.js"
   ],
-  "suiteCount": 28
+  "suiteCount": 31
 }

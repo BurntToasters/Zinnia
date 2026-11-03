@@ -41,18 +41,52 @@ fn read_pending_stage_records(
     };
     let values: Vec<serde_json::Value> = match serde_json::from_str(&json) {
         Ok(values) => values,
-        Err(_) => return Ok(Vec::new()),
+        Err(error) => {
+            let preserved = quarantine_corrupt_pending_stages(cache_dir, &json, &[])?;
+            eprintln!(
+                "Pending-stage registry could not be parsed ({error}); skipped all of its records and preserved the original at {}.",
+                preserved.display()
+            );
+            return Ok(Vec::new());
+        }
     };
     if values.len() > 10_000 {
         return Err("Pending-stage registry exceeds its record safety limit.".to_string());
     }
-    let mut records = Vec::with_capacity(values.len());
+    let total = values.len();
+    let mut records = Vec::with_capacity(total);
     for value in values {
         if let Ok(record) = serde_json::from_value::<PendingStageRecord>(value) {
             records.push(record);
         }
     }
+    let skipped = total - records.len();
+    if skipped > 0 {
+        let preserved = quarantine_corrupt_pending_stages(cache_dir, &json, &records)?;
+        eprintln!(
+            "Pending-stage registry had {skipped} unreadable record(s); skipped them and preserved the original at {}.",
+            preserved.display()
+        );
+    }
     Ok(records)
+}
+
+/// Copy the original registry bytes to a sibling file, then rewrite the registry
+/// with only its valid records so the next read sees a clean file.
+fn quarantine_corrupt_pending_stages(
+    cache_dir: &std::path::Path,
+    json: &str,
+    valid_records: &[PendingStageRecord],
+) -> Result<std::path::PathBuf, String> {
+    let token = crate::process::staging::random_token()?;
+    let preserved = cache_dir.join(format!("pending-stages.corrupt-{token}.json"));
+    crate::settings_store::atomic_write_text(&preserved, json).map_err(|error| {
+        format!("Could not preserve the unreadable pending-stage registry: {error}")
+    })?;
+    write_pending_stage_records(cache_dir, valid_records).map_err(|error| {
+        format!("Could not rewrite the pending-stage registry after preserving it: {error}")
+    })?;
+    Ok(preserved)
 }
 
 #[cfg(test)]

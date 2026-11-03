@@ -63,6 +63,28 @@ pub fn e2e_session_active() -> bool {
     }
 }
 
+/// macOS background E2E runs: the app never takes focus or joins the Dock.
+/// scripts/test-e2e.js sets `ZINNIA_E2E_BACKGROUND=1` unless CI or
+/// `ZINNIA_E2E_FOREGROUND=1` is set.
+#[cfg(feature = "e2e")]
+pub fn e2e_background() -> bool {
+    cfg!(target_os = "macos")
+        && e2e_session_active()
+        && std::env::var("ZINNIA_E2E_BACKGROUND").as_deref() == Ok("1")
+}
+
+/// False only in background E2E runs. Gates every focus request.
+pub(crate) fn window_may_take_focus() -> bool {
+    #[cfg(feature = "e2e")]
+    {
+        !e2e_background()
+    }
+    #[cfg(not(feature = "e2e"))]
+    {
+        true
+    }
+}
+
 /// WebView2 `ExecuteScript` completion is dropped on transparent/hidden HWNDs.
 #[cfg(all(feature = "e2e", windows))]
 pub(crate) const E2E_WEBVIEW2_BROWSER_ARGS: &str =
@@ -82,6 +104,13 @@ where
         {
             builder = builder.additional_browser_args(E2E_WEBVIEW2_BROWSER_ARGS);
         }
+    }
+    if e2e_background() {
+        // Stay below other apps, never focused, and keep timers running while occluded.
+        builder = builder
+            .focused(false)
+            .always_on_bottom(true)
+            .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled);
     }
     builder
 }

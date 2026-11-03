@@ -348,11 +348,10 @@ pub async fn export_logs(
         let destination = {
             #[cfg(feature = "e2e")]
             if crate::launch::e2e_session_active() {
-                if let Some(path) = destination_path.as_deref().filter(|path| !path.is_empty()) {
-                    Some(std::path::PathBuf::from(path))
-                } else {
-                    None
-                }
+                destination_path
+                    .as_deref()
+                    .filter(|path| !path.is_empty())
+                    .map(std::path::PathBuf::from)
             } else {
                 None
             }

@@ -324,15 +324,23 @@ pub(crate) async fn assert_extract_archive_members_safe_with_summary(
             .ok_or_else(|| "Could not read archive identity for member preflight.".to_string())?;
     let (mut rx, child, pending_password) =
         crate::process::commands::spawn_7z_noninteractive(app, list_args, state)?;
+    #[cfg(feature = "e2e")]
+    crate::process::e2e_crash::pause_point("member-preflight-spawned").await;
     {
-        let cancelling = lock_process(state)?.cancelling;
+        // Check cancelling and register the child under one lock so cancel_7z
+        // cannot run between the two and miss the child.
+        let cancelling = {
+            let mut process = lock_process(state)?;
+            if !process.cancelling {
+                // Register before password stdin so cancel can kill a blocked write.
+                process.child = Some(child.clone());
+            }
+            process.cancelling
+        };
         if cancelling {
             terminate_registered_child_async(app, &child).await?;
             return Err("Operation cancelled.".to_string());
         }
-        // Register before password stdin so cancel can kill a blocked write.
-        let mut process = lock_process(state)?;
-        process.child = Some(child.clone());
     }
     if let Some(pending_password) = pending_password {
         if let Err(error) =

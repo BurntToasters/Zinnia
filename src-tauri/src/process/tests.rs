@@ -6009,7 +6009,7 @@ fn legacy_pending_stage_record_preserves_present_directory() {
     std::fs::write(stage.join("legacy.txt"), b"legacy").expect("legacy content");
     let legacy_json = serde_json::to_string(&vec![stage.to_string_lossy().to_string()])
         .expect("legacy registry json");
-    std::fs::write(cache.join("pending-stages.json"), legacy_json).expect("legacy registry");
+    std::fs::write(cache.join("pending-stages.json"), &legacy_json).expect("legacy registry");
 
     cleanup_orphan_stages_at(&cache).expect("legacy bare-string entry is ignored");
 
@@ -6021,8 +6021,37 @@ fn legacy_pending_stage_record_preserves_present_directory() {
         .expect("registry read")
         .is_empty());
     assert!(
-        cache.join("pending-stages.json").is_file(),
-        "unreadable registry file stays in place until rewritten"
+        !cache.join("pending-stages.json").exists(),
+        "unreadable registry is rewritten without its records"
+    );
+    let corrupt_copies = |dir: &std::path::Path| -> Vec<std::path::PathBuf> {
+        std::fs::read_dir(dir)
+            .expect("cache listing")
+            .map(|entry| entry.expect("cache entry").path())
+            .filter(|path| {
+                let name = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("");
+                name.starts_with("pending-stages.corrupt-") && name.ends_with(".json")
+            })
+            .collect()
+    };
+    let copies = corrupt_copies(&cache);
+    assert_eq!(
+        copies.len(),
+        1,
+        "one preserved copy of the unreadable registry"
+    );
+    assert_eq!(
+        std::fs::read(&copies[0]).expect("preserved registry"),
+        legacy_json.as_bytes()
+    );
+    cleanup_orphan_stages_at(&cache).expect("repeat cleanup");
+    assert_eq!(
+        corrupt_copies(&cache).len(),
+        1,
+        "repeat cleanup does not copy the registry again"
     );
     let _ = std::fs::remove_dir_all(cache);
 }

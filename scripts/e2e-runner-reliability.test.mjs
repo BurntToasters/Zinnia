@@ -1965,3 +1965,62 @@ test("Windows E2E artifact accepts a session capture gap", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// Failure modes: scripts/e2e-background.failure-modes.md (env rules, modes 1-6).
+test("local macOS E2E runs default to background mode", () => {
+  assert.equal(
+    e2eRunner.e2eBackgroundValue({ env: {}, platform: "darwin" }),
+    "1",
+  );
+});
+
+test("CI keeps the foreground E2E behavior", () => {
+  for (const CI of ["true", "1"]) {
+    assert.equal(
+      e2eRunner.e2eBackgroundValue({ env: { CI }, platform: "darwin" }),
+      null,
+    );
+  }
+});
+
+test("empty, false, or 0 CI values are not CI", () => {
+  for (const CI of ["", "false", "0"]) {
+    assert.equal(
+      e2eRunner.e2eBackgroundValue({ env: { CI }, platform: "darwin" }),
+      "1",
+    );
+  }
+});
+
+test("ZINNIA_E2E_FOREGROUND=1 opts a local macOS run out", () => {
+  assert.equal(
+    e2eRunner.e2eBackgroundValue({
+      env: { ZINNIA_E2E_FOREGROUND: "1" },
+      platform: "darwin",
+    }),
+    null,
+  );
+});
+
+test("an explicit ZINNIA_E2E_BACKGROUND value wins over CI and defaults", () => {
+  assert.equal(
+    e2eRunner.e2eBackgroundValue({
+      env: { ZINNIA_E2E_BACKGROUND: "0" },
+      platform: "darwin",
+    }),
+    "0",
+  );
+  assert.equal(
+    e2eRunner.e2eBackgroundValue({
+      env: { ZINNIA_E2E_BACKGROUND: "1", CI: "true" },
+      platform: "darwin",
+    }),
+    "1",
+  );
+});
+
+test("Windows and Linux runs get no background mode by default", () => {
+  for (const platform of ["win32", "linux"]) {
+    assert.equal(e2eRunner.e2eBackgroundValue({ env: {}, platform }), null);
+  }
+});

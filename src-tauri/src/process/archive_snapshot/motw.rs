@@ -16,17 +16,17 @@ pub(crate) fn copy_windows_zone_identifier_with_identity(
 ) -> Result<(), String> {
     use std::io::{Read as _, Write as _};
 
+    const SOURCE_CHANGED: &str =
+        "The download-marker source changed before the archive could be marked.";
+    // Held open until the stream is read, so the identity observed here stays
+    // bound to the file whose stream is read below.
     let source_file = crate::path_safety::open_regular_file_nofollow(source)?;
     let opened_identity = crate::process::journal::file_identity(&source_file)?;
     if let Some(expected) = expected_source_identity {
         if !crate::process::journal::file_identities_match(&opened_identity, expected) {
-            return Err(
-                "The download-marker source changed before the archive could be marked."
-                    .to_string(),
-            );
+            return Err(SOURCE_CHANGED.to_string());
         }
     }
-    drop(source_file);
 
     const MAX_ZONE_BYTES: u64 = 64 * 1024;
     fn stream_path(path: &std::path::Path) -> std::path::PathBuf {
@@ -83,6 +83,22 @@ pub(crate) fn copy_windows_zone_identifier_with_identity(
     source_stream
         .read_to_end(&mut contents)
         .map_err(|error| format!("Could not read archive Mark-of-the-Web: {error}"))?;
+    // Re-open the source by path and confirm it still is the file observed at
+    // the first open. The stream above was read by path, so a swap in between
+    // would otherwise mark the archive with another file's stream.
+    let reopened = crate::path_safety::open_regular_file_nofollow(source)
+        .map_err(|_| SOURCE_CHANGED.to_string())?;
+    let reopened_identity = crate::process::journal::file_identity(&reopened)?;
+    let matches_expected = expected_source_identity.is_none_or(|expected| {
+        crate::process::journal::file_identities_match(&reopened_identity, expected)
+    });
+    if !crate::process::journal::file_identities_match(&reopened_identity, &opened_identity)
+        || !matches_expected
+    {
+        return Err(SOURCE_CHANGED.to_string());
+    }
+    drop(reopened);
+    drop(source_file);
     let Some(payload) = decode_zone_identifier(&contents) else {
         return Err("Archive Mark-of-the-Web has an invalid format.".to_string());
     };

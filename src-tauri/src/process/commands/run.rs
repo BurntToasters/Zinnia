@@ -568,15 +568,23 @@ pub(super) async fn prepare_compound_tar_snapshot(
         )
         .await?;
         let (mut rx, child, pending_password) = spawn_7z_noninteractive(app, outer_args, state)?;
+        #[cfg(feature = "e2e")]
+        crate::process::e2e_crash::pause_point("compound-tar-spawned").await;
         {
-            let cancelling = lock_process(state)?.cancelling;
+            // Check cancelling and register the child and cleanup plan under one
+            // lock so cancel_7z cannot run between the two and miss the child.
+            let cancelling = {
+                let mut process = lock_process(state)?;
+                if !process.cancelling {
+                    process.child = Some(child.clone());
+                    process.cleanup_plan = Some(cleanup_plan.clone());
+                }
+                process.cancelling
+            };
             if cancelling {
                 terminate_registered_child_async(app, &child).await?;
                 return Err("Archive operation was cancelled during preparation.".to_string());
             }
-            let mut process = lock_process(state)?;
-            process.child = Some(child.clone());
-            process.cleanup_plan = Some(cleanup_plan.clone());
         }
         if let Some(password) = pending_password {
             if let Err(error) = complete_password_transport(&child, password).await {
@@ -1150,6 +1158,9 @@ pub(super) async fn run_7z_inner(
         mask_password_arg_tokens(&mut execution_args);
         mask_password_arg_tokens(&mut snapshot_args);
 
+        #[cfg(feature = "e2e")]
+        crate::process::e2e_crash::pause_point("run-spawned").await;
+
         // Scoped so the `MutexGuard` this binds is provably dropped (not just
         // logically unreachable after a `return`) before the `.await` below:
         // `RunningProcess` is not `Send`-friendly to hold across an await
@@ -1639,14 +1650,22 @@ pub(super) async fn probe_7z_inner(
     let result = async {
         let (mut rx, child, _pending_password) =
             spawn_7z_noninteractive(&app, vec!["i".to_string()], &state)?;
+        #[cfg(feature = "e2e")]
+        crate::process::e2e_crash::pause_point("probe-spawned").await;
         {
-            let cancelling = lock_process(&state)?.cancelling;
+            // Check cancelling and register the child under one lock so cancel_7z
+            // cannot run between the two and miss the child.
+            let cancelling = {
+                let mut process = lock_process(&state)?;
+                if !process.cancelling {
+                    process.child = Some(child.clone());
+                }
+                process.cancelling
+            };
             if cancelling {
                 terminate_registered_child_async(&app, &child).await?;
                 return Err("7z runtime probe was cancelled.".to_string());
             }
-            let mut process = lock_process(&state)?;
-            process.child = Some(child.clone());
         }
 
         let probe = async {

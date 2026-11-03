@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -281,4 +282,118 @@ export function collectEvidence(evidenceDir) {
     .map((name) =>
       JSON.parse(fs.readFileSync(path.join(evidenceDir, name), "utf8")),
     );
+}
+
+export const PENDING_REGISTRY_FILE = "pending-stages.json";
+const UNREADABLE_REGISTRY = "{ not a pending-stage registry\n";
+
+/**
+ * Seed an unreadable pending-stage registry in the app cache dir, beside a
+ * leaked stage directory that no record names. Startup must preserve the
+ * registry bytes once and leave the stage alone.
+ */
+export function preparePendingRegistry(profile) {
+  const root = path.join(profile.work, "pending-registry");
+  const cacheDir = path.dirname(journalPathForProfile(profile.profileDir));
+  const registry = path.join(cacheDir, PENDING_REGISTRY_FILE);
+  const stage = path.join(root, `.zinnia-extract-${"d".repeat(32)}`);
+  fs.mkdirSync(stage, { recursive: true });
+  fs.writeFileSync(
+    path.join(stage, "staged.txt"),
+    "leaked by an earlier build\n",
+  );
+  fs.mkdirSync(cacheDir, { recursive: true });
+  fs.writeFileSync(registry, UNREADABLE_REGISTRY);
+  return {
+    root,
+    cacheDir,
+    registry,
+    registrySha256: sha256File(registry),
+    stage,
+    stageManifest: treeManifest(stage),
+    archive: profile.copies["hello.7z"],
+    destination: path.join(root, "after-startup"),
+    payloadFile: profile.manifest.payloadFile,
+  };
+}
+
+// Pause point and archive for each cancel-race spec. The pause is long enough
+// for WebDriver to click Cancel while the app is held at the point.
+export const CANCEL_RACE_PAUSE_MS = 4000;
+const CANCEL_RACE_CASES = {
+  "cancel-race": {
+    point: "member-preflight-spawned",
+    source: (profile) => profile.copies["hello.7z"],
+  },
+  "cancel-race-compound": {
+    point: "compound-tar-spawned",
+    source: () => path.join(REPO_ROOT, "zips", "hello.tar.gz"),
+  },
+};
+
+/**
+ * Lay out one cancel-race case under the profile work dir. The pause marker
+ * lives in the work dir, outside the case root, so it is not scanned for
+ * leftovers, and it is removed so a stale file cannot satisfy the wait.
+ */
+export function prepareCancelRace(profile, caseId) {
+  const testCase = CANCEL_RACE_CASES[caseId];
+  if (!testCase) throw new Error(`unknown cancel-race case ${caseId}`);
+  const source = testCase.source(profile);
+  if (!fs.existsSync(source)) {
+    throw new Error(`cancel-race fixture is missing: ${source}`);
+  }
+  const root = path.join(profile.work, caseId);
+  const srcDir = path.join(root, "src");
+  fs.mkdirSync(srcDir, { recursive: true });
+  const archive = path.join(srcDir, path.basename(source));
+  fs.copyFileSync(source, archive);
+  const marker = path.join(profile.work, `${caseId}.pause-marker`);
+  fs.rmSync(marker, { force: true });
+  return {
+    id: caseId,
+    point: testCase.point,
+    pauseMs: CANCEL_RACE_PAUSE_MS,
+    marker,
+    root,
+    archive,
+    archiveSha256: sha256File(archive),
+    destination: path.join(root, "cancelled-out"),
+    rerunDestination: path.join(root, "rerun-out"),
+    payloadFile: profile.manifest.payloadFile,
+  };
+}
+
+/**
+ * Live 7-Zip sidecar processes, as "pid command" lines. Zinnia passes the
+ * archive to 7-Zip through a private listfile, so argv does not name the
+ * archive; the executable name is the only stable signal.
+ */
+export function sevenZipProcesses(platform = process.platform) {
+  if (platform === "win32") {
+    const output = execFileSync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        'Get-CimInstance Win32_Process -Filter "Name LIKE \'7z%\'" | ForEach-Object { "$($_.ProcessId) $($_.Name)" }',
+      ],
+      { encoding: "utf8" },
+    );
+    return output
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  }
+  const output = execFileSync("ps", ["-axww", "-o", "pid=,command="], {
+    encoding: "utf8",
+  });
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => {
+      const executable = line.replace(/^\d+\s+/, "").split(/\s+/)[0] ?? "";
+      return path.basename(executable).startsWith("7z");
+    });
 }

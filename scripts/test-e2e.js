@@ -30,7 +30,9 @@ import {
   expectedRecoverySuiteCount,
   journalPathForProfile,
   loadRecoveryPlan,
+  prepareCancelRace,
   prepareCrashCase,
+  preparePendingRegistry,
   prepareNewerJournal,
   prepareOlderJournal,
 } from "../e2e/helpers/recovery-harness.js";
@@ -42,6 +44,11 @@ import { isDirectExecutionOf } from "./direct-execution.mjs";
 const EXTRACT_WINDOW_AUTO_CLOSE_SECONDS = 10;
 // Crash launches are retried only for a startup timeout before #app (see runRecoveryScenarios).
 const CRASH_LAUNCH_ATTEMPTS = 3;
+// Scenario specs that hold the app at a pause point, then cancel inside it.
+const CANCEL_RACE_SPECS = new Set([
+  "./specs/cancel-race.spec.js",
+  "./specs/cancel-race-compound.spec.js",
+]);
 
 function npmCommand() {
   return process.platform === "win32" ? "npm.cmd" : "npm";
@@ -112,6 +119,20 @@ export function listE2eOnlyAvailableNames(root = REPO_ROOT) {
   return [...new Set(names)].sort((left, right) => left.localeCompare(right));
 }
 
+/**
+ * Value for ZINNIA_E2E_BACKGROUND, or null for foreground. Local macOS runs
+ * default to background; CI and ZINNIA_E2E_FOREGROUND=1 keep the foreground.
+ * See scripts/e2e-background.failure-modes.md.
+ */
+export function e2eBackgroundValue({ env, platform }) {
+  if (env.ZINNIA_E2E_BACKGROUND !== undefined) return env.ZINNIA_E2E_BACKGROUND;
+  if (platform !== "darwin") return null;
+  if (env.ZINNIA_E2E_FOREGROUND === "1") return null;
+  const ci = (env.CI ?? "").trim().toLowerCase();
+  if (ci !== "" && ci !== "false" && ci !== "0") return null;
+  return "1";
+}
+
 export function parseE2eOnlyTokens(argv = process.argv, env = process.env) {
   const tokens = [];
   const args = argv.slice(2);
@@ -153,7 +174,7 @@ function normalizeE2eOnlyToken(token) {
 }
 
 export function resolveE2eOnlySelection(tokens, root = REPO_ROOT) {
-  const plan = loadRecoveryPlan();
+  const plan = loadRecoveryPlan(path.join(root, "e2e", "recovery-plan.json"));
   const available = listE2eOnlyAvailableNames(root);
   const selection = {
     filter: [...tokens],
@@ -713,6 +734,8 @@ async function runWdio(
     // Only the crash-injection phase sets a crash point; every other launch
     // must not inherit one from the developer's shell.
     ZINNIA_E2E_CRASH_AT: "",
+    // Only the cancel-race launches set a pause point; never inherit one.
+    ZINNIA_E2E_PAUSE_AT: "",
     ZINNIA_E2E_JOURNAL: journalPathForProfile(profile.profileDir),
     ZINNIA_E2E: "1",
     ZINNIA_E2E_BINARY: e2eBinaryPath(),
@@ -1064,12 +1087,16 @@ async function runRecoveryScenarios({
   };
   try {
     for (const testCase of plan.crashCases) {
-      const runCrash =
-        !only || only.runAllCrashLaunches || only.crashCaseIds.has(testCase.id);
       const runRecovery =
         !only ||
         only.runAllCrashRecoveries ||
         only.crashCaseIds.has(testCase.id);
+      // A recovery phase reads the transaction state its crash launch leaves.
+      const runCrash =
+        !only ||
+        only.runAllCrashLaunches ||
+        only.crashCaseIds.has(testCase.id) ||
+        runRecovery;
       if (only && !runCrash && !runRecovery) continue;
 
       const retries = [];
@@ -1134,6 +1161,21 @@ async function runRecoveryScenarios({
           envOverrides = {
             ZINNIA_E2E_CASE: JSON.stringify(prepareOlderJournal(profile)),
           };
+        } else if (spec === "./specs/pending-registry.spec.js") {
+          envOverrides = {
+            ZINNIA_E2E_CASE: JSON.stringify(preparePendingRegistry(profile)),
+          };
+        } else if (CANCEL_RACE_SPECS.has(spec)) {
+          const info = prepareCancelRace(
+            profile,
+            path.basename(spec, ".spec.js"),
+          );
+          envOverrides = {
+            ZINNIA_E2E_CASE: JSON.stringify(info),
+            ZINNIA_E2E_PAUSE_AT: info.point,
+            ZINNIA_E2E_PAUSE_MARKER: info.marker,
+            ZINNIA_E2E_PAUSE_MS: String(info.pauseMs),
+          };
         }
         await runPhase(
           profile,
@@ -1176,7 +1218,18 @@ async function main() {
   }
   const onlyTokens = parseE2eOnlyTokens();
   const only = onlyTokens ? resolveE2eOnlySelection(onlyTokens) : null;
+  // Set before any app launch so every spawned launch inherits the mode.
+  const background = e2eBackgroundValue({
+    env: process.env,
+    platform: process.platform,
+  });
+  if (background !== null) process.env.ZINNIA_E2E_BACKGROUND = background;
   if (await reexecUnderXvfb()) return;
+  console.log(
+    process.env.ZINNIA_E2E_BACKGROUND === "1"
+      ? "E2E background mode: on (the app will not take focus). Set ZINNIA_E2E_FOREGROUND=1 to run in the foreground."
+      : "E2E background mode: off (foreground run).",
+  );
   const reportDir = path.resolve(
     process.env.ZINNIA_E2E_REPORT_DIR ||
       path.join(REPO_ROOT, "coverage", "e2e"),

@@ -116,8 +116,9 @@ fn force_exit_after_busy_teardown(app: tauri::AppHandle) {
                             eprintln!(
                                 "Retry stop during forced exit also failed: {retry_error}. A leftover 7-Zip process may hold staging locks until the next recovery pass."
                             );
+                            return true;
                         }
-                        return true;
+                        return false;
                     }
                     false
                 })
@@ -256,6 +257,12 @@ fn main() {
         builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     }
 
+    // Launch activation runs before setup, so the background flag must reach the builder.
+    #[cfg(all(feature = "e2e", target_os = "macos"))]
+    if launch::e2e_background() {
+        builder = builder.activate_ignoring_other_apps(false);
+    }
+
     let app = builder
         .manage(InitialPaths(Mutex::new(initial_paths.clone())))
         .manage(InitialMode(Mutex::new(initial_mode.clone())))
@@ -267,6 +274,11 @@ fn main() {
         .manage(LogFileLock(Mutex::new(())))
         .manage(RunningProcess::new())
         .setup(move |app| {
+            #[cfg(all(feature = "e2e", target_os = "macos"))]
+            if launch::e2e_background() {
+                // No Dock icon and no activation, so E2E launches never steal focus.
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            }
             // Primary instance only reaches setup. Resolve shell handoffs here
             // (and in emit_open_paths); collect_cli_context must not consume them
             // or warm-start Explorer selections are deleted by the secondary.
@@ -474,7 +486,9 @@ fn main() {
                 if let Some(extract_window) = first_extract_window(app_handle) {
                     launch::restore_foreground_activation(app_handle);
                     let _ = extract_window.show();
-                    let _ = extract_window.set_focus();
+                    if launch::window_may_take_focus() {
+                        let _ = extract_window.set_focus();
+                    }
                 } else {
                     // Dock/Spotlight activate while warm-idle: open the full app.
                     EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);

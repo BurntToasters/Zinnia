@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { browser, $ } from "@wdio/globals";
 
@@ -938,4 +939,52 @@ export async function clickPowerExtractPasswordToggle() {
   await browser.execute(() => {
     document.getElementById("toggle-extract-password")?.click();
   });
+}
+
+/**
+ * Wait until the app's pause point writes its marker and return the time it
+ * was seen. Fails if the point never fires or the marker names another point.
+ */
+export async function waitForPauseMarker(marker, point, timeout = 60_000) {
+  try {
+    await browser.waitUntil(() => fs.existsSync(marker), {
+      timeout,
+      interval: 50,
+    });
+  } catch {
+    throw new Error(
+      `pause point ${point} never fired (no marker at ${marker}); ${await uiDiagnostics()}`,
+    );
+  }
+  const markerSeenAt = Date.now();
+  const held = fs.readFileSync(marker, "utf8").trim();
+  if (held !== point) {
+    throw new Error(
+      `pause marker holds ${JSON.stringify(held)}, expected ${point}`,
+    );
+  }
+  return markerSeenAt;
+}
+
+/** Click Cancel on the running Power extract and return the click time. */
+export async function cancelDuringPause() {
+  const clicked = await browser.execute(() => {
+    const button = document.getElementById("extract-cancel");
+    if (!button || button.hidden || button.disabled) return false;
+    button.click();
+    return true;
+  });
+  if (!clicked) {
+    throw new Error(
+      `Cancel was not available during the pause; ${await uiDiagnostics()}`,
+    );
+  }
+  return Date.now();
+}
+
+/** Text of the activity log, where a cancelled run writes its final line. */
+export async function activityLogText() {
+  return browser.execute(
+    () => document.getElementById("log")?.textContent ?? "",
+  );
 }

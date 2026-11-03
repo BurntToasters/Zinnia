@@ -1413,7 +1413,7 @@ impl Update {
             Err(err) => return Err(err.into()),
         }
 
-        let _ = std::process::Command::new("touch")
+        let _ = std::process::Command::new("/usr/bin/touch")
             .arg(&self.extract_path)
             .status();
 

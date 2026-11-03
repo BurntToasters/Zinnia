@@ -139,6 +139,8 @@ Failure cases considered before the fixes for the beta.5 release audit.
 - The guard fails when the local branch does not exist yet or has no upstream.
 - The override hint only works in POSIX shells.
 
+The guard script was removed in 0.7.0; `npm run b` and `npm run r` no longer run it.
+
 # 0.7.0 audit fix failure inventory
 
 Failure cases considered before the fixes for the 0.7.0 pre-1.0 audit. Legacy
@@ -245,4 +247,65 @@ that removal could hurt users who upgrade.
 - Clearing or resetting a Power password field resets the button text to "Show" while leaving `aria-label="Hide password"`.
 - `e2e-archive-benchmark.ts` or `basic/sync.ts` accesses removed `#delete-after` or `#path-mode` DOM nodes and throws at runtime once `setup-dom.ts` stops faking them.
 - `export_logs` in E2E cannot be exercised end-to-end because the save dialog blocks headless automation unless E2E mode can supply a queued destination path.
+
+# 0.7.0 audit follow-up failure inventory
+
+Failure cases considered before the follow-up fixes for the 0.7.0 audit. Each
+section lists how the fix could still fail or hurt users.
+
+## Cancel registration race
+
+- `cancel_7z` runs between the cancelling check and the child registration, sees no child, arms `cancelling`, and the spawned 7-Zip process keeps running.
+- The check and the registration take the lock twice, so a cancel that lands between them is never seen by the spawned child.
+- The compound TAR path registers the child but not the cleanup plan, so a cancel leaves staged output that nothing cleans up.
+- The probe path returns a different error string than before, so the UI shows a new message for a cancelled runtime probe.
+- The fix holds the process lock across an `.await`, so the command future is no longer `Send` and Tauri refuses to compile it.
+- The fix returns early without terminating the child it just spawned, so the child outlives the operation.
+
+## E2E pause point
+
+- The pause hook runs in a production build, so a stray environment variable can stall real extractions.
+- `ZINNIA_E2E_PAUSE_MS` is unset or unparseable, so the pause is zero or unbounded instead of the 4000 ms default.
+- A huge `ZINNIA_E2E_PAUSE_MS` value stalls a test run for hours. The clamp to 30000 ms must hold.
+- The marker file is written non-atomically, so a test reads a half-written marker and opens the race window at the wrong time.
+- The pause is placed before the child spawn instead of after it, so the child is never registered during the pause and the race window does not open.
+- The hook blocks a thread with a sleep instead of yielding, so it stalls the runtime for every other task.
+
+## Pending-stage registry corruption
+
+- A whole-file parse failure drops every record and the next write overwrites the file, so stage directories leak forever.
+- A single bad record is skipped silently, so the stage it pointed at is no longer tracked.
+- The preserved copy is written non-atomically, so a crash leaves a partial corrupt copy and the original bytes are lost.
+- The preserve step fails and the read still returns an empty list, so the registry is dropped without any record of it.
+- A fully valid registry is also copied, which fills the cache dir with copies on every read.
+- The 10,000 record limit now runs after preservation, so an oversized file is copied when it should only error.
+- Repeated reads of a still-corrupt file create a new preserved copy each time, so the cache dir gains several copies before the next valid write.
+- A corrupt registry that is read but not rewritten, such as when every record is skipped and the orphan cleanup returns early, adds a preserved copy on every launch and read, so copies pile up without limit.
+
+## Mark-of-the-Web source binding
+
+- The source file is replaced between the identity check and the stream read, so the stream of a different file is copied as the marker.
+- The source handle is dropped before the stream read, so the observed file identity no longer protects the read.
+- The re-check compares against the wrong identity, so a swapped source passes the check.
+- The re-check fails when the source is missing, and the error reads as a generic open failure instead of the changed-source message.
+- The re-check runs after the destination is written, so a swapped source has already been marked.
+
+## Forced exit teardown
+
+- The retry kill succeeds but the app still treats the child as failed, so it skips `cancel_owner_and_wait` and rolls nothing back.
+- The first kill fails and the retry is skipped, so a live 7-Zip process is left behind.
+- The retry fails and the function returns false, so the app exits without teardown and the staging locks stay held.
+- A join error still reads as a failed teardown, so the fallback path keeps running after a panic.
+
+## Updater touch path
+
+- `touch` resolves through `PATH`, so a planted `touch` binary runs with the updater's privileges.
+- `/usr/bin/touch` is missing on a minimal macOS image, so the touch call fails silently and the extract path keeps its old timestamp.
+- The absolute path changes the error behavior for a missing binary, so the updater reports success either way.
+
+## Branch reset guard doc
+
+- The sentence says the guard is removed, but a reader still assumes `npm run b` or `npm run r` protects unpushed commits.
+- The sentence is added under the wrong heading, so the removal note appears next to unrelated guard text.
+- The sentence uses an em dash or other punctuation the no-em-dash validator rejects.
 
