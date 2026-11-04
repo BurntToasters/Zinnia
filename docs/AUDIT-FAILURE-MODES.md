@@ -309,3 +309,128 @@ section lists how the fix could still fail or hurt users.
 - The sentence is added under the wrong heading, so the removal note appears next to unrelated guard text.
 - The sentence uses an em dash or other punctuation the no-em-dash validator rejects.
 
+
+# 0.7.0 second audit fix failure inventory
+
+Failure cases considered before the fixes for the 2026-11-03 audit
+(`coverage/audit-2026-11-03/report.md`).
+
+## Encrypted archive update
+
+- Adding files to an encrypted 7z or ZIP with an empty password field stores the new files unencrypted, and 7-Zip exits 0 so no password prompt appears.
+- Adding files with a wrong password succeeds, and the archive ends up with members under two different passwords.
+- The check lives only in the frontend, so a direct `run_7z` IPC call still adds plaintext members.
+- The check lists a different file than 7-Zip updates, so an archive swapped in between is never inspected.
+- The check reads the whole archive to verify the password, so adding one file to a large encrypted archive takes as long as testing all of it.
+- The refusal message does not match the password-retry hint, so the user sees a generic failure instead of a password prompt.
+- A header-encrypted 7z without a password fails with a new message, and the existing password prompt stops appearing.
+- A plaintext archive, a TAR, or a mixed archive whose encrypted members accept the given password is refused.
+- A corrupt or unreadable archive passes the check because a failed listing is treated as "not encrypted".
+- The extra listing child is not registered with the operation slot, so Cancel cannot stop it and the slot is released while it runs.
+- The listing or test password leaks into argv, the log, or the error text.
+- The check runs for create (`a`) commands and slows every new archive.
+
+## ZipCrypto refusal
+
+- The guard reads an archive-level `Method` field that 7-Zip never prints for ZIP, so ZipCrypto archives are updated anyway.
+- The parser change marks AES ZIPs as ZipCrypto and blocks ordinary password updates.
+- A ZIP with both AES and ZipCrypto members is accepted because only the first member is checked.
+- The backend does not enforce the refusal, so a direct IPC call still mixes ZipCrypto and AES members.
+
+## Release proof source binding
+
+- Tracked source changes after `test:all` still validate against the old proof, so a native build ships code that never passed the gate.
+- New untracked source files are not covered by the digest.
+- Ignored build output (`node_modules`, `target`, `dist`, `coverage`) is hashed, so every build changes the digest and the proof never validates.
+- The proof and session files themselves, or regenerated Tauri schemas, are included in the digest, so writing the proof invalidates it.
+- A proof written by an older script without a digest is accepted.
+- File order or path separators differ between platforms, so a proof recorded on one run does not validate on the same tree.
+
+## Vendored updater `zip` dependency
+
+- The `zip` 4.x advisories stay in `Cargo.lock` and `cargo audit` keeps failing in CI.
+- Upgrading `zip` changes the extraction API, and the Windows-only updater path no longer compiles, which macOS CI never sees.
+- Removing ZIP support breaks Windows updates if any published updater artifact is ZIP-wrapped.
+
+## Dev-toolchain advisories
+
+- A patched dev dependency is available but not installed, so the reviewed-advisory gate fails or a fixable advisory stays.
+- An advisory is added to the reviewed list without showing that it never reaches a shipped package.
+- Updating dev dependencies changes production dependencies or the lockfile's production tree.
+
+# 0.7.0 third audit fix failure inventory
+
+Failure cases considered before the fixes for the second 2026-11-03 audit
+(`coverage/audit-2026-11-03-b/report.md`).
+
+## Selective extract of members that start with a dash
+
+- A selected member named `-dash.txt` is written to the list file as `./-dash.txt`, 7-Zip finds no match, exits 0, and the run reports success with the file missing.
+- Removing the `./` prefix for every command also removes it for compress inputs, where a leading dash is parsed as a switch.
+- A member whose name starts with `@` is mishandled because the fix changes how `@` lines are written.
+- A folder named `-dir` is skipped along with every file under it.
+- A mixed selection publishes only the normal members and the UI still reports success.
+- A member name that contains a line break is written unescaped and splits into two list entries.
+- The archive path itself (first positional argument) loses its `./` neutralizing and is parsed as a switch or list file.
+
+## Basic destination fields
+
+- The typed destination is copied into Power on every keystroke, and an incomplete path is passed to a later run.
+- Copying runs while a run is active and changes the destination mid-operation.
+- The Basic field is overwritten by Power's stale value on the next switch, so the sync fix only moves the problem.
+- Syncing the output path also overwrites Power's auto-filled name after the user cleared it.
+- A programmatic Basic value (autofill) now counts as user-typed and stops later autofill.
+
+## macOS Services pasteboard
+
+- Restricting to file URLs rejects valid selections whose items are `NSURL` file references instead of plain file URLs.
+- A mixed pasteboard with one non-file URL rejects the whole request instead of skipping the item.
+- The cap is applied after conversion, so a huge selection is still fully allocated.
+- The cap counts skipped items and rejects a valid small selection.
+
+## Finder Sync timestamp
+
+- A negative or non-finite clock value still traps.
+- Clamping to 0 produces a request that the consumer accepts as expired but never removes, so it stays in the request directory.
+- The request is dropped silently and the user sees no result.
+
+## Recovery journal confinement
+
+- A valid journal written by the app is refused because a volume name pattern is too strict (`.7z.001`, `.zip.001`, `.part1.rar` style names).
+- A destination that is a symlink or has different case on a case-insensitive volume fails the equality check and strands a real rollback.
+- A refused journal blocks every later operation with no visible explanation.
+- The check runs after some deletions have already happened.
+- Backup paths for the previous family are still restored to unconfined targets.
+
+## Updater download limit
+
+- A legitimate large installer is rejected because the cap is too low.
+- A server that omits `Content-Length` bypasses a check that only reads the header.
+- The cap is enforced after the buffer is already full.
+- Rejection leaves a partial file or a stale download resource in the webview.
+
+## Windows read-only clearing
+
+- Clearing through a handle misses read-only directories, so removal fails on a tree that previously worked.
+- Read-only files inside read-only directories are cleared in the wrong order.
+- A handle held without `FILE_SHARE_DELETE` blocks the removal that follows.
+- The Windows-only change cannot be run on this macOS host, so a compile error or behavior change ships unseen.
+
+## Windows read-only clearing: deliberately not changed
+
+- Replacing the path-based pre-pass with `open_directory_for_quarantine` plus `remove_directory_contents_relative` opens each directory with `DELETE` access. Windows can refuse that open on an entry that carries the read-only attribute (`STATUS_CANNOT_DELETE`), which is exactly the case the pre-pass exists for, so cleanup would start failing for every Windows user.
+- The change cannot be compiled or run on the macOS development host (the `ring` build needs MSVC headers), so a mistake would ship unseen.
+- The remaining race needs a same-user process inside the app's private conversion temp directory, and the current behavior is covered by the Windows run of `process/tests.rs`.
+- Revisit only together with a Windows CI run that exercises read-only directories and files.
+
+## Seeded settings file overwritten by a queued write
+
+Failure cases considered before fixing the intermittent `settings-flows` failure.
+
+- A workspace switch in test cleanup queues a debounced (140 ms) write of the app's in-memory settings. The next test seeds `settings.json`, the stale write lands on top, and the reload loads the app's own state instead of the seed.
+- The flush runs after the baseline file is written, so the stale write still lands after it.
+- The flush is exposed outside E2E builds and lets a page drop settings writes in production.
+- The flush bumps the persist generation, so a legitimate write queued afterwards is rejected as superseded.
+- A cleanup that throws before the flush leaves the stale write in place for the next test.
+- Cleanup runs with no WebDriver session (settings reset relaunch), so the flush call itself throws and skips the baseline seed.
+- Timing diagnostics inside the page change the schedule and hide the race; watch the file from the test process instead.

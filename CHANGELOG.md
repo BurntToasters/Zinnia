@@ -37,6 +37,16 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Fix:** Preset delete and settings reset ask for confirmation.
 - **Fix:** Finder Sync enable reports `pluginkit` errors.
 - **Fix:** Stdout reader panic no longer drops stderr.
+- **Security:** Adding files to an encrypted 7z or ZIP now requires the archive password and checks it first; before, an empty or wrong password stored the new files unencrypted or under a different key.
+- **Security:** Adding files to a ZIP with ZipCrypto members is refused in the app and the backend (convert to an AES-256 ZIP instead).
+- **Security:** The Windows updater uses `zip` 9 (fixes RUSTSEC-2026-0367, -0368, -0369, -0429).
+- **Release:** The release quality-gate proof now records a source digest, so source edited after `test:all` cannot be built from that proof.
+- **Fix:** Selective extract no longer silently skips archive members whose names start with `-` (`-notes.txt`, `-dir/`); the success message was shown even though those files were missing.
+- **Fix:** A destination typed in Basic is kept when you switch to Power and back.
+- **Security:** Crash recovery refuses an archive journal that names files other than the destination archive and its numbered volumes.
+- **Security:** Finder Services ignores non-file URLs and rejects an oversized selection before converting it.
+- **Fix:** Finder Sync no longer crashes if the system clock is set before 1970.
+- **Security:** The updater refuses a download larger than 1 GiB instead of buffering it.
 - **Accessibility:** Password toggle labels, extract countdown announcements, progress valuetext, folder twisty labels, 44px hit areas, Basic browse loading/error status.
 - **Codebase:** Large Rust, TypeScript, and CSS modules split without behavior change.
 - **Testing:** Expanded E2E (compress, extract, settings, UI surfaces, older journals) and `--only` filter for the E2E runner.
