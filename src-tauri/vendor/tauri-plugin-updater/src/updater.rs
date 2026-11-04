@@ -41,6 +41,32 @@ use crate::{
     Config,
 };
 
+/// Upper bound for one update download. The body is buffered in memory and
+/// only verified after it is complete, so an endless or oversized stream from
+/// a misbehaving host must be refused before it exhausts memory. Signed
+/// installers are far below this.
+pub(crate) const MAX_UPDATE_DOWNLOAD_BYTES: u64 = 1024 * 1024 * 1024;
+
+/// Refuse a download that declares, or has accumulated, more than
+/// [`MAX_UPDATE_DOWNLOAD_BYTES`]. `buffered` is what is already held,
+/// `incoming` is the next chunk, and `declared` is `Content-Length` when sent.
+/// Both are checked because the header is optional and not trustworthy.
+pub(crate) fn ensure_download_within_limit(
+    buffered: usize,
+    incoming: usize,
+    declared: Option<u64>,
+) -> Result<()> {
+    let too_large = declared.is_some_and(|length| length > MAX_UPDATE_DOWNLOAD_BYTES)
+        || (buffered as u64).saturating_add(incoming as u64) > MAX_UPDATE_DOWNLOAD_BYTES;
+    if too_large {
+        return Err(Error::Network(format!(
+            "Update download exceeds the {} MiB safety limit.",
+            MAX_UPDATE_DOWNLOAD_BYTES / (1024 * 1024)
+        )));
+    }
+    Ok(())
+}
+
 const UPDATER_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"),);
 
 #[derive(Copy, Clone)]
@@ -689,11 +715,14 @@ impl Update {
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.parse().ok());
 
+        ensure_download_within_limit(0, 0, content_length)?;
+
         let mut buffer = Vec::new();
 
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
+            ensure_download_within_limit(buffer.len(), chunk.len(), content_length)?;
             on_chunk(chunk.len(), content_length);
             buffer.extend(chunk);
         }
@@ -1755,6 +1784,36 @@ fn escape_msi_property_arg(arg: impl AsRef<OsStr>) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::{ensure_download_within_limit, MAX_UPDATE_DOWNLOAD_BYTES};
+
+    #[test]
+    fn download_limit_rejects_a_declared_oversize_body_before_reading() {
+        let error = ensure_download_within_limit(0, 0, Some(MAX_UPDATE_DOWNLOAD_BYTES + 1))
+            .expect_err("declared size over the limit");
+        assert!(error.to_string().contains("exceeds"), "{error}");
+    }
+
+    #[test]
+    fn download_limit_rejects_a_stream_that_outgrows_a_missing_or_false_length() {
+        for declared in [None, Some(10)] {
+            let error = ensure_download_within_limit(
+                (MAX_UPDATE_DOWNLOAD_BYTES - 5) as usize,
+                6,
+                declared,
+            )
+            .expect_err("accumulated size over the limit");
+            assert!(error.to_string().contains("exceeds"), "{error}");
+        }
+    }
+
+    #[test]
+    fn download_limit_accepts_sizes_up_to_and_including_the_limit() {
+        ensure_download_within_limit(0, 0, Some(MAX_UPDATE_DOWNLOAD_BYTES)).expect("exact limit");
+        ensure_download_within_limit((MAX_UPDATE_DOWNLOAD_BYTES - 5) as usize, 5, None)
+            .expect("exactly at the limit");
+        ensure_download_within_limit(1024, 1024, Some(2048)).expect("ordinary download");
+        ensure_download_within_limit(0, 4096, None).expect("unknown length, small body");
+    }
 
     #[test]
     #[cfg(windows)]
