@@ -204,6 +204,51 @@ pub(crate) fn retract_scrub_archive_journal_or_fail(app: &tauri::AppHandle) -> R
     retract_scrub_archive_journal_at(&cleanup_journal_path(app)?)
 }
 
+/// True when `candidate` is the destination archive itself or one of its
+/// numbered volumes (`name.001`, `name.002`, ...) in the same directory.
+/// Archive families are always built that way (`commit::archive_family`), so
+/// anything else in a journal was not written by this application.
+fn is_destination_family_member(
+    destination: &std::path::Path,
+    candidate: &std::path::Path,
+) -> bool {
+    if candidate == destination {
+        return true;
+    }
+    if candidate.parent() != destination.parent() {
+        return false;
+    }
+    let (Some(destination_name), Some(candidate_name)) = (
+        destination.file_name().and_then(|name| name.to_str()),
+        candidate.file_name().and_then(|name| name.to_str()),
+    ) else {
+        return false;
+    };
+    candidate_name
+        .strip_prefix(destination_name)
+        .and_then(|suffix| suffix.strip_prefix('.'))
+        .is_some_and(|digits| digits.len() >= 3 && digits.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
+/// Recovery deletes `next_archive_family` entries and restores backups to
+/// `previous_archive_family` entries. Both must belong to the journal's own
+/// destination, so an edited journal cannot point recovery at another file.
+fn assert_archive_family_belongs_to_destination(journal: &CleanupJournal) -> Result<(), String> {
+    for path in journal
+        .previous_archive_family
+        .iter()
+        .chain(journal.next_archive_family.iter())
+    {
+        if !is_destination_family_member(&journal.destination, path) {
+            return Err(format!(
+                "Refusing archive rollback because {} is not the journal's destination archive or one of its volumes; the journal was preserved.",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn rollback_archive_journal(journal: &CleanupJournal) -> Result<(), String> {
     let stage_identity = journal.extract_stage_identity.as_ref().ok_or_else(|| {
         "Refusing archive rollback because the journal has no stage identity.".to_string()
@@ -211,6 +256,7 @@ pub(crate) fn rollback_archive_journal(journal: &CleanupJournal) -> Result<(), S
     if journal.previous_archive_identities.len() != journal.previous_archive_family.len() {
         return Err("Archive recovery journal has invalid backup identity records.".to_string());
     }
+    assert_archive_family_belongs_to_destination(journal)?;
     let validated = super::journal::validate_transaction_artifacts(
         &journal.stage,
         Some(stage_identity),

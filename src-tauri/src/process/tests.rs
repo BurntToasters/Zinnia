@@ -5061,6 +5061,99 @@ fn archive_journal_not_committed_while_staged_outputs_remain() {
 }
 
 #[test]
+fn archive_journal_rollback_refuses_family_paths_outside_the_destination() {
+    let root = temp_root("zinnia-journal-family-confinement");
+    let stage = root.join(".zinnia-archive-abc");
+    let destination = root.join("out.7z");
+    std::fs::create_dir_all(&stage).expect("stage");
+    let victim = root.join("important.docx");
+    std::fs::write(&victim, b"user document").expect("victim file");
+    let sibling_volume_of_other = root.join("other.7z.001");
+    std::fs::write(&sibling_volume_of_other, b"other archive").expect("other volume");
+    let nested_victim_dir = root.join("nested");
+    std::fs::create_dir_all(&nested_victim_dir).expect("nested dir");
+    let nested_victim = nested_victim_dir.join("out.7z");
+    std::fs::write(&nested_victim, b"same name, other folder").expect("nested victim");
+
+    let journal_for = |next: std::path::PathBuf| CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
+        stage: stage.clone(),
+        destination: destination.clone(),
+        archive: true,
+        extract_stage_placement: None,
+        move_plan_sidecar: false,
+        move_plan_identity: None,
+        move_identity_log_identity: None,
+        previous_archive_family: Vec::new(),
+        previous_archive_identities: Vec::new(),
+        next_archive_identities: vec![Some(
+            super::journal::regular_file_identity_with_fingerprint(&next).unwrap(),
+        )],
+        next_archive_family: vec![next],
+        extract_stage_identity: Some(super::journal::path_identity(&stage).unwrap()),
+        extract_phase: None,
+        archive_phase: Some(ArchiveJournalPhase::InProgress),
+    };
+
+    for outside in [&victim, &sibling_volume_of_other, &nested_victim] {
+        let error = rollback_archive_journal(&journal_for(outside.clone()))
+            .expect_err("a family path that is not the destination must be refused");
+        assert!(error.contains("destination"), "unexpected error: {error}");
+        assert!(
+            outside.is_file(),
+            "recovery deleted {} from a journal that does not own it",
+            outside.display()
+        );
+    }
+
+    std::fs::write(&destination, b"current archive").expect("destination archive");
+    let mut restore_elsewhere = journal_for(destination.clone());
+    restore_elsewhere.next_archive_family.clear();
+    restore_elsewhere.next_archive_identities.clear();
+    restore_elsewhere.previous_archive_family = vec![victim.clone()];
+    restore_elsewhere.previous_archive_identities = vec![None];
+    rollback_archive_journal(&restore_elsewhere)
+        .expect_err("a previous-family path that is not the destination must be refused");
+    assert!(victim.is_file());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn archive_journal_rollback_accepts_destination_and_numbered_volumes() {
+    let root = temp_root("zinnia-journal-family-accepts");
+    let stage = root.join(".zinnia-archive-abc");
+    let destination = root.join("out.7z");
+    std::fs::create_dir_all(&stage).expect("stage");
+    let volume_one = root.join("out.7z.001");
+    let volume_two = root.join("out.7z.002");
+    std::fs::write(&volume_one, b"v1").expect("volume 1");
+    std::fs::write(&volume_two, b"v2").expect("volume 2");
+    let journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
+        stage: stage.clone(),
+        destination: destination.clone(),
+        archive: true,
+        extract_stage_placement: None,
+        move_plan_sidecar: false,
+        move_plan_identity: None,
+        move_identity_log_identity: None,
+        previous_archive_family: Vec::new(),
+        previous_archive_identities: Vec::new(),
+        next_archive_family: vec![volume_one.clone(), volume_two.clone()],
+        next_archive_identities: vec![
+            Some(super::journal::regular_file_identity_with_fingerprint(&volume_one).unwrap()),
+            Some(super::journal::regular_file_identity_with_fingerprint(&volume_two).unwrap()),
+        ],
+        extract_stage_identity: Some(super::journal::path_identity(&stage).unwrap()),
+        extract_phase: None,
+        archive_phase: Some(ArchiveJournalPhase::InProgress),
+    };
+    rollback_archive_journal(&journal).expect("volumes of the destination roll back");
+    assert!(!volume_one.exists() && !volume_two.exists());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn scrub_retract_skips_missing_journal() {
     let root = temp_root("zinnia-scrub-missing-journal");
     let path = root.join("active-transaction.json");
