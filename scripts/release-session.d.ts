@@ -7,6 +7,8 @@ export interface ReleaseIdentity {
   rustc: string;
   packageLockSha256: string;
   cargoLockSha256: string;
+  /** Digest of tracked and untracked, non-ignored files the gate tested. */
+  sourceSha256: string;
 }
 
 export interface ReleaseSession extends ReleaseIdentity {
@@ -25,6 +27,7 @@ export const QUALITY_GATE_RELATIVE_PATH: string;
 export const RELEASE_SESSION_RELATIVE_PATH: string;
 
 export function currentReleaseIdentity(root?: string): ReleaseIdentity;
+export function releaseSourceSha256(root?: string): string;
 export function porcelainPaths(statusText: string): string[];
 export function isIgnorableReleaseDirtyPath(filePath: string): boolean;
 export function createReleaseSession(root?: string): ReleaseSession;

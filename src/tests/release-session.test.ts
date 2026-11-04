@@ -13,6 +13,7 @@ import {
   recordSuccessfulQualityGate,
   validateQualityGate,
   validateReleaseSession,
+  verifyQualityGate,
   verifyReleaseSession,
 } from "../../scripts/release-session.js";
 
@@ -25,6 +26,7 @@ const identity = {
   rustc: "rustc 1.90.0",
   packageLockSha256: "b".repeat(64),
   cargoLockSha256: "c".repeat(64),
+  sourceSha256: "9".repeat(64),
 };
 
 describe("release build session", () => {
@@ -84,6 +86,7 @@ describe("release build session", () => {
     ["rustc", "rustc 1.89.0"],
     ["packageLockSha256", "e".repeat(64)],
     ["cargoLockSha256", "f".repeat(64)],
+    ["sourceSha256", "8".repeat(64)],
   ])("rejects a mismatched %s", (key, value) => {
     const session = {
       ...identity,
@@ -280,11 +283,50 @@ describe("release build session", () => {
       expect(() => verifyReleaseSession(root)).toThrow(/packageLockSha256/);
 
       fs.writeFileSync(path.join(root, "package-lock.json"), "lock\n");
+      expect(verifyReleaseSession(root).commit).toBe(session.commit);
+
+      // Source edited after the gate ran: the proof must not cover it.
       fs.writeFileSync(
         path.join(root, ".gitignore"),
         "/coverage/*\n# edited\n",
       );
+      expect(() => verifyReleaseSession(root)).toThrow(/sourceSha256/);
+      expect(() => verifyQualityGate(root)).toThrow(/sourceSha256/);
+      fs.writeFileSync(path.join(root, ".gitignore"), "/coverage/*\n");
       expect(verifyReleaseSession(root).commit).toBe(session.commit);
+
+      // New untracked source is not covered by the gate either.
+      fs.writeFileSync(path.join(root, "untested.ts"), "export {};\n");
+      expect(() => verifyReleaseSession(root)).toThrow(/sourceSha256/);
+      fs.rmSync(path.join(root, "untested.ts"));
+
+      // A newly staged file is a source change too.
+      fs.writeFileSync(path.join(root, "extra.txt"), "x\n");
+      execFileSync("git", ["add", "extra.txt"], { cwd: root });
+      expect(() => verifyReleaseSession(root)).toThrow(/sourceSha256/);
+      fs.rmSync(path.join(root, "extra.txt"));
+      execFileSync("git", ["rm", "--cached", "--quiet", "extra.txt"], {
+        cwd: root,
+      });
+      expect(verifyReleaseSession(root).commit).toBe(session.commit);
+
+      // Ignored output and the exact generated schemas do not invalidate it.
+      fs.mkdirSync(path.join(root, "coverage", "build"), { recursive: true });
+      fs.writeFileSync(path.join(root, "coverage", "build", "x.bin"), "x\n");
+      fs.writeFileSync(path.join(schemaDir, "linux-schema.json"), "again\n");
+      expect(verifyReleaseSession(root).commit).toBe(session.commit);
+
+      // A dirty tree is allowed when the gate ran on exactly that tree.
+      fs.writeFileSync(path.join(root, "dirty.ts"), "export const a = 1;\n");
+      expect(recordSuccessfulQualityGate(root).recorded).toBe(true);
+      expect(verifyQualityGate(root).sourceSha256).toMatch(/^[0-9a-f]{64}$/);
+
+      // A proof recorded by an older script without a digest is refused.
+      const proofPath = path.join(root, "coverage", ".release-quality.json");
+      const legacy = JSON.parse(fs.readFileSync(proofPath, "utf8"));
+      delete legacy.sourceSha256;
+      fs.writeFileSync(proofPath, JSON.stringify(legacy));
+      expect(() => verifyQualityGate(root)).toThrow(/sourceSha256/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

@@ -1378,9 +1378,10 @@ async function scenarioNoReleaseSession(ctx) {
   );
 }
 
-// Failure inventory: tracked generated changes or untracked files must not block
-// proof recording, preflight, session verification, or draft creation. Identity
-// and failed-check enforcement remain covered by the other release scenarios.
+// Failure inventory: tracked generated changes or untracked files present when
+// the quality gate ran must not block proof recording, preflight, session
+// verification, or draft creation. A source edit made after the gate must be
+// refused before any GitHub request, because the gate never tested it.
 async function scenarioPreflightAllowsDirtyTree(ctx) {
   await createStandardFixture(ctx);
   const generated = path.join(ctx.root, "run.rosie.zinnia.metainfo.xml");
@@ -1401,12 +1402,27 @@ async function scenarioPreflightAllowsDirtyTree(ctx) {
   );
   ctx.prepareReleaseSession();
   fs.appendFileSync(generated, "after quality gate\n");
+  const stale = await ctx.runScript(
+    "release:session:verify (edited after gate)",
+    "scripts/release-session.js",
+  );
+  ctx.check(
+    "session verification refuses a source edit made after the quality gate",
+    stale.exitCode !== 0 && stale.stderrTail.includes("sourceSha256"),
+    stale.stderrTail,
+  );
+  ctx.check(
+    "the stale-source refusal happens before any GitHub request",
+    ctx.server.requests.length === 0,
+    `requests=${ctx.server.requests.length}`,
+  );
+  fs.writeFileSync(generated, "regenerated\n");
   const session = await ctx.runScript(
     "release:session:verify",
     "scripts/release-session.js",
   );
   ctx.check(
-    "session verification accepts workspace changes",
+    "session verification accepts the dirty workspace the gate tested",
     session.exitCode === 0,
     session.stderrTail,
   );
@@ -1427,7 +1443,7 @@ async function scenarioPreflightAllowsDirtyTree(ctx) {
   );
   ctx.check(
     "generated metadata is preserved",
-    fs.readFileSync(generated, "utf8") === "regenerated\nafter quality gate\n",
+    fs.readFileSync(generated, "utf8") === "regenerated\n",
   );
 }
 
