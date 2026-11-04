@@ -159,6 +159,70 @@ describe("extract flows", function () {
     fs.mkdirSync(ROOT, { recursive: true });
   });
 
+  it("selectively extracts members whose names start with a dash", async () => {
+    const tree = path.join(ROOT, "dash-src");
+    fs.rmSync(tree, { recursive: true, force: true });
+    fs.mkdirSync(path.join(tree, "-dir"), { recursive: true });
+    fs.writeFileSync(path.join(tree, "-dash.txt"), "dash\n");
+    fs.writeFileSync(path.join(tree, "normal.txt"), "normal\n");
+    fs.writeFileSync(path.join(tree, "-dir", "inner.txt"), "inner\n");
+    fs.writeFileSync(path.join(tree, "skipped.txt"), "skipped\n");
+    const archive = path.join(ROOT, "dash.7z");
+    fs.rmSync(archive, { force: true });
+    run7z(
+      sidecar,
+      [
+        "a",
+        "-t7z",
+        archive,
+        "--",
+        "./-dash.txt",
+        "normal.txt",
+        "./-dir",
+        "skipped.txt",
+      ],
+      { cwd: tree },
+    );
+    const dest = path.join(ROOT, "dash-out");
+    mkdirFresh(dest);
+
+    await openBrowseArchive(archive, "normal.txt");
+    await openSelectiveExtractPicker();
+    await toggleSelectiveMember("-dash.txt");
+    await toggleSelectiveMember("-dir");
+    await toggleSelectiveMember("normal.txt");
+    await confirmSelectiveExtract(dest);
+
+    await browser.waitUntil(
+      () => fs.existsSync(path.join(dest, "normal.txt")),
+      {
+        timeout: 120_000,
+        timeoutMsg: `selective extract did not publish normal.txt; ${await uiDiagnostics()}`,
+      },
+    );
+    await waitForArchiveIdle();
+
+    assert.equal(
+      fs.readFileSync(path.join(dest, "-dash.txt"), "utf8"),
+      "dash\n",
+      "member -dash.txt was silently skipped",
+    );
+    assert.equal(
+      fs.readFileSync(path.join(dest, "-dir", "inner.txt"), "utf8"),
+      "inner\n",
+      "folder -dir was silently skipped",
+    );
+    assert.equal(fs.existsSync(path.join(dest, "skipped.txt")), false);
+
+    writeEvidence(EVIDENCE_DIR, "selective-extract-dash-members", {
+      scenario: "selective-extract-dash-members",
+      archive,
+      destination: dest,
+      selected: ["-dash.txt", "-dir/", "normal.txt"],
+      tree: treeManifest(dest),
+    });
+  });
+
   it("selectively extracts only checked files and folders in Power mode", async () => {
     const archive = buildSelectiveFixtureArchive();
     const dest = path.join(ROOT, "selective-out");

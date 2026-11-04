@@ -98,6 +98,7 @@ pub(super) fn prepare_managed_listfile(
         .0
         .to_str()
         .ok_or_else(|| "Temporary 7-Zip list path is not valid UTF-8.".to_string())?;
+    let neutralize_leading_dash = matches!(args.first().map(String::as_str), Some("a" | "u"));
     let selected = rewrite_args_for_managed_listfile(args, format!("@{listfile_str}"))?;
     if selected.iter().any(|path| path.contains(['\r', '\n'])) {
         return Err(
@@ -116,10 +117,13 @@ pub(super) fn prepare_managed_listfile(
         .open(&listfile.0)
         .map_err(|error| format!("Could not create a private 7-Zip list file: {error}"))?;
     for path in &selected {
-        // A leading dash still has switch shape. A leading `@` inside a
-        // listfile is a literal member name (only command-line `@file` opens a
-        // second listfile), so preserve it.
-        let line = if path.starts_with('-') {
+        // Compress inputs are filesystem paths: a leading dash still has
+        // switch shape there, so `./` keeps it a path. Extract selections are
+        // archive member names matched literally, and `./-name` would never
+        // match the member `-name`, so they are written as-is. A leading `@`
+        // inside a listfile is a literal name (only command-line `@file`
+        // opens a second listfile), so preserve it in both cases.
+        let line = if neutralize_leading_dash && path.starts_with('-') {
             format!("./{path}")
         } else {
             path.clone()
