@@ -59,6 +59,19 @@ export async function queueConfirmResult(result) {
   }, result);
 }
 
+/**
+ * Drop the app's debounced settings write and wait for any write in flight.
+ * Call it before writing settings.json directly: UI activity from an earlier
+ * test (a workspace switch, a resize) queues a write of the app's in-memory
+ * state about 140 ms later, and it lands on top of a seed written meanwhile.
+ */
+export async function flushPendingSettingsWrites() {
+  await waitForE2eHook();
+  await browser.execute(() =>
+    window.__ZINNIA_E2E__.flushPendingSettingsPersistence(),
+  );
+}
+
 /** Dismiss visible toast notifications so later cases see only fresh messages. */
 export async function dismissToasts() {
   await browser.execute(() => {

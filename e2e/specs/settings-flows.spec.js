@@ -16,6 +16,7 @@ import {
   dismissToasts,
   dispatchDocumentKey,
   doubleClickSettingsSave,
+  flushPendingSettingsWrites,
   invokeLoadSettingsRaw,
   isSettingsOverlayOpen,
   isSetupWizardVisible,
@@ -29,6 +30,7 @@ import {
   setSelectValue,
   settingsModalFocusables,
   switchToBasicWorkspace,
+  switchToPowerWorkspace,
   waitForArchiveIdle,
   waitForE2eHook,
   waitForMainWindow,
@@ -77,6 +79,25 @@ function assertNoLegacyKeys(rawJson, label) {
 }
 
 async function restoreBaselineSettings() {
+  if (browser.sessionId) {
+    try {
+      await dismissToasts();
+      if (await isSettingsOverlayOpen()) {
+        await closeSettingsModalViaUi().catch(() => undefined);
+      }
+      if (await isShortcutsOverlayOpen()) {
+        await dispatchDocumentKey("Escape");
+      }
+      await switchToBasicWorkspace();
+      await waitForArchiveIdle();
+      // The workspace switch queued a debounced write of the app's in-memory
+      // state. Settle it before writing the baseline file, or it lands on top
+      // of whatever the next test seeds.
+      await flushPendingSettingsWrites();
+    } catch {
+      // Settings reset relaunch can end the WebDriver session before UI cleanup.
+    }
+  }
   seedE2eSettings(path.dirname(settingsJsonPath()));
   updateE2eSettings(e2eProfileDir(), {
     setupComplete: true,
@@ -84,20 +105,6 @@ async function restoreBaselineSettings() {
     theme: "system",
     customPresets: [],
   });
-  if (!browser.sessionId) return;
-  try {
-    await dismissToasts();
-    if (await isSettingsOverlayOpen()) {
-      await closeSettingsModalViaUi().catch(() => undefined);
-    }
-    if (await isShortcutsOverlayOpen()) {
-      await dispatchDocumentKey("Escape");
-    }
-    await switchToBasicWorkspace();
-    await waitForArchiveIdle();
-  } catch {
-    // Settings reset relaunch can end the WebDriver session before UI cleanup.
-  }
 }
 
 describe("Settings flows", function () {
@@ -218,7 +225,38 @@ describe("Settings flows", function () {
     await closeSettingsModalViaUi();
   });
 
+  it("keeps a seeded settings file when a workspace switch had queued a write", async () => {
+    // Switching workspace queues a debounced (140 ms) write of the app's
+    // in-memory settings. Without a flush it lands on top of a seed written
+    // in the meantime; this is what made the legacy-key test intermittent.
+    await switchToPowerWorkspace();
+    await flushPendingSettingsWrites();
+    writeSettingsFileObject({
+      theme: "light",
+      setupComplete: true,
+      workspaceMode: "basic",
+      customPresets: [
+        {
+          name: "Seed marker",
+          format: "7z",
+          level: "5",
+          method: "lzma2",
+          dict: "64m",
+          wordSize: "64",
+          solid: "4g",
+        },
+      ],
+    });
+    await browser.pause(600);
+    assert.match(
+      readSettingsFileRaw() ?? "",
+      /Seed marker/,
+      "a queued working-context write overwrote the seeded settings file",
+    );
+  });
+
   it("strips legacy settings keys when saved from Settings", async () => {
+    await flushPendingSettingsWrites();
     writeSettingsFileObject({
       theme: "light",
       setupComplete: true,
