@@ -1174,7 +1174,7 @@ test("archive benchmark timeout wins when a callback finishes after the deadline
 
 test("workflow Rust version matches the pinned toolchain", () => {
   const workflow = read(".github/workflows/ci.yml");
-  assert.match(workflow, /RUST_VERSION:\s*["']1\.98\.1["']/);
+  assert.match(workflow, /RUST_VERSION:\s*["']1\.99\.1["']/);
   assert.match(workflow, /toolchain:\s*\$\{\{ env\.RUST_VERSION \}\}/);
   const rustCheckStart = workflow.indexOf("  rust-check:");
   const updaterStart = workflow.indexOf(

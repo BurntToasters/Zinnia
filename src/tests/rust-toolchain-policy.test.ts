@@ -12,7 +12,7 @@ describe("Rust toolchain policy", () => {
   // follows a newer compiler; or Flatpak releases compile with a different
   // Rust toolchain than native releases.
   it("pins every release/build path to the same exact Rust toolchain", () => {
-    const rustToolchain = "1.98.1";
+    const rustToolchain = "1.99.1";
     expect(readRepositoryFile("rust-toolchain.toml")).toMatch(
       new RegExp(`^channel = "${rustToolchain}"$`, "m"),
     );

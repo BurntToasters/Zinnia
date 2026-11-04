@@ -328,7 +328,7 @@ async function runBaselineCheckout({
       ZINNIA_BENCH_REQUIRE_CANDIDATE: "0",
       ZINNIA_BENCH_REQUIRE_ZINNIA: "0",
       ZINNIA_BENCH_RUN_TIMEOUT_MS: String(baselineRunTimeoutMs),
-      RUSTUP_TOOLCHAIN: process.env.RUST_VERSION || "1.98.1",
+      RUSTUP_TOOLCHAIN: process.env.RUST_VERSION || "1.99.1",
     };
     const childArgs = [
       "scripts/run-archive-io-benchmark.mjs",

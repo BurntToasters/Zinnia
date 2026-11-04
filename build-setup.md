@@ -40,14 +40,14 @@
 
 ## Rust toolchain policy
 
-Zinnia builds with Rust `1.98.1`, pinned in `rust-toolchain.toml` and used by
+Zinnia builds with Rust `1.99.1`, pinned in `rust-toolchain.toml` and used by
 CI, Flatpak, and release builds. Install that exact toolchain before building:
 
 ```sh
 npm run rust:update
 ```
 
-The Rust target setup commands also add targets to `1.98.1`.
+The Rust target setup commands also add targets to `1.99.1`.
 
 ## License notice audit
 
