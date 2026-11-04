@@ -37,6 +37,14 @@ function resetExtractCompletion(): void {
 }
 
 export function wireBasicExtractEvents(): void {
+  const extractPathInput = document.getElementById(
+    "basic-extract-path",
+  ) as HTMLInputElement | null;
+  // Mirror a typed destination to Power; see the matching output-path
+  // listener in wire.ts. Only real `input` events fire, so autofill is intact.
+  extractPathInput?.addEventListener("input", () => {
+    $<HTMLInputElement>("extract-path").value = extractPathInput.value;
+  });
   document
     .getElementById("basic-choose-extract")
     ?.addEventListener("click", async () => {

@@ -3,6 +3,7 @@ import path from "node:path";
 import assert from "node:assert/strict";
 import { browser, $ } from "@wdio/globals";
 import {
+  applyIncomingPaths,
   assertOsIntegrationTabMatchesBackend,
   clickBasicRecentArchive,
   clickBasicRunExtract,
@@ -10,6 +11,7 @@ import {
   closeSettingsModalViaUi,
   dismissToasts,
   domText,
+  domValue,
   enableLocalLoggingViaSettings,
   exportDiagnosticsLogsTo,
   basicBrowseStatusState,
@@ -18,7 +20,9 @@ import {
   openOsIntegrationSettingsTab,
   powerExtractPasswordToggleState,
   prepareBasicExtract,
+  setInputValue,
   startPowerExtract,
+  switchToBasicWorkspace,
   switchToPowerWorkspace,
   waitForArchiveIdle,
   waitForBasicBrowseStatusIdle,
@@ -179,6 +183,61 @@ describe("ui surfaces", function () {
       "re-opening from recents did not load the extract archive",
     );
     assert.equal(await domText("#basic-extract-archive-name"), "hello.7z");
+  });
+
+  it("keeps a destination typed in Basic after a round trip through Power", async () => {
+    const hello = process.env.ZINNIA_E2E_HELLO_TXT;
+    const typedOutput = path.join(ROOT, "typed-output.7z");
+    const typedExtract = path.join(ROOT, "typed-extract");
+    await dismissToasts();
+    await waitForArchiveIdle();
+
+    await applyIncomingPaths([hello], "compress");
+    await setInputValue("#basic-output-path", typedOutput);
+    await switchToPowerWorkspace();
+    assert.equal(
+      await domValue("#output-path"),
+      typedOutput,
+      "Power did not receive the compress destination typed in Basic",
+    );
+    await switchToBasicWorkspace();
+    assert.equal(
+      await domValue("#basic-output-path"),
+      typedOutput,
+      "Basic lost its typed compress destination after visiting Power",
+    );
+
+    await applyIncomingPaths([HELLO], "extract");
+    await setInputValue("#basic-extract-path", typedExtract);
+    await switchToPowerWorkspace();
+    assert.equal(
+      await domValue("#extract-path"),
+      typedExtract,
+      "Power did not receive the extract destination typed in Basic",
+    );
+    await switchToBasicWorkspace();
+    assert.equal(
+      await domValue("#basic-extract-path"),
+      typedExtract,
+      "Basic lost its typed extract destination after visiting Power",
+    );
+
+    writeEvidence(EVIDENCE_DIR, "basic-destination-round-trip", {
+      scenario: "basic-destination-round-trip",
+      compressDestination: typedOutput,
+      extractDestination: typedExtract,
+    });
+    await browser.execute(() => {
+      for (const id of [
+        "output-path",
+        "basic-output-path",
+        "extract-path",
+        "basic-extract-path",
+      ]) {
+        const input = document.getElementById(id);
+        if (input) input.value = "";
+      }
+    });
   });
 
   it("toggles Power extract password visibility via aria-label and input type", async () => {

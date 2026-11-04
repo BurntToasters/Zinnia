@@ -459,6 +459,19 @@ export function wireBasicCompressEvents(): void {
     });
   }
 
+  const outputPathInput = document.getElementById(
+    "basic-output-path",
+  ) as HTMLInputElement | null;
+  if (outputPathInput) {
+    // Basic is not re-read when the user switches to Power, and switching back
+    // to Basic overwrites these fields from Power. Mirror what the user types
+    // so the destination survives the round trip. Autofill and programmatic
+    // writes do not fire `input`, so they keep their existing handling.
+    outputPathInput.addEventListener("input", () => {
+      $<HTMLInputElement>("output-path").value = outputPathInput.value;
+    });
+  }
+
   const archiveNameInput = document.getElementById(
     "basic-archive-name",
   ) as HTMLInputElement | null;
