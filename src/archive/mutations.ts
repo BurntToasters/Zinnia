@@ -157,7 +157,10 @@ export async function addFilesToArchive(): Promise<void> {
     if (archivePassword) args.push(`-p${archivePassword}`);
     const zipDest = archive.toLowerCase().endsWith(".zip");
     const cached = state.browseArchiveInfoByPath.get(archive);
-    if (zipDest && cached?.method?.toLowerCase().includes("zipcrypto")) {
+    if (
+      zipDest &&
+      (cached?.zipCrypto || cached?.method?.toLowerCase().includes("zipcrypto"))
+    ) {
       throw new Error(
         "This ZIP still has ZipCrypto members. Convert it to a new AES-256 ZIP instead of adding files in place.",
       );

@@ -78,8 +78,10 @@ export function parseArchiveListing(stdout: string): ArchiveInfo {
         current.isFolder = value.trimStart().startsWith("D");
       else if (key === "Encrypted" && isEncryptedFlag(value))
         info.encrypted = true;
-      else if (key === "Method" && methodLooksEncrypted(value))
-        info.encrypted = true;
+      else if (key === "Method") {
+        if (methodLooksEncrypted(value)) info.encrypted = true;
+        if (value.toLowerCase().includes("zipcrypto")) info.zipCrypto = true;
+      }
     }
   }
 

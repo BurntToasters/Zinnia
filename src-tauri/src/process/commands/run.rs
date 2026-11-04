@@ -16,9 +16,10 @@ use super::super::recovery::{
     wait_for_startup_recovery,
 };
 use super::super::staging::{
-    assert_extract_archive_members_safe_with_summary, create_publish_stage_dir_inside,
-    operation_output_path, prepare_cleanup_plan_with_cancel, rewrite_archive_output,
-    rewrite_archive_update_output, rewrite_extract_archive, rewrite_extract_output,
+    assert_extract_archive_members_safe_with_summary, assert_update_encryption_policy,
+    create_publish_stage_dir_inside, operation_output_path, prepare_cleanup_plan_with_cancel,
+    rewrite_archive_output, rewrite_archive_update_output, rewrite_extract_archive,
+    rewrite_extract_output,
 };
 use super::super::{
     ensure_idle_mut, lock_process, release_preparation_failure_best_effort,
@@ -1043,6 +1044,24 @@ pub(super) async fn run_7z_inner(
     } else {
         None
     };
+    // `7z u` copies existing members without decrypting them, so it would
+    // happily add plaintext (no password) or differently keyed (wrong
+    // password) members to an encrypted archive. Check the archive 7-Zip
+    // reads before it starts.
+    if args.first().map(String::as_str) == Some("u") {
+        if let Some((_, destination)) = cleanup_plan.staged_archive.clone() {
+            if let Err(error) =
+                assert_update_encryption_policy(&app, &state, &args, &destination).await
+            {
+                return Err(finalize_preparation_error(
+                    &state,
+                    &cleanup_plan,
+                    Some(&mut journal_guard),
+                    error,
+                ));
+            }
+        }
+    }
     if let Some(diagnostics) = io_diagnostics.as_mut() {
         diagnostics.phase_times.member_preflight = elapsed_ms(member_preflight_started);
         if let Some(manifest) = extract_manifest.as_ref() {

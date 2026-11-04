@@ -6,12 +6,17 @@ import { browser, $ } from "@wdio/globals";
 import { requireHostSidecar, run7z } from "../../scripts/archive-fixtures.js";
 import {
   applyIncomingPaths,
+  cancelInputModal,
+  confirmInputModal,
+  dismissToasts,
   queueDialogResult,
   startPowerExtract,
   switchToPowerWorkspace,
   waitForArchiveIdle,
   waitForE2eHook,
+  waitForInputModalLabel,
   waitForMainWindow,
+  waitForToastContaining,
 } from "../helpers/ui-driver.js";
 import {
   findLeftovers,
@@ -106,6 +111,66 @@ function memberMethods(listing) {
     if (methodMatch && current) methods.set(current, methodMatch[1]);
   }
   return methods;
+}
+
+/** Per-member `Encrypted` and `Method` from a `-slt` listing. */
+function memberRecords(listing) {
+  const records = new Map();
+  let current = null;
+  for (const line of listing.split(/\r?\n/)) {
+    const pathMatch = line.match(/^Path = (.+)$/);
+    if (pathMatch) {
+      current = { encrypted: null, method: "" };
+      records.set(pathMatch[1], current);
+      continue;
+    }
+    if (!current) continue;
+    const encrypted = line.match(/^Encrypted = (.*)$/);
+    if (encrypted) current.encrypted = encrypted[1].trim();
+    const method = line.match(/^Method = (.*)$/);
+    if (method) current.method = method[1].trim();
+  }
+  return records;
+}
+
+/** True when 7-Zip can extract `member` from `archive` with `password`. */
+function memberReadableWith(archive, member, password) {
+  const result = spawnSync(
+    requireHostSidecar(),
+    ["e", "-so", `-p${password}`, "--", archive, member],
+    { encoding: "utf8" },
+  );
+  return result.status === 0;
+}
+
+/** Call `run_7z` over IPC; resolve to `{ result }` or `{ error }` instead of throwing. */
+async function invokeRun7zUpdate(archive, args) {
+  const token = await browser.execute(
+    (target) =>
+      window.__TAURI_INTERNALS__.invoke("archive_output_selection_token", {
+        path: target,
+      }),
+    archive,
+  );
+  assert.ok(token && token !== "absent", "no output token for the archive");
+  // A rejected invoke surfaces as a WebDriver error on this side, not in the page.
+  try {
+    const result = await browser.execute(
+      (requestJson) =>
+        window.__TAURI_INTERNALS__.invoke("run_7z", { requestJson }),
+      JSON.stringify({ args, expectedArchiveIdentity: token }),
+    );
+    return { result };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+async function clickBrowseAddFiles(files) {
+  await queueDialogResult(files);
+  await browser.execute(() => {
+    document.getElementById("browse-add-files")?.click();
+  });
 }
 
 async function openInBrowse(archive, member) {
@@ -328,6 +393,266 @@ describe("beta.5 release safeguards", () => {
       archive: path.basename(archive),
       addedMemberMethod: method,
       existingMemberMethod: methods.get("legacy-hello.txt") ?? null,
+    });
+  });
+
+  it("asks for the password before adding files to an encrypted 7z, and encrypts the added file", async function () {
+    this.timeout(300_000);
+    const work = path.join(ROOT, "enc-7z");
+    fs.mkdirSync(work, { recursive: true });
+    fs.writeFileSync(path.join(work, "old.txt"), PAYLOAD);
+    const archive = path.join(ROOT, "encrypted.7z");
+    const password = "Zinnia-E2E-7z-Secret";
+    run7z(
+      requireHostSidecar(),
+      ["a", "-t7z", `-p${password}`, archive, "--", "old.txt"],
+      { cwd: work },
+    );
+    const added = path.join(ROOT, "enc-7z-added.txt");
+    fs.writeFileSync(added, "must stay encrypted\n");
+    const before = sha256File(archive);
+
+    await openInBrowse(archive, "old.txt");
+    await dismissToasts();
+    await clickBrowseAddFiles([added]);
+    const promptLabel = await waitForInputModalLabel(
+      "encrypted",
+      "adding to an encrypted 7z without a password did not ask for it",
+    );
+    await cancelInputModal();
+    await waitForArchiveIdle();
+    assert.equal(
+      sha256File(archive),
+      before,
+      "a cancelled password prompt still changed the archive",
+    );
+
+    await clickBrowseAddFiles([added]);
+    await waitForInputModalLabel(
+      "encrypted",
+      "second add attempt did not ask for the password",
+    );
+    await confirmInputModal(password);
+    await browser.waitUntil(
+      () => listArchive(archive, password).includes("enc-7z-added.txt"),
+      {
+        timeout: 60_000,
+        interval: 250,
+        timeoutMsg: "add files with the password did not publish the file",
+      },
+    );
+    await waitForArchiveIdle();
+
+    const records = memberRecords(listArchive(archive, password));
+    const addedRecord = records.get("enc-7z-added.txt");
+    assert.equal(
+      addedRecord?.encrypted,
+      "+",
+      "added 7z member is not encrypted",
+    );
+    assert.equal(records.get("old.txt")?.encrypted, "+");
+    assert.equal(
+      memberReadableWith(archive, "enc-7z-added.txt", "wrong-password"),
+      false,
+      "added 7z member is readable with a wrong password",
+    );
+    assert.equal(
+      memberReadableWith(archive, "enc-7z-added.txt", password),
+      true,
+    );
+
+    writeEvidence(EVIDENCE_DIR, "encrypted-7z-add-requires-password", {
+      scenario: "encrypted-7z-add-requires-password",
+      promptLabel,
+      cancelledArchiveUnchanged: true,
+      addedMember: addedRecord,
+      existingMember: records.get("old.txt") ?? null,
+    });
+  });
+
+  it("refuses an IPC update of an encrypted ZIP without the right password and leaves it unchanged", async () => {
+    const work = path.join(ROOT, "enc-zip");
+    fs.mkdirSync(work, { recursive: true });
+    fs.writeFileSync(path.join(work, "old.txt"), PAYLOAD);
+    const archive = path.join(ROOT, "encrypted-aes.zip");
+    const password = "Zinnia-E2E-Zip-Secret";
+    run7z(
+      requireHostSidecar(),
+      ["a", "-tzip", `-p${password}`, "-mem=AES256", archive, "--", "old.txt"],
+      { cwd: work },
+    );
+    const added = path.join(ROOT, "enc-zip-added.txt");
+    fs.writeFileSync(added, "must stay encrypted\n");
+    const before = sha256File(archive);
+    const update = ["u", "-sse", "-snl", "-snh", "-spd"];
+
+    await waitForArchiveIdle();
+    const missing = await invokeRun7zUpdate(archive, [
+      ...update,
+      archive,
+      "--",
+      added,
+    ]);
+    assert.ok(
+      missing.error || missing.result?.code !== 0,
+      "update of an encrypted ZIP without a password succeeded",
+    );
+    const missingText = missing.error ?? missing.result?.stderr ?? "";
+    assert.match(missingText, /password/i);
+    assert.equal(sha256File(archive), before, "archive changed (no password)");
+
+    const wrong = await invokeRun7zUpdate(archive, [
+      ...update,
+      "-pnot-the-password",
+      archive,
+      "--",
+      added,
+    ]);
+    assert.ok(
+      wrong.error || wrong.result?.code !== 0,
+      "update of an encrypted ZIP with a wrong password succeeded",
+    );
+    const wrongText = wrong.error ?? wrong.result?.stderr ?? "";
+    assert.match(wrongText, /wrong password/i);
+    assert.doesNotMatch(wrongText, /not-the-password/);
+    assert.equal(
+      sha256File(archive),
+      before,
+      "archive changed (wrong password)",
+    );
+
+    const right = await invokeRun7zUpdate(archive, [
+      ...update,
+      `-p${password}`,
+      archive,
+      "--",
+      added,
+    ]);
+    assert.equal(right.error, undefined, `update failed: ${right.error}`);
+    assert.equal(right.result.code, 0, `update failed: ${right.result.stderr}`);
+    const records = memberRecords(listArchive(archive, password));
+    assert.equal(records.get("enc-zip-added.txt")?.encrypted, "+");
+    assert.match(records.get("enc-zip-added.txt")?.method ?? "", /AES-256/);
+    assert.equal(
+      memberReadableWith(archive, "enc-zip-added.txt", "wrong-password"),
+      false,
+    );
+
+    writeEvidence(EVIDENCE_DIR, "encrypted-zip-update-password-policy", {
+      scenario: "encrypted-zip-update-password-policy",
+      missingPasswordRefused: missingText.slice(0, 200),
+      wrongPasswordRefused: wrongText.slice(0, 200),
+      addedMember: records.get("enc-zip-added.txt") ?? null,
+    });
+  });
+
+  it("still adds files to a plaintext 7z without asking for a password", async () => {
+    const work = path.join(ROOT, "plain-7z");
+    fs.mkdirSync(work, { recursive: true });
+    fs.writeFileSync(path.join(work, "old.txt"), PAYLOAD);
+    const archive = path.join(ROOT, "plain.7z");
+    run7z(requireHostSidecar(), ["a", "-t7z", archive, "--", "old.txt"], {
+      cwd: work,
+    });
+    const added = path.join(ROOT, "plain-added.txt");
+    fs.writeFileSync(added, "plain\n");
+
+    await waitForArchiveIdle();
+    const outcome = await invokeRun7zUpdate(archive, [
+      "u",
+      "-sse",
+      "-snl",
+      "-snh",
+      "-spd",
+      archive,
+      "--",
+      added,
+    ]);
+    assert.equal(outcome.error, undefined, `update failed: ${outcome.error}`);
+    assert.equal(outcome.result.code, 0, outcome.result.stderr);
+    const records = memberRecords(listArchive(archive));
+    assert.equal(records.get("plain-added.txt")?.encrypted, "-");
+
+    writeEvidence(EVIDENCE_DIR, "plaintext-7z-update-unchanged", {
+      scenario: "plaintext-7z-update-unchanged",
+      addedMember: records.get("plain-added.txt") ?? null,
+    });
+  });
+
+  it("refuses to add files to a ZIP with ZipCrypto members, from the UI and over IPC", async () => {
+    const work = path.join(ROOT, "zipcrypto");
+    fs.mkdirSync(work, { recursive: true });
+    fs.writeFileSync(path.join(work, "old.txt"), PAYLOAD);
+    const archive = path.join(ROOT, "zipcrypto.zip");
+    const password = "Zinnia-E2E-ZipCrypto";
+    run7z(
+      requireHostSidecar(),
+      [
+        "a",
+        "-tzip",
+        `-p${password}`,
+        "-mem=ZipCrypto",
+        archive,
+        "--",
+        "old.txt",
+      ],
+      { cwd: work },
+    );
+    assert.match(
+      memberRecords(listArchive(archive, password)).get("old.txt")?.method ??
+        "",
+      /ZipCrypto/,
+      "fixture is not ZipCrypto; the test proves nothing",
+    );
+    const added = path.join(ROOT, "zipcrypto-added.txt");
+    fs.writeFileSync(added, "should not be added\n");
+    const before = sha256File(archive);
+
+    await openInBrowse(archive, "old.txt");
+    await dismissToasts();
+    await browser.execute((value) => {
+      const field = document.getElementById("browse-password");
+      field.value = value;
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    }, password);
+    await clickBrowseAddFiles([added]);
+    await waitForToastContaining(
+      "ZipCrypto",
+      "UI add to a ZipCrypto ZIP did not show the ZipCrypto refusal",
+    );
+    await waitForArchiveIdle();
+    assert.equal(
+      sha256File(archive),
+      before,
+      "UI add changed the ZipCrypto ZIP",
+    );
+
+    const ipc = await invokeRun7zUpdate(archive, [
+      "u",
+      "-sse",
+      "-snl",
+      "-snh",
+      "-spd",
+      `-p${password}`,
+      archive,
+      "--",
+      added,
+    ]);
+    assert.ok(
+      ipc.error || ipc.result?.code !== 0,
+      "IPC update of a ZipCrypto ZIP succeeded",
+    );
+    assert.match(ipc.error ?? ipc.result?.stderr ?? "", /ZipCrypto/);
+    assert.equal(
+      sha256File(archive),
+      before,
+      "IPC update changed the ZipCrypto ZIP",
+    );
+
+    writeEvidence(EVIDENCE_DIR, "zipcrypto-update-refused", {
+      scenario: "zipcrypto-update-refused",
+      uiRefused: true,
+      ipcRefused: (ipc.error ?? ipc.result?.stderr ?? "").slice(0, 200),
     });
   });
 

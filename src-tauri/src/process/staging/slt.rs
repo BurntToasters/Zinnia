@@ -299,33 +299,28 @@ pub(crate) fn assert_slt_declared_size_within_limit(
     parse_slt_archive_manifest(slt_output, archive_path, Some(max_bytes)).map(|_| ())
 }
 
-pub(crate) async fn assert_extract_archive_members_safe_with_summary(
+/// Output of a backend-owned preflight 7-Zip child (listing or test).
+pub(crate) struct PreflightOutput {
+    pub(crate) code: i32,
+    pub(crate) stdout: String,
+    pub(crate) stderr: String,
+}
+
+/// Run a short backend-owned 7-Zip child under the current operation slot.
+/// The child is registered before password transport so Cancel can stop it,
+/// and the slot's child is cleared again before returning.
+pub(crate) async fn run_registered_preflight_7z(
     app: &tauri::AppHandle,
     state: &tauri::State<'_, RunningProcess>,
-    args: &[String],
-    max_declared_bytes: Option<u64>,
-) -> Result<
-    (
-        std::path::PathBuf,
-        ArchiveFileIdentity,
-        ArchiveManifestSummary,
-    ),
-    String,
-> {
-    let list_args = extract_member_list_args(args)?;
-    let archive = list_args
-        .last()
-        .cloned()
-        .ok_or_else(|| "Extraction member list is missing an archive path.".to_string())?;
-    let archive_path = std::path::PathBuf::from(&archive);
-    let identity =
-        crate::process::archive_snapshot::archive_identity_from_snapshot_handle(&archive_path)
-            .or_else(|| archive_file_identity(&archive_path).ok())
-            .ok_or_else(|| "Could not read archive identity for member preflight.".to_string())?;
+    args: Vec<String>,
+    timeout: std::time::Duration,
+    label: &str,
+    #[cfg_attr(not(feature = "e2e"), allow(unused_variables))] pause_point: &str,
+) -> Result<PreflightOutput, String> {
     let (mut rx, child, pending_password) =
-        crate::process::commands::spawn_7z_noninteractive(app, list_args, state)?;
+        crate::process::commands::spawn_7z_noninteractive(app, args, state)?;
     #[cfg(feature = "e2e")]
-    crate::process::e2e_crash::pause_point("member-preflight-spawned").await;
+    crate::process::e2e_crash::pause_point(pause_point).await;
     {
         // Check cancelling and register the child under one lock so cancel_7z
         // cannot run between the two and miss the child.
@@ -362,9 +357,8 @@ pub(crate) async fn assert_extract_archive_members_safe_with_summary(
         }
     }
     const LIST_OUTPUT_LIMIT: usize = 32 * 1024 * 1024;
-    const LIST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
     let collected = match tokio::time::timeout(
-        LIST_TIMEOUT,
+        timeout,
         collect_command_output(&mut rx, LIST_OUTPUT_LIMIT, |_| {}),
     )
     .await
@@ -372,7 +366,10 @@ pub(crate) async fn assert_extract_archive_members_safe_with_summary(
         Ok(collected) => collected,
         Err(_) => {
             terminate_registered_child_async(app, &child).await?;
-            return Err("Archive member-safety preflight timed out after 120 seconds.".to_string());
+            return Err(format!(
+                "{label} timed out after {} seconds.",
+                timeout.as_secs()
+            ));
         }
     };
     if collected.stream_error.is_some() || collected.exit.is_none() {
@@ -391,25 +388,69 @@ pub(crate) async fn assert_extract_archive_members_safe_with_summary(
         .and_then(|payload| payload.code)
         .unwrap_or(-1);
     if collected.stdout_truncated || collected.stderr_truncated {
-        return Err(
-            "Archive member-safety listing exceeded its output limit; extraction was cancelled."
-                .to_string(),
-        );
+        return Err(format!(
+            "{label} exceeded its output limit; the operation was cancelled."
+        ));
     }
-    if !listing_preflight_exit_is_acceptable(code, &collected.stdout, &collected.stderr) {
-        let detail = sanitize_output(collected.stderr.trim());
-        let detail = if detail.is_empty() {
-            sanitize_output(collected.stdout.trim())
-        } else {
-            detail
-        };
+    Ok(PreflightOutput {
+        code,
+        stdout: collected.stdout,
+        stderr: collected.stderr,
+    })
+}
+
+/// Sanitized 7-Zip failure detail (stderr first, then stdout).
+pub(crate) fn preflight_failure_detail(output: &PreflightOutput) -> String {
+    let detail = sanitize_output(output.stderr.trim());
+    if detail.is_empty() {
+        sanitize_output(output.stdout.trim())
+    } else {
+        detail
+    }
+}
+
+pub(crate) async fn assert_extract_archive_members_safe_with_summary(
+    app: &tauri::AppHandle,
+    state: &tauri::State<'_, RunningProcess>,
+    args: &[String],
+    max_declared_bytes: Option<u64>,
+) -> Result<
+    (
+        std::path::PathBuf,
+        ArchiveFileIdentity,
+        ArchiveManifestSummary,
+    ),
+    String,
+> {
+    let list_args = extract_member_list_args(args)?;
+    let archive = list_args
+        .last()
+        .cloned()
+        .ok_or_else(|| "Extraction member list is missing an archive path.".to_string())?;
+    let archive_path = std::path::PathBuf::from(&archive);
+    let identity =
+        crate::process::archive_snapshot::archive_identity_from_snapshot_handle(&archive_path)
+            .or_else(|| archive_file_identity(&archive_path).ok())
+            .ok_or_else(|| "Could not read archive identity for member preflight.".to_string())?;
+    let output = run_registered_preflight_7z(
+        app,
+        state,
+        list_args,
+        std::time::Duration::from_secs(120),
+        "Archive member-safety preflight",
+        "member-preflight-spawned",
+    )
+    .await?;
+    let code = output.code;
+    if !listing_preflight_exit_is_acceptable(code, &output.stdout, &output.stderr) {
+        let detail = preflight_failure_detail(&output);
         return Err(if detail.is_empty() {
             format!("Could not list archive members for path safety (exit {code}).")
         } else {
             format!("Could not list archive members for path safety: {detail}")
         });
     }
-    let mut manifest = parse_slt_archive_manifest(&collected.stdout, &archive, max_declared_bytes)?;
+    let mut manifest = parse_slt_archive_manifest(&output.stdout, &archive, max_declared_bytes)?;
     let lower = archive.to_ascii_lowercase();
     if [".gz", ".bz2", ".xz", ".tgz", ".tbz2", ".txz"]
         .iter()
@@ -418,4 +459,185 @@ pub(crate) async fn assert_extract_archive_members_safe_with_summary(
         manifest.declared_size_untrusted = true;
     }
     Ok((archive_path, identity, manifest))
+}
+
+pub(crate) const UPDATE_PASSWORD_REQUIRED: &str =
+    "A password is required to add files to this encrypted archive. Files were not added.";
+pub(crate) const UPDATE_WRONG_PASSWORD: &str =
+    "Wrong password for this encrypted archive. Files were not added.";
+pub(crate) const ZIPCRYPTO_UPDATE_REFUSED: &str =
+    "This ZIP still has ZipCrypto members. Convert it to a new AES-256 ZIP instead of adding files in place.";
+
+/// Encryption facts about the members of an existing archive.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct UpdateEncryptionFacts {
+    pub(crate) has_encrypted_members: bool,
+    pub(crate) has_zipcrypto_members: bool,
+    /// Smallest encrypted regular file, used to verify a supplied password
+    /// without decrypting the whole archive.
+    pub(crate) smallest_encrypted_file: Option<String>,
+}
+
+/// Read per-member `Encrypted`, `Method`, `Folder`, and `Size` from
+/// `7z l -slt -ba` output. 7-Zip reports ZIP encryption methods only on
+/// member records, never on the archive record.
+pub(crate) fn parse_update_encryption_facts(slt_output: &str) -> UpdateEncryptionFacts {
+    #[derive(Default)]
+    struct Member<'a> {
+        path: Option<&'a str>,
+        encrypted: bool,
+        folder: bool,
+        size: Option<u64>,
+    }
+    let mut facts = UpdateEncryptionFacts::default();
+    let mut smallest: Option<(u64, String)> = None;
+    let mut flush = |member: &Member<'_>, facts: &mut UpdateEncryptionFacts| {
+        if !member.encrypted {
+            return;
+        }
+        facts.has_encrypted_members = true;
+        let (Some(path), false) = (member.path, member.folder) else {
+            return;
+        };
+        let size = member.size.unwrap_or(u64::MAX);
+        if smallest.as_ref().is_none_or(|(best, _)| size < *best) {
+            smallest = Some((size, path.to_string()));
+        }
+    };
+    let mut current = Member::default();
+    for line in slt_output.lines() {
+        let line = line.trim_end_matches('\r');
+        if let Some(path) = line.strip_prefix("Path = ") {
+            flush(&current, &mut facts);
+            current = Member {
+                path: Some(path),
+                ..Member::default()
+            };
+        } else if let Some(value) = line.strip_prefix("Encrypted = ") {
+            current.encrypted |= value.trim() == "+";
+        } else if let Some(value) = line.strip_prefix("Folder = ") {
+            current.folder = value.trim() == "+";
+        } else if let Some(value) = line.strip_prefix("Size = ") {
+            current.size = value.trim().parse().ok();
+        } else if let Some(value) = line.strip_prefix("Method = ") {
+            let lower = value.to_ascii_lowercase();
+            if lower.contains("zipcrypto") {
+                facts.has_zipcrypto_members = true;
+                current.encrypted = true;
+            }
+            if lower.contains("aes") {
+                current.encrypted = true;
+            }
+        }
+    }
+    flush(&current, &mut facts);
+    facts.smallest_encrypted_file = smallest.map(|(_, path)| path);
+    facts
+}
+
+fn password_and_type_switches(args: &[String]) -> (Option<String>, Vec<String>) {
+    let separator = args
+        .iter()
+        .position(|arg| arg == "--")
+        .unwrap_or(args.len());
+    let mut password = None;
+    let mut types = Vec::new();
+    for arg in &args[1..separator] {
+        let lower = arg.to_ascii_lowercase();
+        if lower.starts_with("-p") && arg.len() > 2 {
+            password = Some(arg.clone());
+        } else if lower.starts_with("-t") && lower != "-stl" && !lower.starts_with("-stx") {
+            types.push(arg.clone());
+        }
+    }
+    (password, types)
+}
+
+/// Refuse an update that would add unencrypted or differently encrypted files
+/// to an encrypted archive, or mix AES with ZipCrypto members.
+///
+/// `7z u` copies existing members without decrypting them, so it succeeds with
+/// no password (new files are stored in plaintext) and with a wrong password
+/// (new files use a different key). Lists the archive 7-Zip will read, then
+/// tests the smallest encrypted file with the supplied password.
+pub(crate) async fn assert_update_encryption_policy(
+    app: &tauri::AppHandle,
+    state: &tauri::State<'_, RunningProcess>,
+    args: &[String],
+    archive: &std::path::Path,
+) -> Result<(), String> {
+    let archive = archive
+        .to_str()
+        .ok_or_else(|| "Archive path is not valid UTF-8.".to_string())?
+        .to_string();
+    let (password, types) = password_and_type_switches(args);
+    let mut list_args = vec!["l".to_string(), "-slt".to_string(), "-ba".to_string()];
+    list_args.extend(password.iter().cloned());
+    list_args.extend(types.iter().cloned());
+    list_args.push("--".to_string());
+    list_args.push(archive.clone());
+    crate::process::commands::harden_7z_args(&mut list_args);
+    let listing = run_registered_preflight_7z(
+        app,
+        state,
+        list_args,
+        std::time::Duration::from_secs(120),
+        "Archive encryption preflight",
+        "update-encryption-preflight-spawned",
+    )
+    .await?;
+    if !listing_preflight_exit_is_acceptable(listing.code, &listing.stdout, &listing.stderr) {
+        let detail = preflight_failure_detail(&listing);
+        return Err(if detail.is_empty() {
+            format!(
+                "Could not inspect the archive before updating it (exit {}).",
+                listing.code
+            )
+        } else {
+            format!("Could not inspect the archive before updating it: {detail}")
+        });
+    }
+    let facts = parse_update_encryption_facts(&listing.stdout);
+    if facts.has_zipcrypto_members {
+        return Err(ZIPCRYPTO_UPDATE_REFUSED.to_string());
+    }
+    if !facts.has_encrypted_members {
+        return Ok(());
+    }
+    let Some(password) = password else {
+        return Err(UPDATE_PASSWORD_REQUIRED.to_string());
+    };
+    let Some(member) = facts.smallest_encrypted_file else {
+        return Ok(());
+    };
+    let mut test_args = vec!["t".to_string(), password];
+    test_args.extend(types);
+    test_args.push("--".to_string());
+    test_args.push(archive);
+    test_args.push(member);
+    crate::process::commands::harden_7z_args(&mut test_args);
+    let test = run_registered_preflight_7z(
+        app,
+        state,
+        test_args,
+        std::time::Duration::from_secs(120),
+        "Archive password check",
+        "update-password-check-spawned",
+    )
+    .await?;
+    if test.code == 0 {
+        return Ok(());
+    }
+    let detail = preflight_failure_detail(&test);
+    if detail.to_ascii_lowercase().contains("wrong password") {
+        return Err(UPDATE_WRONG_PASSWORD.to_string());
+    }
+    Err(if detail.is_empty() {
+        format!(
+            "Could not verify the archive password before updating (exit {}).",
+            test.code
+        )
+    } else {
+        format!("Could not verify the archive password before updating: {detail}")
+    })
 }
