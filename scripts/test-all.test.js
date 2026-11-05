@@ -1,14 +1,89 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import fs, { readFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 import { createInitialResults, main } from "./test-all.js";
+import {
+  QUALITY_GATE_RELATIVE_PATH,
+  currentReleaseIdentity,
+  recordSuccessfulQualityGate,
+  verifyQualityGate,
+} from "./release-session.js";
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
+const mockedIdentity = {
+  version: "0.7.0-beta.1",
+  commit: "a".repeat(40),
+  platform: "test",
+  arch: "test",
+  node: "test",
+  rustc: "test",
+  packageLockSha256: "b".repeat(64),
+  cargoLockSha256: "c".repeat(64),
+  sourceSha256: "d".repeat(64),
+};
+
+function createReleaseFixture({ schema = false } = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "zinnia-test-all-proof-"));
+  fs.mkdirSync(path.join(root, "src-tauri"), { recursive: true });
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, "package.json"),
+    JSON.stringify({ version: "1.2.3-beta.1" }),
+  );
+  fs.writeFileSync(path.join(root, "package-lock.json"), "package lock\n");
+  fs.writeFileSync(path.join(root, "src-tauri", "Cargo.lock"), "cargo lock\n");
+  fs.writeFileSync(
+    path.join(root, "src", "index.ts"),
+    "export const value = 1;\n",
+  );
+  fs.writeFileSync(path.join(root, ".gitignore"), "/coverage/*\n");
+  if (schema) {
+    const schemaDir = path.join(root, "src-tauri", "gen", "schemas");
+    fs.mkdirSync(schemaDir, { recursive: true });
+    fs.writeFileSync(path.join(schemaDir, "linux-schema.json"), "initial\n");
+  }
+  execFileSync("git", ["init", "--quiet"], { cwd: root });
+  execFileSync("git", ["add", "."], { cwd: root });
+  execFileSync(
+    "git",
+    [
+      "-c",
+      "user.name=Zinnia Test",
+      "-c",
+      "user.email=zinnia@example.invalid",
+      "commit",
+      "--quiet",
+      "-m",
+      "fixture",
+    ],
+    { cwd: root },
+  );
+  return root;
+}
+
+function runController(root, { mutateAt, mutate, failAt } = {}) {
+  return main({
+    root,
+    captureIdentity: currentReleaseIdentity,
+    parseCoverage: (results) => {
+      results.coverage.status = "passed";
+    },
+    runner: (name, _command, _args, _parser, results) => {
+      if (name === mutateAt) mutate(root);
+      const passed = name !== failAt;
+      results[name].status = passed ? "passed" : "failed";
+      if (name === "test") results.coverage.status = "passed";
+      return passed;
+    },
+  });
+}
 
 function readPackageJsonScripts() {
   return JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"))
@@ -57,6 +132,7 @@ test("main prevents quality-gate proof recording when cargoSafeUpdate fails", ()
       calls.push("recordProof");
       return { recorded: true };
     },
+    captureIdentity: () => mockedIdentity,
     runner: (name, _cmd, _args, _parser, results) => {
       calls.push(`run:${name}`);
       if (name === "cargoSafeUpdate") {
@@ -86,6 +162,7 @@ test("main prevents quality-gate proof recording when cargoUpdatePolicy fails", 
       calls.push("recordProof");
       return { recorded: true };
     },
+    captureIdentity: () => mockedIdentity,
     runner: (name, _cmd, _args, _parser, results) => {
       calls.push(`run:${name}`);
       if (name === "cargoUpdatePolicy") {
@@ -108,15 +185,22 @@ test("main prevents quality-gate proof recording when cargoUpdatePolicy fails", 
 
 test("main records quality-gate proof when all checks pass", () => {
   const calls = [];
+  let captureCount = 0;
   const exitCode = main({
     root: repoRoot,
     clearProof: () => calls.push("clearProof"),
-    recordProof: () => {
+    recordProof: (_root, options) => {
+      assert.deepEqual(options, { e2e: "passed", identity: mockedIdentity });
       calls.push("recordProof");
       return { recorded: true };
     },
     parseCoverage: (results) => {
       results.coverage.status = "passed";
+    },
+    captureIdentity: () => {
+      captureCount += 1;
+      calls.push("captureIdentity");
+      return mockedIdentity;
     },
     runner: (name, _cmd, _args, _parser, results) => {
       calls.push(`run:${name}`);
@@ -129,6 +213,11 @@ test("main records quality-gate proof when all checks pass", () => {
   assert.ok(calls.includes("run:archives"));
   assert.ok(calls.includes("run:e2e"));
   assert.ok(calls.includes("recordProof"));
+  assert.equal(captureCount, 2);
+  assert.ok(
+    calls.indexOf("captureIdentity") < calls.indexOf("run:typecheck"),
+    "the tested identity must be captured before the first gate stage",
+  );
   assert.equal(exitCode, 0);
 });
 
@@ -141,13 +230,14 @@ test("main records explicitly skipped e2e in release proof mode", () => {
     requireCleanProof: true,
     clearProof: () => calls.push("clearProof"),
     recordProof: (_root, options) => {
-      assert.deepEqual(options, { e2e: "skipped" });
+      assert.deepEqual(options, { e2e: "skipped", identity: mockedIdentity });
       calls.push("recordProof");
       return { recorded: true };
     },
     parseCoverage: (results) => {
       results.coverage.status = "passed";
     },
+    captureIdentity: () => mockedIdentity,
     runner: (name, _cmd, _args, _parser, results) => {
       calls.push(`run:${name}`);
       results[name].status = "passed";
@@ -172,6 +262,7 @@ test("standalone e2e skip does not record release proof", () => {
       recorded = true;
       return { recorded: true };
     },
+    captureIdentity: () => mockedIdentity,
     parseCoverage: (results) => {
       results.coverage.status = "passed";
     },
@@ -196,6 +287,7 @@ test("release e2e skip preserves failures and dirty-tree proof refusal", () => {
         recorded = true;
         return { recorded: false, dirtyFiles: " M source.ts" };
       },
+      captureIdentity: () => mockedIdentity,
       parseCoverage: (results) => {
         results.coverage.status = "passed";
       },
@@ -214,6 +306,7 @@ test("main keeps generic test:all green when proof cannot be recorded", () => {
     root: repoRoot,
     clearProof: () => {},
     recordProof: () => ({ recorded: false, dirtyFiles: " M source.ts" }),
+    captureIdentity: () => mockedIdentity,
     parseCoverage: (results) => {
       results.coverage.status = "passed";
     },
@@ -232,6 +325,7 @@ test("main fails release proof mode when proof cannot be recorded", () => {
     root: repoRoot,
     clearProof: () => {},
     recordProof: () => ({ recorded: false, dirtyFiles: " M source.ts" }),
+    captureIdentity: () => mockedIdentity,
     requireCleanProof: true,
     parseCoverage: (results) => {
       results.coverage.status = "passed";
@@ -244,4 +338,144 @@ test("main fails release proof mode when proof cannot be recorded", () => {
   });
 
   assert.equal(exitCode, 1);
+});
+
+test("main rejects tracked source drift between gate stages without writing proof", () => {
+  const root = createReleaseFixture();
+  try {
+    const exitCode = runController(root, {
+      mutateAt: "lint",
+      mutate: (fixtureRoot) =>
+        fs.writeFileSync(
+          path.join(fixtureRoot, "src", "index.ts"),
+          "export const value = 2;\n",
+        ),
+    });
+    assert.equal(exitCode, 1);
+    assert.equal(
+      fs.existsSync(path.join(root, QUALITY_GATE_RELATIVE_PATH)),
+      false,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("main rejects untracked source added during the gate without writing proof", () => {
+  const root = createReleaseFixture();
+  try {
+    const exitCode = runController(root, {
+      mutateAt: "lint",
+      mutate: (fixtureRoot) =>
+        fs.writeFileSync(
+          path.join(fixtureRoot, "src", "new.ts"),
+          "export {};\n",
+        ),
+    });
+    assert.equal(exitCode, 1);
+    assert.equal(
+      fs.existsSync(path.join(root, QUALITY_GATE_RELATIVE_PATH)),
+      false,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("main rejects a tracked source deletion during the gate without writing proof", () => {
+  const root = createReleaseFixture();
+  try {
+    const exitCode = runController(root, {
+      mutateAt: "lint",
+      mutate: (fixtureRoot) =>
+        fs.rmSync(path.join(fixtureRoot, "src", "index.ts")),
+    });
+    assert.equal(exitCode, 1);
+    assert.equal(
+      fs.existsSync(path.join(root, QUALITY_GATE_RELATIVE_PATH)),
+      false,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("main rejects lockfile drift during the gate without writing proof", () => {
+  for (const lockfile of ["package-lock.json", "src-tauri/Cargo.lock"]) {
+    const root = createReleaseFixture();
+    try {
+      const exitCode = runController(root, {
+        mutateAt: "lint",
+        mutate: (fixtureRoot) =>
+          fs.appendFileSync(path.join(fixtureRoot, lockfile), "changed\n"),
+      });
+      assert.equal(exitCode, 1, `${lockfile} drift must fail the gate`);
+      assert.equal(
+        fs.existsSync(path.join(root, QUALITY_GATE_RELATIVE_PATH)),
+        false,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("main records the exact pre-gate dirty source when it stays unchanged", () => {
+  const root = createReleaseFixture();
+  try {
+    fs.writeFileSync(
+      path.join(root, "src", "index.ts"),
+      "export const value = 9;\n",
+    );
+    const exitCode = runController(root);
+    assert.equal(exitCode, 0);
+    const proof = verifyQualityGate(root);
+    assert.equal(proof.sourceSha256, currentReleaseIdentity(root).sourceSha256);
+    assert.equal(proof.e2e, "passed");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("main allows only the generated schema change during the gate", () => {
+  const root = createReleaseFixture({ schema: true });
+  try {
+    const exitCode = runController(root, {
+      mutateAt: "lint",
+      mutate: (fixtureRoot) =>
+        fs.writeFileSync(
+          path.join(
+            fixtureRoot,
+            "src-tauri",
+            "gen",
+            "schemas",
+            "linux-schema.json",
+          ),
+          "regenerated\n",
+        ),
+    });
+    assert.equal(exitCode, 0);
+    assert.equal(verifyQualityGate(root).e2e, "passed");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a failed gate clears an older quality-gate proof", () => {
+  const root = createReleaseFixture();
+  try {
+    assert.equal(recordSuccessfulQualityGate(root).recorded, true);
+    assert.equal(
+      fs.existsSync(path.join(root, QUALITY_GATE_RELATIVE_PATH)),
+      true,
+    );
+    const exitCode = runController(root, { failAt: "typecheck" });
+    assert.equal(exitCode, 1);
+    assert.equal(
+      fs.existsSync(path.join(root, QUALITY_GATE_RELATIVE_PATH)),
+      false,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

@@ -21,7 +21,6 @@ pub(crate) use run::{
 };
 #[cfg(test)]
 pub(crate) use spawn::spawn_child_output_for_test;
-#[cfg(test)]
 pub(crate) use spawn::CollectedOutput;
 pub(crate) use spawn::{
     collect_command_output, complete_password_transport, spawn_7z_noninteractive, terminate_child,

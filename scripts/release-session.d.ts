@@ -34,7 +34,7 @@ export function createReleaseSession(root?: string): ReleaseSession;
 export function clearQualityGateProof(root?: string): void;
 export function recordSuccessfulQualityGate(
   root?: string,
-  options?: { e2e?: "passed" | "skipped" },
+  options?: { e2e?: "passed" | "skipped"; identity?: ReleaseIdentity },
 ): {
   recorded: boolean;
   dirtyFiles: string | null;

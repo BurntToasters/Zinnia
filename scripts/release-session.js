@@ -204,13 +204,14 @@ function clearQualityGateProof(root = defaultRoot) {
 
 function recordSuccessfulQualityGate(
   root = defaultRoot,
-  { e2e = "passed" } = {},
+  { e2e = "passed", identity } = {},
 ) {
   const proofPath = path.join(root, QUALITY_GATE_RELATIVE_PATH);
+  const releaseIdentity = identity ?? currentReleaseIdentity(root);
   fs.mkdirSync(path.dirname(proofPath), { recursive: true });
   fs.writeFileSync(
     proofPath,
-    `${JSON.stringify({ ...currentReleaseIdentity(root), completedAt: Date.now(), e2e })}\n`,
+    `${JSON.stringify({ ...releaseIdentity, completedAt: Date.now(), e2e })}\n`,
     { mode: 0o600 },
   );
   return { recorded: true, dirtyFiles: null };

@@ -133,6 +133,29 @@ function memberRecords(listing) {
   return records;
 }
 
+function memberRecordsForName(listing, name) {
+  const records = [];
+  let current = null;
+  const flush = () => {
+    if (current?.path === name) records.push(current);
+  };
+  for (const line of listing.split(/\r?\n/)) {
+    const pathMatch = line.match(/^Path = (.+)$/);
+    if (pathMatch) {
+      flush();
+      current = { path: pathMatch[1], encrypted: null, method: "" };
+      continue;
+    }
+    if (!current) continue;
+    const encrypted = line.match(/^Encrypted = (.*)$/);
+    if (encrypted) current.encrypted = encrypted[1].trim();
+    const method = line.match(/^Method = (.*)$/);
+    if (method) current.method = method[1].trim();
+  }
+  flush();
+  return records;
+}
+
 /** True when 7-Zip can extract `member` from `archive` with `password`. */
 function memberReadableWith(archive, member, password) {
   const result = spawnSync(
@@ -544,6 +567,209 @@ describe("beta.5 release safeguards", () => {
       wrongPasswordRefused: wrongText.slice(0, 200),
       addedMember: records.get("enc-zip-added.txt") ?? null,
     });
+  });
+
+  it("requires encrypted-data proof when listed member names are lossy or ambiguous", async function () {
+    this.timeout(300_000);
+    if (process.platform === "win32") {
+      writeEvidence(EVIDENCE_DIR, "encrypted-member-name-preflight", {
+        scenario: "encrypted-member-name-preflight",
+        platform: process.platform,
+        skipped: "POSIX newline member names are unsupported on Windows",
+      });
+      this.skip();
+    }
+
+    const password = "Zinnia-E2E-Original-Password";
+    const wrongPassword = "Zinnia-E2E-Wrong-Password";
+    for (const format of ["7z", "zip"]) {
+      for (const scenario of [
+        "case-normalized-alias",
+        "lossy-name",
+        "normalized-alias",
+      ]) {
+        const aliasName =
+          scenario === "case-normalized-alias"
+            ? "TINY_SECRET.TXT"
+            : "tiny_secret.txt";
+        const work = path.join(ROOT, `password-proof-${format}-${scenario}`);
+        fs.mkdirSync(work, { recursive: true });
+        fs.writeFileSync(
+          path.join(work, "tiny\nsecret.txt"),
+          "encrypted tiny\n",
+        );
+        fs.writeFileSync(
+          path.join(work, "large.txt"),
+          "encrypted larger payload\n".repeat(40),
+        );
+        const archive = path.join(
+          ROOT,
+          `password-proof-${format}-${scenario}.${format}`,
+        );
+        const createArgs = [
+          "a",
+          `-t${format}`,
+          `-p${password}`,
+          ...(format === "7z" ? ["-ms=off"] : ["-mem=AES256"]),
+          archive,
+          "--",
+          "tiny\nsecret.txt",
+          "large.txt",
+        ];
+        run7z(requireHostSidecar(), createArgs, { cwd: work });
+
+        if (scenario !== "lossy-name") {
+          fs.writeFileSync(path.join(work, aliasName), "plaintext alias\n");
+          run7z(requireHostSidecar(), ["u", "-spd", archive, "--", aliasName], {
+            cwd: work,
+          });
+        }
+
+        const listed = listArchive(archive, password);
+        const selectedNameMembers = memberRecordsForName(
+          listed,
+          "tiny_secret.txt",
+        );
+        const aliasMembers =
+          scenario === "case-normalized-alias"
+            ? memberRecordsForName(listed, aliasName)
+            : [];
+        const displayedMembers = [...selectedNameMembers, ...aliasMembers];
+        assert.equal(
+          displayedMembers.length,
+          scenario === "lossy-name" ? 1 : 2,
+          "fixture does not contain the expected lossy display name/alias",
+        );
+        if (scenario !== "lossy-name") {
+          assert.deepEqual(
+            displayedMembers.map((record) => record.encrypted).sort(),
+            ["+", "-"],
+            "fixture alias must pair encrypted newline data with a plaintext literal name",
+          );
+        } else {
+          assert.equal(displayedMembers[0]?.encrypted, "+");
+        }
+        if (scenario === "case-normalized-alias") {
+          const insensitive = run7z(
+            requireHostSidecar(),
+            [
+              "t",
+              "-ssc-",
+              `-p${wrongPassword}`,
+              "--",
+              archive,
+              "tiny_secret.txt",
+            ],
+            { allowFailure: true },
+          );
+          const sensitive = run7z(
+            requireHostSidecar(),
+            [
+              "t",
+              "-ssc",
+              `-p${wrongPassword}`,
+              "--",
+              archive,
+              "tiny_secret.txt",
+            ],
+            { allowFailure: true },
+          );
+          assert.equal(insensitive.code, 0);
+          assert.doesNotMatch(insensitive.stdout, /No files to process/i);
+          assert.match(insensitive.stdout, /Size:\s*[1-9]\d*/);
+          assert.equal(sensitive.code, 0);
+          assert.match(sensitive.stdout, /No files to process/i);
+          writeEvidence(
+            EVIDENCE_DIR,
+            `password-proof-${format}-${scenario}-selector-control`,
+            {
+              scenario: `password-proof-${format}-${scenario}-selector-control`,
+              caseInsensitiveSelectorAcceptedPlaintextAlias: true,
+              caseSensitiveSelectorReportedNoFiles: true,
+            },
+          );
+        }
+
+        const addedName = `added-${format}-${scenario}.txt`;
+        const added = path.join(ROOT, addedName);
+        fs.writeFileSync(added, "new data must retain the original password\n");
+        const before = sha256File(archive);
+        const update = ["u", "-sse", "-snl", "-snh", "-spd"];
+        await waitForArchiveIdle();
+
+        const wrong = await invokeRun7zUpdate(archive, [
+          ...update,
+          `-p${wrongPassword}`,
+          archive,
+          "--",
+          added,
+        ]);
+        const wrongText = wrong.error ?? wrong.result?.stderr ?? "";
+        writeEvidence(
+          EVIDENCE_DIR,
+          `password-proof-${format}-${scenario}-wrong`,
+          {
+            scenario: `password-proof-${format}-${scenario}-wrong`,
+            wrongPasswordRefused: Boolean(
+              wrong.error || wrong.result?.code !== 0,
+            ),
+            error: wrongText.slice(0, 240),
+            archiveUnchanged: sha256File(archive) === before,
+            displayedMembers,
+          },
+        );
+        assert.ok(
+          wrong.error || wrong.result?.code !== 0,
+          `${format} ${scenario} update accepted a wrong password`,
+        );
+        assert.match(wrongText, /wrong password/i);
+        assert.doesNotMatch(wrongText, new RegExp(wrongPassword));
+        assert.equal(
+          sha256File(archive),
+          before,
+          "wrong-password update changed the archive",
+        );
+
+        const right = await invokeRun7zUpdate(archive, [
+          ...update,
+          `-p${password}`,
+          archive,
+          "--",
+          added,
+        ]);
+        assert.equal(
+          right.error,
+          undefined,
+          `${format} ${scenario} update failed: ${right.error}`,
+        );
+        assert.equal(
+          right.result.code,
+          0,
+          `${format} ${scenario} update failed: ${right.result.stderr}`,
+        );
+        assert.equal(
+          memberReadableWith(archive, addedName, password),
+          true,
+          "new member cannot be decrypted with the original password",
+        );
+        assert.equal(
+          memberReadableWith(archive, addedName, wrongPassword),
+          false,
+          "new member is readable with the wrong password",
+        );
+        writeEvidence(
+          EVIDENCE_DIR,
+          `password-proof-${format}-${scenario}-right`,
+          {
+            scenario: `password-proof-${format}-${scenario}-right`,
+            correctPasswordUpdateSucceeded: true,
+            addedMemberReadableWithOriginal: true,
+            addedMemberReadableWithWrongPassword: false,
+            archiveSha256: sha256File(archive),
+          },
+        );
+      }
+    }
   });
 
   it("still adds files to a plaintext 7z without asking for a password", async () => {

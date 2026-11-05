@@ -6,6 +6,7 @@ use crate::validation::archive_member_path_is_unsafe;
 use crate::process::archive_snapshot::{archive_file_identity, ArchiveFileIdentity};
 use crate::process::commands::{
     collect_command_output, extract_warning_is_metadata_only, terminate_registered_child_async,
+    CollectedOutput,
 };
 use crate::process::{lock_process, ArchiveManifestSummary, RunningProcess};
 
@@ -300,10 +301,51 @@ pub(crate) fn assert_slt_declared_size_within_limit(
 }
 
 /// Output of a backend-owned preflight 7-Zip child (listing or test).
+#[derive(Debug)]
 pub(crate) struct PreflightOutput {
     pub(crate) code: i32,
     pub(crate) stdout: String,
     pub(crate) stderr: String,
+}
+
+/// Convert a collected child result only when both pipe streams and process
+/// termination are complete. Listing callers still classify accepted exit-1
+/// metadata warnings after this boundary.
+pub(crate) fn checked_preflight_output(
+    collected: CollectedOutput,
+    label: &str,
+) -> Result<PreflightOutput, String> {
+    if collected.stdout_truncated || collected.stderr_truncated {
+        return Err(format!(
+            "{label} exceeded its output limit; the operation was cancelled."
+        ));
+    }
+    if !collected.output_is_complete() {
+        if let Some(error) = collected.stream_error.as_deref() {
+            return Err(format!(
+                "{label} could not read the complete output stream: {}",
+                sanitize_output(error)
+            ));
+        }
+        if collected.exit.is_none() {
+            return Err(format!("{label} ended without a termination event."));
+        }
+        return Err(format!("{label} produced incomplete output."));
+    }
+    let code = collected.exit_code();
+    if code < 0
+        || collected
+            .exit
+            .as_ref()
+            .is_some_and(|termination| termination.signal.is_some())
+    {
+        return Err(format!("{label} did not produce a valid exit status."));
+    }
+    Ok(PreflightOutput {
+        code,
+        stdout: collected.stdout,
+        stderr: collected.stderr,
+    })
 }
 
 /// Run a short backend-owned 7-Zip child under the current operation slot.
@@ -382,21 +424,7 @@ pub(crate) async fn run_registered_preflight_7z(
             return Err("Operation cancelled.".to_string());
         }
     }
-    let code = collected
-        .exit
-        .as_ref()
-        .and_then(|payload| payload.code)
-        .unwrap_or(-1);
-    if collected.stdout_truncated || collected.stderr_truncated {
-        return Err(format!(
-            "{label} exceeded its output limit; the operation was cancelled."
-        ));
-    }
-    Ok(PreflightOutput {
-        code,
-        stdout: collected.stdout,
-        stderr: collected.stderr,
-    })
+    checked_preflight_output(collected, label)
 }
 
 /// Sanitized 7-Zip failure detail (stderr first, then stdout).
@@ -476,6 +504,9 @@ pub(crate) struct UpdateEncryptionFacts {
     /// Smallest encrypted regular file, used to verify a supplied password
     /// without decrypting the whole archive.
     pub(crate) smallest_encrypted_file: Option<String>,
+    /// True when another member has the same displayed name, so this selector
+    /// may resolve to a different record after 7-Zip normalizes the name.
+    pub(crate) smallest_encrypted_file_ambiguous: bool,
 }
 
 /// Read per-member `Encrypted`, `Method`, `Folder`, and `Size` from
@@ -491,7 +522,11 @@ pub(crate) fn parse_update_encryption_facts(slt_output: &str) -> UpdateEncryptio
     }
     let mut facts = UpdateEncryptionFacts::default();
     let mut smallest: Option<(u64, String)> = None;
+    let mut displayed_name_counts = std::collections::HashMap::<String, usize>::new();
     let mut flush = |member: &Member<'_>, facts: &mut UpdateEncryptionFacts| {
+        if let Some(path) = member.path {
+            *displayed_name_counts.entry(path.to_string()).or_default() += 1;
+        }
         if !member.encrypted {
             return;
         }
@@ -531,8 +566,93 @@ pub(crate) fn parse_update_encryption_facts(slt_output: &str) -> UpdateEncryptio
         }
     }
     flush(&current, &mut facts);
-    facts.smallest_encrypted_file = smallest.map(|(_, path)| path);
+    if let Some((_, path)) = smallest {
+        facts.smallest_encrypted_file_ambiguous =
+            displayed_name_counts.get(&path).copied().unwrap_or(0) > 1;
+        facts.smallest_encrypted_file = Some(path);
+    }
     facts
+}
+
+fn preflight_test_reports_no_files(output: &PreflightOutput) -> bool {
+    output
+        .stdout
+        .lines()
+        .chain(output.stderr.lines())
+        .any(|line| line.trim().to_ascii_lowercase().starts_with("no files"))
+}
+
+fn preflight_test_reports_processed_file(output: &PreflightOutput) -> bool {
+    let no_files_reported = preflight_test_reports_no_files(output);
+    if no_files_reported {
+        return false;
+    }
+    let files_count = output
+        .stdout
+        .lines()
+        .chain(output.stderr.lines())
+        .map(|line| line.trim().to_ascii_lowercase())
+        .find_map(|line| {
+            line.strip_prefix("files:")
+                .and_then(|count| count.trim().parse::<u64>().ok())
+        });
+    if let Some(files_count) = files_count {
+        return files_count > 0;
+    }
+    output
+        .stdout
+        .lines()
+        .chain(output.stderr.lines())
+        .map(|line| line.trim().to_ascii_lowercase())
+        .any(|line| {
+            line.strip_prefix("size:")
+                .is_some_and(|size| size.trim().parse::<u64>().is_ok())
+        })
+}
+
+pub(crate) fn member_password_test_needs_full_archive_check(
+    facts: &UpdateEncryptionFacts,
+    member_test: &PreflightOutput,
+) -> bool {
+    if facts.smallest_encrypted_file_ambiguous {
+        return true;
+    }
+    if preflight_test_reports_no_files(member_test) {
+        return true;
+    }
+    member_test.code == 0 && !preflight_test_reports_processed_file(member_test)
+}
+
+async fn run_update_password_check(
+    app: &tauri::AppHandle,
+    state: &tauri::State<'_, RunningProcess>,
+    archive: &str,
+    password: &str,
+    types: &[String],
+    member: Option<&str>,
+) -> Result<PreflightOutput, String> {
+    let mut test_args = vec!["t".to_string(), password.to_string()];
+    if member.is_some() {
+        // 7-Zip's default case matching varies by platform. Keep a lossy
+        // displayed name from selecting a differently cased plaintext alias.
+        test_args.push("-ssc".to_string());
+    }
+    test_args.extend(types.iter().cloned());
+    test_args.push("--".to_string());
+    test_args.push(archive.to_string());
+    if let Some(member) = member {
+        test_args.push(member.to_string());
+    }
+    crate::process::commands::harden_7z_args(&mut test_args);
+    run_registered_preflight_7z(
+        app,
+        state,
+        test_args,
+        std::time::Duration::from_secs(120),
+        "Archive password check",
+        "update-password-check-spawned",
+    )
+    .await
 }
 
 fn password_and_type_switches(args: &[String]) -> (Option<String>, Vec<String>) {
@@ -559,7 +679,8 @@ fn password_and_type_switches(args: &[String]) -> (Option<String>, Vec<String>) 
 /// `7z u` copies existing members without decrypting them, so it succeeds with
 /// no password (new files are stored in plaintext) and with a wrong password
 /// (new files use a different key). Lists the archive 7-Zip will read, then
-/// tests the smallest encrypted file with the supplied password.
+/// tests the smallest unambiguous encrypted file. If the listed selector is
+/// ambiguous or the test proves it processed no data, tests the whole archive.
 pub(crate) async fn assert_update_encryption_policy(
     app: &tauri::AppHandle,
     state: &tauri::State<'_, RunningProcess>,
@@ -607,26 +728,32 @@ pub(crate) async fn assert_update_encryption_policy(
     let Some(password) = password else {
         return Err(UPDATE_PASSWORD_REQUIRED.to_string());
     };
-    let Some(member) = facts.smallest_encrypted_file else {
-        return Ok(());
+    let Some(member) = facts.smallest_encrypted_file.as_deref() else {
+        return Err(
+            "Could not verify the archive password because no encrypted file was available to test."
+                .to_string(),
+        );
     };
-    let mut test_args = vec!["t".to_string(), password];
-    test_args.extend(types);
-    test_args.push("--".to_string());
-    test_args.push(archive);
-    test_args.push(member);
-    crate::process::commands::harden_7z_args(&mut test_args);
-    let test = run_registered_preflight_7z(
-        app,
-        state,
-        test_args,
-        std::time::Duration::from_secs(120),
-        "Archive password check",
-        "update-password-check-spawned",
-    )
-    .await?;
-    if test.code == 0 {
+    let test = if facts.smallest_encrypted_file_ambiguous {
+        run_update_password_check(app, state, &archive, &password, &types, None).await?
+    } else {
+        let member_test =
+            run_update_password_check(app, state, &archive, &password, &types, Some(member))
+                .await?;
+        if member_password_test_needs_full_archive_check(&facts, &member_test) {
+            run_update_password_check(app, state, &archive, &password, &types, None).await?
+        } else {
+            member_test
+        }
+    };
+    if test.code == 0 && preflight_test_reports_processed_file(&test) {
         return Ok(());
+    }
+    if test.code == 0 {
+        return Err(
+            "Could not verify the archive password because 7-Zip did not test any files."
+                .to_string(),
+        );
     }
     let detail = preflight_failure_detail(&test);
     if detail.to_ascii_lowercase().contains("wrong password") {

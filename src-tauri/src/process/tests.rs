@@ -892,6 +892,143 @@ fn stream_error_keeps_collecting_until_termination() {
     });
 }
 
+fn collected_preflight_output(
+    exit_code: Option<i32>,
+    stdout: &str,
+    stderr: &str,
+    stdout_truncated: bool,
+    stderr_truncated: bool,
+    stream_error: Option<&str>,
+) -> super::commands::CollectedOutput {
+    super::commands::CollectedOutput {
+        stdout: stdout.to_string(),
+        stderr: stderr.to_string(),
+        stdout_truncated,
+        stderr_truncated,
+        exit: exit_code.map(|code| tauri_plugin_shell::process::TerminatedPayload {
+            code: Some(code),
+            signal: None,
+        }),
+        stream_error: stream_error.map(str::to_string),
+    }
+}
+
+#[test]
+fn preflight_boundary_rejects_stream_error_with_exit_zero() {
+    let error = super::staging::checked_preflight_output(
+        collected_preflight_output(
+            Some(0),
+            "partial listing\n",
+            "",
+            false,
+            false,
+            Some("broken pipe"),
+        ),
+        "Archive encryption preflight",
+    )
+    .expect_err("stream error must invalidate exit-zero output");
+    assert!(error.contains("stream"), "unexpected error: {error}");
+}
+
+#[test]
+fn preflight_boundary_rejects_missing_termination() {
+    let error = super::staging::checked_preflight_output(
+        collected_preflight_output(None, "partial listing\n", "", false, false, None),
+        "Archive encryption preflight",
+    )
+    .expect_err("missing termination must invalidate output");
+    assert!(error.contains("termination"), "unexpected error: {error}");
+}
+
+#[test]
+fn preflight_boundary_rejects_truncated_output() {
+    let error = super::staging::checked_preflight_output(
+        collected_preflight_output(Some(0), "partial listing\n", "", true, false, None),
+        "Archive encryption preflight",
+    )
+    .expect_err("truncated output must invalidate preflight");
+    assert!(error.contains("output limit"), "unexpected error: {error}");
+}
+
+#[test]
+fn preflight_boundary_preserves_complete_exit_zero() {
+    let output = super::staging::checked_preflight_output(
+        collected_preflight_output(Some(0), "Path = safe.txt\n", "", false, false, None),
+        "Archive encryption preflight",
+    )
+    .expect("complete exit-zero output");
+    assert_eq!(output.code, 0);
+    assert_eq!(output.stdout, "Path = safe.txt\n");
+}
+
+#[test]
+fn preflight_boundary_preserves_complete_metadata_warning_for_caller() {
+    let output = super::staging::checked_preflight_output(
+        collected_preflight_output(
+            Some(1),
+            "WARNING: Cannot set owner\n",
+            "",
+            false,
+            false,
+            None,
+        ),
+        "Archive member-safety preflight",
+    )
+    .expect("complete metadata-warning output");
+    assert_eq!(output.code, 1);
+    assert!(listing_preflight_exit_is_acceptable(
+        output.code,
+        &output.stdout,
+        &output.stderr
+    ));
+}
+
+#[test]
+fn encrypted_member_alias_requires_whole_archive_password_check() {
+    let listing = "Path = tiny_secret.txt\nFolder = -\nSize = 1\nEncrypted = +\nMethod = AES-256 Store\n\nPath = tiny_secret.txt\nFolder = -\nSize = 1\nEncrypted = -\nMethod = Deflate\n";
+    let facts = super::staging::parse_update_encryption_facts(listing);
+    assert_eq!(
+        facts.smallest_encrypted_file.as_deref(),
+        Some("tiny_secret.txt")
+    );
+    assert!(facts.smallest_encrypted_file_ambiguous);
+    let member_test = super::staging::PreflightOutput {
+        code: 0,
+        stdout: "Testing tiny_secret.txt\nEverything is Ok\nFiles: 1\n".to_string(),
+        stderr: String::new(),
+    };
+    assert!(super::staging::member_password_test_needs_full_archive_check(&facts, &member_test));
+}
+
+#[test]
+fn member_test_reporting_no_files_requires_whole_archive_fallback() {
+    let facts = super::staging::parse_update_encryption_facts(
+        "Path = tiny_secret.txt\nFolder = -\nSize = 1\nEncrypted = +\nMethod = AES-256 Store\n",
+    );
+    assert!(!facts.smallest_encrypted_file_ambiguous);
+    let member_test = super::staging::PreflightOutput {
+        code: 0,
+        stdout: "No files to process\nEverything is Ok\nFiles: 0\n".to_string(),
+        stderr: String::new(),
+    };
+    assert!(super::staging::member_password_test_needs_full_archive_check(&facts, &member_test));
+}
+
+#[test]
+fn ordinary_encrypted_member_keeps_smallest_member_check() {
+    let facts = super::staging::parse_update_encryption_facts(
+        "Path = tiny.txt\nFolder = -\nSize = 1\nEncrypted = +\nMethod = AES-256 Store\n\nPath = large.txt\nFolder = -\nSize = 100\nEncrypted = +\nMethod = AES-256 Deflate\n",
+    );
+    assert_eq!(facts.smallest_encrypted_file.as_deref(), Some("tiny.txt"));
+    assert!(!facts.smallest_encrypted_file_ambiguous);
+    let member_test = super::staging::PreflightOutput {
+        code: 0,
+        stdout: "Testing tiny.txt\nEverything is Ok\nFiles: 1\n".to_string(),
+        stderr: String::new(),
+    };
+    assert!(!super::staging::member_password_test_needs_full_archive_check(&facts, &member_test));
+}
+
 #[test]
 fn cancelled_output_keeps_drained_streams_but_never_reports_success() {
     tauri::async_runtime::block_on(async {

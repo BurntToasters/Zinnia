@@ -8,6 +8,7 @@ import {
   DEFAULT_MAX_AGE_MS,
   RELEASE_SESSION_RELATIVE_PATH,
   createReleaseSession,
+  currentReleaseIdentity,
   isIgnorableReleaseDirtyPath,
   porcelainPaths,
   recordSuccessfulQualityGate,
@@ -207,6 +208,27 @@ describe("release build session", () => {
         ],
         { cwd: root },
       );
+
+      const testedIdentity = currentReleaseIdentity(root);
+      fs.writeFileSync(
+        path.join(root, ".gitignore"),
+        "/coverage/*\n# changed after snapshot\n",
+      );
+      expect(
+        recordSuccessfulQualityGate(root, { identity: testedIdentity })
+          .recorded,
+      ).toBe(true);
+      const suppliedIdentityProof = JSON.parse(
+        fs.readFileSync(
+          path.join(root, "coverage", ".release-quality.json"),
+          "utf8",
+        ),
+      );
+      expect(suppliedIdentityProof.sourceSha256).toBe(
+        testedIdentity.sourceSha256,
+      );
+      expect(() => verifyQualityGate(root)).toThrow(/sourceSha256/);
+      fs.writeFileSync(path.join(root, ".gitignore"), "/coverage/*\n");
 
       // Add .gitignore to fixture so proof path coverage/.release-quality.json is ignored
       fs.writeFileSync(path.join(root, ".gitignore"), "/coverage/*\n");
