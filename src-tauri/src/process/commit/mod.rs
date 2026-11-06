@@ -20,7 +20,7 @@ pub(crate) use extract_merge::{
 };
 #[cfg(test)]
 pub(crate) use extract_merge::{validate_move_record, write_move_plan};
-#[cfg(any(windows, test))]
+#[cfg(test)]
 pub(crate) use publish::copy_file_no_replace;
 #[cfg(test)]
 pub(crate) use publish::publish_file_no_replace;

@@ -938,7 +938,7 @@ pub(crate) fn security_descriptor_dacl(
 }
 
 #[cfg(windows)]
-pub(crate) fn access_allowed_ace_view(
+fn access_allowed_ace_view(
     dacl: *const windows_sys::Win32::Security::ACL,
     index: u32,
 ) -> Result<Option<AccessAllowedAceView>, String> {

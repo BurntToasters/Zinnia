@@ -22,26 +22,21 @@ pub(crate) use windows::{
 
 #[cfg(all(test, windows))]
 pub(crate) use windows::{
-    access_allowed_ace_view, create_private_file_windows, current_user_identity,
-    current_user_sid_from_token, dacl_matches_expected, open_directory_for_acl_verification,
-    read_directory_security_descriptor, security_descriptor_dacl, security_descriptor_owner,
-    system32_whoami_path,
+    current_user_identity, current_user_sid_from_token, dacl_matches_expected,
+    open_directory_for_acl_verification, read_directory_security_descriptor,
+    security_descriptor_dacl, security_descriptor_owner, system32_whoami_path,
 };
 
 /// Create a new directory that is private to the current user when the OS allows it.
 /// Unix: mode 0o700. Windows: disable inheritance and grant only the current user + SYSTEM.
+#[cfg(not(windows))]
 pub(crate) fn open_directory_nofollow(path: &Path) -> io::Result<std::fs::File> {
     #[cfg(unix)]
     {
         unix::open_directory_nofollow(path)
     }
 
-    #[cfg(windows)]
-    {
-        windows::open_directory_nofollow(path)
-    }
-
-    #[cfg(not(any(unix, windows)))]
+    #[cfg(not(unix))]
     {
         let directory = std::fs::File::open(path)?;
         if !directory.metadata()?.is_dir() {
@@ -169,7 +164,6 @@ pub(crate) fn create_inheriting_stage_dir_open_in(
 
 /// After an atomic extract-root rename, match the destination parent's mode so
 /// a private 0o700 stage does not leave a permanently restrictive directory.
-
 #[cfg(not(unix))]
 pub fn apply_parent_directory_mode(_path: &Path) -> io::Result<()> {
     Ok(())

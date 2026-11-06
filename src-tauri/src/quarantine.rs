@@ -218,6 +218,13 @@ fn copy_mark_of_the_web_with_expected_identity(
 /// quarantine attribute or the Windows Zone.Identifier stream that Gatekeeper
 /// and SmartScreen use to warn about downloaded files.
 #[cfg(all(test, any(target_os = "macos", windows)))]
+#[cfg_attr(
+    not(all(test, target_os = "macos")),
+    allow(
+        dead_code,
+        reason = "only the macOS quarantine tests call this wrapper"
+    )
+)]
 pub(crate) fn copy_mark_of_the_web(
     source: &std::path::Path,
     output: &std::path::Path,
@@ -243,7 +250,13 @@ pub(crate) fn copy_mark_of_the_web_to_family_from_validated(
 }
 
 /// Marks every member of the archive output family with `source`'s download marker.
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(all(test, target_os = "macos")),
+    allow(
+        dead_code,
+        reason = "only the macOS quarantine tests call this wrapper"
+    )
+)]
 pub(crate) fn copy_mark_of_the_web_to_family(
     source: &std::path::Path,
     output_base: &std::path::Path,

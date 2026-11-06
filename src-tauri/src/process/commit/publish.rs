@@ -61,7 +61,7 @@ pub(super) fn publish_file_no_replace_with_created(
     }
 }
 
-#[cfg(any(windows, test))]
+#[cfg(test)]
 pub(crate) fn copy_file_no_replace(
     source: &std::path::Path,
     target: &std::path::Path,

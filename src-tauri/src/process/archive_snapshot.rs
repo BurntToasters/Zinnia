@@ -375,7 +375,7 @@ mod windows_snapshot_tests {
             .expect("hard-link snapshot identity must be registered");
         let opened = crate::path_safety::open_regular_file_nofollow_for_snapshot(&staged.path)
             .expect("open staged hard-link");
-        let direct = archive_file_identity_from_open_file(&staged.path, &opened)
+        let direct = super::identity::archive_file_identity_from_open_file(&staged.path, &opened)
             .expect("read staged hard-link identity");
         assert_eq!(registered, direct);
     }
