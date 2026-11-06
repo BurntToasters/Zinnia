@@ -20,6 +20,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import npmCli from "./npm-cli.cjs";
 import { isDirectExecutionOf } from "./direct-execution.mjs";
+import { readPinnedRustToolchain } from "./rust-toolchain.mjs";
+
+export { readPinnedRustToolchain };
 
 const { npmInvocation } = npmCli;
 const npmDevAuditScript = fileURLToPath(
@@ -28,29 +31,6 @@ const npmDevAuditScript = fileURLToPath(
 
 export const MINIMUM_NPM_VERSION = "12.2.1";
 export const SUPPORTED_NODE_VERSIONS = "^24.22.1 || >=26.13.0";
-
-export function readPinnedRustToolchain(root) {
-  const filePath = path.join(root, "rust-toolchain.toml");
-  let contents;
-  try {
-    contents = readFileSync(filePath, "utf8");
-  } catch (error) {
-    if (error?.code === "ENOENT") {
-      throw new Error(`Rust toolchain pin is missing: ${filePath}`, {
-        cause: error,
-      });
-    }
-    throw error;
-  }
-
-  const channel = contents.match(/^\s*channel\s*=\s*"([^"]+)"\s*$/mu)?.[1];
-  if (!channel || !/^\d+\.\d+\.\d+$/u.test(channel)) {
-    throw new Error(
-      `rust-toolchain.toml must pin an exact Rust version; found ${channel || "no channel"}`,
-    );
-  }
-  return channel;
-}
 
 export function parseVersion(value) {
   const match = String(value)

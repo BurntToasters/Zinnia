@@ -26,7 +26,6 @@ permissions:
 env:
   NODE_VERSION: "26.13.0"
   NPM_VERSION: "12.2.1"
-  RUST_VERSION: "1.99.1"
 
 jobs:
   archive-io-release:
@@ -67,10 +66,17 @@ jobs:
       - id: install_npm
         name: Install pinned npm 12
         run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - name: Resolve pinned Rust toolchain
+        id: rust-pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node scripts/rust-toolchain.mjs)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - id: rust_toolchain
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: ${{ env.RUST_VERSION }}
+          toolchain: ${{ steps.rust-pin.outputs.version }}
       - id: linux_deps
         name: Install Linux E2E dependencies
         if: runner.os == 'Linux'

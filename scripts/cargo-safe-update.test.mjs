@@ -46,6 +46,12 @@ import {
   restoreSnapshot,
   usesWindowsCmdShell,
 } from "./npm-safe-update.mjs";
+import {
+  readPinnedRustToolchain as readSharedRustToolchain,
+  readRustToolchainConfig,
+  rustupInstallArgs,
+  rustupTargetArgs,
+} from "./rust-toolchain.mjs";
 
 // Skip real Cargo integration tests if SKIP_CARGO_INTEGRATION=1
 const SKIP_CARGO_INTEGRATION = process.env.SKIP_CARGO_INTEGRATION === "1";
@@ -1584,16 +1590,21 @@ test("45. update environment versions fail closed at exact boundaries", () => {
   assert.throws(() => parseVersion("latest"), /Invalid semantic version/);
 });
 
-// Failure modes covered: a floating `stable` toolchain passes without the
-// repository pin; a prefix match accepts 1.99.10 for 1.99.1; rustup's
-// host-qualified exact version is rejected; or a malformed pin passes.
+// Failure modes covered before implementation: a missing pin file;
+// a floating `stable` or suffixed channel; a malformed value; CRLF line
+// endings; component/profile drift; rustup argument loss; a prefix match that
+// accepts a higher patch version; npm-safe-update carrying its own parser
+// instead of delegating; or Windows spawn routing rustup through a shell.
 test("45a. npm updater requires exact repository-pinned Rust toolchain", () => {
   const root = process.cwd();
   const pinned = readPinnedRustToolchain(root);
-  assert.equal(pinned, "1.99.1");
-  assert.equal(hasRustToolchain("1.99.1\n", pinned), true);
+  assert.match(pinned, /^\d+\.\d+\.\d+$/);
+  assert.equal(readSharedRustToolchain(root), pinned);
+  const [major, minor, patch] = pinned.split(".").map(Number);
+  const higherPatch = `${major}.${minor}.${patch + 10}`;
+  assert.equal(hasRustToolchain(`${pinned}\n`, pinned), true);
   assert.equal(
-    hasRustToolchain("1.99.1-aarch64-apple-darwin (default)\n", pinned),
+    hasRustToolchain(`${pinned}-aarch64-apple-darwin (default)\n`, pinned),
     true,
   );
   assert.equal(hasRustToolchain("stable\n", pinned), false);
@@ -1602,28 +1613,90 @@ test("45a. npm updater requires exact repository-pinned Rust toolchain", () => {
     false,
   );
   assert.equal(
-    hasRustToolchain("1.99.10-aarch64-apple-darwin\n", pinned),
+    hasRustToolchain(`${higherPatch}-aarch64-apple-darwin\n`, pinned),
     false,
   );
 
   const tempRoot = mkdtempSync(path.join(os.tmpdir(), "rust-toolchain-pin-"));
   try {
+    assert.throws(
+      () => readPinnedRustToolchain(path.join(tempRoot, "missing")),
+      /Rust toolchain pin is missing/,
+    );
     writeFileSync(
       path.join(tempRoot, "rust-toolchain.toml"),
-      '[toolchain]\nchannel = "2.7.3"\n',
+      '[toolchain]\r\nchannel = "2.7.3"\r\nprofile = "minimal"\r\ncomponents = ["cargo", "clippy", "rustfmt"]\r\n',
     );
     assert.equal(readPinnedRustToolchain(tempRoot), "2.7.3");
+    const config = readRustToolchainConfig(tempRoot);
+    assert.deepEqual(config, {
+      channel: "2.7.3",
+      profile: "minimal",
+      components: ["cargo", "clippy", "rustfmt"],
+    });
+    assert.deepEqual(rustupInstallArgs(config), [
+      "toolchain",
+      "install",
+      "2.7.3",
+      "--profile",
+      "minimal",
+      "--component",
+      "cargo,clippy,rustfmt",
+    ]);
+    assert.deepEqual(
+      rustupTargetArgs("2.7.3", [
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+      ]),
+      [
+        "target",
+        "add",
+        "--toolchain",
+        "2.7.3",
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+      ],
+    );
+
+    for (const malformed of [
+      '[toolchain]\nchannel = "stable"\n',
+      '[toolchain]\nchannel = "2.7"\n',
+      '[toolchain]\nchannel = "2.7.3-x86_64-unknown-linux-gnu"\n',
+      "[toolchain]\nchannel = 2.7.3\n",
+      '[toolchain]\nprofile = "minimal"\n',
+    ]) {
+      writeFileSync(path.join(tempRoot, "rust-toolchain.toml"), malformed);
+      assert.throws(
+        () => readPinnedRustToolchain(tempRoot),
+        /must pin an exact Rust version/,
+      );
+    }
+
     writeFileSync(
       path.join(tempRoot, "rust-toolchain.toml"),
-      '[toolchain]\nchannel = "stable"\n',
+      '[toolchain]\nchannel = "2.7.3"\ncomponents = "cargo"\n',
     );
     assert.throws(
-      () => readPinnedRustToolchain(tempRoot),
-      /must pin an exact Rust version/,
+      () => readRustToolchainConfig(tempRoot),
+      /components must be an array of strings/,
     );
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }
+
+  const updaterSource = readFileSync(
+    new URL("./npm-safe-update.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.match(updaterSource, /from "\.\/rust-toolchain\.mjs"/);
+  assert.match(updaterSource, /export \{ readPinnedRustToolchain \}/);
+  assert.doesNotMatch(updaterSource, /export function readPinnedRustToolchain/);
+  const toolchainSource = readFileSync(
+    new URL("./rust-toolchain.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.match(toolchainSource, /spawnSync\(\s*["']rustup["']/);
+  assert.doesNotMatch(toolchainSource, /shell:\s*true/);
 });
 
 test("46. npm lock update cannot install packages or run lifecycle scripts", () => {

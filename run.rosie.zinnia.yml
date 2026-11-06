@@ -44,9 +44,14 @@ modules:
         HUSKY: "0"
     build-commands:
       # The Flathub rust-stable SDK extension lags the pinned toolchain, so
-      # install rustup and the exact pinned compiler inside the sandbox.
-      - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.99.1 --profile minimal
-      - test "$(rustc --version | cut -d' ' -f2)" = 1.99.1
+      # install rustup and the exact pinned compiler inside the sandbox. These
+      # commands share one shell so the extracted pin survives to the assertion.
+      - |
+        set -eu
+        PINNED="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"[[:space:]]*$/\1/p' rust-toolchain.toml)"
+        test -n "$PINNED"
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain "$PINNED" --profile minimal
+        test "$(rustc --version | cut -d' ' -f2)" = "$PINNED"
       # node24 SDK ships npm 11.x, which does not support --min-release-age.
       # Match packageManager and CI exactly. --before retains the age gate.
       - npm install --global npm@12.2.1 --ignore-scripts --engine-strict=false --before="$(date -u -d '3 days ago' +%Y-%m-%dT%H:%M:%SZ)" --prefix /run/build/zinnia/npm-global

@@ -20,7 +20,6 @@ permissions:
 env:
   NODE_VERSION: "26.13.0"
   NPM_VERSION: "12.2.1"
-  RUST_VERSION: "1.99.1"
   CARGO_AUDIT_VERSION: "0.22.2"
 
 jobs:
@@ -62,9 +61,16 @@ jobs:
           cache: npm
       - name: Install latest npm 12
         run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - name: Resolve pinned Rust toolchain
+        id: rust-pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node scripts/rust-toolchain.mjs)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: ${{ env.RUST_VERSION }}
+          toolchain: ${{ steps.rust-pin.outputs.version }}
           components: rustfmt, clippy
       - name: Install Linux dependencies
         run: |
@@ -170,10 +176,17 @@ jobs:
       - name: Install latest npm 12
         id: install-npm
         run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - name: Resolve pinned Rust toolchain
+        id: rust-pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node scripts/rust-toolchain.mjs)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         id: rust-toolchain
         with:
-          toolchain: ${{ env.RUST_VERSION }}
+          toolchain: ${{ steps.rust-pin.outputs.version }}
       - name: Install Linux E2E dependencies
         id: linux-dependencies
         if: runner.os == 'Linux'
@@ -304,10 +317,17 @@ jobs:
       - name: Install latest npm 12
         id: install-npm
         run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - name: Resolve pinned Rust toolchain
+        id: rust-pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node scripts/rust-toolchain.mjs)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         id: rust-toolchain
         with:
-          toolchain: ${{ env.RUST_VERSION }}
+          toolchain: ${{ steps.rust-pin.outputs.version }}
       - name: Install Linux E2E dependencies
         id: linux-dependencies
         if: runner.os == 'Linux'
@@ -412,9 +432,16 @@ jobs:
           cache: npm
       - name: Install latest npm 12
         run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - name: Resolve pinned Rust toolchain
+        id: rust-pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node scripts/rust-toolchain.mjs)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: ${{ env.RUST_VERSION }}
+          toolchain: ${{ steps.rust-pin.outputs.version }}
           components: clippy
       # Same Linux E2E packages as quality-gate, for the ubuntu-24.04-arm entry.
       - name: Install Linux dependencies
@@ -535,9 +562,16 @@ jobs:
           cache: npm
       - name: Install latest npm 12
         run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - name: Resolve pinned Rust toolchain
+        id: rust-pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node scripts/rust-toolchain.mjs)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: ${{ env.RUST_VERSION }}
+          toolchain: ${{ steps.rust-pin.outputs.version }}
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
@@ -589,9 +623,16 @@ jobs:
           cache: npm
       - name: Install latest npm 12
         run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - name: Resolve pinned Rust toolchain
+        id: rust-pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node scripts/rust-toolchain.mjs)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: ${{ env.RUST_VERSION }}
+          toolchain: ${{ steps.rust-pin.outputs.version }}
       - run: npm ci --ignore-scripts
       - run: node scripts/npm-audit-signatures.cjs
       - name: npm audit - production

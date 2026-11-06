@@ -66,7 +66,9 @@ async function assertProcessStopped(pid) {
 // - a hung nested benchmark or persistent runner can outlive its useful budget;
 // - stable-promotion PRs can pass without six-platform release-scale evidence;
 // - skipped promotion jobs are not distinguished from failed required jobs;
-// - CI's Rust version can drift from the pinned local toolchain.
+// - CI's Rust version can drift from the pinned local toolchain;
+// - a workflow reads the Rust pin before checkout or misses a toolchain consumer;
+// - extraction uses the wrong shell or writes a malformed GITHUB_OUTPUT value.
 // Additional release-path failures to prevent:
 // - promotion compares main instead of the accepted beta tag for this version;
 // - baseline worktree builds with its floating Rust stable channel;
@@ -1172,18 +1174,55 @@ test("archive benchmark timeout wins when a callback finishes after the deadline
   await assert.rejects(run, /exceeded its 5ms run timeout/);
 });
 
-test("workflow Rust version matches the pinned toolchain", () => {
+test("workflow Rust version derives from the pinned toolchain", () => {
   const workflow = read(".github/workflows/ci.yml");
-  assert.match(workflow, /RUST_VERSION:\s*["']1\.99\.1["']/);
-  assert.match(workflow, /toolchain:\s*\$\{\{ env\.RUST_VERSION \}\}/);
+  const pinned = read("rust-toolchain.toml").match(
+    /^channel = "(\d+\.\d+\.\d+)"$/m,
+  )?.[1];
+  assert.ok(pinned, "rust-toolchain.toml must pin an exact Rust channel");
+  assert.doesNotMatch(workflow, /RUST_VERSION/);
+  assert.ok(!workflow.includes(pinned));
+  assert.equal(
+    (workflow.match(/uses:\s*dtolnay\/rust-toolchain/g) ?? []).length,
+    6,
+  );
+  assert.equal((workflow.match(/id:\s*rust-pin/g) ?? []).length, 6);
+  assert.match(workflow, /shell:\s*bash/);
+  assert.match(workflow, /node scripts\/rust-toolchain\.mjs/);
+  assert.match(workflow, /echo "version=\$version" >> "\$GITHUB_OUTPUT"/);
+  assert.match(
+    workflow,
+    /toolchain:\s*\$\{\{ steps\.rust-pin\.outputs\.version \}\}/,
+  );
+
   const rustCheckStart = workflow.indexOf("  rust-check:");
   const updaterStart = workflow.indexOf(
     "\n  updater-manifest:",
     rustCheckStart,
   );
+  const rustCheckJob = workflow.slice(rustCheckStart, updaterStart);
+  assert.match(rustCheckJob, /id:\s*rust-pin/);
   assert.match(
-    workflow.slice(rustCheckStart, updaterStart),
-    /components:\s*clippy/,
+    rustCheckJob,
+    /toolchain:\s*\$\{\{ steps\.rust-pin\.outputs\.version \}\}/,
+  );
+  assert.match(rustCheckJob, /components:\s*clippy/);
+  assert.ok(
+    rustCheckJob.indexOf("actions/checkout") <
+      rustCheckJob.indexOf("id: rust-pin"),
+  );
+  assert.ok(
+    rustCheckJob.indexOf("id: rust-pin") <
+      rustCheckJob.indexOf("dtolnay/rust-toolchain"),
+  );
+
+  const benchmarkWorkflow = read(".github/workflows/archive-io-benchmark.yml");
+  assert.doesNotMatch(benchmarkWorkflow, /RUST_VERSION/);
+  assert.ok(!benchmarkWorkflow.includes(pinned));
+  assert.match(benchmarkWorkflow, /id:\s*rust-pin/);
+  assert.match(
+    benchmarkWorkflow,
+    /toolchain:\s*\$\{\{ steps\.rust-pin\.outputs\.version \}\}/,
   );
 });
 
