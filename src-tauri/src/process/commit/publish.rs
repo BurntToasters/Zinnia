@@ -133,7 +133,7 @@ pub(super) fn copy_file_no_replace_with_created(
     let stamp_result = {
         #[cfg(windows)]
         {
-            super::copy_windows_zone_identifier(source, target)
+            crate::process::copy_windows_zone_identifier(source, target)
         }
         #[cfg(target_os = "macos")]
         {
