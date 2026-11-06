@@ -1315,7 +1315,14 @@ test("archive benchmark wrapper uses release persistent runner contract", () => 
   assert.match(script, /abort: session\?\.abort\?\.bind\(session\)/);
   assert.match(script, /const mergedEnv = \{ \.\.\.process\.env, \.\.\.env \}/);
   assert.match(script, /benchmarkCommandTimeoutMs\(mergedEnv\)/);
-  assert.match(script, /RUSTUP_TOOLCHAIN: process\.env\.RUST_VERSION/);
+  assert.match(
+    script,
+    /RUSTUP_TOOLCHAIN:\s*process\.env\.RUST_VERSION \|\| readPinnedRustToolchain\(REPO_ROOT\)/,
+  );
+  assert.doesNotMatch(
+    script,
+    /RUSTUP_TOOLCHAIN:\s*process\.env\.RUST_VERSION \|\| ["']\d+\.\d+\.\d+["']/,
+  );
   assert.match(script, /ZINNIA_BENCH_REQUIRE_BASELINE_REPORT/);
   assert.match(runner, /tauri/);
   assert.match(runner, /--features/);
