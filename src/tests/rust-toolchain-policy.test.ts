@@ -65,7 +65,10 @@ describe("Rust toolchain policy", () => {
       "org.freedesktop.Sdk.Extension.rust-stable",
     );
     expect(flatpakManifest).not.toContain("RUSTUP_TOOLCHAIN:");
-    expect(flatpakManifest).not.toContain("rustup toolchain install");
+    expect(flatpakManifest).toContain(
+      "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs",
+    );
+    expect(flatpakManifest).toContain("RUSTUP_HOME: /run/build/zinnia/rustup");
     expect(flatpakManifest).toContain(
       `test "$(rustc --version | cut -d' ' -f2)" = ${rustToolchain}`,
     );
