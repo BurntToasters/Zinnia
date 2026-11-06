@@ -62,6 +62,31 @@ describe("Rust toolchain policy", () => {
     expect(cli.stdout.trim()).toBe(rustToolchain);
   });
 
+  it("prints the same pin for --print and never combines it with an action", () => {
+    const script = path.resolve(process.cwd(), "scripts", "rust-toolchain.mjs");
+    const run = (args: string[]) =>
+      spawnSync(process.execPath, [script, ...args], { encoding: "utf8" });
+    const bare = run([]);
+    expect(bare.status).toBe(0);
+    expect(bare.stdout).toMatch(/^\d+\.\d+\.\d+\n$/u);
+    const printed = run(["--print"]);
+    expect(printed.status).toBe(0);
+    expect(printed.stdout).toBe(bare.stdout);
+    for (const args of [
+      ["--print", "--install"],
+      ["--install", "--print"],
+      ["--print", "--target", "x86_64-pc-windows-msvc"],
+      ["--target", "x86_64-pc-windows-msvc", "--print"],
+    ]) {
+      const result = run(args);
+      expect(result.status, args.join(" ")).not.toBe(0);
+      expect(result.stderr, args.join(" ")).toMatch(
+        /--print cannot be combined/u,
+      );
+      expect(result.stdout, args.join(" ")).toBe("");
+    }
+  });
+
   it("derives every Rust package script from the pin without dropping targets", () => {
     const rustToolchain = readPinnedRustToolchain();
     const packageText = readRepositoryFile("package.json");

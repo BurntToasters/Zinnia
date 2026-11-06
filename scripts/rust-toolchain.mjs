@@ -198,6 +198,12 @@ function runRustup(args) {
 
 function parseArguments(argv) {
   if (argv.length === 0) return { mode: "version" };
+  if (argv.includes("--print")) {
+    if (argv.length !== 1) {
+      throw new Error("--print cannot be combined with an action");
+    }
+    return { mode: "version" };
+  }
   if (argv[0] === "--install") {
     if (argv.length !== 1) {
       throw new Error("--install does not accept additional arguments");
@@ -214,7 +220,7 @@ function parseArguments(argv) {
     };
   }
   throw new Error(
-    `Unknown arguments: ${argv.join(" ")} (expected --install or --target <triple...>)`,
+    `Unknown arguments: ${argv.join(" ")} (expected --print, --install, or --target <triple...>)`,
   );
 }
 
