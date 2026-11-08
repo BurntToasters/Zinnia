@@ -22,7 +22,7 @@ tauri-plugin-wdio-webdriver = { version = "1", optional = true }
 tokio = { version = "1", features = ["time"] }
 shared_child = "1.1"
 getrandom = "0.3"
-sha2 = "0.10"
+sha2 = "0.11"
 # Tauri 2 already uses 0.6. Keeping one version avoids duplicate Objective-C
 # class symbols in the final macOS bundle.
 window-vibrancy = "0.6"
