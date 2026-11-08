@@ -55,6 +55,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
 <details>
   <summary>ℹ️ Click here to see previous major releases!</summary>
+- **7-Zip:** Updated bundled 7-Zip to `26.06`.
 
 ## Changes in `v0.6.0:`
 
