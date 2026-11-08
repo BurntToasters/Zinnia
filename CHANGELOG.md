@@ -50,12 +50,14 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Accessibility:** Password toggle labels, extract countdown announcements, progress valuetext, folder twisty labels, 44px hit areas, Basic browse loading/error status.
 - **Codebase:** Large Rust, TypeScript, and CSS modules split without behavior change.
 - **Testing:** Expanded E2E (compress, extract, settings, UI surfaces, older journals) and `--only` filter for the E2E runner.
+- **macOS - 7-Zip:** Starting with `26.06`, 7-Zip publishes separate macOS downloads for Apple Silicon (`arm64`) and Intel (`x86-64`) instead of one universal file. Zinnia now combines the two official files into a single universal 7-Zip helper, so the Universal app keeps working on both Apple Silicon and Intel Macs. Each half is copied byte for byte from the official download. Intel-only builds now bundle the Intel 7-Zip instead of the Apple Silicon one.
+- **Build:** Bundled 7-Zip updates now stop if a macOS download contains the wrong architecture, and every build checks that the combined macOS helper still matches the two official files. The changelog update no longer places the 7-Zip entry inside the collapsed release history.
+- **7-Zip:** Updated bundled 7-Zip to `26.06`.
 
 ### FULL CHANGELOG:
 
 <details>
   <summary>ℹ️ Click here to see previous major releases!</summary>
-- **7-Zip:** Updated bundled 7-Zip to `26.06`.
 
 ## Changes in `v0.6.0:`
 

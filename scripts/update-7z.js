@@ -10,7 +10,9 @@ import { Readable } from "node:stream";
 import {
   assertExtractedTreeContained,
   assertOfficialArchiveMembersSafe,
+  buildUniversalMachO,
   findExtractedRegularFile,
+  readThinMachOArch,
   validateTrusted7zPath,
 } from "./prepare-7z-helpers.js";
 import { isDirectExecutionOf } from "./direct-execution.mjs";
@@ -22,12 +24,15 @@ const provenancePath = path.join(assetsDirectory, "7z-provenance.json");
 const changelogPath = path.join(root, "CHANGELOG.md");
 const packageJsonPath = path.join(root, "package.json");
 const CHANGELOG_7Z_BULLET_PREFIX = "- **7-Zip:**";
+const universalMacAsset = "mac/universal/7zz";
+const universalMacInputs = { x86_64: "mac/x64/7zz", arm64: "mac/arm64/7zz" };
 const latestReleaseUrl = "https://github.com/ip7z/7zip/releases/latest";
 const officialDownloadPage = "https://www.7-zip.org/download.html";
 
 const obsoletePaths = [
   "assets/linux/arm64/7zz",
   "assets/linux/x64/7zz",
+  "assets/mac/7zz",
   "assets/win/arm64/7-ZipFar.dll",
   "assets/win/arm64/7za.dll",
   "assets/win/arm64/7za.exe",
@@ -142,7 +147,8 @@ export function syncChangelog7zVersion(changelog, appVersion, sevenZipVersion) {
     );
   }
   const bodyStart = headingIndex + heading.length;
-  const nextHeading = text.indexOf("\n## ", bodyStart);
+  const boundary = text.slice(bodyStart).search(/\n(?:#{2,3} |<details)/);
+  const nextHeading = boundary === -1 ? -1 : bodyStart + boundary;
   const bodyEnd = nextHeading === -1 ? text.length : nextHeading + 1;
   const bullet = `${CHANGELOG_7Z_BULLET_PREFIX} Updated bundled 7-Zip to \`${sevenZipVersion}\`.`;
   const lines = text
@@ -222,10 +228,16 @@ function sourceDefinitions(version) {
       },
     },
     {
-      name: "mac",
+      name: "mac-arm64",
       url: releaseUrl(`7z${compact}-mac.tar.xz`),
       format: "tar.xz",
-      artifacts: [{ asset: "mac/7zz", member: "7zz" }],
+      artifacts: [{ asset: "mac/arm64/7zz", member: "7zz", machO: "arm64" }],
+    },
+    {
+      name: "mac-x64",
+      url: releaseUrl(`7z${compact}-mac-x64.tar.xz`),
+      format: "tar.xz",
+      artifacts: [{ asset: "mac/x64/7zz", member: "7zz", machO: "x86_64" }],
     },
     {
       name: "windows-arm64-installer",
@@ -452,6 +464,14 @@ async function update(version) {
       extractArchive(source, archivePath, extracted, extractor);
       for (const artifact of source.artifacts) {
         const memberPath = findExtractedRegularFile(extracted, artifact.member);
+        if (artifact.machO) {
+          const actualArch = readThinMachOArch(fs.readFileSync(memberPath));
+          if (actualArch !== artifact.machO) {
+            throw new Error(
+              `${source.url} ships a ${actualArch} ${artifact.member}; expected ${artifact.machO}.`,
+            );
+          }
+        }
         const executable =
           artifact.asset.endsWith("/7zz") || artifact.asset.endsWith("/7zzs");
         writeStagedFile(
@@ -494,6 +514,29 @@ async function update(version) {
         };
       }
     }
+
+    const universalPath = path.join(
+      stagingDirectory,
+      `assets/${universalMacAsset}`,
+    );
+    fs.mkdirSync(path.dirname(universalPath), { recursive: true });
+    fs.writeFileSync(
+      universalPath,
+      buildUniversalMachO(
+        Object.fromEntries(
+          Object.entries(universalMacInputs).map(([arch, asset]) => [
+            arch,
+            fs.readFileSync(path.join(stagingDirectory, `assets/${asset}`)),
+          ]),
+        ),
+      ),
+    );
+    if (process.platform !== "win32") fs.chmodSync(universalPath, 0o755);
+    artifacts[universalMacAsset] = {
+      derivedFrom: universalMacInputs,
+      method: "universal-macho",
+    };
+    stagedFiles.push(`assets/${universalMacAsset}`);
 
     const checksums = Object.fromEntries(
       Object.keys(artifacts)
