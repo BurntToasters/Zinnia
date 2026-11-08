@@ -297,3 +297,57 @@ export function findExtractedRegularFile(rootDirectory, member) {
   }
   return matches[0];
 }
+
+const MACHO_MAGIC_64 = 0xfeedfacf;
+const FAT_MAGIC = 0xcafebabe;
+const MACHO_CPU_TYPES = { x86_64: 0x01000007, arm64: 0x0100000c };
+const UNIVERSAL_SLICE_ALIGN = { x86_64: 12, arm64: 14 };
+
+export function readThinMachOArch(bytes) {
+  if (bytes.length < 32 || bytes.readUInt32LE(0) !== MACHO_MAGIC_64) {
+    throw new Error("Expected a thin 64-bit little-endian Mach-O file.");
+  }
+  const cpuType = bytes.readUInt32LE(4);
+  const arch = Object.keys(MACHO_CPU_TYPES).find(
+    (name) => MACHO_CPU_TYPES[name] === cpuType,
+  );
+  if (!arch) {
+    throw new Error(
+      `Unsupported Mach-O architecture cputype 0x${cpuType.toString(16)}.`,
+    );
+  }
+  return arch;
+}
+
+export function buildUniversalMachO(slices) {
+  const order = ["x86_64", "arm64"];
+  for (const arch of order) {
+    const bytes = slices?.[arch];
+    if (!Buffer.isBuffer(bytes)) {
+      throw new Error(`Missing ${arch} slice for the universal Mach-O.`);
+    }
+    const actual = readThinMachOArch(bytes);
+    if (actual !== arch) {
+      throw new Error(`The ${arch} slice is a ${actual} Mach-O.`);
+    }
+  }
+  const header = Buffer.alloc(8 + order.length * 20);
+  header.writeUInt32BE(FAT_MAGIC, 0);
+  header.writeUInt32BE(order.length, 4);
+  const parts = [header];
+  let cursor = header.length;
+  order.forEach((arch, index) => {
+    const bytes = slices[arch];
+    const alignment = 2 ** UNIVERSAL_SLICE_ALIGN[arch];
+    const offset = Math.ceil(cursor / alignment) * alignment;
+    parts.push(Buffer.alloc(offset - cursor), bytes);
+    const entry = 8 + index * 20;
+    header.writeUInt32BE(bytes.readUInt32LE(4), entry);
+    header.writeUInt32BE(bytes.readUInt32LE(8), entry + 4);
+    header.writeUInt32BE(offset, entry + 8);
+    header.writeUInt32BE(bytes.length, entry + 12);
+    header.writeUInt32BE(UNIVERSAL_SLICE_ALIGN[arch], entry + 16);
+    cursor = offset + bytes.length;
+  });
+  return Buffer.concat(parts);
+}

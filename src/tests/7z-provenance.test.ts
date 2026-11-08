@@ -20,7 +20,11 @@ describe("bundled 7-Zip provenance", () => {
       version: string;
       officialDownloadPage: string;
       sourceArchives: Record<string, { url: string; sha256: string }>;
-      artifacts: Record<string, { source: string; member: string }>;
+      artifacts: Record<
+        string,
+        | { source: string; member: string }
+        | { derivedFrom: Record<string, string>; method: string }
+      >;
     };
 
     // build.rs embeds this as the runtime version gate; keep it the only copy.
@@ -35,14 +39,23 @@ describe("bundled 7-Zip provenance", () => {
     expect(Object.keys(provenance.sourceArchives).sort()).toEqual([
       "linux-arm64",
       "linux-x64",
-      "mac",
+      "mac-arm64",
+      "mac-x64",
       "windows-arm64-installer",
       "windows-x64-installer",
     ]);
+    expect(provenance.sourceArchives["mac-arm64"].url).toMatch(
+      new RegExp(`/7z${compact}-mac\\.tar\\.xz$`),
+    );
+    expect(provenance.sourceArchives["mac-x64"].url).toMatch(
+      new RegExp(`/7z${compact}-mac-x64\\.tar\\.xz$`),
+    );
     expect(Object.keys(provenance.artifacts).sort()).toEqual([
       "linux/arm64/7zzs",
       "linux/x64/7zzs",
-      "mac/7zz",
+      "mac/arm64/7zz",
+      "mac/universal/7zz",
+      "mac/x64/7zz",
       "win/arm64/7z.dll",
       "win/arm64/7z.exe",
       "win/x64/7z.dll",
@@ -51,7 +64,17 @@ describe("bundled 7-Zip provenance", () => {
     expect(Object.keys(provenance.artifacts).sort()).toEqual(
       Object.keys(checksums).sort(),
     );
+    expect(provenance.artifacts["mac/universal/7zz"]).toEqual({
+      derivedFrom: { x86_64: "mac/x64/7zz", arm64: "mac/arm64/7zz" },
+      method: "universal-macho",
+    });
     for (const record of Object.values(provenance.artifacts)) {
+      if ("derivedFrom" in record) {
+        for (const input of Object.values(record.derivedFrom)) {
+          expect(provenance.artifacts[input]).toHaveProperty("member");
+        }
+        continue;
+      }
       expect(record.member).not.toBe("");
       const source = provenance.sourceArchives[record.source];
       expect(source?.url).toMatch(
@@ -65,6 +88,7 @@ describe("bundled 7-Zip provenance", () => {
     const obsolete = [
       "assets/linux/arm64/7zz",
       "assets/linux/x64/7zz",
+      "assets/mac/7zz",
       "assets/win/arm64/7-ZipFar.dll",
       "assets/win/arm64/7za.dll",
       "assets/win/arm64/7za.exe",

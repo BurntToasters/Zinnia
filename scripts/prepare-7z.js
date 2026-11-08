@@ -6,6 +6,7 @@ import { spawnSync } from "child_process";
 import {
   assertExtractedTreeContained,
   assertOfficialArchiveMembersSafe,
+  buildUniversalMachO,
   officialArchiveExtractionCommand,
   validateTrusted7zPath,
 } from "./prepare-7z-helpers.js";
@@ -49,9 +50,9 @@ function loadChecksums() {
 const mappings = [
   { source: "win/x64/7z.exe", target: "7z-x86_64-pc-windows-msvc.exe" },
   { source: "win/arm64/7z.exe", target: "7z-aarch64-pc-windows-msvc.exe" },
-  { source: "mac/7zz", target: "7z-x86_64-apple-darwin" },
-  { source: "mac/7zz", target: "7z-aarch64-apple-darwin" },
-  { source: "mac/7zz", target: "7z-universal-apple-darwin" },
+  { source: "mac/x64/7zz", target: "7z-x86_64-apple-darwin" },
+  { source: "mac/arm64/7zz", target: "7z-aarch64-apple-darwin" },
+  { source: "mac/universal/7zz", target: "7z-universal-apple-darwin" },
   { source: "linux/x64/7zzs", target: "7z-x86_64-unknown-linux-gnu" },
   { source: "linux/arm64/7zzs", target: "7z-aarch64-unknown-linux-gnu" },
 ];
@@ -79,7 +80,7 @@ function requiredSourcesForHost() {
       : ["win/x64/7z.exe", "win/x64/7z.dll"];
   }
   if (process.platform === "darwin") {
-    return ["mac/7zz"];
+    return ["mac/x64/7zz", "mac/arm64/7zz", "mac/universal/7zz"];
   }
   if (process.platform === "linux") {
     return process.arch === "arm64" ? ["linux/arm64/7zzs"] : ["linux/x64/7zzs"];
@@ -168,11 +169,44 @@ for (const [name, source] of Object.entries(provenance.sourceArchives ?? {})) {
     throw new Error(`Invalid official archive provenance for ${name}.`);
   }
 }
+function universalInputs(record) {
+  const inputs = record?.derivedFrom;
+  if (
+    record?.method !== "universal-macho" ||
+    !inputs ||
+    Object.keys(inputs).sort().join(",") !== "arm64,x86_64"
+  ) {
+    return undefined;
+  }
+  return inputs;
+}
+
 for (const source of Object.keys(expectedChecksums)) {
   const record = provenance.artifacts?.[source];
+  if (record?.derivedFrom) {
+    const inputs = universalInputs(record);
+    if (
+      !inputs ||
+      Object.values(inputs).some(
+        (input) => !provenance.artifacts?.[input]?.member,
+      )
+    ) {
+      throw new Error(`Invalid derived provenance for ${source}.`);
+    }
+    continue;
+  }
   if (!record?.member || !provenance.sourceArchives?.[record.source]) {
     throw new Error(`Missing archive/member provenance for ${source}.`);
   }
+}
+
+function buildDerivedAsset(record, readInput) {
+  const inputs = universalInputs(record);
+  return buildUniversalMachO(
+    Object.fromEntries(
+      Object.entries(inputs).map(([arch, input]) => [arch, readInput(input)]),
+    ),
+  );
 }
 if (updateChecksums) {
   console.warn(
@@ -267,6 +301,19 @@ for (const mapping of mappings) {
     }
   }
 
+  const derivedRecord = provenance.artifacts?.[mapping.source];
+  if (derivedRecord?.derivedFrom) {
+    const rebuilt = buildDerivedAsset(derivedRecord, (input) =>
+      fs.readFileSync(path.join(assetsDir, input)),
+    );
+    if (!rebuilt.equals(fs.readFileSync(sourcePath))) {
+      console.error(
+        `FATAL: ${mapping.source} does not match the universal merge of its tracked inputs.`,
+      );
+      process.exit(1);
+    }
+  }
+
   fs.copyFileSync(sourcePath, targetPath);
   console.log(`  ${mapping.target}: sha256=${sourceHash}`);
   if (process.platform !== "win32") {
@@ -331,6 +378,26 @@ function verifyOfficialDownloads(downloadDirectory) {
       assertExtractedTreeContained(destination);
     }
     for (const [asset, record] of Object.entries(provenance.artifacts)) {
+      if (record.derivedFrom) {
+        const expected =
+          regeneratedChecksums[asset] ?? expectedChecksums[asset];
+        const rebuilt = buildDerivedAsset(record, (input) => {
+          const inputRecord = provenance.artifacts[input];
+          return fs.readFileSync(
+            path.join(extractionRoot, inputRecord.source, inputRecord.member),
+          );
+        });
+        const actual = crypto
+          .createHash("sha256")
+          .update(rebuilt)
+          .digest("hex");
+        if (actual !== expected) {
+          throw new Error(
+            `Tracked ${asset} does not match the universal merge of the official archives: expected ${expected}, got ${actual}.`,
+          );
+        }
+        continue;
+      }
       const extracted = path.join(extractionRoot, record.source, record.member);
       if (!fs.existsSync(extracted)) {
         throw new Error(`Official archive is missing ${record.member}.`);

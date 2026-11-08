@@ -34,3 +34,11 @@ export function findExtractedRegularFile(
   rootDirectory: string,
   member: string,
 ): string;
+
+export type UniversalMachOArch = "x86_64" | "arm64";
+
+export function readThinMachOArch(bytes: Buffer): UniversalMachOArch;
+
+export function buildUniversalMachO(
+  slices: Record<UniversalMachOArch, Buffer>,
+): Buffer;
