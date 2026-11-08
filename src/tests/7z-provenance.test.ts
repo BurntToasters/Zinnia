@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 describe("bundled 7-Zip provenance", () => {
@@ -81,6 +82,35 @@ describe("bundled 7-Zip provenance", () => {
         /^https:\/\/(?:www\.7-zip\.org\/a\/|github\.com\/ip7z\/7zip\/releases\/download\/)/,
       );
       expect(source?.sha256).toMatch(/^[a-f0-9]{64}$/);
+    }
+  });
+
+  it("tracks every bundled Unix 7-Zip binary as executable in git", () => {
+    const checksums = JSON.parse(
+      fs.readFileSync(
+        path.resolve(process.cwd(), "assets", "7z-checksums.json"),
+        "utf8",
+      ),
+    ) as Record<string, string>;
+    const unixBinaries = Object.keys(checksums)
+      .filter((asset) => /\/7zzs?$/.test(asset))
+      .map((asset) => `assets/${asset}`)
+      .sort();
+    expect(unixBinaries.length).toBeGreaterThanOrEqual(5);
+    const modes = Object.fromEntries(
+      execFileSync("git", ["ls-files", "-s", "--", ...unixBinaries], {
+        encoding: "utf8",
+      })
+        .trim()
+        .split("\n")
+        .map((line) => {
+          const [meta, file] = line.split("\t");
+          return [file, meta.split(" ")[0]];
+        }),
+    );
+    expect(Object.keys(modes).sort()).toEqual(unixBinaries);
+    for (const file of unixBinaries) {
+      expect(modes[file], file).toBe("100755");
     }
   });
 
