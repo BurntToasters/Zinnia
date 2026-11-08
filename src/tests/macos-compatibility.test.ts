@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
@@ -7,6 +8,156 @@ import {
   macBundleVersionFromSemver,
   macMarketingVersionFromSemver,
 } from "../../scripts/sync-version-helpers.js";
+import {
+  buildUniversalMachO,
+  readThinMachOArch,
+} from "../../scripts/prepare-7z-helpers.js";
+
+const MAC_7Z_SLICES = [
+  ["x64", "x86_64"],
+  ["arm64", "arm64"],
+] as const;
+
+const CPU_TYPES = { x86_64: 0x01000007, arm64: 0x0100000c } as const;
+
+function thinMachO(cpuType: number, body: string, magic = 0xfeedfacf): Buffer {
+  const header = Buffer.alloc(32);
+  header.writeUInt32LE(magic, 0);
+  header.writeUInt32LE(cpuType, 4);
+  header.writeUInt32LE(cpuType === CPU_TYPES.x86_64 ? 3 : 0, 8);
+  header.writeUInt32LE(2, 12);
+  return Buffer.concat([header, Buffer.from(body)]);
+}
+
+function readMacAsset(dir: string): Buffer {
+  return fs.readFileSync(
+    path.resolve(process.cwd(), "assets", "mac", dir, "7zz"),
+  );
+}
+
+describe("universal macOS 7-Zip merge", () => {
+  const x64 = thinMachO(CPU_TYPES.x86_64, "x86_64 slice body");
+  const arm64 = thinMachO(CPU_TYPES.arm64, "arm64 slice body, a bit longer");
+
+  it("rejects inputs that are not thin 64-bit Mach-O files", () => {
+    expect(() => readThinMachOArch(Buffer.alloc(0))).toThrow(/Mach-O/);
+    expect(() =>
+      readThinMachOArch(Buffer.from("not a binary at all, nope")),
+    ).toThrow(/Mach-O/);
+    expect(() =>
+      readThinMachOArch(thinMachO(CPU_TYPES.x86_64, "x", 0xfeedface)),
+    ).toThrow(/Mach-O/);
+    const fat = buildUniversalMachO({ x86_64: x64, arm64 });
+    expect(() => readThinMachOArch(fat)).toThrow(/Mach-O/);
+    expect(() =>
+      readThinMachOArch(thinMachO(0x00000007, "i386 cpu type")),
+    ).toThrow(/architecture/);
+  });
+
+  it("rejects a slice placed under the wrong architecture", () => {
+    expect(() => buildUniversalMachO({ x86_64: arm64, arm64 })).toThrow(
+      /x86_64/,
+    );
+    expect(() => buildUniversalMachO({ x86_64: x64, arm64: x64 })).toThrow(
+      /arm64/,
+    );
+    expect(() => buildUniversalMachO({ x86_64: x64 } as never)).toThrow(
+      /arm64/,
+    );
+  });
+
+  it("writes an aligned big-endian fat header that preserves slice bytes", () => {
+    const fat = buildUniversalMachO({ x86_64: x64, arm64 });
+    expect(fat.readUInt32BE(0)).toBe(0xcafebabe);
+    expect(fat.readUInt32BE(4)).toBe(2);
+    const slices = [0, 1].map((index) => {
+      const offset = 8 + index * 20;
+      return {
+        cpuType: fat.readUInt32BE(offset),
+        cpuSubtype: fat.readUInt32BE(offset + 4),
+        offset: fat.readUInt32BE(offset + 8),
+        size: fat.readUInt32BE(offset + 12),
+        align: fat.readUInt32BE(offset + 16),
+      };
+    });
+    expect(slices.map((slice) => slice.cpuType)).toEqual([
+      CPU_TYPES.x86_64,
+      CPU_TYPES.arm64,
+    ]);
+    expect(slices[0].cpuSubtype).toBe(3);
+    for (const [slice, source] of [
+      [slices[0], x64],
+      [slices[1], arm64],
+    ] as const) {
+      expect(slice.offset % 2 ** slice.align).toBe(0);
+      expect(slice.align).toBeGreaterThanOrEqual(12);
+      expect(slice.size).toBe(source.length);
+      expect(
+        fat.subarray(slice.offset, slice.offset + slice.size).equals(source),
+      ).toBe(true);
+    }
+    expect(slices[1].align).toBe(14);
+    expect(slices[1].offset).toBeGreaterThanOrEqual(
+      slices[0].offset + slices[0].size,
+    );
+    expect(fat.length).toBe(slices[1].offset + slices[1].size);
+  });
+
+  it("is deterministic", () => {
+    expect(
+      buildUniversalMachO({ x86_64: x64, arm64 }).equals(
+        buildUniversalMachO({ x86_64: x64, arm64 }),
+      ),
+    ).toBe(true);
+  });
+
+  it("matches the committed universal asset built from the official slices", () => {
+    const rebuilt = buildUniversalMachO({
+      x86_64: readMacAsset("x64"),
+      arm64: readMacAsset("arm64"),
+    });
+    expect(rebuilt.equals(readMacAsset("universal"))).toBe(true);
+  });
+
+  it.runIf(process.platform === "darwin")(
+    "produces a universal 7zz that lipo, codesign, and the host CPU accept",
+    () => {
+      const provenance = JSON.parse(
+        fs.readFileSync(
+          path.resolve(process.cwd(), "assets", "7z-provenance.json"),
+          "utf8",
+        ),
+      ) as { version: string };
+      const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "zinnia-7zz-fat-"));
+      try {
+        const universal = path.join(workDir, "7zz");
+        fs.copyFileSync(
+          path.resolve(process.cwd(), "assets", "mac", "universal", "7zz"),
+          universal,
+        );
+        fs.chmodSync(universal, 0o755);
+        expect(
+          execFileSync("lipo", ["-archs", universal], { encoding: "utf8" })
+            .trim()
+            .split(/\s+/)
+            .sort(),
+        ).toEqual(["arm64", "x86_64"]);
+        for (const [dir, arch] of MAC_7Z_SLICES) {
+          const thinned = path.join(workDir, `7zz-${arch}`);
+          execFileSync("lipo", [universal, "-thin", arch, "-output", thinned]);
+          expect(fs.readFileSync(thinned).equals(readMacAsset(dir))).toBe(true);
+        }
+        execFileSync("codesign", ["--force", "--sign", "-", universal]);
+        execFileSync("codesign", ["--verify", "--verbose=2", universal]);
+        const banner = execFileSync(universal, ["i"], { encoding: "utf8" });
+        expect(banner).toContain(`7-Zip (z) ${provenance.version}`);
+      } finally {
+        fs.rmSync(workDir, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+});
 
 describe("macOS compatibility", () => {
   it("requires macOS 26+ and a numeric bundle build version", () => {
@@ -39,6 +190,18 @@ describe("macOS compatibility", () => {
     expect(infoPlist).toContain("Extract with Zinnia");
   });
 
+  it("stores each official macOS 7-Zip slice as its own thin Mach-O", () => {
+    for (const [dir, arch] of MAC_7Z_SLICES) {
+      const bytes = fs.readFileSync(
+        path.resolve(process.cwd(), "assets", "mac", dir, "7zz"),
+      );
+      expect(readThinMachOArch(bytes), `assets/mac/${dir}/7zz`).toBe(arch);
+    }
+    expect(
+      fs.existsSync(path.resolve(process.cwd(), "assets", "mac", "7zz")),
+    ).toBe(false);
+  });
+
   it.runIf(process.platform === "darwin")(
     "keeps every official 7-Zip slice compatible with the declared macOS floor",
     () => {
@@ -49,8 +212,14 @@ describe("macOS compatibility", () => {
         ),
       );
       const requiredMacOS = config.bundle.macOS.minimumSystemVersion;
-      const sidecar = path.resolve(process.cwd(), "assets", "mac", "7zz");
-      for (const arch of ["x86_64", "arm64"]) {
+      for (const [dir, arch] of MAC_7Z_SLICES) {
+        const sidecar = path.resolve(
+          process.cwd(),
+          "assets",
+          "mac",
+          dir,
+          "7zz",
+        );
         const output = execFileSync("otool", ["-arch", arch, "-l", sidecar], {
           encoding: "utf8",
         });

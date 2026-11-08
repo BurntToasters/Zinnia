@@ -3,9 +3,9 @@ use std::path::Path;
 const BINARIES: &[(&str, &str)] = &[
     ("win/x64/7z.exe", "7z-x86_64-pc-windows-msvc.exe"),
     ("win/arm64/7z.exe", "7z-aarch64-pc-windows-msvc.exe"),
-    ("mac/7zz", "7z-x86_64-apple-darwin"),
-    ("mac/7zz", "7z-aarch64-apple-darwin"),
-    ("mac/7zz", "7z-universal-apple-darwin"),
+    ("mac/x64/7zz", "7z-x86_64-apple-darwin"),
+    ("mac/arm64/7zz", "7z-aarch64-apple-darwin"),
+    ("mac/universal/7zz", "7z-universal-apple-darwin"),
     ("linux/x64/7zzs", "7z-x86_64-unknown-linux-gnu"),
     ("linux/arm64/7zzs", "7z-aarch64-unknown-linux-gnu"),
 ];

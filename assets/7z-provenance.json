@@ -13,9 +13,13 @@
       "url": "https://github.com/ip7z/7zip/releases/download/26.06/7z2606-linux-x64.tar.xz",
       "sha256": "2b539cf067b2ad48e1baa5093dbaa8818b73542d1222a0ffde9dc5f2922ea62e"
     },
-    "mac": {
+    "mac-arm64": {
       "url": "https://github.com/ip7z/7zip/releases/download/26.06/7z2606-mac.tar.xz",
       "sha256": "b6f17920b4240940461dac8ef4009891881ac44d2a5ead625ede2ec8472185dd"
+    },
+    "mac-x64": {
+      "url": "https://github.com/ip7z/7zip/releases/download/26.06/7z2606-mac-x64.tar.xz",
+      "sha256": "3af68b124052da7fc2a246c96b0bea6a68bfee389baa788f4cead1a133445586"
     },
     "windows-arm64-installer": {
       "url": "https://github.com/ip7z/7zip/releases/download/26.06/7z2606-arm64.exe",
@@ -49,8 +53,19 @@
       "source": "linux-x64",
       "member": "7zzs"
     },
-    "mac/7zz": {
-      "source": "mac",
+    "mac/arm64/7zz": {
+      "source": "mac-arm64",
+      "member": "7zz"
+    },
+    "mac/universal/7zz": {
+      "derivedFrom": {
+        "x86_64": "mac/x64/7zz",
+        "arm64": "mac/arm64/7zz"
+      },
+      "method": "universal-macho"
+    },
+    "mac/x64/7zz": {
+      "source": "mac-x64",
       "member": "7zz"
     },
     "win/arm64/7z.dll": {
