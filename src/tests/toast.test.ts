@@ -47,6 +47,36 @@ describe("showToast", () => {
     expect(document.querySelectorAll(".toast")).toHaveLength(0);
   });
 
+  it("pauses auto-dismiss while hovered and resumes with the remaining time", () => {
+    showToast("Hover", "info", 1000);
+    const toast = document.querySelector(".toast") as HTMLElement;
+    vi.advanceTimersByTime(300);
+    toast.dispatchEvent(new Event("mouseenter"));
+    vi.advanceTimersByTime(5000);
+    expect(toast.classList.contains("toast--leaving")).toBe(false);
+    toast.dispatchEvent(new Event("mouseleave"));
+    vi.advanceTimersByTime(699);
+    expect(toast.classList.contains("toast--leaving")).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(toast.classList.contains("toast--leaving")).toBe(true);
+    vi.advanceTimersByTime(200);
+    expect(document.querySelectorAll(".toast")).toHaveLength(0);
+  });
+
+  it("keeps a timed toast paused while focus and hover overlap", () => {
+    showToast("Focus", "success", 1000);
+    const toast = document.querySelector(".toast") as HTMLElement;
+    toast.dispatchEvent(new Event("focusin"));
+    toast.dispatchEvent(new Event("mouseenter"));
+    vi.advanceTimersByTime(5000);
+    toast.dispatchEvent(new Event("mouseleave"));
+    vi.advanceTimersByTime(5000);
+    expect(toast.classList.contains("toast--leaving")).toBe(false);
+    toast.dispatchEvent(new Event("focusout"));
+    vi.advanceTimersByTime(1000);
+    expect(toast.classList.contains("toast--leaving")).toBe(true);
+  });
+
   it("dismisses on click", () => {
     showToast("Tap", "info", 0);
     const toast = document.querySelector(".toast") as HTMLElement;

@@ -477,48 +477,106 @@ pub(crate) fn read_cleanup_journal_any_version_at(
 /// Refuse a journal this build cannot interpret. The message says the journal
 /// was preserved so the startup banner offers acknowledgment.
 pub(crate) fn ensure_journal_format_supported(journal: &CleanupJournal) -> Result<(), String> {
+    check_journal_format_supported(journal).map_err(|failure| failure.message)
+}
+
+pub(crate) fn check_journal_format_supported(
+    journal: &CleanupJournal,
+) -> Result<(), RecoveryFailure> {
     if journal.format_version > CLEANUP_JOURNAL_FORMAT_VERSION {
-        return Err(format!(
-            "The recovery journal was written by a newer Zinnia version (journal format {}; \
-             this build supports up to {}). The journal was preserved and no files were \
-             changed. Recover it with that newer Zinnia version, or accept it here to clear \
-             the marker without changing files.",
-            journal.format_version, CLEANUP_JOURNAL_FORMAT_VERSION
+        return Err(RecoveryFailure::new(
+            RecoveryKind::Newer,
+            format!(
+                "The recovery journal was written by a newer Zinnia version (journal format {}; \
+                 this build supports up to {}). The journal was preserved and no files were \
+                 changed. Recover it with that newer Zinnia version, or accept it here to clear \
+                 the marker without changing files.",
+                journal.format_version, CLEANUP_JOURNAL_FORMAT_VERSION
+            ),
         ));
     }
     if journal.format_version < CLEANUP_JOURNAL_FORMAT_VERSION {
-        return Err(format!(
-            "The recovery journal was written by an older Zinnia version (journal format {}; \
-             this build requires at least {}). The journal was preserved and no files were \
-             changed. Recover it with Zinnia 0.6.2 or earlier, or accept it here to clear \
-             the marker without changing files.",
-            journal.format_version, CLEANUP_JOURNAL_FORMAT_VERSION
+        return Err(RecoveryFailure::new(
+            RecoveryKind::Older,
+            format!(
+                "The recovery journal was written by an older Zinnia version (journal format {}; \
+                 this build requires at least {}). The journal was preserved and no files were \
+                 changed. Recover it with Zinnia 0.6.2 or earlier, or accept it here to clear \
+                 the marker without changing files.",
+                journal.format_version, CLEANUP_JOURNAL_FORMAT_VERSION
+            ),
         ));
     }
     if !journal.archive && !journal.move_plan_sidecar {
-        return Err(
+        return Err(RecoveryFailure::new(
+            RecoveryKind::Older,
             "The recovery journal has no durable sidecar move plan and was preserved. \
-             No files were changed. Accept it here to clear the marker without changing files."
-                .to_string(),
-        );
+             No files were changed. Accept it here to clear the marker without changing files.",
+        ));
     }
     if journal.archive && journal.archive_phase.is_none() {
-        return Err(
+        return Err(RecoveryFailure::new(
+            RecoveryKind::Older,
             "The recovery journal was preserved because archive phase metadata is missing. \
-             No files were changed. Accept it here to clear the marker without changing files."
-                .to_string(),
-        );
+             No files were changed. Accept it here to clear the marker without changing files.",
+        ));
     }
     if !journal.archive
         && (journal.extract_phase.is_none() || journal.extract_stage_placement.is_none())
     {
-        return Err(
+        return Err(RecoveryFailure::new(
+            RecoveryKind::Older,
             "The recovery journal was preserved because extraction phase or placement metadata is missing. \
-             No files were changed. Accept it here to clear the marker without changing files."
-                .to_string(),
-        );
+             No files were changed. Accept it here to clear the marker without changing files.",
+        ));
     }
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RecoveryKind {
+    Newer,
+    Older,
+    Ambiguous,
+    Error,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct RecoveryFailure {
+    pub kind: RecoveryKind,
+    pub message: String,
+}
+
+impl RecoveryFailure {
+    pub fn new(kind: RecoveryKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+
+    pub fn error(message: impl Into<String>) -> Self {
+        Self::new(RecoveryKind::Error, message)
+    }
+}
+
+impl From<String> for RecoveryFailure {
+    fn from(message: String) -> Self {
+        Self::error(message)
+    }
+}
+
+impl From<&str> for RecoveryFailure {
+    fn from(message: &str) -> Self {
+        Self::error(message)
+    }
+}
+
+impl std::fmt::Display for RecoveryFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
 }
 
 /// Read the active journal for recovery or mutation. Every caller that can
@@ -527,10 +585,16 @@ pub(crate) fn ensure_journal_format_supported(journal: &CleanupJournal) -> Resul
 pub(crate) fn read_cleanup_journal_at(
     path: &std::path::Path,
 ) -> Result<Option<CleanupJournal>, String> {
+    read_recoverable_cleanup_journal_at(path).map_err(|failure| failure.message)
+}
+
+pub(crate) fn read_recoverable_cleanup_journal_at(
+    path: &std::path::Path,
+) -> Result<Option<CleanupJournal>, RecoveryFailure> {
     let Some(journal) = read_cleanup_journal_any_version_at(path)? else {
         return Ok(None);
     };
-    ensure_journal_format_supported(&journal)?;
+    check_journal_format_supported(&journal)?;
     Ok(Some(journal))
 }
 

@@ -218,7 +218,13 @@ describe("describe7zError", () => {
     expect(
       describe7zError("", "The system cannot find the path specified"),
     ).toMatch(/no longer exists/i);
-    expect(describe7zError("", "file not found")).toMatch(/no longer exists/i);
+    expect(
+      describe7zError("", "The system cannot find the file specified"),
+    ).toMatch(/no longer exists/i);
+    expect(describe7zError("", "No such file or directory")).toMatch(
+      /no longer exists/i,
+    );
+    expect(describe7zError("", "method not found")).toBe("");
   });
 
   it("hints for create/permission failures", () => {

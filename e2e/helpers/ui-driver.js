@@ -59,6 +59,11 @@ export async function queueConfirmResult(result) {
   }, result);
 }
 
+export async function confirmDialogTitles() {
+  await waitForE2eHook();
+  return browser.execute(() => window.__ZINNIA_E2E__.readConfirmTitles());
+}
+
 /**
  * Drop the app's debounced settings write and wait for any write in flight.
  * Call it before writing settings.json directly: UI activity from an earlier
@@ -307,8 +312,13 @@ export async function openSelectiveExtractPicker() {
 /** Expand a collapsed folder row in the selective extract tree. */
 export async function expandSelectiveFolder(folderPath) {
   await browser.execute((targetPath) => {
-    const normalized = targetPath.replace(/\\/g, "/");
-    const row = document.querySelector(`[data-member-path="${normalized}"]`);
+    const target = targetPath.replace(/\\/g, "/");
+    const row = Array.from(
+      document.querySelectorAll("[data-member-path]"),
+    ).find(
+      (candidate) =>
+        candidate.dataset.memberPath.replace(/\\/g, "/") === target,
+    );
     const twisty = row?.querySelector(".selective-twisty");
     if (!twisty || twisty.disabled) {
       throw new Error(`missing selective folder row for ${targetPath}`);
@@ -317,11 +327,26 @@ export async function expandSelectiveFolder(folderPath) {
   }, folderPath);
 }
 
+/** Whether the selective extract tree renders a row for the member path (separator-agnostic). */
+export async function hasSelectiveMember(memberPath) {
+  return browser.execute((targetPath) => {
+    const target = targetPath.replace(/\\/g, "/");
+    return Array.from(document.querySelectorAll("[data-member-path]")).some(
+      (candidate) =>
+        candidate.dataset.memberPath.replace(/\\/g, "/") === target,
+    );
+  }, memberPath);
+}
+
 /** Toggle one selective row by archive member path (tree rows use data-member-path). */
 export async function toggleSelectiveMember(memberPath) {
   await browser.execute((targetPath) => {
-    const row = document.querySelector(
-      `[data-member-path="${targetPath.replace(/\\/g, "/")}"]`,
+    const target = targetPath.replace(/\\/g, "/");
+    const row = Array.from(
+      document.querySelectorAll("[data-member-path]"),
+    ).find(
+      (candidate) =>
+        candidate.dataset.memberPath.replace(/\\/g, "/") === target,
     );
     const checkbox = row?.querySelector('input[type="checkbox"]');
     if (!checkbox) {

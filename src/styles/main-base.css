@@ -141,8 +141,8 @@
 }
 
 .support-btn .support-heart {
-  color: #e11d48;
-  fill: #e11d48;
+  color: var(--heart);
+  fill: var(--heart);
   width: 14px;
   height: 14px;
 }

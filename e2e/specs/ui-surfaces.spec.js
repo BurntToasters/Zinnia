@@ -10,9 +10,11 @@ import {
   clickPowerExtractPasswordToggle,
   closeSettingsModalViaUi,
   dismissToasts,
+  dispatchDocumentKey,
   domText,
   domValue,
   enableLocalLoggingViaSettings,
+  isShortcutsOverlayOpen,
   exportDiagnosticsLogsTo,
   basicBrowseStatusState,
   openBasicBrowseForArchive,
@@ -265,5 +267,120 @@ describe("ui surfaces", function () {
     assert.equal(hiddenAgain.inputType, "password");
     assert.equal(hiddenAgain.ariaLabel, "Show password");
     assert.equal(hiddenAgain.pressed, "false");
+  });
+
+  it("swaps the Basic browse password toggle between eye and eye-off icons", async () => {
+    await openBasicBrowseForArchive(ARCHIVE);
+    await browser.execute(() => {
+      document.getElementById("basic-browse-contents")?.click();
+    });
+    await browser.waitUntil(
+      () =>
+        browser.execute(() => {
+          const field = document.getElementById("basic-browse-password-field");
+          return field !== null && !field.hidden;
+        }),
+      {
+        timeout: 60_000,
+        timeoutMsg:
+          "Basic browse did not reveal the password field for the encrypted archive",
+      },
+    );
+
+    const toggleState = () =>
+      browser.execute(() => {
+        const input = document.getElementById("basic-browse-password");
+        const toggle = document.getElementById("basic-toggle-browse-password");
+        const icon = toggle?.querySelector("svg");
+        const paths = [...(icon?.querySelectorAll("path") ?? [])].map(
+          (path) => path.getAttribute("d") ?? "",
+        );
+        const glyph = paths.some((d) => d.startsWith("M2.062 12.348"))
+          ? "eye"
+          : paths.some((d) => d.startsWith("M10.733 5.076"))
+            ? "eye-off"
+            : "none";
+        return {
+          inputType: input?.getAttribute("type") ?? null,
+          ariaLabel: toggle?.getAttribute("aria-label") ?? null,
+          pressed: toggle?.getAttribute("aria-pressed") ?? null,
+          iconClasses: icon ? [...icon.classList] : [],
+          glyph,
+        };
+      });
+    const clickBasicBrowseToggle = () =>
+      browser.execute(() => {
+        document.getElementById("basic-toggle-browse-password")?.click();
+      });
+
+    const hidden = await toggleState();
+    assert.equal(hidden.inputType, "password");
+    assert.equal(hidden.ariaLabel, "Show password");
+    assert.equal(hidden.pressed, "false");
+    assert.equal(hidden.glyph, "eye");
+
+    await clickBasicBrowseToggle();
+    await browser.waitUntil(
+      async () => (await toggleState()).glyph === "eye-off",
+      {
+        timeout: 10_000,
+        timeoutMsg:
+          "Basic browse toggle did not render the eye-off glyph after reveal",
+      },
+    );
+    const shown = await toggleState();
+    assert.equal(shown.inputType, "text");
+    assert.equal(shown.ariaLabel, "Hide password");
+    assert.equal(shown.pressed, "true");
+    assert.ok(shown.iconClasses.includes("lucide-eye-off"));
+
+    await clickBasicBrowseToggle();
+    await browser.waitUntil(async () => (await toggleState()).glyph === "eye", {
+      timeout: 10_000,
+      timeoutMsg: "Basic browse toggle did not render the eye glyph after hide",
+    });
+    const hiddenAgain = await toggleState();
+    assert.equal(hiddenAgain.inputType, "password");
+    assert.equal(hiddenAgain.ariaLabel, "Show password");
+    assert.equal(hiddenAgain.pressed, "false");
+    assert.ok(hiddenAgain.iconClasses.includes("lucide-eye"));
+  });
+
+  it("lists Basic and Power rows in the keyboard shortcuts modal", async () => {
+    await dispatchDocumentKey("?");
+    await browser.waitUntil(() => isShortcutsOverlayOpen(), {
+      timeout: 10_000,
+      timeoutMsg: "? did not open the shortcuts overlay",
+    });
+
+    const rows = await browser.execute(() =>
+      [...document.querySelectorAll("#shortcut-list .shortcut-list__row")].map(
+        (row) => ({
+          workspace: row.dataset.workspace ?? null,
+          keys: row.querySelector("dt")?.textContent?.trim() ?? "",
+          description: row.querySelector("dd")?.textContent?.trim() ?? "",
+        }),
+      ),
+    );
+    assert.ok(
+      rows.some(
+        (row) => row.workspace === "basic" && row.keys.includes("Enter"),
+      ),
+      `shortcuts modal lacks a Basic row: ${JSON.stringify(rows)}`,
+    );
+    assert.ok(
+      rows.some(
+        (row) => row.workspace === "power" && row.description.length > 0,
+      ),
+      `shortcuts modal lacks a Power row: ${JSON.stringify(rows)}`,
+    );
+
+    await browser.execute(() => {
+      document.getElementById("close-shortcuts")?.click();
+    });
+    await browser.waitUntil(async () => !(await isShortcutsOverlayOpen()), {
+      timeout: 10_000,
+      timeoutMsg: "shortcuts overlay did not close",
+    });
   });
 });

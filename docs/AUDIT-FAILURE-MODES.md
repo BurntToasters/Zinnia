@@ -1,3 +1,49 @@
+# 0.7.0-beta.1 audit fix failure inventory
+
+Failure cases considered before the fixes for the 0.7.0-beta.1 audit items.
+
+## Toast pause
+
+- Hovering a success or info toast does not stop its dismiss timer, so the text disappears while the pointer is still on it.
+- Keyboard focus on a timed toast does not stop the timer, so a keyboard user loses the message before reaching it.
+- Resuming after a pause restarts the full duration instead of the remaining time, so a toast can stay visible far longer than configured.
+- Leaving hover while focus remains inside the toast (or leaving focus while the pointer is still over it) resumes the timer early.
+- Repeated enter, leave, focus, and blur events stack timers, so a toast dismisses early or its removal runs more than once.
+- Click or Escape dismissal leaves the pending timer alive, which later runs against a detached toast.
+- Sticky error toasts (duration 0) must stay persistent and must not gain a dismiss timer.
+
+## OS integration logging
+
+- A failed status refresh is written only with `console.warn`, so it never reaches the activity log or exported diagnostics.
+- `devLog` writes only in DEV builds or when log verbosity is debug, so a release build at default verbosity drops these lines. The calls must use `log` at the error level instead.
+- If the logging call throws, the catch block exits early and `renderOsIntegrationRefreshFailure` is skipped, leaving the panel showing stale status.
+- If the Finder Sync enable log throws, the fallback that opens Finder Sync settings is skipped.
+
+## Error hint matcher
+
+- A bare `not found` substring matches unrelated 7-Zip output such as "method not found", so an unsupported method is reported as a missing file.
+- Narrowing too far drops the Windows "The system cannot find the path specified" message, so a vanished folder gets no hint.
+- Matching is lowercased, so the comparison phrases must be lowercase, and a localized 7-Zip message gets no hint and falls back to the generic text.
+- Checks run in order, so an earlier broad branch such as "access is denied" can take precedence over a missing-file message in the same output.
+
+## Reset script guard
+
+- `npm run b` or `npm run r` runs `git reset --hard` with uncommitted tracked changes present, and the edits are discarded with no prompt.
+- `git clean -fd` deletes untracked files, so the guard must count `??` entries from `git status --porcelain`, not only modified files.
+- The current branch has commits that its upstream does not, and `git reset --hard` plus `git switch -C` leave them reachable only through the reflog.
+- The branch has no upstream and its commits are on no remote-tracking ref. Treating "no upstream" as safe would pass this case.
+- Detached HEAD has no branch name. The guard must still check HEAD against the remote-tracking refs rather than skip the commit check.
+- An unborn branch in a fresh repository has no HEAD commit, so `rev-list HEAD` fails. That must not be read as a refusal with a bogus message or as a clean pass with unknown state.
+- A repository with no remotes matches nothing for `--remotes`, so every commit counts as unpushed and the guard refuses. This is the intended conservative result.
+- The upstream is configured but its remote-tracking ref was deleted, so `@{u}` does not resolve. The guard must fall back to the remotes check instead of passing.
+- The guard runs before `git fetch`, so a tracking ref can be stale. Commits pushed since the last fetch make the guard refuse. That is a false refusal, and the operator clears it with `git fetch`. It is never a silent loss.
+- `git` is missing from `PATH`, the directory is not a repository, or `git status` fails on a stale `index.lock`. A failed command must exit non-zero, not read as an empty status.
+- The override is set to `true`, `yes`, or an empty string. Only the exact value `1` may bypass the guard.
+- The override hint uses `VAR=1 cmd` syntax, which PowerShell and cmd do not accept. The hint must also show the PowerShell form, `$env:ZINNIA_FORCE_RESET = "1"`.
+- A branch name, path, or ref containing spaces, quotes, or `$` must never reach a shell string. Git is invoked with `execFileSync` and an argument array only.
+- The guard checks only the current branch. `git switch -C beta origin/beta` repoints a local `beta` or `main` that is not current, so unpushed commits on that other branch are still lost. The approved design does not cover that path, and the README must not claim it does.
+- The new README text or guard message uses an em dash, which `npm run validate:no-em-dash` rejects.
+
 # 0.6.3 audit fix failure inventory
 
 Failure cases considered before the fixes for the 0.6.3 codebase audit.

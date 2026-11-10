@@ -52,3 +52,21 @@ Cargo audit's reviewed transitive warning set is also fail-closed. The exact
 `src-tauri/.cargo/audit.toml` ignore IDs are checked by
 `npm run check:rustsec-ignore-policy`, and the review date expires so the GTK3
 and other transitive debt must be re-evaluated rather than silently growing.
+
+The `audit.toml` ignores expire on 2027-03-01. No ignore is due before then.
+
+## Tauri updater plugin
+
+`@tauri-apps/plugin-updater` stays pinned to exact `2.10.1` in `package.json`.
+The Rust side is vendored at `src-tauri/vendor/tauri-plugin-updater`, and the
+vendored copy carries local patches. Upstream is at 2.14.x.
+
+A re-vendor against upstream 2.14.x is scheduled after 0.7.0-beta.1. It must
+re-apply every documented patch: macOS transactional install, confined tar
+extraction, Linux helper PATH, Windows ShellExecute, download stall limit,
+minisign-verify 0.3, and zip 9. Do not bump the npm pin on its own.
+
+## Lucide
+
+`lucide` is bumped from 1.68.0 to 1.70.0, with the caret range kept as
+`^1.70.0`. It is a shipped runtime dependency, so the production audit covers it.

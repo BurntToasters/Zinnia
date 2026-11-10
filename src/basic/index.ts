@@ -39,7 +39,6 @@ export {
   handleBasicDragDrop,
   runBasicBrowseArchive,
   partitionByArchive,
-  testArchivePassword,
   isArchiveEncrypted,
   openPathWithFeedback,
   togglePasswordVisibility,

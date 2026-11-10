@@ -36,14 +36,19 @@ export function showToast(
   message.textContent = boundToastText(text);
   toast.appendChild(message);
 
+  let dismissed = false;
+  let dismissTimer: number | undefined;
   const dismiss = () => {
+    if (dismissed) return;
+    dismissed = true;
+    window.clearTimeout(dismissTimer);
     toast.classList.add("toast--leaving");
     window.setTimeout(() => toast.remove(), 200);
   };
 
+  toast.tabIndex = 0;
   toast.addEventListener("click", dismiss);
   if (durationMs <= 0) {
-    toast.tabIndex = 0;
     const close = document.createElement("button");
     close.type = "button";
     close.className = "toast-dismiss";
@@ -64,6 +69,37 @@ export function showToast(
   region.appendChild(toast);
 
   if (durationMs > 0) {
-    window.setTimeout(dismiss, durationMs);
+    let remainingMs = durationMs;
+    let timerStartedAt = 0;
+    let hovered = false;
+    let focused = false;
+    const pause = () => {
+      if (dismissTimer === undefined) return;
+      window.clearTimeout(dismissTimer);
+      dismissTimer = undefined;
+      remainingMs = Math.max(0, remainingMs - (Date.now() - timerStartedAt));
+    };
+    const resume = () => {
+      if (dismissed || dismissTimer !== undefined) return;
+      timerStartedAt = Date.now();
+      dismissTimer = window.setTimeout(dismiss, remainingMs);
+    };
+    toast.addEventListener("mouseenter", () => {
+      hovered = true;
+      pause();
+    });
+    toast.addEventListener("mouseleave", () => {
+      hovered = false;
+      if (!focused) resume();
+    });
+    toast.addEventListener("focusin", () => {
+      focused = true;
+      pause();
+    });
+    toast.addEventListener("focusout", () => {
+      focused = false;
+      if (!hovered) resume();
+    });
+    resume();
   }
 }

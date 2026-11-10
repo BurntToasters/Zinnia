@@ -1,4 +1,5 @@
 import { $, trapFocus, releaseFocusTrap } from "./utils";
+import { renderShortcuts } from "./shortcuts";
 
 let shortcutsTrigger: HTMLElement | null = null;
 
@@ -22,6 +23,7 @@ export function closeShortcutsModal(): void {
 }
 
 export function wireShortcutsEvents(): void {
+  renderShortcuts();
   $("close-shortcuts").addEventListener("click", closeShortcutsModal);
   $("close-shortcuts-footer").addEventListener("click", closeShortcutsModal);
   $("shortcuts-overlay").addEventListener("click", (e) => {

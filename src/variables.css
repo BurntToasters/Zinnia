@@ -49,6 +49,9 @@
   --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%239c9c9c'/%3E%3C/svg%3E");
   --shortcut-chip-bg: rgba(0, 0, 0, 0.22);
   --shortcut-chip-border: rgba(255, 255, 255, 0.2);
+  --heart: #e11d48;
+  --titlebar-close-hover: #e81123;
+  --titlebar-close-hover-fg: #ffffff;
 }
 
 [data-theme="light"] {
@@ -95,6 +98,9 @@
   --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%235c5c5c'/%3E%3C/svg%3E");
   --shortcut-chip-bg: rgba(0, 0, 0, 0.28);
   --shortcut-chip-border: rgba(255, 255, 255, 0.35);
+  --heart: #e11d48;
+  --titlebar-close-hover: #e81123;
+  --titlebar-close-hover-fg: #ffffff;
 }
 
 @media (prefers-color-scheme: light) {
@@ -142,5 +148,8 @@
     --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%235c5c5c'/%3E%3C/svg%3E");
     --shortcut-chip-bg: rgba(0, 0, 0, 0.28);
     --shortcut-chip-border: rgba(255, 255, 255, 0.35);
+    --heart: #e11d48;
+    --titlebar-close-hover: #e81123;
+    --titlebar-close-hover-fg: #ffffff;
   }
 }

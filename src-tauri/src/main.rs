@@ -377,9 +377,13 @@ fn main() {
             let maintenance_handle = app.handle().clone();
             std::thread::spawn(move || {
                 let recovered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    if let Err(e) = process::recover_interrupted_transaction(&maintenance_handle) {
-                        eprintln!("Failed to recover an interrupted archive transaction: {e}");
-                        process::set_startup_recovery_error(Some(e));
+                    if let Err(failure) =
+                        process::recover_interrupted_transaction(&maintenance_handle)
+                    {
+                        eprintln!(
+                            "Failed to recover an interrupted archive transaction: {failure}"
+                        );
+                        process::set_startup_recovery_error(Some(failure));
                     } else {
                         process::set_startup_recovery_error(None);
                         if let Err(e) = process::cleanup_orphan_stages(&maintenance_handle) {
@@ -389,9 +393,9 @@ fn main() {
                 }));
                 if recovered.is_err() {
                     eprintln!("Startup recovery panicked; unblocking archive operations.");
-                    process::set_startup_recovery_error(Some(
-                        "Startup recovery failed unexpectedly.".to_string(),
-                    ));
+                    process::set_startup_recovery_error(Some(process::RecoveryFailure::error(
+                        "Startup recovery failed unexpectedly.",
+                    )));
                 }
                 // Unblock run_7z before temp cleanup; recovery is what must be serialized.
                 process::mark_startup_recovery_done();

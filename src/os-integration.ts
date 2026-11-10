@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { $ } from "./utils";
+import { log } from "./ui/log";
 import { showToast } from "./toast";
 
 export interface OsIntegrationStatus {
@@ -399,7 +400,7 @@ export async function refreshDefaultArchiverActionButton(
     configureDefaultArchiverActionButton(button, status);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`Failed to refresh default archiver action: ${msg}`);
+    log(`Failed to refresh default archiver action: ${msg}`, "error");
   }
 }
 
@@ -449,7 +450,7 @@ export async function refreshOsIntegrationStatus(): Promise<void> {
       renderOsIntegrationStatus(status);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`Failed to refresh OS integration status: ${msg}`);
+      log(`Failed to refresh OS integration status: ${msg}`, "error");
       renderOsIntegrationRefreshFailure();
     } finally {
       if (refresh) refresh.disabled = false;
@@ -478,7 +479,7 @@ export async function openFinderSyncSettings(): Promise<void> {
         await invoke("enable_finder_sync");
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`Finder Sync pluginkit enable did not succeed: ${msg}`);
+        log(`Finder Sync pluginkit enable did not succeed: ${msg}`, "error");
       }
       await refreshOsIntegrationStatus();
       if (latestStatus?.finderSyncEnabled) {

@@ -366,5 +366,11 @@
 }
 
 #app[data-workspace-mode="basic"] .grid.show-activity .panel--log {
-  display: none !important;
+  display: none;
+}
+
+@media (forced-colors: active) {
+  .status-pill {
+    border: 1px solid ButtonText;
+  }
 }

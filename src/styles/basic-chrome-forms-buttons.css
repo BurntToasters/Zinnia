@@ -361,3 +361,32 @@
   opacity: 0.4;
   cursor: not-allowed;
 }
+
+@media (forced-colors: active) {
+  .basic-btn,
+  .basic-btn--secondary,
+  .basic-preset-pills,
+  .basic-preset-pill,
+  .basic-field input,
+  .basic-field select {
+    border: 1px solid ButtonText;
+  }
+
+  .basic-preset-pill.is-active {
+    background: Highlight;
+    color: HighlightText;
+  }
+
+  .basic-btn:focus-visible,
+  .basic-dropzone:focus-visible,
+  .basic-field input:focus,
+  .basic-field select:focus,
+  #app[data-workspace-mode="basic"]
+    :where(button, a[href], summary, [role="button"]):focus-visible,
+  #app[data-workspace-mode="basic"]
+    .switch
+    input:focus-visible
+    + .switch__track {
+    outline-color: Highlight;
+  }
+}

@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { $ } from "../utils";
 import { state } from "../state";
+import type { UserSettings } from "../settings-model";
 import {
   applyTheme,
   readSettingsModal,
@@ -10,6 +11,7 @@ import {
   closeSettingsModal,
   toggleSettingsModal,
   populateSettingsModal,
+  useSessionCompressionValues,
 } from "../settings";
 import {
   log,
@@ -36,8 +38,29 @@ import { confirmWithE2eQueue } from "../e2e-dialog";
 
 const BASIC_RECENT_ARCHIVES_KEY = "zinnia.basic.recentArchives";
 
+const COMPRESSION_DEFAULT_KEYS = [
+  "format",
+  "level",
+  "method",
+  "dict",
+  "wordSize",
+  "solid",
+  "threads",
+  "encryptHeaders",
+] as const;
+
+function compressionDefaultsChanged(
+  before: UserSettings,
+  after: UserSettings,
+): boolean {
+  return COMPRESSION_DEFAULT_KEYS.some((key) => before[key] !== after[key]);
+}
+
 export function wireSettingsEvents(): void {
   $("open-settings").addEventListener("click", toggleSettingsModal);
+  document
+    .getElementById("settings-use-session-values")
+    ?.addEventListener("click", () => useSessionCompressionValues());
   $("close-settings").addEventListener("click", () => closeSettingsModal());
   $("cancel-settings").addEventListener("click", () => closeSettingsModal());
   $("settings-overlay").addEventListener("click", (e) => {
@@ -62,9 +85,11 @@ export function wireSettingsEvents(): void {
       setBasicView("home");
     }
     setUiDensity(state.currentSettings.uiDensity, { persist: false });
-    applySettingsToForm();
-    updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
-    onCompressionOptionChange();
+    if (compressionDefaultsChanged(previous, state.currentSettings)) {
+      applySettingsToForm();
+      updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
+      onCompressionOptionChange();
+    }
     if (state.currentSettings.workspaceMode === "basic") {
       syncBasicWorkspaceFromPower();
     }
@@ -74,14 +99,22 @@ export function wireSettingsEvents(): void {
     };
 
     const rollbackSettingsSave = (err: unknown) => {
+      const compressionChanged = compressionDefaultsChanged(
+        state.currentSettings,
+        previous,
+      );
       state.currentSettings = previous;
       applyTheme(state.currentSettings.theme);
       setWorkspaceMode(state.currentSettings.workspaceMode, { persist: false });
       setUiDensity(state.currentSettings.uiDensity, { persist: false });
-      applySettingsToForm();
+      if (compressionChanged) {
+        applySettingsToForm();
+      }
       populateSettingsModal();
-      updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
-      onCompressionOptionChange();
+      if (compressionChanged) {
+        updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
+        onCompressionOptionChange();
+      }
       if (state.currentSettings.workspaceMode === "basic") {
         syncBasicWorkspaceFromPower();
       }

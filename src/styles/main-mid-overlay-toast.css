@@ -106,7 +106,7 @@
 }
 
 .debug-console[hidden] {
-  display: none !important;
+  display: none;
 }
 
 .debug-console__header {
@@ -226,5 +226,15 @@
   }
   .toast--leaving {
     transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .toast {
+    border: 2px solid ButtonText;
+  }
+
+  .toast-dismiss:focus-visible {
+    outline: 2px solid Highlight;
   }
 }

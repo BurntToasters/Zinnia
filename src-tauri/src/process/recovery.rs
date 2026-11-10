@@ -5,8 +5,9 @@ use super::journal::{
     cleanup_journal_path, clear_acknowledged_cleanup_journal_at, clear_cleanup_journal,
     ensure_path_identity, ensure_recovery_path_unchanged, is_safe_stage_dir_name, move_plan_path,
     read_cleanup_journal_any_version_at, read_cleanup_journal_at,
-    remove_recovery_regular_file_if_matches, ArchiveJournalPhase, CleanupJournal,
-    ExtractJournalPhase, FileIdentity,
+    read_recoverable_cleanup_journal_at, remove_recovery_regular_file_if_matches,
+    ArchiveJournalPhase, CleanupJournal, ExtractJournalPhase, FileIdentity, RecoveryFailure,
+    RecoveryKind,
 };
 
 static RECOVERY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -15,7 +16,8 @@ static RECOVERY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 static STARTUP_RECOVERY_DONE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(cfg!(test));
 /// Last startup recovery failure (cleared when recovery succeeds or was a no-op).
-static STARTUP_RECOVERY_ERROR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+static STARTUP_RECOVERY_ERROR: std::sync::Mutex<Option<RecoveryFailure>> =
+    std::sync::Mutex::new(None);
 
 /// Archive publish crossed its durable commit point when phase metadata says so.
 pub(crate) fn archive_journal_is_committed(journal: &CleanupJournal) -> bool {
@@ -61,13 +63,18 @@ fn extraction_move_plan_exists(journal: &CleanupJournal) -> Result<bool, String>
     }
 }
 
+#[cfg(test)]
 pub(crate) fn recover_missing_extract_stage(journal: &CleanupJournal) -> Result<(), String> {
+    recover_missing_extract_stage_failure(journal).map_err(|failure| failure.message)
+}
+
+fn recover_missing_extract_stage_failure(journal: &CleanupJournal) -> Result<(), RecoveryFailure> {
     let _stage_identity = journal.extract_stage_identity.as_ref().ok_or_else(|| {
         "Refusing extraction recovery because the journal has no stage identity.".to_string()
     })?;
     if journal.extract_phase.is_none() {
         return Err(
-            "Refusing extraction recovery because the journal has no explicit phase.".to_string(),
+            "Refusing extraction recovery because the journal has no explicit phase.".into(),
         );
     }
 
@@ -78,7 +85,7 @@ pub(crate) fn recover_missing_extract_stage(journal: &CleanupJournal) -> Result<
             journal.move_plan_identity.as_ref(),
             journal.move_identity_log_identity.as_ref(),
         )?;
-        return cleanup_extract_journal_artifacts(journal);
+        return cleanup_extract_journal_artifacts(journal).map_err(RecoveryFailure::from);
     }
 
     let destination_metadata = match std::fs::symlink_metadata(&journal.destination) {
@@ -86,17 +93,17 @@ pub(crate) fn recover_missing_extract_stage(journal: &CleanupJournal) -> Result<
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Err(
                 "Extraction stage and destination are both missing; preserving the recovery journal."
-                    .to_string(),
+                    .into(),
             );
         }
-        Err(error) => return Err(error.to_string()),
+        Err(error) => return Err(error.to_string().into()),
     };
     if crate::path_safety::is_link_or_reparse(&destination_metadata)
         || !destination_metadata.is_dir()
     {
         return Err(
             "Refusing to recover a missing extraction stage through an unexpected destination."
-                .to_string(),
+                .into(),
         );
     }
 
@@ -106,7 +113,7 @@ pub(crate) fn recover_missing_extract_stage(journal: &CleanupJournal) -> Result<
                 // No move plan means publication never started. The destination
                 // predated the transaction, so preserve it and clear only sidecars.
             }
-            cleanup_extract_journal_artifacts(journal)
+            cleanup_extract_journal_artifacts(journal).map_err(RecoveryFailure::from)
         }
         Some(super::journal::ExtractStagePlacement::Sibling) => {
             if !extract_journal_is_committed(journal) {
@@ -115,18 +122,18 @@ pub(crate) fn recover_missing_extract_stage(journal: &CleanupJournal) -> Result<
                 // destination identity or content fingerprint can prove that
                 // Zinnia published the live name rather than another actor
                 // installing a replacement. Preserve both it and the journal.
-                return Err(
-                    "Extraction stage is missing before its sibling publish was durably committed; the destination and recovery journal were preserved."
-                        .to_string(),
-                );
+                return Err(RecoveryFailure::new(
+                    RecoveryKind::Ambiguous,
+                    "Extraction stage is missing before its sibling publish was durably committed; the destination and recovery journal were preserved.",
+                ));
             }
             // A durable commit marker authorizes cleanup of Zinnia's sidecars,
             // but never removal, movement, or ownership claims for destination.
-            cleanup_extract_journal_artifacts(journal)
+            cleanup_extract_journal_artifacts(journal).map_err(RecoveryFailure::from)
         }
         None => Err(
             "Refusing extraction recovery because the journal has no recorded stage placement."
-                .to_string(),
+                .into(),
         ),
     }
 }
@@ -442,19 +449,19 @@ pub async fn acknowledge_preserved_transaction(app: tauri::AppHandle) -> Result<
 pub fn mark_startup_recovery_done() {
     STARTUP_RECOVERY_DONE.store(true, std::sync::atomic::Ordering::Release);
 }
-pub fn set_startup_recovery_error(message: Option<String>) {
+pub fn set_startup_recovery_error(failure: Option<RecoveryFailure>) {
     if let Ok(mut guard) = STARTUP_RECOVERY_ERROR.lock() {
-        *guard = message;
+        *guard = failure;
     }
 }
 
 #[tauri::command]
-pub async fn get_startup_recovery_status() -> Option<String> {
+pub async fn get_startup_recovery_status() -> Option<RecoveryFailure> {
     // A one-shot read during UI initialization used to race the maintenance
     // thread: a later recovery failure was recorded but never surfaced. Make
     // the command resolve only once the authoritative pass has finished.
     if let Err(error) = wait_for_startup_recovery().await {
-        return Some(error);
+        return Some(RecoveryFailure::error(error));
     }
     STARTUP_RECOVERY_ERROR
         .lock()
@@ -480,12 +487,12 @@ pub(crate) async fn wait_for_startup_recovery() -> Result<(), String> {
     Ok(())
 }
 
-pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), String> {
+pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), RecoveryFailure> {
     let path = cleanup_journal_path(app)?;
     let _recovery_guard = RECOVERY_LOCK
         .lock()
         .map_err(|_| "Archive recovery lock is unavailable.".to_string())?;
-    let Some(journal) = read_cleanup_journal_at(&path)? else {
+    let Some(journal) = read_recoverable_cleanup_journal_at(&path)? else {
         return Ok(());
     };
     let stage_name = journal
@@ -505,7 +512,7 @@ pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), Str
             .unwrap_or(false)
     };
     if !placement_is_valid || !is_safe_stage_dir_name(stage_name) {
-        return Err("Refusing unsafe interrupted-transaction recovery path.".to_string());
+        return Err("Refusing unsafe interrupted-transaction recovery path.".into());
     }
     let stage_identity = journal.extract_stage_identity.as_ref().ok_or_else(|| {
         "Refusing interrupted-transaction recovery because the journal has no mandatory stage identity."
@@ -519,22 +526,22 @@ pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), Str
                 && archive_journal_is_committed(&journal) =>
         {
             cleanup_committed_archive_journal(&journal)?;
-            return clear_cleanup_journal(app);
+            return clear_cleanup_journal(app).map_err(RecoveryFailure::from);
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             if !journal.archive {
-                recover_missing_extract_stage(&journal)?;
+                recover_missing_extract_stage_failure(&journal)?;
             } else if !archive_journal_is_committed(&journal) {
                 // Stage may have been scrubbed after a failed add-mode commit
                 // while partial destinations remain. Retract them before drop.
                 rollback_archive_journal(&journal)?;
             }
-            return clear_cleanup_journal(app);
+            return clear_cleanup_journal(app).map_err(RecoveryFailure::from);
         }
-        Err(error) => return Err(error.to_string()),
+        Err(error) => return Err(error.to_string().into()),
     };
     if crate::path_safety::is_link_or_reparse(&metadata) || !metadata.is_dir() {
-        return Err("Refusing unsafe interrupted-transaction staging directory.".to_string());
+        return Err("Refusing unsafe interrupted-transaction staging directory.".into());
     }
     ensure_path_identity(&journal.stage, stage_identity)?;
 
@@ -543,14 +550,14 @@ pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), Str
             // Publish already crossed its durable commit point. Only remove
             // recovery leftovers; never delete or roll back destinations.
             cleanup_committed_archive_journal(&journal)?;
-            return clear_cleanup_journal(app);
+            return clear_cleanup_journal(app).map_err(RecoveryFailure::from);
         }
         rollback_archive_journal(&journal)?;
     } else if extract_journal_is_committed(&journal) {
         // All targets crossed the durable extraction commit point. Preserve
         // them and remove only the source stage and recovery sidecars.
         cleanup_extract_journal_artifacts(&journal)?;
-        return clear_cleanup_journal(app);
+        return clear_cleanup_journal(app).map_err(RecoveryFailure::from);
     } else {
         rollback_persisted_move_plan(
             &journal.stage,
@@ -570,5 +577,5 @@ pub fn recover_interrupted_transaction(app: &tauri::AppHandle) -> Result<(), Str
     } else {
         cleanup_extract_journal_artifacts(&journal)?;
     }
-    clear_cleanup_journal(app)
+    clear_cleanup_journal(app).map_err(RecoveryFailure::from)
 }

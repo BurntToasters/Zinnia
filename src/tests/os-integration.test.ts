@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
+import { log } from "../ui/log";
 import {
   configureDefaultArchiverActionButton,
   openFinderServicesSettings,
@@ -11,6 +12,10 @@ import {
   setZinniaDefaultArchiver,
   wireOsIntegrationEvents,
 } from "../os-integration";
+
+vi.mock("../ui/log", () => ({
+  log: vi.fn(),
+}));
 
 const invokeMock = vi.mocked(invoke);
 
@@ -137,8 +142,6 @@ describe("OS integration UI", () => {
 
   it("shows Unable to check when OS integration status refresh fails", async () => {
     invokeMock.mockRejectedValueOnce(new Error("backend offline"));
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-
     await refreshOsIntegrationStatus();
 
     expect(document.getElementById("os-integration-help")?.textContent).toBe(
@@ -181,7 +184,10 @@ describe("OS integration UI", () => {
     expect(document.getElementById("os-context-status")?.textContent).toBe(
       "Unable to check",
     );
-    warn.mockRestore();
+    expect(log).toHaveBeenCalledWith(
+      "Failed to refresh OS integration status: backend offline",
+      "error",
+    );
   });
 
   it("sets Zinnia as the default archiver and refreshes status", async () => {

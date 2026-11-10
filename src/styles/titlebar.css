@@ -12,7 +12,7 @@
   border-bottom: 1px solid var(--border);
   position: relative;
   z-index: 9999;
-  -webkit-app-region: drag !important;
+  -webkit-app-region: drag;
 }
 
 /* Display titlebar on platforms with custom window chrome */
@@ -57,7 +57,7 @@ html[data-window-fx="basic"] body.platform-windows #titlebar {
   position: absolute;
   right: 0;
   top: 0;
-  -webkit-app-region: no-drag !important;
+  -webkit-app-region: no-drag;
 }
 
 .titlebar-btn {
@@ -73,7 +73,7 @@ html[data-window-fx="basic"] body.platform-windows #titlebar {
   transition:
     background var(--transition),
     color var(--transition);
-  -webkit-app-region: no-drag !important;
+  -webkit-app-region: no-drag;
 }
 
 .titlebar-btn svg {
@@ -91,15 +91,15 @@ html[data-window-fx="basic"] body.platform-windows #titlebar {
 }
 
 .titlebar-btn--close:hover {
-  background: #e81123 !important;
-  color: #fff !important;
+  background: var(--titlebar-close-hover) !important;
+  color: var(--titlebar-close-hover-fg) !important;
 }
 
 /* Platform Adjustments */
 body.platform-macos #titlebar {
   height: 38px;
-  background: transparent !important;
-  border-bottom: none !important;
+  background: transparent;
+  border-bottom: none;
 }
 
 body.platform-macos .titlebar-logo {
@@ -107,14 +107,14 @@ body.platform-macos .titlebar-logo {
 }
 
 body.platform-macos #titlebar-controls {
-  display: none !important;
+  display: none;
 }
 
 /* Make sure dragging header doesn't conflict when titlebar is active */
 body.platform-windows .header,
 body.platform-macos .header,
 body.platform-linux .header {
-  -webkit-app-region: no-drag !important;
+  -webkit-app-region: no-drag;
 }
 
 /* Hide redundant branding when custom titlebar is showing */

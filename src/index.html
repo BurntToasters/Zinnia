@@ -654,6 +654,13 @@
                   <p class="settings-hint">
                     Applied when creating new archives.
                   </p>
+                  <button
+                    type="button"
+                    class="btn btn--sm"
+                    id="settings-use-session-values"
+                  >
+                    Use current session values
+                  </button>
                   <div class="grid-split">
                     <div class="field">
                       <label for="s-format">Format</label>
@@ -915,6 +922,7 @@
                       draggable="false"
                       role="button"
                       tabindex="0"
+                      aria-label="Toggle hidden debug mode (click five times)"
                     />
                     <div>
                       <h3 class="about-name">Zinnia</h3>
@@ -929,7 +937,7 @@
                         <a
                           href="https://rosie.run"
                           target="_blank"
-                          rel="noopener"
+                          rel="noopener noreferrer"
                           >rosie.run</a
                         ></span
                       >
@@ -938,15 +946,11 @@
                   <div class="about-rows">
                     <div class="settings-row">
                       <span class="settings-label">Version</span>
-                      <span class="settings-value" id="s-version-label"
-                        >v0.1.0</span
-                      >
+                      <span class="settings-value" id="s-version-label"></span>
                     </div>
                     <div class="settings-row">
                       <span class="settings-label">Platform</span>
-                      <span class="settings-value" id="s-platform-label"
-                        >Platform</span
-                      >
+                      <span class="settings-value" id="s-platform-label"></span>
                     </div>
                     <div class="settings-row">
                       <span class="settings-label">License</span>
@@ -972,7 +976,7 @@
                         <a
                           href="https://www.7-zip.org/"
                           target="_blank"
-                          rel="noopener"
+                          rel="noopener noreferrer"
                           >7-Zip</a
                         >
                         binaries by Igor Pavlov. 7-Zip is licensed under the GNU
@@ -1149,28 +1153,7 @@
             </button>
           </div>
           <div class="modal__body">
-            <dl class="shortcut-list">
-              <div class="shortcut-list__row">
-                <dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd></dt>
-                <dd>Run the current operation</dd>
-              </div>
-              <div class="shortcut-list__row">
-                <dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>,</kbd></dt>
-                <dd>Open Settings</dd>
-              </div>
-              <div class="shortcut-list__row">
-                <dt><kbd>Esc</kbd></dt>
-                <dd>Close the open dialog</dd>
-              </div>
-              <div class="shortcut-list__row">
-                <dt><kbd>?</kbd></dt>
-                <dd>Show this help</dd>
-              </div>
-              <div class="shortcut-list__row">
-                <dt><kbd>←</kbd> <kbd>→</kbd> in settings tabs</dt>
-                <dd>Move between settings tabs</dd>
-              </div>
-            </dl>
+            <dl class="shortcut-list" id="shortcut-list"></dl>
           </div>
           <div class="modal__footer">
             <button class="btn btn--ghost btn--sm" id="close-shortcuts-footer">
@@ -1411,7 +1394,7 @@
             <button
               class="basic-toolbar__back"
               id="basic-tab-home"
-              title="Go home"
+              title="Back"
               type="button"
             >
               <i data-lucide="arrow-left" class="lucide-icon"></i>
@@ -1472,7 +1455,7 @@
                 alt=""
                 aria-hidden="true"
               />
-              <h2 class="basic-home__title">Drop a file here</h2>
+              <h2 class="basic-home__title">Drop files here</h2>
               <p class="basic-home__subtitle">
                 Open an archive, or make a new one: Zinnia handles the rest.
               </p>
@@ -1662,7 +1645,8 @@
                         class="basic-password-toggle"
                         id="basic-toggle-password"
                         type="button"
-                        aria-label="Toggle password visibility"
+                        aria-label="Show password"
+                        aria-pressed="false"
                       >
                         Show
                       </button>
@@ -1881,7 +1865,8 @@
                         class="basic-password-toggle"
                         id="basic-toggle-extract-password"
                         type="button"
-                        aria-label="Toggle password visibility"
+                        aria-label="Show password"
+                        aria-pressed="false"
                       >
                         Show
                       </button>
@@ -2070,6 +2055,7 @@
                   class="basic-password-toggle basic-password-toggle--icon"
                   id="basic-toggle-browse-password"
                   aria-label="Show password"
+                  aria-pressed="false"
                 >
                   <i data-lucide="eye" class="lucide-icon"></i>
                 </button>
@@ -2796,8 +2782,8 @@
           aria-live="polite"
         ></span>
         <span class="statusbar__spacer"></span>
-        <span class="statusbar__item" id="version-label">v0.1.0</span>
-        <span class="statusbar__item" id="platform-label">Platform</span>
+        <span class="statusbar__item" id="version-label"></span>
+        <span class="statusbar__item" id="platform-label"></span>
       </footer>
     </div>
 

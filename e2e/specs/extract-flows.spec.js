@@ -12,6 +12,7 @@ import {
   waitForInputModalLabel,
   confirmSelectiveExtract,
   expandSelectiveFolder,
+  hasSelectiveMember,
   isInputModalOpen,
   openBrowseArchive,
   openSelectiveExtractPicker,
@@ -23,7 +24,6 @@ import {
   waitForArchiveIdle,
   waitForE2eHook,
   waitForMainWindow,
-  waitForToastContaining,
 } from "../helpers/ui-driver.js";
 import { treeManifest, writeEvidence } from "../helpers/recovery-harness.js";
 
@@ -34,7 +34,6 @@ const sidecar = requireHostSidecar();
 
 const WRONG_PASSWORD_HINT =
   "Wrong or missing password. Enter the archive password and try again.";
-const BASIC_WRONG_PASSWORD_TOAST = "Incorrect password. Please try again.";
 const POWER_INCORRECT_PASSWORD_MODAL_LABEL =
   "Incorrect password. Enter the archive password:";
 const RAW_7Z_MARKERS = [
@@ -232,18 +231,10 @@ describe("extract flows", function () {
     await openSelectiveExtractPicker();
     await toggleSelectiveMember("keep");
     await expandSelectiveFolder("skip");
-    await browser.waitUntil(
-      async () =>
-        browser.execute(() =>
-          Boolean(
-            document.querySelector('[data-member-path="skip/skip-me.txt"]'),
-          ),
-        ),
-      {
-        timeout: 10_000,
-        timeoutMsg: "selective tree did not show skip/skip-me.txt",
-      },
-    );
+    await browser.waitUntil(() => hasSelectiveMember("skip/skip-me.txt"), {
+      timeout: 10_000,
+      timeoutMsg: "selective tree did not show skip/skip-me.txt",
+    });
     await toggleSelectiveMember("skip/skip-me.txt");
     await confirmSelectiveExtract(dest);
 
@@ -298,7 +289,7 @@ describe("extract flows", function () {
     await dismissToasts();
   });
 
-  it("shows the friendly wrong-password hint in Power and Basic without raw 7-Zip text", async () => {
+  it("shows the friendly wrong-password hint in Power without raw 7-Zip text", async () => {
     const archive = process.env.ZINNIA_E2E_ENCRYPTED_7Z;
     const goodPassword = process.env.ZINNIA_E2E_PASSWORD;
     const wrongPassword = wrongPasswordGlobal();
@@ -344,29 +335,6 @@ describe("extract flows", function () {
     await waitForArchiveIdle();
     assert.equal(fs.readFileSync(powerExtracted, "utf8"), payload);
 
-    const basicDest = path.join(ROOT, "wrong-password-basic");
-    mkdirFresh(basicDest);
-    await dismissToasts();
-    await prepareBasicExtract(archive, basicDest);
-    await clickBasicRunExtract();
-    await confirmInputModal(wrongPassword);
-    const basicWrongToasts = await waitForToastContaining(
-      BASIC_WRONG_PASSWORD_TOAST,
-      `Basic did not toast after wrong password; ${await uiDiagnostics()}`,
-    );
-    await browser.waitUntil(async () => isInputModalOpen(), {
-      timeout: 30_000,
-      timeoutMsg: "Basic did not re-prompt for password after a wrong attempt",
-    });
-    await confirmInputModal(goodPassword);
-    const extracted = path.join(basicDest, "hello.txt");
-    await browser.waitUntil(() => fs.existsSync(extracted), {
-      timeout: 120_000,
-      timeoutMsg: `Basic extract with correct password did not write ${extracted}`,
-    });
-    await waitForArchiveIdle();
-    assert.equal(fs.readFileSync(extracted, "utf8"), payload);
-
     await dismissToasts();
     writeEvidence(EVIDENCE_DIR, "wrong-password", {
       scenario: "wrong-password",
@@ -377,12 +345,45 @@ describe("extract flows", function () {
         okDestination: powerOkDest,
         observedTexts: powerTexts,
       },
-      basic: {
-        destination: basicDest,
-        wrongPasswordToasts: basicWrongToasts,
-        extractedHello: extracted,
-      },
       partialOutputPower: treeManifest(powerDest),
+    });
+  });
+
+  it("re-prompts Basic extract with the incorrect-password label after a wrong password", async () => {
+    const archive = process.env.ZINNIA_E2E_ENCRYPTED_7Z;
+    const goodPassword = process.env.ZINNIA_E2E_PASSWORD;
+    const wrongPassword = wrongPasswordGlobal();
+    const payload = process.env.ZINNIA_E2E_PAYLOAD;
+
+    await abortArchiveOperationIfBusy();
+    await dismissToasts();
+    const basicDest = path.join(ROOT, "wrong-password-basic");
+    mkdirFresh(basicDest);
+    await prepareBasicExtract(archive, basicDest);
+    await clickBasicRunExtract();
+    await confirmInputModal(wrongPassword);
+    await waitForInputModalLabel(
+      POWER_INCORRECT_PASSWORD_MODAL_LABEL,
+      `Basic did not show the incorrect-password retry prompt; ${await uiDiagnostics()}`,
+    );
+    assertDestinationHasNoFiles(basicDest);
+    await confirmInputModal(goodPassword);
+    const extracted = path.join(basicDest, "hello.txt");
+    await browser.waitUntil(() => fs.existsSync(extracted), {
+      timeout: 120_000,
+      timeoutMsg: `Basic extract with correct password did not write ${extracted}`,
+    });
+    await waitForArchiveIdle();
+    assert.equal(fs.readFileSync(extracted, "utf8"), payload);
+
+    await dismissToasts();
+    writeEvidence(EVIDENCE_DIR, "wrong-password-basic", {
+      scenario: "wrong-password-basic",
+      archive,
+      wrongPassword,
+      destination: basicDest,
+      extractedHello: extracted,
+      tree: treeManifest(basicDest),
     });
   });
 

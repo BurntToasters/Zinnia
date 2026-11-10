@@ -29,6 +29,7 @@ pub use commands::{
 };
 #[allow(unused_imports)]
 pub use journal::cleanup_orphan_stages;
+pub(crate) use journal::RecoveryFailure;
 #[allow(unused_imports)]
 pub use recovery::{
     acknowledge_preserved_transaction, get_startup_recovery_status, mark_startup_recovery_done,

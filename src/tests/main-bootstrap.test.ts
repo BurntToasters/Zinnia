@@ -1376,7 +1376,9 @@ describe("main bootstrap", () => {
     const recoveryMessage =
       "Extraction stage is missing before its sibling publish was durably committed; the destination and recovery journal were preserved.";
     setInvokeRouter((command) => {
-      if (command === "get_startup_recovery_status") return recoveryMessage;
+      if (command === "get_startup_recovery_status") {
+        return { kind: "ambiguous", message: recoveryMessage };
+      }
       if (command === "acknowledge_preserved_transaction") {
         throw new Error("marker is locked");
       }

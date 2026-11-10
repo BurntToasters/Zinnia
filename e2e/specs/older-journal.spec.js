@@ -5,6 +5,7 @@ import { browser } from "@wdio/globals";
 import {
   awaitStartupRecoveryStatus,
   bannerState,
+  confirmDialogTitles,
   queueConfirmResult,
   startPowerExtract,
   uiDiagnostics,
@@ -64,7 +65,8 @@ describe("older-format recovery journal", () => {
     assert.match(banner.text, /older Zinnia version/i);
     assert.match(banner.text, OLDER_BANNER);
     const status = await awaitStartupRecoveryStatus();
-    assert.match(String(status.value), /older Zinnia version/);
+    assert.equal(status.value?.kind, "older");
+    assert.match(String(status.value?.message), /older Zinnia version/);
     assert.deepEqual(
       treeManifest(CASE.root),
       CASE.preManifest,
@@ -94,6 +96,16 @@ describe("older-format recovery journal", () => {
   it("keeps the journal when Accept is declined", async () => {
     await queueConfirmResult(false);
     await clickDom("#startup-recovery-banner-acknowledge");
+    await browser.waitUntil(
+      async () => (await confirmDialogTitles()).length > 0,
+      {
+        timeout: 10_000,
+        timeoutMsg: "Accept did not open the confirmation dialog",
+      },
+    );
+    assert.deepEqual(await confirmDialogTitles(), [
+      "Accept job from older Zinnia",
+    ]);
     await browser.pause(1_000);
     assert.equal(
       fs.existsSync(CASE.journal),

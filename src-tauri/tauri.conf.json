@@ -16,7 +16,7 @@
         "create": false,
         "title": "Zinnia",
         "width": 500,
-        "height": 600,
+        "height": 650,
         "minWidth": 360,
         "minHeight": 400,
         "resizable": true,

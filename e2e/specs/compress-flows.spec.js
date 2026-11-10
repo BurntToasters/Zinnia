@@ -9,7 +9,15 @@ import {
   run7z,
 } from "../../scripts/archive-fixtures.js";
 import {
+  seedE2eSettings,
+  settingsDirForProfile,
+  updateE2eSettings,
+} from "../helpers/profile.js";
+import {
   domText,
+  flushPendingSettingsWrites,
+  reloadMainWindow,
+  selectPowerPreset,
   startPowerCompress,
   uiDiagnostics,
   waitForArchiveIdle,
@@ -25,6 +33,12 @@ const JOURNAL = process.env.ZINNIA_E2E_JOURNAL;
 const ROOT = path.join(WORK, "compress-flows");
 const sidecar = requireHostSidecar();
 const ENCRYPT_PASSWORD = "ZinniaE2e-Encrypt-7z";
+
+function e2eProfileDir() {
+  const home = process.env.HOME ?? process.env.USERPROFILE;
+  if (!home) throw new Error("E2E profile home env is missing");
+  return path.dirname(home);
+}
 
 function writeIncompressibleFile(file, bytes) {
   const handle = fs.openSync(file, "w");
@@ -80,6 +94,12 @@ describe("Power compress flows", function () {
     await waitForMainWindow();
     await waitForE2eHook();
     fs.mkdirSync(ROOT, { recursive: true });
+  });
+
+  after(async () => {
+    await flushPendingSettingsWrites().catch(() => undefined);
+    updateE2eSettings(e2eProfileDir(), { customPresets: [] });
+    await reloadMainWindow().catch(() => undefined);
   });
 
   it("creates zip and gzip archives that list hello.txt", async () => {
@@ -171,6 +191,63 @@ describe("Power compress flows", function () {
       listWithoutPasswordShowsHello: leakedWithoutPassword,
       listWithPasswordShowsHello: listingHasMember(withPassword, "hello.txt"),
       passwordInLog: logText.includes(ENCRYPT_PASSWORD),
+    });
+  });
+
+  it("compresses 7z with a custom preset whose solid mode is empty", async () => {
+    const presetName = "E2E empty solid";
+    const profileDir = e2eProfileDir();
+    await flushPendingSettingsWrites();
+    seedE2eSettings(settingsDirForProfile(profileDir, process.platform));
+    updateE2eSettings(profileDir, {
+      customPresets: [
+        {
+          name: presetName,
+          format: "7z",
+          level: "5",
+          method: "lzma2",
+          dict: "",
+          wordSize: "",
+          solid: "",
+        },
+      ],
+    });
+    await reloadMainWindow();
+
+    const dir = path.join(ROOT, "empty-solid");
+    const hello = path.join(dir, "hello.txt");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(hello, PAYLOAD);
+    const archive = path.join(dir, "hello.7z");
+
+    await startPowerCompress(hello, archive, { run: false });
+    await selectPowerPreset(`custom:${presetName}`);
+    await browser.execute(() => {
+      document.getElementById("run-action")?.click();
+    });
+    await browser.waitUntil(() => fs.existsSync(archive), {
+      timeout: 120_000,
+      timeoutMsg: `empty-solid compress did not write ${archive}; ${await uiDiagnostics()}`,
+    });
+    await waitForArchiveIdle();
+
+    const listing = listStdout(archive);
+    assert.ok(
+      listingHasMember(listing, "hello.txt"),
+      `empty-solid archive lacked hello.txt: ${listing}`,
+    );
+    const logText = String(await domText("#log"));
+    assert.ok(
+      !logText.includes("is not permitted"),
+      `empty-solid compress was rejected: ${logText.slice(-500)}`,
+    );
+
+    writeEvidence(EVIDENCE_DIR, "compress-empty-solid-preset", {
+      scenario: "compress-empty-solid-preset",
+      preset: presetName,
+      input: hello,
+      output: archive,
+      listsHello: listingHasMember(listing, "hello.txt"),
     });
   });
 

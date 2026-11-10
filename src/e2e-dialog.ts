@@ -6,6 +6,7 @@ type DialogResult = string | string[] | null;
 // dialog would return; production builds never read or fill this queue.
 const queuedResults: DialogResult[] = [];
 const queuedConfirmResults: boolean[] = [];
+const recordedConfirmTitles: string[] = [];
 
 export function queueE2eDialogResult(result: DialogResult): void {
   if (!isE2eFrontend()) return;
@@ -29,9 +30,18 @@ export function queueE2eConfirmResult(result: boolean): void {
  */
 export async function confirmWithE2eQueue(
   native: () => Promise<boolean>,
+  title?: string,
 ): Promise<boolean> {
-  if (isE2eFrontend() && queuedConfirmResults.length > 0) {
-    return queuedConfirmResults.shift() ?? false;
+  if (isE2eFrontend()) {
+    if (title !== undefined) recordedConfirmTitles.push(title);
+    if (queuedConfirmResults.length > 0) {
+      return queuedConfirmResults.shift() ?? false;
+    }
   }
   return native();
+}
+
+export function readE2eConfirmTitles(): string[] {
+  if (!isE2eFrontend()) return [];
+  return [...recordedConfirmTitles];
 }

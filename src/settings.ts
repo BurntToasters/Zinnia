@@ -66,64 +66,75 @@ export function applySettingsToForm() {
     state.currentSettings.encryptHeaders;
 }
 
+type CompressionFormValues = {
+  format: UserSettings["format"];
+  level: string;
+  method: string;
+  dict: string;
+  wordSize: string;
+  solid: string;
+  threads: string;
+  encryptHeaders: boolean;
+};
+
 function liveOrFallback(live: string | undefined, fallback: string): string {
   return live && live.length > 0 ? live : fallback;
 }
 
+function savedCompressionValues(): CompressionFormValues {
+  const saved = state.currentSettings;
+  return {
+    format: saved.format,
+    level: saved.level,
+    method: saved.method,
+    dict: saved.dict,
+    wordSize: saved.wordSize,
+    solid: saved.solid,
+    threads: String(saved.threads),
+    encryptHeaders: saved.encryptHeaders,
+  };
+}
+
+function sessionCompressionValues(): CompressionFormValues {
+  const saved = savedCompressionValues();
+  const select = (id: string) =>
+    document.getElementById(id) as HTMLSelectElement | null;
+  const input = (id: string) =>
+    document.getElementById(id) as HTMLInputElement | null;
+  return {
+    format: liveOrFallback(
+      select("format")?.value,
+      saved.format,
+    ) as UserSettings["format"],
+    level: liveOrFallback(select("level")?.value, saved.level),
+    method: liveOrFallback(select("method")?.value, saved.method),
+    dict: liveOrFallback(select("dict")?.value, saved.dict),
+    wordSize: liveOrFallback(select("word-size")?.value, saved.wordSize),
+    solid: liveOrFallback(select("solid")?.value, saved.solid),
+    threads: liveOrFallback(input("threads")?.value, saved.threads),
+    encryptHeaders: input("encrypt-headers")?.checked ?? saved.encryptHeaders,
+  };
+}
+
+function writeCompressionValuesToModal(values: CompressionFormValues) {
+  $<HTMLSelectElement>("s-format").value = values.format;
+  $<HTMLSelectElement>("s-level").value = values.level;
+  $<HTMLSelectElement>("s-method").value = values.method;
+  $<HTMLSelectElement>("s-dict").value = values.dict;
+  $<HTMLSelectElement>("s-word-size").value = values.wordSize;
+  $<HTMLSelectElement>("s-solid").value = values.solid;
+  $<HTMLInputElement>("s-threads").value = values.threads;
+  $<HTMLInputElement>("s-encrypt-headers").checked = values.encryptHeaders;
+  syncSettingsSecurityControlsForFormat(values.format);
+}
+
+export function useSessionCompressionValues() {
+  writeCompressionValuesToModal(sessionCompressionValues());
+}
+
 export function populateSettingsModal() {
-  const liveFormat = document.getElementById(
-    "format",
-  ) as HTMLSelectElement | null;
-  const liveLevel = document.getElementById(
-    "level",
-  ) as HTMLSelectElement | null;
-  const liveMethod = document.getElementById(
-    "method",
-  ) as HTMLSelectElement | null;
-  const liveDict = document.getElementById("dict") as HTMLSelectElement | null;
-  const liveWord = document.getElementById(
-    "word-size",
-  ) as HTMLSelectElement | null;
-  const liveSolid = document.getElementById(
-    "solid",
-  ) as HTMLSelectElement | null;
-  const liveThreads = document.getElementById(
-    "threads",
-  ) as HTMLInputElement | null;
-  const liveHeaders = document.getElementById(
-    "encrypt-headers",
-  ) as HTMLInputElement | null;
   $<HTMLSelectElement>("s-theme").value = state.currentSettings.theme;
-  $<HTMLSelectElement>("s-format").value = liveOrFallback(
-    liveFormat?.value,
-    state.currentSettings.format,
-  );
-  $<HTMLSelectElement>("s-level").value = liveOrFallback(
-    liveLevel?.value,
-    state.currentSettings.level,
-  );
-  $<HTMLSelectElement>("s-method").value = liveOrFallback(
-    liveMethod?.value,
-    state.currentSettings.method,
-  );
-  $<HTMLSelectElement>("s-dict").value = liveOrFallback(
-    liveDict?.value,
-    state.currentSettings.dict,
-  );
-  $<HTMLSelectElement>("s-word-size").value = liveOrFallback(
-    liveWord?.value,
-    state.currentSettings.wordSize,
-  );
-  $<HTMLSelectElement>("s-solid").value = liveOrFallback(
-    liveSolid?.value,
-    state.currentSettings.solid,
-  );
-  $<HTMLInputElement>("s-threads").value = liveOrFallback(
-    liveThreads?.value,
-    String(state.currentSettings.threads),
-  );
-  $<HTMLInputElement>("s-encrypt-headers").checked =
-    liveHeaders?.checked ?? state.currentSettings.encryptHeaders;
+  writeCompressionValuesToModal(savedCompressionValues());
   $<HTMLInputElement>("s-auto-check-updates").checked =
     state.currentSettings.autoCheckUpdates;
   $<HTMLSelectElement>("s-update-channel").value =
@@ -152,9 +163,6 @@ export function populateSettingsModal() {
     basicFx.checked = state.currentSettings.basicWindowEffects;
   }
   syncQuickExtractWarmIdleControl();
-  syncSettingsSecurityControlsForFormat(
-    $<HTMLSelectElement>("s-format").value as UserSettings["format"],
-  );
   void syncBasicWindowEffectsVisibility();
 
   const logDir = document.getElementById("s-log-dir");

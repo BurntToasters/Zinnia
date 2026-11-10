@@ -22,7 +22,7 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
 - **macOS:** Minimum supported version is macOS 15.0; Finder Sync uses the app's configured deployment target.
 - **Breaking:** Removed legacy Windows installer cleanup for v0.5.x context-menu registration.
-- **Breaking:** Settings no longer restore from `.bak` sidecars; legacy keys (`sfx`, `deleteAfter`, `pathMode`, `_setupComplete`, `_integration*`) are stripped on load and save.
+- **Breaking:** Settings no longer restore from `.bak` sidecars; legacy keys (`sfx`, `deleteAfter`, `pathMode`, `_setupComplete`, `_integration*`) are stripped on load and save. A 0.6.x `_setupComplete: true` is still honored once, so upgrading users do not see the setup wizard again.
 - **Breaking:** Cleanup journals from before `format_version` 1 are refused fail-closed (files preserved); recover with 0.6.2 or acknowledge the recovery banner to clear the marker.
 - **Breaking:** Format-version 1 cleanup journals must include explicit `archive_phase`, `extract_phase`, and `extract_stage_placement`; incomplete v1 journals are refused fail-closed like pre-v1 journals.
 - **Fix:** Base `tauri.conf.json` `fileAssociations` now includes `.rar`, matching every platform bundle config.
@@ -47,6 +47,22 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Security:** Finder Services ignores non-file URLs and rejects an oversized selection before converting it.
 - **Fix:** Finder Sync no longer crashes if the system clock is set before 1970.
 - **Security:** The updater refuses a download larger than 1 GiB instead of buffering it.
+- **Fix:** The Basic browse password toggle now shows the eye-off icon while the password is revealed.
+- **Fix:** 7z compression no longer fails with "7z argument '-ms=' is not permitted" when a custom preset has an empty solid mode; the solid setting falls back to Off.
+- **Fix:** Basic extract no longer runs a full archive test before extracting an encrypted archive, so large encrypted archives no longer take about twice as long. A wrong password re-prompts with the "Incorrect password" label, as in Power.
+- **Fix:** The main window opens at the Basic workspace height (650) instead of growing from 600 after launch.
+- **Fix:** Saving Settings no longer stores the current Power compression values as new defaults. The Compression tab shows the saved defaults, a "Use current session values" button copies the Power form in, and a theme-only Save leaves the live Power session unchanged.
+- **Fix:** OS integration status failures are written to the activity log and exported diagnostics instead of only the console.
+- **Fix:** Archive error hints no longer treat unrelated 7-Zip messages containing "not found" as a missing file.
+- **UI:** The version and platform labels no longer flash placeholder text on startup; Basic uses "Back" and "Drop files here" consistently.
+- **UI:** The keyboard shortcuts help lists Basic-mode keys and is generated from one shared table.
+- **Accessibility:** Password toggles start with "Show password" and a pressed state, the About logo debug toggle has an accessible name, and external links use `noreferrer`.
+- **Accessibility:** Success and info toasts pause auto-dismiss while hovered or focused.
+- **Accessibility:** Basic controls, preset pills, inputs, the dropzone, settings tabs, status pills, toasts, and progress get Windows High Contrast borders, Highlight selected states, and visible focus outlines.
+- **Codebase:** Startup recovery status is a structured kind and message from the backend; the recovery banner no longer parses message text to pick its dialog.
+- **Codebase:** Heart and Windows close-hover colors are theme tokens, and about 75 hand-written `!important` declarations were removed where selector specificity already wins.
+- **Codebase:** `npm run b` and `npm run r` refuse to reset when the working tree has uncommitted or untracked changes or the current branch has unpushed commits (`ZINNIA_FORCE_RESET=1` overrides).
+- **Codebase:** Updated `lucide` to 1.70.0.
 - **Accessibility:** Password toggle labels, extract countdown announcements, progress valuetext, folder twisty labels, 44px hit areas, Basic browse loading/error status.
 - **Codebase:** Large Rust, TypeScript, and CSS modules split without behavior change.
 - **Testing:** Expanded E2E (compress, extract, settings, UI surfaces, older journals) and `--only` filter for the E2E runner.

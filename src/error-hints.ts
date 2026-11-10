@@ -56,7 +56,10 @@ export function describe7zError(stdout: string, stderr: string): string {
   ) {
     return "Permission denied writing to the destination. Pick a folder you can write to.";
   }
-  if (text.includes("the system cannot find") || text.includes("not found")) {
+  if (
+    text.includes("the system cannot find") ||
+    text.includes("no such file or directory")
+  ) {
     return "A file or folder in the operation no longer exists. Refresh your selection.";
   }
   return "";

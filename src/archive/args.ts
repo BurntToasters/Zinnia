@@ -97,7 +97,7 @@ export function buildCompressionMethodSwitches(format: string): string[] {
   if (normalizedFormat === "7z") {
     if (solid === "solid") switches.push("-ms=on");
     else if (solid === "off") switches.push("-ms=off");
-    else switches.push(`-ms=${solid}`);
+    else if (solid) switches.push(`-ms=${solid}`);
   }
   if (threads) switches.push(`-mmt=${threads}`);
   if (normalizedFormat === "zip") switches.push("-mcu=on");

@@ -7,8 +7,8 @@
   border: 2px dashed var(--border-strong) !important;
   border-radius: var(--basic-radius) !important;
   transition: all var(--transition) !important;
-  backdrop-filter: blur(8px) !important;
-  -webkit-backdrop-filter: blur(8px) !important;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   box-shadow: var(--basic-glass-shadow) !important;
   cursor: default !important;
 }
@@ -89,8 +89,8 @@
   background: var(--basic-glass-bg) !important;
   border: 1px solid var(--basic-glass-border) !important;
   border-radius: var(--basic-radius) !important;
-  backdrop-filter: blur(8px) !important;
-  -webkit-backdrop-filter: blur(8px) !important;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   box-shadow: var(--basic-glass-shadow) !important;
 }
 
@@ -112,8 +112,8 @@
     var(--surface-alt) 80%,
     transparent
   ) !important;
-  backdrop-filter: blur(12px) !important;
-  -webkit-backdrop-filter: blur(12px) !important;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   padding: 10px 12px !important;
   text-align: left;
   font-weight: 600;
@@ -347,7 +347,7 @@ html[data-window-fx="basic"]
 .basic-view-sticky-bottom:has(.basic-progress.is-active) .basic-extract-actions,
 .basic-view-sticky-bottom:has(.basic-completion.is-active)
   .basic-extract-actions {
-  display: none !important;
+  display: none;
 }
 
 /* Unified form section layout */
@@ -382,4 +382,26 @@ html[data-window-fx="basic"]
   border: none;
   border-top: 1px solid var(--border-strong);
   margin: 8px 0;
+}
+
+@media (forced-colors: active) {
+  .basic-archive-info,
+  .basic-browse-table-wrap {
+    border: 1px solid ButtonText;
+  }
+
+  .basic-toolbar__tab,
+  .basic-toolbar__back {
+    border: 1px solid ButtonText;
+  }
+
+  .basic-toolbar__tab.is-active {
+    background: Highlight;
+    color: HighlightText;
+  }
+
+  .basic-toolbar__tab:focus-visible,
+  .basic-toolbar__back:focus-visible {
+    outline-color: Highlight;
+  }
 }

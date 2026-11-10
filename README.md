@@ -88,6 +88,16 @@ native build runs.
   destructively resets that VM to the exact `origin/beta` tip. Then run
   `npm run release:win`, `npm run release:mac`, `npm run release:linux`, or
   `npm run release:linux:arm64` as appropriate.
+- `npm run b` and `npm run r` start with `scripts/guard-reset.mjs`, which
+  refuses to reset when the working tree has uncommitted or untracked changes,
+  or when the current branch has commits not on its upstream. A branch with no
+  upstream is checked against every remote-tracking branch. The guard reads
+  tracking refs as of the last `git fetch`, which runs only after the guard
+  passes, so fetch first if you pushed recently. Only the current branch is
+  checked; a local `beta` or `main` that is not current is still repointed.
+  To discard that work on purpose, set `ZINNIA_FORCE_RESET=1` for that run. In
+  POSIX shells use `ZINNIA_FORCE_RESET=1 npm run b`; in PowerShell use
+  `$env:ZINNIA_FORCE_RESET = "1"` before `npm run b`.
 - The `main` and `beta` branches intentionally have no branch protection.
   Operators may delete and recreate `beta`. Pull request review and hosted CI
   checks are release-process requirements enforced by operators, not branch

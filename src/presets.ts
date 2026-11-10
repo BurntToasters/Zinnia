@@ -25,6 +25,12 @@ function currentConfig(): PresetConfig {
   };
 }
 
+function solidOptionOrOff(select: HTMLSelectElement, value: string): string {
+  return [...select.options].some((option) => option.value === value)
+    ? value
+    : "off";
+}
+
 function getCustomPreset(name: string): CustomPreset | undefined {
   return state.currentSettings.customPresets.find((p) => p.name === name);
 }
@@ -189,15 +195,13 @@ export function updateCompressionOptionsForFormat(format: string) {
     wordSizeSelect.value = "";
   }
 
-  if (currentSolid) {
-    solidSelect.value = currentSolid;
-  }
-
   // Solid mode is only supported for 7z archives
   const solidSupported = format === "7z";
   solidSelect.disabled = !solidSupported;
   if (!solidSupported) {
     solidSelect.value = "off";
+  } else {
+    solidSelect.value = solidOptionOrOff(solidSelect, currentSolid);
   }
 
   if (
@@ -229,7 +233,8 @@ export function applyPreset(name: string) {
   $<HTMLSelectElement>("method").value = preset.method;
   $<HTMLSelectElement>("dict").value = preset.dict;
   $<HTMLSelectElement>("word-size").value = preset.wordSize;
-  $<HTMLSelectElement>("solid").value = preset.solid;
+  const solidSelect = $<HTMLSelectElement>("solid");
+  solidSelect.value = solidOptionOrOff(solidSelect, preset.solid);
 }
 
 function configsMatch(a: PresetConfig, b: PresetConfig): boolean {

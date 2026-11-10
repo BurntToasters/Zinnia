@@ -70,8 +70,8 @@
     "dist:clean-all": "node scripts/dist-tools.js clean-all",
     "wc": "npm run win-compiler:x64",
     "vi": "node scripts/vi.js",
-    "b": "git fetch origin && git reset --hard && git clean -fd && git switch -C beta origin/beta && git reset --hard origin/beta && git clean -fd && npm run vi",
-    "r": "git fetch origin && git reset --hard && git clean -fd && git switch -C main origin/main && git reset --hard origin/main && git clean -fd && npm run vi && npm run gitprune:force",
+    "b": "node scripts/guard-reset.mjs && git fetch origin && git reset --hard && git clean -fd && git switch -C beta origin/beta && git reset --hard origin/beta && git clean -fd && npm run vi",
+    "r": "node scripts/guard-reset.mjs && git fetch origin && git reset --hard && git clean -fd && git switch -C main origin/main && git reset --hard origin/main && git clean -fd && npm run vi && npm run gitprune:force",
     "u": "node scripts/npm-safe-update.mjs && node scripts/cargo-safe-update.mjs --manifest-path src-tauri/Cargo.toml && node scripts/sync-version.js && node scripts/update-metainfo.js && npm run check:tauri-alignment",
     "check:tauri-alignment": "node scripts/check-tauri-alignment.mjs",
     "deps:majors": "node scripts/deps-majors.mjs",
@@ -150,7 +150,7 @@
     "@tauri-apps/plugin-process": "^2.4.0",
     "@tauri-apps/plugin-shell": "^2.6.0",
     "@tauri-apps/plugin-updater": "2.10.1",
-    "lucide": "^1.68.0"
+    "lucide": "^1.70.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.4",

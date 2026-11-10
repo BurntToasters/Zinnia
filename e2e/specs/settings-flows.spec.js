@@ -15,6 +15,7 @@ import {
   deleteSelectedCustomPreset,
   dismissToasts,
   dispatchDocumentKey,
+  domValue,
   doubleClickSettingsSave,
   flushPendingSettingsWrites,
   invokeLoadSettingsRaw,
@@ -174,6 +175,59 @@ describe("Settings flows", function () {
 
     const loaded = await loadSettingsObject();
     assert.equal(loaded.workspaceMode, "power");
+  });
+
+  it("does not promote session-only Power compression values when Save runs without touching Compression", async () => {
+    updateE2eSettings(e2eProfileDir(), { level: "5" });
+    await reloadMainWindow();
+    await switchToPowerWorkspace();
+    await setSelectValue("#level", "9");
+
+    await openSettingsModal();
+    assert.equal(
+      await domValue("#s-level"),
+      "5",
+      "Settings was pre-filled from the live Power form instead of saved defaults",
+    );
+    await setSelectValue("#s-theme", "dark");
+    await clickSettingsSave();
+    await waitForSettingsSavedAndClosed();
+    assert.equal(
+      await domValue("#level"),
+      "9",
+      "theme-only Save reset the live Power session level",
+    );
+
+    await reloadMainWindow();
+    const loaded = await loadSettingsObject();
+    assert.equal(
+      loaded.level,
+      "5",
+      "Save persisted the session-only Power level as the new default",
+    );
+  });
+
+  it("copies session Power compression values into Settings only when requested", async () => {
+    updateE2eSettings(e2eProfileDir(), { level: "5" });
+    await reloadMainWindow();
+    await switchToPowerWorkspace();
+    await setSelectValue("#level", "9");
+
+    await openSettingsModal();
+    await browser.execute(() => {
+      document.getElementById("settings-use-session-values")?.click();
+    });
+    assert.equal(
+      await domValue("#s-level"),
+      "9",
+      "Use current session values did not copy the Power level",
+    );
+    await clickSettingsSave();
+    await waitForSettingsSavedAndClosed();
+
+    await reloadMainWindow();
+    const loaded = await loadSettingsObject();
+    assert.equal(loaded.level, "9");
   });
 
   it("opens Settings and shortcuts from the keyboard and closes with Escape", async () => {

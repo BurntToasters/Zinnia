@@ -63,11 +63,16 @@ import { installNativeWebviewContextMenuGuard } from "./webview-context-menu";
 
 let persistentAlertDismissWired = false;
 let preservedRecoveryAcknowledgementAvailable = false;
-type PreservedRecoveryKind = "newer" | "older" | "ambiguous";
+type StartupRecoveryKind = "newer" | "older" | "ambiguous" | "error";
+type StartupRecoveryStatus = { kind: StartupRecoveryKind; message: string };
+type PreservedRecoveryKind = Exclude<StartupRecoveryKind, "error">;
 
 let preservedRecoveryKind: PreservedRecoveryKind = "ambiguous";
 
-function showPersistentAlertBanner(message: string): void {
+function showPersistentAlertBanner(
+  message: string,
+  kind: StartupRecoveryKind = "error",
+): void {
   const banner = document.getElementById("startup-recovery-banner");
   const text = document.getElementById("startup-recovery-banner-text");
   const dismiss = document.getElementById("startup-recovery-banner-dismiss");
@@ -79,52 +84,45 @@ function showPersistentAlertBanner(message: string): void {
   text.textContent =
     existing && existing !== message ? `${existing} ${message}` : message;
   banner.hidden = false;
-  if (/was preserved|were preserved/i.test(message)) {
+  if (kind !== "error") {
     preservedRecoveryAcknowledgementAvailable = true;
-    if (/newer Zinnia version/i.test(message)) {
-      preservedRecoveryKind = "newer";
-    } else if (
-      /Zinnia 0\.6\.2 or earlier|older Zinnia version|no durable sidecar move plan|phase metadata is missing/i.test(
-        message,
-      )
-    ) {
-      preservedRecoveryKind = "older";
-    } else {
-      preservedRecoveryKind = "ambiguous";
-    }
+    preservedRecoveryKind = kind;
   }
   if (acknowledge) {
     if (preservedRecoveryAcknowledgementAvailable) {
       acknowledge.hidden = false;
       acknowledge.onclick ??= async () => {
-        const proceed = await confirmWithE2eQueue(() =>
-          ask(
-            preservedRecoveryKind === "newer"
-              ? "A newer Zinnia version left an unfinished archive job that this " +
-                  "version cannot read. Opening that newer version is the safest " +
-                  "way to finish it. Accepting here leaves the files exactly as " +
-                  "they are and only clears the recovery marker so archive jobs " +
-                  "can run again."
-              : preservedRecoveryKind === "older"
-                ? "An older Zinnia version left an unfinished archive job in a legacy " +
-                  "format. Opening Zinnia 0.6.2 or earlier is the safest way to " +
-                  "recover it. Accepting here leaves the files exactly as they are " +
-                  "and only clears the recovery marker so archive jobs can run again."
-                : "Zinnia cannot prove whether it wrote the kept extraction result " +
-                  "itself. Accepting leaves the files exactly as they are and only " +
-                  "clears the recovery marker so archive jobs can run again.",
-            {
-              title:
-                preservedRecoveryKind === "newer"
-                  ? "Accept job from newer Zinnia"
-                  : preservedRecoveryKind === "older"
-                    ? "Accept job from older Zinnia"
-                    : "Accept kept extraction result",
-              kind: "warning",
-              okLabel: "Accept and continue",
-              cancelLabel: "Keep blocked",
-            },
-          ),
+        const dialogTitle =
+          preservedRecoveryKind === "newer"
+            ? "Accept job from newer Zinnia"
+            : preservedRecoveryKind === "older"
+              ? "Accept job from older Zinnia"
+              : "Accept kept extraction result";
+        const proceed = await confirmWithE2eQueue(
+          () =>
+            ask(
+              preservedRecoveryKind === "newer"
+                ? "A newer Zinnia version left an unfinished archive job that this " +
+                    "version cannot read. Opening that newer version is the safest " +
+                    "way to finish it. Accepting here leaves the files exactly as " +
+                    "they are and only clears the recovery marker so archive jobs " +
+                    "can run again."
+                : preservedRecoveryKind === "older"
+                  ? "An older Zinnia version left an unfinished archive job in a legacy " +
+                    "format. Opening Zinnia 0.6.2 or earlier is the safest way to " +
+                    "recover it. Accepting here leaves the files exactly as they are " +
+                    "and only clears the recovery marker so archive jobs can run again."
+                  : "Zinnia cannot prove whether it wrote the kept extraction result " +
+                    "itself. Accepting leaves the files exactly as they are and only " +
+                    "clears the recovery marker so archive jobs can run again.",
+              {
+                title: dialogTitle,
+                kind: "warning",
+                okLabel: "Accept and continue",
+                cancelLabel: "Keep blocked",
+              },
+            ),
+          dialogTitle,
         );
         if (!proceed) return;
         try {
@@ -392,14 +390,15 @@ export async function init() {
   uiReadyForOpenPaths = true;
   refreshQuickActionRepeatState();
 
-  const startupRecoveryStatus = invoke<string | null>(
+  const startupRecoveryStatus = invoke<StartupRecoveryStatus | null>(
     "get_startup_recovery_status",
   );
   void startupRecoveryStatus
-    .then((message) => {
-      if (!message) return;
+    .then((status) => {
+      if (!status) return;
       showPersistentAlertBanner(
-        `Could not finish recovering an interrupted archive job: ${message}`,
+        `Could not finish recovering an interrupted archive job: ${status.message}`,
+        status.kind,
       );
     })
     .catch((err) => {

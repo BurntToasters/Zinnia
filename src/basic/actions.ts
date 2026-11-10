@@ -435,39 +435,6 @@ export async function handleBasicCompressAction(): Promise<void> {
   }
 }
 
-export type PasswordCheckResult = "ok" | "wrong" | "error";
-
-/**
- * Test a candidate password against `archive`. Distinguishes a genuinely
- * wrong password from a transport/backend failure (busy backend, runtime
- * probe failure, IPC error): those must not be reported to the user as
- * "Incorrect password", which would loop forever on an unrelated problem.
- */
-export async function testArchivePassword(
-  archive: string,
-  password?: string,
-): Promise<PasswordCheckResult> {
-  if (!(await ensureRuntimeReady())) return "error";
-  try {
-    const args = ["t", "-spd"];
-    if (password) {
-      args.push(`-p${password}`);
-    }
-    args.push("--", archive);
-    const result = await invokeGuardedRun7z(args);
-    if (result.code > 1) {
-      return looksLikePasswordRequiredError(result.stdout, result.stderr)
-        ? "wrong"
-        : "error";
-    }
-    return "ok";
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log(`Password check failed: ${msg}`, "error");
-    return "error";
-  }
-}
-
 /**
  * `true`/`false` when the archive's encryption state is known, `null` when
  * it could not be determined (backend/IPC failure). Callers must treat
@@ -559,8 +526,7 @@ async function handleBasicExtractActionOnce(
   let password = "";
 
   if (isEncrypted) {
-    let correctPassword = false;
-    while (!correctPassword) {
+    while (!password) {
       const input = await promptInput({
         title: "Password Required",
         label: "This archive is encrypted. Enter password:",
@@ -568,30 +534,9 @@ async function handleBasicExtractActionOnce(
       });
 
       if (!isBasicPreparationCurrent(preparation) || input === null) {
-        // User cancelled the prompt modal
         return;
       }
-
-      // Test the password. "error" means the check itself failed (busy
-      // backend, runtime probe, IPC) rather than confirming the password is
-      // wrong, so it must not loop the "Incorrect password" prompt forever.
-      const check = await testArchivePassword(archive, input);
-      if (!isBasicPreparationCurrent(preparation)) return;
-      if (check === "ok") {
-        password = input;
-        correctPassword = true;
-      } else if (check === "wrong") {
-        showToast("Incorrect password. Please try again.", "error", 5000);
-        if (!isBasicPreparationCurrent(preparation)) return;
-      } else {
-        showBasicCompletion(
-          "extract",
-          false,
-          "Operation failed",
-          "Could not verify the archive password. Check the log for details and try again.",
-        );
-        return;
-      }
+      password = input;
     }
   }
 

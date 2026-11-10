@@ -10,8 +10,8 @@
   padding: 14px;
   background: var(--basic-glass-bg) !important;
   border: 1px solid var(--basic-glass-border) !important;
-  backdrop-filter: blur(24px) saturate(145%) !important;
-  -webkit-backdrop-filter: blur(24px) saturate(145%) !important;
+  backdrop-filter: blur(24px) saturate(145%);
+  -webkit-backdrop-filter: blur(24px) saturate(145%);
   box-shadow: var(--basic-glass-shadow) !important;
   border-radius: var(--basic-radius) !important;
 }
@@ -112,8 +112,8 @@
   padding: 16px;
   background: var(--basic-glass-bg) !important;
   border: 1px solid var(--basic-glass-border) !important;
-  backdrop-filter: blur(24px) saturate(145%) !important;
-  -webkit-backdrop-filter: blur(24px) saturate(145%) !important;
+  backdrop-filter: blur(24px) saturate(145%);
+  -webkit-backdrop-filter: blur(24px) saturate(145%);
   box-shadow: var(--basic-glass-shadow) !important;
   border-radius: var(--basic-radius) !important;
   text-align: center;
@@ -183,4 +183,19 @@
     var(--basic-glass-bg)
   ) !important;
   border-left: 3px solid var(--danger-fg) !important;
+}
+
+@media (forced-colors: active) {
+  .basic-progress,
+  .basic-completion {
+    border: 1px solid ButtonText;
+  }
+
+  .basic-progress__bar-track {
+    border: 1px solid ButtonText;
+  }
+
+  .basic-progress__bar-fill {
+    background: Highlight;
+  }
 }
