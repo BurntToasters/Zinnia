@@ -242,6 +242,18 @@ describe("macOS compatibility", () => {
     ).toBe(false);
   });
 
+  it("stores each official macOS 7-Zip slice as its own thin Mach-O", () => {
+    for (const [dir, arch] of MAC_7Z_SLICES) {
+      const bytes = fs.readFileSync(
+        path.resolve(process.cwd(), "assets", "mac", dir, "7zz"),
+      );
+      expect(readThinMachOArch(bytes), `assets/mac/${dir}/7zz`).toBe(arch);
+    }
+    expect(
+      fs.existsSync(path.resolve(process.cwd(), "assets", "mac", "7zz")),
+    ).toBe(false);
+  });
+
   it.runIf(process.platform === "darwin")(
     "keeps every official 7-Zip slice compatible with the declared macOS floor",
     () => {
