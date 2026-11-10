@@ -1,5 +1,5 @@
-import { open } from "@tauri-apps/plugin-dialog";
-import { $ } from "../utils";
+import { open, type DialogFilter } from "@tauri-apps/plugin-dialog";
+import { $, isImeComposing } from "../utils";
 import { state } from "../state";
 import {
   setMode,
@@ -15,11 +15,16 @@ import {
   addFilesIfCurrent,
   addFolderIfCurrent,
 } from "../files";
-import { deriveOutputArchivePath } from "../extract-path";
+import {
+  deriveOutputArchivePath,
+  ARCHIVE_NAME_SEPARATOR_MESSAGE,
+  archiveNameHasSeparator,
+  outputPathForArchiveName,
+  outputPathForFormatChange,
+} from "../extract-path";
 import {
   setBasicView,
   syncBasicToPower,
-  syncBasicOutputAutofill,
   updateBasicPasswordField,
   updateBasicSplitCustomVisibility,
   setBasicBrowsePasswordVisible,
@@ -86,8 +91,16 @@ const BASIC_ARCHIVE_EXTENSIONS = [
   "001",
 ];
 
-function basicArchiveDialogExtensions(): string[] {
-  return [...BASIC_ARCHIVE_EXTENSIONS];
+/**
+ * Open-archive filters, matching Power's list in files.ts: archives first
+ * (including the split first volume), then an All files option. Built fresh
+ * per call so a dialog cannot mutate the next one's filters.
+ */
+function basicArchiveOpenFilters(): DialogFilter[] {
+  return [
+    { name: "Archives", extensions: [...BASIC_ARCHIVE_EXTENSIONS] },
+    { name: "All files", extensions: ["*"] },
+  ];
 }
 
 export function initBasicWorkspace(): void {
@@ -118,6 +131,7 @@ export function initBasicWorkspace(): void {
     };
     dropzone.addEventListener("click", () => void activateDropzone());
     dropzone.addEventListener("keydown", (e: KeyboardEvent) => {
+      if (isImeComposing(e)) return;
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
         void activateDropzone();
@@ -145,12 +159,7 @@ export function initBasicWorkspace(): void {
         selection = await openBasicDialog({
           title: "Open archive",
           multiple: true,
-          filters: [
-            {
-              name: "Archives",
-              extensions: basicArchiveDialogExtensions(),
-            },
-          ],
+          filters: basicArchiveOpenFilters(),
         });
         if (!selection || !isBasicPreparationCurrent(preparation)) return;
       } finally {
@@ -193,12 +202,7 @@ export function initBasicWorkspace(): void {
         selection = await openBasicDialog({
           title: "Open archive",
           multiple: false,
-          filters: [
-            {
-              name: "Archives",
-              extensions: basicArchiveDialogExtensions(),
-            },
-          ],
+          filters: basicArchiveOpenFilters(),
         });
         if (!selection || !isBasicPreparationCurrent(preparation)) return;
       } finally {
@@ -216,6 +220,7 @@ export function initBasicWorkspace(): void {
     };
     extractArchiveInfo.addEventListener("click", chooseExtractArchive);
     extractArchiveInfo.addEventListener("keydown", (event) => {
+      if (isImeComposing(event)) return;
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
       void chooseExtractArchive();
@@ -234,12 +239,7 @@ export function initBasicWorkspace(): void {
         selection = await openBasicDialog({
           title: "Open archive",
           multiple: false,
-          filters: [
-            {
-              name: "Archives",
-              extensions: basicArchiveDialogExtensions(),
-            },
-          ],
+          filters: basicArchiveOpenFilters(),
         });
         if (!selection || !isBasicPreparationCurrent(preparation)) return;
       } finally {
@@ -256,6 +256,7 @@ export function initBasicWorkspace(): void {
     };
     browseArchiveInfo.addEventListener("click", chooseBrowseArchive);
     browseArchiveInfo.addEventListener("keydown", (event) => {
+      if (isImeComposing(event)) return;
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
       void chooseBrowseArchive();
@@ -323,6 +324,29 @@ async function activateBasicAddFiles(): Promise<void> {
   } finally {
     finishBasicPreparation(preparation);
   }
+}
+
+/** Keep the Basic output path's folder and set its extension for `format`. */
+function syncBasicOutputForFormat(format: string): void {
+  const basicOutput = document.getElementById(
+    "basic-output-path",
+  ) as HTMLInputElement | null;
+  const basicName = document.getElementById(
+    "basic-archive-name",
+  ) as HTMLInputElement | null;
+  if (!basicOutput) return;
+  const current = basicOutput.value;
+  const next = outputPathForFormatChange(
+    current,
+    state.lastAutoOutputPath,
+    format,
+    basicName?.value ?? "",
+    (customName) => deriveOutputArchivePath(state.inputs, format, customName),
+  );
+  if (!next || next === current) return;
+  const wasAutofilled = !current || current === state.lastAutoOutputPath;
+  basicOutput.value = next;
+  if (wasAutofilled) state.lastAutoOutputPath = next;
 }
 
 export function wireBasicCompressEvents(): void {
@@ -426,8 +450,9 @@ export function wireBasicCompressEvents(): void {
       // password resident in a hidden field even though the visible Basic
       // field was cleared right after.
       updateBasicPasswordField();
+      // Output first, so the mirror to Power carries the new extension.
+      syncBasicOutputForFormat(formatSelect.value);
       syncBasicToPower();
-      syncBasicOutputAutofill();
     });
   }
 
@@ -477,15 +502,30 @@ export function wireBasicCompressEvents(): void {
   ) as HTMLInputElement | null;
   if (archiveNameInput) {
     archiveNameInput.addEventListener("input", () => {
+      // The typed name replaces only the file name; a Browse folder is kept.
+      if (archiveNameHasSeparator(archiveNameInput.value)) {
+        if (!archiveNameInput.hasAttribute("aria-invalid")) {
+          showToast(ARCHIVE_NAME_SEPARATOR_MESSAGE, "error", 5000);
+        }
+        archiveNameInput.setAttribute("aria-invalid", "true");
+        return;
+      }
+      archiveNameInput.removeAttribute("aria-invalid");
       const format =
         (document.getElementById("basic-format") as HTMLSelectElement | null)
           ?.value ?? "7z";
-      const customName = archiveNameInput.value || undefined;
-      const next = deriveOutputArchivePath(state.inputs, format, customName);
       const basicOutput = document.getElementById(
         "basic-output-path",
       ) as HTMLInputElement | null;
-      if (next && basicOutput) {
+      if (!basicOutput) return;
+      const next = outputPathForArchiveName(
+        basicOutput.value,
+        format,
+        archiveNameInput.value,
+        (customName) =>
+          deriveOutputArchivePath(state.inputs, format, customName),
+      );
+      if (next) {
         basicOutput.value = next;
         state.lastAutoOutputPath = next;
       }
@@ -528,7 +568,7 @@ export function wireBasicCompressEvents(): void {
   const compressAgainBtn = document.getElementById("basic-compress-again");
   if (compressAgainBtn) {
     compressAgainBtn.addEventListener("click", () => {
-      const isFailure = compressAgainBtn.textContent?.trim() === "Close";
+      const isFailure = compressAgainBtn.dataset.completionAction === "dismiss";
       if (isFailure) {
         hideBasicCompletion("compress");
       } else {

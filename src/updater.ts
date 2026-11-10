@@ -36,11 +36,21 @@ async function touchUpdateReservation(): Promise<void> {
   }
 }
 
+/** Persistent status-bar button. Status text alone is overwritten too easily. */
+function renderUpdateReadyIndicator(version: string | null): void {
+  const indicator = document.getElementById("update-ready-indicator");
+  if (!indicator) return;
+  indicator.hidden = version === null;
+  indicator.textContent =
+    version === null ? "" : `Update ${version} ready. Restart to install`;
+}
+
 function clearPendingUpdate(closeResource: boolean): void {
   const update = pendingUpdate;
   pendingUpdate = null;
   pendingVersion = null;
   pendingTarget = undefined;
+  renderUpdateReadyIndicator(null);
   if (closeResource && update) {
     const close = (update as Update & { close?: () => Promise<void> }).close;
     if (close) {
@@ -163,6 +173,7 @@ async function promptInstallAndRestart(
   }
   pendingUpdate = update;
   pendingVersion = version;
+  renderUpdateReadyIndicator(version);
   setStatus("Update ready");
   if (await archiveOperationIsRunning()) {
     if (generation !== updateGeneration) return;
@@ -245,13 +256,60 @@ async function promptInstallAndRestart(
       installInFlight = false;
     }
   } else {
-    await notify(
+    // Later must not prompt for notification permission.
+    await notifyIfAlreadyGranted(
       "Zinnia",
       "Update downloaded and ready to install from Check now.",
     );
     setStatus("Update ready");
   }
 }
+
+/**
+ * Background downloads never open the native restart modal. The status-bar
+ * indicator carries the pending update until the user acts on it.
+ */
+function holdBackgroundUpdate(
+  version: string,
+  update: Update,
+  generation: number,
+): void {
+  if (generation !== updateGeneration) {
+    void update.close().catch(() => {});
+    return;
+  }
+  pendingUpdate = update;
+  pendingVersion = version;
+  renderUpdateReadyIndicator(version);
+  setStatus("Update ready");
+  void notifyIfAlreadyGranted(
+    "Zinnia",
+    `Version ${version} is downloaded. Use Update ready in the status bar to restart.`,
+  );
+}
+
+/** Indicator click: the user asked to install, so the restart prompt may show. */
+async function installPendingUpdateFromIndicator(): Promise<void> {
+  if (!pendingUpdate || !pendingVersion || installInFlight) return;
+  try {
+    await promptInstallAndRestart(
+      pendingVersion,
+      pendingUpdate,
+      updateGeneration,
+    );
+  } catch (err) {
+    const messageText = err instanceof Error ? err.message : String(err);
+    log(`Updater error: ${messageText}`, "error");
+    setStatus("Idle");
+    showToast(`Failed to install update. ${messageText}`, "error", 0);
+  }
+}
+
+document
+  .getElementById("update-ready-indicator")
+  ?.addEventListener("click", () => {
+    void installPendingUpdateFromIndicator();
+  });
 
 async function runUpdateCheck(interactive: boolean): Promise<void> {
   let checkedUpdate: Update | null = null;
@@ -350,7 +408,11 @@ async function runUpdateCheck(interactive: boolean): Promise<void> {
     }
     pendingTarget = target;
     log(`Update ${candidate.version} downloaded and ready to install.`);
-    await promptInstallAndRestart(candidate.version, candidate, generation);
+    if (interactive) {
+      await promptInstallAndRestart(candidate.version, candidate, generation);
+    } else {
+      holdBackgroundUpdate(candidate.version, candidate, generation);
+    }
     checkedUpdate = null;
   } catch (err) {
     if (checkedUpdate && checkedUpdate !== pendingUpdate) {

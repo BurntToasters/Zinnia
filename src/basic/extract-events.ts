@@ -1,4 +1,4 @@
-import { $ } from "../utils";
+import { $, isImeComposing } from "../utils";
 import { state } from "../state";
 import { setMode, renderInputs } from "../ui";
 import { applyPreset } from "../presets";
@@ -91,7 +91,8 @@ export function wireBasicExtractEvents(): void {
   const browsePassword = document.getElementById("basic-browse-password");
   browsePassword?.addEventListener("change", syncBasicBrowsePasswordToPower);
   browsePassword?.addEventListener("keydown", (event) => {
-    if ((event as KeyboardEvent).key === "Enter") void runBasicBrowseArchive();
+    if (isImeComposing(event)) return;
+    if (event.key === "Enter") void runBasicBrowseArchive();
   });
   document
     .getElementById("basic-toggle-extract-password")
@@ -137,7 +138,7 @@ export function wireBasicExtractEvents(): void {
     ?.addEventListener("click", resetCompressCompletion);
   const extractAgain = document.getElementById("basic-extract-another");
   extractAgain?.addEventListener("click", () => {
-    if (extractAgain.textContent?.trim() === "Close")
+    if (extractAgain.dataset.completionAction === "dismiss")
       hideBasicCompletion("extract");
     else resetExtractCompletion();
   });

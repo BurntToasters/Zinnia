@@ -142,6 +142,14 @@ vi.mock("../archive", () => ({
   parseArchiveListing: depMocks.parseArchiveListing,
 }));
 
+vi.mock("../archive/ops", () => ({
+  runActionAfterNativeSave: depMocks.runAction,
+}));
+
+vi.mock("../archive/inspection", () => ({
+  browsedArchivePasswordFor: vi.fn().mockResolvedValue(null),
+}));
+
 vi.mock("../prompt-modal", () => ({
   promptInput: depMocks.promptInput,
 }));
@@ -771,7 +779,12 @@ describe("basic-ui state transitions", () => {
       payload: { currentFile: "Finalizing…", percent: 100 },
     });
     expect(cancel.disabled).toBe(true);
-    expect(status.textContent).toBe("Finalizing…");
+    // The operation label stays; Finalizing shows on the detail line.
+    expect(status.textContent).toBe("Extracting");
+    expect(
+      document.querySelector("#basic-extract-progress .basic-progress__file")
+        ?.textContent,
+    ).toBe("Finalizing…");
     setSevenZipRunInFlight(false);
     updateBasicRunningState(false);
   });
@@ -861,6 +874,18 @@ describe("basic-ui state transitions", () => {
         .getElementById("basic-compress-progress")
         ?.classList.contains("is-active"),
     ).toBe(false);
+    expect(
+      document
+        .getElementById("basic-compress-completion")
+        ?.classList.contains("basic-completion--cancelled"),
+    ).toBe(true);
+    expect(
+      (
+        document.getElementById(
+          "basic-compress-completion-title",
+        ) as HTMLElement
+      ).textContent,
+    ).toBe("Cancelled");
 
     uiMocks.runtime.mode = "extract";
     updateBasicStatus("Done");
@@ -1459,7 +1484,7 @@ describe("basic-ui drag and init wiring", () => {
     ).toBe(false);
   });
 
-  it("unlocks and clears extraction passwords on picker cancellation", async () => {
+  it("unlocks and keeps extraction passwords on picker cancellation", async () => {
     state.inputs = ["/tmp/archive.7z"];
     uiMocks.runtime.mode = "extract";
     setBasicView("extract");
@@ -1485,21 +1510,22 @@ describe("basic-ui drag and init wiring", () => {
 
     await handleBasicExtractAction();
 
+    // Nothing ran, so the typed passwords stay for the next attempt.
     expect(state.operationPreparing).toBe(false);
     expect(
       (document.getElementById("basic-extract-password") as HTMLInputElement)
         .value,
-    ).toBe("");
+    ).toBe("basic-secret");
     expect(
       (document.getElementById("extract-password") as HTMLInputElement).value,
-    ).toBe("");
+    ).toBe("power-secret");
     expect(
       (document.getElementById("basic-extract-password") as HTMLInputElement)
         .type,
-    ).toBe("password");
+    ).toBe("text");
     expect(
       document.getElementById("basic-toggle-extract-password")?.textContent,
-    ).toBe("Show");
+    ).toBe("Hide");
   });
 
   it("shows Basic extraction failure when folder dialog rejects", async () => {
@@ -1778,14 +1804,14 @@ describe("basic-ui drag and init wiring", () => {
       "basic-extract-another",
     ) as HTMLButtonElement;
     extractCompletion.classList.add("is-active");
-    extractAgain.textContent = "Close";
+    extractAgain.dataset.completionAction = "dismiss";
     extractAgain.click();
     expect(extractCompletion.classList.contains("is-active")).toBe(false);
 
     state.inputs = ["/tmp/archive.7z"];
     state.lastAutoExtractDestination = "/tmp/extracted";
     extractCompletion.classList.add("is-active");
-    extractAgain.textContent = "Extract another";
+    extractAgain.dataset.completionAction = "reset";
     extractAgain.click();
     expect(state.inputs).toEqual([]);
     expect(state.lastAutoExtractDestination).toBeNull();
@@ -1820,6 +1846,11 @@ describe("basic-ui drag and init wiring", () => {
     const extensions = options?.filters?.[0]?.extensions ?? [];
     expect(extensions).toContain("rar");
     expect(extensions).toContain("zip");
+    expect(extensions).toContain("001");
+    expect(options?.filters?.[1]).toEqual({
+      name: "All files",
+      extensions: ["*"],
+    });
   });
 
   it("caps Basic archive-picker selections before batch extraction", async () => {

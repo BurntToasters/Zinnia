@@ -13,6 +13,11 @@ export interface PresetConfig {
 }
 
 const CUSTOM_PRESET_PREFIX = "custom:";
+const MAX_CUSTOM_PRESET_NAME_LENGTH = 64;
+
+function isBuiltInPresetName(name: string): boolean {
+  return Object.hasOwn(PRESETS, name);
+}
 
 function currentConfig(): PresetConfig {
   return {
@@ -221,7 +226,9 @@ export function updateCompressionOptionsForFormat(format: string) {
 export function applyPreset(name: string) {
   if (name === "custom") return;
 
-  let preset: PresetConfig | undefined = PRESETS[name];
+  let preset: PresetConfig | undefined = isBuiltInPresetName(name)
+    ? PRESETS[name]
+    : undefined;
   if (!preset && name.startsWith(CUSTOM_PRESET_PREFIX)) {
     preset = getCustomPreset(name.slice(CUSTOM_PRESET_PREFIX.length));
   }
@@ -264,8 +271,13 @@ export function detectPreset(): string {
 export function saveCustomPreset(name: string): CustomPreset {
   const trimmed = name.trim();
   if (!trimmed) throw new Error("Preset name cannot be empty.");
-  if (trimmed in PRESETS) {
+  if (isBuiltInPresetName(trimmed)) {
     throw new Error(`"${trimmed}" is a built-in preset name. Choose another.`);
+  }
+  if (trimmed.length > MAX_CUSTOM_PRESET_NAME_LENGTH) {
+    throw new Error(
+      `Preset names can be at most ${MAX_CUSTOM_PRESET_NAME_LENGTH} characters.`,
+    );
   }
 
   const customPresets = state.currentSettings.customPresets;

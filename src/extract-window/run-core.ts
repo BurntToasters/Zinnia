@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listenToOwnWindow } from "../window-events";
+import { listenForStopRequests, listenToOwnWindow } from "../window-events";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { validateArchivePaths } from "../archive-rules";
 import { confirmExtractDestination } from "../extract-destination";
@@ -11,6 +11,7 @@ import { normalizeAutoCloseDelay, parseSettingsRaw } from "../settings-model";
 import { basename } from "../path-display";
 import {
   formatEta as formatSharedEta,
+  SAFE_COPY_PROGRESS_LABEL,
   type ProgressUpdate,
 } from "../progress-update";
 import { redactSensitiveText } from "../utils";
@@ -42,6 +43,57 @@ import { readInjectedExtractSession } from "./injected-session";
 import { sanitizeStatusFileName } from "./status-sanitize";
 import { createAutoCloseController } from "./auto-close";
 
+type ExtractSettings = ReturnType<typeof parseSettingsRaw>["settings"];
+
+/** Read settings once at startup; null when they cannot be loaded. */
+async function loadExtractSettings(): Promise<ExtractSettings | null> {
+  try {
+    const raw = await invoke<string>("load_settings");
+    return parseSettingsRaw(raw).settings;
+  } catch {
+    return null;
+  }
+}
+
+/** Copy with the clipboard API, then a hidden textarea when that API fails. */
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Fall through to the textarea copy.
+  }
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.opacity = "0";
+  area.style.pointerEvents = "none";
+  document.body.appendChild(area);
+  let copied = false;
+  try {
+    area.select();
+    copied =
+      typeof document.execCommand === "function" &&
+      document.execCommand("copy");
+  } catch {
+    copied = false;
+  } finally {
+    area.remove();
+  }
+  return copied;
+}
+
+function selectTextForManualCopy(element: HTMLElement): void {
+  const range = document.createRange();
+  range.selectNodeContents(element);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
 export async function runExtractWindow(): Promise<void> {
   installNativeWebviewContextMenuGuard();
   await installWdioGuestPluginIfEnabled();
@@ -56,7 +108,6 @@ export async function runExtractWindow(): Promise<void> {
       }
     })
     .catch(() => {});
-  void syncExtractWindowFx();
 
   // Wire custom titlebar buttons
   const minBtn = document.getElementById("titlebar-min");
@@ -69,12 +120,35 @@ export async function runExtractWindow(): Promise<void> {
   }
   const cancelBtn = $("cancel-btn") as HTMLButtonElement;
   const openDestinationBtn = $("open-destination-btn") as HTMLButtonElement;
+  const retryBtn = $("retry-btn") as HTMLButtonElement;
   const closeBtn = $("close-btn") as HTMLButtonElement;
   let cancelRequested = false;
   const extractAbort = new AbortController();
 
+  let operationFinished = false;
+  let extractionRunning = false;
+  let archivePath = "";
+  let destination = "";
+
+  // Arms the same abort the Cancel button uses. Runs only after the user
+  // confirms that a running extraction may be stopped.
+  const armCancelForClose = () => {
+    cancelRequested = true;
+    extractAbort.abort();
+    cancelBtn.disabled = true;
+    openDestinationBtn.disabled = true;
+    closeBtn.disabled = true;
+    $("extract-status").textContent = "Cancelling...";
+  };
+
   if (closeTitlebarBtn) {
     closeTitlebarBtn.addEventListener("click", () => {
+      if (extractionRunning) {
+        // Let the native close request ask before cancelling. Declining keeps
+        // the extraction, and the abort stays unarmed.
+        void appWindow.close();
+        return;
+      }
       // Arm local abort before teardown so an in-flight password prompt cannot
       // start another run_7z after the window is dismissed.
       cancelRequested = true;
@@ -82,24 +156,17 @@ export async function runExtractWindow(): Promise<void> {
       void closeWindowSafely();
     });
   }
-  let operationFinished = false;
-  let destination = "";
+  void listenForStopRequests(armCancelForClose).catch((err) => {
+    console.warn(`Could not register extraction stop listener: ${String(err)}`);
+  });
 
-  let autoCloseDelay = 1.5;
-  let debugMode = false;
-  try {
-    const raw = await invoke<string>("load_settings");
-    const { settings } = parseSettingsRaw(raw);
-    autoCloseDelay = normalizeAutoCloseDelay(
-      settings.extractAutoCloseSeconds,
-      1.5,
-    );
-    debugMode = settings.debug === true;
-  } catch {
-    autoCloseDelay = -1;
-    debugMode = false;
-  }
+  const settings = await loadExtractSettings();
+  const autoCloseDelay = settings
+    ? normalizeAutoCloseDelay(settings.extractAutoCloseSeconds, 1.5)
+    : -1;
+  const debugMode = settings?.debug === true;
   setNativeWebviewContextMenuAllowed(debugMode);
+  void syncExtractWindowFx(settings);
 
   const { beginAutoClose } = createAutoCloseController(
     closeBtn,
@@ -153,24 +220,20 @@ export async function runExtractWindow(): Promise<void> {
     "copy-error-detail",
   ) as HTMLButtonElement | null;
   copyErrorBtn?.addEventListener("click", async () => {
-    const text = $("error-detail").textContent ?? "";
+    const detailEl = $("error-detail");
+    const text = detailEl.textContent ?? "";
     if (!text.trim()) return;
-    try {
-      if (!navigator.clipboard?.writeText) {
-        throw new Error("Clipboard API unavailable");
-      }
-      await navigator.clipboard.writeText(text);
-      copyErrorBtn.textContent = "Copied";
-      window.setTimeout(() => {
-        copyErrorBtn.textContent = "Copy details";
-      }, 1300);
-    } catch {
-      copyErrorBtn.textContent = "Copy failed";
-      window.setTimeout(() => {
-        copyErrorBtn.textContent = "Copy details";
-      }, 1300);
-    }
+    const copied = await copyTextToClipboard(text);
+    if (!copied) selectTextForManualCopy(detailEl);
+    copyErrorBtn.textContent = copied ? "Copied" : "Copy failed";
+    window.setTimeout(() => {
+      copyErrorBtn.textContent = "Copy details";
+    }, 1300);
   });
+
+  const hideRecoveryActions = () => {
+    retryBtn.hidden = true;
+  };
 
   const showError = (
     detail: string,
@@ -180,6 +243,7 @@ export async function runExtractWindow(): Promise<void> {
       extra?: string;
       rawDetail?: string;
     },
+    offerRecovery = false,
   ) => {
     $("extract-error").hidden = false;
     const detailEl = $("error-detail");
@@ -219,6 +283,11 @@ export async function runExtractWindow(): Promise<void> {
     detailEl.textContent = text;
     if (copyErrorBtn) copyErrorBtn.hidden = false;
     finish("Failed", 100, true, false);
+    if (offerRecovery) {
+      retryBtn.disabled = false;
+      retryBtn.hidden = false;
+      retryBtn.focus();
+    }
   };
 
   cancelBtn.addEventListener("click", async () => {
@@ -277,13 +346,241 @@ export async function runExtractWindow(): Promise<void> {
     }
   });
 
+  const runExtractionSteps = async (): Promise<void> => {
+    try {
+      const proceed = await confirmExtractDestination(destination);
+      if (!proceed || cancelRequested) {
+        finish("Cancelled", 0, false, false, true);
+        return;
+      }
+      $("extract-status").textContent = "Starting extraction...";
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err);
+      showError(userFacingBackendError(raw), { rawDetail: raw });
+      return;
+    }
+
+    startIndeterminateProgress();
+    if (cancelRequested) {
+      finish("Cancelled", 0, false, false, true);
+      return;
+    }
+
+    let expectedArchiveIdentity: string | undefined;
+    try {
+      const [validation] = await validateArchivePaths([archivePath], true);
+      if (!validation?.valid) {
+        const reason = validation?.reason?.trim() ?? "";
+        if (reason) {
+          showError(reason);
+        } else {
+          showError("This archive path is not supported for extraction.");
+        }
+        return;
+      }
+      expectedArchiveIdentity = validation.identity;
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err);
+      const facing = userFacingBackendError(raw);
+      showError(
+        facing === raw ? `Could not validate the archive: ${facing}` : facing,
+        { rawDetail: raw },
+      );
+      return;
+    }
+    if (cancelRequested) {
+      finish("Cancelled", 0, false, false, true);
+      return;
+    }
+
+    let sawStructuredPercent = false;
+
+    const startedAt = Date.now();
+    let lastFile = "";
+
+    const registerProgressListener = <T>(registration: Promise<T>) =>
+      registration.catch((err) => {
+        console.warn(
+          `Could not register extraction progress listener: ${String(err)}`,
+        );
+        return null;
+      });
+    const structuredListen = registerProgressListener(
+      listenToOwnWindow<ProgressUpdate>("7z-progress-structured", (event) => {
+        if (!isExtractRunInFlight()) return;
+        const update = event.payload;
+        if (update?.currentFile === "Working…") {
+          // Heartbeats fill blank status only; keep file name / ETA lines.
+          if (!sawStructuredPercent && !lastFile) {
+            $("extract-status").textContent = "Still working…";
+          }
+          return;
+        }
+        if (update?.currentFile === "Finalizing…") {
+          sawStructuredPercent = true;
+          cancelBtn.disabled = true;
+          setDeterminateProgress(100);
+          $("extract-status").textContent = "Finalizing…";
+          return;
+        }
+        if (update?.currentFile === SAFE_COPY_PROGRESS_LABEL) {
+          // Backend copies the archive before 7-Zip starts; that is not a file.
+          $("extract-status").textContent = SAFE_COPY_PROGRESS_LABEL;
+          return;
+        }
+        let eta = "";
+        if (
+          typeof update?.percent === "number" &&
+          Number.isFinite(update.percent)
+        ) {
+          sawStructuredPercent = true;
+          const progressBar = document.getElementById("extract-progress");
+          if (progressBar) progressBar.dataset.sawStructuredPercent = "true";
+          setDeterminateProgress(Math.min(99, update.percent));
+          eta = formatSharedEta(Date.now() - startedAt, update.percent);
+        }
+        if (update?.currentFile) {
+          const clean = sanitizeStatusFileName(basename(update.currentFile));
+          if (clean) lastFile = clean;
+        }
+        const label = lastFile ? `Extracting ${lastFile}...` : "Extracting...";
+        $("extract-status").textContent = eta ? `${label}  ${eta}` : label;
+      }),
+    );
+    const rawListen = registerProgressListener(
+      listenToOwnWindow<string>("7z-progress", (event) => {
+        if (!isExtractRunInFlight() || sawStructuredPercent) return;
+        const chunk = typeof event.payload === "string" ? event.payload : "";
+        for (const line of chunk.split(/[\r\n]+/)) {
+          const match = line.trim().match(/^-\s+(.+)/);
+          if (match?.[1]) {
+            const clean = sanitizeStatusFileName(basename(match[1]));
+            if (!clean) continue;
+            lastFile = clean;
+            $("extract-status").textContent = `Extracting ${clean}...`;
+          }
+        }
+      }),
+    );
+
+    // Listener registration is asynchronous in real Tauri webviews. Starting
+    // 7-Zip first can lose every percentage event from a fast extraction.
+    const [unlistenStructured, unlistenRaw] = await Promise.all([
+      structuredListen,
+      rawListen,
+    ]);
+
+    async function removeProgressListeners() {
+      for (const unlisten of [unlistenStructured, unlistenRaw]) {
+        try {
+          unlisten?.();
+        } catch (err) {
+          console.warn(
+            `Could not remove extraction progress listener: ${String(err)}`,
+          );
+        }
+      }
+    }
+
+    if (cancelRequested) {
+      await removeProgressListeners();
+      finish("Cancelled", 0, false, false, true);
+      return;
+    }
+
+    $("extract-status").textContent = "Extracting...";
+
+    const args = [
+      "x",
+      `-o${destination}`,
+      SAFE_EXTRACT_OVERWRITE_MODE,
+      "-bb1",
+      "-bsp1",
+      "--",
+      archivePath,
+    ];
+
+    try {
+      const result = await runWithPasswordRetry(
+        args,
+        () => cancelRequested,
+        expectedArchiveIdentity,
+        extractAbort.signal,
+        debugMode,
+      );
+      await removeProgressListeners();
+
+      if (cancelRequested && result.code !== 0) {
+        finish("Cancelled", 0, false, false, true);
+        return;
+      }
+
+      if (result.code !== 0) {
+        const hint = describe7zError(result.stdout ?? "", result.stderr ?? "");
+        const userMessage =
+          result.code === 1
+            ? "7-Zip stopped with warnings (exit code 1). Extraction was not completed."
+            : hint ||
+              `Extraction failed (exit code ${result.code}). Check the application log for details.`;
+        showError(userMessage, { args, result }, true);
+        return;
+      }
+
+      finish(result.warning_code ? "Done (warnings)" : "Done", 100);
+    } catch (err) {
+      await removeProgressListeners();
+      if (cancelRequested) {
+        finish("Cancelled", 0, false, false, true);
+        return;
+      }
+      const raw = err instanceof Error ? err.message : String(err);
+      if (cancelRequested || raw === EXTRACT_PASSWORD_PROMPT_CANCELLED) {
+        finish("Cancelled", 0, false, false, true);
+        return;
+      }
+      showError(
+        userFacingBackendError(raw),
+        {
+          args,
+          rawDetail: raw,
+        },
+        true,
+      );
+    }
+  };
+
+  /** One full quick-extract attempt for the current archive and destination. */
+  const runExtraction = async (): Promise<void> => {
+    extractionRunning = true;
+    operationFinished = false;
+    hideRecoveryActions();
+    $("extract-error").hidden = true;
+    const errorTitle = $("extract-error").querySelector<HTMLElement>(
+      ".extract-error-title",
+    );
+    if (errorTitle) errorTitle.textContent = "Extraction failed";
+    cancelBtn.disabled = false;
+    setButtons(true, false, false);
+    $("extract-status").textContent = "Starting extraction...";
+    try {
+      await runExtractionSteps();
+    } finally {
+      extractionRunning = false;
+    }
+  };
+
+  retryBtn.addEventListener("click", () => {
+    if (extractionRunning) return;
+    void runExtraction();
+  });
+
   setButtons(true, false, false);
 
   const injected = readInjectedExtractSession();
   // Drain the backend queue even when the session was injected at window create.
   const claimPaths = invoke<string[]>("get_extract_paths");
 
-  let archivePath = injected?.archive ?? "";
+  archivePath = injected?.archive ?? "";
   const derivedDestination = archivePath
     ? deriveExtractDestinationPath(archivePath)
     : "";
@@ -337,195 +634,5 @@ export async function runExtractWindow(): Promise<void> {
     return;
   }
 
-  try {
-    const proceed = await confirmExtractDestination(destination);
-    if (!proceed || cancelRequested) {
-      finish("Cancelled", 0, false, false, true);
-      return;
-    }
-    $("extract-status").textContent = "Starting extraction...";
-  } catch (err) {
-    const raw = err instanceof Error ? err.message : String(err);
-    showError(userFacingBackendError(raw), { rawDetail: raw });
-    return;
-  }
-
-  startIndeterminateProgress();
-  if (cancelRequested) {
-    finish("Cancelled", 100, false, false, true);
-    return;
-  }
-
-  let expectedArchiveIdentity: string | undefined;
-  try {
-    const [validation] = await validateArchivePaths([archivePath], true);
-    if (!validation?.valid) {
-      const reason = validation?.reason?.trim() ?? "";
-      if (reason) {
-        showError(reason);
-      } else {
-        showError("This archive path is not supported for extraction.");
-      }
-      return;
-    }
-    expectedArchiveIdentity = validation.identity;
-  } catch (err) {
-    const raw = err instanceof Error ? err.message : String(err);
-    const facing = userFacingBackendError(raw);
-    showError(
-      facing === raw ? `Could not validate the archive: ${facing}` : facing,
-      { rawDetail: raw },
-    );
-    return;
-  }
-  if (cancelRequested) {
-    finish("Cancelled", 100, false, false, true);
-    return;
-  }
-
-  let sawStructuredPercent = false;
-
-  const startedAt = Date.now();
-  let lastFile = "";
-
-  const registerProgressListener = <T>(registration: Promise<T>) =>
-    registration.catch((err) => {
-      console.warn(
-        `Could not register extraction progress listener: ${String(err)}`,
-      );
-      return null;
-    });
-  const structuredListen = registerProgressListener(
-    listenToOwnWindow<ProgressUpdate>("7z-progress-structured", (event) => {
-      if (!isExtractRunInFlight()) return;
-      const update = event.payload;
-      if (update?.currentFile === "Working…") {
-        // Heartbeats fill blank status only; keep file name / ETA lines.
-        if (!sawStructuredPercent && !lastFile) {
-          $("extract-status").textContent = "Still working…";
-        }
-        return;
-      }
-      if (update?.currentFile === "Finalizing…") {
-        sawStructuredPercent = true;
-        cancelBtn.disabled = true;
-        setDeterminateProgress(100);
-        $("extract-status").textContent = "Finalizing…";
-        return;
-      }
-      let eta = "";
-      if (
-        typeof update?.percent === "number" &&
-        Number.isFinite(update.percent)
-      ) {
-        sawStructuredPercent = true;
-        const progressBar = document.getElementById("extract-progress");
-        if (progressBar) progressBar.dataset.sawStructuredPercent = "true";
-        setDeterminateProgress(Math.min(99, update.percent));
-        eta = formatSharedEta(Date.now() - startedAt, update.percent);
-      }
-      if (update?.currentFile) {
-        const clean = sanitizeStatusFileName(basename(update.currentFile));
-        if (clean) lastFile = clean;
-      }
-      const label = lastFile ? `Extracting ${lastFile}...` : "Extracting...";
-      $("extract-status").textContent = eta ? `${label}  ${eta}` : label;
-    }),
-  );
-  const rawListen = registerProgressListener(
-    listenToOwnWindow<string>("7z-progress", (event) => {
-      if (!isExtractRunInFlight() || sawStructuredPercent) return;
-      const chunk = typeof event.payload === "string" ? event.payload : "";
-      for (const line of chunk.split(/[\r\n]+/)) {
-        const match = line.trim().match(/^-\s+(.+)/);
-        if (match?.[1]) {
-          const clean = sanitizeStatusFileName(basename(match[1]));
-          if (!clean) continue;
-          lastFile = clean;
-          $("extract-status").textContent = `Extracting ${clean}...`;
-        }
-      }
-    }),
-  );
-
-  // Listener registration is asynchronous in real Tauri webviews. Starting
-  // 7-Zip first can lose every percentage event from a fast extraction.
-  const [unlistenStructured, unlistenRaw] = await Promise.all([
-    structuredListen,
-    rawListen,
-  ]);
-
-  async function removeProgressListeners() {
-    for (const unlisten of [unlistenStructured, unlistenRaw]) {
-      try {
-        unlisten?.();
-      } catch (err) {
-        console.warn(
-          `Could not remove extraction progress listener: ${String(err)}`,
-        );
-      }
-    }
-  }
-
-  if (cancelRequested) {
-    await removeProgressListeners();
-    finish("Cancelled", 0, false, false, true);
-    return;
-  }
-
-  $("extract-status").textContent = "Extracting...";
-
-  const args = [
-    "x",
-    `-o${destination}`,
-    SAFE_EXTRACT_OVERWRITE_MODE,
-    "-bb1",
-    "-bsp1",
-    "--",
-    archivePath,
-  ];
-
-  try {
-    const result = await runWithPasswordRetry(
-      args,
-      () => cancelRequested,
-      expectedArchiveIdentity,
-      extractAbort.signal,
-      debugMode,
-    );
-    await removeProgressListeners();
-
-    if (cancelRequested && result.code !== 0) {
-      finish("Cancelled", 100, false, false, true);
-      return;
-    }
-
-    if (result.code !== 0) {
-      const hint = describe7zError(result.stdout ?? "", result.stderr ?? "");
-      const userMessage =
-        result.code === 1
-          ? "7-Zip stopped with warnings (exit code 1). Extraction was not completed."
-          : hint ||
-            `Extraction failed (exit code ${result.code}). Check the application log for details.`;
-      showError(userMessage, { args, result });
-      return;
-    }
-
-    finish(result.warning_code ? "Done (warnings)" : "Done", 100);
-  } catch (err) {
-    await removeProgressListeners();
-    if (cancelRequested) {
-      finish("Cancelled", 100, false, false, true);
-      return;
-    }
-    const raw = err instanceof Error ? err.message : String(err);
-    if (cancelRequested || raw === EXTRACT_PASSWORD_PROMPT_CANCELLED) {
-      finish("Cancelled", 100, false, false, true);
-      return;
-    }
-    showError(userFacingBackendError(raw), {
-      args,
-      rawDetail: raw,
-    });
-  }
+  await runExtraction();
 }

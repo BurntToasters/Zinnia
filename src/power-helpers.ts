@@ -50,6 +50,7 @@ export function resetRuntimeStateForFirstRun(): void {
   state.lastAutoExtractDestination = null;
   state.lastAutoOutputPath = null;
   state.browseArchiveInfoByPath.clear();
+  state.browseArchiveIdentityByPath.clear();
   state.browseSelectionsByArchive.clear();
   state.selectiveSearchQuery = "";
   state.selectiveActiveArchive = null;

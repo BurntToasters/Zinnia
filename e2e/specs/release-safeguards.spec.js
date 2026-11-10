@@ -245,6 +245,17 @@ describe("beta.5 release safeguards", () => {
     await browser.execute(() => {
       document.getElementById("browse-convert")?.click();
     });
+    // Convert opens its own dialog first. Accept the 7z default and submit.
+    await browser.waitUntil(
+      () =>
+        browser.execute(
+          () => document.getElementById("convert-overlay")?.hidden === false,
+        ),
+      { timeout: 60_000, timeoutMsg: "convert dialog did not open" },
+    );
+    await browser.execute(() => {
+      document.getElementById("convert-submit")?.click();
+    });
     await browser.waitUntil(() => fs.existsSync(dest), {
       timeout: 120_000,
       interval: 250,

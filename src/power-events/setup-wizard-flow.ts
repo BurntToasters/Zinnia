@@ -6,6 +6,7 @@ import {
   updateCompressionOptionsForFormat,
   onCompressionOptionChange,
 } from "../presets";
+import { setBasicView, syncBasicWorkspaceFromPower } from "../basic";
 import {
   showSetupWizard,
   markSetupComplete,
@@ -15,6 +16,7 @@ import {
 export async function runSetupWizardFlow(
   options: SetupWizardOptions = {},
 ): Promise<void> {
+  const previousWorkspaceMode = state.currentSettings.workspaceMode;
   await resizeWorkspaceWindow("power");
   const result = await showSetupWizard(options);
   if (result) {
@@ -41,6 +43,12 @@ export async function runSetupWizardFlow(
   applySettingsToForm();
   updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
   onCompressionOptionChange();
+  // Same resync as the Settings save path: a re-run that picks Basic must
+  // refresh the Basic view from the Power values just applied.
+  if (state.currentSettings.workspaceMode === "basic") {
+    if (previousWorkspaceMode !== "basic") setBasicView("home");
+    syncBasicWorkspaceFromPower();
+  }
 
   if (persistError) {
     throw persistError;

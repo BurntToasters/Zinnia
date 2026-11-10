@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { promptInput } from "../prompt-modal";
+import { promptPassword } from "../prompt-modal";
 import {
   isEncryptedFlag,
   methodLooksEncrypted,
@@ -23,7 +23,7 @@ import { state } from "../state";
 import { clearDebugConsole, setDebugEnabled } from "../debug-mode";
 
 vi.mock("../prompt-modal", () => ({
-  promptInput: vi.fn().mockResolvedValue(null),
+  promptPassword: vi.fn().mockResolvedValue({ kind: "cancel" }),
 }));
 
 describe("isEncryptedFlag", () => {
@@ -227,10 +227,22 @@ describe("describe7zError", () => {
     expect(describe7zError("", "method not found")).toBe("");
   });
 
-  it("hints for create/permission failures", () => {
+  it("hints for create failures without blaming permissions", () => {
     expect(describe7zError("", "Can not create output file")).toMatch(
-      /permission/i,
+      /could not create/i,
     );
+    expect(
+      describe7zError(
+        "",
+        "Cannot create output directory : errno=17 : File exists : ro/sub/",
+      ),
+    ).toMatch(/could not create/i);
+  });
+
+  it("keeps the permission hint when create failures say access is denied", () => {
+    expect(
+      describe7zError("", "Cannot create output file: Permission denied"),
+    ).toMatch(/permission/i);
   });
 
   it("returns empty string for unrecognized output", () => {
@@ -284,7 +296,7 @@ describe("withPassword", () => {
 describe("runWithPasswordRetry", () => {
   it("retries a header-encrypted safety-list rejection with a password", async () => {
     const invokeMock = vi.mocked(invoke);
-    const promptMock = vi.mocked(promptInput);
+    const promptMock = vi.mocked(promptPassword);
     invokeMock.mockReset();
     promptMock.mockReset();
     invokeMock
@@ -299,7 +311,7 @@ describe("runWithPasswordRetry", () => {
         code: 0,
         archiveIdentityAfter: "archive-identity",
       });
-    promptMock.mockResolvedValueOnce("secret");
+    promptMock.mockResolvedValueOnce({ kind: "submit", value: "secret" });
 
     const result = await runWithPasswordRetry(
       ["x", "-o/tmp/out", "--", "/tmp/headers.7z"],
@@ -319,7 +331,7 @@ describe("runWithPasswordRetry", () => {
 
   it("does not convert unrelated backend failures into password prompts", async () => {
     const invokeMock = vi.mocked(invoke);
-    const promptMock = vi.mocked(promptInput);
+    const promptMock = vi.mocked(promptPassword);
     invokeMock.mockReset();
     promptMock.mockReset();
     const failure = new Error("Archive snapshot disk unavailable");
@@ -333,7 +345,7 @@ describe("runWithPasswordRetry", () => {
 
   it("re-enables Cancel and ignores Finalizing while the password prompt is open", async () => {
     const invokeMock = vi.mocked(invoke);
-    const promptMock = vi.mocked(promptInput);
+    const promptMock = vi.mocked(promptPassword);
     invokeMock.mockReset();
     promptMock.mockReset();
     let handler: ((event: { payload: unknown }) => void) | undefined;
@@ -346,7 +358,7 @@ describe("runWithPasswordRetry", () => {
         "Could not list archive members for path safety: Enter password:",
       ),
     );
-    let resolvePrompt: ((value: string | null) => void) | undefined;
+    let resolvePrompt: ((value: { kind: "cancel" }) => void) | undefined;
     promptMock.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
@@ -378,7 +390,7 @@ describe("runWithPasswordRetry", () => {
       "Finalizing…",
     );
 
-    resolvePrompt?.(null);
+    resolvePrompt?.({ kind: "cancel" });
     const cancelled = await result;
     expect(cancelled.code).toBe(-1);
     expect(state.cancelRequested).toBe(true);

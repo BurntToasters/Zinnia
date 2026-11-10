@@ -206,6 +206,121 @@ fn create_list_test_extract_roundtrip() {
     let _ = std::fs::remove_dir_all(work);
 }
 
+/// Zinnia writes each managed list-file line wrapped in one pair of double
+/// quotes; 7-Zip strips exactly one pair. Names with trailing or leading spaces
+/// and names that carry their own quotes must round-trip exactly, both when
+/// creating an archive and when selecting members for extraction.
+#[cfg(unix)]
+#[test]
+fn quoted_listfile_lines_round_trip_exact_member_names() {
+    let Some(bin) = binary_path() else {
+        eprintln!("skipping: bundled 7z binary not found (run npm run prepare:7z)");
+        return;
+    };
+
+    let work = temp_dir("listfile-quotes");
+    let src = work.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    let names = ["report ", "report", " lead.txt", "\"quoted\"", "quoted"];
+    for name in names {
+        std::fs::write(src.join(name), format!("{name}\n")).unwrap();
+    }
+    let quoted_line = |path: &Path| format!("\"{}\"\r\n", path.display());
+
+    let create_list = work.join("create.txt");
+    let create_body: String = names
+        .iter()
+        .map(|name| quoted_line(&src.join(name)))
+        .collect();
+    std::fs::write(&create_list, create_body).unwrap();
+    let archive = work.join("names.7z");
+    let add = Command::new(&bin)
+        .current_dir(&work)
+        .args([
+            "a",
+            "-scsUTF-8",
+            "-t7z",
+            archive.to_str().unwrap(),
+            &format!("@{}", create_list.display()),
+        ])
+        .output()
+        .expect("7z add should run");
+    assert!(
+        add.status.success(),
+        "add failed: {}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+
+    let list = Command::new(&bin)
+        .args(["l", "-slt", "--", archive.to_str().unwrap()])
+        .output()
+        .expect("7z list should run");
+    assert!(list.status.success());
+    let mut members = Vec::new();
+    let mut in_entries = false;
+    for line in String::from_utf8_lossy(&list.stdout).lines() {
+        if line.starts_with("----------") {
+            in_entries = true;
+        } else if in_entries {
+            if let Some(value) = line.strip_prefix("Path = ") {
+                members.push(value.to_string());
+            }
+        }
+    }
+    let mut expected: Vec<String> = names.iter().map(|name| name.to_string()).collect();
+    members.sort();
+    expected.sort();
+    assert_eq!(
+        members, expected,
+        "archive must hold exactly the listed names"
+    );
+
+    // Selective extract: three names, one of which is a trailing-space sibling
+    // of `report`. Only the selected names may appear in the output.
+    let selected = ["report ", " lead.txt", "\"quoted\""];
+    let extract_list = work.join("extract.txt");
+    let extract_body: String = selected
+        .iter()
+        .map(|name| format!("\"{name}\"\r\n"))
+        .collect();
+    std::fs::write(&extract_list, extract_body).unwrap();
+    let out = work.join("extracted");
+    let extract = Command::new(&bin)
+        .args([
+            "x",
+            "-scsUTF-8",
+            &format!("-o{}", out.to_str().unwrap()),
+            "-aou",
+            "-spd",
+            archive.to_str().unwrap(),
+            &format!("@{}", extract_list.display()),
+        ])
+        .output()
+        .expect("7z extract should run");
+    assert!(
+        extract.status.success(),
+        "extract failed: {}",
+        String::from_utf8_lossy(&extract.stderr)
+    );
+    let mut extracted: Vec<String> = std::fs::read_dir(&out)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    extracted.sort();
+    let mut wanted: Vec<String> = selected.iter().map(|name| name.to_string()).collect();
+    wanted.sort();
+    assert_eq!(
+        extracted, wanted,
+        "selective extract wrote unselected names"
+    );
+    assert_eq!(
+        std::fs::read_to_string(out.join("report ")).unwrap(),
+        "report \n"
+    );
+
+    let _ = std::fs::remove_dir_all(work);
+}
+
 #[test]
 fn compound_tar_two_pass_roundtrip() {
     let Some(bin) = binary_path() else {

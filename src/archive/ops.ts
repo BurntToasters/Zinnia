@@ -63,6 +63,18 @@ export {
 export { addFilesToArchive, convertArchive } from "./mutations";
 
 export async function runAction() {
+  return runSingleOperation(false);
+}
+
+/**
+ * Run after the native save dialog already confirmed the output path, so
+ * Zinnia does not ask about overwriting that archive a second time.
+ */
+export async function runActionAfterNativeSave() {
+  return runSingleOperation(true);
+}
+
+async function runSingleOperation(outputConfirmed: boolean) {
   if (state.running) return;
 
   const mode = getMode();
@@ -74,6 +86,10 @@ export async function runAction() {
   state.batchCancelled = false;
   state.cancelRequested = false;
   setRunning(true);
+  // Password fields are cleared only once 7-Zip has been started for this run.
+  // Pre-run errors and declined confirms must leave what the user typed.
+  let sevenZipStarted = false;
+  let updateMode = false;
   try {
     if (!(await ensureRuntimeReady())) return;
     if (state.cancelRequested) {
@@ -103,26 +119,35 @@ export async function runAction() {
       }
     } else {
       args = buildArgs();
+      updateMode = $<HTMLInputElement>("update-mode").checked;
       const outputPath = $<HTMLInputElement>("output-path").value;
       expectedArchiveIdentity = await invoke<string>(
         "archive_output_selection_token",
         { path: outputPath },
       );
       if (
+        !outputConfirmed &&
         typeof expectedArchiveIdentity === "string" &&
         expectedArchiveIdentity.length > 0 &&
         expectedArchiveIdentity !== "absent"
       ) {
-        const replace = await confirmWithE2eQueue(() =>
-          confirm(
-            `An archive already exists at ${outputPath}. Replace its contents?`,
-            {
-              title: "Replace archive",
-              kind: "warning",
-              okLabel: "Replace",
-              cancelLabel: "Cancel",
-            },
-          ),
+        const title = updateMode
+          ? "Add to existing archive?"
+          : "Replace archive";
+        const replace = await confirmWithE2eQueue(
+          () =>
+            confirm(
+              updateMode
+                ? `${outputPath} already exists. Add the selected files to it?`
+                : `An archive already exists at ${outputPath}. Replace its contents?`,
+              {
+                title,
+                kind: "warning",
+                okLabel: updateMode ? "Add files" : "Replace",
+                cancelLabel: "Cancel",
+              },
+            ),
+          title,
         );
         if (!replace) {
           setStatus("Cancelled", 2000);
@@ -141,14 +166,15 @@ export async function runAction() {
     setStatus("Running");
     if (isDebugEnabled()) debugLog(`Starting ${mode} operation.`);
 
-    const result = await withLiveProgress(() =>
-      runWithPasswordRetry(
+    const result = await withLiveProgress(() => {
+      sevenZipStarted = true;
+      return runWithPasswordRetry(
         args,
         mode === "extract",
         "Extract",
         expectedArchiveIdentity,
-      ),
-    );
+      );
+    });
     if (state.cancelRequested && result.code !== 0) {
       hideProgress();
       setStatus("Cancelled", 2000);
@@ -167,13 +193,17 @@ export async function runAction() {
         debugLog(`${mode} operation finished successfully.`);
       }
       showToast(
-        mode === "extract" ? "Extraction complete." : "Archive created.",
+        mode === "extract"
+          ? "Extraction complete."
+          : updateMode
+            ? "Archive updated."
+            : "Archive created.",
         "success",
       );
       // Clear every mirrored password field after a successful operation.
       clearPasswordFields();
     } else {
-      log(`7z exited with code ${result.code}`);
+      log(`7z exited with code ${result.code}`, "error");
       if (isDebugEnabled()) {
         debugLog(`${mode} operation failed with exit code ${result.code}.`);
       }
@@ -194,7 +224,7 @@ export async function runAction() {
     }
 
     const raw = err instanceof Error ? err.message : String(err);
-    log(`Error: ${raw}`);
+    log(`Error: ${raw}`, "error");
     if (isDebugEnabled()) debugLog(`${mode} operation threw: ${raw}`);
     const messageText = userFacingBackendError(raw);
     setStatus("Error", 3000, messageText);
@@ -208,7 +238,7 @@ export async function runAction() {
       );
     }
   } finally {
-    clearPasswordFields();
+    if (sevenZipStarted) clearPasswordFields();
     setRunning(false);
   }
 }
@@ -220,6 +250,7 @@ export async function runBatchExtract() {
   setRunning(true);
   let unlistenProgress: (() => void) | null = null;
   const passwordCarry = { value: "" };
+  let batchStarted = false;
   try {
     if (!(await ensureRuntimeReady())) return;
     if (state.batchCancelled || state.cancelRequested) {
@@ -264,6 +295,7 @@ export async function runBatchExtract() {
 
     let succeeded = 0;
     let failed = 0;
+    let skipped = 0;
     let warningFailures = 0;
     let current = 0;
     let archiveStartedAt = Date.now();
@@ -323,13 +355,20 @@ export async function runBatchExtract() {
           debugLog(`Batch extract ${i + 1}/${archives.length}: ${archive}`);
         }
 
+        batchStarted = true;
         const result = await runWithPasswordRetry(
           args,
           true,
           "Extract",
           identities[i],
           passwordCarry,
+          { allowSkip: true },
         );
+
+        if (result.skipped) {
+          skipped++;
+          continue;
+        }
 
         logCommandResult(result.stdout, result.stderr, result.code);
         logTruncationNotice(result);
@@ -347,7 +386,7 @@ export async function runBatchExtract() {
               "error",
             );
           } else {
-            log(`Failed: ${archive} (exit code ${result.code})`);
+            log(`Failed: ${archive} (exit code ${result.code})`, "error");
           }
           if (isDebugEnabled()) {
             debugLog(
@@ -359,7 +398,7 @@ export async function runBatchExtract() {
         if (state.batchCancelled || state.cancelRequested) break;
         failed++;
         const msg = err instanceof Error ? err.message : String(err);
-        log(`Error extracting ${archive}: ${msg}`);
+        log(`Error extracting ${archive}: ${msg}`, "error");
         if (isDebugEnabled()) {
           debugLog(`Batch extract threw for ${archive}: ${msg}`);
         }
@@ -374,7 +413,7 @@ export async function runBatchExtract() {
         // Completion feedback must not block the event loop or automation.
         showToast("Batch extraction was cancelled.", "info", 5000);
       }
-    } else if (failed === 0) {
+    } else if (failed === 0 && skipped === 0) {
       setStatus("Done", 3000);
       if (!basic) {
         showToast(
@@ -383,11 +422,18 @@ export async function runBatchExtract() {
           5000,
         );
       }
+    } else if (failed === 0) {
+      const summary = `${succeeded} succeeded, ${skipped} skipped.`;
+      setStatus("Done", 4000, summary);
+      if (!basic) {
+        showToast(summary, "success", 7000);
+      }
     } else {
       const warningDetail = warningFailures
         ? ` (${warningFailures} warning exit${warningFailures === 1 ? "" : "s"})`
         : "";
-      const summary = `${succeeded} succeeded, ${failed} failed${warningDetail}.`;
+      const skippedDetail = skipped ? `, ${skipped} skipped` : "";
+      const summary = `${succeeded} succeeded, ${failed} failed${warningDetail}${skippedDetail}.`;
       setStatus("Error", 4000, summary);
       if (!basic) {
         showToast(summary, "error", 7000);
@@ -395,7 +441,7 @@ export async function runBatchExtract() {
     }
   } catch (err) {
     const raw = err instanceof Error ? err.message : String(err);
-    log(`Error: ${raw}`);
+    log(`Error: ${raw}`, "error");
     const msg = userFacingBackendError(raw);
     setStatus("Error", 3000, msg);
     hideProgress();
@@ -409,7 +455,7 @@ export async function runBatchExtract() {
   } finally {
     if (unlistenProgress) unlistenProgress();
     passwordCarry.value = "";
-    clearPasswordFields();
+    if (batchStarted) clearPasswordFields();
     $<HTMLInputElement>("extract-path").disabled = false;
     $<HTMLInputElement>("extract-password").disabled = false;
     $<HTMLInputElement>("extract-extra-args").disabled = false;
@@ -442,7 +488,14 @@ export async function cancelAction() {
     }
   } catch (err) {
     const raw = err instanceof Error ? err.message : String(err);
+    // The job keeps running and the cancel intent stays recorded, so the next
+    // checkpoint still honours it. The status must not fall back to Idle.
     log(`Cancel failed: ${raw}`, "error");
-    setStatus("Cancelling...", 3000, userFacingBackendError(raw));
+    setStatus("Could not cancel");
+    showToast(
+      `Could not cancel the running operation. It is still running. ${truncateForDialog(userFacingBackendError(raw), 500)}`,
+      "error",
+      5000,
+    );
   }
 }

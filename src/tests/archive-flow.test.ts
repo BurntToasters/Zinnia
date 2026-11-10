@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
 import path from "node:path";
 import { invoke } from "@tauri-apps/api/core";
 import { confirm, message, open, save } from "@tauri-apps/plugin-dialog";
@@ -357,6 +358,23 @@ describe("archive test/browse/selective flows", () => {
     basicBrowsePassword.id = "basic-browse-password";
     basicBrowsePassword.value = "must-clear";
     document.body.appendChild(basicBrowsePassword);
+    state.inputs = ["/tmp/sample.7z"];
+    setInvokeRouter((command, payload) => {
+      if (command === "validate_archive_paths") {
+        const paths = pathsFromValidationPayload(payload);
+        return paths.map((path) => ({ path, valid: true }));
+      }
+      if (command === "probe_7z") return undefined;
+      if (command === "run_7z") {
+        return {
+          stdout: "",
+          stderr: "",
+          code: 0,
+          archiveIdentityAfter: "identity:/tmp/sample.7z",
+        };
+      }
+      return undefined;
+    });
 
     await testArchive();
 
@@ -563,7 +581,7 @@ describe("archive test/browse/selective flows", () => {
     );
   });
 
-  it("shows encrypted hint when browseArchive fails with password-required error", async () => {
+  it("prompts for a password when browseArchive hits a password-required error", async () => {
     state.inputs = ["/tmp/encrypted.7z"];
 
     setInvokeRouter((command, payload) => {
@@ -578,13 +596,26 @@ describe("archive test/browse/selective flows", () => {
       return undefined;
     });
 
-    const result = await browseArchive();
+    const pending = browseArchive();
+    await vi.waitFor(() => {
+      expect(
+        (document.getElementById("input-modal-overlay") as HTMLElement).hidden,
+      ).toBe(false);
+    });
+    expect(document.getElementById("input-modal-label")?.textContent).toContain(
+      "encrypted",
+    );
+    (
+      document.getElementById("input-modal-cancel") as HTMLButtonElement
+    ).click();
+
+    const result = await pending;
 
     expect(result).toBeNull();
     expect(messageMock).not.toHaveBeenCalled();
-    expect(document.getElementById("toast-region")?.textContent).toContain(
-      "Wrong or missing password",
-    );
+    expect(
+      document.getElementById("toast-region")?.textContent ?? "",
+    ).not.toContain("Failed to list archive contents");
   });
 
   it("returns parsed info and renders table when browseArchive succeeds", async () => {
@@ -1729,7 +1760,128 @@ describe("archive test/browse/selective flows", () => {
   });
 });
 
+function ensureConvertDialogDom(): void {
+  if (document.getElementById("convert-overlay")) return;
+  const html = fs.readFileSync(
+    path.resolve(process.cwd(), "src", "index.html"),
+    "utf8",
+  );
+  const parsed = new DOMParser().parseFromString(html, "text/html");
+  const overlay = parsed.getElementById("convert-overlay");
+  if (!overlay) {
+    throw new Error("convert dialog markup is missing from index.html");
+  }
+  document.body.appendChild(document.importNode(overlay, true));
+}
+
+/** Seeds the listing cache so Convert does not run a listing of its own. */
+function primeSourceListing(archive: string, encrypted = false): void {
+  state.browseArchiveInfoByPath.set(archive, {
+    ...archiveInfo([]),
+    encrypted,
+  });
+  state.browseArchiveIdentityByPath.set(archive, `identity:${archive}`);
+}
+
+/** Answers only the identity checks Convert makes before the dialog and run. */
+function routeArchiveValidationOnly(): void {
+  setInvokeRouter((command, payload) => {
+    if (command === "validate_archive_paths") {
+      return pathsFromValidationPayload(payload).map((path) => ({
+        path,
+        valid: true,
+      }));
+    }
+    if (command === "archive_output_selection_token") return "absent";
+    return undefined;
+  });
+}
+
+type ConvertAnswers = {
+  format?: string;
+  password?: string;
+  encryptHeaders?: boolean;
+  storeTimestamps?: boolean;
+  splitSize?: string;
+  splitCustom?: string;
+};
+
+function convertDialogOpen(): boolean {
+  return document.getElementById("convert-overlay")?.hidden === false;
+}
+
+function fillConvertDialog(answers: ConvertAnswers): void {
+  if (answers.format !== undefined) {
+    const select = document.getElementById(
+      "convert-format",
+    ) as HTMLSelectElement;
+    select.value = answers.format;
+    select.dispatchEvent(new Event("change"));
+  }
+  if (answers.password !== undefined) {
+    const input = document.getElementById(
+      "convert-password",
+    ) as HTMLInputElement;
+    input.value = answers.password;
+    input.dispatchEvent(new Event("input"));
+  }
+  if (answers.encryptHeaders !== undefined) {
+    (
+      document.getElementById("convert-encrypt-headers") as HTMLInputElement
+    ).checked = answers.encryptHeaders;
+  }
+  if (answers.storeTimestamps !== undefined) {
+    (
+      document.getElementById("convert-store-timestamps") as HTMLInputElement
+    ).checked = answers.storeTimestamps;
+  }
+  if (answers.splitSize !== undefined) {
+    const select = document.getElementById(
+      "convert-split-size",
+    ) as HTMLSelectElement;
+    select.value = answers.splitSize;
+    select.dispatchEvent(new Event("change"));
+  }
+  if (answers.splitCustom !== undefined) {
+    (
+      document.getElementById("convert-split-custom") as HTMLInputElement
+    ).value = answers.splitCustom;
+  }
+}
+
+function clickConvertButton(id: "convert-submit" | "convert-cancel"): void {
+  (document.getElementById(id) as HTMLButtonElement).click();
+}
+
+async function waitForConvertDialog(): Promise<void> {
+  await vi.waitFor(() => expect(convertDialogOpen()).toBe(true));
+}
+
+async function waitForConvertIdle(): Promise<void> {
+  await vi.waitFor(() =>
+    expect(
+      (document.getElementById("convert-submit") as HTMLButtonElement).disabled,
+    ).toBe(false),
+  );
+}
+
+/** Starts Convert, fills the dialog, then submits or cancels it. */
+async function convertWithDialog(
+  answers: ConvertAnswers = {},
+  action: "submit" | "cancel" = "submit",
+): Promise<void> {
+  const pending = convertArchive();
+  await waitForConvertDialog();
+  fillConvertDialog(answers);
+  clickConvertButton(action === "submit" ? "convert-submit" : "convert-cancel");
+  await pending;
+}
+
 describe("convertArchive", () => {
+  beforeEach(() => {
+    ensureConvertDialogDom();
+  });
+
   it("requires an open archive before converting", async () => {
     state.inputs = [];
     await convertArchive();
@@ -1741,21 +1893,35 @@ describe("convertArchive", () => {
   });
 
   it("refuses converting zips/hello.7z into a compound TAR path", async () => {
-    state.inputs = [path.resolve(process.cwd(), "zips", "hello.7z")];
-    (document.getElementById("format") as HTMLSelectElement).value = "gzip";
+    const archive = path.resolve(process.cwd(), "zips", "hello.7z");
+    state.inputs = [archive];
+    primeSourceListing(archive);
+    routeArchiveValidationOnly();
     saveMock.mockResolvedValueOnce("/tmp/hello.tar.gz");
-    await convertArchive();
-    expect(messageMock).not.toHaveBeenCalled();
-    expect(document.getElementById("toast-region")?.textContent).toMatch(
+
+    const pending = convertArchive();
+    await waitForConvertDialog();
+    fillConvertDialog({ format: "gzip" });
+    clickConvertButton("convert-submit");
+    await waitForConvertIdle();
+
+    expect(document.getElementById("convert-error")?.textContent).toMatch(
       /compound TAR/i,
     );
+    expect(convertDialogOpen()).toBe(true);
+    clickConvertButton("convert-cancel");
+    await pending;
+    expect(messageMock).not.toHaveBeenCalled();
     expect(invokeMock.mock.calls.some(([name]) => name === "run_7z")).toBe(
       false,
     );
   });
 
   it("discards a conversion dialog result after the archive session changes", async () => {
-    state.inputs = [uniqueArchivePath("convert-race")];
+    const archive = uniqueArchivePath("convert-race");
+    state.inputs = [archive];
+    primeSourceListing(archive);
+    routeArchiveValidationOnly();
     let resolveSave: ((value: string | null) => void) | undefined;
     saveMock.mockImplementationOnce(
       () =>
@@ -1765,8 +1931,10 @@ describe("convertArchive", () => {
     );
 
     const pending = convertArchive();
+    await waitForConvertDialog();
     expect(state.incomingPathsApplying).toBe(true);
-    await Promise.resolve();
+    clickConvertButton("convert-submit");
+    await vi.waitFor(() => expect(saveMock).toHaveBeenCalled());
     state.inputs = [uniqueArchivePath("replacement")];
     resolveSave?.("/tmp/stale.7z");
     await pending;
@@ -1780,6 +1948,7 @@ describe("convertArchive", () => {
   it("extracts with the safe overwrite policy then recompresses", async () => {
     const archive = uniqueArchivePath("convert-src");
     state.inputs = [archive];
+    primeSourceListing(archive);
     saveMock.mockResolvedValueOnce("/tmp/converted.7z");
 
     const runArgs: string[][] = [];
@@ -1805,7 +1974,7 @@ describe("convertArchive", () => {
       return undefined;
     });
 
-    await convertArchive();
+    await convertWithDialog();
 
     expect(runArgs).toHaveLength(2);
     expect(runArgs[0][0]).toBe("x");
@@ -1831,6 +2000,7 @@ describe("convertArchive", () => {
   it("asks the backend to mark the converted archive before it is published", async () => {
     const archive = uniqueArchivePath("convert-motw");
     state.inputs = [archive];
+    primeSourceListing(archive);
     saveMock.mockResolvedValueOnce("/tmp/converted-motw.7z");
 
     setInvokeRouter((command, payload) => {
@@ -1853,7 +2023,7 @@ describe("convertArchive", () => {
       return undefined;
     });
 
-    await convertArchive();
+    await convertWithDialog();
 
     const runRequests = invokeMock.mock.calls
       .filter(([name]) => name === "run_7z")
@@ -1873,6 +2043,7 @@ describe("convertArchive", () => {
   it("reports failure instead of success when the backend cannot mark the converted archive", async () => {
     const archive = uniqueArchivePath("convert-motw-fail");
     state.inputs = [archive];
+    primeSourceListing(archive);
     saveMock.mockResolvedValueOnce("/tmp/converted-motw-fail.7z");
 
     setInvokeRouter((command, payload) => {
@@ -1901,7 +2072,7 @@ describe("convertArchive", () => {
       return undefined;
     });
 
-    await convertArchive();
+    await convertWithDialog();
 
     const toast = document.getElementById("toast-region")?.textContent ?? "";
     expect(toast).toContain("an unmarked archive was not published");
@@ -1911,6 +2082,7 @@ describe("convertArchive", () => {
   it("does not recompress conversion output after a warning exit", async () => {
     const archive = uniqueArchivePath("convert-warning");
     state.inputs = [archive];
+    primeSourceListing(archive);
     saveMock.mockResolvedValueOnce("/tmp/converted.7z");
 
     setInvokeRouter((command, payload) => {
@@ -1930,7 +2102,7 @@ describe("convertArchive", () => {
       return undefined;
     });
 
-    await convertArchive();
+    await convertWithDialog();
 
     expect(
       invokeMock.mock.calls.filter(([name]) => name === "run_7z"),
@@ -1949,6 +2121,7 @@ describe("convertArchive", () => {
   it("does not start recompression when cancellation arrives during child listing", async () => {
     const archive = uniqueArchivePath("convert-cancel-listing");
     state.inputs = [archive];
+    primeSourceListing(archive);
     saveMock.mockResolvedValueOnce("/tmp/converted.7z");
 
     setInvokeRouter((command, payload) => {
@@ -1979,7 +2152,7 @@ describe("convertArchive", () => {
       return undefined;
     });
 
-    await convertArchive();
+    await convertWithDialog();
 
     expect(
       invokeMock.mock.calls.filter(([name]) => name === "run_7z"),
@@ -1990,7 +2163,9 @@ describe("convertArchive", () => {
   });
 
   it("fails conversion safely when extraction produces no children", async () => {
-    state.inputs = [uniqueArchivePath("convert-empty")];
+    const archive = uniqueArchivePath("convert-empty");
+    state.inputs = [archive];
+    primeSourceListing(archive);
     saveMock.mockResolvedValueOnce("/tmp/converted.7z");
 
     const runArgs: string[][] = [];
@@ -2014,7 +2189,7 @@ describe("convertArchive", () => {
       return undefined;
     });
 
-    await convertArchive();
+    await convertWithDialog();
 
     expect(runArgs).toHaveLength(1);
     expect(messageMock).not.toHaveBeenCalled();
@@ -2027,8 +2202,9 @@ describe("convertArchive", () => {
   });
 
   it("converts ZIP trees with links without a stale fidelity warning", async () => {
-    state.inputs = [uniqueArchivePath("convert-zip-risk")];
-    (document.getElementById("format") as HTMLSelectElement).value = "zip";
+    const archive = uniqueArchivePath("convert-zip-risk");
+    state.inputs = [archive];
+    primeSourceListing(archive);
     saveMock.mockResolvedValueOnce("/tmp/converted.zip");
 
     const runArgs: string[][] = [];
@@ -2054,7 +2230,7 @@ describe("convertArchive", () => {
       return undefined;
     });
 
-    await convertArchive();
+    await convertWithDialog({ format: "zip" });
 
     expect(runArgs).toHaveLength(2);
     expect(runArgs[1]).toEqual(
@@ -2067,17 +2243,11 @@ describe("convertArchive", () => {
   });
 
   it("preserves conversion passwords, timestamps, and split settings", async () => {
-    state.inputs = [uniqueArchivePath("convert-options")];
-    (document.getElementById("format") as HTMLSelectElement).value = "zip";
+    const archive = uniqueArchivePath("convert-options");
+    state.inputs = [archive];
+    primeSourceListing(archive);
     (document.getElementById("extract-password") as HTMLInputElement).value =
       "source-secret";
-    (document.getElementById("password") as HTMLInputElement).value =
-      "dest-secret";
-    (document.getElementById("encrypt-headers") as HTMLInputElement).checked =
-      true;
-    (document.getElementById("store-timestamps") as HTMLInputElement).checked =
-      true;
-    (document.getElementById("split-size") as HTMLSelectElement).value = "100m";
     saveMock.mockResolvedValueOnce("/tmp/converted.zip");
 
     const runArgs: string[][] = [];
@@ -2103,7 +2273,13 @@ describe("convertArchive", () => {
       return undefined;
     });
 
-    await convertArchive();
+    await convertWithDialog({
+      format: "zip",
+      password: "dest-secret",
+      encryptHeaders: true,
+      storeTimestamps: true,
+      splitSize: "100m",
+    });
 
     expect(runArgs).toHaveLength(2);
     expect(runArgs[0]).toContain("-psource-secret");
@@ -2118,12 +2294,23 @@ describe("convertArchive", () => {
     );
   });
 
-  it("aborts cleanly when the save dialog is cancelled", async () => {
-    state.inputs = [uniqueArchivePath("convert-cancel")];
+  it("keeps the dialog open when the save dialog is cancelled, then closes on cancel", async () => {
+    const archive = uniqueArchivePath("convert-cancel");
+    state.inputs = [archive];
+    primeSourceListing(archive);
+    routeArchiveValidationOnly();
     saveMock.mockResolvedValueOnce(null);
 
-    await convertArchive();
+    const pending = convertArchive();
+    await waitForConvertDialog();
+    clickConvertButton("convert-submit");
+    await vi.waitFor(() => expect(saveMock).toHaveBeenCalled());
+    await waitForConvertIdle();
+    expect(convertDialogOpen()).toBe(true);
+    clickConvertButton("convert-cancel");
+    await pending;
 
+    expect(convertDialogOpen()).toBe(false);
     expect(invokeMock.mock.calls.some(([name]) => name === "run_7z")).toBe(
       false,
     );

@@ -128,8 +128,8 @@ describe("parseThreads", () => {
 });
 
 describe("formatSize", () => {
-  it("returns dash for zero bytes", () => {
-    expect(formatSize(0)).toBe("-");
+  it("returns 0 B for zero bytes so an empty file is not shown as a folder", () => {
+    expect(formatSize(0)).toBe("0 B");
   });
 
   it("formats bytes", () => {

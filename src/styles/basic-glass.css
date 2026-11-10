@@ -229,7 +229,7 @@ html[data-window-fx="basic"] #app[data-workspace-mode="basic"] .basic-dropzone {
 #app[data-workspace-mode="basic"] input[type="number"],
 #app[data-workspace-mode="basic"] select {
   background: var(--basic-glass-bg) !important;
-  border: 1px solid var(--basic-glass-border) !important;
+  border: 1px solid var(--control-border) !important;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   box-shadow: var(--basic-glass-shadow);

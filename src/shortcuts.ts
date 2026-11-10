@@ -37,8 +37,7 @@ export const SHORTCUTS: readonly ShortcutEntry[] = [
   {
     workspace: "basic",
     keys: [["Enter"]],
-    description:
-      "Run the visible Basic action (not while a button or link has focus)",
+    description: "Run the visible Basic action from a text field",
   },
   {
     workspace: "basic",
@@ -61,18 +60,18 @@ export const SHORTCUTS: readonly ShortcutEntry[] = [
     workspace: "power",
     keys: [["↑"], ["↓"]],
     joiner: " ",
-    description: "Move between entries in Extract Selected Entries",
+    description: "Move between entries in Extract selected",
   },
   {
     workspace: "power",
     keys: [["←"], ["→"]],
     joiner: " ",
-    description: "Collapse or expand a folder in Extract Selected Entries",
+    description: "Collapse or expand a folder in Extract selected",
   },
   {
     workspace: "power",
     keys: [["Space", "Enter"]],
-    description: "Toggle the focused entry in Extract Selected Entries",
+    description: "Toggle the focused entry in Extract selected",
   },
 ];
 

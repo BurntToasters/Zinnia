@@ -234,11 +234,73 @@ impl SnapshotStrategy {
     }
 }
 
+/// Percent of a snapshot copy, 0 to 100. An empty copy is already complete.
+pub(super) fn snapshot_copy_percent(done: u64, total: u64) -> u8 {
+    if total == 0 {
+        return 100;
+    }
+    let percent = (u128::from(done.min(total)) * 100) / u128::from(total);
+    percent as u8
+}
+
+/// Turns cumulative byte counts into percent updates, emitting each percent once.
+#[derive(Default)]
+pub(super) struct SnapshotCopyProgress {
+    last: Option<u8>,
+}
+
+impl SnapshotCopyProgress {
+    pub(super) fn percent_to_report(&mut self, done: u64, total: u64) -> Option<u8> {
+        let percent = snapshot_copy_percent(done, total);
+        if self.last == Some(percent) {
+            return None;
+        }
+        self.last = Some(percent);
+        Some(percent)
+    }
+}
+
+/// Chunked byte copy that keeps Cancel responsive. `on_bytes` receives the
+/// cumulative bytes copied so far from this file.
+fn copy_snapshot_bytes_with_progress(
+    source: &mut std::fs::File,
+    destination: &mut std::fs::File,
+    should_cancel: &dyn Fn() -> bool,
+    on_bytes: &mut dyn FnMut(u64),
+) -> Result<(), String> {
+    use std::io::{Read as _, Write as _};
+
+    let cancelled = || "Archive operation was cancelled during input snapshot.".to_string();
+    let mut buffer = vec![0u8; 1024 * 1024];
+    let mut copied = 0u64;
+    loop {
+        if should_cancel() {
+            return Err(cancelled());
+        }
+        let read = source
+            .read(&mut buffer)
+            .map_err(|error| error.to_string())?;
+        if read == 0 {
+            break;
+        }
+        destination
+            .write_all(&buffer[..read])
+            .map_err(|error| error.to_string())?;
+        copied += read as u64;
+        on_bytes(copied);
+    }
+    if should_cancel() {
+        return Err(cancelled());
+    }
+    Ok(())
+}
+
 pub(super) fn copy_archive_snapshot_file<C>(
     source: &mut std::fs::File,
     source_path: &std::path::Path,
     destination: &std::path::Path,
     should_cancel: &C,
+    on_bytes: &mut dyn FnMut(u64),
 ) -> Result<SnapshotStrategy, String>
 where
     C: Fn() -> bool,
@@ -372,29 +434,9 @@ where
 
     // Chunked copy keeps Cancel responsive on Windows, network shares, and
     // filesystems where CoW cloning is unavailable.
-    let result = (|| {
-        use std::io::{Read as _, Write as _};
-
-        let mut buffer = vec![0u8; 1024 * 1024];
-        loop {
-            if should_cancel() {
-                return Err("Archive operation was cancelled during input snapshot.".to_string());
-            }
-            let read = source
-                .read(&mut buffer)
-                .map_err(|error| error.to_string())?;
-            if read == 0 {
-                break;
-            }
-            destination_file
-                .write_all(&buffer[..read])
-                .map_err(|error| error.to_string())?;
-        }
-        if should_cancel() {
-            return Err("Archive operation was cancelled during input snapshot.".to_string());
-        }
-        crate::process::commit::sync_file_best_effort(&destination_file)
-    })();
+    let result =
+        copy_snapshot_bytes_with_progress(source, &mut destination_file, should_cancel, on_bytes)
+            .and_then(|()| crate::process::commit::sync_file_best_effort(&destination_file));
     drop(destination_file);
 
     if let Err(error) = result {
@@ -429,4 +471,99 @@ fn ensure_snapshot_byte_copy_space(
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    fn scratch_path(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("zinnia-copy-progress-{tag}-{}", std::process::id()))
+    }
+
+    fn sample_bytes() -> Vec<u8> {
+        (0..(3 * 1024 * 1024 + 7))
+            .map(|index| (index % 251) as u8)
+            .collect()
+    }
+
+    #[test]
+    fn percent_is_bounded_and_an_empty_copy_finishes_at_one_hundred() {
+        assert_eq!(snapshot_copy_percent(0, 0), 100);
+        assert_eq!(snapshot_copy_percent(0, 10), 0);
+        assert_eq!(snapshot_copy_percent(5, 10), 50);
+        assert_eq!(snapshot_copy_percent(10, 10), 100);
+        assert_eq!(snapshot_copy_percent(99, 10), 100);
+    }
+
+    #[test]
+    fn progress_reports_each_percent_once_in_order() {
+        let mut progress = SnapshotCopyProgress::default();
+        assert_eq!(progress.percent_to_report(0, 10), Some(0));
+        assert_eq!(progress.percent_to_report(0, 10), None);
+        assert_eq!(progress.percent_to_report(5, 10), Some(50));
+        assert_eq!(progress.percent_to_report(5, 10), None);
+        assert_eq!(progress.percent_to_report(10, 10), Some(100));
+        assert_eq!(progress.percent_to_report(10, 10), None);
+    }
+
+    #[test]
+    fn byte_copy_reports_monotonic_progress_and_copies_every_byte() {
+        let data = sample_bytes();
+        let source_path = scratch_path("source-ok");
+        let dest_path = scratch_path("dest-ok");
+        let _ = std::fs::remove_file(&dest_path);
+        std::fs::write(&source_path, &data).expect("write source");
+        let mut source = std::fs::File::open(&source_path).expect("open source");
+        let mut dest = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&dest_path)
+            .expect("create dest");
+        let mut reported: Vec<u64> = Vec::new();
+        let result =
+            copy_snapshot_bytes_with_progress(&mut source, &mut dest, &|| false, &mut |copied| {
+                reported.push(copied)
+            });
+        drop(dest);
+        let copied = std::fs::read(&dest_path).expect("read dest");
+        let _ = std::fs::remove_file(&source_path);
+        let _ = std::fs::remove_file(&dest_path);
+        result.expect("byte copy succeeds");
+        assert_eq!(copied, data);
+        assert!(!reported.is_empty());
+        assert!(reported.windows(2).all(|pair| pair[0] <= pair[1]));
+        assert_eq!(reported.last().copied(), Some(data.len() as u64));
+    }
+
+    #[test]
+    fn cancelled_byte_copy_stops_without_reporting_completion() {
+        let data = sample_bytes();
+        let source_path = scratch_path("source-cancel");
+        let dest_path = scratch_path("dest-cancel");
+        let _ = std::fs::remove_file(&dest_path);
+        std::fs::write(&source_path, &data).expect("write source");
+        let mut source = std::fs::File::open(&source_path).expect("open source");
+        let mut dest = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&dest_path)
+            .expect("create dest");
+        let checks = Cell::new(0u32);
+        let cancel = || {
+            checks.set(checks.get() + 1);
+            checks.get() > 2
+        };
+        let mut reported: Vec<u64> = Vec::new();
+        let result =
+            copy_snapshot_bytes_with_progress(&mut source, &mut dest, &cancel, &mut |copied| {
+                reported.push(copied)
+            });
+        drop(dest);
+        let _ = std::fs::remove_file(&source_path);
+        let _ = std::fs::remove_file(&dest_path);
+        assert!(result.is_err(), "cancelled copy must fail");
+        assert!(reported.last().copied().unwrap_or(0) < data.len() as u64);
+    }
 }

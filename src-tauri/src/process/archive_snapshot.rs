@@ -77,6 +77,27 @@ pub(super) fn stage_extract_input(
     stage_extract_input_with_cancel(archive, cache_dir, expected_identity, || false)
 }
 
+/// Label for the snapshot phase when the archive is copied byte by byte.
+pub(crate) const SAFE_COPY_PROGRESS_LABEL: &str = "Preparing a safe copy of the archive...";
+
+/// Bytes a preflight reads: every volume of a split family, else the file itself.
+pub(crate) fn archive_input_family_bytes(archive: &std::path::Path) -> u64 {
+    let family_total = volumes::archive_input_family(archive)
+        .ok()
+        .and_then(|family| {
+            family.iter().try_fold(0u64, |total, volume| {
+                let len = std::fs::metadata(volume).ok()?.len();
+                total.checked_add(len)
+            })
+        });
+    family_total.unwrap_or_else(|| {
+        std::fs::metadata(archive)
+            .map(|metadata| metadata.len())
+            .unwrap_or(0)
+    })
+}
+
+#[cfg(test)]
 pub(super) fn stage_extract_input_with_cancel<C>(
     archive: &std::path::Path,
     cache_dir: Option<&std::path::Path>,
@@ -85,6 +106,28 @@ pub(super) fn stage_extract_input_with_cancel<C>(
 ) -> Result<StagedArchiveInput, String>
 where
     C: Fn() -> bool,
+{
+    stage_extract_input_with_progress(
+        archive,
+        cache_dir,
+        expected_identity,
+        should_cancel,
+        |_: u8| {},
+    )
+}
+
+/// Stage the archive input. `on_progress` receives 0 to 100 only while the
+/// snapshot falls back to a byte copy; clone and hard-link paths report nothing.
+pub(super) fn stage_extract_input_with_progress<C, P>(
+    archive: &std::path::Path,
+    cache_dir: Option<&std::path::Path>,
+    expected_identity: Option<&str>,
+    should_cancel: C,
+    on_progress: P,
+) -> Result<StagedArchiveInput, String>
+where
+    C: Fn() -> bool,
+    P: Fn(u8),
 {
     let archive = crate::path_safety::resolve_regular_file_input(archive)?;
     let initial_token = identity::archive_identity_token(&archive)?;
@@ -141,6 +184,8 @@ where
     #[cfg(not(windows))]
     let used_hardlink = false;
     let mut snapshot_strategy: Option<copy::SnapshotStrategy> = None;
+    let mut copy_progress = copy::SnapshotCopyProgress::default();
+    let mut bytes_before_volume = 0u64;
     let result = (|| {
         for (source, expected) in inputs {
             if should_cancel() {
@@ -175,6 +220,12 @@ where
                     &source,
                     &destination,
                     &should_cancel,
+                    &mut |copied_in_volume| {
+                        let done = bytes_before_volume.saturating_add(copied_in_volume);
+                        if let Some(percent) = copy_progress.percent_to_report(done, total_len) {
+                            on_progress(percent);
+                        }
+                    },
                 )
                 .map_err(|error| {
                     format!(
@@ -183,6 +234,7 @@ where
                     )
                 })?
             };
+            bytes_before_volume = bytes_before_volume.saturating_add(expected.len);
             snapshot_strategy = Some(match snapshot_strategy {
                 Some(previous) => previous.merge(strategy),
                 None => strategy,
@@ -257,6 +309,40 @@ where
                 )),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod preflight_bytes_tests {
+    use super::*;
+
+    fn scratch_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "zinnia-preflight-bytes-{tag}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create scratch dir");
+        dir
+    }
+
+    #[test]
+    fn single_archive_bytes_use_the_file_length() {
+        let dir = scratch_dir("single");
+        let archive = dir.join("single.zip");
+        std::fs::write(&archive, [0u8; 3]).expect("write archive");
+        assert_eq!(archive_input_family_bytes(&archive), 3);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn split_archive_bytes_sum_every_numbered_volume() {
+        let dir = scratch_dir("split");
+        let first = dir.join("split.7z.001");
+        std::fs::write(&first, [0u8; 10]).expect("write first volume");
+        std::fs::write(dir.join("split.7z.002"), [0u8; 5]).expect("write second volume");
+        assert_eq!(archive_input_family_bytes(&first), 15);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
@@ -454,9 +540,14 @@ mod windows_snapshot_tests {
 
         let mut source_file = crate::path_safety::open_regular_file_nofollow_for_snapshot(&source)
             .expect("open source for copy fallback");
-        let strategy =
-            copy::copy_archive_snapshot_file(&mut source_file, &source, &destination, &|| false)
-                .expect("copy fallback");
+        let strategy = copy::copy_archive_snapshot_file(
+            &mut source_file,
+            &source,
+            &destination,
+            &|| false,
+            &mut |_| {},
+        )
+        .expect("copy fallback");
         assert!(
             matches!(
                 strategy,

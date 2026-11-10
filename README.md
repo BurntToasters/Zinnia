@@ -32,6 +32,10 @@ See [ARCHITECTURE.md](ARCHITECTURE.md), [CONTRIBUTING.md](CONTRIBUTING.md), and
   distribution with the required WebKitGTK runtime). The public release ships
   x64 AppImage, DEB, RPM, and sideloaded Flatpak bundles. ARM64 AppImage/DEB/RPM
   are published only when explicitly built for that release; Flatpak stays x64.
+- Archive size: Browse lists up to about 200,000 ZIP or TAR entries, and extraction checks
+  up to about 800,000 ZIP or TAR entries (1,000,000 in any format). See
+  [SECURITY.md](SECURITY.md) for details.
+  In this beta, archives with more than about 100,000 entries extract very slowly.
 
 ## Dev
 

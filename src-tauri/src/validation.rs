@@ -1,9 +1,8 @@
 //! Allow-list validation for 7z args. Security boundary between frontend and process.
 
-// Large drag-and-drop selections are valid. This is still bounded to protect
-// the sidecar and IPC boundary without rejecting ordinary bulk operations.
-// Archive validation accepts 4,096 user paths. Leave bounded room for the
-// command, output, safety, compression, and user-approved option arguments.
+// Caps the switch region: the command, switches, and archive path before `--`.
+// Selected members after `--` are capped by the caller against the extract
+// entry limit (see `process::commands`), since that constant lives in `process`.
 const MAX_7Z_ARGS: usize = 8192;
 const MAX_7Z_ARG_BYTES: usize = 8192;
 
@@ -30,11 +29,29 @@ use switches::{
     is_allowed_switch, is_include_or_exclude, is_include_switch,
 };
 
+/// Number of selected paths after the first `--`, excluding the archive that
+/// `x`, `l` and `t` place first after the separator.
+pub(crate) fn selected_member_count(args: &[String]) -> usize {
+    let Some(separator) = args.iter().position(|arg| arg == "--") else {
+        return 0;
+    };
+    let after_separator = args.len() - separator - 1;
+    let archive = usize::from(matches!(
+        args.first().map(String::as_str),
+        Some("x" | "l" | "t")
+    ));
+    after_separator.saturating_sub(archive)
+}
+
 pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
     if args.is_empty() {
         return Err("Missing 7z arguments".to_string());
     }
-    if args.len() > MAX_7Z_ARGS {
+    let switch_region = args
+        .iter()
+        .position(|arg| arg == "--")
+        .unwrap_or(args.len());
+    if switch_region > MAX_7Z_ARGS {
         return Err("Too many 7z arguments.".to_string());
     }
     if args.iter().any(|arg| arg.len() > MAX_7Z_ARG_BYTES) {
@@ -58,10 +75,18 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
     let mut archive_output: Option<&str> = None;
 
     for (idx, arg) in args.iter().enumerate().skip(1) {
-        if arg == "--" {
-            if separator_index.is_some() {
-                return Err("7z argument separator '--' may appear only once.".to_string());
+        // The first `--` ends the switch region. Everything after it is a
+        // literal path or member name, so switch rules do not apply there.
+        if separator_index.is_some() {
+            positional_after_separator += 1;
+            if has_parent_dir_component(arg) {
+                return Err(format!(
+                    "7z path '{arg}' must not contain a '..' parent-directory segment."
+                ));
             }
+            continue;
+        }
+        if arg == "--" {
             separator_index = Some(idx);
             continue;
         }
@@ -75,7 +100,7 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
         }
         // Reject @listfile references before -- (7z reads them as file lists with
         // unvalidated contents). After --, the leading @ is literal.
-        if separator_index.is_none() && arg.starts_with('@') {
+        if arg.starts_with('@') {
             return Err(format!(
                 "7z argument '{arg}' is not permitted (response files are not allowed)."
             ));
@@ -85,27 +110,20 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
                 "7z argument '{arg}' is not permitted (list files are backend-managed only)."
             ));
         }
-        if separator_index.is_none() && lower.starts_with("-o") {
+        if lower.starts_with("-o") {
             output_switches += 1;
         }
-        if separator_index.is_none() && lower.starts_with("-p") {
+        if lower.starts_with("-p") {
             password_switches += 1;
             if arg.len() > 2 && arg[2..].contains(['\r', '\n', '\0', '\u{2028}', '\u{2029}']) {
                 return Err("Archive passwords cannot contain line breaks.".to_string());
             }
         }
-        if separator_index.is_none() && lower.starts_with("-ao") {
+        if lower.starts_with("-ao") {
             overwrite_switches += 1;
         }
 
-        if separator_index.is_some() {
-            positional_after_separator += 1;
-            if has_parent_dir_component(arg) {
-                return Err(format!(
-                    "7z path '{arg}' must not contain a '..' parent-directory segment."
-                ));
-            }
-        } else if arg.starts_with('-') {
+        if arg.starts_with('-') {
             if !is_allowed_switch(cmd, arg) {
                 return Err(format!("7z argument '{arg}' is not permitted."));
             }
@@ -1104,5 +1122,134 @@ mod tests {
                 "{switch}: {err}"
             );
         }
+    }
+
+    #[test]
+    fn validate_run_7z_args_allows_switch_shaped_members_after_separator() {
+        let mut extract = vec![
+            "x".to_string(),
+            "-o/tmp/out".to_string(),
+            "-aou".to_string(),
+            "-spd".to_string(),
+            "--".to_string(),
+            "archive.7z".to_string(),
+        ];
+        extract.extend(
+            [
+                "-web/app.js",
+                "-sidebar.png",
+                "-work.txt",
+                "-icons/@2x.png",
+                "-sdel",
+                "-si",
+                "-wfoo",
+                "-snldfoo",
+                "-spd",
+                "-pending.zip",
+                "-tzip",
+                "-i!literal",
+                "--",
+            ]
+            .map(str::to_string),
+        );
+        validate_run_7z_args(&extract).expect("members after -- are literal names");
+
+        let mut compress = vec![
+            "a".to_string(),
+            "-t7z".to_string(),
+            "out.7z".to_string(),
+            "--".to_string(),
+        ];
+        compress.extend(["-sdel.txt", "-w", "-sfx", "@list", "-x!y", "-p"].map(str::to_string));
+        validate_run_7z_args(&compress).expect("compress members after -- are literal names");
+    }
+
+    #[test]
+    fn validate_run_7z_args_still_rejects_switches_before_separator() {
+        for bad in ["-sdel", "-si", "-w", "-sns", "-spf"] {
+            let args = vec![
+                "x".to_string(),
+                bad.to_string(),
+                "-o/tmp/out".to_string(),
+                "-aou".to_string(),
+                "--".to_string(),
+                "-web/app.js".to_string(),
+            ];
+            assert!(
+                validate_run_7z_args(&args).is_err(),
+                "{bad} before -- must stay rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_run_7z_args_still_rejects_parent_dir_and_nul_after_separator() {
+        let parent = vec![
+            "x".to_string(),
+            "-o/tmp/out".to_string(),
+            "-aou".to_string(),
+            "--".to_string(),
+            "archive.7z".to_string(),
+            "../escape.txt".to_string(),
+        ];
+        assert!(validate_run_7z_args(&parent).is_err());
+
+        let nul = vec![
+            "x".to_string(),
+            "-o/tmp/out".to_string(),
+            "-aou".to_string(),
+            "--".to_string(),
+            "archive.7z".to_string(),
+            "bad\0name".to_string(),
+        ];
+        assert!(validate_run_7z_args(&nul).is_err());
+    }
+
+    #[test]
+    fn validate_run_7z_args_treats_a_second_separator_as_a_member() {
+        let args = vec![
+            "x".to_string(),
+            "-o/tmp/out".to_string(),
+            "-aou".to_string(),
+            "--".to_string(),
+            "archive.7z".to_string(),
+            "--".to_string(),
+        ];
+        validate_run_7z_args(&args).expect("a member named -- is literal after the separator");
+    }
+
+    #[test]
+    fn validate_run_7z_args_caps_only_the_switch_region() {
+        let mut at_cap = vec![
+            "x".to_string(),
+            "-o/tmp/out".to_string(),
+            "-aou".to_string(),
+        ];
+        at_cap.extend(std::iter::repeat_n("-spd".to_string(), MAX_7Z_ARGS - 3));
+        at_cap.push("--".to_string());
+        at_cap.push("archive.7z".to_string());
+        assert_eq!(at_cap.iter().position(|a| a == "--"), Some(MAX_7Z_ARGS));
+        validate_run_7z_args(&at_cap).expect("switch region at the cap is accepted");
+
+        let mut over_cap = at_cap.clone();
+        over_cap.insert(3, "-spd".to_string());
+        let err = validate_run_7z_args(&over_cap).expect_err("switch region over the cap");
+        assert!(err.contains("Too many 7z arguments"), "{err}");
+
+        let mut many_members = at_cap.clone();
+        many_members.extend((0..9_000).map(|index| format!("file-{index}.txt")));
+        validate_run_7z_args(&many_members).expect("9,000 members are not a switch-region cap");
+    }
+
+    #[test]
+    fn selected_member_count_excludes_command_switches_and_archive() {
+        let extract = ["x", "-o/tmp/out", "-aou", "--", "archive.7z", "a", "b"].map(str::to_string);
+        assert_eq!(selected_member_count(&extract), 2);
+        let compress = ["a", "-t7z", "out.7z", "--", "a", "b", "c"].map(str::to_string);
+        assert_eq!(selected_member_count(&compress), 3);
+        let list = ["l", "-slt", "--", "archive.7z"].map(str::to_string);
+        assert_eq!(selected_member_count(&list), 0);
+        let no_separator = ["b".to_string()];
+        assert_eq!(selected_member_count(&no_separator), 0);
     }
 }

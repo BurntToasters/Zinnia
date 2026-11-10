@@ -383,7 +383,7 @@ export class FakeGitHub {
       return this.#send(response, 200, this.#releaseJson(release), record);
     }
     if (method === "POST" && rest === "/releases") {
-      return this.#createRelease(response, record, body);
+      return this.#createRelease(response, record);
     }
     if ((match = rest.match(/^\/releases\/assets\/(\d+)$/))) {
       const asset = this.assets.get(Number(match[1]));
@@ -486,7 +486,7 @@ export class FakeGitHub {
     ]);
   }
 
-  #createRelease(response, record, body) {
+  #createRelease(response, record) {
     const input = record.body ?? {};
     if (
       !input.draft &&

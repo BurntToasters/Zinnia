@@ -1,4 +1,4 @@
-import { formatSize } from "../utils";
+import { formatSize, isImeComposing } from "../utils";
 import { state, cacheSelection } from "../state";
 import type { BrowseEntry } from "../browse-model";
 import {
@@ -15,6 +15,56 @@ import {
 } from "./browse-selective-helpers";
 
 const MAX_RENDERED_SELECTIVE_ROWS = 1_000;
+
+/**
+ * Work derived from one archive listing: separator style, the tree, and the
+ * last filter result. Keyed by the listing array, so a re-browse starts fresh
+ * and toggles or expansions reuse the same objects.
+ */
+interface ListingModel {
+  entries: BrowseEntry[];
+  windowsPaths: boolean;
+  tree: TreeNode[] | null;
+  filterQuery: string | null;
+  filtered: BrowseEntry[];
+}
+
+let listingModel: ListingModel | null = null;
+
+function modelFor(entries: BrowseEntry[]): ListingModel {
+  if (listingModel?.entries !== entries) {
+    listingModel = {
+      entries,
+      windowsPaths: detectWindowsMemberPaths(entries),
+      tree: null,
+      filterQuery: null,
+      filtered: entries,
+    };
+  }
+  return listingModel;
+}
+
+function filteredFor(model: ListingModel, query: string): BrowseEntry[] {
+  if (model.filterQuery !== query) {
+    model.filtered = filterBrowseEntriesByQuery(model.entries, query);
+    model.filterQuery = query;
+  }
+  return model.filtered;
+}
+
+/** Re-applies one rendered row's checked state from a selection set. */
+type RowRefresh = (selected: Set<string>) => void;
+
+interface SummaryShape {
+  total: number;
+  matches: number;
+  searching: boolean;
+}
+
+// Rows in the DOM right now. A toggle updates these in place; a full render
+// replaces them.
+let renderedRows: RowRefresh[] = [];
+let pickerSummary: { archive: string; shape: SummaryShape } | null = null;
 
 /** Selection scope matches rendered rows so folder toggles cannot reach hidden members. */
 export function collectRenderedSelectiveScope(
@@ -59,22 +109,55 @@ export function collectRenderedSelectiveScope(
   return [...scoped.values()];
 }
 
+function writeSelectiveSummary(archive: string, shape: SummaryShape): void {
+  const summary = document.getElementById("selective-summary");
+  if (!summary) return;
+  const selectedCount = getOrCreateSelection(archive).size;
+  const shownCount = renderedRows.length;
+  if (shape.searching) {
+    summary.textContent =
+      shape.matches > shownCount
+        ? `${selectedCount} selected · ${shownCount} shown of ${shape.matches} matches · ${shape.total} total`
+        : `${selectedCount} selected · ${shownCount} shown · ${shape.total} total`;
+  } else {
+    const rowLabel = shownCount === 1 ? "row shown" : "rows shown";
+    const entryLabel = shape.total === 1 ? "archive entry" : "archive entries";
+    summary.textContent = `${selectedCount} selected · ${shownCount} ${rowLabel} · ${shape.total} ${entryLabel}`;
+  }
+}
+
+/**
+ * Toggle path: refresh the checkboxes already on screen. Rows keep their
+ * identity, so keyboard focus stays where the user left it.
+ */
+function refreshRenderedRows(archive: string): void {
+  const selected = getOrCreateSelection(archive);
+  for (const refresh of renderedRows) refresh(selected);
+  if (pickerSummary?.archive === archive) {
+    writeSelectiveSummary(archive, pickerSummary.shape);
+  }
+}
+
 function renderSelectiveFlatRow(
   archive: string,
   entry: BrowseEntry,
   scopeEntries: BrowseEntry[],
   windowsPaths: boolean,
 ): HTMLElement {
-  const selected = getOrCreateSelection(archive);
   const row = document.createElement("label");
   row.className = "selective-row";
+  row.dataset.memberPath = entry.path;
   row.setAttribute("role", "listitem");
 
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
   checkbox.setAttribute("aria-label", `Select ${entry.path}`);
-  checkbox.checked = selected.has(entry.path);
-  checkbox.disabled = state.running;
+  const applyState: RowRefresh = (selected) => {
+    checkbox.checked = selected.has(entry.path);
+    checkbox.disabled = state.running;
+  };
+  applyState(getOrCreateSelection(archive));
+  renderedRows.push(applyState);
   checkbox.addEventListener("change", () => {
     const current = getOrCreateSelection(archive);
     const next = toggleEntrySelection(
@@ -84,7 +167,7 @@ function renderSelectiveFlatRow(
       windowsPaths,
     );
     cacheSelection(archive, next);
-    renderSelectiveExtractModal();
+    refreshRenderedRows(archive);
   });
 
   const path = document.createElement("span");
@@ -96,7 +179,7 @@ function renderSelectiveFlatRow(
   meta.className = "selective-row__meta";
   const kind = entry.isFolder ? "Folder" : "File";
   const size = entry.isFolder ? "-" : formatSize(entry.size);
-  meta.textContent = `${kind} \u00b7 ${size}`;
+  meta.textContent = `${kind} · ${size}`;
 
   row.appendChild(checkbox);
   row.appendChild(path);
@@ -117,7 +200,6 @@ function renderSelectiveTreeNode(
     return;
   }
   budget.remaining -= 1;
-  const selected = getOrCreateSelection(archive);
   const row = document.createElement("div");
   row.className = "selective-row selective-row--tree";
   row.dataset.depth = String(Math.min(Math.max(node.depth, 0), 20));
@@ -135,7 +217,7 @@ function renderSelectiveTreeNode(
   twisty.type = "button";
   twisty.tabIndex = -1;
   twisty.className = "selective-twisty";
-  twisty.textContent = expandable ? (expanded ? "\u25be" : "\u25b8") : "";
+  twisty.textContent = expandable ? (expanded ? "▾" : "▸") : "";
   twisty.disabled = !expandable;
   if (expandable) {
     const twistyName = node.name || node.path;
@@ -156,18 +238,24 @@ function renderSelectiveTreeNode(
   checkbox.type = "checkbox";
   checkbox.tabIndex = -1;
   checkbox.setAttribute("aria-label", `Select ${node.path}`);
-  const checkState = computeNodeCheckState(node, selected);
-  checkbox.checked = checkState === "checked";
-  checkbox.indeterminate = checkState === "indeterminate";
-  checkbox.disabled = state.running;
-  row.setAttribute(
-    "aria-selected",
-    checkState === "checked" ? "true" : "false",
-  );
-  row.setAttribute(
-    "aria-checked",
-    checkState === "indeterminate" ? "mixed" : String(checkState === "checked"),
-  );
+  const applyState: RowRefresh = (selected) => {
+    const checkState = computeNodeCheckState(node, selected);
+    checkbox.checked = checkState === "checked";
+    checkbox.indeterminate = checkState === "indeterminate";
+    checkbox.disabled = state.running;
+    row.setAttribute(
+      "aria-selected",
+      checkState === "checked" ? "true" : "false",
+    );
+    row.setAttribute(
+      "aria-checked",
+      checkState === "indeterminate"
+        ? "mixed"
+        : String(checkState === "checked"),
+    );
+  };
+  applyState(getOrCreateSelection(archive));
+  renderedRows.push(applyState);
   checkbox.addEventListener("change", () => {
     const current = getOrCreateSelection(archive);
     const entry: BrowseEntry = {
@@ -184,7 +272,7 @@ function renderSelectiveTreeNode(
       windowsPaths,
     );
     cacheSelection(archive, next);
-    renderSelectiveExtractModal();
+    refreshRenderedRows(archive);
   });
 
   row.addEventListener("keydown", (event) => {
@@ -232,7 +320,11 @@ function renderSelectiveTreeNode(
           }
         }
       }
-    } else if (event.key === " " || event.key === "Enter") {
+    } else if (
+      event.key === " " ||
+      (event.key === "Enter" && !isImeComposing(event))
+    ) {
+      // Enter that confirms IME text must not toggle the row.
       event.preventDefault();
       checkbox.click();
     }
@@ -273,21 +365,31 @@ function renderSelectiveTreeNode(
   }
 }
 
+function findRowByMemberPath(
+  list: HTMLElement,
+  memberPath: string,
+): HTMLElement | undefined {
+  return Array.from(
+    list.querySelectorAll<HTMLElement>("[data-member-path]"),
+  ).find((row) => row.dataset.memberPath === memberPath);
+}
+
 function renderSelectiveEntryList(
   archive: string,
   entries: BrowseEntry[],
   allEntries: BrowseEntry[],
   searching: boolean,
-  windowsPaths: boolean,
+  model: ListingModel,
 ): void {
+  renderedRows = [];
   const list = document.getElementById("selective-list");
   if (!list) return;
-  const activeRow = (
-    document.activeElement as HTMLElement | null
-  )?.closest<HTMLElement>('[role="treeitem"]');
-  const focusedPath = list.contains(activeRow ?? null)
-    ? activeRow?.dataset.memberPath
-    : undefined;
+  // Remember focus inside the list so a full re-render can restore it.
+  const active = document.activeElement as HTMLElement | null;
+  const focusedPath =
+    active && list.contains(active)
+      ? active.closest<HTMLElement>("[data-member-path]")?.dataset.memberPath
+      : undefined;
   list.replaceChildren();
   list.removeAttribute("role");
   list.removeAttribute("aria-label");
@@ -305,7 +407,7 @@ function renderSelectiveEntryList(
   // selection must include the folder's complete archive subtree even while
   // collapsed, otherwise its checkbox appears to work but extracts nothing.
   const scopeEntries = searching
-    ? collectRenderedSelectiveScope(entries, true, windowsPaths)
+    ? collectRenderedSelectiveScope(entries, true, model.windowsPaths)
     : allEntries;
 
   // Searching shows a flat result list; otherwise a collapsible tree.
@@ -314,7 +416,12 @@ function renderSelectiveEntryList(
     list.setAttribute("aria-label", "Archive search results");
     for (const entry of entries.slice(0, MAX_RENDERED_SELECTIVE_ROWS)) {
       list.appendChild(
-        renderSelectiveFlatRow(archive, entry, scopeEntries, windowsPaths),
+        renderSelectiveFlatRow(
+          archive,
+          entry,
+          scopeEntries,
+          model.windowsPaths,
+        ),
       );
     }
     if (entries.length > MAX_RENDERED_SELECTIVE_ROWS) {
@@ -323,6 +430,13 @@ function renderSelectiveEntryList(
       notice.textContent = `Refine the search to view matches beyond the first ${MAX_RENDERED_SELECTIVE_ROWS.toLocaleString()}.`;
       list.appendChild(notice);
     }
+    if (focusedPath !== undefined) {
+      const control = findRowByMemberPath(
+        list,
+        focusedPath,
+      )?.querySelector<HTMLInputElement>("input");
+      if (control) queueMicrotask(() => control.focus());
+    }
     return;
   }
 
@@ -330,11 +444,13 @@ function renderSelectiveEntryList(
   list.setAttribute("aria-label", "Archive contents");
   list.setAttribute("aria-multiselectable", "true");
 
+  // The tree depends only on the listing, so build it once per listing.
+  model.tree ??= buildEntryTree(allEntries, model.windowsPaths);
   const budget = {
     remaining: MAX_RENDERED_SELECTIVE_ROWS,
     truncated: false,
   };
-  for (const node of buildEntryTree(entries, windowsPaths)) {
+  for (const node of model.tree) {
     if (budget.remaining <= 0) {
       budget.truncated = true;
       break;
@@ -343,7 +459,7 @@ function renderSelectiveEntryList(
       archive,
       node,
       scopeEntries,
-      windowsPaths,
+      model.windowsPaths,
       list,
       budget,
     );
@@ -364,6 +480,7 @@ function renderSelectiveEntryList(
     if (focusedPath) queueMicrotask(() => focusTarget.focus());
   }
 }
+
 export function renderSelectiveExtractModal(): void {
   const archive = state.selectiveActiveArchive;
   if (!archive) return;
@@ -371,39 +488,23 @@ export function renderSelectiveExtractModal(): void {
   if (!info) return;
 
   const searching = state.selectiveSearchQuery.trim().length > 0;
-  const filteredEntries = filterBrowseEntriesByQuery(
-    info.entries,
-    state.selectiveSearchQuery,
-  );
+  const model = modelFor(info.entries);
+  const filteredEntries = filteredFor(model, state.selectiveSearchQuery);
   state.selectiveVisiblePaths = filteredEntries.map((entry) => entry.path);
-  const windowsPaths = detectWindowsMemberPaths(info.entries);
 
   renderSelectiveEntryList(
     archive,
     filteredEntries,
     info.entries,
     searching,
-    windowsPaths,
+    model,
   );
 
-  const summary = document.getElementById("selective-summary");
-  if (summary) {
-    const selectedCount = getOrCreateSelection(archive).size;
-    const matchCount = filteredEntries.length;
-    const shownCount =
-      document
-        .getElementById("selective-list")
-        ?.querySelectorAll(".selective-row").length ?? 0;
-    if (searching) {
-      summary.textContent =
-        matchCount > shownCount
-          ? `${selectedCount} selected \u00b7 ${shownCount} shown of ${matchCount} matches \u00b7 ${info.entries.length} total`
-          : `${selectedCount} selected \u00b7 ${shownCount} shown \u00b7 ${info.entries.length} total`;
-    } else {
-      const rowLabel = shownCount === 1 ? "row shown" : "rows shown";
-      const entryLabel =
-        info.entries.length === 1 ? "archive entry" : "archive entries";
-      summary.textContent = `${selectedCount} selected \u00b7 ${shownCount} ${rowLabel} \u00b7 ${info.entries.length} ${entryLabel}`;
-    }
-  }
+  const shape: SummaryShape = {
+    total: info.entries.length,
+    matches: filteredEntries.length,
+    searching,
+  };
+  pickerSummary = { archive, shape };
+  writeSelectiveSummary(archive, shape);
 }

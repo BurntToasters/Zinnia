@@ -1,6 +1,6 @@
 //! Cleanup plan preparation for mutating archive operations.
 
-use crate::process::archive_snapshot::stage_extract_input_with_cancel;
+use crate::process::archive_snapshot::stage_extract_input_with_progress;
 use crate::process::commit::archive_destination_family_snapshot;
 use crate::process::quota::available_space_for_path;
 use crate::process::CleanupPlan;
@@ -11,31 +11,47 @@ pub(crate) fn prepare_cleanup_plan(
     cache_dir: Option<std::path::PathBuf>,
     expected_archive_identity: Option<&str>,
 ) -> Result<CleanupPlan, String> {
-    prepare_cleanup_plan_with_cancel(args, cache_dir, expected_archive_identity, || false)
-        .map_err(|error| error.into_parts().0)
+    prepare_cleanup_plan_with_cancel(
+        args,
+        cache_dir,
+        expected_archive_identity,
+        || false,
+        |_: u8| {},
+    )
+    .map_err(|error| error.into_parts().0)
 }
 
-pub(crate) fn prepare_cleanup_plan_with_cancel<C>(
+pub(crate) fn prepare_cleanup_plan_with_cancel<C, P>(
     args: &[String],
     cache_dir: Option<std::path::PathBuf>,
     expected_archive_identity: Option<&str>,
     should_cancel: C,
+    on_snapshot_progress: P,
 ) -> Result<CleanupPlan, super::PreparationPlanError>
 where
     C: Fn() -> bool,
+    P: Fn(u8),
 {
-    prepare_cleanup_plan_inner(args, cache_dir, expected_archive_identity, should_cancel)
-        .map_err(super::classify_preparation_error)
+    prepare_cleanup_plan_inner(
+        args,
+        cache_dir,
+        expected_archive_identity,
+        should_cancel,
+        on_snapshot_progress,
+    )
+    .map_err(super::classify_preparation_error)
 }
 
-fn prepare_cleanup_plan_inner<C>(
+fn prepare_cleanup_plan_inner<C, P>(
     args: &[String],
     cache_dir: Option<std::path::PathBuf>,
     expected_archive_identity: Option<&str>,
     should_cancel: C,
+    on_snapshot_progress: P,
 ) -> Result<CleanupPlan, String>
 where
     C: Fn() -> bool,
+    P: Fn(u8),
 {
     let cache_ref = cache_dir.as_deref();
     let command = args.first().map(String::as_str);
@@ -56,11 +72,12 @@ where
             let archive = args
                 .get(separator + 1)
                 .ok_or_else(|| "Archive command is missing an archive path.".to_string())?;
-            let staged_input = stage_extract_input_with_cancel(
+            let staged_input = stage_extract_input_with_progress(
                 std::path::Path::new(archive),
                 cache_ref,
                 expected_archive_identity,
                 &should_cancel,
+                &on_snapshot_progress,
             )?;
             let preparation = (|| {
                 let ratio_limit = staged_input
@@ -157,11 +174,12 @@ where
             let archive = args
                 .get(separator + 1)
                 .ok_or_else(|| "Extraction command is missing an archive path.".to_string())?;
-            let staged_input = match stage_extract_input_with_cancel(
+            let staged_input = match stage_extract_input_with_progress(
                 std::path::Path::new(archive),
                 cache_ref,
                 Some(expected_archive_identity),
                 &should_cancel,
+                &on_snapshot_progress,
             ) {
                 Ok(snapshot) => snapshot,
                 Err(error) => {

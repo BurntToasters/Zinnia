@@ -177,6 +177,8 @@
 .toast-message {
   flex: 1;
   min-width: 0;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 
 .toast-dismiss {
@@ -185,8 +187,25 @@
   background: transparent;
   color: inherit;
   cursor: pointer;
-  padding: 0;
+  padding: 2px;
   font: inherit;
+  line-height: 0;
+  border-radius: 3px;
+}
+
+.toast-dismiss svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.toast-dismiss:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
 }
 
 .toast--leaving {

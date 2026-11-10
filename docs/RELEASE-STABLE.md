@@ -256,6 +256,55 @@ and notarization, and Linux MIME/desktop integration where applicable.
 Fix and rebuild any failing artifact. Do not publish a draft that has not
 passed this matrix.
 
+### Manual target checks for 0.7.0
+
+These checks need real Windows, Linux or macOS machines and cannot run on the
+build host. Record the OS version, the Zinnia build and the result for each
+item with the release sign-off. Each item lists what to do and the pass
+condition.
+
+1. **A-05 OneDrive Known Folder Move (Windows 11).** Enable Known Folder Move
+   for Desktop and Documents. Compress files from Desktop and Documents, and
+   extract into both folders. Repeat with the files set to "Always keep on
+   this device" and then to online-only. Repeat from the Explorer right-click
+   menu. Pass: every operation completes, and the files keep their on-device
+   or online-only state. If compress or extract rejects a placeholder as a
+   reparse point, allow the cloud reparse tags explicitly instead of all
+   reparse tags, then rerun this item.
+2. **A-03 list-file quoting (Windows).** Compress and extract names with a
+   leading space (` lead.txt`), a trailing space (`report `) and wrapped in
+   double quotes, in a folder whose path contains spaces. Use Power, Basic and
+   selective extract. Pass: each member has exactly the name it was created
+   with, and no other member is selected or skipped.
+3. **B-03 slow-media preflight (USB stick or network share).** Create a tar of
+   several GB on the USB stick or network share, then list, test and extract it
+   from Power. Pass: no operation fails with a timeout, and Cancel stops the
+   child process within a few seconds.
+4. **B-04 safe-copy progress (exFAT and ext4).** Put an archive on an exFAT or
+   ext4 volume, where clone and hard links are not available, and compress or
+   extract it so the safe copy runs. Watch the progress line in Power and the
+   quick-extract window. Pass: the line shows "Preparing a safe copy of the
+   archive..." while the copy runs, the bar moves, the normal label returns
+   when the copy finishes, and Cancel still works.
+5. **C-09 exit-1 output (Windows and Linux).** Compress a folder that contains
+   a file the user cannot read. Extract a ZIP with data after its end. Pass:
+   the compress run stops with the friendly error hint, and the raw 7-Zip text
+   is in the activity log only. The ZIP extracts with a warning and publishes
+   its files. Record the exit code and the 7-Zip text, because macOS could not
+   produce a real exit-1 extraction.
+6. **B-11 macOS text fields.** Type `--` and quotes in the path, archive name,
+   extra arguments and password fields, including after Show. Pass: the text is
+   unchanged, with no smart dashes, autocorrect or auto-capitalization, in both
+   Basic and Power.
+7. **C-20 title-bar maximize (Windows and Linux).** In Power, resize the window,
+   double-click the title bar to maximize, then restore it, close it and reopen
+   it. Pass: double-click toggles maximize, the restored size matches the size
+   before maximize, and Basic stays locked (not resizable or maximizable).
+8. **B-17 right-click paste (Windows and Linux).** Right-click inside the path,
+   archive name, password and extra-arguments fields. Then right-click on a
+   non-editable area. Pass: the native menu with Copy and Paste appears in the
+   editable fields and does not appear elsewhere.
+
 ## 7. Verify the draft before publishing
 
 After all required platform assets and signatures are present:

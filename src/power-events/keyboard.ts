@@ -1,4 +1,4 @@
-import { $ } from "../utils";
+import { $, isImeComposing, isKeyHandled, markKeyHandled } from "../utils";
 import { state } from "../state";
 import { closeSettingsModal, toggleSettingsModal } from "../settings";
 import {
@@ -15,8 +15,11 @@ import { openShortcutsModal, closeShortcutsModal } from "../power-shortcuts";
 
 export function wireGlobalKeyboardEvents(): void {
   document.addEventListener("keydown", (e) => {
+    // A toast or the Recent menu already consumed this key.
+    if (isKeyHandled(e)) return;
     if (!$("setup-wizard-overlay").hidden) {
       if (e.key === "Escape") {
+        markKeyHandled(e);
         e.preventDefault();
       }
       return;
@@ -43,24 +46,30 @@ export function wireGlobalKeyboardEvents(): void {
     }
     if (e.key === "Escape") {
       // Licenses may be nested over Settings in Basic mode; always dismiss the
-      // visually topmost sheet first.
+      // visually topmost sheet first. Each close marks the event so the Basic
+      // handler does not also navigate Home.
       if (!$("licenses-overlay").hidden) {
+        markKeyHandled(e);
         closeLicensesModal();
         return;
       }
       if (!$("settings-overlay").hidden) {
+        markKeyHandled(e);
         closeSettingsModal();
         return;
       }
       if (!$("selective-overlay").hidden) {
+        markKeyHandled(e);
         closeSelectiveExtractModal();
         return;
       }
       if (!$("command-preview-overlay").hidden) {
+        markKeyHandled(e);
         closeCommandPreviewModal();
         return;
       }
       if (!$("shortcuts-overlay").hidden) {
+        markKeyHandled(e);
         closeShortcutsModal();
         return;
       }
@@ -80,6 +89,7 @@ export function wireGlobalKeyboardEvents(): void {
       return;
     }
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      if (isImeComposing(e)) return;
       if (
         !$("setup-wizard-overlay").hidden ||
         !$("settings-overlay").hidden ||

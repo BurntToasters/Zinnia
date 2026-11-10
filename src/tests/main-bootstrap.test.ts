@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => {
       }),
       populateSettingsModal: vi.fn(),
       syncSettingsSecurityControlsForFormat: vi.fn(),
+      syncSettingsMethodForSelectedFormat: vi.fn(),
     },
     ui: {
       log: vi.fn(),
@@ -140,6 +141,8 @@ vi.mock("../settings", () => ({
   populateSettingsModal: mocks.settings.populateSettingsModal,
   syncSettingsSecurityControlsForFormat:
     mocks.settings.syncSettingsSecurityControlsForFormat,
+  syncSettingsMethodForSelectedFormat:
+    mocks.settings.syncSettingsMethodForSelectedFormat,
 }));
 
 vi.mock("../ui", async (importOriginal) => {
@@ -242,7 +245,8 @@ vi.mock("../os-integration", () => ({
   wireOsIntegrationEvents: mocks.osIntegration.wireOsIntegrationEvents,
 }));
 
-vi.mock("../extract-path", () => ({
+vi.mock("../extract-path", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../extract-path")>()),
   deriveOutputArchivePath: mocks.extractPath.deriveOutputArchivePath,
   resolveOutputArchiveAutofill: mocks.extractPath.resolveOutputArchiveAutofill,
 }));
@@ -308,6 +312,8 @@ function ensureMainDomElements(): void {
   ensureElement("progress", "div");
   ensureElement("version-label", "div");
   ensureElement("platform-label", "div");
+  ensureElement("cancel-benchmark", "button").hidden = true;
+  ensureElement("update-ready-indicator", "button").hidden = true;
 
   if (!document.querySelector(".grid")) {
     const grid = document.createElement("div");

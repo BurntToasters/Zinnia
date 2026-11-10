@@ -1,6 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 
-/** Keep in sync with validation.rs is_allowed_method_switch / compress extras. */
+/**
+ * Keep in sync with validation.rs is_allowed_method_switch / compress extras.
+ * `-mhe=` is left out on purpose: validateExtraArgs rejects every `-mhe` extra
+ * before this list is consulted, and Zinnia sets `-mhe=on` itself.
+ */
 export const ALLOWED_METHOD_PREFIXES = [
   "-mx",
   "-m0=",
@@ -9,7 +13,6 @@ export const ALLOWED_METHOD_PREFIXES = [
   "-ms",
   "-mmt",
   "-mem=",
-  "-mhe=",
   "-mtc=",
   "-mta=",
   "-mhc=",

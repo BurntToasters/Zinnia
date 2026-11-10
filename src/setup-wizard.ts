@@ -35,6 +35,32 @@ function $(id: string): HTMLElement {
   return el;
 }
 
+/** Steps after the welcome step get a Skip button, created here (markup is fixed). */
+const SKIPPABLE_STEPS = [1, 2, 3, 4] as const;
+
+function skipButtonId(step: number): string {
+  return `setup-skip-step-${step}`;
+}
+
+function ensureSkipButton(step: number): HTMLButtonElement | null {
+  const stepEl = document.querySelector<HTMLElement>(
+    `.setup-wizard-step[data-step="${step}"]`,
+  );
+  const actions = stepEl?.querySelector<HTMLElement>(
+    ".setup-wizard-step__actions",
+  );
+  if (!actions) return null;
+  const existing = document.getElementById(skipButtonId(step));
+  if (existing instanceof HTMLButtonElement) return existing;
+  const button = document.createElement("button");
+  button.id = skipButtonId(step);
+  button.type = "button";
+  button.className = "btn btn--ghost";
+  button.textContent = "Skip setup";
+  actions.appendChild(button);
+  return button;
+}
+
 function setProgress(step: number, visibleSteps: readonly number[]): void {
   const bar = $("setup-wizard-progress-bar");
   const index = Math.max(visibleSteps.indexOf(step), 0);
@@ -134,9 +160,32 @@ export function showSetupWizard(
     const themeButtons = document.querySelectorAll<HTMLButtonElement>(
       ".setup-wizard-theme-btn",
     );
+    const skipButtons = SKIPPABLE_STEPS.map((step) =>
+      ensureSkipButton(step),
+    ).filter((btn): btn is HTMLButtonElement => btn !== null);
 
     function goTo(step: number): void {
       showStep(step, visibleSteps);
+    }
+
+    // Skip and Escape close the wizard the same way: no choices from the
+    // unfinished steps are applied, and setup is marked complete.
+    function skipWizard(): void {
+      cleanup();
+      resolve(null);
+    }
+
+    function onSkipStep(): void {
+      skipWizard();
+    }
+
+    function onWizardEscape(e: KeyboardEvent): void {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      // Capture phase on window: other Escape handlers (Basic Home, dialogs)
+      // must not also act on this keypress.
+      e.stopImmediatePropagation();
+      skipWizard();
     }
 
     function setWorkspaceSelection(mode: WorkspaceMode): void {
@@ -178,6 +227,10 @@ export function showSetupWizard(
         btn.removeEventListener("click", onWorkspaceSelect),
       );
       themeButtons.forEach((btn) => btn.removeEventListener("click", onTheme));
+      skipButtons.forEach((btn) =>
+        btn.removeEventListener("click", onSkipStep),
+      );
+      window.removeEventListener("keydown", onWizardEscape, true);
       if (
         previousFocus?.isConnected &&
         !overlay.contains(previousFocus) &&
@@ -223,8 +276,7 @@ export function showSetupWizard(
     }
 
     function onWelcomeSkip(): void {
-      cleanup();
-      resolve(null);
+      skipWizard();
     }
 
     function onWorkspaceBack(): void {
@@ -296,5 +348,7 @@ export function showSetupWizard(
       btn.addEventListener("click", onWorkspaceSelect),
     );
     themeButtons.forEach((btn) => btn.addEventListener("click", onTheme));
+    skipButtons.forEach((btn) => btn.addEventListener("click", onSkipStep));
+    window.addEventListener("keydown", onWizardEscape, true);
   });
 }

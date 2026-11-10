@@ -40,7 +40,14 @@ pub(crate) fn is_zip_create_or_update(args: &[String]) -> bool {
     if !matches!(cmd.as_str(), "a" | "u") {
         return false;
     }
-    if args.iter().any(|arg| arg.eq_ignore_ascii_case("-tzip")) {
+    let separator = args
+        .iter()
+        .position(|arg| arg == "--")
+        .unwrap_or(args.len());
+    if args[..separator]
+        .iter()
+        .any(|arg| arg.eq_ignore_ascii_case("-tzip"))
+    {
         return true;
     }
     create_output_looks_like_zip(args)

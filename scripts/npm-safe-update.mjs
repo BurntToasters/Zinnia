@@ -16,7 +16,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import npmCli from "./npm-cli.cjs";
 import { isDirectExecutionOf } from "./direct-execution.mjs";

@@ -1,7 +1,18 @@
 //! Byte-bounded, UTF-8-safe output buffering helpers.
 
 pub const MAX_OUTPUT_BYTES: usize = 10 * 1024 * 1024;
+/// Browse listings are much larger than other 7-Zip output. About 200,000 ZIP
+/// entries fit; larger listings are reported as truncated.
+pub const MAX_LIST_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_LOG_ENTRY_BYTES: usize = 16 * 1024;
+
+/// Stdout/stderr cap for a `run_7z` command. Only listings get the larger cap.
+pub fn output_limit_for_command(command: Option<&str>) -> usize {
+    match command {
+        Some("l") => MAX_LIST_OUTPUT_BYTES,
+        _ => MAX_OUTPUT_BYTES,
+    }
+}
 
 #[derive(Default)]
 pub struct Utf8StreamDecoder {
@@ -183,6 +194,21 @@ fn redact_key_value_secrets(input: &str) -> String {
         i += ch.len_utf8();
     }
     redacted
+}
+
+#[cfg(test)]
+mod listing_limit_tests {
+    use super::*;
+
+    #[test]
+    fn only_listing_commands_get_the_larger_browse_cap() {
+        assert_eq!(MAX_LIST_OUTPUT_BYTES, 64 * 1024 * 1024);
+        assert_eq!(output_limit_for_command(Some("l")), MAX_LIST_OUTPUT_BYTES);
+        assert_eq!(output_limit_for_command(Some("x")), MAX_OUTPUT_BYTES);
+        assert_eq!(output_limit_for_command(Some("t")), MAX_OUTPUT_BYTES);
+        assert_eq!(output_limit_for_command(Some("a")), MAX_OUTPUT_BYTES);
+        assert_eq!(output_limit_for_command(None), MAX_OUTPUT_BYTES);
+    }
 }
 
 #[cfg(test)]

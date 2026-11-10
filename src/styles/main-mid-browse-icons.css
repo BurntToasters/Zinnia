@@ -5,7 +5,7 @@
 }
 
 .browse-summary {
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   color: var(--text-secondary);
   padding: 6px 10px;
   background: var(--surface);
@@ -38,7 +38,7 @@
   text-align: left;
   padding: 7px 10px;
   font-weight: 600;
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--border-strong);
   white-space: nowrap;

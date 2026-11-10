@@ -1,18 +1,33 @@
 import { invoke } from "@tauri-apps/api/core";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { $, parseThreads, trapFocus, releaseFocusTrap } from "./utils";
 import { state } from "./state";
 import {
   LoadSettingsResult,
   UserSettings,
   SETTING_DEFAULTS,
+  COMPRESSION_METHODS_BY_FORMAT,
   mergeSettingsPayload,
   normalizeAutoCloseDelay,
   parseSettingsRaw,
 } from "./settings-model";
 import { getCompressionSecuritySupport } from "./compression-security";
+import { getDefaultThreads } from "./window-events";
 import { syncWorkspaceWindowFx } from "./window-fx";
+import { confirmWithE2eQueue } from "./e2e-dialog";
+
+const METHOD_LABELS: Record<string, string> = {
+  lzma2: "LZMA2",
+  lzma: "LZMA",
+  deflate: "Deflate",
+};
+
+export const DISCARD_SETTINGS_TITLE = "Discard unsaved settings";
 
 let settingsModalBasicWindowEffects: boolean | null = null;
+/** Modal values when it opened; a different value on close means unsaved edits. */
+let settingsSnapshotOnOpen: string | null = null;
+let discardPromptOpen = false;
 
 export function applyTheme(pref: string) {
   const resolved =
@@ -116,10 +131,47 @@ function sessionCompressionValues(): CompressionFormValues {
   };
 }
 
+/**
+ * Rebuild the Settings method list for a format, as the main form does.
+ * Formats without a method choice get a disabled N/A option.
+ */
+export function syncSettingsMethodOptions(
+  format: UserSettings["format"],
+  preferred: string,
+): void {
+  const select = $<HTMLSelectElement>("s-method");
+  const methods = COMPRESSION_METHODS_BY_FORMAT[format];
+  select.replaceChildren();
+  if (methods.length === 0) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "N/A";
+    select.appendChild(option);
+    select.value = "";
+    select.disabled = true;
+    return;
+  }
+  for (const method of methods) {
+    const option = document.createElement("option");
+    option.value = method;
+    option.textContent = METHOD_LABELS[method] ?? method;
+    select.appendChild(option);
+  }
+  select.value = methods.includes(preferred) ? preferred : methods[0];
+  select.disabled = false;
+}
+
+/** Re-filter the method list after the Settings format select changes. */
+export function syncSettingsMethodForSelectedFormat(): void {
+  const format = $<HTMLSelectElement>("s-format")
+    .value as UserSettings["format"];
+  syncSettingsMethodOptions(format, $<HTMLSelectElement>("s-method").value);
+}
+
 function writeCompressionValuesToModal(values: CompressionFormValues) {
   $<HTMLSelectElement>("s-format").value = values.format;
   $<HTMLSelectElement>("s-level").value = values.level;
-  $<HTMLSelectElement>("s-method").value = values.method;
+  syncSettingsMethodOptions(values.format, values.method);
   $<HTMLSelectElement>("s-dict").value = values.dict;
   $<HTMLSelectElement>("s-word-size").value = values.wordSize;
   $<HTMLSelectElement>("s-solid").value = values.solid;
@@ -198,7 +250,7 @@ export function readSettingsModal(): UserSettings {
     solid: $<HTMLSelectElement>("s-solid").value,
     threads: parseThreads(
       $<HTMLInputElement>("s-threads").value,
-      SETTING_DEFAULTS.threads,
+      getDefaultThreads(),
     ),
     encryptHeaders:
       securitySupport.encryptHeaders &&
@@ -265,12 +317,6 @@ export async function syncBasicWindowEffectsVisibility(): Promise<void> {
   row.hidden = !supports;
 }
 
-function syncSettingsTriggerState(open: boolean) {
-  const trigger = document.getElementById("open-settings");
-  if (!trigger) return;
-  trigger.setAttribute("aria-expanded", open ? "true" : "false");
-}
-
 export function openSettingsModal() {
   if (
     state.running ||
@@ -303,8 +349,8 @@ export function openSettingsModal() {
       void syncWorkspaceWindowFx();
     });
   }
+  settingsSnapshotOnOpen = currentSettingsSnapshot();
   overlay.hidden = false;
-  syncSettingsTriggerState(true);
   const modal = overlay.querySelector<HTMLElement>(".modal");
   if (modal) {
     trapFocus(modal);
@@ -315,6 +361,64 @@ export function openSettingsModal() {
   }
 }
 
+function currentSettingsSnapshot(): string {
+  return JSON.stringify(readSettingsModal());
+}
+
+function hasUnsavedSettingsEdits(): boolean {
+  return (
+    settingsSnapshotOnOpen !== null &&
+    currentSettingsSnapshot() !== settingsSnapshotOnOpen
+  );
+}
+
+export type CloseSettingsOptions = {
+  preserveLivePreview?: boolean;
+  /** Set by Save: the modal values were just persisted, so nothing is discarded. */
+  saved?: boolean;
+  discardConfirmed?: boolean;
+};
+
+/** Ask before dropping unsaved edits. Resolves false when the user keeps editing. */
+async function confirmDiscardSettingsEdits(): Promise<boolean> {
+  if (discardPromptOpen) return false;
+  discardPromptOpen = true;
+  try {
+    return await confirmWithE2eQueue(
+      () =>
+        ask("Your changes to Settings have not been saved. Discard them?", {
+          title: DISCARD_SETTINGS_TITLE,
+          kind: "warning",
+          okLabel: "Discard",
+          cancelLabel: "Keep editing",
+        }),
+      DISCARD_SETTINGS_TITLE,
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`Could not ask about discarding Settings edits: ${msg}`);
+    return false;
+  } finally {
+    discardPromptOpen = false;
+  }
+}
+
+/**
+ * Close Settings, asking first when the modal has unsaved edits. Resolves true
+ * once the modal is closed and false when the user keeps editing.
+ */
+export async function requestCloseSettingsModal(
+  options: CloseSettingsOptions = {},
+): Promise<boolean> {
+  if (options.saved || options.discardConfirmed || !hasUnsavedSettingsEdits()) {
+    closeSettingsModal(options);
+    return true;
+  }
+  if (!(await confirmDiscardSettingsEdits())) return false;
+  closeSettingsModal({ ...options, discardConfirmed: true });
+  return true;
+}
+
 export function toggleSettingsModal() {
   if ($("settings-overlay").hidden) {
     openSettingsModal();
@@ -323,9 +427,16 @@ export function toggleSettingsModal() {
   }
 }
 
-export function closeSettingsModal(
-  options: { preserveLivePreview?: boolean } = {},
-) {
+export function closeSettingsModal(options: CloseSettingsOptions = {}) {
+  if (
+    !options.saved &&
+    !options.discardConfirmed &&
+    hasUnsavedSettingsEdits()
+  ) {
+    void requestCloseSettingsModal(options);
+    return;
+  }
+  settingsSnapshotOnOpen = null;
   if (
     !options.preserveLivePreview &&
     settingsModalBasicWindowEffects !== null
@@ -336,7 +447,6 @@ export function closeSettingsModal(
   settingsModalBasicWindowEffects = null;
   const overlay = $("settings-overlay");
   overlay.hidden = true;
-  syncSettingsTriggerState(false);
   const modal = overlay.querySelector<HTMLElement>(".modal");
   if (modal) releaseFocusTrap(modal);
   const trigger = document.getElementById("open-settings");

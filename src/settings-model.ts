@@ -74,10 +74,11 @@ export const SETTING_DEFAULTS: UserSettings = {
   theme: "system",
   format: "7z",
   level: "5",
+  // Same values as the Balanced preset in presets.ts, so a first run shows it.
   method: "lzma2",
-  dict: "256m",
+  dict: "64m",
   wordSize: "64",
-  solid: "16g",
+  solid: "4g",
   threads: 8,
   encryptHeaders: false,
   autoCheckUpdates: true,
@@ -165,6 +166,31 @@ const VALID_METHODS = new Set([
   "copy",
   "zstd",
 ]);
+/**
+ * Methods the runtime can configure for each format. Must match `validMethods`
+ * in presets.ts. An empty list means the format has no method choice.
+ */
+export const COMPRESSION_METHODS_BY_FORMAT: Readonly<
+  Record<ArchiveFormat, readonly string[]>
+> = {
+  "7z": ["lzma2", "lzma"],
+  zip: ["deflate", "lzma"],
+  tar: [],
+  gzip: [],
+  bzip2: [],
+  xz: [],
+};
+
+/** Keep a method the format supports; otherwise use its first supported one. */
+export function normalizeMethodForFormat(
+  format: ArchiveFormat,
+  method: string,
+): string {
+  const allowed = COMPRESSION_METHODS_BY_FORMAT[format];
+  if (allowed.length === 0) return "";
+  return allowed.includes(method) ? method : allowed[0];
+}
+
 const VALID_DICTS = new Set([
   "",
   "64k",
@@ -325,6 +351,10 @@ function asCustomPresets(
       VALID_METHODS,
       SETTING_DEFAULTS.method,
     );
+    const normalizedMethod =
+      format === null || method === null
+        ? null
+        : normalizeMethodForFormat(format, method);
     const dict = optionalPresetField(
       r.dict,
       VALID_DICTS,
@@ -345,7 +375,7 @@ function asCustomPresets(
     if (
       format === null ||
       level === null ||
-      method === null ||
+      normalizedMethod === null ||
       dict === null ||
       wordSize === null ||
       solid === null
@@ -357,7 +387,7 @@ function asCustomPresets(
       name,
       format,
       level,
-      method,
+      method: normalizedMethod,
       dict,
       wordSize,
       solid,
@@ -401,11 +431,15 @@ export function normalizeUserSettings(
     fallback.powerWindowWidth,
     fallback.powerWindowHeight,
   );
+  const format = asSetValue(settings.format, FORMATS, fallback.format);
   return {
     theme: asSetValue(settings.theme, THEMES, fallback.theme),
-    format: asSetValue(settings.format, FORMATS, fallback.format),
+    format,
     level: asSetValue(settings.level, VALID_LEVELS, fallback.level),
-    method: asSetValue(settings.method, VALID_METHODS, fallback.method),
+    method: normalizeMethodForFormat(
+      format,
+      asSetValue(settings.method, VALID_METHODS, fallback.method),
+    ),
     dict: asSetValue(settings.dict, VALID_DICTS, fallback.dict),
     wordSize: asSetValue(
       settings.wordSize,

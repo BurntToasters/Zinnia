@@ -1,5 +1,6 @@
 import { $, parseThreads, splitArgs } from "../utils";
-import { SETTING_DEFAULTS, state } from "../state";
+import { state } from "../state";
+import { getDefaultThreads } from "../window-events";
 import { getMode } from "../ui";
 import { validateExtraArgs } from "../archive-rules";
 import {
@@ -64,7 +65,7 @@ export function buildCompressionMethodSwitches(format: string): string[] {
   const solid = $<HTMLSelectElement>("solid").value;
   const threads = parseThreads(
     $<HTMLInputElement>("threads").value,
-    SETTING_DEFAULTS.threads,
+    getDefaultThreads(),
   );
 
   const normalizedFormat = format.toLowerCase();
@@ -74,7 +75,11 @@ export function buildCompressionMethodSwitches(format: string): string[] {
       (normalizedMethod === "lzma2" || normalizedMethod === "lzma")) ||
     (normalizedFormat === "zip" &&
       (normalizedMethod === "deflate" || normalizedMethod === "lzma"));
-  const effectiveMethod = methodSupported ? normalizedMethod : "";
+  // Level 0 means store. An explicit -m0= makes 7-Zip deflate ZIP entries, so
+  // leave the method unset there and let -mx=0 pick Store (or copy for 7z).
+  const storeLevel = level.trim() === "0";
+  const effectiveMethod =
+    methodSupported && !storeLevel ? normalizedMethod : "";
   const switches = [`-t${normalizedFormat}`, `-mx=${level}`];
   if (effectiveMethod) switches.push(`-m0=${effectiveMethod}`);
   // 7-Zip method switches are not format-agnostic. In particular, Deflate and
@@ -215,11 +220,13 @@ export function buildArgs() {
   );
 
   // -snl/-snh preserve symlinks/hardlinks (macOS .app / .framework bundles).
+  // -bsp1 sends progress lines to stdout so the UI can show a percent.
   const switches = [
     "-sse",
     "-snl",
     "-snh",
     "-spd",
+    "-bsp1",
     ...buildCompressionMethodSwitches(format),
   ];
   if (password) switches.push(`-p${password}`);

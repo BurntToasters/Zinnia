@@ -195,7 +195,7 @@ pub fn atomic_write_text(path: &std::path::Path, contents: &str) -> Result<(), S
         }
         e.to_string()
     })?;
-    sync_parent_directory(path)
+    tolerate_post_rename_sync(sync_parent_directory(path))
 }
 
 pub(crate) fn sync_parent_directory(path: &std::path::Path) -> Result<(), String> {
@@ -253,39 +253,116 @@ pub fn load_settings(app: tauri::AppHandle) -> Result<String, String> {
     }
 }
 
-#[tauri::command(async)]
-pub fn save_settings(app: tauri::AppHandle, json: String) -> Result<(), String> {
-    let _guard = lock_settings()?;
+/// Format a UTC instant as `YYYYMMDDTHHMMSSZ` for quarantine file names.
+fn utc_compact_timestamp(now: std::time::SystemTime) -> String {
+    let secs = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let days = (secs / 86_400) as i64;
+    let rem = secs % 86_400;
+    // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if month <= 2 { year + 1 } else { year };
+    format!(
+        "{year:04}{month:02}{day:02}T{:02}{:02}{:02}Z",
+        rem / 3600,
+        (rem % 3600) / 60,
+        rem % 60
+    )
+}
+
+/// Move an unparsable settings file aside as `settings.json.corrupt-<UTC>`.
+/// A same-second collision gets a numeric suffix instead of overwriting.
+fn quarantine_unparsable_settings(
+    path: &std::path::Path,
+    now: std::time::SystemTime,
+) -> Result<std::path::PathBuf, String> {
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "Invalid file name in path".to_string())?;
+    let stamp = utc_compact_timestamp(now);
+    for attempt in 0..1000u32 {
+        let suffix = if attempt == 0 {
+            String::new()
+        } else {
+            format!("-{attempt}")
+        };
+        let target = path.with_file_name(format!("{file_name}.corrupt-{stamp}{suffix}"));
+        if std::fs::symlink_metadata(&target).is_ok() {
+            continue;
+        }
+        std::fs::rename(path, &target).map_err(|e| e.to_string())?;
+        return Ok(target);
+    }
+    Err("Could not find a free name for the unreadable settings file.".to_string())
+}
+
+/// The rename has already put the new settings in place, so a failed
+/// directory sync is logged and the save still reports success.
+fn tolerate_post_rename_sync(result: Result<(), String>) -> Result<(), String> {
+    if let Err(error) = result {
+        eprintln!("Warning: settings were saved but the folder sync failed: {error}");
+    }
+    Ok(())
+}
+
+/// Merge an incoming payload into the settings file at `path`.
+fn save_settings_to_path(
+    path: &std::path::Path,
+    json: &str,
+    now: std::time::SystemTime,
+) -> Result<(), String> {
     if json.len() > MAX_SETTINGS_BYTES {
         return Err("Settings payload exceeds maximum allowed size.".to_string());
     }
-    let path = settings_path(&app)?;
-
-    let mut incoming = parse_json_object(&json)?;
-    if let Some(existing_raw) = read_bounded_settings_file(&path).map_err(|e| {
+    let mut incoming = parse_json_object(json)?;
+    match read_bounded_settings_file(path).map_err(|e| {
         format!(
             "Failed to read existing settings for reserved-key preservation: {e}. \
              Refusing to overwrite to avoid data loss."
         )
     })? {
-        match parse_json_object(&existing_raw) {
-            Ok(existing) => merge_reserved_settings(&existing, &mut incoming),
-            Err(parse_error) => {
-                return Err(format!(
-                    "Existing settings file is corrupt ({parse_error}). \
-                     Refusing to overwrite to avoid losing reserved keys. \
-                     Delete the file manually to reset."
-                ));
-            }
+        None => {
+            // First save: still reject planted backend-owned `_` keys.
+            strip_untrusted_reserved_settings(&mut incoming);
         }
-    } else {
-        // First save: still reject planted backend-owned `_` keys.
-        strip_untrusted_reserved_settings(&mut incoming);
+        Some(existing_raw) => match serde_json::from_str::<serde_json::Value>(&existing_raw) {
+            Ok(serde_json::Value::Object(existing)) => {
+                merge_reserved_settings(&existing, &mut incoming);
+            }
+            _ => {
+                // Unparsable, or valid JSON that is not an object: there are no
+                // reserved keys to keep, so move the file aside and start over.
+                let moved = quarantine_unparsable_settings(path, now)?;
+                eprintln!(
+                    "Warning: settings.json could not be read; moved it to {} and wrote new settings.",
+                    moved.display()
+                );
+                strip_untrusted_reserved_settings(&mut incoming);
+            }
+        },
     }
 
     let merged = serde_json::Value::Object(incoming);
     let serialized = serde_json::to_string(&merged).map_err(|e| e.to_string())?;
-    atomic_write_text(&path, &serialized)
+    atomic_write_text(path, &serialized)
+}
+
+#[tauri::command(async)]
+pub fn save_settings(app: tauri::AppHandle, json: String) -> Result<(), String> {
+    let _guard = lock_settings()?;
+    let path = settings_path(&app)?;
+    save_settings_to_path(&path, &json, std::time::SystemTime::now())
 }
 
 #[tauri::command(async)]
@@ -363,6 +440,149 @@ mod tests {
         assert!(!path.exists());
         assert!(!backup_path(&path).exists());
         let _ = std::fs::remove_dir_all(base);
+    }
+
+    fn scratch_settings_dir(name: &str) -> std::path::PathBuf {
+        let base = std::env::temp_dir().join(format!(
+            "zinnia-{name}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time should work")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).expect("scratch directory should be created");
+        base
+    }
+
+    fn epoch_plus(secs: u64) -> std::time::SystemTime {
+        std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs)
+    }
+
+    #[test]
+    fn utc_compact_timestamp_formats_known_instants() {
+        assert_eq!(utc_compact_timestamp(epoch_plus(0)), "19700101T000000Z");
+        assert_eq!(
+            utc_compact_timestamp(epoch_plus(1_709_164_800)),
+            "20240229T000000Z"
+        );
+        assert_eq!(
+            utc_compact_timestamp(epoch_plus(1_794_227_696)),
+            "20261109T123456Z"
+        );
+    }
+
+    #[test]
+    fn quarantine_moves_unparsable_file_and_never_overwrites_a_previous_one() {
+        let base = scratch_settings_dir("quarantine");
+        let path = base.join("settings.json");
+        std::fs::write(&path, "{ bad").expect("seed file should be written");
+
+        let first = quarantine_unparsable_settings(&path, epoch_plus(1_794_227_696))
+            .expect("quarantine should succeed");
+        assert!(!path.exists(), "original settings path should be vacated");
+        let first_name = first
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("quarantine name should be UTF-8")
+            .to_string();
+        assert!(
+            first_name.starts_with("settings.json.corrupt-20261109T123456Z"),
+            "unexpected quarantine name {first_name}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&first).expect("quarantined"),
+            "{ bad"
+        );
+
+        std::fs::write(&path, "{ worse").expect("second seed should be written");
+        let second = quarantine_unparsable_settings(&path, epoch_plus(1_794_227_696))
+            .expect("second quarantine should succeed");
+        assert_ne!(first, second, "a same-second quarantine must not overwrite");
+        assert_eq!(
+            std::fs::read_to_string(&first).expect("first kept"),
+            "{ bad"
+        );
+        assert_eq!(std::fs::read_to_string(&second).expect("second"), "{ worse");
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn save_over_unparsable_file_quarantines_it_and_writes_new_settings() {
+        let base = scratch_settings_dir("corrupt-save");
+        let path = base.join("settings.json");
+        std::fs::write(&path, "{ bad").expect("seed file should be written");
+
+        save_settings_to_path(
+            &path,
+            r#"{"theme":"dark","_setupWizardVersion":3}"#,
+            epoch_plus(1_794_227_696),
+        )
+        .expect("save over a corrupt file should succeed");
+
+        let saved = std::fs::read_to_string(&path).expect("settings readable");
+        assert!(saved.contains("\"theme\":\"dark\""), "saved: {saved}");
+        // The bad file is unparsable, so there is no reserved key to keep;
+        // the incoming payload's own value is what gets written.
+        assert!(saved.contains("\"_setupWizardVersion\":3"));
+        let quarantined: Vec<_> = std::fs::read_dir(&base)
+            .expect("dir readable")
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.starts_with("settings.json.corrupt-"))
+            .collect();
+        assert_eq!(quarantined.len(), 1, "expected one quarantined file");
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn save_over_valid_file_keeps_wizard_version_and_does_not_quarantine() {
+        let base = scratch_settings_dir("valid-save");
+        let path = base.join("settings.json");
+        std::fs::write(&path, r#"{"theme":"light","_setupWizardVersion":2}"#)
+            .expect("seed file should be written");
+
+        save_settings_to_path(&path, r#"{"theme":"dark"}"#, epoch_plus(1_794_227_696))
+            .expect("valid save should succeed");
+
+        let saved = std::fs::read_to_string(&path).expect("settings readable");
+        assert!(
+            saved.contains("\"_setupWizardVersion\":2"),
+            "saved: {saved}"
+        );
+        assert!(saved.contains("\"theme\":\"dark\""));
+        let names: Vec<_> = std::fs::read_dir(&base)
+            .expect("dir readable")
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(!names.iter().any(|n| n.contains("corrupt")));
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn save_quarantines_valid_json_that_is_not_an_object() {
+        let base = scratch_settings_dir("array-save");
+        let path = base.join("settings.json");
+        std::fs::write(&path, "[1,2]").expect("seed file should be written");
+
+        save_settings_to_path(&path, r#"{"theme":"dark"}"#, epoch_plus(1_794_227_696))
+            .expect("save over a non-object file should succeed");
+
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("settings readable"),
+            r#"{"theme":"dark"}"#
+        );
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn post_rename_directory_sync_failure_still_reports_success() {
+        let result = tolerate_post_rename_sync(Err("fsync denied".to_string()));
+        assert!(result.is_ok(), "rename already committed the new settings");
+        assert!(tolerate_post_rename_sync(Ok(())).is_ok());
     }
 
     #[test]

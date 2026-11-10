@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { ask } from "@tauri-apps/plugin-dialog";
 import {
   applyTheme,
   applySettingsToForm,
@@ -341,7 +342,7 @@ describe("openSettingsModal / closeSettingsModal", () => {
     overlay.hidden = true;
     openSettingsModal();
     expect(overlay.hidden).toBe(false);
-    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(trigger.hasAttribute("aria-expanded")).toBe(false);
   });
 
   it.each(["running", "operationPreparing", "incomingPathsApplying"] as const)(
@@ -375,10 +376,10 @@ describe("openSettingsModal / closeSettingsModal", () => {
     overlay.hidden = true;
     toggleSettingsModal();
     expect(overlay.hidden).toBe(false);
-    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(trigger.hasAttribute("aria-expanded")).toBe(false);
     toggleSettingsModal();
     expect(overlay.hidden).toBe(true);
-    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(trigger.hasAttribute("aria-expanded")).toBe(false);
   });
 
   it("hides settings overlay on close", () => {
@@ -387,10 +388,10 @@ describe("openSettingsModal / closeSettingsModal", () => {
     overlay.hidden = false;
     closeSettingsModal();
     expect(overlay.hidden).toBe(true);
-    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(trigger.hasAttribute("aria-expanded")).toBe(false);
   });
 
-  it("restores the live window-effects preview when settings are cancelled", () => {
+  it("restores the live window-effects preview when unsaved edits are discarded", async () => {
     state.currentSettings.basicWindowEffects = true;
     openSettingsModal();
     const basicFx = document.getElementById(
@@ -400,7 +401,12 @@ describe("openSettingsModal / closeSettingsModal", () => {
     basicFx.dispatchEvent(new Event("change"));
 
     expect(state.currentSettings.basicWindowEffects).toBe(false);
+    // Edits exist, so closing asks first; the user confirms the discard.
+    vi.mocked(ask).mockResolvedValueOnce(true);
     closeSettingsModal();
+    await vi.waitFor(() =>
+      expect(document.getElementById("settings-overlay")!.hidden).toBe(true),
+    );
 
     expect(state.currentSettings.basicWindowEffects).toBe(true);
   });

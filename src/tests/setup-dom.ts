@@ -85,6 +85,7 @@ addEl("div", "input-list");
 addEl("div", "log");
 addEl("div", "status");
 addEl("div", "progress");
+addEl("button", "update-ready-indicator").hidden = true;
 addEl("div", "version-label");
 addEl("div", "platform-label");
 
@@ -257,6 +258,7 @@ const basicFxRow = addEl("div", "setting-basic-window-effects");
 basicFxRow.hidden = true;
 addEl("div", "s-log-dir");
 addEl("button", "run-benchmark");
+addEl("button", "cancel-benchmark").hidden = true;
 addEl("div", "benchmark-result");
 addEl("div", "os-integration-help").setAttribute("aria-live", "polite");
 addEl("div", "os-platform-label");

@@ -2,6 +2,15 @@
   --radius: 6px;
   --radius-sm: 4px;
   --transition: 150ms ease;
+  /* Same value in both themes, so defined once here. */
+  --accent: #0078d4;
+  --accent-pressed: #005a9e;
+  --text-on-accent: #ffffff;
+  --heart: #e11d48;
+  --titlebar-close-hover: #e81123;
+  --titlebar-close-hover-fg: #ffffff;
+  --danger-hover: #dc2626;
+  --danger-pressed: #991b1b;
 }
 
 :root,
@@ -10,11 +19,9 @@
   --bg: #1e1e1e;
   --surface: #2d2d2d;
   --surface-alt: #252526;
-  --accent: #0078d4;
   --accent-hover: #268cdb;
   --accent-bg: rgba(0, 120, 212, 0.12);
   --accent-bg-strong: rgba(0, 120, 212, 0.2);
-  --accent-pressed: #005a9e;
   --accent-fg: #5eb5f7;
   --accent-fg-hover: #8acaff;
   --accent-fg-pressed: #3d9ee8;
@@ -27,16 +34,15 @@
   --warning-bg: rgba(251, 191, 36, 0.06);
   --text: #f5f5f5;
   --text-secondary: #9c9c9c;
-  --text-on-accent: #ffffff;
   --border: rgba(255, 255, 255, 0.08);
   --border-strong: rgba(255, 255, 255, 0.14);
   --border-hover: rgba(255, 255, 255, 0.2);
+  --control-border: rgba(255, 255, 255, 0.4);
+  --control-border-hover: rgba(255, 255, 255, 0.5);
   --danger: #b91c1c;
   --danger-fg: #f87171;
   --danger-bg: rgba(185, 28, 28, 0.12);
   --danger-border: rgba(248, 113, 113, 0.4);
-  --danger-hover: #dc2626;
-  --danger-pressed: #991b1b;
   --hover-overlay: rgba(255, 255, 255, 0.04);
   --scrollbar-thumb: rgba(255, 255, 255, 0.12);
   --scrollbar-thumb-hover: rgba(255, 255, 255, 0.22);
@@ -49,9 +55,6 @@
   --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%239c9c9c'/%3E%3C/svg%3E");
   --shortcut-chip-bg: rgba(0, 0, 0, 0.22);
   --shortcut-chip-border: rgba(255, 255, 255, 0.2);
-  --heart: #e11d48;
-  --titlebar-close-hover: #e81123;
-  --titlebar-close-hover-fg: #ffffff;
 }
 
 [data-theme="light"] {
@@ -59,11 +62,9 @@
   --bg: #f3f3f3;
   --surface: #ffffff;
   --surface-alt: #f9f9f9;
-  --accent: #0078d4;
   --accent-hover: #106ebe;
   --accent-bg: rgba(0, 120, 212, 0.06);
   --accent-bg-strong: rgba(0, 120, 212, 0.14);
-  --accent-pressed: #005a9e;
   --accent-fg: #0067b8;
   --accent-fg-hover: #005a9e;
   --accent-fg-pressed: #004578;
@@ -76,16 +77,15 @@
   --warning-bg: rgba(143, 85, 0, 0.06);
   --text: #1f1f1f;
   --text-secondary: #5c5c5c;
-  --text-on-accent: #ffffff;
   --border: rgba(0, 0, 0, 0.06);
   --border-strong: rgba(0, 0, 0, 0.12);
   --border-hover: rgba(0, 0, 0, 0.2);
+  --control-border: rgba(0, 0, 0, 0.46);
+  --control-border-hover: rgba(0, 0, 0, 0.6);
   --danger: #b5191d;
   --danger-fg: #b5191d;
   --danger-bg: rgba(181, 25, 29, 0.06);
   --danger-border: rgba(181, 25, 29, 0.35);
-  --danger-hover: #dc2626;
-  --danger-pressed: #991b1b;
   --hover-overlay: rgba(0, 0, 0, 0.03);
   --scrollbar-thumb: rgba(0, 0, 0, 0.15);
   --scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);
@@ -98,9 +98,6 @@
   --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%235c5c5c'/%3E%3C/svg%3E");
   --shortcut-chip-bg: rgba(0, 0, 0, 0.28);
   --shortcut-chip-border: rgba(255, 255, 255, 0.35);
-  --heart: #e11d48;
-  --titlebar-close-hover: #e81123;
-  --titlebar-close-hover-fg: #ffffff;
 }
 
 @media (prefers-color-scheme: light) {
@@ -109,11 +106,9 @@
     --bg: #f3f3f3;
     --surface: #ffffff;
     --surface-alt: #f9f9f9;
-    --accent: #0078d4;
     --accent-hover: #106ebe;
     --accent-bg: rgba(0, 120, 212, 0.06);
     --accent-bg-strong: rgba(0, 120, 212, 0.14);
-    --accent-pressed: #005a9e;
     --accent-fg: #0067b8;
     --accent-fg-hover: #005a9e;
     --accent-fg-pressed: #004578;
@@ -126,16 +121,15 @@
     --warning-bg: rgba(143, 85, 0, 0.06);
     --text: #1f1f1f;
     --text-secondary: #5c5c5c;
-    --text-on-accent: #ffffff;
     --border: rgba(0, 0, 0, 0.06);
     --border-strong: rgba(0, 0, 0, 0.12);
     --border-hover: rgba(0, 0, 0, 0.2);
+    --control-border: rgba(0, 0, 0, 0.46);
+    --control-border-hover: rgba(0, 0, 0, 0.6);
     --danger: #b5191d;
     --danger-fg: #b5191d;
     --danger-bg: rgba(181, 25, 29, 0.06);
     --danger-border: rgba(181, 25, 29, 0.35);
-    --danger-hover: #dc2626;
-    --danger-pressed: #991b1b;
     --hover-overlay: rgba(0, 0, 0, 0.03);
     --scrollbar-thumb: rgba(0, 0, 0, 0.15);
     --scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);
@@ -148,8 +142,5 @@
     --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%235c5c5c'/%3E%3C/svg%3E");
     --shortcut-chip-bg: rgba(0, 0, 0, 0.28);
     --shortcut-chip-border: rgba(255, 255, 255, 0.35);
-    --heart: #e11d48;
-    --titlebar-close-hover: #e81123;
-    --titlebar-close-hover-fg: #ffffff;
   }
 }

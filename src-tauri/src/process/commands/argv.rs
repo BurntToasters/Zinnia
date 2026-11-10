@@ -4,6 +4,28 @@ use std::io::Write;
 
 pub(crate) struct ManagedListFile(pub(crate) std::path::PathBuf);
 
+/// Index of the first `--`, or the argument count when there is none.
+fn switch_region_end(args: &[String]) -> usize {
+    args.iter()
+        .position(|arg| arg == "--")
+        .unwrap_or(args.len())
+}
+
+/// Switch-shaped arguments: everything before the first `--`. Arguments after
+/// it are literal path or member names and are never inspected as switches.
+fn switch_region(args: &[String]) -> &[String] {
+    &args[..switch_region_end(args)]
+}
+
+/// Keep only the switch-region arguments that `keep` accepts. The tail after
+/// `--` is preserved unchanged, so a member named like a switch survives.
+fn retain_switch_region(args: &mut Vec<String>, mut keep: impl FnMut(&str) -> bool) {
+    let end = switch_region_end(args);
+    let tail = args.split_off(end);
+    args.retain(|arg| keep(arg.as_str()));
+    args.extend(tail);
+}
+
 impl Drop for ManagedListFile {
     fn drop(&mut self) {
         if let Err(error) = std::fs::remove_file(&self.0) {
@@ -100,9 +122,12 @@ pub(super) fn prepare_managed_listfile(
         .ok_or_else(|| "Temporary 7-Zip list path is not valid UTF-8.".to_string())?;
     let neutralize_leading_dash = matches!(args.first().map(String::as_str), Some("a" | "u"));
     let selected = rewrite_args_for_managed_listfile(args, format!("@{listfile_str}"))?;
-    if selected.iter().any(|path| path.contains(['\r', '\n'])) {
+    if selected
+        .iter()
+        .any(|path| path.contains(['\r', '\n', '\0']))
+    {
         return Err(
-            "A selected path contains a line break and cannot be placed in a managed 7-Zip list file."
+            "A selected path contains a line break or NUL character and cannot be placed in a managed 7-Zip list file."
                 .to_string(),
         );
     }
@@ -123,11 +148,15 @@ pub(super) fn prepare_managed_listfile(
         // match the member `-name`, so they are written as-is. A leading `@`
         // inside a listfile is a literal name (only command-line `@file`
         // opens a second listfile), so preserve it in both cases.
-        let line = if neutralize_leading_dash && path.starts_with('-') {
+        let name = if neutralize_leading_dash && path.starts_with('-') {
             format!("./{path}")
         } else {
             path.clone()
         };
+        // 7-Zip trims spaces around each list line and strips one pair of
+        // surrounding quotes. Wrapping every line keeps leading and trailing
+        // spaces and any quotes the name itself contains.
+        let line = format!("\"{name}\"");
         file.write_all(line.as_bytes())
             .and_then(|_| file.write_all(b"\r\n"))
             .map_err(|error| format!("Could not write the 7-Zip list file: {error}"))?;
@@ -186,40 +215,37 @@ pub(crate) fn harden_7z_args(args: &mut Vec<String>) {
     let command = args.first().cloned();
     let command = command.as_deref();
     if matches!(command, Some("a" | "u" | "x" | "l" | "t"))
-        && !args.iter().any(|arg| arg.eq_ignore_ascii_case("-spd"))
+        && !switch_region(args)
+            .iter()
+            .any(|arg| arg.eq_ignore_ascii_case("-spd"))
     {
         args.insert(1, "-spd".to_string());
     }
     #[cfg(target_os = "windows")]
     if matches!(command, Some("a" | "u" | "x" | "l" | "t")) {
-        args.retain(|arg| !arg.to_ascii_lowercase().starts_with("-scc"));
-        let insert_at = args
-            .iter()
-            .position(|arg| arg == "--")
-            .unwrap_or(args.len());
+        retain_switch_region(args, |arg| !arg.to_ascii_lowercase().starts_with("-scc"));
+        let insert_at = switch_region_end(args);
         args.insert(insert_at, "-sccUTF-8".to_string());
     }
     #[cfg(not(target_os = "windows"))]
-    if command == Some("x") && !args.iter().any(|arg| arg.eq_ignore_ascii_case("-spod")) {
+    if command == Some("x")
+        && !switch_region(args)
+            .iter()
+            .any(|arg| arg.eq_ignore_ascii_case("-spod"))
+    {
         args.insert(1, "-spod".to_string());
     }
     if crate::validation::is_password_protected_zip_create(args) {
-        args.retain(|arg| !arg.to_ascii_lowercase().starts_with("-mem="));
-        let insert_at = args
-            .iter()
-            .position(|arg| arg == "--")
-            .unwrap_or(args.len());
+        retain_switch_region(args, |arg| !arg.to_ascii_lowercase().starts_with("-mem="));
+        let insert_at = switch_region_end(args);
         args.insert(insert_at, "-mem=AES256".to_string());
     }
     if crate::validation::is_zip_create_or_update(args) {
-        args.retain(|arg| {
+        retain_switch_region(args, |arg| {
             let lower = arg.to_ascii_lowercase();
             !lower.starts_with("-mcu") && !lower.starts_with("-mcl")
         });
-        let insert_at = args
-            .iter()
-            .position(|arg| arg == "--")
-            .unwrap_or(args.len());
+        let insert_at = switch_region_end(args);
         args.insert(insert_at, "-mcu=on".to_string());
     }
 }
@@ -235,10 +261,16 @@ pub(crate) fn harden_7z_args(args: &mut Vec<String>) {
 /// is the required containment gate before publish. Never raise to `-snld20`.
 pub(crate) fn apply_backend_link_switches(args: &mut Vec<String>) {
     if matches!(args.first().map(String::as_str), Some("a" | "u")) {
-        if !args.iter().any(|arg| arg.eq_ignore_ascii_case("-snl")) {
+        if !switch_region(args)
+            .iter()
+            .any(|arg| arg.eq_ignore_ascii_case("-snl"))
+        {
             args.insert(1, "-snl".to_string());
         }
-        if !args.iter().any(|arg| arg.eq_ignore_ascii_case("-snh")) {
+        if !switch_region(args)
+            .iter()
+            .any(|arg| arg.eq_ignore_ascii_case("-snh"))
+        {
             args.insert(1, "-snh".to_string());
         }
     }
@@ -246,7 +278,9 @@ pub(crate) fn apply_backend_link_switches(args: &mut Vec<String>) {
     // extracted files. macOS/Linux 7-Zip builds reject -snz.
     #[cfg(target_os = "windows")]
     if args.first().map(String::as_str) == Some("x")
-        && !args.iter().any(|arg| arg.eq_ignore_ascii_case("-snz"))
+        && !switch_region(args)
+            .iter()
+            .any(|arg| arg.eq_ignore_ascii_case("-snz"))
     {
         args.insert(1, "-snz".to_string());
     }
@@ -255,11 +289,147 @@ pub(crate) fn apply_backend_link_switches(args: &mut Vec<String>) {
     // depth so archive-supplied streams cannot replace the `-snz` marker.
     #[cfg(target_os = "windows")]
     if args.first().map(String::as_str) == Some("x") {
-        args.retain(|arg| !arg.to_ascii_lowercase().starts_with("-sns"));
+        retain_switch_region(args, |arg| !arg.to_ascii_lowercase().starts_with("-sns"));
         args.insert(1, "-sns-".to_string());
     }
     if args.first().map(String::as_str) == Some("x") {
-        args.retain(|arg| !arg.to_ascii_lowercase().starts_with("-snld"));
+        retain_switch_region(args, |arg| !arg.to_ascii_lowercase().starts_with("-snld"));
         args.insert(1, "-snld10".to_string());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn owned(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| value.to_string()).collect()
+    }
+
+    /// Lines of the managed list file that `prepare_managed_listfile` writes.
+    fn written_listfile_lines(args: &mut Vec<String>) -> Result<Vec<String>, String> {
+        let Some(listfile) = prepare_managed_listfile(args)? else {
+            return Ok(Vec::new());
+        };
+        let body = std::fs::read_to_string(&listfile.0).map_err(|error| error.to_string())?;
+        Ok(body
+            .split("\r\n")
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect())
+    }
+
+    #[test]
+    fn managed_listfile_wraps_every_extract_member_in_one_quote_pair() {
+        let mut args = owned(&[
+            "x",
+            "-o/tmp/out",
+            "-aou",
+            "-spd",
+            "--",
+            "/tmp/archive.7z",
+            "report ",
+            " lead.txt",
+            "\"quoted\"",
+            "-web/app.js",
+            "@at.txt",
+        ]);
+        let lines = written_listfile_lines(&mut args).expect("extract list file");
+        assert_eq!(
+            lines,
+            [
+                "\"report \"",
+                "\" lead.txt\"",
+                "\"\"quoted\"\"",
+                "\"-web/app.js\"",
+                "\"@at.txt\"",
+            ]
+        );
+    }
+
+    #[test]
+    fn managed_listfile_wraps_compress_inputs_after_the_dash_prefix() {
+        let mut args = owned(&[
+            "a",
+            "-t7z",
+            "/tmp/out.7z",
+            "--",
+            "-dash.txt",
+            "plain ",
+            "\"q\"",
+        ]);
+        let lines = written_listfile_lines(&mut args).expect("compress list file");
+        assert_eq!(lines, ["\"./-dash.txt\"", "\"plain \"", "\"\"q\"\""]);
+    }
+
+    #[test]
+    fn managed_listfile_rejects_line_breaks_and_nul_in_names() {
+        for bad in ["bad\nname", "bad\rname", "bad\0name"] {
+            let mut args = owned(&["x", "-o/tmp/out", "-aou", "--", "/tmp/archive.7z"]);
+            args.push(bad.to_string());
+            assert!(
+                prepare_managed_listfile(&mut args).is_err(),
+                "name {bad:?} must not reach a list file"
+            );
+        }
+    }
+
+    #[test]
+    fn backend_link_switches_leave_members_named_like_switches_alone() {
+        let mut create = owned(&["a", "-t7z", "out.7z", "--", "-snl", "-snh"]);
+        apply_backend_link_switches(&mut create);
+        let separator = create.iter().position(|arg| arg == "--").unwrap();
+        assert!(create[..separator].iter().any(|arg| arg == "-snl"));
+        assert!(create[..separator].iter().any(|arg| arg == "-snh"));
+        assert_eq!(&create[separator + 1..], ["-snl", "-snh"]);
+
+        let mut extract = owned(&[
+            "x",
+            "-o/tmp/out",
+            "-aou",
+            "--",
+            "/tmp/archive.7z",
+            "-snldfoo",
+            "-snsx",
+        ]);
+        apply_backend_link_switches(&mut extract);
+        assert_eq!(extract[1], "-snld10");
+        assert_eq!(&extract[extract.len() - 2..], ["-snldfoo", "-snsx"]);
+    }
+
+    #[test]
+    fn harden_helpers_leave_members_named_like_switches_alone() {
+        let mut extract = owned(&[
+            "x",
+            "-o/tmp/out",
+            "-aou",
+            "--",
+            "/tmp/archive.7z",
+            "-spd",
+            "-mcu=on",
+        ]);
+        harden_7z_args(&mut extract);
+        let separator = extract.iter().position(|arg| arg == "--").unwrap();
+        assert!(extract[..separator].iter().any(|arg| arg == "-spd"));
+        assert_eq!(
+            &extract[separator + 1..],
+            ["/tmp/archive.7z", "-spd", "-mcu=on"]
+        );
+    }
+
+    #[test]
+    fn zip_policy_ignores_a_member_named_like_the_zip_type_switch() {
+        let args = owned(&["a", "-t7z", "out.7z", "--", "-tzip"]);
+        assert!(!crate::validation::is_zip_create_or_update(&args));
+    }
+
+    #[test]
+    fn listfile_rewrite_neutralizes_a_switch_shaped_archive_name() {
+        let mut args = owned(&["x", "-o/tmp/out", "-aou", "--", "-archive.7z", "member"]);
+        let selected = rewrite_args_for_managed_listfile(&mut args, "@/tmp/items.txt".to_string())
+            .expect("rewrite");
+        assert_eq!(selected, ["member"]);
+        assert!(args.contains(&"./-archive.7z".to_string()));
+        assert_eq!(args.last().map(String::as_str), Some("@/tmp/items.txt"));
     }
 }

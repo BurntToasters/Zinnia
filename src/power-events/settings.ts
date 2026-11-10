@@ -12,6 +12,8 @@ import {
   toggleSettingsModal,
   populateSettingsModal,
   useSessionCompressionValues,
+  syncSettingsMethodForSelectedFormat,
+  requestCloseSettingsModal,
 } from "../settings";
 import {
   log,
@@ -66,6 +68,9 @@ export function wireSettingsEvents(): void {
   $("settings-overlay").addEventListener("click", (e) => {
     if (e.target === e.currentTarget) closeSettingsModal();
   });
+  $("s-format").addEventListener("change", () => {
+    syncSettingsMethodForSelectedFormat();
+  });
   $("save-settings").addEventListener("click", async () => {
     const saveButton = $<HTMLButtonElement>("save-settings");
     if (saveButton.disabled) return;
@@ -95,7 +100,7 @@ export function wireSettingsEvents(): void {
     }
     const finishSettingsSaveSuccess = () => {
       log("Settings saved successfully.");
-      closeSettingsModal({ preserveLivePreview: true });
+      closeSettingsModal({ preserveLivePreview: true, saved: true });
     };
 
     const rollbackSettingsSave = (err: unknown) => {
@@ -146,7 +151,7 @@ export function wireSettingsEvents(): void {
     }
   });
   $("rerun-setup-wizard").addEventListener("click", async () => {
-    closeSettingsModal();
+    if (!(await requestCloseSettingsModal())) return;
     try {
       await runSetupWizardFlow({
         skipUpdates: document.body.classList.contains("platform-flatpak"),
@@ -162,16 +167,18 @@ export function wireSettingsEvents(): void {
   });
 
   $("reset-settings").addEventListener("click", async () => {
-    const confirmed = await confirmWithE2eQueue(() =>
-      ask(
-        "Are you sure you want to reset all settings to default and restart Zinnia?",
-        {
-          title: "Reset Settings",
-          kind: "warning",
-          okLabel: "Reset & Restart",
-          cancelLabel: "Cancel",
-        },
-      ),
+    const confirmed = await confirmWithE2eQueue(
+      () =>
+        ask(
+          "Are you sure you want to reset all settings to default and restart Zinnia? This also deletes all logs, recent archives, and custom presets.",
+          {
+            title: "Reset Settings",
+            kind: "warning",
+            okLabel: "Reset & Restart",
+            cancelLabel: "Cancel",
+          },
+        ),
+      "Reset Settings",
     );
     if (!confirmed) return;
 

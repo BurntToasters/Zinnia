@@ -93,6 +93,35 @@
   gap: 8px;
 }
 
+.basic-progress__detail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  font-size: var(--basic-label);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.basic-progress__percent {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.basic-progress__percent:empty,
+.basic-progress__eta:empty,
+.basic-progress__file:empty {
+  display: none;
+}
+
+.basic-progress__file {
+  flex: 1 1 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @keyframes basic-completion-slide-up {
   from {
     opacity: 0;
@@ -173,6 +202,10 @@
     var(--basic-glass-bg)
   ) !important;
   border-left: 3px solid var(--success) !important;
+}
+
+.basic-completion--cancelled {
+  border-left: 3px solid var(--text-secondary) !important;
 }
 
 .basic-completion--error {

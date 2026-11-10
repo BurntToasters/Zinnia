@@ -33,6 +33,7 @@ env:
 jobs:
   evaluate-release-policy:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Start source-bound release-policy check
         id: policy_check

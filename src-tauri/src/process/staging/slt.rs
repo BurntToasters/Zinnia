@@ -10,6 +10,34 @@ use crate::process::commands::{
 };
 use crate::process::{lock_process, ArchiveManifestSummary, RunningProcess};
 
+/// Stdout/stderr cap for backend-owned preflight listings and tests. At about
+/// 325 bytes per ZIP `-slt` record this covers roughly 800,000 entries.
+pub(crate) const PREFLIGHT_LIST_OUTPUT_LIMIT: usize = 256 * 1024 * 1024;
+
+pub(crate) const MEMBER_LIST_LIMIT_MESSAGE: &str = "This archive lists more entries than Zinnia can check safely (listing over 256 MiB, roughly 800,000 entries). Nothing was extracted.";
+
+const PREFLIGHT_BASE_TIMEOUT_SECS: u64 = 120;
+const PREFLIGHT_BYTES_PER_EXTRA_SECOND: u64 = 16 * 1024 * 1024;
+
+/// 120 seconds plus one second per 16 MiB of archive bytes, rounded up.
+pub(crate) fn preflight_timeout_for_archive_bytes(bytes: u64) -> std::time::Duration {
+    let extra_secs = bytes.div_ceil(PREFLIGHT_BYTES_PER_EXTRA_SECOND);
+    std::time::Duration::from_secs(PREFLIGHT_BASE_TIMEOUT_SECS.saturating_add(extra_secs))
+}
+
+pub(crate) fn preflight_timeout_for_archive(archive: &std::path::Path) -> std::time::Duration {
+    preflight_timeout_for_archive_bytes(
+        crate::process::archive_snapshot::archive_input_family_bytes(archive),
+    )
+}
+
+pub(crate) fn preflight_timeout_error(label: &str, timeout: std::time::Duration) -> String {
+    format!(
+        "{label} timed out after {} seconds. Copy the archive to a faster disk and try again.",
+        timeout.as_secs()
+    )
+}
+
 /// Build `7z l -slt -ba` args from an extract command, copying switches that
 /// affect whether/how the archive can be opened.
 pub(crate) fn extract_member_list_args(args: &[String]) -> Result<Vec<String>, String> {
@@ -311,14 +339,25 @@ pub(crate) struct PreflightOutput {
 /// Convert a collected child result only when both pipe streams and process
 /// termination are complete. Listing callers still classify accepted exit-1
 /// metadata warnings after this boundary.
+#[cfg(test)]
 pub(crate) fn checked_preflight_output(
     collected: CollectedOutput,
     label: &str,
 ) -> Result<PreflightOutput, String> {
+    checked_preflight_output_with_limit(collected, label, None)
+}
+
+/// As `checked_preflight_output`, with a caller-specific message for truncation.
+pub(crate) fn checked_preflight_output_with_limit(
+    collected: CollectedOutput,
+    label: &str,
+    limit_message: Option<&str>,
+) -> Result<PreflightOutput, String> {
     if collected.stdout_truncated || collected.stderr_truncated {
-        return Err(format!(
-            "{label} exceeded its output limit; the operation was cancelled."
-        ));
+        return Err(match limit_message {
+            Some(message) => message.to_string(),
+            None => format!("{label} exceeded its output limit; the operation was cancelled."),
+        });
     }
     if !collected.output_is_complete() {
         if let Some(error) = collected.stream_error.as_deref() {
@@ -357,6 +396,7 @@ pub(crate) async fn run_registered_preflight_7z(
     args: Vec<String>,
     timeout: std::time::Duration,
     label: &str,
+    limit_message: Option<&str>,
     #[cfg_attr(not(feature = "e2e"), allow(unused_variables))] pause_point: &str,
 ) -> Result<PreflightOutput, String> {
     let (mut rx, child, pending_password) =
@@ -398,20 +438,16 @@ pub(crate) async fn run_registered_preflight_7z(
             return Err("Operation cancelled.".to_string());
         }
     }
-    const LIST_OUTPUT_LIMIT: usize = 32 * 1024 * 1024;
     let collected = match tokio::time::timeout(
         timeout,
-        collect_command_output(&mut rx, LIST_OUTPUT_LIMIT, |_| {}),
+        collect_command_output(&mut rx, PREFLIGHT_LIST_OUTPUT_LIMIT, |_| {}),
     )
     .await
     {
         Ok(collected) => collected,
         Err(_) => {
             terminate_registered_child_async(app, &child).await?;
-            return Err(format!(
-                "{label} timed out after {} seconds.",
-                timeout.as_secs()
-            ));
+            return Err(preflight_timeout_error(label, timeout));
         }
     };
     if collected.stream_error.is_some() || collected.exit.is_none() {
@@ -424,7 +460,7 @@ pub(crate) async fn run_registered_preflight_7z(
             return Err("Operation cancelled.".to_string());
         }
     }
-    checked_preflight_output(collected, label)
+    checked_preflight_output_with_limit(collected, label, limit_message)
 }
 
 /// Sanitized 7-Zip failure detail (stderr first, then stdout).
@@ -464,8 +500,9 @@ pub(crate) async fn assert_extract_archive_members_safe_with_summary(
         app,
         state,
         list_args,
-        std::time::Duration::from_secs(120),
+        preflight_timeout_for_archive(&archive_path),
         "Archive member-safety preflight",
+        Some(MEMBER_LIST_LIMIT_MESSAGE),
         "member-preflight-spawned",
     )
     .await?;
@@ -648,8 +685,9 @@ async fn run_update_password_check(
         app,
         state,
         test_args,
-        std::time::Duration::from_secs(120),
+        preflight_timeout_for_archive(std::path::Path::new(archive)),
         "Archive password check",
+        None,
         "update-password-check-spawned",
     )
     .await
@@ -702,8 +740,9 @@ pub(crate) async fn assert_update_encryption_policy(
         app,
         state,
         list_args,
-        std::time::Duration::from_secs(120),
+        preflight_timeout_for_archive(std::path::Path::new(&archive)),
         "Archive encryption preflight",
+        None,
         "update-encryption-preflight-spawned",
     )
     .await?;
@@ -767,4 +806,80 @@ pub(crate) async fn assert_update_encryption_policy(
     } else {
         format!("Could not verify the archive password before updating: {detail}")
     })
+}
+
+#[cfg(test)]
+mod preflight_budget_tests {
+    use super::*;
+    use std::time::Duration;
+
+    const MIB: u64 = 1024 * 1024;
+
+    #[test]
+    fn timeout_is_120_seconds_plus_one_per_16_mib_rounded_up() {
+        assert_eq!(
+            preflight_timeout_for_archive_bytes(0),
+            Duration::from_secs(120)
+        );
+        assert_eq!(
+            preflight_timeout_for_archive_bytes(1),
+            Duration::from_secs(121)
+        );
+        assert_eq!(
+            preflight_timeout_for_archive_bytes(16 * MIB),
+            Duration::from_secs(121)
+        );
+        assert_eq!(
+            preflight_timeout_for_archive_bytes(16 * MIB + 1),
+            Duration::from_secs(122)
+        );
+        assert_eq!(
+            preflight_timeout_for_archive_bytes(1024 * MIB),
+            Duration::from_secs(120 + 64)
+        );
+        assert_eq!(
+            preflight_timeout_for_archive_bytes(50 * 1024 * MIB),
+            Duration::from_secs(120 + 3200)
+        );
+    }
+
+    #[test]
+    fn timeout_saturates_for_extreme_archive_sizes() {
+        assert!(preflight_timeout_for_archive_bytes(u64::MAX) >= Duration::from_secs(120));
+    }
+
+    #[test]
+    fn timeout_message_states_the_seconds_and_suggests_a_faster_disk() {
+        let message =
+            preflight_timeout_error("Archive member-safety preflight", Duration::from_secs(184));
+        assert!(message.contains("184 seconds"), "{message}");
+        assert!(message.contains("faster disk"), "{message}");
+    }
+
+    #[test]
+    fn listing_buffer_is_256_mib_and_covers_about_800k_zip_entries() {
+        assert_eq!(PREFLIGHT_LIST_OUTPUT_LIMIT, 256 * 1024 * 1024);
+        const { assert!(PREFLIGHT_LIST_OUTPUT_LIMIT / 325 >= 800_000) };
+    }
+
+    #[test]
+    fn truncated_member_listing_reports_the_entry_limit_in_plain_words() {
+        let collected = CollectedOutput {
+            stdout: String::new(),
+            stderr: String::new(),
+            stdout_truncated: true,
+            stderr_truncated: false,
+            exit: None,
+            stream_error: None,
+        };
+        let error = checked_preflight_output_with_limit(
+            collected,
+            "Archive member-safety preflight",
+            Some(MEMBER_LIST_LIMIT_MESSAGE),
+        )
+        .expect_err("truncated listing must fail");
+        assert_eq!(error, MEMBER_LIST_LIMIT_MESSAGE);
+        assert!(error.contains("256 MiB"), "{error}");
+        assert!(error.contains("Nothing was extracted."), "{error}");
+    }
 }

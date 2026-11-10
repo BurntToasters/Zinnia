@@ -24,7 +24,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { createServer } from "node:http";
-import { URL, pathToFileURL } from "node:url";
+import { URL } from "node:url";
 import { promisify } from "node:util";
 import { isDirectExecutionOf } from "./direct-execution.mjs";
 

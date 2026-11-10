@@ -209,7 +209,7 @@ body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
 
 #app[data-workspace-mode="basic"] .modal--settings .settings-section__title {
   margin: 0 0 10px;
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   font-weight: 650;
   letter-spacing: 0.07em;
   text-transform: uppercase;

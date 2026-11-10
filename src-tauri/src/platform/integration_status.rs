@@ -304,7 +304,7 @@ fn win11_modern_menu_status_for(platform: &str, packaged: bool) -> Win11ModernMe
             available: true,
             known: true,
             registered: false,
-            help: "Install a signed NSIS build to register the Win11 modern context menu (sparse identity package + shell DLL). Classic Explorer verbs still work without it.".to_string(),
+            help: "Install a signed installer build to register the Win11 modern context menu (Windows integration package + shell DLL). Classic Explorer verbs still work without it.".to_string(),
         };
     }
 
@@ -318,7 +318,7 @@ fn win11_modern_menu_status_for(platform: &str, packaged: bool) -> Win11ModernMe
             available: true,
             known: true,
             registered: true,
-            help: "Win11 modern menu package is registered (sparse identity only; Zinnia remains a normal NSIS install). Confirm Extract/Compress launch from the primary menu. Classic HKCU Extract/Compress verbs are removed on success so they do not stack under Show more options; they return only if package registration fails.".to_string(),
+            help: "Win11 modern menu package is registered (Windows integration package only; Zinnia remains a normal installed app).Confirm Extract/Compress launch from the primary menu. Classic HKCU Extract/Compress verbs are removed on success so they do not stack under Show more options; they return only if package registration fails.".to_string(),
         },
         Some(false) => Win11ModernMenuInfo {
             available: true,

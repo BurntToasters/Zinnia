@@ -6,6 +6,7 @@ import {
   setNativeWebviewContextMenuAllowed,
 } from "./webview-context-menu";
 import { parseSettingsRaw } from "./settings-model";
+import { appendCappedLogText } from "./log-tail";
 
 const MAX_LOG_LINES = 1000;
 
@@ -15,18 +16,9 @@ function $(id: string): HTMLElement {
   return el;
 }
 
-function trimLog(logEl: HTMLElement): void {
-  const text = logEl.textContent || "";
-  const lines = text.split("\n");
-  if (lines.length > MAX_LOG_LINES) {
-    logEl.textContent = lines.slice(lines.length - MAX_LOG_LINES).join("\n");
-  }
-}
-
 function appendLine(line: string): void {
   const logEl = $("dbg-log");
-  logEl.textContent += `${line}\n`;
-  trimLog(logEl);
+  appendCappedLogText(logEl, `${line}\n`, MAX_LOG_LINES);
   logEl.scrollTop = logEl.scrollHeight;
 }
 

@@ -331,7 +331,7 @@ export function renderOsIntegrationStatus(status: OsIntegrationStatus): void {
     setText(
       "os-win11-menu-help",
       status.win11ModernMenuHelp ??
-        "Sparse identity package for the primary right-click menu (Zinnia stays a normal NSIS install).",
+        "Windows integration package for the primary right-click menu (Zinnia stays a normal installed app).",
     );
   }
 
@@ -348,7 +348,7 @@ export function renderOsIntegrationStatus(status: OsIntegrationStatus): void {
       help.textContent =
         status.win11ModernMenuHelp ??
         status.defaultArchiverHelp ??
-        "Zinnia installs as a normal NSIS app. Win11 modern menu uses a sparse identity package; classic Extract/Compress registry verbs are only a fallback when that package is unavailable. Open with Zinnia stays on the file-association ProgId.";
+        "Zinnia installs as a normal app. The Windows 11 modern menu uses a Windows integration package; classic Extract/Compress menu entries are only a fallback when that package is unavailable. Open with Zinnia uses file type registration.";
     } else if (status.platform === "linux") {
       help.textContent =
         status.defaultArchiverHelp ??

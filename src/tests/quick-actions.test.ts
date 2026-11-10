@@ -246,7 +246,7 @@ describe("executeQuickAction", () => {
 });
 
 describe("quick action wiring", () => {
-  it("disables repeat buttons when no replay target exists in active mode", () => {
+  it("disables repeat buttons when no replay target exists in any mode", () => {
     const app = document.getElementById("app") as HTMLElement;
     app.dataset.mode = "add";
     state.lastQuickActionByMode = {};
@@ -260,7 +260,22 @@ describe("quick action wiring", () => {
     expect(
       (document.getElementById("quick-extract-repeat") as HTMLButtonElement)
         .disabled,
+    ).toBe(true);
+  });
+
+  it("enables only the repeat button whose mode has a recorded action", () => {
+    state.lastQuickActionByMode = { extract: "extract-now" };
+
+    refreshQuickActionRepeatState();
+
+    expect(
+      (document.getElementById("quick-extract-repeat") as HTMLButtonElement)
+        .disabled,
     ).toBe(false);
+    expect(
+      (document.getElementById("quick-add-repeat") as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
   });
 
   it("wires click handlers and ignores clicks while running", async () => {

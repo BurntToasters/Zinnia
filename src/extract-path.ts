@@ -63,6 +63,7 @@ function joinPath(parent: string, name: string, separator: "/" | "\\"): string {
   return `${parent}${separator}${name}`;
 }
 
+/** File name without a known archive suffix, or "" when there is none. */
 function stripKnownArchiveSuffix(fileName: string): string {
   const lower = fileName.toLowerCase();
   for (const suffix of KNOWN_ARCHIVE_SUFFIXES) {
@@ -71,6 +72,10 @@ function stripKnownArchiveSuffix(fileName: string): string {
     }
   }
   return "";
+}
+
+export function archiveExtensionForFormat(format: string): string {
+  return format === "gzip" ? "gz" : format === "bzip2" ? "bz2" : format;
 }
 
 // Win32 device names, matched on the dot-stem, case-insensitively, with the
@@ -122,9 +127,33 @@ function sanitizeExtractFolderName(folder: string): string {
   return folder;
 }
 
+/**
+ * Base name of a split volume (`a.7z.001`, `a.zip.001`, `a.part1.rar`,
+ * `a.z01`), or null when the name is not a volume. A bare numeric suffix only
+ * counts when the base already ends in a known archive extension, so a name
+ * such as `report.2024` is left alone.
+ */
+function splitVolumeBaseName(archiveName: string): string | null {
+  const partMatch = archiveName.match(/^(.+)\.part0*\d+\.rar$/i);
+  if (partMatch) return partMatch[1];
+  const zipSplitMatch = archiveName.match(/^(.+)\.z\d{2,}$/i);
+  if (zipSplitMatch) return zipSplitMatch[1];
+  const numericMatch = archiveName.match(/^(.+)\.\d{3,}$/);
+  if (numericMatch && stripKnownArchiveSuffix(numericMatch[1])) {
+    return numericMatch[1];
+  }
+  return null;
+}
+
 export function deriveExtractFolderName(archiveName: string): string {
   const cleanedName = archiveName;
   if (!cleanedName) return "";
+
+  const volumeBase = splitVolumeBaseName(cleanedName);
+  if (volumeBase) {
+    const volumeStem = stripKnownArchiveSuffix(volumeBase) || volumeBase;
+    return sanitizeExtractFolderName(volumeStem);
+  }
 
   const stripped = stripKnownArchiveSuffix(cleanedName);
   const folder = stripped || `${cleanedName}_extracted`;
@@ -199,32 +228,51 @@ export function fallbackCompressParent(sourcePath: string): string | null {
   return null;
 }
 
+function normalizeInputPath(raw: string): string {
+  if (!raw) return "";
+  if (raw === "/" || raw === "\\") return raw;
+  if (/^[A-Za-z]:[\\/]*$/.test(raw)) return `${raw.slice(0, 2)}\\`;
+  return raw.replace(/[/\\]+$/, "");
+}
+
+/**
+ * Folder name shared by every input, or "" when the inputs come from different
+ * folders or the shared folder has no name (a drive or filesystem root).
+ */
+function sharedParentFolderName(inputs: string[]): string {
+  if (inputs.length < 2) return "";
+  const parents = inputs.map(
+    (raw) => splitPathParts(normalizeInputPath(raw)).parent,
+  );
+  const [first] = parents;
+  if (!first || parents.some((parent) => parent !== first)) return "";
+  return splitPathParts(first).name;
+}
+
 /**
  * Derives the default output archive path from the first input and the chosen
  * format.  For files the full filename is kept as the stem (so `file.exe`
  * becomes `file.exe.7z`).  For folders the folder name is used.  A trailing
  * separator is stripped so both `/folder` and `/folder/` work correctly.
  *
- * When `customName` is provided it replaces the auto-derived stem.
- * Protected parents (Start Menu, Program Files, …) fall back to the user's
- * Desktop (or home) so staging never lands under a relative CWD / install dir.
+ * When `customName` is provided it replaces the auto-derived stem. Several
+ * inputs in one folder are named after that folder. Protected parents (Start
+ * Menu, Program Files, …) fall back to the user's Desktop (or home) so staging
+ * never lands under a relative CWD / install dir.
  */
 export function deriveOutputArchivePath(
   inputs: string[],
   format: string,
   customName?: string,
 ): string | null {
-  const firstRaw = inputs[0] ?? "";
-  const first = (() => {
-    if (!firstRaw) return "";
-    if (firstRaw === "/" || firstRaw === "\\") return firstRaw;
-    if (/^[A-Za-z]:[\\/]*$/.test(firstRaw)) return `${firstRaw.slice(0, 2)}\\`;
-    return firstRaw.replace(/[/\\]+$/, "");
-  })();
+  const first = normalizeInputPath(inputs[0] ?? "");
   if (!first) return null;
   const { parent, name, separator } = splitPathParts(first);
   if (!name) return null;
-  const archiveStem = customName && customName.length > 0 ? customName : name;
+  const archiveStem =
+    customName && customName.length > 0
+      ? customName
+      : sharedParentFolderName(inputs) || name;
   if (!archiveStem) return null;
   const extension = archiveExtensionForFormat(format);
   const fileName = `${archiveStem}.${extension}`;
@@ -240,8 +288,100 @@ export function deriveOutputArchivePath(
   return fileName;
 }
 
-export function archiveExtensionForFormat(format: string): string {
-  return format === "gzip" ? "gz" : format === "bzip2" ? "bz2" : format;
+/** Typed names are a file name only; folders come from the output path. */
+export function archiveNameHasSeparator(typed: string): boolean {
+  return /[\\/]/.test(typed);
+}
+
+export const ARCHIVE_NAME_SEPARATOR_MESSAGE =
+  "Archive names cannot contain / or \\. Use Browse to choose a folder.";
+
+/**
+ * Typed archive name without the format's own extension, so `photos.7z` with
+ * format 7z becomes `photos`. Returns "" when nothing is left.
+ */
+export function normalizeTypedArchiveStem(
+  typed: string,
+  format: string,
+): string {
+  const trimmed = typed.trim();
+  const suffix = `.${archiveExtensionForFormat(format.toLowerCase())}`;
+  if (trimmed.toLowerCase() === suffix) return "";
+  if (
+    trimmed.length > suffix.length &&
+    trimmed.toLowerCase().endsWith(suffix)
+  ) {
+    return trimmed.slice(0, trimmed.length - suffix.length).trimEnd();
+  }
+  return trimmed;
+}
+
+/** Output path for the current folder with the file name of `derivedPath`. */
+export function withArchiveFileName(
+  currentPath: string,
+  derivedPath: string,
+): string {
+  const derived = splitPathParts(derivedPath);
+  if (!derived.name) return derivedPath;
+  if (!currentPath) return derivedPath;
+  const current = splitPathParts(currentPath);
+  // A bare current name has no folder, so use the derived folder.
+  const folder = current.parent ? current : derived;
+  return joinPath(folder.parent, derived.name, folder.separator);
+}
+
+/**
+ * Output path for a typed archive name. `deriveDefault` builds the default
+ * path for the inputs (with an optional custom stem). The folder of
+ * `currentPath` is kept, so a Browse choice survives typing.
+ */
+export function outputPathForArchiveName(
+  currentPath: string,
+  format: string,
+  typedName: string,
+  deriveDefault: (customName?: string) => string | null,
+): string | null {
+  if (archiveNameHasSeparator(typedName)) return null;
+  const stem = normalizeTypedArchiveStem(typedName, format);
+  const derived = deriveDefault(stem || undefined);
+  if (!derived) return null;
+  return withArchiveFileName(currentPath, derived);
+}
+
+/**
+ * Output path after a manual or autofilled format change. An empty path gets
+ * the default. An autofilled path is rebuilt from the typed name. A manual
+ * path only swaps its extension (compound extensions included).
+ */
+export function outputPathForFormatChange(
+  currentPath: string,
+  lastAutoPath: string | null,
+  format: string,
+  typedName: string,
+  deriveDefault: (customName?: string) => string | null,
+): string | null {
+  if (!currentPath) {
+    const stem = normalizeTypedArchiveStem(typedName, format);
+    return deriveDefault(stem || undefined);
+  }
+  if (currentPath === lastAutoPath) {
+    return outputPathForArchiveName(
+      currentPath,
+      format,
+      typedName,
+      deriveDefault,
+    );
+  }
+  return swapArchiveExtension(currentPath, format);
+}
+
+/** Output path with the format's extension, keeping the folder and name. */
+export function swapArchiveExtension(path: string, format: string): string {
+  const { parent, name, separator } = splitPathParts(path);
+  if (!name) return path;
+  const stem = stripKnownArchiveSuffix(name) || name;
+  const extension = archiveExtensionForFormat(format.toLowerCase());
+  return joinPath(parent, `${stem}.${extension}`, separator);
 }
 
 export function shouldAutofillOutputPath(

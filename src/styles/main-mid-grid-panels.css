@@ -99,7 +99,7 @@
 
 .segmented--workspace .segmented__btn {
   padding: 4px 12px;
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
 }
 
 .quick-actions {
@@ -119,7 +119,7 @@
 }
 
 .quick-actions__label {
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.03em;
   font-weight: 600;
@@ -127,7 +127,7 @@
 }
 
 .quick-actions__feedback {
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   color: var(--danger-fg);
   min-height: 14px;
 }

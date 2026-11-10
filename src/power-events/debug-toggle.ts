@@ -1,6 +1,10 @@
 import { ask } from "@tauri-apps/plugin-dialog";
 import { state } from "../state";
-import { persistSettingsImmediately } from "../ui";
+import {
+  persistSettingsImmediately,
+  awaitInFlightSettingsPersistence,
+  isSettingsPersistSupersededError,
+} from "../ui";
 import {
   isDebugEnabled,
   setDebugEnabled,
@@ -9,6 +13,19 @@ import {
 } from "../debug-mode";
 import { showToast } from "../toast";
 import { confirmWithE2eQueue } from "../e2e-dialog";
+
+/** Same superseded-write handling as the Settings save path (see presets.ts). */
+async function persistDebugSetting(
+  snapshot: typeof state.currentSettings,
+): Promise<void> {
+  try {
+    await persistSettingsImmediately(snapshot, state.settingsExtras);
+  } catch (err) {
+    if (!isSettingsPersistSupersededError(err)) throw err;
+    await awaitInFlightSettingsPersistence();
+    await persistSettingsImmediately(snapshot, state.settingsExtras);
+  }
+}
 
 export async function promptAndToggleDebugMode(): Promise<void> {
   const enabling = !isDebugEnabled();
@@ -30,7 +47,7 @@ export async function promptAndToggleDebugMode(): Promise<void> {
   const previousSettings = state.currentSettings;
   const nextSettings = { ...previousSettings, debug: enabling };
   try {
-    await persistSettingsImmediately(nextSettings, state.settingsExtras);
+    await persistDebugSetting(nextSettings);
   } catch (err) {
     state.currentSettings = previousSettings;
     const msg = err instanceof Error ? err.message : String(err);

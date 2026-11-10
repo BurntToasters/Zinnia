@@ -34,7 +34,7 @@ use super::spawn::{
 use super::{
     assert_probed_version_matches_bundle, parse_7z_version, parse_run_7z_request, Run7zRequest,
 };
-use crate::output::{sanitize_output, MAX_OUTPUT_BYTES};
+use crate::output::{output_limit_for_command, sanitize_output, MAX_OUTPUT_BYTES};
 use crate::progress::parse_progress_line;
 
 pub(super) fn release_snapshot_handles_for_plan(plan: &CleanupPlan) {
@@ -479,10 +479,20 @@ pub(crate) fn extract_warning_is_metadata_only(stdout: &str, stderr: &str) -> bo
             (line.contains("warning")
                 || line.starts_with("error:")
                 || line.starts_with("errors:")
+                || line.starts_with("archives with errors")
                 || line.contains("system error"))
                 && !line.starts_with("warnings:")
+                && !is_7zip_warnings_summary(&line)
                 && !allowed_markers.iter().any(|marker| line.contains(marker))
         })
+}
+
+/// 7-Zip's end-of-run summary, e.g. `Archives with Warnings: 1`. Only that
+/// exact shape with a numeric count is exempt; any other "warning" line still
+/// fails closed. Expects a lowercased, trimmed line.
+fn is_7zip_warnings_summary(line: &str) -> bool {
+    line.strip_prefix("archives with warnings: ")
+        .is_some_and(|count| !count.is_empty() && count.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
 fn find_single_compound_tar(root: &std::path::Path) -> Result<std::path::PathBuf, String> {
@@ -766,6 +776,7 @@ pub(super) async fn run_7z_inner(
     harden_7z_args(&mut args);
     apply_backend_link_switches(&mut args);
     let compound_tar_operation = is_compound_tar_operation(&args);
+    let command_output_limit = output_limit_for_command(args.first().map(String::as_str));
     // Listing and test commands do not create a cleanup plan, so retain the
     // identity proof explicitly. The frontend uses this value to reject a
     // stale browse/test result; keeping the initial token here also lets the
@@ -903,6 +914,8 @@ pub(super) async fn run_7z_inner(
         }
     };
     let plan_started = std::time::Instant::now();
+    let snapshot_progress_window = window.clone();
+    let snapshot_progress_target = tauri::EventTarget::webview_window(window.label());
     let mut cleanup_plan = match tokio::task::spawn_blocking(move || {
         let result = prepare_cleanup_plan_with_cancel(
             &blocking_plan_args,
@@ -915,6 +928,21 @@ pub(super) async fn run_7z_inner(
                     .lock()
                     .map(|process| process.cancelling)
                     .unwrap_or(true)
+            },
+            move |percent: u8| {
+                // Only the byte-copy fallback reports here, so the UI shows
+                // why preparation takes time instead of looking stalled.
+                let _ = snapshot_progress_window.emit_to(
+                    snapshot_progress_target.clone(),
+                    "7z-progress-structured",
+                    crate::progress::ProgressUpdate {
+                        percent: Some(percent),
+                        files_done: None,
+                        current_file: Some(
+                            super::super::archive_snapshot::SAFE_COPY_PROGRESS_LABEL.to_string(),
+                        ),
+                    },
+                );
             },
         );
         mask_password_arg_tokens(&mut blocking_plan_args);
@@ -1331,12 +1359,13 @@ pub(super) async fn run_7z_inner(
         .checked_sub(std::time::Duration::from_millis(100))
         .unwrap_or_else(std::time::Instant::now);
     let mut last_structured_progress_emit = last_raw_progress_emit;
+    let mut held_structured_update: Option<crate::progress::ProgressUpdate> = None;
 
     // Every mutating command uses a non-interactive overwrite policy and bare
     // password prompts are rejected by validation. Silence is therefore not a
     // reliable hang signal: large compression/update phases may legitimately
     // emit nothing for a long time.
-    let collected = collect_command_output(&mut rx, MAX_OUTPUT_BYTES, |chunk| {
+    let collected = collect_command_output(&mut rx, command_output_limit, |chunk| {
         // 7z can produce one stdout chunk per file. Keep IPC bounded so a
         // large archive cannot make the webview spend more time rendering
         // progress than extracting. Structured state is still emitted as
@@ -1357,13 +1386,20 @@ pub(super) async fn run_7z_inner(
                 let _ =
                     emit_window.emit_to(progress_target.clone(), "7z-progress-structured", update);
                 last_structured_progress_emit = std::time::Instant::now();
+                held_structured_update = None;
                 if let Ok(mut activity) = last_progress_activity.lock() {
                     *activity = last_structured_progress_emit;
                 }
+            } else {
+                // Keep the newest throttled update so the stream end can flush it.
+                held_structured_update = Some(update);
             }
         }
     })
     .await;
+    if let Some(update) = held_structured_update.take() {
+        let _ = emit_window.emit_to(progress_target.clone(), "7z-progress-structured", update);
+    }
     heartbeat_task.abort();
     let _ = heartbeat_task.await;
     quota_finished.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -1746,4 +1782,116 @@ pub(super) async fn probe_7z_inner(
     }
 
     result
+}
+
+#[cfg(test)]
+mod listing_warning_fixture_tests {
+    use super::extract_warning_is_metadata_only;
+
+    // Bundled 7-Zip 26.06 (arm64), extracting a ZIP with bytes after its end
+    // record. Exit 0 with the standard end-of-run summary.
+    const TRAILING_DATA_STDOUT: &str = "\
+Extracting archive: good.zip
+
+WARNINGS:
+There are data after the end of archive
+
+--
+Path = good.zip
+Type = zip
+WARNINGS:
+There are data after the end of archive
+Physical Size = 563
+Tail Size = 15
+
+- src/
+- src/dir/
+- src/dir/locked.txt
+- src/ok.txt
+Everything is Ok
+
+Archives with Warnings: 1
+
+Warnings: 1
+Folders: 2
+Files: 2
+Size:       13
+Compressed: 578
+";
+
+    // Bundled 7-Zip 26.06 (arm64), compressing a folder that holds a file with
+    // mode 000 on POSIX. Exit 1 with an unknown "Cannot open" warning.
+    const UNREADABLE_FILE_STDOUT: &str = "\
+Scanning the drive:
+2 folders, 2 files, 13 bytes (1 KiB)
+
+Creating archive: out.zip
+
+Add new data to archive: 2 folders, 2 files, 13 bytes (1 KiB)
+
++ src/dir/locked.txt
+
+WARNING: errno=13 : Permission denied
+src/dir/locked.txt
+
++ src/ok.txt
+
+Files read from disk: 1
+Archive size: 408 bytes (1 KiB)
+
+WARNINGS for files:
+
+src/dir/locked.txt : errno=13 : Permission denied
+----------------
+WARNING: Cannot open 1 file
+";
+
+    const UNREADABLE_FILE_STDERR: &str =
+        "\nWARNING: errno=13 : Permission denied\nsrc/dir/locked.txt\n";
+
+    #[test]
+    fn accepts_the_7zip_archives_with_warnings_summary_line() {
+        assert!(extract_warning_is_metadata_only(TRAILING_DATA_STDOUT, ""));
+    }
+
+    #[test]
+    fn rejects_the_real_unreadable_file_warning_output() {
+        assert!(!extract_warning_is_metadata_only(
+            UNREADABLE_FILE_STDOUT,
+            UNREADABLE_FILE_STDERR
+        ));
+    }
+
+    #[test]
+    fn rejects_an_errors_summary_next_to_the_warnings_summary() {
+        let stdout = format!("{TRAILING_DATA_STDOUT}\nArchives with Errors: 1\n");
+        assert!(!extract_warning_is_metadata_only(&stdout, ""));
+    }
+
+    #[test]
+    fn rejects_an_unknown_warning_next_to_the_summary_line() {
+        let stdout = format!("{TRAILING_DATA_STDOUT}\nWARNING: Something new happened\n");
+        assert!(!extract_warning_is_metadata_only(&stdout, ""));
+    }
+
+    #[test]
+    fn rejects_a_summary_line_with_a_non_numeric_count() {
+        let stdout = TRAILING_DATA_STDOUT
+            .replace("Archives with Warnings: 1", "Archives with Warnings: lots");
+        assert!(!extract_warning_is_metadata_only(&stdout, ""));
+    }
+
+    #[test]
+    fn rejects_an_unknown_stderr_line_even_with_the_summary_line() {
+        assert!(!extract_warning_is_metadata_only(
+            TRAILING_DATA_STDOUT,
+            "WARNING: surprise"
+        ));
+    }
+
+    #[test]
+    fn rejects_a_crc_failure_beside_the_summary_line() {
+        let stdout = format!("{TRAILING_DATA_STDOUT}\nCRC Failed : src/ok.txt\n");
+        assert!(!extract_warning_is_metadata_only(&stdout, ""));
+    }
 }

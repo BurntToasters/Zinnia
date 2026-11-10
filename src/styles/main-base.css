@@ -47,7 +47,7 @@
   --session-card-pad-y: 9px;
   --session-card-pad-x: 10px;
   --session-card-gap: 7px;
-  --field-label-size: 11px;
+  --field-label-size: 0.75rem;
   --field-label-gap: 4px;
   --input-pad-y: 6px;
   --input-pad-x: 8px;
@@ -66,7 +66,7 @@
   --session-card-pad-y: 7px;
   --session-card-pad-x: 8px;
   --session-card-gap: 5px;
-  --field-label-size: 10px;
+  --field-label-size: 0.75rem;
   --field-label-gap: 3px;
   --input-pad-y: 5px;
   --input-pad-x: 7px;
@@ -154,4 +154,17 @@
 .platform-windows .btn.btn--explorer,
 .platform-linux .btn.btn--explorer {
   display: inline-flex;
+}
+
+/* Visually hidden but still read by assistive technology. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }

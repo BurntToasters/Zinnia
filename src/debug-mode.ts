@@ -6,6 +6,7 @@ import { sanitizeCommandArgsForPreview } from "./archive/command-sanitize";
 import { state } from "./state";
 import { persistSettingsImmediately } from "./ui/workspace";
 import { setNativeWebviewContextMenuAllowed } from "./webview-context-menu";
+import { appendCappedLogText } from "./log-tail";
 
 let debugEnabled = false;
 let consoleControlsWired = false;
@@ -105,14 +106,6 @@ export function setDebugConsoleVisible(visible: boolean): void {
 export function isDebugConsoleVisible(): boolean {
   const panel = consolePanel();
   return Boolean(panel && !panel.hidden);
-}
-
-function trimDebugLog(logEl: HTMLElement): void {
-  const text = logEl.textContent || "";
-  const lines = text.split("\n");
-  if (lines.length > MAX_LOG_LINES) {
-    logEl.textContent = lines.slice(lines.length - MAX_LOG_LINES).join("\n");
-  }
 }
 
 function pushBufferedLine(line: string): void {
@@ -259,8 +252,7 @@ export function debugLog(message: string | (() => string)): void {
   const panel = consolePanel();
   if (panel?.hidden) panel.hidden = false;
 
-  logEl.textContent += `${line}\n`;
-  trimDebugLog(logEl);
+  appendCappedLogText(logEl, `${line}\n`, MAX_LOG_LINES);
   logEl.scrollTop = logEl.scrollHeight;
 }
 

@@ -35,6 +35,8 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
   state.batchCancelled = false;
   state.cancelRequested = false;
   setRunning(true);
+  // Password fields are cleared only once 7-Zip has been started.
+  let sevenZipStarted = false;
   try {
     const archive = state.selectiveActiveArchive ?? state.inputs[0] ?? null;
     if (!archive) {
@@ -140,9 +142,10 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
       );
     }
 
-    const result = await withLiveProgress(() =>
-      runWithPasswordRetry(args, true, "Extract", browsedIdentity),
-    );
+    const result = await withLiveProgress(() => {
+      sevenZipStarted = true;
+      return runWithPasswordRetry(args, true, "Extract", browsedIdentity);
+    });
     if (state.cancelRequested && result.code !== 0) {
       hideProgress();
       setStatus("Cancelled", 2000);
@@ -155,7 +158,7 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
     devLog(`Exit code: ${result.code}`);
 
     if (result.code !== 0) {
-      log(`7z exited with code ${result.code}`);
+      log(`7z exited with code ${result.code}`, "error");
       if (isDebugEnabled()) {
         debugLog(`Selective extract failed with exit code ${result.code}.`);
       }
@@ -189,7 +192,7 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
     }
 
     const raw = err instanceof Error ? err.message : String(err);
-    log(`Error: ${raw}`);
+    log(`Error: ${raw}`, "error");
     if (isDebugEnabled()) debugLog(`Selective extract threw: ${raw}`);
     const msg = userFacingBackendError(raw);
     setStatus("Error", 3000, msg);
@@ -200,7 +203,7 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
       0,
     );
   } finally {
-    clearPasswordFields();
+    if (sevenZipStarted) clearPasswordFields();
     setRunning(false);
   }
 }

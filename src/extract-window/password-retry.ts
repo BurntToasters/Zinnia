@@ -62,10 +62,9 @@ export async function runWithPasswordRetry(
     if (!looksLikePasswordRequiredError("", detail)) throw error;
     result = { stdout: "", stderr: detail, code: 255 };
   }
-  if (shouldAbort() || signal?.aborted) {
-    return result;
-  }
-  if (
+  // A password that was already sent is known to be wrong when 7-Zip asks again.
+  let passwordSent = false;
+  while (
     result.code > 1 &&
     looksLikePasswordRequiredError(result.stdout ?? "", result.stderr ?? "")
   ) {
@@ -77,25 +76,27 @@ export async function runWithPasswordRetry(
     ) as HTMLButtonElement | null;
     if (cancelBtn) cancelBtn.disabled = false;
     stopProgressAt(0, false);
-    const { promptInput } = await import("../prompt-modal");
-    const password = await promptInput({
+    const { promptPassword } = await import("../prompt-modal");
+    const outcome = await promptPassword({
       title: "Password required",
-      label: "This archive is encrypted. Enter password:",
-      password: true,
+      label: passwordSent
+        ? "Incorrect password. Enter the archive password:"
+        : "This archive is encrypted. Enter password:",
       confirmLabel: "Extract",
       signal,
     });
-    if (shouldAbort() || signal?.aborted || !password) {
+    if (shouldAbort() || signal?.aborted || outcome.kind !== "submit") {
       throw new Error(EXTRACT_PASSWORD_PROMPT_CANCELLED);
     }
     startIndeterminateProgress();
     result = await invokeExtractRun(
       {
-        args: withPassword(args, password),
+        args: withPassword(args, outcome.value),
         ...(expectedArchiveIdentity ? { expectedArchiveIdentity } : {}),
       },
       includeIoDiagnostics,
     );
+    passwordSent = true;
   }
   return result;
 }

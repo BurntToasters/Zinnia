@@ -16,9 +16,11 @@ impl ProgressUpdate {
 }
 
 pub fn parse_progress_line(line: &str) -> Option<ProgressUpdate> {
-    // 7z rewrites the line with '\r'; take the latest segment.
+    // 7z rewrites the line with '\r' or with runs of backspace (U+0008) and no
+    // newline; take the latest non-blank segment. Blank segments between
+    // backspace runs are skipped by the `find` below.
     let segment = line
-        .rsplit(['\r', '\n'])
+        .rsplit(['\r', '\n', '\u{8}'])
         .find(|s| !s.trim().is_empty())
         .unwrap_or("")
         .trim_start();
@@ -243,5 +245,23 @@ mod tests {
         let long = format!(" 10% - {}", "a".repeat(300));
         let u = parse_progress_line(&long).expect("should parse");
         assert_eq!(u.current_file.as_ref().map(String::len), Some(200));
+    }
+
+    /// Captured from the bundled 7-Zip 26.06 (arm64) sidecar running
+    /// `a -t7z -bsp1` on a 64 MiB file. 7-Zip separates updates with runs of
+    /// backspace (U+0008) and writes no newline between them.
+    #[test]
+    fn parses_backspace_separated_7zip_progress_updates() {
+        let chunk = "  0%\u{8}\u{8}\u{8}\u{8}    \u{8}\u{8}\u{8}\u{8} 10% + p.bin\u{8}\u{8}\u{8}\u{8}\u{8}\u{8}\u{8}\u{8}\u{8}\u{8}\u{8}\u{8}            \u{8}\u{8}\u{8}\u{8}\u{8}\u{8}\u{8}\u{8}\u{8}\u{8}\u{8}\u{8} 22% + p.bin\u{8}\u{8}";
+        let u = parse_progress_line(chunk).expect("should parse");
+        assert_eq!(u.percent, Some(22));
+        assert_eq!(u.files_done, None);
+        assert_eq!(u.current_file.as_deref(), Some("p.bin"));
+    }
+
+    #[test]
+    fn backspace_runs_without_progress_text_are_not_updates() {
+        assert!(parse_progress_line("\u{8}\u{8}\u{8}    \u{8}\u{8}").is_none());
+        assert!(parse_progress_line("\u{8}\u{8}\u{8}\u{8}").is_none());
     }
 }

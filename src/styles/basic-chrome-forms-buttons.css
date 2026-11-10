@@ -134,7 +134,7 @@
   font-size: var(--basic-font);
   color: var(--text);
   background: var(--surface-alt);
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: var(--basic-radius-input);
   padding: 8px 10px;
   box-shadow: var(--input-inset-shadow);

@@ -30,6 +30,7 @@ function mountExtractDom(): void {
       <div class="extract-footer">
         <button id="cancel-btn">Cancel</button>
         <button id="open-destination-btn" hidden>Open destination</button>
+        <button id="retry-btn" hidden>Retry</button>
         <button id="close-btn" hidden>Close</button>
       </div>
     </div>
@@ -111,6 +112,11 @@ async function setupAndRun(
       String(event),
       handler as (event: { payload: unknown }) => void,
     );
+    // The stop-request listener is registered first and is not a progress
+    // listener, so it must not consume a queued progress registration.
+    if (String(event) === "operation-stop-request") {
+      return Promise.resolve(vi.fn());
+    }
     return listenerRegistrations.shift() ?? Promise.resolve(progressUnlisten);
   });
   vi.mocked(webviewApi.getCurrentWebviewWindow).mockReturnValue(

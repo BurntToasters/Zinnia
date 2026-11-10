@@ -18,6 +18,8 @@ import {
   looksLikePasswordRequiredError,
   parseArchiveListing,
 } from "../archive";
+import { runActionAfterNativeSave } from "../archive/ops";
+import { browsedArchivePasswordFor } from "../archive/inspection";
 import {
   clearPasswordFields,
   ensureRuntimeReady,
@@ -295,7 +297,7 @@ export async function handleBasicDrop(paths: string[]): Promise<void> {
   const preparation = beginBasicPreparation();
   if (!preparation) {
     showToast(
-      "Zinnia is busy preparing another action. Drop the files again in a moment.",
+      "An operation is already running. Drop the files again in a moment.",
       "error",
       4000,
     );
@@ -316,7 +318,7 @@ async function handleBasicCompressActionOnce(
     showBasicCompletion(
       "compress",
       false,
-      "Operation failed",
+      "Check your choices",
       "Add at least one input.",
     );
     return;
@@ -332,7 +334,7 @@ async function handleBasicCompressActionOnce(
     showBasicCompletion(
       "compress",
       false,
-      "Operation failed",
+      "Check your choices",
       `${(formatEarly || "format").toUpperCase()} accepts exactly one input. Pick one file, or use 7z/ZIP/TAR.`,
     );
     return;
@@ -369,6 +371,8 @@ async function handleBasicCompressActionOnce(
     "basic-output-path",
   ) as HTMLInputElement | null;
   let output: string | null = basicOutputPath?.value ?? null;
+  // The native save dialog already asked about overwriting the chosen file.
+  let chosenByNativeSave = false;
   if (!output) {
     const queued = takeE2eDialogResult();
     const queuedPath =
@@ -380,6 +384,7 @@ async function handleBasicCompressActionOnce(
           title: "Choose output archive",
           defaultPath,
         }));
+      chosenByNativeSave = Boolean(output);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log(`Could not open the save-archive dialog: ${msg}`, "error");
@@ -422,7 +427,11 @@ async function handleBasicCompressActionOnce(
   // Unlock prep, then enter runAction synchronously so setRunning(true) closes
   // the gap before any OS-handoff waiter can resume.
   finishBasicPreparation(preparation);
-  await runAction();
+  if (chosenByNativeSave) {
+    await runActionAfterNativeSave();
+  } else {
+    await runAction();
+  }
 }
 
 export async function handleBasicCompressAction(): Promise<void> {
@@ -437,9 +446,9 @@ export async function handleBasicCompressAction(): Promise<void> {
 
 /**
  * `true`/`false` when the archive's encryption state is known, `null` when
- * it could not be determined (backend/IPC failure). Callers must treat
- * `null` as "assume encrypted": silently skipping the password prompt on an
- * error would let an encrypted archive fail extraction with no explanation.
+ * it could not be determined (truncated listing, probe or IPC failure). For
+ * `null`, callers skip the upfront password prompt and rely on the password
+ * prompt that runs when 7-Zip reports that a password is required.
  */
 export async function isArchiveEncrypted(
   archivePath: string,
@@ -496,10 +505,10 @@ async function handleBasicExtractActionOnce(
     return;
   }
 
-  // 1. Check if archive is encrypted. `null` means the check itself failed
-  // (busy backend, runtime probe failure, IPC error) rather than confirming
-  // the archive is plaintext; treat that the same as "encrypted" so a real
-  // password requirement is never silently skipped.
+  // 1. Check if archive is encrypted. `null` means the check could not decide
+  // (busy backend, truncated listing, IPC error). Do not prompt upfront then:
+  // the run prompts when 7-Zip reports that a password is required, so a
+  // plaintext archive is never blocked by a failed check.
   const encryptionCheck = await isArchiveEncrypted(archive);
   if (!isBasicPreparationCurrent(preparation)) return;
   if (encryptionCheck === null) {
@@ -509,7 +518,7 @@ async function handleBasicExtractActionOnce(
       showBasicCompletion(
         "extract",
         false,
-        "Operation failed",
+        "Check your choices",
         userFacingBackendError(
           validation?.reason?.trim() ??
             "This archive path is not supported for extraction.",
@@ -518,14 +527,15 @@ async function handleBasicExtractActionOnce(
       return;
     }
     log(
-      "Could not determine whether this archive is encrypted; treating it as encrypted.",
+      "Could not determine whether this archive is encrypted; a password prompt appears only if one is needed.",
       "debug",
     );
   }
-  const isEncrypted = encryptionCheck ?? true;
-  let password = "";
+  // Reuse the password that opened this archive in Browse, if it still matches.
+  let password = (await browsedArchivePasswordFor(archive)) ?? "";
+  if (!isBasicPreparationCurrent(preparation)) return;
 
-  if (isEncrypted) {
+  if (encryptionCheck === true && !password) {
     while (!password) {
       const input = await promptInput({
         title: "Password Required",
@@ -578,19 +588,22 @@ async function handleBasicExtractActionOnce(
     return;
   }
 
-  // 3. Populate the fields only for the immediate extraction run. The normal
-  // run cleanup clears both fields when the operation finishes.
-  const basicPasswordInput = document.getElementById(
-    "basic-extract-password",
-  ) as HTMLInputElement | null;
-  if (basicPasswordInput) {
-    basicPasswordInput.value = password;
-  }
-  const powerPasswordInput = document.getElementById(
-    "extract-password",
-  ) as HTMLInputElement | null;
-  if (powerPasswordInput) {
-    powerPasswordInput.value = password;
+  // 3. Populate the fields only for the immediate extraction run. A password
+  // typed into the field stays when nothing was prompted (unknown encryption
+  // state), and the run cleanup clears both fields once 7-Zip has started.
+  if (password) {
+    const basicPasswordInput = document.getElementById(
+      "basic-extract-password",
+    ) as HTMLInputElement | null;
+    if (basicPasswordInput) {
+      basicPasswordInput.value = password;
+    }
+    const powerPasswordInput = document.getElementById(
+      "extract-password",
+    ) as HTMLInputElement | null;
+    if (powerPasswordInput) {
+      powerPasswordInput.value = password;
+    }
   }
 
   if (basicExtractPath) {
@@ -614,9 +627,14 @@ export async function handleBasicExtractAction(): Promise<void> {
   const preparation = beginBasicPreparation();
   if (!preparation) return;
   try {
+    // runAction clears the password fields once 7-Zip has started. Clearing
+    // here would also erase the password on pre-run errors. Only an unexpected
+    // rejection clears them, since no run can be trusted to have done so.
     await handleBasicExtractActionOnce(preparation);
-  } finally {
+  } catch (err) {
     clearPasswordFields();
+    throw err;
+  } finally {
     finishBasicPreparation(preparation);
   }
 }

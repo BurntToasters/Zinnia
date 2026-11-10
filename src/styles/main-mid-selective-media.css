@@ -16,7 +16,7 @@
 }
 
 .selective-summary {
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   color: var(--text-secondary);
 }
 
@@ -59,7 +59,7 @@
   border: none;
   color: var(--text-secondary);
   cursor: pointer;
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   line-height: 1;
   padding: 4px;
   width: 24px;
@@ -91,7 +91,7 @@
 
 .selective-row__meta {
   color: var(--text-secondary);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   white-space: nowrap;
 }
 
@@ -103,7 +103,7 @@
 }
 
 .selective-hint {
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   color: var(--text-secondary);
 }
 
@@ -150,7 +150,7 @@
 
 .license-card__tag {
   flex-shrink: 0;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   background: var(--accent-bg);
   color: var(--accent-fg);
   padding: 2px 8px;
@@ -271,7 +271,7 @@
 
   .selective-row__meta {
     grid-column: 2;
-    font-size: 0.625rem;
+    font-size: 0.75rem;
   }
 }
 

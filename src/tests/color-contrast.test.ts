@@ -44,12 +44,20 @@ describe("theme text contrast", () => {
       path.resolve(process.cwd(), "src/variables.css"),
       "utf8",
     );
-    const dark = variables(
-      css.match(/:root,\s*\[data-theme="dark"\]\s*{([\s\S]*?)\n}/)?.[1] ?? "",
-    );
-    const light = variables(
-      css.match(/\[data-theme="light"\]\s*{([\s\S]*?)\n}/)?.[1] ?? "",
-    );
+    // Tokens shared by both themes live in the unconditional :root block.
+    const shared = variables(css.match(/^:root\s*{([\s\S]*?)\n}/m)?.[1] ?? "");
+    const dark = new Map([
+      ...shared,
+      ...variables(
+        css.match(/:root,\s*\[data-theme="dark"\]\s*{([\s\S]*?)\n}/)?.[1] ?? "",
+      ),
+    ]);
+    const light = new Map([
+      ...shared,
+      ...variables(
+        css.match(/\[data-theme="light"\]\s*{([\s\S]*?)\n}/)?.[1] ?? "",
+      ),
+    ]);
     for (const theme of [dark, light]) {
       const surfaces = [theme.get("bg"), theme.get("surface")];
       for (const foreground of [

@@ -6,7 +6,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { showToast } from "./toast";
 import { $ } from "./utils";
-import { SETTING_DEFAULTS, state, dom } from "./state";
+import { state, dom } from "./state";
 import {
   applyTheme,
   loadSettingsWithMetadata,
@@ -50,8 +50,14 @@ import {
   applyIncomingPaths,
   acquireIncomingPathLock,
   isIncomingPathBusy,
+  notifyIncomingPathsQueuedIfBusy,
   releaseIncomingPathLock,
 } from "./incoming-paths";
+import {
+  getDefaultThreads,
+  listenForStopRequests,
+  setDetectedCpuCount,
+} from "./window-events";
 import {
   wireEvents,
   openShortcutsModal,
@@ -158,6 +164,22 @@ function showPersistentAlertBanner(
   });
 }
 
+/** True only when settings.json holds a threads value. Unknown counts as absent. */
+async function hasPersistedThreadsSetting(): Promise<boolean> {
+  try {
+    const raw = await invoke<string>("load_settings");
+    const parsed: unknown = JSON.parse(raw);
+    return (
+      parsed !== null &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed) &&
+      Object.prototype.hasOwnProperty.call(parsed, "threads")
+    );
+  } catch {
+    return false;
+  }
+}
+
 function wireTitlebar(): void {
   const appWindow = getCurrentWebviewWindow();
   const minBtn = document.getElementById("titlebar-min");
@@ -254,6 +276,14 @@ export async function init() {
   }
 
   try {
+    // Quit (Cmd+Q) and close while a run is active ask first. See main.rs.
+    await listenForStopRequests();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Failed to subscribe to stop requests: ${msg}`, "error");
+  }
+
+  try {
     await listen<string>("open-paths-dropped", (event) => {
       const detail =
         typeof event.payload === "string" && event.payload.trim()
@@ -289,7 +319,7 @@ export async function init() {
 
   try {
     const cpuCount = await invoke<number>("get_cpu_count");
-    SETTING_DEFAULTS.threads = cpuCount;
+    setDetectedCpuCount(cpuCount);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     devLog(`Unable to determine CPU count, using default: ${msg}`);
@@ -299,6 +329,11 @@ export async function init() {
   state.currentSettings = loadedSettings.settings;
   state.lastPersistedSettings = { ...loadedSettings.settings };
   state.settingsExtras = { ...loadedSettings.extras };
+  if (!(await hasPersistedThreadsSetting())) {
+    // First run: start from the detected CPU count, not the static default.
+    state.currentSettings.threads = getDefaultThreads();
+    state.lastPersistedSettings.threads = getDefaultThreads();
+  }
   if (isE2eFrontend()) {
     state.currentSettings.autoCheckUpdates = false;
     state.currentSettings.basicWindowEffects = false;
@@ -520,6 +555,7 @@ export async function init() {
         dom.inputList.classList.remove("list--dragover");
         const paths = event.payload.paths;
         if (!paths.length) return;
+        notifyIncomingPathsQueuedIfBusy();
         await acquireIncomingPathLock();
         try {
           const previousPrimary = state.inputs[0] ?? null;

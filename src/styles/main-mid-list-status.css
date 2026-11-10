@@ -88,7 +88,7 @@
   padding: 0 6px;
   border: 1px solid var(--border);
   border-radius: 999px;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.01em;
   flex-shrink: 0;
@@ -114,7 +114,7 @@
 
 .list__item-reason {
   flex-basis: 100%;
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -126,7 +126,7 @@
   border: none;
   color: var(--text-secondary);
   cursor: pointer;
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   padding: 4px 8px;
   min-width: 24px;
   min-height: 24px;
@@ -151,7 +151,7 @@
 
 .actions .btn--primary {
   padding: 6px 12px;
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   border-radius: 8px;
 }
 
@@ -168,7 +168,7 @@
 
 .actions--browse .btn--accent-outline {
   padding: 5px 12px;
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
 }
 
 .btn--shortcut {
@@ -182,7 +182,7 @@
   right: 8px;
   top: 50%;
   transform: translateY(-50%);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   font-weight: 500;
   letter-spacing: 0.02em;
   line-height: 1;
@@ -222,7 +222,7 @@ body.platform-macos .btn--shortcut::after {
   min-height: 240px;
   max-height: calc(100vh - 180px);
   font-family: "Cascadia Code", "SF Mono", "Fira Code", "Consolas", monospace;
-  font-size: 11.5px;
+  font-size: 0.75rem;
   line-height: 1.6;
   color: var(--text-secondary);
   overflow: auto;
@@ -237,7 +237,7 @@ body.platform-macos .btn--shortcut::after {
   gap: 0;
   background: var(--surface);
   border-top: 1px solid var(--border);
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   color: var(--text-secondary);
   padding: 0;
   user-select: none;

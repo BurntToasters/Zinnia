@@ -36,20 +36,30 @@ where
     const MAX_STREAM_RECORD_BYTES: usize = 16 * 1024;
     let mut buffer = [0u8; 8 * 1024];
     let mut pending = Vec::with_capacity(MAX_STREAM_RECORD_BYTES);
+    // True once the open record holds text. A backspace after text ends it.
+    let mut pending_has_text = false;
     loop {
         match reader.read(&mut buffer) {
             Ok(0) => break,
             Ok(read) => {
                 for byte in &buffer[..read] {
+                    // 7-Zip refreshes progress with carriage returns, or with
+                    // a backspace run and no newline when stdout is piped.
+                    // Close the record at either boundary so a later status
+                    // segment cannot hide the percentage before it.
+                    let closes_record = match *byte {
+                        b'\r' | b'\n' => true,
+                        b'\x08' => pending_has_text,
+                        _ => false,
+                    };
                     pending.push(*byte);
-                    // 7-Zip refreshes progress with carriage returns. Emit at
-                    // either line boundary so a later status segment cannot
-                    // hide the percentage that preceded it in the same record.
-                    if matches!(*byte, b'\r' | b'\n') || pending.len() == MAX_STREAM_RECORD_BYTES {
+                    pending_has_text |= !matches!(*byte, b'\x08');
+                    if closes_record || pending.len() == MAX_STREAM_RECORD_BYTES {
                         let bytes = std::mem::replace(
                             &mut pending,
                             Vec::with_capacity(MAX_STREAM_RECORD_BYTES),
                         );
+                        pending_has_text = false;
                         let tx = tx.clone();
                         let _ = block_on(async move { tx.send(wrap(bytes)).await });
                     }
@@ -745,4 +755,73 @@ where
     }
 
     out
+}
+
+#[cfg(test)]
+mod stream_record_tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    /// Yields one scripted part per read and runs `gate` before each read.
+    struct GatedReader<G: FnMut(usize)> {
+        parts: Vec<Vec<u8>>,
+        gate: G,
+        reads: usize,
+    }
+
+    impl<G: FnMut(usize)> std::io::Read for GatedReader<G> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            (self.gate)(self.reads);
+            self.reads += 1;
+            if self.parts.is_empty() {
+                return Ok(0);
+            }
+            let part = self.parts.remove(0);
+            let n = part.len().min(buf.len());
+            buf[..n].copy_from_slice(&part[..n]);
+            if n < part.len() {
+                self.parts.insert(0, part[n..].to_vec());
+            }
+            Ok(n)
+        }
+    }
+
+    #[test]
+    fn backspace_refresh_is_delivered_before_stream_end() {
+        // 7-Zip with -bsp1 on a pipe writes `  0%` then a backspace run and
+        // no newline. The update must reach the consumer while the stream is
+        // still open, not only when stdout reaches EOF.
+        let (tx, rx) = tauri::async_runtime::channel::<CommandEvent>(64);
+        let rx = Rc::new(RefCell::new(rx));
+        let delivered_mid_stream = Rc::new(RefCell::new(Vec::<String>::new()));
+        let gate_rx = rx.clone();
+        let gate_seen = delivered_mid_stream.clone();
+        let reader = GatedReader {
+            parts: vec![
+                b"  0%\x08\x08\x08\x08".to_vec(),
+                b"\x08\x08\x08\x08 21% + big.bin\x08\x08\x08\x08".to_vec(),
+            ],
+            gate: move |index| {
+                if index != 1 {
+                    return;
+                }
+                let mut rx = gate_rx.borrow_mut();
+                while let Ok(event) = rx.try_recv() {
+                    if let CommandEvent::Stdout(bytes) = event {
+                        gate_seen
+                            .borrow_mut()
+                            .push(String::from_utf8_lossy(&bytes).into_owned());
+                    }
+                }
+            },
+            reads: 0,
+        };
+        read_command_stream(reader, tx, CommandEvent::Stdout);
+        let seen = delivered_mid_stream.borrow();
+        assert!(
+            seen.iter().any(|record| record.contains("0%")),
+            "progress before the backspace refresh waited for EOF: {seen:?}"
+        );
+    }
 }

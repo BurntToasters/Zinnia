@@ -1,5 +1,5 @@
-import { open, save } from "@tauri-apps/plugin-dialog";
-import { $ } from "./utils";
+import { open, save, type DialogFilter } from "@tauri-apps/plugin-dialog";
+import { $, ARCHIVE_EXTENSIONS } from "./utils";
 import { state } from "./state";
 import {
   getMode,
@@ -47,6 +47,27 @@ function inputDialogSessionIsCurrent(session: InputDialogSession): boolean {
   );
 }
 
+const ARCHIVE_OPEN_EXTENSIONS = [
+  ...[...ARCHIVE_EXTENSIONS].map((ext) => ext.slice(1)),
+  "001",
+];
+
+/** Archive filters for opening existing archives, with an All files option. */
+function archiveOpenFilters(): DialogFilter[] {
+  return [
+    { name: "Archives", extensions: ARCHIVE_OPEN_EXTENSIONS },
+    { name: "All files", extensions: ["*"] },
+  ];
+}
+
+/** Compression inputs can be any file; only extract and browse pick archives. */
+function addFileDialogOptions(): { filters?: DialogFilter[] } {
+  const mode = getMode();
+  return mode === "extract" || mode === "browse"
+    ? { filters: archiveOpenFilters() }
+    : {};
+}
+
 export async function chooseOutput() {
   await chooseOutputIfCurrent(() => true);
 }
@@ -66,13 +87,15 @@ export async function chooseOutputIfCurrent(isCurrent: () => boolean) {
     const queued = takeE2eDialogResult();
     const queuedPath =
       queued && typeof queued.result === "string" ? queued.result : null;
+    const extension = archiveExtensionForFormat(format.toLowerCase());
     const output =
       queuedPath ??
       (await save({
         title: "Choose output archive",
-        defaultPath:
-          derived ??
-          `zinnia.${archiveExtensionForFormat(format.toLowerCase())}`,
+        defaultPath: derived ?? `zinnia.${extension}`,
+        filters: [
+          { name: `${format.toUpperCase()} archive`, extensions: [extension] },
+        ],
       }));
     if (
       output &&
@@ -204,6 +227,7 @@ export async function addFilesIfCurrent(
       : await open({
           title: "Add files",
           multiple: true,
+          ...addFileDialogOptions(),
         });
     if (!selection || !isCurrent() || !inputDialogSessionIsCurrent(session)) {
       return;

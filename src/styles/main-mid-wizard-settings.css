@@ -29,7 +29,7 @@
   display: inline-block;
   padding: 1px 6px;
   font-family: "Cascadia Code", "SF Mono", "Consolas", monospace;
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   color: var(--text);
   background: var(--surface);
   border: 1px solid var(--border);
@@ -144,7 +144,7 @@
 
 .setup-wizard-choice-btn span {
   color: var(--text-secondary);
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
 }
 
 .setup-wizard-choice-btn:hover {
@@ -182,7 +182,7 @@
 }
 
 .setup-wizard-field label {
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -228,7 +228,7 @@
   max-width: 100%;
   padding: 4px 8px;
   border-radius: 999px;
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   font-weight: 600;
   line-height: 1;
 }
@@ -280,7 +280,7 @@
 .os-default-row__handler {
   min-width: 0;
   color: var(--text-secondary);
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -316,7 +316,7 @@
 
 .settings-hint {
   margin: 0 0 12px;
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   color: var(--text-secondary);
   line-height: 1.5;
 }

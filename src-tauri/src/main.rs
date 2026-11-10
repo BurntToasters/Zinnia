@@ -24,7 +24,7 @@ mod window_fx;
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::Mutex;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use launch::{
     collect_cli_context, emit_open_paths, enter_extract_warm_idle, has_extract_windows,
@@ -48,21 +48,62 @@ fn production_integrations_enabled() -> bool {
     }
 }
 
+/// Frontend event that asks the window owning a run to confirm before the run
+/// is cancelled. Its payload is "close" or "quit".
+const OPERATION_STOP_REQUEST_EVENT: &str = "operation-stop-request";
+
+/// The archive slot as seen by a close or quit request.
+struct SlotFacts {
+    owner: Option<String>,
+    /// An update install holds the slot. It is not a run the user started.
+    update_reserved: bool,
+    /// A 7-Zip child or its preparation that the user started is running.
+    user_run: bool,
+    /// Anything that closing or quitting must wait out.
+    busy: bool,
+}
+
+fn read_slot_facts(app: &tauri::AppHandle) -> SlotFacts {
+    let state = app.state::<RunningProcess>();
+    let mut process = match state.0.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    process.reap_orphaned_child();
+    process.expire_stale_update_reservation();
+    let update_reserved = process.blocks_quit_for_update_install();
+    let user_run = !update_reserved && (process.child.is_some() || process.preparing);
+    SlotFacts {
+        owner: process.owner_label.clone(),
+        update_reserved,
+        user_run,
+        busy: update_reserved || user_run || process.cancelling,
+    }
+}
+
+/// Asks the owning window to confirm. Returns false when that window is gone,
+/// so the caller falls back to cancelling without a prompt.
+fn ask_owner_to_confirm(app: &tauri::AppHandle, owner: &str, request: &str) -> bool {
+    if app.get_webview_window(owner).is_none() {
+        return false;
+    }
+    app.emit_to(
+        tauri::EventTarget::WebviewWindow {
+            label: owner.to_string(),
+        },
+        OPERATION_STOP_REQUEST_EVENT,
+        request,
+    )
+    .is_ok()
+}
+
 fn defer_close_while_operation_finishes(
     app: &tauri::AppHandle,
     label: &str,
     api: &tauri::CloseRequestApi,
 ) -> bool {
-    let state = app.state::<RunningProcess>();
-    let owns_busy_operation = state.0.lock().map_or(true, |mut process| {
-        process.reap_orphaned_child();
-        process.expire_stale_update_reservation();
-        process.owner_label.as_deref() == Some(label)
-            && (process.child.is_some()
-                || process.preparing
-                || process.cancelling
-                || process.blocks_quit_for_update_install())
-    });
+    let facts = read_slot_facts(app);
+    let owns_busy_operation = facts.owner.as_deref() == Some(label) && facts.busy;
     if !owns_busy_operation {
         if launch::is_extract_window_label(label) {
             launch::clear_extract_window_bindings(app, label);
@@ -71,6 +112,11 @@ fn defer_close_while_operation_finishes(
     }
 
     api.prevent_close();
+    // A user run waits for the window's answer. The frontend's accept path
+    // closes the window after the run is stopped, so the next request passes.
+    if facts.user_run && ask_owner_to_confirm(app, label, "close") {
+        return true;
+    }
     let handle = app.clone();
     let window_label = label.to_string();
     tauri::async_runtime::spawn(async move {
@@ -163,42 +209,27 @@ fn defer_exit_while_operation_finishes(
     app: &tauri::AppHandle,
     api: &tauri::ExitRequestApi,
 ) -> bool {
-    let state = app.state::<RunningProcess>();
-    let owner = match state.0.lock() {
-        Ok(mut process) => {
-            // An update reservation has no child to cancel. Do not mistake a
-            // user/system Quit during installation for the later updater
-            // relaunch. The frontend releases this reservation immediately
-            // before calling relaunch; until then, keep the process alive.
-            process.reap_orphaned_child();
-            process.expire_stale_update_reservation();
-            if process.blocks_quit_for_update_install() {
-                api.prevent_exit();
-                return true;
-            }
-            if process.child.is_some() || process.preparing || process.cancelling {
-                process.owner_label.clone()
-            } else {
-                return false;
-            }
-        }
-        Err(poisoned) => {
-            let mut process = poisoned.into_inner();
-            process.reap_orphaned_child();
-            process.expire_stale_update_reservation();
-            if process.blocks_quit_for_update_install() {
-                api.prevent_exit();
-                return true;
-            }
-            if process.child.is_some() || process.preparing || process.cancelling {
-                process.owner_label.clone()
-            } else {
-                return false;
-            }
-        }
-    };
+    let facts = read_slot_facts(app);
+    // An update reservation has no child to cancel. Do not mistake a
+    // user/system Quit during installation for the later updater relaunch.
+    // The frontend releases this reservation immediately before calling
+    // relaunch; until then, keep the process alive.
+    if facts.update_reserved {
+        api.prevent_exit();
+        return true;
+    }
+    if !facts.busy {
+        return false;
+    }
     api.prevent_exit();
-    let Some(owner) = owner else {
+    if facts.user_run {
+        if let Some(owner) = facts.owner.as_deref() {
+            if ask_owner_to_confirm(app, owner, "quit") {
+                return true;
+            }
+        }
+    }
+    let Some(owner) = facts.owner else {
         eprintln!("Busy archive slot has no owner; forcing teardown before exit.");
         force_exit_after_busy_teardown(app.clone());
         return true;

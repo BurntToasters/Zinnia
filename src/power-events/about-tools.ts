@@ -1,4 +1,4 @@
-import { $ } from "../utils";
+import { $, isImeComposing } from "../utils";
 import { setMode } from "../ui";
 import { checkUpdates } from "../updater";
 import { openLicensesModal, closeLicensesModal } from "../licenses";
@@ -7,7 +7,7 @@ import {
   refreshQuickActionRepeatState,
 } from "../quick-actions";
 import { wireOsIntegrationEvents } from "../os-integration";
-import { runBenchmark } from "../benchmark";
+import { cancelBenchmark, runBenchmark } from "../benchmark";
 import { wireDebugConsoleControls } from "../debug-mode";
 import { exportLocalLogs, openLogsFolder, clearLocalLogs } from "../power-logs";
 import { promptAndToggleDebugMode } from "./debug-toggle";
@@ -18,6 +18,7 @@ export function wireAboutAndToolsEvents(): void {
   $("open-logs-folder").addEventListener("click", openLogsFolder);
   $("clear-logs").addEventListener("click", clearLocalLogs);
   $("run-benchmark").addEventListener("click", runBenchmark);
+  $("cancel-benchmark").addEventListener("click", cancelBenchmark);
   $("show-licenses").addEventListener("click", (e) =>
     openLicensesModal(e.currentTarget as HTMLElement),
   );
@@ -29,6 +30,7 @@ export function wireAboutAndToolsEvents(): void {
     void promptAndToggleDebugMode();
   });
   aboutDebugToggle.addEventListener("keydown", (e) => {
+    if (isImeComposing(e)) return;
     if (e.key !== "Enter" && e.key !== " ") return;
     e.preventDefault();
     void promptAndToggleDebugMode();

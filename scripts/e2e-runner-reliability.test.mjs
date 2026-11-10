@@ -7,7 +7,6 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
-  statSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -963,7 +962,7 @@ test(
       "const [triggerFile, latePidFile] = process.argv.slice(1);",
       "let spawned = false;",
       'process.on("SIGTERM", () => {});',
-      'const timer = setInterval(() => { if (!spawned && fs.existsSync(triggerFile)) { spawned = true; const late = spawn(process.execPath, ["-e", "process.on(\\\"SIGTERM\\\",()=>{});setInterval(()=>{},1000)"], { stdio: "ignore", windowsHide: true }); fs.writeFileSync(latePidFile, String(late.pid)); } }, 10);',
+      'const timer = setInterval(() => { if (!spawned && fs.existsSync(triggerFile)) { spawned = true; const late = spawn(process.execPath, ["-e", "process.on(\\"SIGTERM\\",()=>{});setInterval(()=>{},1000)"], { stdio: "ignore", windowsHide: true }); fs.writeFileSync(latePidFile, String(late.pid)); } }, 10);',
       "setInterval(() => {}, 1000);",
     ].join(" ");
     const leaderSource = [

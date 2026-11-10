@@ -26,7 +26,7 @@
 .session-card__title p {
   margin: 2px 0 0;
   color: var(--text-secondary);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   line-height: 1.35;
 }
 
@@ -64,7 +64,7 @@
   justify-content: space-between;
   padding: 8px 10px;
   cursor: pointer;
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   font-weight: 600;
   color: var(--text);
   list-style: none;
@@ -78,7 +78,7 @@
 
 .session-details > summary::after {
   content: "\276F";
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   color: var(--text-secondary);
   transition: transform var(--transition);
   transform: rotate(90deg);
@@ -98,4 +98,22 @@
   flex-direction: column;
   gap: 8px;
   border-top: 1px solid var(--border);
+}
+
+.modal--convert {
+  width: 440px;
+}
+
+.convert-dialog__source,
+.convert-dialog__output {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.convert-dialog__error {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--danger-fg);
 }

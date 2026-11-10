@@ -2,7 +2,12 @@ import { $ } from "../utils";
 import { promptInput } from "../prompt-modal";
 import { state } from "../state";
 import { syncSettingsSecurityControlsForFormat } from "../settings";
-import { setStatus, persistSettingsImmediately } from "../ui";
+import {
+  setStatus,
+  persistSettingsImmediately,
+  awaitInFlightSettingsPersistence,
+  isSettingsPersistSupersededError,
+} from "../ui";
 import {
   updateCompressionOptionsForFormat,
   applyPreset,
@@ -15,13 +20,37 @@ import { confirmWithE2eQueue } from "../e2e-dialog";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
   deriveOutputArchivePath,
-  resolveOutputArchiveAutofill,
+  ARCHIVE_NAME_SEPARATOR_MESSAGE,
+  archiveNameHasSeparator,
+  outputPathForArchiveName,
+  outputPathForFormatChange,
 } from "../extract-path";
 import { wirePasswordToggle } from "../power-helpers";
 import { showToast } from "../toast";
 
+/**
+ * Persist the current settings. A superseded write means a newer snapshot is
+ * queued and will reach disk, so wait for it and save again instead of rolling
+ * back the change in memory. Mirrors the Settings save path.
+ */
+async function persistPresetSettings(): Promise<void> {
+  try {
+    await persistSettingsImmediately(
+      state.currentSettings,
+      state.settingsExtras,
+    );
+  } catch (err) {
+    if (!isSettingsPersistSupersededError(err)) throw err;
+    await awaitInFlightSettingsPersistence();
+    await persistSettingsImmediately(
+      state.currentSettings,
+      state.settingsExtras,
+    );
+  }
+}
+
 export function wirePresetAndCompressionEvents(): void {
-  function syncOutputPath(): void {
+  function syncOutputPathForFormat(): void {
     const outputPathInput = document.getElementById(
       "output-path",
     ) as HTMLInputElement | null;
@@ -30,19 +59,18 @@ export function wirePresetAndCompressionEvents(): void {
     ) as HTMLInputElement | null;
     if (!outputPathInput) return;
     const format = $<HTMLSelectElement>("format").value;
-    const rawName = archiveNameInput?.value;
-    const customName = rawName && rawName.length > 0 ? rawName : undefined;
-    const next = resolveOutputArchiveAutofill(
-      outputPathInput.value,
+    const current = outputPathInput.value;
+    const wasAutofilled = !current || current === state.lastAutoOutputPath;
+    const next = outputPathForFormatChange(
+      current,
       state.lastAutoOutputPath,
-      state.inputs,
       format,
-      customName,
+      archiveNameInput?.value ?? "",
+      (customName) => deriveOutputArchivePath(state.inputs, format, customName),
     );
-    if (next) {
-      outputPathInput.value = next;
-      state.lastAutoOutputPath = next;
-    }
+    if (!next || next === current) return;
+    outputPathInput.value = next;
+    if (wasAutofilled) state.lastAutoOutputPath = next;
   }
 
   const updateDeletePresetButton = () => {
@@ -75,10 +103,7 @@ export function wirePresetAndCompressionEvents(): void {
         saveCustomPreset(name);
         refreshPresetDropdown(`custom:${name}`);
         updateDeletePresetButton();
-        await persistSettingsImmediately(
-          state.currentSettings,
-          state.settingsExtras,
-        );
+        await persistPresetSettings();
         setStatus(`Preset "${name}" saved`, 2000);
       } catch (err) {
         state.currentSettings.customPresets = previousPresets;
@@ -112,10 +137,7 @@ export function wirePresetAndCompressionEvents(): void {
         deleteCustomPreset(name);
         refreshPresetDropdown("custom");
         updateDeletePresetButton();
-        await persistSettingsImmediately(
-          state.currentSettings,
-          state.settingsExtras,
-        );
+        await persistPresetSettings();
         setStatus(`Preset "${name}" deleted`, 2000);
       } catch (err) {
         state.currentSettings.customPresets = previousPresets;
@@ -143,12 +165,24 @@ export function wirePresetAndCompressionEvents(): void {
   });
 
   $("archive-name").addEventListener("input", () => {
-    // Archive name field always drives the output path (force-update).
-    const outputPathInput = $<HTMLInputElement>("output-path");
+    // The typed name replaces only the file name; the folder stays as chosen.
     const archiveNameInput = $<HTMLInputElement>("archive-name");
+    const outputPathInput = $<HTMLInputElement>("output-path");
+    if (archiveNameHasSeparator(archiveNameInput.value)) {
+      if (!archiveNameInput.hasAttribute("aria-invalid")) {
+        showToast(ARCHIVE_NAME_SEPARATOR_MESSAGE, "error", 5000);
+      }
+      archiveNameInput.setAttribute("aria-invalid", "true");
+      return;
+    }
+    archiveNameInput.removeAttribute("aria-invalid");
     const format = $<HTMLSelectElement>("format").value;
-    const customName = archiveNameInput.value || undefined;
-    const next = deriveOutputArchivePath(state.inputs, format, customName);
+    const next = outputPathForArchiveName(
+      outputPathInput.value,
+      format,
+      archiveNameInput.value,
+      (customName) => deriveOutputArchivePath(state.inputs, format, customName),
+    );
     if (next) {
       outputPathInput.value = next;
       state.lastAutoOutputPath = next;
@@ -158,7 +192,7 @@ export function wirePresetAndCompressionEvents(): void {
   $<HTMLSelectElement>("format").addEventListener("change", () => {
     updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
     onCompressionOptionChange();
-    syncOutputPath();
+    syncOutputPathForFormat();
   });
 
   for (const id of ["level", "method", "dict", "word-size", "solid"]) {

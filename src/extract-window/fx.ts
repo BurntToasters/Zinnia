@@ -1,5 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
-import { parseSettingsRaw } from "../settings-model";
+import type { ThemePreference } from "../settings-model";
+
+/** Settings read once by the window at startup; null when they failed to load. */
+export type ExtractWindowFxSettings = {
+  basicWindowEffects: boolean;
+  theme: ThemePreference;
+} | null;
 
 export async function closeWindowSafely(): Promise<void> {
   try {
@@ -18,7 +24,9 @@ export async function closeWindowSafely(): Promise<void> {
 }
 
 /** Match main-window Basic glass when the user has effects enabled. */
-export async function syncExtractWindowFx(): Promise<void> {
+export async function syncExtractWindowFx(
+  settings: ExtractWindowFxSettings,
+): Promise<void> {
   let supports = false;
   try {
     supports = await invoke<boolean>("supports_workspace_window_fx");
@@ -26,16 +34,9 @@ export async function syncExtractWindowFx(): Promise<void> {
     supports = false;
   }
 
-  let effectsEnabled = true;
-  let themePref = "system";
-  try {
-    const raw = await invoke<string>("load_settings");
-    const { settings } = parseSettingsRaw(raw);
-    effectsEnabled = settings.basicWindowEffects;
-    themePref = settings.theme;
-  } catch {
-    // Defaults match SETTING_DEFAULTS (effects on, system theme).
-  }
+  // Defaults match SETTING_DEFAULTS (effects on, system theme) when settings are missing.
+  const effectsEnabled = settings?.basicWindowEffects ?? true;
+  const themePref: ThemePreference = settings?.theme ?? "system";
 
   const dark =
     themePref === "dark" ||

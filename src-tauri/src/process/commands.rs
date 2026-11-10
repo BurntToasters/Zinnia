@@ -33,8 +33,9 @@ use std::sync::Arc;
 
 use tauri::Manager;
 
-use crate::validation::validate_run_7z_args;
+use crate::validation::{selected_member_count, validate_run_7z_args};
 
+use super::quota::MAX_EXTRACT_ENTRIES;
 use super::{lock_process, RunResult, RunningProcess};
 
 const MAX_RUN_7Z_REQUEST_BYTES: usize = 64 * 1024 * 1024;
@@ -76,6 +77,11 @@ pub(super) fn parse_run_7z_request(request_json: &str) -> Result<Run7zRequest, S
         }
     }
     validate_run_7z_args(&request.args)?;
+    // Selected members have their own cap, separate from the switch region.
+    let members = u64::try_from(selected_member_count(&request.args)).unwrap_or(u64::MAX);
+    if members > MAX_EXTRACT_ENTRIES {
+        return Err("Too many selected 7z members.".to_string());
+    }
     if matches!(
         request.args.first().map(String::as_str),
         Some("x" | "a" | "u")
@@ -379,5 +385,34 @@ mod ipc_envelope_tests {
 
         let multibyte_argument = serde_json::json!({ "args": ["é".repeat(4097)] }).to_string();
         assert!(parse_run_7z_request(&multibyte_argument).is_err());
+    }
+
+    fn extract_request_with_members(count: usize) -> String {
+        let mut args = vec![
+            "x".to_string(),
+            "-o/tmp/out".to_string(),
+            "-aou".to_string(),
+            "--".to_string(),
+            "/tmp/archive.7z".to_string(),
+        ];
+        args.extend((0..count).map(|index| format!("m{index}")));
+        serde_json::json!({ "args": args, "expectedArchiveIdentity": "absent" }).to_string()
+    }
+
+    #[test]
+    fn run_7z_parser_accepts_nine_thousand_selected_members() {
+        parse_run_7z_request(&extract_request_with_members(9_000))
+            .expect("a folder of 9,000 files must be selectable");
+    }
+
+    #[test]
+    fn run_7z_parser_caps_selected_members_at_the_extract_entry_limit() {
+        let limit = crate::process::quota::MAX_EXTRACT_ENTRIES as usize;
+        parse_run_7z_request(&extract_request_with_members(limit))
+            .expect("members at the extract entry limit are accepted");
+        let err = parse_run_7z_request(&extract_request_with_members(limit + 1))
+            .err()
+            .expect("one member over the extract entry limit");
+        assert!(err.contains("members"), "{err}");
     }
 }
