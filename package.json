@@ -152,6 +152,12 @@
     "@tauri-apps/plugin-updater": "2.10.1",
     "lucide": "^1.70.0"
   },
+  "overrides": {
+    "@tauri-apps/cli": {
+      "@tauri-apps/cli-linux-x64-gnu": "2.12.2",
+      "@tauri-apps/cli-linux-arm64-gnu": "2.12.2"
+    }
+  },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.4",
     "@types/node": "^24.19.1",
