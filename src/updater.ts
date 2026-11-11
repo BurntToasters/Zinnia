@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { check, type Update } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
+import { relaunchApp } from "./relaunch";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
   isPermissionGranted,
@@ -239,7 +239,7 @@ async function promptInstallAndRestart(
       // Native exit handling deliberately blocks Quit while the reservation is
       // held, so successful release is required before requesting relaunch.
       await releaseUpdateReservation();
-      await relaunch();
+      await relaunchApp();
     } catch (error) {
       try {
         await releaseUpdateReservation();

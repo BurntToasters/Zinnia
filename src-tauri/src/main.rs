@@ -473,6 +473,7 @@ fn main() {
             launch::mark_main_window_ready,
             platform::get_platform_info,
             platform::get_beta_updater_target,
+            platform::relaunch_app,
             platform::get_os_integration_status,
             platform::open_os_integration_settings,
             platform::open_finder_services_settings,

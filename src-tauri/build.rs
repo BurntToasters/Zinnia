@@ -452,6 +452,7 @@ fn main() {
         "mark_main_window_ready",
         "get_platform_info",
         "get_beta_updater_target",
+        "relaunch_app",
         "get_os_integration_status",
         "open_os_integration_settings",
         "open_finder_services_settings",

@@ -108,6 +108,8 @@ describe("Tauri capability policy", () => {
   it("grants only the dialog, updater, process, notification, and shell APIs Zinnia uses", () => {
     const { permissions } = readCapability("default");
 
+    // Relaunch goes through relaunch_app; the plugin restart permission stays unused.
+    expect(permissions).not.toContain("process:allow-restart");
     expect(permissions).toEqual(
       expect.arrayContaining([
         "dialog:allow-message",
@@ -118,7 +120,6 @@ describe("Tauri capability policy", () => {
         "updater:allow-check",
         "updater:allow-download",
         "updater:allow-install",
-        "process:allow-restart",
         "notification:allow-is-permission-granted",
         "notification:allow-request-permission",
         "notification:allow-notify",

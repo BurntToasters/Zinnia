@@ -1242,10 +1242,6 @@ describe("main bootstrap", () => {
     expect(invokeMock).not.toHaveBeenCalledWith("reset_settings");
 
     // 2. User confirms reset
-    const { relaunch } = await import("@tauri-apps/plugin-process");
-    const relaunchMock = vi.mocked(relaunch);
-    relaunchMock.mockReset();
-    relaunchMock.mockResolvedValue(undefined);
 
     askMock.mockResolvedValueOnce(true);
     (document.getElementById("reset-settings") as HTMLButtonElement).click();
@@ -1256,15 +1252,11 @@ describe("main bootstrap", () => {
     expect(invokeMock).toHaveBeenCalledWith("reset_settings");
     expect(invokeMock).toHaveBeenCalledWith("clear_logs");
     expect(localStorage.getItem("zinnia.basic.recentArchives")).toBeNull();
-    expect(relaunchMock).toHaveBeenCalled();
+    expect(invokeMock).toHaveBeenCalledWith("relaunch_app");
   });
 
   it("relaunches after reset even when localStorage cannot clear basic recents", async () => {
     await loadMainModule();
-    const { relaunch } = await import("@tauri-apps/plugin-process");
-    const relaunchMock = vi.mocked(relaunch);
-    relaunchMock.mockReset();
-    relaunchMock.mockResolvedValue(undefined);
     const removeItem = vi
       .spyOn(Storage.prototype, "removeItem")
       .mockImplementationOnce(() => {
@@ -1276,7 +1268,7 @@ describe("main bootstrap", () => {
     await flushAsync();
 
     expect(invokeMock).toHaveBeenCalledWith("reset_settings");
-    expect(relaunchMock).toHaveBeenCalled();
+    expect(invokeMock).toHaveBeenCalledWith("relaunch_app");
     removeItem.mockRestore();
   });
 

@@ -1,6 +1,6 @@
 import { ask } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
-import { relaunch } from "@tauri-apps/plugin-process";
+import { relaunchApp } from "../relaunch";
 import { $ } from "../utils";
 import { state } from "../state";
 import type { UserSettings } from "../settings-model";
@@ -200,7 +200,7 @@ export function wireSettingsEvents(): void {
         console.warn(`Failed to clear recent archives during reset: ${msg}`);
       }
       resetRuntimeStateForFirstRun();
-      await relaunch();
+      await relaunchApp();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log(`Failed to reset settings: ${msg}`, "error");
