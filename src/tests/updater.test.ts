@@ -121,6 +121,97 @@ describe("notify", () => {
 });
 
 describe("checkUpdates", () => {
+  it.each(["0.4.1", "0.3.0"])(
+    "refuses to download version %s at or below the installed version",
+    async (version) => {
+      const download = vi.fn();
+      const close = vi.fn().mockResolvedValue(undefined);
+      checkMock.mockResolvedValue({
+        version,
+        download,
+        close,
+      } as unknown as Awaited<ReturnType<typeof check>>);
+      await checkUpdates();
+      expect(download).not.toHaveBeenCalled();
+      expect(close).toHaveBeenCalledOnce();
+      expect(askMock).not.toHaveBeenCalled();
+      expect(setStatusMock).toHaveBeenLastCalledWith("Idle");
+    },
+  );
+
+  it.each(["busy", "unavailable", "reservation race"])(
+    "keeps the downloaded update ready when archive status is %s",
+    async (scenario) => {
+      const install = vi.fn();
+      checkMock.mockResolvedValue({
+        version: "0.5.0",
+        download: vi.fn().mockResolvedValue(undefined),
+        install,
+        close: vi.fn().mockResolvedValue(undefined),
+      } as unknown as Awaited<ReturnType<typeof check>>);
+      askMock.mockResolvedValue(true);
+      invokeMock.mockImplementation((command, payload) => {
+        if (command === "is_7z_running") {
+          if (scenario === "unavailable")
+            return Promise.reject(new Error("status unavailable"));
+          const mode = (payload as { mode?: string } | undefined)?.mode;
+          return Promise.resolve(
+            scenario === "busy" || mode === "reserve_update",
+          );
+        }
+        return defaultInvoke(String(command));
+      });
+      await checkUpdates();
+      expect(install).not.toHaveBeenCalled();
+      expect(relaunchCalls()).toBe(0);
+      expect(setStatusMock).toHaveBeenLastCalledWith("Update ready");
+      expect(document.getElementById("update-ready-indicator")?.hidden).toBe(
+        false,
+      );
+      expect(askMock).toHaveBeenCalledTimes(
+        scenario === "reservation race" ? 1 : 0,
+      );
+    },
+  );
+
+  it.each([false, true])(
+    "installs a background download from its indicator and reports failure=%s",
+    async (fails) => {
+      const install = fails
+        ? vi.fn().mockRejectedValue(new Error("installer unavailable"))
+        : vi.fn().mockResolvedValue(undefined);
+      const download = vi.fn().mockResolvedValue(undefined);
+      checkMock.mockResolvedValue({
+        version: "0.5.0",
+        download,
+        install,
+        close: vi.fn().mockResolvedValue(undefined),
+      } as unknown as Awaited<ReturnType<typeof check>>);
+      await autoCheckUpdates();
+      expect(askMock).not.toHaveBeenCalled();
+      const indicator = document.getElementById("update-ready-indicator")!;
+      expect(indicator.hidden).toBe(false);
+      expect(indicator.textContent).toContain("0.5.0");
+      askMock.mockResolvedValue(true);
+      indicator.click();
+      await vi.waitFor(() => {
+        if (fails) {
+          expect(
+            document.getElementById("toast-region")?.textContent,
+          ).toContain("Failed to install update. installer unavailable");
+        } else {
+          expect(relaunchCalls()).toBe(1);
+        }
+      });
+      expect(install).toHaveBeenCalledOnce();
+      expect(download).toHaveBeenCalledOnce();
+      expect(invokeMock).toHaveBeenCalledWith("is_7z_running", {
+        mode: "release_update",
+      });
+      expect(relaunchCalls()).toBe(fails ? 0 : 1);
+    },
+  );
+
   it("shows no-updates message on stable channel", async () => {
     mockState.currentSettings.updateChannel = "stable";
     checkMock.mockResolvedValue(null);
