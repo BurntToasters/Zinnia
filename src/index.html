@@ -170,8 +170,7 @@
             id="open-settings"
             title="Settings"
             aria-label="Settings"
-            aria-expanded="false"
-            aria-controls="settings-overlay"
+            aria-haspopup="dialog"
             aria-keyshortcuts="Meta+Comma Control+Comma"
           >
             <i data-lucide="settings" class="lucide-icon"></i>
@@ -513,11 +512,11 @@
                   <div class="setting-item">
                     <div class="setting-info">
                       <span class="setting-title" id="title-local-logging"
-                        >Local logging</span
+                        >Local logging: writes operations, paths and errors to a
+                        log file on this device</span
                       >
                       <span class="setting-desc"
-                        >Privacy-preserving activity logs on this device
-                        only.</span
+                        >Recent archives are kept for this session only.</span
                       >
                     </div>
                     <label class="switch">
@@ -585,6 +584,13 @@
                     <div class="setting-actions">
                       <button class="btn btn--sm" id="run-benchmark">
                         Run
+                      </button>
+                      <button
+                        class="btn btn--ghost btn--sm"
+                        id="cancel-benchmark"
+                        hidden
+                      >
+                        Cancel
                       </button>
                     </div>
                   </div>
@@ -654,6 +660,13 @@
                   <p class="settings-hint">
                     Applied when creating new archives.
                   </p>
+                  <button
+                    type="button"
+                    class="btn btn--sm"
+                    id="settings-use-session-values"
+                  >
+                    Use current session values
+                  </button>
                   <div class="grid-split">
                     <div class="field">
                       <label for="s-format">Format</label>
@@ -735,33 +748,11 @@
                         value="8"
                       />
                     </div>
-                    <!-- Compatibility state for settings saved before 0.6.0-beta.4.
-                         Zinnia now creates only safely relocatable archives. -->
-                    <input id="s-path-mode" type="hidden" value="relative" />
                   </div>
                 </section>
 
                 <section class="settings-section">
                   <h3 class="settings-section__title">Options</h3>
-                  <div class="setting-item">
-                    <div class="setting-info">
-                      <span class="setting-title" id="title-sfx"
-                        >Self-extracting archives</span
-                      >
-                      <span class="setting-desc"
-                        >Not bundled in this build.</span
-                      >
-                    </div>
-                    <label class="switch">
-                      <input
-                        type="checkbox"
-                        id="s-sfx"
-                        aria-labelledby="title-sfx"
-                        disabled
-                      />
-                      <span class="switch__track"></span>
-                    </label>
-                  </div>
                   <div class="setting-item">
                     <div class="setting-info">
                       <span class="setting-title" id="title-encrypt-headers"
@@ -773,26 +764,6 @@
                         type="checkbox"
                         id="s-encrypt-headers"
                         aria-labelledby="title-encrypt-headers"
-                      />
-                      <span class="switch__track"></span>
-                    </label>
-                  </div>
-                  <div class="setting-item">
-                    <div class="setting-info">
-                      <span class="setting-title" id="title-delete-after"
-                        >Delete after compression</span
-                      >
-                      <span class="setting-desc"
-                        >Unavailable: delete sources manually after testing the
-                        archive.</span
-                      >
-                    </div>
-                    <label class="switch">
-                      <input
-                        type="checkbox"
-                        id="s-delete-after"
-                        aria-labelledby="title-delete-after"
-                        disabled
                       />
                       <span class="switch__track"></span>
                     </label>
@@ -891,7 +862,7 @@
                       <span class="setting-title">Win11 modern menu</span>
                       <span class="setting-desc" id="os-win11-menu-help"
                         >Sparse identity package for the primary right-click
-                        menu (Zinnia stays a normal NSIS install).</span
+                        menu (Zinnia stays a normal installed app).</span
                       >
                     </div>
                     <div class="os-finder-services-actions">
@@ -956,7 +927,8 @@
                       class="about-icon"
                       draggable="false"
                       role="button"
-                      tabindex="0"
+                      tabindex="-1"
+                      aria-label="Toggle hidden debug mode (click five times)"
                     />
                     <div>
                       <h3 class="about-name">Zinnia</h3>
@@ -971,7 +943,7 @@
                         <a
                           href="https://rosie.run"
                           target="_blank"
-                          rel="noopener"
+                          rel="noopener noreferrer"
                           >rosie.run</a
                         ></span
                       >
@@ -980,15 +952,11 @@
                   <div class="about-rows">
                     <div class="settings-row">
                       <span class="settings-label">Version</span>
-                      <span class="settings-value" id="s-version-label"
-                        >v0.1.0</span
-                      >
+                      <span class="settings-value" id="s-version-label"></span>
                     </div>
                     <div class="settings-row">
                       <span class="settings-label">Platform</span>
-                      <span class="settings-value" id="s-platform-label"
-                        >Platform</span
-                      >
+                      <span class="settings-value" id="s-platform-label"></span>
                     </div>
                     <div class="settings-row">
                       <span class="settings-label">License</span>
@@ -1014,7 +982,7 @@
                         <a
                           href="https://www.7-zip.org/"
                           target="_blank"
-                          rel="noopener"
+                          rel="noopener noreferrer"
                           >7-Zip</a
                         >
                         binaries by Igor Pavlov. 7-Zip is licensed under the GNU
@@ -1072,11 +1040,11 @@
           aria-labelledby="selective-title"
         >
           <div class="modal__header">
-            <h2 id="selective-title">Extract Selected Entries</h2>
+            <h2 id="selective-title">Extract selected</h2>
             <button
               class="btn btn--ghost btn--sm"
               id="close-selective"
-              aria-label="Close Extract Selected Entries dialog"
+              aria-label="Close Extract selected dialog"
             >
               &times;
             </button>
@@ -1088,6 +1056,10 @@
                 type="text"
                 id="selective-search"
                 placeholder="Filter by path..."
+                spellcheck="false"
+                autocorrect="off"
+                autocapitalize="off"
+                autocomplete="off"
               />
             </div>
             <div class="selective-toolbar">
@@ -1109,12 +1081,16 @@
               </div>
             </div>
             <div class="field">
-              <label for="selective-dest">Extract to</label>
+              <label for="selective-dest">Destination folder</label>
               <div class="input-row">
                 <input
                   type="text"
                   id="selective-dest"
                   placeholder="Select destination folder"
+                  spellcheck="false"
+                  autocorrect="off"
+                  autocapitalize="off"
+                  autocomplete="off"
                 />
                 <button class="btn btn--sm" id="selective-browse-dest">
                   Browse
@@ -1132,6 +1108,120 @@
             </button>
             <button class="btn btn--primary btn--sm" id="selective-confirm">
               Extract selected
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-overlay" id="convert-overlay" hidden>
+        <div
+          class="modal modal--convert"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="convert-title"
+          aria-describedby="convert-source"
+        >
+          <div class="modal__header">
+            <h2 id="convert-title">Convert archive</h2>
+            <button
+              class="btn btn--ghost btn--sm"
+              id="convert-close"
+              aria-label="Close convert archive dialog"
+            >
+              &times;
+            </button>
+          </div>
+          <div class="modal__body">
+            <p class="convert-dialog__source" id="convert-source"></p>
+            <div class="field">
+              <label for="convert-format">Convert to</label>
+              <select id="convert-format">
+                <option value="7z" selected>7z</option>
+                <option value="zip">zip</option>
+                <option value="tar">tar</option>
+                <option value="gzip">gzip</option>
+                <option value="bzip2">bzip2</option>
+                <option value="xz">xz</option>
+              </select>
+            </div>
+            <div class="field" id="convert-password-field">
+              <label for="convert-password">Password</label>
+              <div class="input-row">
+                <input
+                  type="password"
+                  id="convert-password"
+                  placeholder="Leave blank for none"
+                  spellcheck="false"
+                  autocorrect="off"
+                  autocapitalize="off"
+                  autocomplete="new-password"
+                />
+                <button
+                  type="button"
+                  class="btn btn--ghost btn--sm"
+                  id="convert-toggle-password"
+                  aria-label="Show password"
+                  aria-pressed="false"
+                >
+                  Show
+                </button>
+              </div>
+            </div>
+            <div class="field" id="convert-encrypt-field">
+              <label class="toggle"
+                ><input type="checkbox" id="convert-encrypt-headers" />Encrypt
+                file names</label
+              >
+            </div>
+            <div class="grid-split">
+              <div class="field">
+                <label for="convert-split-size">Split into volumes</label>
+                <select id="convert-split-size">
+                  <option value="" selected>Off (single file)</option>
+                  <option value="100m">100 MB</option>
+                  <option value="700m">700 MB (CD)</option>
+                  <option value="1g">1 GB</option>
+                  <option value="4g">4 GB (FAT32)</option>
+                  <option value="custom">Custom…</option>
+                </select>
+              </div>
+              <div class="field" id="convert-split-custom-field" hidden>
+                <label for="convert-split-custom">Custom size</label>
+                <input
+                  type="text"
+                  id="convert-split-custom"
+                  placeholder="e.g. 250m, 2g"
+                  spellcheck="false"
+                  autocorrect="off"
+                  autocapitalize="off"
+                  autocomplete="off"
+                />
+              </div>
+            </div>
+            <div class="field">
+              <label class="toggle"
+                ><input type="checkbox" id="convert-store-timestamps" />Store
+                created &amp; accessed times</label
+              >
+            </div>
+            <p
+              class="convert-dialog__output"
+              id="convert-output-name"
+              aria-live="polite"
+            ></p>
+            <p
+              class="convert-dialog__error"
+              id="convert-error"
+              role="alert"
+              hidden
+            ></p>
+          </div>
+          <div class="modal__footer">
+            <button class="btn btn--ghost btn--sm" id="convert-cancel">
+              Cancel
+            </button>
+            <button class="btn btn--primary btn--sm" id="convert-submit">
+              Convert
             </button>
           </div>
         </div>
@@ -1191,28 +1281,7 @@
             </button>
           </div>
           <div class="modal__body">
-            <dl class="shortcut-list">
-              <div class="shortcut-list__row">
-                <dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd></dt>
-                <dd>Run the current operation</dd>
-              </div>
-              <div class="shortcut-list__row">
-                <dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>,</kbd></dt>
-                <dd>Open Settings</dd>
-              </div>
-              <div class="shortcut-list__row">
-                <dt><kbd>Esc</kbd></dt>
-                <dd>Close the open dialog</dd>
-              </div>
-              <div class="shortcut-list__row">
-                <dt><kbd>?</kbd></dt>
-                <dd>Show this help</dd>
-              </div>
-              <div class="shortcut-list__row">
-                <dt><kbd>←</kbd> <kbd>→</kbd> in settings tabs</dt>
-                <dd>Move between settings tabs</dd>
-              </div>
-            </dl>
+            <dl class="shortcut-list" id="shortcut-list"></dl>
           </div>
           <div class="modal__footer">
             <button class="btn btn--ghost btn--sm" id="close-shortcuts-footer">
@@ -1242,7 +1311,14 @@
           <div class="modal__body">
             <label class="field">
               <span id="input-modal-label">Value</span>
-              <input type="text" id="input-modal-field" autocomplete="off" />
+              <input
+                type="text"
+                id="input-modal-field"
+                spellcheck="false"
+                autocorrect="off"
+                autocapitalize="off"
+                autocomplete="off"
+              />
             </label>
           </div>
           <div class="modal__footer">
@@ -1453,7 +1529,7 @@
             <button
               class="basic-toolbar__back"
               id="basic-tab-home"
-              title="Go home"
+              title="Back"
               type="button"
             >
               <i data-lucide="arrow-left" class="lucide-icon"></i>
@@ -1514,7 +1590,7 @@
                 alt=""
                 aria-hidden="true"
               />
-              <h2 class="basic-home__title">Drop a file here</h2>
+              <h2 class="basic-home__title">Drop files here</h2>
               <p class="basic-home__subtitle">
                 Open an archive, or make a new one: Zinnia handles the rest.
               </p>
@@ -1564,7 +1640,7 @@
             <div class="basic-view-scroll-content">
               <div class="basic-view-header">
                 <div>
-                  <h2 class="basic-section-title">Make an archive</h2>
+                  <h2 class="basic-section-title">Compress</h2>
                   <p class="basic-section-subtitle">
                     Pick what to include, choose where to save, then go.
                   </p>
@@ -1611,23 +1687,31 @@
                     type="text"
                     id="basic-archive-name"
                     placeholder="Use source name"
+                    spellcheck="false"
+                    autocorrect="off"
+                    autocapitalize="off"
+                    autocomplete="off"
                   />
                 </div>
                 <div class="basic-field basic-field--path">
                   <label class="basic-field__label" for="basic-output-path"
-                    >Output path</label
+                    >Output archive</label
                   >
                   <div class="basic-input-row">
                     <input
                       type="text"
                       id="basic-output-path"
                       placeholder="Choose where to save the archive"
+                      spellcheck="false"
+                      autocorrect="off"
+                      autocapitalize="off"
+                      autocomplete="off"
                     />
                     <button
                       class="basic-btn basic-btn--sm basic-btn--secondary"
                       id="basic-choose-output"
                     >
-                      Choose folder
+                      Choose location
                     </button>
                   </div>
                 </div>
@@ -1698,13 +1782,17 @@
                         type="password"
                         id="basic-password"
                         placeholder="Leave blank for none"
-                        autocomplete="off"
+                        spellcheck="false"
+                        autocorrect="off"
+                        autocapitalize="off"
+                        autocomplete="new-password"
                       />
                       <button
                         class="basic-password-toggle"
                         id="basic-toggle-password"
                         type="button"
-                        aria-label="Toggle password visibility"
+                        aria-label="Show password"
+                        aria-pressed="false"
                       >
                         Show
                       </button>
@@ -1735,6 +1823,9 @@
                       type="text"
                       id="basic-split-custom"
                       placeholder="e.g. 250m, 2g"
+                      spellcheck="false"
+                      autocorrect="off"
+                      autocapitalize="off"
                       autocomplete="off"
                     />
                   </div>
@@ -1760,7 +1851,7 @@
                   aria-valuemin="0"
                   aria-valuemax="100"
                   aria-valuenow="0"
-                  aria-labelledby="basic-compress-status"
+                  aria-label="Compression progress"
                 >
                   <div
                     class="basic-progress__bar-fill is-indeterminate"
@@ -1799,7 +1890,9 @@
                 <h3
                   class="basic-completion__title"
                   id="basic-compress-completion-title"
-                ></h3>
+                >
+                  Compression finished
+                </h3>
                 <p
                   class="basic-completion__message"
                   id="basic-compress-completion-msg"
@@ -1885,13 +1978,17 @@
                 </div>
                 <div class="basic-field" id="basic-extract-destination-field">
                   <label class="basic-field__label" for="basic-extract-path"
-                    >Extract to</label
+                    >Destination folder</label
                   >
                   <div class="basic-input-row">
                     <input
                       type="text"
                       id="basic-extract-path"
                       placeholder="Choose destination folder"
+                      spellcheck="false"
+                      autocorrect="off"
+                      autocapitalize="off"
+                      autocomplete="off"
                     />
                     <button
                       class="basic-btn basic-btn--sm basic-btn--secondary"
@@ -1917,13 +2014,17 @@
                         type="password"
                         id="basic-extract-password"
                         placeholder="Enter archive password"
+                        spellcheck="false"
+                        autocorrect="off"
+                        autocapitalize="off"
                         autocomplete="off"
                       />
                       <button
                         class="basic-password-toggle"
                         id="basic-toggle-extract-password"
                         type="button"
-                        aria-label="Toggle password visibility"
+                        aria-label="Show password"
+                        aria-pressed="false"
                       >
                         Show
                       </button>
@@ -1959,7 +2060,7 @@
                   aria-valuemin="0"
                   aria-valuemax="100"
                   aria-valuenow="0"
-                  aria-labelledby="basic-extract-status"
+                  aria-label="Extraction progress"
                 >
                   <div
                     class="basic-progress__bar-fill is-indeterminate"
@@ -1998,7 +2099,9 @@
                 <h3
                   class="basic-completion__title"
                   id="basic-extract-completion-title"
-                ></h3>
+                >
+                  Extraction finished
+                </h3>
                 <p
                   class="basic-completion__message"
                   id="basic-extract-completion-msg"
@@ -2075,6 +2178,13 @@
                 aria-live="polite"
                 aria-atomic="true"
               ></div>
+              <div
+                class="basic-browse-summary"
+                id="basic-browse-status"
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+              ></div>
               <div class="basic-browse-table-wrap">
                 <table>
                   <thead>
@@ -2097,14 +2207,17 @@
                 <input
                   id="basic-browse-password"
                   type="password"
-                  autocomplete="off"
                   spellcheck="false"
+                  autocorrect="off"
+                  autocapitalize="off"
+                  autocomplete="off"
                 />
                 <button
                   type="button"
                   class="basic-password-toggle basic-password-toggle--icon"
                   id="basic-toggle-browse-password"
                   aria-label="Show password"
+                  aria-pressed="false"
                 >
                   <i data-lucide="eye" class="lucide-icon"></i>
                 </button>
@@ -2144,7 +2257,7 @@
                   data-mode-btn="add"
                   aria-pressed="true"
                 >
-                  Add
+                  Compress
                 </button>
                 <button
                   class="segmented__btn"
@@ -2238,7 +2351,7 @@
                   data-quick-action-btn
                   data-quick-action="extract-selective"
                 >
-                  Extract Selected
+                  Extract selected
                 </button>
                 <button
                   class="btn btn--ghost btn--sm"
@@ -2264,7 +2377,7 @@
                   data-quick-action-btn
                   data-quick-action="browse-list"
                 >
-                  List
+                  List contents
                 </button>
                 <button
                   class="btn btn--sm"
@@ -2280,7 +2393,7 @@
                   data-quick-action-btn
                   data-quick-action="browse-selective"
                 >
-                  Selective Extract
+                  Extract selected
                 </button>
                 <button
                   class="btn btn--ghost btn--sm"
@@ -2323,7 +2436,7 @@
                 <div
                   class="list"
                   id="input-list"
-                  role="list"
+                  role="group"
                   aria-label="File inputs: drop files here or use buttons above"
                 ></div>
               </section>
@@ -2400,16 +2513,24 @@
                     type="text"
                     id="archive-name"
                     placeholder="Leave blank to use source name"
+                    spellcheck="false"
+                    autocorrect="off"
+                    autocapitalize="off"
+                    autocomplete="off"
                   />
                 </div>
 
                 <div class="field">
-                  <label for="output-path">Archive destination</label>
+                  <label for="output-path">Output archive</label>
                   <div class="input-row">
                     <input
                       type="text"
                       id="output-path"
                       placeholder="Select output archive"
+                      spellcheck="false"
+                      autocorrect="off"
+                      autocapitalize="off"
+                      autocomplete="off"
                     />
                     <button class="btn btn--sm" id="choose-output">
                       Browse
@@ -2448,12 +2569,16 @@
                 </div>
 
                 <div class="field">
-                  <label for="extract-path">Extract to</label>
+                  <label for="extract-path">Destination folder</label>
                   <div class="input-row">
                     <input
                       type="text"
                       id="extract-path"
                       placeholder="Select destination folder"
+                      spellcheck="false"
+                      autocorrect="off"
+                      autocapitalize="off"
+                      autocomplete="off"
                     />
                     <button class="btn btn--sm" id="choose-extract">
                       Browse
@@ -2471,13 +2596,16 @@
                           type="password"
                           id="extract-password"
                           placeholder="Only if needed"
+                          spellcheck="false"
+                          autocorrect="off"
+                          autocapitalize="off"
                           autocomplete="off"
                         />
                         <button
                           type="button"
                           class="btn btn--ghost btn--sm"
                           id="toggle-extract-password"
-                          aria-label="Toggle password visibility"
+                          aria-label="Show password"
                           aria-pressed="false"
                         >
                           Show
@@ -2490,6 +2618,10 @@
                         type="text"
                         id="extract-extra-args"
                         placeholder="-y -bb1 -bsp1"
+                        spellcheck="false"
+                        autocorrect="off"
+                        autocapitalize="off"
+                        autocomplete="off"
                       />
                     </div>
                   </div>
@@ -2535,13 +2667,16 @@
                       type="password"
                       id="browse-password"
                       placeholder="Only if needed"
+                      spellcheck="false"
+                      autocorrect="off"
+                      autocapitalize="off"
                       autocomplete="off"
                     />
                     <button
                       type="button"
                       class="btn btn--ghost btn--sm"
                       id="toggle-browse-password"
-                      aria-label="Toggle password visibility"
+                      aria-label="Show password"
                       aria-pressed="false"
                     >
                       Show
@@ -2588,7 +2723,7 @@
                     id="browse-selective"
                     data-power-only
                   >
-                    Select items...
+                    Extract selected...
                   </button>
                   <button
                     class="btn btn--accent-outline"
@@ -2601,7 +2736,7 @@
                     class="btn btn--accent-outline"
                     id="browse-convert"
                     data-power-only
-                    title="Extract and recompress this archive using the current compression format"
+                    title="Convert this archive to another format, with its own password and output name"
                   >
                     Convert...
                   </button>
@@ -2676,9 +2811,6 @@
                           value="8"
                         />
                       </div>
-                      <!-- Absolute archive members cannot be extracted safely.
-                           Keep this state holder while migrating saved settings. -->
-                      <input id="path-mode" type="hidden" value="relative" />
                     </div>
                     <div class="grid-split">
                       <div class="field">
@@ -2698,6 +2830,9 @@
                           type="text"
                           id="split-custom"
                           placeholder="e.g. 250m, 2g"
+                          spellcheck="false"
+                          autocorrect="off"
+                          autocapitalize="off"
                           autocomplete="off"
                         />
                       </div>
@@ -2718,22 +2853,8 @@
                           existing archive</label
                         >
                         <label class="toggle"
-                          ><input type="checkbox" id="sfx" disabled />SFX
-                          unavailable</label
-                        >
-                        <label class="toggle"
                           ><input type="checkbox" id="encrypt-headers" />Encrypt
                           file names</label
-                        >
-                        <label
-                          class="toggle"
-                          title="Unavailable because source deletion cannot be rolled back safely"
-                          ><input
-                            type="checkbox"
-                            id="delete-after"
-                            disabled
-                          />Delete files manually after testing the
-                          archive</label
                         >
                         <label
                           class="toggle"
@@ -2750,13 +2871,16 @@
                           type="password"
                           id="password"
                           placeholder="Leave blank for none"
-                          autocomplete="off"
+                          spellcheck="false"
+                          autocorrect="off"
+                          autocapitalize="off"
+                          autocomplete="new-password"
                         />
                         <button
                           type="button"
                           class="btn btn--ghost btn--sm"
                           id="toggle-password"
-                          aria-label="Toggle password visibility"
+                          aria-label="Show password"
                           aria-pressed="false"
                         >
                           Show
@@ -2769,6 +2893,10 @@
                         type="text"
                         id="extra-args"
                         placeholder="-mx=9 -mmt=on"
+                        spellcheck="false"
+                        autocorrect="off"
+                        autocapitalize="off"
+                        autocomplete="off"
                       />
                     </div>
                   </div>
@@ -2785,7 +2913,7 @@
               </button>
             </div>
             <div class="panel__body">
-              <div class="log" id="log" aria-live="polite" role="log"></div>
+              <div class="log" id="log" aria-live="off" role="log"></div>
             </div>
           </section>
         </div>
@@ -2835,21 +2963,28 @@
           class="debug-console__log"
           id="debug-console-log"
           role="log"
-          aria-live="polite"
+          aria-live="off"
         ></pre>
       </aside>
 
       <footer class="statusbar">
         <span class="statusbar__item" id="status" aria-live="polite">Idle</span>
+        <span class="statusbar__item" id="progress" hidden></span>
         <span
-          class="statusbar__item"
-          id="progress"
-          hidden
+          class="sr-only"
+          id="progress-announcer"
+          role="status"
           aria-live="polite"
         ></span>
+        <button
+          type="button"
+          class="statusbar__item update-ready-indicator"
+          id="update-ready-indicator"
+          hidden
+        ></button>
         <span class="statusbar__spacer"></span>
-        <span class="statusbar__item" id="version-label">v0.1.0</span>
-        <span class="statusbar__item" id="platform-label">Platform</span>
+        <span class="statusbar__item" id="version-label"></span>
+        <span class="statusbar__item" id="platform-label"></span>
       </footer>
     </div>
 

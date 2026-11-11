@@ -19,7 +19,7 @@ import {
   describe7zError,
   looksLikePasswordRequiredError,
 } from "../error-hints";
-import { promptInput } from "../prompt-modal";
+import { promptPassword, type PasswordPromptOutcome } from "../prompt-modal";
 import { withPassword } from "./args";
 import { basename } from "../path-display";
 import { formatEta, type ProgressUpdate } from "../progress-update";
@@ -33,7 +33,8 @@ import { assertRunResult } from "../utils";
 
 export const formatBatchEta = formatEta;
 
-export type Run7zResult = RunResult;
+/** `skipped` is set when the user chose "Skip this archive" in a batch. */
+export type Run7zResult = RunResult & { skipped?: boolean };
 
 const OUTPUT_TRUNCATION_LIMIT_MIB = 10;
 const RUNTIME_PROBE_TIMEOUT_MS = 7000;
@@ -258,27 +259,49 @@ export async function withLiveProgress<T>(fn: () => Promise<T>): Promise<T> {
 
 export type PasswordCarry = { value: string };
 
+export type PasswordRetryOptions = {
+  /** Batch callers only. Lets the password prompt skip this archive. */
+  allowSkip?: boolean;
+};
+
+const PASSWORD_PROMPT_TITLE = "Password required";
+const FIRST_PASSWORD_LABEL = "This archive is encrypted. Enter password:";
+const RETRY_PASSWORD_LABEL = "Incorrect password. Enter the archive password:";
+
+function cancelledRunResult(): Run7zResult {
+  return { stdout: "", stderr: "Operation cancelled by user", code: -1 };
+}
+
+function archivePathFromArgs(args: string[]): string {
+  const separator = args.indexOf("--");
+  return separator === -1 ? "" : (args[separator + 1] ?? "");
+}
+
+/**
+ * Runs 7-Zip and, for a password failure, prompts until a password is accepted
+ * or the user cancels. Skip (batch only) returns a `skipped` result so the
+ * caller moves on without stopping the batch.
+ */
 export async function runWithPasswordRetry(
   args: string[],
   retryForMissingPassword: boolean,
   confirmLabel = "Extract",
   expectedArchiveIdentity?: string,
   passwordCarry?: PasswordCarry,
+  options: PasswordRetryOptions = {},
 ): Promise<Run7zResult> {
   if (state.cancelRequested || state.batchCancelled) {
-    return {
-      stdout: "",
-      stderr: "Operation cancelled by user",
-      code: -1,
-    };
+    return cancelledRunResult();
   }
   const hasPasswordSwitch = args.some(
     (arg) => arg.length > 2 && arg.slice(0, 2).toLowerCase() === "-p",
   );
-  let effectiveArgs =
+  const effectiveArgs =
     passwordCarry?.value && !hasPasswordSwitch
       ? withPassword(args, passwordCarry.value)
       : args;
+  // Once a password has gone to 7-Zip, a repeated failure means it was wrong.
+  let passwordSent = effectiveArgs !== args || hasPasswordSwitch;
   let result: Run7zResult;
   try {
     result = await invokeGuardedRun7z(effectiveArgs, expectedArchiveIdentity);
@@ -295,7 +318,7 @@ export async function runWithPasswordRetry(
     }
     result = { stdout: "", stderr: detail, code: 255 };
   }
-  if (
+  while (
     retryForMissingPassword &&
     result.code > 1 &&
     looksLikePasswordRequiredError(result.stdout, result.stderr)
@@ -308,34 +331,36 @@ export async function runWithPasswordRetry(
     const cancelBtn = document.getElementById("cancel-action");
     const onCancel = () => abort.abort();
     cancelBtn?.addEventListener("click", onCancel);
-    let password: string | null;
+    let outcome: PasswordPromptOutcome;
     try {
-      password = await promptInput({
-        title: "Password required",
-        label: "This archive is encrypted. Enter password:",
-        password: true,
+      outcome = await promptPassword({
+        title: PASSWORD_PROMPT_TITLE,
+        label: passwordSent ? RETRY_PASSWORD_LABEL : FIRST_PASSWORD_LABEL,
         confirmLabel,
+        allowSkip: options.allowSkip === true,
         signal: abort.signal,
       });
     } finally {
       cancelBtn?.removeEventListener("click", onCancel);
     }
-    if (state.cancelRequested || !password) {
-      state.cancelRequested = true;
-      return {
-        stdout: "",
-        stderr: "Operation cancelled by user",
-        code: -1,
-      };
-    }
-    if (password) {
-      if (passwordCarry) passwordCarry.value = password;
-      setStatus("Retrying with password");
-      result = await invokeGuardedRun7z(
-        withPassword(effectiveArgs, password),
-        expectedArchiveIdentity,
+    if (outcome.kind === "skip") {
+      const archive = archivePathFromArgs(args);
+      log(
+        `Skipped ${archive ? basename(archive) : "archive"} at your request.`,
       );
+      return { stdout: "", stderr: "Skipped by user", code: -1, skipped: true };
     }
+    if (state.cancelRequested || outcome.kind === "cancel") {
+      state.cancelRequested = true;
+      return cancelledRunResult();
+    }
+    if (passwordCarry) passwordCarry.value = outcome.value;
+    setStatus("Retrying with password");
+    result = await invokeGuardedRun7z(
+      withPassword(args, outcome.value),
+      expectedArchiveIdentity,
+    );
+    passwordSent = true;
   }
   return result;
 }

@@ -3,29 +3,44 @@ import {
   SETTING_DEFAULTS,
   mergeSettingsPayload,
   normalizeUserSettings,
-  parseSettingsJson,
   parseSettingsRaw,
   splitSettingsPayload,
 } from "../settings-model";
 
-describe("parseSettingsJson", () => {
-  it("returns defaults for broken JSON", () => {
-    expect(parseSettingsJson("{broken json")).toEqual(SETTING_DEFAULTS);
-  });
-
-  it("parses valid JSON and merges with defaults", () => {
-    const result = parseSettingsJson(JSON.stringify({ theme: "dark" }));
-    expect(result.theme).toBe("dark");
-    expect(result.format).toBe(SETTING_DEFAULTS.format);
-  });
-});
-
 describe("parseSettingsRaw", () => {
-  it("marks malformed JSON and returns defaults", () => {
+  it("returns defaults for broken JSON", () => {
     const result = parseSettingsRaw("{broken json");
     expect(result.malformed).toBe(true);
     expect(typeof result.warning).toBe("string");
     expect(result.settings).toEqual(SETTING_DEFAULTS);
+  });
+
+  it("parses valid JSON and merges with defaults", () => {
+    const result = parseSettingsRaw(JSON.stringify({ theme: "dark" }));
+    expect(result.malformed).toBe(false);
+    expect(result.settings.theme).toBe("dark");
+    expect(result.settings.format).toBe(SETTING_DEFAULTS.format);
+  });
+
+  it("drops legacy keys and migrates _setupComplete to setupComplete", () => {
+    const result = parseSettingsRaw(
+      JSON.stringify({
+        theme: "dark",
+        pathMode: "absolute",
+        sfx: true,
+        deleteAfter: true,
+        _setupComplete: true,
+      }),
+    );
+    expect(result.settings.theme).toBe("dark");
+    expect(result.settings.setupComplete).toBe(true);
+    expect(result.extras._setupComplete).toBeUndefined();
+    expect(
+      Object.prototype.hasOwnProperty.call(result.settings, "pathMode"),
+    ).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(result.settings, "sfx")).toBe(
+      false,
+    );
   });
 });
 
@@ -40,26 +55,38 @@ describe("normalizeUserSettings", () => {
     expect(result.theme).toBe(SETTING_DEFAULTS.theme);
   });
 
-  it("migrates unsafe absolute pathMode to relative", () => {
-    const result = normalizeUserSettings({
-      format: "zip",
-      pathMode: "absolute",
-    });
-    expect(result.format).toBe("zip");
-    expect(result.pathMode).toBe("relative");
-  });
-
   it("rejects wrong types for boolean fields", () => {
     const result = normalizeUserSettings({
-      sfx: "true",
-      deleteAfter: 1,
       localLoggingEnabled: "yes",
     });
-    expect(result.sfx).toBe(SETTING_DEFAULTS.sfx);
-    expect(result.deleteAfter).toBe(SETTING_DEFAULTS.deleteAfter);
     expect(result.localLoggingEnabled).toBe(
       SETTING_DEFAULTS.localLoggingEnabled,
     );
+  });
+
+  it("strips legacy keys from custom presets without failing", () => {
+    const result = normalizeUserSettings({
+      customPresets: [
+        {
+          name: "Legacy",
+          format: "7z",
+          level: "5",
+          sfx: true,
+          deleteAfter: true,
+          pathMode: "absolute",
+        },
+      ],
+    });
+    expect(result.customPresets).toHaveLength(1);
+    expect(result.customPresets[0]).toEqual({
+      name: "Legacy",
+      format: "7z",
+      level: "5",
+      method: SETTING_DEFAULTS.method,
+      dict: SETTING_DEFAULTS.dict,
+      wordSize: SETTING_DEFAULTS.wordSize,
+      solid: SETTING_DEFAULTS.solid,
+    });
   });
 
   it("accepts valid logVerbosity and booleans", () => {
@@ -280,5 +307,18 @@ describe("mergeSettingsPayload", () => {
     expect(merged._integrationAutoEnabled).toBe(true);
     expect(merged.customInternal).toBe("x");
     expect(merged.theme).toBe(SETTING_DEFAULTS.theme);
+  });
+
+  it("omits dropped legacy keys from saved payload", () => {
+    const merged = mergeSettingsPayload(SETTING_DEFAULTS, {
+      _setupComplete: true,
+      pathMode: "absolute",
+      sfx: true,
+      deleteAfter: true,
+    });
+    expect(merged._setupComplete).toBeUndefined();
+    expect(merged.pathMode).toBeUndefined();
+    expect(merged.sfx).toBeUndefined();
+    expect(merged.deleteAfter).toBeUndefined();
   });
 });

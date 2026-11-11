@@ -81,7 +81,6 @@ const FORM_VALUE_IDS = [
 const FORM_CHECKED_IDS = [
   "update-mode",
   "encrypt-headers",
-  "delete-after",
   "store-timestamps",
 ] as const;
 
@@ -255,7 +254,6 @@ function configureSafeCompressionForm(
   setValue("extra-args", "");
   setChecked("update-mode", updateMode);
   setChecked("encrypt-headers", false);
-  setChecked("delete-after", false);
   setChecked("store-timestamps", false);
 }
 

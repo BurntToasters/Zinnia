@@ -11,6 +11,19 @@ import {
 } from "../presets";
 import { state } from "../state";
 import { syncBasicToPower } from "../basic/sync";
+import { mergeSettingsPayload, parseSettingsRaw } from "../settings-model";
+
+function makeCustomPresets(count: number) {
+  return Array.from({ length: count }, (_, index) => ({
+    name: `Preset ${index}`,
+    format: "7z",
+    level: "5",
+    method: "lzma2",
+    dict: "64m",
+    wordSize: "64",
+    solid: "off",
+  }));
+}
 
 function getSelectValue(id: string): string {
   return (document.getElementById(id) as HTMLSelectElement).value;
@@ -165,6 +178,52 @@ describe("custom presets", () => {
     saveCustomPreset("Dup");
     expect(state.currentSettings.customPresets).toHaveLength(1);
     expect(state.currentSettings.customPresets[0].level).toBe("9");
+  });
+
+  it("allows the 50th custom preset", () => {
+    state.currentSettings.customPresets = makeCustomPresets(49);
+
+    saveCustomPreset("Preset 49");
+
+    expect(state.currentSettings.customPresets).toHaveLength(50);
+    expect(state.currentSettings.customPresets[49].name).toBe("Preset 49");
+  });
+
+  it("rejects a 51st custom preset without changing the saved list", () => {
+    state.currentSettings.customPresets = makeCustomPresets(50);
+    const before = state.currentSettings.customPresets.map((preset) => ({
+      ...preset,
+    }));
+
+    expect(() => saveCustomPreset("One Too Many")).toThrow(
+      /50.*(?:delete|remove|replace)|(?:delete|remove|replace).*50/i,
+    );
+    expect(state.currentSettings.customPresets).toEqual(before);
+  });
+
+  it("replaces a preset in place at capacity and survives a settings round trip", () => {
+    state.currentSettings.customPresets = makeCustomPresets(50);
+    const expectedNames = state.currentSettings.customPresets.map(
+      (preset) => preset.name,
+    );
+    setSelectValue("level", "9");
+
+    saveCustomPreset("Preset 24");
+
+    const saved = state.currentSettings.customPresets;
+    expect(saved).toHaveLength(50);
+    expect(saved.map((preset) => preset.name)).toEqual(expectedNames);
+    expect(saved[24].level).toBe("9");
+
+    const persisted = mergeSettingsPayload(
+      state.currentSettings,
+      state.settingsExtras,
+    );
+    const restored = parseSettingsRaw(JSON.stringify(persisted)).settings
+      .customPresets;
+    expect(restored).toHaveLength(50);
+    expect(restored.map((preset) => preset.name)).toEqual(expectedNames);
+    expect(restored[24].level).toBe("9");
   });
 
   it("applies a saved custom preset by prefixed value", () => {

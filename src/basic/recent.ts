@@ -1,5 +1,6 @@
 import { validateArchivePaths } from "../archive-rules";
 import { basename } from "../path-display";
+import { isKeyHandled, markKeyHandled } from "../utils";
 
 const RECENT_ARCHIVES_KEY = "zinnia.basic.recentArchives";
 const MAX_RECENT_ARCHIVES = 5;
@@ -100,8 +101,27 @@ function setRecentMenuOpen(open: boolean): void {
   menu.hidden = !open;
 }
 
-function closeRecentMenu(): void {
+function isRecentMenuOpen(): boolean {
+  return (
+    document.getElementById("header-recent")?.classList.contains("is-open") ??
+    false
+  );
+}
+
+function recentMenuItems(): HTMLButtonElement[] {
+  return Array.from(
+    document.querySelectorAll<HTMLButtonElement>(
+      "#header-recent-menu .header-recent__item",
+    ),
+  );
+}
+
+/** Close the menu. Esc restores focus to the trigger; outside clicks do not. */
+function closeRecentMenu(restoreFocus = false): void {
   menuOpenGeneration += 1;
+  if (restoreFocus && isRecentMenuOpen()) {
+    document.getElementById("header-recent-btn")?.focus();
+  }
   setRecentMenuOpen(false);
 }
 
@@ -121,6 +141,7 @@ function wireRecentMenuOnce(): void {
         if (openGeneration !== menuOpenGeneration) return;
         if (loadRecentArchives().length === 0) return;
         setRecentMenuOpen(true);
+        recentMenuItems()[0]?.focus();
       });
     } else {
       closeRecentMenu();
@@ -133,9 +154,42 @@ function wireRecentMenuOnce(): void {
     closeRecentMenu();
   });
 
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") closeRecentMenu();
+  wrap.addEventListener("keydown", (event) => {
+    if (!isRecentMenuOpen()) return;
+    const items = recentMenuItems();
+    if (items.length === 0) return;
+    const current = items.indexOf(document.activeElement as HTMLButtonElement);
+    let next = -1;
+    if (event.key === "ArrowDown") {
+      next = current < 0 ? 0 : (current + 1) % items.length;
+    } else if (event.key === "ArrowUp") {
+      next =
+        current < 0
+          ? items.length - 1
+          : (current - 1 + items.length) % items.length;
+    } else if (event.key === "Home") {
+      next = 0;
+    } else if (event.key === "End") {
+      next = items.length - 1;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    items[next].focus();
   });
+
+  // Capture phase: this must run before the Basic Esc handler, which would
+  // otherwise navigate Home for a key that only meant "close the menu".
+  document.addEventListener(
+    "keydown",
+    (event) => {
+      if (event.key !== "Escape" || isKeyHandled(event)) return;
+      if (!isRecentMenuOpen()) return;
+      markKeyHandled(event);
+      closeRecentMenu(true);
+    },
+    true,
+  );
 }
 
 function renderRecentList(recent: string[]): void {

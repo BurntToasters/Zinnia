@@ -2,6 +2,19 @@ import tsPlugin from "@typescript-eslint/eslint-plugin";
 import tsParser from "@typescript-eslint/parser";
 import noUnsanitized from "eslint-plugin-no-unsanitized";
 
+// Node-side globals come from the running runtime, so no `globals` package is
+// needed. CommonJS wrapper names are listed separately for .cjs files.
+const nodeGlobals = Object.fromEntries(
+  Object.getOwnPropertyNames(globalThis).map((name) => [name, "readonly"]),
+);
+const cjsGlobals = {
+  require: "readonly",
+  module: "writable",
+  exports: "writable",
+  __dirname: "readonly",
+  __filename: "readonly",
+};
+
 export default [
   {
     files: ["src/**/*.ts"],
@@ -46,7 +59,11 @@ export default [
     },
   },
   {
-    files: ["scripts/**/*.{js,ts}", "e2e/**/*.js"],
+    files: [
+      "scripts/**/*.{js,mjs,cjs,ts}",
+      "bench/**/*.{js,mjs,cjs}",
+      "e2e/**/*.js",
+    ],
     languageOptions: {
       parser: tsParser,
     },
@@ -59,6 +76,28 @@ export default [
         "error",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
       ],
+    },
+  },
+  {
+    // Node-only scripts and bench code. Core rules here are the subset of
+    // eslint:recommended that catches real bugs without touching e2e/ or src/.
+    // Switch to js.configs.recommended once @eslint/js is a declared devDependency.
+    files: ["scripts/**/*.{mjs,cjs}", "bench/**/*.{js,mjs,cjs}"],
+    languageOptions: {
+      globals: { ...nodeGlobals, ...cjsGlobals },
+    },
+    rules: {
+      "no-undef": "error",
+      "no-unreachable": "error",
+      "no-dupe-keys": "error",
+      "no-dupe-class-members": "error",
+      "no-unsafe-finally": "error",
+      "no-self-assign": "error",
+      "no-redeclare": "error",
+      "no-cond-assign": "error",
+      // Empty catch blocks are deliberate best-effort cleanup in these scripts.
+      "no-empty": ["error", { allowEmptyCatch: true }],
+      "no-useless-escape": "error",
     },
   },
   {

@@ -1,6 +1,5 @@
 //! Compress-input tree probes (symlinks, app bundles, Windows cloud/junction reparse).
 
-use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 const MAX_EXAMPLES: usize = 4;
@@ -25,9 +24,8 @@ impl ProbeBudget {
     }
 }
 
-#[derive(Default, Serialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct CompressInputProbe {
+#[derive(Default, Clone, Debug)]
+struct CompressInputProbe {
     pub nested_symlinks: u32,
     pub app_bundles: u32,
     pub nested_reparse_points: u32,
@@ -36,11 +34,7 @@ pub struct CompressInputProbe {
 
 /// Walk selected compress inputs (files/folders). Top-level symlink inputs are
 /// rejected elsewhere; this finds nested links and Windows non-symlink reparse.
-pub fn probe_compress_input_paths(paths: &[String]) -> Result<CompressInputProbe, String> {
-    probe_compress_input_paths_with_cancel(paths, || false)
-}
-
-pub fn probe_compress_input_paths_with_cancel<C>(
+fn scan_compress_inputs_with_cancel<C>(
     paths: &[String],
     should_cancel: C,
 ) -> Result<CompressInputProbe, String>
@@ -398,20 +392,20 @@ pub fn assert_compress_inputs_safe_with_cancel<C>(
 where
     C: Fn() -> bool + Sync,
 {
-    let probe = probe_compress_input_paths_with_cancel(paths, should_cancel)?;
-    #[cfg(windows)]
+    let probe = scan_compress_inputs_with_cancel(paths, should_cancel)?;
     if probe.nested_reparse_points != 0 {
-        let sample = probe
-            .examples
-            .first()
-            .cloned()
-            .unwrap_or_else(|| "(path omitted)".to_string());
-        return Err(format!(
-            "Compress inputs contain a Windows reparse point (junction or cloud placeholder) that is not a symbolic link: {sample}. Copy the real files locally, or remove the reparse entry, then try again."
-        ));
+        #[cfg(windows)]
+        {
+            let sample = probe
+                .examples
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "(path omitted)".to_string());
+            return Err(format!(
+                "Compress inputs contain a Windows reparse point (junction or cloud placeholder) that is not a symbolic link: {sample}. Copy the real files locally, or remove the reparse entry, then try again."
+            ));
+        }
     }
-    #[cfg(not(windows))]
-    let _ = probe;
     Ok(())
 }
 
@@ -439,7 +433,9 @@ mod tests {
         symlink("A", root.join("Demo.app/Contents/Current")).unwrap();
         std::fs::create_dir_all(root.join("plain")).unwrap();
 
-        let probe = probe_compress_input_paths(&[root.to_string_lossy().to_string()]).unwrap();
+        let probe =
+            scan_compress_inputs_with_cancel(&[root.to_string_lossy().to_string()], || false)
+                .unwrap();
         assert!(probe.app_bundles >= 1);
         assert!(probe.nested_symlinks >= 1);
         assert_eq!(probe.nested_reparse_points, 0);
@@ -475,7 +471,7 @@ mod tests {
             std::fs::write(root.join(format!("entry-{index}")), b"x").unwrap();
         }
         let before = METADATA_WORKERS_CREATED.load(std::sync::atomic::Ordering::Relaxed);
-        probe_compress_input_paths(&[root.to_string_lossy().to_string()]).unwrap();
+        scan_compress_inputs_with_cancel(&[root.to_string_lossy().to_string()], || false).unwrap();
         let created = METADATA_WORKERS_CREATED
             .load(std::sync::atomic::Ordering::Relaxed)
             .saturating_sub(before);

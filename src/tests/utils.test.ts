@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   $,
-  escapeHtml,
   parseThreads,
   formatSize,
   splitArgs,
@@ -105,26 +104,6 @@ describe("isArchiveFile", () => {
   });
 });
 
-describe("escapeHtml", () => {
-  it("escapes special HTML characters", () => {
-    expect(escapeHtml('<script>"test"</script>')).toBe(
-      "&lt;script&gt;&quot;test&quot;&lt;/script&gt;",
-    );
-  });
-
-  it("escapes single quotes", () => {
-    expect(escapeHtml("it's")).toBe("it&#39;s");
-  });
-
-  it("escapes ampersands", () => {
-    expect(escapeHtml("A & B")).toBe("A &amp; B");
-  });
-
-  it("returns empty string unchanged", () => {
-    expect(escapeHtml("")).toBe("");
-  });
-});
-
 describe("parseThreads", () => {
   it("parses valid thread counts", () => {
     expect(parseThreads("4", 2)).toBe(4);
@@ -149,8 +128,8 @@ describe("parseThreads", () => {
 });
 
 describe("formatSize", () => {
-  it("returns dash for zero bytes", () => {
-    expect(formatSize(0)).toBe("-");
+  it("returns 0 B for zero bytes so an empty file is not shown as a folder", () => {
+    expect(formatSize(0)).toBe("0 B");
   });
 
   it("formats bytes", () => {

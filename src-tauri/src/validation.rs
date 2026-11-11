@@ -1,9 +1,8 @@
 //! Allow-list validation for 7z args. Security boundary between frontend and process.
 
-// Large drag-and-drop selections are valid. This is still bounded to protect
-// the sidecar and IPC boundary without rejecting ordinary bulk operations.
-// Archive validation accepts 4,096 user paths. Leave bounded room for the
-// command, output, safety, compression, and user-approved option arguments.
+// Caps the switch region: the command, switches, and archive path before `--`.
+// Selected members after `--` are capped by the caller against the extract
+// entry limit (see `process::commands`), since that constant lives in `process`.
 const MAX_7Z_ARGS: usize = 8192;
 const MAX_7Z_ARG_BYTES: usize = 8192;
 
@@ -13,349 +12,46 @@ const ALLOWED_7Z_COMMANDS: &[&str] = &["a", "u", "x", "l", "t", "b"];
 // BLOCKED so those switches validate; frontend extra-args does not expose them.
 const BLOCKED_7Z_ARGS: &[&str] = &["-si", "-so", "-sdel", "-sfx", "-w", "-sns", "-sni", "-spf2"];
 
-fn has_embedded_listfile(arg: &str) -> bool {
-    let lower = arg.to_ascii_lowercase();
-    (lower.starts_with("-i") || lower.starts_with("-x")) && arg[2..].contains('@')
-}
+mod members;
+mod switches;
+mod zip_policy;
 
-fn is_numbered_switch(arg: &str, prefix: &str, max: u8) -> bool {
-    arg.strip_prefix(prefix)
-        .and_then(|value| value.parse::<u8>().ok())
-        .is_some_and(|value| value <= max)
-}
+pub(crate) use members::{
+    archive_member_path_is_unsafe, has_parent_dir_component, windows_component_name_is_unsafe,
+};
+pub(crate) use zip_policy::{
+    archive_type_switches, is_password_protected_zip_create, is_zip_create_or_update,
+};
 
-fn is_stream_switch(arg: &str) -> bool {
-    // -bsp2 would push progress into stderr and defeat the exit-1 classifier.
-    arg.eq_ignore_ascii_case("-bsp1")
-}
+use members::switch_contains_parent_traversal;
+use switches::{
+    compress_include_exclude_payload_is_unsafe, has_embedded_listfile, include_exclude_payload,
+    is_allowed_switch, is_include_or_exclude, is_include_switch,
+};
 
-pub(crate) fn archive_type_switches(args: &[String]) -> Vec<String> {
-    let separator = args
-        .iter()
-        .position(|arg| arg == "--")
-        .unwrap_or(args.len());
-    args.iter()
-        .take(separator)
-        .skip(1)
-        .filter_map(|arg| {
-            let lower = arg.to_ascii_lowercase();
-            if lower == "-stl" || lower.starts_with("-stx") {
-                return None;
-            }
-            lower
-                .strip_prefix("-t")
-                .filter(|value| !value.is_empty())
-                .map(str::to_string)
-        })
-        .collect()
-}
-
-fn create_output_looks_like_zip(args: &[String]) -> bool {
-    let separator = args
-        .iter()
-        .position(|arg| arg == "--")
-        .unwrap_or(args.len());
-    args[1..separator]
-        .iter()
-        .rev()
-        .find(|arg| !arg.starts_with('-'))
-        .is_some_and(|path| path.to_ascii_lowercase().ends_with(".zip"))
-}
-
-pub(crate) fn is_zip_create_or_update(args: &[String]) -> bool {
-    let Some(cmd) = args.first() else {
-        return false;
+/// Number of selected paths after the first `--`, excluding the archive that
+/// `x`, `l` and `t` place first after the separator.
+pub(crate) fn selected_member_count(args: &[String]) -> usize {
+    let Some(separator) = args.iter().position(|arg| arg == "--") else {
+        return 0;
     };
-    if !matches!(cmd.as_str(), "a" | "u") {
-        return false;
-    }
-    if args.iter().any(|arg| arg.eq_ignore_ascii_case("-tzip")) {
-        return true;
-    }
-    create_output_looks_like_zip(args)
-}
-
-/// Password-protected ZIP create/update must use AES-256, never ZipCrypto.
-pub(crate) fn is_password_protected_zip_create(args: &[String]) -> bool {
-    let Some(cmd) = args.first() else {
-        return false;
-    };
-    if !matches!(cmd.as_str(), "a" | "u") {
-        return false;
-    }
-    let separator = args
-        .iter()
-        .position(|arg| arg == "--")
-        .unwrap_or(args.len());
-    let has_password = args[1..separator].iter().any(|arg| {
-        let lower = arg.to_ascii_lowercase();
-        lower.starts_with("-p") && arg.len() > 2
-    });
-    if !has_password {
-        return false;
-    }
-    match archive_type_switches(args).last().map(String::as_str) {
-        Some("zip") => true,
-        None => create_output_looks_like_zip(args),
-        _ => false,
-    }
-}
-
-fn is_include_or_exclude(arg: &str) -> bool {
-    let lower = arg.to_ascii_lowercase();
-    (lower.starts_with("-i") || lower.starts_with("-x"))
-        && !has_embedded_listfile(arg)
-        && arg.contains('!')
-}
-
-fn is_include_switch(arg: &str) -> bool {
-    arg.to_ascii_lowercase().starts_with("-i") && arg.contains('!')
-}
-
-fn include_exclude_payload(arg: &str) -> Option<&str> {
-    let index = arg.find('!')?;
-    Some(&arg[index + 1..])
-}
-
-/// Compress `-i!` / `-x!` payloads that name absolute host paths bypass the
-/// after-`--` real-path / reparse checks. Reject those shapes here.
-fn compress_include_exclude_payload_is_unsafe(payload: &str) -> bool {
-    if payload.is_empty() {
-        return false;
-    }
-    if archive_member_path_is_unsafe(payload) {
-        return true;
-    }
-    let bytes = payload.as_bytes();
-    bytes[0] == b'/' || bytes[0] == b'\\' || (bytes.len() >= 2 && bytes[1] == b':')
-}
-
-fn is_common_diagnostic_switch(lower: &str) -> bool {
-    lower == "-ba"
-        || lower == "-bt"
-        || lower == "-slt"
-        || is_numbered_switch(lower, "-bb", 3)
-        || is_stream_switch(lower)
-}
-
-fn method_switch_value_is_safe(value: &str) -> bool {
-    !value.is_empty() && !value.contains('/') && !value.contains('\\') && !value.contains("..")
-}
-
-fn is_allowed_method_switch(lower: &str) -> bool {
-    // Intentionally narrow: reject open-ended -m* (and -ssw is blocked separately).
-    // Prefixes ending in '=' require a non-empty value. Others require end / '=' / digit
-    // so `-mxyz` does not match `-mx`. Values must not smuggle path separators.
-    const PREFIXES: &[&str] = &[
-        "-m0=", "-mem=", "-mhe=", "-mtc=", "-mta=", "-mhc=", "-mcu=", "-mcl=", "-mx", "-md",
-        "-mfb", "-ms", "-mmt",
-    ];
-    for prefix in PREFIXES {
-        let Some(rest) = lower.strip_prefix(prefix) else {
-            continue;
-        };
-        if prefix.ends_with('=') {
-            return method_switch_value_is_safe(rest);
-        }
-        if rest.is_empty() {
-            return true;
-        }
-        if let Some(value) = rest.strip_prefix('=') {
-            return method_switch_value_is_safe(value);
-        }
-        if rest.chars().next().is_some_and(|ch| ch.is_ascii_digit()) {
-            return method_switch_value_is_safe(rest);
-        }
-        return false;
-    }
-    false
-}
-
-fn is_allowed_switch(cmd: &str, arg: &str) -> bool {
-    let lower = arg.to_ascii_lowercase();
-    if is_common_diagnostic_switch(&lower) {
-        return true;
-    }
-
-    match cmd {
-        "a" | "u" => {
-            (lower.starts_with("-t") && lower.len() > 2)
-                || is_allowed_method_switch(&lower)
-                || (lower.starts_with("-p") && lower.len() > 2)
-                || lower == "-stl"
-                || lower == "-slp"
-                || lower == "-ssp"
-                || lower == "-sse"
-                || lower == "-snl"
-                || lower == "-snh"
-                || lower == "-spd"
-                || is_include_or_exclude(arg)
-                || (cmd == "a"
-                    && lower.starts_with("-v")
-                    && lower.len() > 2
-                    && lower[2..]
-                        .chars()
-                        .all(|ch| ch.is_ascii_digit() || matches!(ch, 'b' | 'k' | 'm' | 'g')))
-        }
-        "x" => {
-            (lower.starts_with("-o") && lower.len() > 2)
-                || (lower.starts_with("-p") && lower.len() > 2)
-                // Only auto-rename / skip existing; never overwrite-all (-aoa) or
-                // rename-existing (-aot). Frontend default is -aou.
-                || matches!(lower.as_str(), "-aos" | "-aou")
-                || lower == "-y"
-                || lower == "-spd"
-                || lower == "-spod"
-                || (lower.starts_with("-t") && lower.len() > 2)
-                || is_include_or_exclude(arg)
-        }
-        "l" | "t" => {
-            (lower.starts_with("-p") && lower.len() > 2)
-                || (lower.starts_with("-t") && lower.len() > 2)
-                || lower == "-spd"
-                || is_include_or_exclude(arg)
-        }
-        "b" => is_allowed_method_switch(&lower),
-        _ => false,
-    }
-}
-
-// True if any path component is exactly "..". Substrings like "name..bak" are fine.
-pub(crate) fn has_parent_dir_component(path: &str) -> bool {
-    path.split(['/', '\\']).any(|component| component == "..")
-}
-
-/// True when an archive member path could escape an extract `-o` root.
-///
-/// Platform-neutral rules: any `..` component (either separator) and a leading
-/// `/`. Windows-only rules (rooted and drive paths, trailing dot/space, NTFS
-/// streams, reserved device names) apply only on Windows hosts. A Unix host
-/// keeps those names literal, so a Linux archive containing `report:2026.txt`
-/// still extracts there; the same archive is re-checked when opened on Windows.
-pub(crate) fn archive_member_path_is_unsafe(path: &str) -> bool {
-    if path.is_empty() {
-        return false;
-    }
-    // Normalize both separators on every platform so ZIP members that use
-    // Windows-style `\` cannot smuggle `..` past a POSIX-only splitter.
-    if path.split(['/', '\\']).any(|component| component == "..") {
-        return true;
-    }
-    if path.as_bytes().first() == Some(&b'/') {
-        return true;
-    }
-    windows_member_path_is_unsafe(path)
-}
-
-/// Win32 member-path rules: backslash-rooted and drive-absolute paths, plus
-/// per-component naming rules. Enforced only where Windows interprets the path.
-#[cfg(windows)]
-fn windows_member_path_is_unsafe(path: &str) -> bool {
-    let bytes = path.as_bytes();
-    if bytes.first() == Some(&b'\\') {
-        return true;
-    }
-    // Drive-absolute: `C:\...` or `C:/...`
-    if bytes.len() >= 2 && bytes[1] == b':' {
-        return true;
-    }
-    path.split(['/', '\\'])
-        .any(windows_component_name_is_unsafe)
-}
-
-#[cfg(not(windows))]
-fn windows_member_path_is_unsafe(_path: &str) -> bool {
-    false
-}
-
-/// Win32 naming rules for one path component: Win32 strips trailing dots and
-/// spaces (so `...` and `.. ` resolve to `..`, and `notes.txt.` collides with
-/// `notes.txt`), any other colon opens an NTFS alternate data stream, and
-/// reserved device names resolve to devices. Applied on every platform to
-/// derived folder names, which may later be opened on Windows.
-pub(crate) fn windows_component_name_is_unsafe(component: &str) -> bool {
-    if component.is_empty() {
-        return false;
-    }
-    if component.ends_with('.') || component.ends_with(' ') {
-        return true;
-    }
-    if component.contains(':') {
-        return true;
-    }
-    is_win32_reserved_device_name(component)
-}
-
-/// Win32 device-name check on the dot-stem, case-insensitive, any extension.
-fn is_win32_reserved_device_name(component: &str) -> bool {
-    let stem = component.split('.').next().unwrap_or(component);
-    let mut folded = String::with_capacity(stem.len());
-    for ch in stem.chars() {
-        match ch {
-            '¹' => folded.push('1'),
-            '²' => folded.push('2'),
-            '³' => folded.push('3'),
-            c if c.is_ascii() => folded.push(c.to_ascii_uppercase()),
-            c => folded.extend(c.to_uppercase()),
-        }
-    }
-    matches!(
-        folded.as_str(),
-        "CON"
-            | "PRN"
-            | "AUX"
-            | "NUL"
-            | "CONIN$"
-            | "CONOUT$"
-            | "CLOCK$"
-            | "COM0"
-            | "COM1"
-            | "COM2"
-            | "COM3"
-            | "COM4"
-            | "COM5"
-            | "COM6"
-            | "COM7"
-            | "COM8"
-            | "COM9"
-            | "LPT0"
-            | "LPT1"
-            | "LPT2"
-            | "LPT3"
-            | "LPT4"
-            | "LPT5"
-            | "LPT6"
-            | "LPT7"
-            | "LPT8"
-            | "LPT9"
-    )
-}
-
-fn switch_contains_parent_traversal(arg: &str) -> bool {
-    // ASCII-only lowercasing: `arg[2..]` below byte-slices the *original*
-    // string, and every allow-listed prefix compared against is ASCII, so
-    // Unicode-aware `to_lowercase()` (which can change a string's byte
-    // length, e.g. "İ" -> "i̇") buys nothing here and only risks a future
-    // allowlist edit reasoning about byte offsets against the wrong string.
-    let lower = arg.to_ascii_lowercase();
-    if !(lower.starts_with("-i")
-        || lower.starts_with("-x")
-        || lower.starts_with("-w")
-        || lower.starts_with("-o"))
-    {
-        return false;
-    }
-
-    arg[2..]
-        .split(['!', ':', '@'])
-        .any(has_parent_dir_component)
+    let after_separator = args.len() - separator - 1;
+    let archive = usize::from(matches!(
+        args.first().map(String::as_str),
+        Some("x" | "l" | "t")
+    ));
+    after_separator.saturating_sub(archive)
 }
 
 pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
     if args.is_empty() {
         return Err("Missing 7z arguments".to_string());
     }
-    if args.len() > MAX_7Z_ARGS {
+    let switch_region = args
+        .iter()
+        .position(|arg| arg == "--")
+        .unwrap_or(args.len());
+    if switch_region > MAX_7Z_ARGS {
         return Err("Too many 7z arguments.".to_string());
     }
     if args.iter().any(|arg| arg.len() > MAX_7Z_ARG_BYTES) {
@@ -379,10 +75,18 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
     let mut archive_output: Option<&str> = None;
 
     for (idx, arg) in args.iter().enumerate().skip(1) {
-        if arg == "--" {
-            if separator_index.is_some() {
-                return Err("7z argument separator '--' may appear only once.".to_string());
+        // The first `--` ends the switch region. Everything after it is a
+        // literal path or member name, so switch rules do not apply there.
+        if separator_index.is_some() {
+            positional_after_separator += 1;
+            if has_parent_dir_component(arg) {
+                return Err(format!(
+                    "7z path '{arg}' must not contain a '..' parent-directory segment."
+                ));
             }
+            continue;
+        }
+        if arg == "--" {
             separator_index = Some(idx);
             continue;
         }
@@ -396,7 +100,7 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
         }
         // Reject @listfile references before -- (7z reads them as file lists with
         // unvalidated contents). After --, the leading @ is literal.
-        if separator_index.is_none() && arg.starts_with('@') {
+        if arg.starts_with('@') {
             return Err(format!(
                 "7z argument '{arg}' is not permitted (response files are not allowed)."
             ));
@@ -406,27 +110,20 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
                 "7z argument '{arg}' is not permitted (list files are backend-managed only)."
             ));
         }
-        if separator_index.is_none() && lower.starts_with("-o") {
+        if lower.starts_with("-o") {
             output_switches += 1;
         }
-        if separator_index.is_none() && lower.starts_with("-p") {
+        if lower.starts_with("-p") {
             password_switches += 1;
             if arg.len() > 2 && arg[2..].contains(['\r', '\n', '\0', '\u{2028}', '\u{2029}']) {
                 return Err("Archive passwords cannot contain line breaks.".to_string());
             }
         }
-        if separator_index.is_none() && lower.starts_with("-ao") {
+        if lower.starts_with("-ao") {
             overwrite_switches += 1;
         }
 
-        if separator_index.is_some() {
-            positional_after_separator += 1;
-            if has_parent_dir_component(arg) {
-                return Err(format!(
-                    "7z path '{arg}' must not contain a '..' parent-directory segment."
-                ));
-            }
-        } else if arg.starts_with('-') {
+        if arg.starts_with('-') {
             if !is_allowed_switch(cmd, arg) {
                 return Err(format!("7z argument '{arg}' is not permitted."));
             }
@@ -701,9 +398,9 @@ pub fn validate_run_7z_args(args: &[String]) -> Result<(), String> {
 
     Ok(())
 }
-
 #[cfg(test)]
 mod tests {
+    use super::switches::is_allowed_method_switch;
     use super::*;
 
     #[test]
@@ -1425,5 +1122,134 @@ mod tests {
                 "{switch}: {err}"
             );
         }
+    }
+
+    #[test]
+    fn validate_run_7z_args_allows_switch_shaped_members_after_separator() {
+        let mut extract = vec![
+            "x".to_string(),
+            "-o/tmp/out".to_string(),
+            "-aou".to_string(),
+            "-spd".to_string(),
+            "--".to_string(),
+            "archive.7z".to_string(),
+        ];
+        extract.extend(
+            [
+                "-web/app.js",
+                "-sidebar.png",
+                "-work.txt",
+                "-icons/@2x.png",
+                "-sdel",
+                "-si",
+                "-wfoo",
+                "-snldfoo",
+                "-spd",
+                "-pending.zip",
+                "-tzip",
+                "-i!literal",
+                "--",
+            ]
+            .map(str::to_string),
+        );
+        validate_run_7z_args(&extract).expect("members after -- are literal names");
+
+        let mut compress = vec![
+            "a".to_string(),
+            "-t7z".to_string(),
+            "out.7z".to_string(),
+            "--".to_string(),
+        ];
+        compress.extend(["-sdel.txt", "-w", "-sfx", "@list", "-x!y", "-p"].map(str::to_string));
+        validate_run_7z_args(&compress).expect("compress members after -- are literal names");
+    }
+
+    #[test]
+    fn validate_run_7z_args_still_rejects_switches_before_separator() {
+        for bad in ["-sdel", "-si", "-w", "-sns", "-spf"] {
+            let args = vec![
+                "x".to_string(),
+                bad.to_string(),
+                "-o/tmp/out".to_string(),
+                "-aou".to_string(),
+                "--".to_string(),
+                "-web/app.js".to_string(),
+            ];
+            assert!(
+                validate_run_7z_args(&args).is_err(),
+                "{bad} before -- must stay rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_run_7z_args_still_rejects_parent_dir_and_nul_after_separator() {
+        let parent = vec![
+            "x".to_string(),
+            "-o/tmp/out".to_string(),
+            "-aou".to_string(),
+            "--".to_string(),
+            "archive.7z".to_string(),
+            "../escape.txt".to_string(),
+        ];
+        assert!(validate_run_7z_args(&parent).is_err());
+
+        let nul = vec![
+            "x".to_string(),
+            "-o/tmp/out".to_string(),
+            "-aou".to_string(),
+            "--".to_string(),
+            "archive.7z".to_string(),
+            "bad\0name".to_string(),
+        ];
+        assert!(validate_run_7z_args(&nul).is_err());
+    }
+
+    #[test]
+    fn validate_run_7z_args_treats_a_second_separator_as_a_member() {
+        let args = vec![
+            "x".to_string(),
+            "-o/tmp/out".to_string(),
+            "-aou".to_string(),
+            "--".to_string(),
+            "archive.7z".to_string(),
+            "--".to_string(),
+        ];
+        validate_run_7z_args(&args).expect("a member named -- is literal after the separator");
+    }
+
+    #[test]
+    fn validate_run_7z_args_caps_only_the_switch_region() {
+        let mut at_cap = vec![
+            "x".to_string(),
+            "-o/tmp/out".to_string(),
+            "-aou".to_string(),
+        ];
+        at_cap.extend(std::iter::repeat_n("-spd".to_string(), MAX_7Z_ARGS - 3));
+        at_cap.push("--".to_string());
+        at_cap.push("archive.7z".to_string());
+        assert_eq!(at_cap.iter().position(|a| a == "--"), Some(MAX_7Z_ARGS));
+        validate_run_7z_args(&at_cap).expect("switch region at the cap is accepted");
+
+        let mut over_cap = at_cap.clone();
+        over_cap.insert(3, "-spd".to_string());
+        let err = validate_run_7z_args(&over_cap).expect_err("switch region over the cap");
+        assert!(err.contains("Too many 7z arguments"), "{err}");
+
+        let mut many_members = at_cap.clone();
+        many_members.extend((0..9_000).map(|index| format!("file-{index}.txt")));
+        validate_run_7z_args(&many_members).expect("9,000 members are not a switch-region cap");
+    }
+
+    #[test]
+    fn selected_member_count_excludes_command_switches_and_archive() {
+        let extract = ["x", "-o/tmp/out", "-aou", "--", "archive.7z", "a", "b"].map(str::to_string);
+        assert_eq!(selected_member_count(&extract), 2);
+        let compress = ["a", "-t7z", "out.7z", "--", "a", "b", "c"].map(str::to_string);
+        assert_eq!(selected_member_count(&compress), 3);
+        let list = ["l", "-slt", "--", "archive.7z"].map(str::to_string);
+        assert_eq!(selected_member_count(&list), 0);
+        let no_separator = ["b".to_string()];
+        assert_eq!(selected_member_count(&no_separator), 0);
     }
 }

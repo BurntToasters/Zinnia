@@ -218,7 +218,7 @@
 }
 
 .setting-desc {
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   color: var(--text-secondary);
   line-height: 1.4;
   overflow-wrap: anywhere;
@@ -246,7 +246,7 @@
 
 .settings-section__title {
   margin: 14px 0 6px;
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;

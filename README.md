@@ -24,14 +24,18 @@ See [ARCHITECTURE.md](ARCHITECTURE.md), [CONTRIBUTING.md](CONTRIBUTING.md), and
 
 ## System requirements
 
-- macOS 26 or later. The universal build supports Intel and Apple silicon Macs
-  that can run macOS 26+.
+- macOS 15 or later. The universal build supports Intel and Apple silicon Macs
+  that can run macOS 15+.
 - Windows 10 version 2004 (build 19041) or later, on x64 or ARM64. The modern
   Explorer integration requires a signed NSIS install.
 - Linux x64: Ubuntu 24.04+, Debian 13+, or Fedora 43+ (or a compatible
   distribution with the required WebKitGTK runtime). The public release ships
   x64 AppImage, DEB, RPM, and sideloaded Flatpak bundles. ARM64 AppImage/DEB/RPM
   are published only when explicitly built for that release; Flatpak stays x64.
+- Archive size: Browse lists up to about 200,000 ZIP or TAR entries, and extraction checks
+  up to about 800,000 ZIP or TAR entries (1,000,000 in any format). See
+  [SECURITY.md](SECURITY.md) for details.
+  In this beta, archives with more than about 100,000 entries extract very slowly.
 
 ## Dev
 
@@ -88,6 +92,16 @@ native build runs.
   destructively resets that VM to the exact `origin/beta` tip. Then run
   `npm run release:win`, `npm run release:mac`, `npm run release:linux`, or
   `npm run release:linux:arm64` as appropriate.
+- `npm run b` and `npm run r` start with `scripts/guard-reset.mjs`, which
+  refuses to reset when the working tree has uncommitted or untracked changes,
+  or when the current branch has commits not on its upstream. A branch with no
+  upstream is checked against every remote-tracking branch. The guard reads
+  tracking refs as of the last `git fetch`, which runs only after the guard
+  passes, so fetch first if you pushed recently. Only the current branch is
+  checked; a local `beta` or `main` that is not current is still repointed.
+  To discard that work on purpose, set `ZINNIA_FORCE_RESET=1` for that run. In
+  POSIX shells use `ZINNIA_FORCE_RESET=1 npm run b`; in PowerShell use
+  `$env:ZINNIA_FORCE_RESET = "1"` before `npm run b`.
 - The `main` and `beta` branches intentionally have no branch protection.
   Operators may delete and recreate `beta`. Pull request review and hosted CI
   checks are release-process requirements enforced by operators, not branch
@@ -128,9 +142,9 @@ native build runs.
   `release:*:resume` command; its build session is bound to the exact commit,
   lockfiles, platform, architecture, and Node/Rust toolchain and expires after
   24 hours.
-- After editing `package.json` `version`, run `npm run u` / `u2`. They copy
+- After editing `package.json` `version`, run `npm run u`. It copies
   that version through native manifests, changelog download URLs, and
-  AppStream, then refresh lockfiles. They still do not install packages or
+  AppStream, then refreshes lockfiles. It still does not install packages or
   execute dependency code. `release:prepare` / `workspace:bootstrap` also write
   AppStream. You can run `sync-version` and the metainfo script alone.
   `--check` remains available if you only want validation.

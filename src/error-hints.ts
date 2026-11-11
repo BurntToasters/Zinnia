@@ -13,6 +13,14 @@ export function looksLikePasswordRequiredError(
   );
 }
 
+// 7-Zip 26.06 prints "Cannot open the file as [7z] archive" and "Is not
+// archive" for files it cannot read as an archive. Older builds used "can not".
+const NOT_AN_ARCHIVE_PATTERNS: readonly RegExp[] = [
+  /\bis not archive\b/,
+  /\b(?:cannot|can not|can't) open (?:the )?file as\b[^\n]*\barchive\b/,
+  /\b(?:cannot|can not|can't) open (?:the )?(?:file )?as archive\b/,
+];
+
 // Map common 7z failure output to a short, actionable hint. "" when unrecognized.
 export function describe7zError(stdout: string, stderr: string): string {
   const text = `${stdout}\n${stderr}`.toLowerCase();
@@ -28,8 +36,9 @@ export function describe7zError(stdout: string, stderr: string): string {
     return "Not enough disk space at the destination. Free up space or choose another location.";
   }
   if (
-    text.includes("can not open") &&
-    (text.includes("as archive") || text.includes("not supported"))
+    NOT_AN_ARCHIVE_PATTERNS.some((pattern) => pattern.test(text)) ||
+    ((text.includes("can not open") || text.includes("cannot open")) &&
+      text.includes("not supported"))
   ) {
     return "The file is not a supported archive or is corrupted. Try testing the archive first.";
   }
@@ -51,13 +60,59 @@ export function describe7zError(stdout: string, stderr: string): string {
   if (
     text.includes("access is denied") ||
     text.includes("permission denied") ||
-    text.includes("cannot create") ||
-    text.includes("can not create")
+    text.includes("read-only") ||
+    text.includes("read only")
   ) {
     return "Permission denied writing to the destination. Pick a folder you can write to.";
   }
-  if (text.includes("the system cannot find") || text.includes("not found")) {
+  // 7-Zip 26.06 reports "Cannot create output directory" with errno=17 ("File
+  // exists") for a read-only parent too, so the text alone is not a permission
+  // problem.
+  if (text.includes("cannot create") || text.includes("can not create")) {
+    return "Could not create the file or folder at the destination. Check the destination path and try again.";
+  }
+  if (
+    text.includes("the system cannot find") ||
+    text.includes("no such file or directory")
+  ) {
     return "A file or folder in the operation no longer exists. Refresh your selection.";
   }
   return "";
+}
+
+/** User-visible failure text for Basic and toasts; never raw 7-Zip stderr. */
+export function userFacing7zErrorDetail(
+  stdout: string,
+  stderr: string,
+  fallback = "Something went wrong. Check the activity log for details.",
+): string {
+  const hint = describe7zError(stdout, stderr);
+  return hint || fallback;
+}
+
+function looksLikeRaw7zOutput(detail: string): boolean {
+  if (detail.includes("7-Zip (")) return true;
+  for (const line of detail.split(/\r?\n/)) {
+    const trimmed = line.trimStart();
+    if (
+      trimmed.startsWith("ERROR:") ||
+      trimmed.startsWith("WARNING:") ||
+      trimmed.startsWith("Open ERROR") ||
+      trimmed.startsWith("Can not open") ||
+      trimmed.startsWith("Cannot open")
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** User-visible text for a rejected backend `invoke`; never raw 7-Zip output. */
+export function userFacingBackendError(detail: string): string {
+  const hint = describe7zError("", detail);
+  if (hint) return hint;
+  if (looksLikeRaw7zOutput(detail)) {
+    return "Something went wrong. Check the activity log for details.";
+  }
+  return detail;
 }

@@ -7,7 +7,7 @@ import console from "node:console";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 export const CARGO_UPDATE_POLICY_SCANNER_VERSION = 5;

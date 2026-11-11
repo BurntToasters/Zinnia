@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { MAX_LOG_LINES, redactSensitiveText } from "../utils";
 import { state, dom } from "../state";
 import { type LogVerbosity } from "../settings-model";
+import { appendCappedLogText } from "../log-tail";
 
 type LogLevel = "info" | "debug" | "error";
 
@@ -65,16 +66,6 @@ function persistLocalLog(level: LogLevel, line: string): void {
   enqueueLocalLogLine(entry);
 }
 
-function trimLog() {
-  const text = dom.logEl.textContent || "";
-  const lines = text.split("\n");
-  if (lines.length > MAX_LOG_LINES) {
-    dom.logEl.textContent = lines
-      .slice(lines.length - MAX_LOG_LINES)
-      .join("\n");
-  }
-}
-
 export function log(line: string, level: LogLevel = "info") {
   const sanitized = redactSensitiveText(line);
   const fragments = buildLogFragments(sanitized);
@@ -84,11 +75,10 @@ export function log(line: string, level: LogLevel = "info") {
     const marker =
       fragments.length > 1 ? ` (${index + 1}/${fragments.length})` : "";
     const rendered = `${fragment}${marker}`;
-    dom.logEl.textContent += `[${stamp}] ${rendered}\n`;
+    appendCappedLogText(dom.logEl, `[${stamp}] ${rendered}\n`, MAX_LOG_LINES);
     persistLocalLog(level, rendered);
   }
 
-  trimLog();
   dom.logEl.scrollTop = dom.logEl.scrollHeight;
 }
 

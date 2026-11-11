@@ -27,7 +27,7 @@ describe("parseBenchmarkSummary", () => {
       "Avg:    4012   4099",
       "Tot:             4123   100   4150",
     ].join("\n");
-    expect(parseBenchmarkSummary(stdout)).toBe("Rating: 4150");
+    expect(parseBenchmarkSummary(stdout)).toBe("Rating: 4,150 MIPS");
   });
 
   it("returns null when there is no Tot line", () => {
@@ -36,7 +36,7 @@ describe("parseBenchmarkSummary", () => {
 
   it("handles CRLF output", () => {
     expect(parseBenchmarkSummary("Tot:   1   2   3333\r\n")).toBe(
-      "Rating: 3333",
+      "Rating: 3,333 MIPS",
     );
   });
 });

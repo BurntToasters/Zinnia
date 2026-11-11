@@ -101,7 +101,10 @@ the publish/verify ordering. Follow `docs/RELEASE-STABLE.md`.
   `test:all -- --require-clean-proof --skip-e2e`; their proof explicitly records
   `e2e: "skipped"`. Normal `test:all` and CI still require GUI E2E.
   `ZINNIA_E2E_REBUILD=1` forces a rebuild of the
-  debug app.
+  debug app. Local iteration: `npm run test:e2e -- --only=<spec>` (or
+  `ZINNIA_E2E_ONLY`); filtered runs write `status: "partial"` and are not CI
+  proof. On macOS, local runs use background mode (the app never takes focus);
+  `ZINNIA_E2E_FOREGROUND=1` restores the foreground window.
 - See [ARCHITECTURE.md](ARCHITECTURE.md) for the module map.
 
 ### Windows GUI E2E

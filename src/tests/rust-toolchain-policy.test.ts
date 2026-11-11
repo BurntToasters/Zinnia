@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -6,68 +7,188 @@ function readRepositoryFile(...segments: string[]): string {
   return fs.readFileSync(path.resolve(process.cwd(), ...segments), "utf8");
 }
 
-describe("Rust toolchain policy", () => {
-  // Failure modes covered: a build script installs a different compiler than
-  // Cargo selects; target setup adds targets to a moving channel; CI silently
-  // follows a newer compiler; or Flatpak releases compile with a different
-  // Rust toolchain than native releases.
-  it("pins every release/build path to the same exact Rust toolchain", () => {
-    const rustToolchain = "1.98.1";
-    expect(readRepositoryFile("rust-toolchain.toml")).toMatch(
-      new RegExp(`^channel = "${rustToolchain}"$`, "m"),
-    );
+function readPinnedRustToolchain(): string {
+  const channel = readRepositoryFile("rust-toolchain.toml").match(
+    /^channel = "(\d+\.\d+\.\d+)"$/m,
+  )?.[1];
+  if (!channel) {
+    throw new Error("rust-toolchain.toml must pin an exact Rust channel");
+  }
+  return channel;
+}
 
-    const packageJson = JSON.parse(readRepositoryFile("package.json")) as {
+function jobBodies(workflow: string): Array<{ name: string; body: string }> {
+  const starts = [...workflow.matchAll(/^  ([A-Za-z0-9_-]+):\s*$/gm)];
+  return starts.map((match, index) => ({
+    name: match[1],
+    body: workflow.slice(
+      match.index,
+      starts[index + 1]?.index ?? workflow.length,
+    ),
+  }));
+}
+
+function stepBodies(job: string): string[] {
+  const lines = job.split(/\r?\n/);
+  const starts: number[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (/^ {6}- /.test(lines[index])) starts.push(index);
+  }
+  return starts.map((start, index) =>
+    lines.slice(start, starts[index + 1] ?? lines.length).join("\n"),
+  );
+}
+
+describe("Rust toolchain policy", () => {
+  // Failure modes covered before implementation:
+  // - the pin file is missing, floating, suffixed, or malformed/CRLF;
+  // - the runtime CLI prints extra output or loses the extracted channel;
+  // - package scripts keep a literal version or drop a target triple;
+  // - a CI job extracts the pin before checkout or misses a toolchain consumer;
+  // - extraction uses the wrong shell or writes malformed GITHUB_OUTPUT;
+  // - Flatpak build-command shells lose the extracted pin and fall back to a literal;
+  // - Windows spawn routes rustup through a shell.
+  it("keeps the exact Rust channel in rust-toolchain.toml and prints it from one CLI", () => {
+    const rustToolchain = readPinnedRustToolchain();
+    expect(rustToolchain).toMatch(/^\d+\.\d+\.\d+$/);
+
+    const cli = spawnSync(
+      process.execPath,
+      [path.resolve(process.cwd(), "scripts", "rust-toolchain.mjs")],
+      { encoding: "utf8" },
+    );
+    expect(cli.status).toBe(0);
+    expect(cli.stderr).toBe("");
+    expect(cli.stdout.trim()).toBe(rustToolchain);
+  });
+
+  it("prints the same pin for --print and never combines it with an action", () => {
+    const script = path.resolve(process.cwd(), "scripts", "rust-toolchain.mjs");
+    const run = (args: string[]) =>
+      spawnSync(process.execPath, [script, ...args], { encoding: "utf8" });
+    const bare = run([]);
+    expect(bare.status).toBe(0);
+    expect(bare.stdout).toMatch(/^\d+\.\d+\.\d+\n$/u);
+    const printed = run(["--print"]);
+    expect(printed.status).toBe(0);
+    expect(printed.stdout).toBe(bare.stdout);
+    for (const args of [
+      ["--print", "--install"],
+      ["--install", "--print"],
+      ["--print", "--target", "x86_64-pc-windows-msvc"],
+      ["--target", "x86_64-pc-windows-msvc", "--print"],
+    ]) {
+      const result = run(args);
+      expect(result.status, args.join(" ")).not.toBe(0);
+      expect(result.stderr, args.join(" ")).toMatch(
+        /--print cannot be combined/u,
+      );
+      expect(result.stdout, args.join(" ")).toBe("");
+    }
+  });
+
+  it("derives every Rust package script from the pin without dropping targets", () => {
+    const rustToolchain = readPinnedRustToolchain();
+    const packageText = readRepositoryFile("package.json");
+    expect(packageText).not.toContain(rustToolchain);
+
+    const packageJson = JSON.parse(packageText) as {
       scripts?: Record<string, string>;
     };
-    const rustScripts = Object.entries(packageJson.scripts ?? {}).filter(
-      ([name]) => name.startsWith("rust:"),
+    const scripts = packageJson.scripts ?? {};
+    const rustScripts = Object.entries(scripts).filter(([name]) =>
+      name.startsWith("rust:"),
     );
-    expect(rustScripts.length).toBeGreaterThan(0);
+    expect(rustScripts).toHaveLength(6);
     for (const [, command] of rustScripts) {
-      expect(command).toContain(rustToolchain);
+      expect(command).toMatch(/^node scripts\/rust-toolchain\.mjs /);
+      expect(command).not.toContain("rustup");
     }
-    expect(packageJson.scripts?.["rust:update"]).toContain(
-      `toolchain install ${rustToolchain}`,
-    );
 
-    const workflow = readRepositoryFile(".github", "workflows", "ci.yml");
-    expect(workflow).toContain(`RUST_VERSION: "${rustToolchain}"`);
-    const workflowToolchains = workflow.match(/^\s+toolchain: .+$/gm) ?? [];
-    expect(workflowToolchains.length).toBeGreaterThan(0);
-    expect(
-      workflowToolchains.every((line) =>
-        line.endsWith("${{ env.RUST_VERSION }}"),
-      ),
-    ).toBe(true);
-    expect(workflow).toMatch(
-      /rust-check:[\s\S]*cargo clippy --locked --manifest-path src-tauri\/Cargo\.toml --all-targets -- -D warnings/,
+    expect(scripts["rust:update"]).toBe(
+      "node scripts/rust-toolchain.mjs --install",
     );
-    const rustCheckStart = workflow.indexOf("\n  rust-check:");
-    const rustCheckEnd = workflow.indexOf(
-      "\n  updater-manifest:",
-      rustCheckStart,
-    );
-    expect(rustCheckStart).toBeGreaterThanOrEqual(0);
-    expect(rustCheckEnd).toBeGreaterThan(rustCheckStart);
-    const rustCheckJob = workflow.slice(rustCheckStart, rustCheckEnd);
-    expect(rustCheckJob).toContain("toolchain: ${{ env.RUST_VERSION }}");
-    expect(rustCheckJob).toMatch(/^\s+components: clippy\s*$/m);
-    const benchmarkWorkflow = readRepositoryFile(
-      ".github",
-      "workflows",
-      "archive-io-benchmark.yml",
-    );
-    expect(benchmarkWorkflow).toContain(`RUST_VERSION: "${rustToolchain}"`);
+    for (const [name, triples] of Object.entries({
+      "rust:targets:win": "x86_64-pc-windows-msvc aarch64-pc-windows-msvc",
+      "rust:targets:mac": "x86_64-apple-darwin aarch64-apple-darwin",
+      "rust:targets:linux":
+        "x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu",
+      "rust:target:linux:x64": "x86_64-unknown-linux-gnu",
+      "rust:target:linux:arm64": "aarch64-unknown-linux-gnu",
+    })) {
+      expect(scripts[name]).toBe(
+        `node scripts/rust-toolchain.mjs --target ${triples}`,
+      );
+    }
+  });
 
+  it("extracts the pin after checkout in every CI job that installs Rust", () => {
+    const rustToolchain = readPinnedRustToolchain();
+    for (const [workflowPath, expectedConsumers] of [
+      [".github/workflows/ci.yml", 6],
+      [".github/workflows/archive-io-benchmark.yml", 1],
+    ] as const) {
+      const workflow = readRepositoryFile(workflowPath);
+      expect(workflow).not.toContain("RUST_VERSION");
+      expect(workflow).not.toContain(rustToolchain);
+
+      const consumers = jobBodies(workflow).filter((job) =>
+        job.body.includes("uses: dtolnay/rust-toolchain"),
+      );
+      expect(consumers).toHaveLength(expectedConsumers);
+      for (const job of consumers) {
+        const checkout = job.body.indexOf("uses: actions/checkout");
+        const pin = job.body.indexOf("id: rust-pin");
+        const toolchainUse = job.body.indexOf("uses: dtolnay/rust-toolchain");
+        expect(checkout).toBeGreaterThanOrEqual(0);
+        expect(pin).toBeGreaterThan(checkout);
+        expect(toolchainUse).toBeGreaterThan(pin);
+        expect(job.body).toContain(
+          "toolchain: ${{ steps.rust-pin.outputs.version }}",
+        );
+
+        const pinStep = stepBodies(job.body).find((step) =>
+          step.includes("id: rust-pin"),
+        );
+        expect(pinStep).toBeDefined();
+        expect(pinStep).toContain("shell: bash");
+        expect(pinStep).toContain("node scripts/rust-toolchain.mjs");
+        expect(pinStep).toContain(
+          'echo "version=$version" >> "$GITHUB_OUTPUT"',
+        );
+        expect(pinStep).not.toContain("pwsh");
+      }
+    }
+
+    const rustCheck = jobBodies(
+      readRepositoryFile(".github/workflows/ci.yml"),
+    ).find((job) => job.name === "rust-check")?.body;
+    expect(rustCheck).toBeDefined();
+    expect(rustCheck).toMatch(/components:\s*clippy/);
+  });
+
+  it("derives the Flatpak compiler from the pin and documents the single source", () => {
+    const rustToolchain = readPinnedRustToolchain();
     const flatpakManifest = readRepositoryFile("run.rosie.zinnia.yml");
+    expect(flatpakManifest).not.toContain(rustToolchain);
     expect(flatpakManifest).toContain(
       "org.freedesktop.Sdk.Extension.rust-stable",
     );
-    expect(flatpakManifest).not.toContain("RUSTUP_TOOLCHAIN:");
-    expect(flatpakManifest).not.toContain("rustup toolchain install");
     expect(flatpakManifest).toContain(
-      `test "$(rustc --version | cut -d' ' -f2)" = ${rustToolchain}`,
+      "prepend-path: /run/build/zinnia/cargo/bin:/run/build/zinnia/npm-global/bin:/usr/lib/sdk/node24/bin:/usr/lib/sdk/rust-stable/bin",
     );
+    expect(flatpakManifest).toContain("RUSTUP_HOME: /run/build/zinnia/rustup");
+    expect(flatpakManifest).not.toContain("RUSTUP_TOOLCHAIN:");
+    expect(flatpakManifest).toContain(
+      "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs",
+    );
+    expect(flatpakManifest).toMatch(
+      /- \|\n\s+set -eu\n\s+PINNED="\$\(sed [^\n]*rust-toolchain\.toml\)"\n\s+test -n "\$PINNED"\n\s+curl [^\n]*\n\s+test "\$\(rustc --version \| cut -d' ' -f2\)" = "\$PINNED"/,
+    );
+    expect(flatpakManifest.match(/--default-toolchain/g)).toHaveLength(1);
+
+    const docs = readRepositoryFile("docs", "DEPENDENCY_UPDATES.md");
+    expect(docs).not.toContain(rustToolchain);
+    expect(docs).toMatch(/edit only `rust-toolchain\.toml`/i);
   });
 });

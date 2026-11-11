@@ -1,6 +1,15 @@
 import Cocoa
 import FinderSync
 
+/// Milliseconds since the Unix epoch for a request timestamp. Returns nil when
+/// the clock is before 1970 or not finite: `UInt64(Double)` traps on those
+/// values, which would crash the extension instead of skipping one request.
+func requestTimestampMs(from date: Date) -> UInt64? {
+  let milliseconds = date.timeIntervalSince1970 * 1_000
+  guard milliseconds.isFinite, milliseconds >= 0 else { return nil }
+  return UInt64(exactly: milliseconds.rounded(.down))
+}
+
 /// Finder Sync extension: adds Extract / Compress to Finder's primary context menu.
 /// Requests are atomically queued in the shared App Group before waking Zinnia.
 final class FinderSync: FIFinderSync {
@@ -206,7 +215,10 @@ final class FinderSync: FIFinderSync {
     let requests = container.appendingPathComponent("FinderSyncRequests", isDirectory: true)
     do {
       try FileManager.default.createDirectory(at: requests, withIntermediateDirectories: true)
-      let createdAtMs = UInt64(Date().timeIntervalSince1970 * 1_000)
+      guard let createdAtMs = requestTimestampMs(from: Date()) else {
+        NSLog("ZinniaFinderSync: system clock is before 1970; request was not queued")
+        return nil
+      }
       let request = Request(
         createdAtMs: createdAtMs,
         mode: mode == "--compress" ? "compress" : "extract",

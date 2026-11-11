@@ -2,7 +2,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 const REVIEW_EXPIRES = "2027-03-01";

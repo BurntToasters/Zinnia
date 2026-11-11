@@ -72,7 +72,7 @@ if (fs.existsSync(manifest)) {
     !yaml.includes("3 days ago")
   ) {
     console.error(
-      "flatpak-dry-run: node22 SDK npm 10.x must be upgraded to the packageManager-pinned npm with a 3-day --before age gate before npm ci",
+      "flatpak-dry-run: node24 SDK npm 11.x must be upgraded to the packageManager-pinned npm with a 3-day --before age gate before npm ci",
     );
     failed = true;
   }
@@ -82,14 +82,19 @@ if (fs.existsSync(manifest)) {
   }
   if (
     !rustToolchain ||
-    !yaml.includes(
-      `test "$(rustc --version | cut -d' ' -f2)" = ${rustToolchain}`,
-    ) ||
+    yaml.includes(rustToolchain) ||
+    !yaml.includes("set -eu") ||
+    !/PINNED="\$\(sed [^\n]*rust-toolchain\.toml\)"/u.test(yaml) ||
+    !yaml.includes('test -n "$PINNED"') ||
+    !yaml.includes('--default-toolchain "$PINNED"') ||
+    !yaml.includes(`test "$(rustc --version | cut -d' ' -f2)" = "$PINNED"`) ||
+    /--default-toolchain\s+["']?\d+\.\d+\.\d+/u.test(yaml) ||
+    /rustc --version[^\n]*=\s*["']?\d+\.\d+\.\d+/u.test(yaml) ||
     yaml.includes("rustup toolchain install") ||
     yaml.includes("RUSTUP_TOOLCHAIN:")
   ) {
     console.error(
-      "flatpak-dry-run: Rust SDK extension must fail closed on the exact pinned compiler without invoking unavailable rustup",
+      "flatpak-dry-run: Flatpak must extract the Rust channel from rust-toolchain.toml, install that $PINNED compiler, and assert it without a literal version",
     );
     failed = true;
   }

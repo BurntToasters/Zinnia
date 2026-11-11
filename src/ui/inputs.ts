@@ -136,11 +136,11 @@ export function resetPasswordFieldControl(
   if (isIconOnly) {
     const icon = toggle.querySelector<HTMLElement>("[data-lucide]");
     icon?.setAttribute("data-lucide", "eye");
-    toggle.setAttribute("aria-label", "Show password");
     triggerIconRefresh();
   } else {
     toggle.textContent = "Show";
   }
+  toggle.setAttribute("aria-label", "Show password");
   toggle.setAttribute("aria-pressed", "false");
 }
 

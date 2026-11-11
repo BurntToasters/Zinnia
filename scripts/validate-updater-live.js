@@ -244,8 +244,14 @@ export function collectManifestArtifactRefs(bodies) {
         );
       }
       const previous = artifacts.get(name);
-      if (previous && previous.url !== entry.url) {
-        throw new Error(`updater-live: conflicting URLs for ${name}`);
+      if (previous) {
+        if (previous.url !== entry.url) {
+          throw new Error(`updater-live: conflicting URLs for ${name}`);
+        }
+        if (previous.signature !== entry.signature) {
+          throw new Error(`updater-live: conflicting signatures for ${name}`);
+        }
+        continue;
       }
       artifacts.set(name, { url: entry.url, signature: entry.signature });
     }

@@ -2,6 +2,80 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
+import { syncChangelog7zVersion } from "../../scripts/update-7z.js";
+
+describe("7-Zip changelog sync", () => {
+  const bullet = "- **7-Zip:** Updated bundled 7-Zip to `26.07`.";
+
+  it("keeps the bullet inside the current release before collapsed history", () => {
+    const changelog = [
+      "## Changes in `v0.7.0-beta.1:`",
+      "",
+      "- **Fix:** Something.",
+      "",
+      "### FULL CHANGELOG:",
+      "",
+      "<details>",
+      "  <summary>Older</summary>",
+      "- **7-Zip:** Updated bundled 7-Zip to `26.06`.",
+      "",
+      "## Changes in `v0.6.0:`",
+      "",
+      "- **Old:** Entry.",
+      "",
+    ].join("\n");
+    const synced = syncChangelog7zVersion(changelog, "0.7.0-beta.1", "26.07");
+    const current = synced.slice(0, synced.indexOf("### FULL CHANGELOG:"));
+    expect(current).toBe(
+      [
+        "## Changes in `v0.7.0-beta.1:`",
+        "",
+        "- **Fix:** Something.",
+        bullet,
+        "",
+        "",
+      ].join("\n"),
+    );
+    expect(synced.slice(synced.indexOf("### FULL CHANGELOG:"))).toBe(
+      changelog.slice(changelog.indexOf("### FULL CHANGELOG:")),
+    );
+  });
+
+  it("replaces an existing bullet instead of stacking one", () => {
+    const changelog = [
+      "## Changes in `v0.6.6:`",
+      "",
+      "- **7-Zip:** Updated bundled 7-Zip to `26.06`.",
+      "- **macOS - 7-Zip:** Kept.",
+      "",
+      "## Changes in `v0.6.5:`",
+      "",
+      "- **7-Zip:** Updated bundled 7-Zip to `26.05`.",
+      "",
+    ].join("\n");
+    const synced = syncChangelog7zVersion(changelog, "0.6.6", "26.07");
+    expect(synced).toBe(
+      [
+        "## Changes in `v0.6.6:`",
+        "",
+        "- **macOS - 7-Zip:** Kept.",
+        bullet,
+        "",
+        "## Changes in `v0.6.5:`",
+        "",
+        "- **7-Zip:** Updated bundled 7-Zip to `26.05`.",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("handles a final section and CRLF line endings", () => {
+    const changelog = "## Changes in `v1.0.0:`\r\n\r\n- **Fix:** One.\r\n";
+    expect(syncChangelog7zVersion(changelog, "1.0.0", "26.07")).toBe(
+      `## Changes in \`v1.0.0:\`\r\n\r\n- **Fix:** One.\r\n${bullet}\r\n`,
+    );
+  });
+});
 
 describe("bundled 7-Zip provenance", () => {
   it("maps every tracked binary to a hashed official archive member", () => {

@@ -51,23 +51,3 @@ export function decodeRun7zInvokePayload(
       : {}),
   };
 }
-
-export function decodeCompressProbeInvokePayload(payload: unknown): string[] {
-  const requestJson = (payload as { requestJson?: unknown } | undefined)
-    ?.requestJson;
-  if (typeof requestJson !== "string") {
-    throw new Error(
-      "probe_compress_inputs test payload is missing requestJson",
-    );
-  }
-  const paths: unknown = JSON.parse(requestJson);
-  if (
-    !Array.isArray(paths) ||
-    !paths.every((inputPath) => typeof inputPath === "string")
-  ) {
-    throw new Error(
-      "probe_compress_inputs test payload has invalid JSON paths",
-    );
-  }
-  return paths;
-}

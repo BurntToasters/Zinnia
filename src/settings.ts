@@ -1,18 +1,33 @@
 import { invoke } from "@tauri-apps/api/core";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { $, parseThreads, trapFocus, releaseFocusTrap } from "./utils";
 import { state } from "./state";
 import {
   LoadSettingsResult,
   UserSettings,
   SETTING_DEFAULTS,
+  COMPRESSION_METHODS_BY_FORMAT,
   mergeSettingsPayload,
   normalizeAutoCloseDelay,
   parseSettingsRaw,
 } from "./settings-model";
 import { getCompressionSecuritySupport } from "./compression-security";
+import { getDefaultThreads } from "./window-events";
 import { syncWorkspaceWindowFx } from "./window-fx";
+import { confirmWithE2eQueue } from "./e2e-dialog";
+
+const METHOD_LABELS: Record<string, string> = {
+  lzma2: "LZMA2",
+  lzma: "LZMA",
+  deflate: "Deflate",
+};
+
+export const DISCARD_SETTINGS_TITLE = "Discard unsaved settings";
 
 let settingsModalBasicWindowEffects: boolean | null = null;
+/** Modal values when it opened; a different value on close means unsaved edits. */
+let settingsSnapshotOnOpen: string | null = null;
+let discardPromptOpen = false;
 
 export function applyTheme(pref: string) {
   const resolved =
@@ -62,76 +77,116 @@ export function applySettingsToForm() {
   $<HTMLSelectElement>("word-size").value = state.currentSettings.wordSize;
   $<HTMLSelectElement>("solid").value = state.currentSettings.solid;
   $<HTMLInputElement>("threads").value = String(state.currentSettings.threads);
-  $<HTMLInputElement>("path-mode").value = "relative";
-  $<HTMLInputElement>("sfx").checked = false;
-  $<HTMLInputElement>("sfx").disabled = true;
   $<HTMLInputElement>("encrypt-headers").checked =
     state.currentSettings.encryptHeaders;
-  $<HTMLInputElement>("delete-after").checked = false;
 }
+
+type CompressionFormValues = {
+  format: UserSettings["format"];
+  level: string;
+  method: string;
+  dict: string;
+  wordSize: string;
+  solid: string;
+  threads: string;
+  encryptHeaders: boolean;
+};
 
 function liveOrFallback(live: string | undefined, fallback: string): string {
   return live && live.length > 0 ? live : fallback;
 }
 
+function savedCompressionValues(): CompressionFormValues {
+  const saved = state.currentSettings;
+  return {
+    format: saved.format,
+    level: saved.level,
+    method: saved.method,
+    dict: saved.dict,
+    wordSize: saved.wordSize,
+    solid: saved.solid,
+    threads: String(saved.threads),
+    encryptHeaders: saved.encryptHeaders,
+  };
+}
+
+function sessionCompressionValues(): CompressionFormValues {
+  const saved = savedCompressionValues();
+  const select = (id: string) =>
+    document.getElementById(id) as HTMLSelectElement | null;
+  const input = (id: string) =>
+    document.getElementById(id) as HTMLInputElement | null;
+  return {
+    format: liveOrFallback(
+      select("format")?.value,
+      saved.format,
+    ) as UserSettings["format"],
+    level: liveOrFallback(select("level")?.value, saved.level),
+    method: liveOrFallback(select("method")?.value, saved.method),
+    dict: liveOrFallback(select("dict")?.value, saved.dict),
+    wordSize: liveOrFallback(select("word-size")?.value, saved.wordSize),
+    solid: liveOrFallback(select("solid")?.value, saved.solid),
+    threads: liveOrFallback(input("threads")?.value, saved.threads),
+    encryptHeaders: input("encrypt-headers")?.checked ?? saved.encryptHeaders,
+  };
+}
+
+/**
+ * Rebuild the Settings method list for a format, as the main form does.
+ * Formats without a method choice get a disabled N/A option.
+ */
+export function syncSettingsMethodOptions(
+  format: UserSettings["format"],
+  preferred: string,
+): void {
+  const select = $<HTMLSelectElement>("s-method");
+  const methods = COMPRESSION_METHODS_BY_FORMAT[format];
+  select.replaceChildren();
+  if (methods.length === 0) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "N/A";
+    select.appendChild(option);
+    select.value = "";
+    select.disabled = true;
+    return;
+  }
+  for (const method of methods) {
+    const option = document.createElement("option");
+    option.value = method;
+    option.textContent = METHOD_LABELS[method] ?? method;
+    select.appendChild(option);
+  }
+  select.value = methods.includes(preferred) ? preferred : methods[0];
+  select.disabled = false;
+}
+
+/** Re-filter the method list after the Settings format select changes. */
+export function syncSettingsMethodForSelectedFormat(): void {
+  const format = $<HTMLSelectElement>("s-format")
+    .value as UserSettings["format"];
+  syncSettingsMethodOptions(format, $<HTMLSelectElement>("s-method").value);
+}
+
+function writeCompressionValuesToModal(values: CompressionFormValues) {
+  $<HTMLSelectElement>("s-format").value = values.format;
+  $<HTMLSelectElement>("s-level").value = values.level;
+  syncSettingsMethodOptions(values.format, values.method);
+  $<HTMLSelectElement>("s-dict").value = values.dict;
+  $<HTMLSelectElement>("s-word-size").value = values.wordSize;
+  $<HTMLSelectElement>("s-solid").value = values.solid;
+  $<HTMLInputElement>("s-threads").value = values.threads;
+  $<HTMLInputElement>("s-encrypt-headers").checked = values.encryptHeaders;
+  syncSettingsSecurityControlsForFormat(values.format);
+}
+
+export function useSessionCompressionValues() {
+  writeCompressionValuesToModal(sessionCompressionValues());
+}
+
 export function populateSettingsModal() {
-  const liveFormat = document.getElementById(
-    "format",
-  ) as HTMLSelectElement | null;
-  const liveLevel = document.getElementById(
-    "level",
-  ) as HTMLSelectElement | null;
-  const liveMethod = document.getElementById(
-    "method",
-  ) as HTMLSelectElement | null;
-  const liveDict = document.getElementById("dict") as HTMLSelectElement | null;
-  const liveWord = document.getElementById(
-    "word-size",
-  ) as HTMLSelectElement | null;
-  const liveSolid = document.getElementById(
-    "solid",
-  ) as HTMLSelectElement | null;
-  const liveThreads = document.getElementById(
-    "threads",
-  ) as HTMLInputElement | null;
-  const liveHeaders = document.getElementById(
-    "encrypt-headers",
-  ) as HTMLInputElement | null;
   $<HTMLSelectElement>("s-theme").value = state.currentSettings.theme;
-  $<HTMLSelectElement>("s-format").value = liveOrFallback(
-    liveFormat?.value,
-    state.currentSettings.format,
-  );
-  $<HTMLSelectElement>("s-level").value = liveOrFallback(
-    liveLevel?.value,
-    state.currentSettings.level,
-  );
-  $<HTMLSelectElement>("s-method").value = liveOrFallback(
-    liveMethod?.value,
-    state.currentSettings.method,
-  );
-  $<HTMLSelectElement>("s-dict").value = liveOrFallback(
-    liveDict?.value,
-    state.currentSettings.dict,
-  );
-  $<HTMLSelectElement>("s-word-size").value = liveOrFallback(
-    liveWord?.value,
-    state.currentSettings.wordSize,
-  );
-  $<HTMLSelectElement>("s-solid").value = liveOrFallback(
-    liveSolid?.value,
-    state.currentSettings.solid,
-  );
-  $<HTMLInputElement>("s-threads").value = liveOrFallback(
-    liveThreads?.value,
-    String(state.currentSettings.threads),
-  );
-  $<HTMLInputElement>("s-path-mode").value = "relative";
-  $<HTMLInputElement>("s-sfx").checked = false;
-  $<HTMLInputElement>("s-sfx").disabled = true;
-  $<HTMLInputElement>("s-encrypt-headers").checked =
-    liveHeaders?.checked ?? state.currentSettings.encryptHeaders;
-  $<HTMLInputElement>("s-delete-after").checked = false;
+  writeCompressionValuesToModal(savedCompressionValues());
   $<HTMLInputElement>("s-auto-check-updates").checked =
     state.currentSettings.autoCheckUpdates;
   $<HTMLSelectElement>("s-update-channel").value =
@@ -160,9 +215,6 @@ export function populateSettingsModal() {
     basicFx.checked = state.currentSettings.basicWindowEffects;
   }
   syncQuickExtractWarmIdleControl();
-  syncSettingsSecurityControlsForFormat(
-    $<HTMLSelectElement>("s-format").value as UserSettings["format"],
-  );
   void syncBasicWindowEffectsVisibility();
 
   const logDir = document.getElementById("s-log-dir");
@@ -198,16 +250,11 @@ export function readSettingsModal(): UserSettings {
     solid: $<HTMLSelectElement>("s-solid").value,
     threads: parseThreads(
       $<HTMLInputElement>("s-threads").value,
-      SETTING_DEFAULTS.threads,
+      getDefaultThreads(),
     ),
-    // Absolute member paths make archives non-relocatable and fail Zinnia's
-    // secure extraction preflight. Preserve the setting only for migration.
-    pathMode: "relative",
-    sfx: false,
     encryptHeaders:
       securitySupport.encryptHeaders &&
       $<HTMLInputElement>("s-encrypt-headers").checked,
-    deleteAfter: $<HTMLInputElement>("s-delete-after").checked,
     autoCheckUpdates: $<HTMLInputElement>("s-auto-check-updates").checked,
     updateChannel: $<HTMLSelectElement>("s-update-channel")
       .value as UserSettings["updateChannel"],
@@ -270,12 +317,6 @@ export async function syncBasicWindowEffectsVisibility(): Promise<void> {
   row.hidden = !supports;
 }
 
-function syncSettingsTriggerState(open: boolean) {
-  const trigger = document.getElementById("open-settings");
-  if (!trigger) return;
-  trigger.setAttribute("aria-expanded", open ? "true" : "false");
-}
-
 export function openSettingsModal() {
   if (
     state.running ||
@@ -308,8 +349,8 @@ export function openSettingsModal() {
       void syncWorkspaceWindowFx();
     });
   }
+  settingsSnapshotOnOpen = currentSettingsSnapshot();
   overlay.hidden = false;
-  syncSettingsTriggerState(true);
   const modal = overlay.querySelector<HTMLElement>(".modal");
   if (modal) {
     trapFocus(modal);
@@ -320,6 +361,64 @@ export function openSettingsModal() {
   }
 }
 
+function currentSettingsSnapshot(): string {
+  return JSON.stringify(readSettingsModal());
+}
+
+function hasUnsavedSettingsEdits(): boolean {
+  return (
+    settingsSnapshotOnOpen !== null &&
+    currentSettingsSnapshot() !== settingsSnapshotOnOpen
+  );
+}
+
+export type CloseSettingsOptions = {
+  preserveLivePreview?: boolean;
+  /** Set by Save: the modal values were just persisted, so nothing is discarded. */
+  saved?: boolean;
+  discardConfirmed?: boolean;
+};
+
+/** Ask before dropping unsaved edits. Resolves false when the user keeps editing. */
+async function confirmDiscardSettingsEdits(): Promise<boolean> {
+  if (discardPromptOpen) return false;
+  discardPromptOpen = true;
+  try {
+    return await confirmWithE2eQueue(
+      () =>
+        ask("Your changes to Settings have not been saved. Discard them?", {
+          title: DISCARD_SETTINGS_TITLE,
+          kind: "warning",
+          okLabel: "Discard",
+          cancelLabel: "Keep editing",
+        }),
+      DISCARD_SETTINGS_TITLE,
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`Could not ask about discarding Settings edits: ${msg}`);
+    return false;
+  } finally {
+    discardPromptOpen = false;
+  }
+}
+
+/**
+ * Close Settings, asking first when the modal has unsaved edits. Resolves true
+ * once the modal is closed and false when the user keeps editing.
+ */
+export async function requestCloseSettingsModal(
+  options: CloseSettingsOptions = {},
+): Promise<boolean> {
+  if (options.saved || options.discardConfirmed || !hasUnsavedSettingsEdits()) {
+    closeSettingsModal(options);
+    return true;
+  }
+  if (!(await confirmDiscardSettingsEdits())) return false;
+  closeSettingsModal({ ...options, discardConfirmed: true });
+  return true;
+}
+
 export function toggleSettingsModal() {
   if ($("settings-overlay").hidden) {
     openSettingsModal();
@@ -328,9 +427,16 @@ export function toggleSettingsModal() {
   }
 }
 
-export function closeSettingsModal(
-  options: { preserveLivePreview?: boolean } = {},
-) {
+export function closeSettingsModal(options: CloseSettingsOptions = {}) {
+  if (
+    !options.saved &&
+    !options.discardConfirmed &&
+    hasUnsavedSettingsEdits()
+  ) {
+    void requestCloseSettingsModal(options);
+    return;
+  }
+  settingsSnapshotOnOpen = null;
   if (
     !options.preserveLivePreview &&
     settingsModalBasicWindowEffects !== null
@@ -341,7 +447,6 @@ export function closeSettingsModal(
   settingsModalBasicWindowEffects = null;
   const overlay = $("settings-overlay");
   overlay.hidden = true;
-  syncSettingsTriggerState(false);
   const modal = overlay.querySelector<HTMLElement>(".modal");
   if (modal) releaseFocusTrap(modal);
   const trigger = document.getElementById("open-settings");

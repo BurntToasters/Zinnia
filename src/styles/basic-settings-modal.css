@@ -1,8 +1,8 @@
 /* --- Basic Mode settings modal redesign --- */
 #app[data-workspace-mode="basic"] #settings-overlay {
-  background: var(--bg) !important;
-  backdrop-filter: none !important;
-  padding: 0 !important;
+  background: var(--bg);
+  backdrop-filter: none;
+  padding: 0;
   display: none;
   align-items: stretch;
   justify-content: stretch;
@@ -45,14 +45,14 @@ body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
   --basic-radius-btn: 10px;
   --basic-radius-input: 8px;
   position: relative;
-  width: 100% !important;
-  height: 100% !important;
-  max-height: 100vh !important;
-  max-width: 100vw !important;
-  margin: 0 !important;
+  width: 100%;
+  height: 100%;
+  max-height: 100vh;
+  max-width: 100vw;
+  margin: 0;
   border: none !important;
   border-radius: 0 !important;
-  box-shadow: none !important;
+  box-shadow: none;
   display: flex;
   flex-direction: column;
   background: var(--bg) !important;
@@ -71,9 +71,9 @@ body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
   margin: 0;
   border: none;
   background: transparent !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  box-shadow: none !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -209,7 +209,7 @@ body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
 
 #app[data-workspace-mode="basic"] .modal--settings .settings-section__title {
   margin: 0 0 10px;
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   font-weight: 650;
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -221,7 +221,7 @@ body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
 }
 
 #app[data-workspace-mode="basic"] #setting-ui-density {
-  display: none !important;
+  display: none;
 }
 
 /* Related preference rows share one horizontal band */
@@ -723,5 +723,23 @@ body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
 @media (prefers-reduced-motion: reduce) {
   #app[data-workspace-mode="basic"] .modal--settings {
     animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  #app[data-workspace-mode="basic"] .modal--settings .settings-tab {
+    border: 1px solid ButtonText;
+  }
+
+  #app[data-workspace-mode="basic"] .modal--settings .settings-tab.is-active {
+    background: Highlight;
+    color: HighlightText;
+    border-color: Highlight;
+  }
+
+  #app[data-workspace-mode="basic"]
+    .modal--settings
+    .settings-tab:focus-visible {
+    outline: 2px solid Highlight;
   }
 }

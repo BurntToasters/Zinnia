@@ -121,6 +121,7 @@
         <button class="btn btn--open" id="open-destination-btn" hidden>
           Open destination
         </button>
+        <button class="btn" id="retry-btn" hidden>Retry</button>
         <button class="btn btn--close" id="close-btn" hidden>Close</button>
       </div>
     </main>
@@ -145,7 +146,14 @@
         <div class="extract-input-modal__body">
           <label class="extract-input-field">
             <span id="input-modal-label">Value</span>
-            <input type="text" id="input-modal-field" autocomplete="off" />
+            <input
+              type="text"
+              id="input-modal-field"
+              spellcheck="false"
+              autocorrect="off"
+              autocapitalize="off"
+              autocomplete="off"
+            />
           </label>
         </div>
         <div class="extract-input-modal__footer">

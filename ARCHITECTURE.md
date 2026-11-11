@@ -14,24 +14,24 @@ frontend (src/, TS)  ──invoke()──▶  Rust commands (src-tauri/src/)  �
 `main.rs` is glue only (state registration, builder, command registry). Logic is
 split into focused modules:
 
-| Module                    | Responsibility                                                                                                    |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `validation.rs`           | Allow-list validation of 7z args: the security boundary                                                           |
-| `process/`                | Process lifecycle: journal/recovery/staging/commit, `run_7z`/`probe_7z`/`cancel_7z`, 7z version attestation       |
-| `progress.rs`             | Parse 7z stdout into structured `{percent, filesDone, currentFile}`                                               |
-| `archive_detect.rs`       | Magic-byte / TAR detection, extension-vs-header validation                                                        |
-| `settings_store.rs`       | Atomic settings load/save (preserves reserved `_` keys)                                                           |
-| `logging.rs`              | Rolling local diagnostics log                                                                                     |
-| `launch/`                 | CLI/file-association routing, extract windows, pending-path queues, quick-extract warm-idle / tray                |
-| `platform/`               | Platform/OS-integration queries, defaults commands, xdg-mime / macOS UTI                                          |
-| `output.rs`               | Byte-bounded, UTF-8-safe output buffering                                                                         |
-| `window_fx.rs`            | Basic-mode native glass (macOS vibrancy, Windows Mica/Acrylic); Linux stays opaque                                |
-| `path_safety.rs`          | Symlink / reparse rejection; Unix `O_NOFOLLOW` opens for promote                                                  |
-| `fs_secure.rs`            | Private (0700 / current-user ACL) and inheriting stage directory creation, nofollow opens, durable directory sync |
-| `tempdir.rs`              | Managed temp directories under one app-owned base; stale-dir sweeps; removal refused outside that base            |
-| `app_menu.rs`             | Native macOS menu bar; queues menu actions until the main window can receive them                                 |
-| `macos_services.rs`       | macOS Finder Services provider (Extract / Compress with Zinnia); reads paths from the pasteboard (macOS only)     |
-| `finder_sync_requests.rs` | macOS: drains requests the sandboxed Finder Sync extension writes to the App Group container (macOS only)         |
+| Module                    | Responsibility                                                                                                |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `validation.rs`           | Allow-list validation of 7z args (`validation/{switches,members,zip_policy}.rs`): the security boundary       |
+| `process/`                | Process lifecycle: journal/recovery/staging/commit, `run_7z`/`probe_7z`/`cancel_7z`, 7z version attestation   |
+| `progress.rs`             | Parse 7z stdout into structured `{percent, filesDone, currentFile}`                                           |
+| `archive_detect.rs`       | Magic-byte / TAR detection, extension-vs-header validation                                                    |
+| `settings_store.rs`       | Atomic settings load/save (carries `_setupWizardVersion` across saves; other legacy `_` keys dropped)         |
+| `logging.rs`              | Rolling local diagnostics log                                                                                 |
+| `launch/`                 | CLI/file-association routing, extract windows, pending-path queues, quick-extract warm-idle / tray            |
+| `platform/`               | Platform/OS-integration queries, defaults commands, xdg-mime / macOS UTI                                      |
+| `output.rs`               | Byte-bounded, UTF-8-safe output buffering                                                                     |
+| `window_fx.rs`            | Basic-mode native glass (macOS vibrancy, Windows Mica/Acrylic); Linux stays opaque                            |
+| `path_safety.rs`          | Symlink / reparse rejection; Unix `O_NOFOLLOW` opens for promote                                              |
+| `fs_secure.rs`            | Private stage dirs, nofollow opens, durable sync; platform helpers in `fs_secure/{unix,windows}.rs`           |
+| `tempdir.rs`              | Managed temp directories under one app-owned base; stale-dir sweeps; removal refused outside that base        |
+| `app_menu.rs`             | Native macOS menu bar; queues menu actions until the main window can receive them                             |
+| `macos_services.rs`       | macOS Finder Services provider (Extract / Compress with Zinnia); reads paths from the pasteboard (macOS only) |
+| `finder_sync_requests.rs` | macOS: drains requests the sandboxed Finder Sync extension writes to the App Group container (macOS only)     |
 
 `run_7z` validates args, owns one sidecar operation globally, emits throttled
 raw (`7z-progress`) plus structured (`7z-progress-structured`) progress events,
@@ -70,28 +70,43 @@ racing a newly opened extract window.
 No framework. State is a single mutable object in `state.ts`; modules
 communicate via direct calls and a few custom DOM events.
 
-### Module layout (target)
+### Module layout
 
-| Path                   | Responsibility                                                                           |
-| ---------------------- | ---------------------------------------------------------------------------------------- |
-| `archive/`             | 7z arg building, ops (`runAction` / batch extract), browse/selective UI, command preview |
-| `basic/`               | Basic workspace UI, Basic↔Power sync, recent archives, progress chrome                   |
-| `ui/`                  | Shared Power/Basic chrome: hooks, logging, workspace mode, status/progress, inputs       |
-| `main.ts`              | Thin entry; boot orchestration lives in `app-init.ts` / `power-events.ts`                |
-| `power-helpers.ts`     | Shared Power helpers (password toggles, editable-target, reset-for-first-run)            |
-| `power-shortcuts.ts`   | Keyboard shortcuts modal                                                                 |
-| `power-logs.ts`        | Diagnostics log export / open / clear                                                    |
-| `selective-extract.ts` | Pure tree/selection model for the picker                                                 |
-| `extract-window.ts`    | Dedicated extract progress window                                                        |
-| `os-integration.ts`    | Settings → OS Integration tab                                                            |
+| Path                   | Responsibility                                                                                                                  |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `archive/`             | 7z arg building, ops, browse UI; selective extract in `selective-run.ts`, `selective-tree-ui.ts`, `browse-selective-helpers.ts` |
+| `basic/`               | Basic workspace UI, Basic↔Power sync, recent archives, progress chrome                                                          |
+| `ui/`                  | Shared Power/Basic chrome: hooks, logging, workspace mode, status/progress, inputs                                              |
+| `power-events/`        | Main-window DOM wiring split by concern (`session`, `settings`, `presets`, …); `power-events.ts` re-exports `wireEvents`        |
+| `extract-window/`      | Extract progress window logic; `extract-window.ts` is the thin entry                                                            |
+| `main.ts`              | Thin entry; boot orchestration lives in `app-init.ts`                                                                           |
+| `power-helpers.ts`     | Shared Power helpers (password toggles, editable-target, reset-for-first-run)                                                   |
+| `power-shortcuts.ts`   | Keyboard shortcuts modal                                                                                                        |
+| `power-logs.ts`        | Diagnostics log export / open / clear                                                                                           |
+| `selective-extract.ts` | Pure tree/selection model for the picker                                                                                        |
+| `os-integration.ts`    | Settings → OS Integration tab                                                                                                   |
+| `styles/`              | `main-mid.css` and `basic-chrome.css` are `@import` aggregators over split part files                                           |
 
-### Backend layout (target)
+### Backend layout
 
 | Path        | Responsibility                                                         |
 | ----------- | ---------------------------------------------------------------------- |
 | `process/`  | Journal, recovery, staging, commit/promote, `run_7z` / cancel / probe  |
 | `platform/` | OS integration status, defaults commands, xdg-mime / macOS UTI helpers |
 | `launch/`   | Open-path routing, extract window lifecycle, pending paths             |
+
+Within `process/`, large modules are split at stable seams (behavior unchanged):
+
+| Root file / dir       | Submodules                                               |
+| --------------------- | -------------------------------------------------------- |
+| `commands.rs`         | `commands/{argv,run,spawn}.rs`                           |
+| `commit/mod.rs`       | `{publish,archive_promote,staged_tree,extract_merge}.rs` |
+| `journal.rs`          | `journal/{identity,cleanup_journal,pending}.rs`          |
+| `archive_snapshot.rs` | `archive_snapshot/{copy,identity,motw,volumes}.rs`       |
+| `staging.rs`          | `staging/{slt,plan}.rs`                                  |
+
+Compress input preflight (`compress_preflight.rs`) runs inside the backend; there is no
+`probe_compress_inputs` IPC command.
 
 Public Tauri command paths stay `process::run_7z`, `platform::…`, `launch::…` via
 re-exports from each crate module root.
@@ -136,28 +151,29 @@ are recorded in the manifest's `asymmetries` array.
 Linux) and `7z.exe` + `7z.dll` (Windows) both extract RAR. Zinnia never creates
 RAR archives.
 
+Base `src-tauri/tauri.conf.json` `bundle.fileAssociations` lists the same ten
+extensions as `tauri.windows.conf.json`, `tauri.macos.conf.json`, and
+`tauri.linux.conf.json`, including `.rar`.
+
 When adding a format, add it to `archive-formats.json` first, then run the
 checker and update each copy it names.
 
-### Remaining size hotspots
+### Removed or fail-closed legacy surfaces
 
-Do not refactor these during release stabilization. For later work, keep existing
-APIs and safety invariants while extracting along these seams:
-
-- `src-tauri/src/process/commit.rs`: archive backup/promotion vs staged-tree
-  validation and move-plan recovery; preserve rollback ordering and no-replace
-  behavior.
-- `src-tauri/src/fs_secure.rs`: platform-specific handle-relative create,
-  quarantine, and ACL helpers behind the current shared APIs.
-- `src-tauri/src/process/commands.rs`: process execution and stream handling vs
-  command preparation and archive-operation orchestration.
-- `src-tauri/src/process/journal.rs`: file identity/fingerprinting vs journal
-  persistence, state transitions, and orphan-stage cleanup; preserve record
-  format and recovery ordering.
-- `src-tauri/src/process/archive_snapshot.rs`: platform identity and snapshot
-  copy strategies behind the current snapshot/token API.
-- `src/styles/main-mid.css` and `src/power-events.ts` (`wireEvents`): peel
-  cohesive style sections and event wiring with behavior unchanged.
+- Settings save no longer writes or restores a `json.bak` sidecar; atomic rename
+  replaces the file in place.
+- Cleanup journals whose `format_version` is missing or below 1 are refused
+  fail-closed (the on-disk journal is preserved). The app shows a recovery
+  banner; finishing recovery on 0.6.2 or acknowledging the banner clears the
+  marker.
+- Format-version 1 cleanup journals must carry explicit `archive_phase`,
+  `extract_phase`, and (for extractions) `extract_stage_placement`. Recovery
+  refuses journals that omit those fields instead of inferring legacy heuristics.
+- Child-process termination waits (7-Zip exit, pipe drain, password stdin
+  transport) run on blocking pool threads via `spawn_blocking`, not on the async
+  runtime worker that serves Tauri commands.
+- The pending-stage registry (`pending-stages.json`) only accepts
+  identity-bearing records; legacy plain path strings are ignored.
 
 Critical coverage gates in `scripts/test-all.js` cover `archive/`, `basic/`,
 `power-helpers.ts`, `power-shortcuts.ts`, and other high-risk modules.

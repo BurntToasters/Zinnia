@@ -15,6 +15,13 @@ const REVIEWED_ADVISORIES = new Map([
   ["GHSA-QJ8W-GFJ5-8C6V", "serialize-javascript"],
   ["GHSA-C475-QRG2-PJ4R", "basic-ftp"],
   ["GHSA-VFJ7-8CJW-P6XM", "braces"],
+  // Reviewed 2026-11-03. No non-breaking fix: minimatch is fixed only by
+  // downgrading @wdio/cli to 8, glob has no patched 9-14 release, and mocha
+  // pins serialize-javascript 6. All copies are dev-only (eslint, mocha,
+  // wdio, license-checker) and only see repository globs and test data.
+  ["GHSA-G3HV-75WG-M249", "minimatch"],
+  ["GHSA-3G3M-2FJR-6PW4", "glob"],
+  ["GHSA-M5MM-P8H7-M29V", "serialize-javascript"],
 ]);
 
 function advisoryId(via) {

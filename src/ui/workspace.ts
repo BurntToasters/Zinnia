@@ -19,6 +19,17 @@ const BASIC_WINDOW_HEIGHT = 650;
 let workingContextPersistTimer: number | undefined;
 let settingsPersistQueue: Promise<void> = Promise.resolve();
 let settingsPersistGeneration = 0;
+
+export class SettingsPersistSupersededError extends Error {
+  constructor() {
+    super("Settings save was superseded by a newer save.");
+    this.name = "SettingsPersistSupersededError";
+  }
+}
+
+export function isSettingsPersistSupersededError(err: unknown): boolean {
+  return err instanceof SettingsPersistSupersededError;
+}
 let workspaceResizeQueue: Promise<void> = Promise.resolve();
 let workspaceResizeGeneration = 0;
 
@@ -34,11 +45,14 @@ function enqueueSettingsPersist(
   const operation = settingsPersistQueue
     .catch(() => undefined)
     .then(async () => {
-      if (generation < settingsPersistGeneration) return;
-      await saveSettings(snapshot, extras);
-      if (generation === settingsPersistGeneration) {
-        state.lastPersistedSettings = { ...snapshot };
+      if (generation < settingsPersistGeneration) {
+        throw new SettingsPersistSupersededError();
       }
+      await saveSettings(snapshot, extras);
+      if (generation !== settingsPersistGeneration) {
+        throw new SettingsPersistSupersededError();
+      }
+      state.lastPersistedSettings = { ...snapshot };
     });
   settingsPersistQueue = operation.catch(() => undefined);
   return operation;
@@ -61,6 +75,14 @@ export async function persistSettingsImmediately(
  * Reset-settings uses this barrier before deleting backend settings so a stale
  * frontend snapshot cannot be written back after the reset completes.
  */
+/**
+ * Wait for queued or in-flight settings writes without bumping generation
+ * (unlike flushPendingSettingsPersistence, which cancels stale snapshots).
+ */
+export async function awaitInFlightSettingsPersistence(): Promise<void> {
+  await settingsPersistQueue.catch(() => undefined);
+}
+
 export async function flushPendingSettingsPersistence(): Promise<void> {
   if (workingContextPersistTimer !== undefined) {
     clearTimeout(workingContextPersistTimer);
@@ -80,6 +102,7 @@ export function queuePersistWorkingContext(): void {
   workingContextPersistTimer = window.setTimeout(() => {
     workingContextPersistTimer = undefined;
     void enqueueSettingsPersist(snapshot, extras, generation).catch((err) => {
+      if (isSettingsPersistSupersededError(err)) return;
       const msg = err instanceof Error ? err.message : String(err);
       devLog(`Failed to persist working context: ${msg}`);
     });
@@ -211,7 +234,6 @@ export function setUiDensity(
   if (toggle) {
     toggle.classList.toggle("is-active", compactEnabled);
     toggle.setAttribute("aria-pressed", String(compactEnabled));
-    toggle.textContent = compactEnabled ? "Comfortable" : "Compact";
   }
   state.currentSettings.uiDensity = density;
   const densitySelect = document.getElementById(
@@ -223,12 +245,66 @@ export function setUiDensity(
   }
 }
 
+let powerWindowSizeSeq = 0;
+// The OS animates maximize and restore for a few hundred milliseconds, and the
+// resize events can end before the final size is reported. Sample until two
+// reads agree, so the saved size is the settled one.
+const POWER_SIZE_SETTLE_MS = 150;
+const POWER_SIZE_SETTLE_ATTEMPTS = 12;
+
+/**
+ * Saves the Power size only once the window is normal and its size has settled.
+ * A maximized or fullscreen size would restore as a very large normal window.
+ * When the state cannot be read, nothing is saved.
+ */
+async function savePowerWindowSizeWhenSettled(seq: number): Promise<void> {
+  let previous: { width: number; height: number } | null = null;
+  for (let attempt = 0; attempt < POWER_SIZE_SETTLE_ATTEMPTS; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise<void>((resolve) =>
+        window.setTimeout(resolve, POWER_SIZE_SETTLE_MS),
+      );
+    }
+    if (seq !== powerWindowSizeSeq || getWorkspaceMode() !== "power") return;
+    let normal: boolean;
+    try {
+      const appWindow = getCurrentWebviewWindow();
+      const [maximized, fullscreen] = await Promise.all([
+        appWindow.isMaximized(),
+        appWindow.isFullscreen(),
+      ]);
+      normal = !maximized && !fullscreen;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      devLog(`Skipped saving Power window size: ${msg}`);
+      return;
+    }
+    // A newer resize owns the decision now.
+    if (seq !== powerWindowSizeSeq) return;
+    if (!normal) {
+      previous = null;
+      continue;
+    }
+    // Read after the state answer: the size captured at event time can be
+    // mid-animation by now.
+    const sample = { width: window.innerWidth, height: window.innerHeight };
+    if (
+      previous?.width === sample.width &&
+      previous?.height === sample.height
+    ) {
+      state.currentSettings.powerWindowWidth = sample.width;
+      state.currentSettings.powerWindowHeight = sample.height;
+      queuePersistWorkingContext();
+      return;
+    }
+    previous = sample;
+  }
+}
+
 if (typeof window !== "undefined") {
   window.addEventListener("resize", () => {
-    if (getWorkspaceMode() === "power") {
-      state.currentSettings.powerWindowWidth = window.innerWidth;
-      state.currentSettings.powerWindowHeight = window.innerHeight;
-      queuePersistWorkingContext();
-    }
+    if (getWorkspaceMode() !== "power") return;
+    const seq = ++powerWindowSizeSeq;
+    void savePowerWindowSizeWhenSettled(seq);
   });
 }

@@ -14,7 +14,19 @@ APPEX="$OUT_DIR/ZinniaFinderSync.appex"
 CONTENTS="$APPEX/Contents"
 MACOS_DIR="$CONTENTS/MacOS"
 MODULE="ZinniaFinderSync"
-MIN_OS="${ZINNIA_FINDERSYNC_MIN_OS:-26.0}"
+CONFIG="$ROOT/src-tauri/tauri.conf.json"
+if ! command -v node >/dev/null 2>&1; then
+  echo "build-macos-finder-sync: node is required to read the app deployment minimum" >&2
+  exit 1
+fi
+if ! MIN_OS="${ZINNIA_FINDERSYNC_MIN_OS:-$(node -e 'const fs=require("node:fs"); const config=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); const value=config.bundle?.macOS?.minimumSystemVersion; if (typeof value !== "string" || !value) process.exit(1); process.stdout.write(value)' "$CONFIG")}"; then
+  echo "build-macos-finder-sync: could not read bundle.macOS.minimumSystemVersion from tauri.conf.json" >&2
+  exit 1
+fi
+if [[ ! "$MIN_OS" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+  echo "build-macos-finder-sync: invalid minimum macOS version: $MIN_OS" >&2
+  exit 1
+fi
 # A macOS-style App Group needs no provisioning profile, but macOS verifies
 # that its Team ID prefix matches both signed processes. Signed Zinnia builds
 # therefore require an explicit APPLE_TEAM_ID even when notarization uses an
@@ -48,6 +60,9 @@ cp "$SRC/Info.plist" "$CONTENTS/Info.plist"
   "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy \
   -c "Set :ZinniaAppGroupIdentifier $APP_GROUP_ID" \
+  "$CONTENTS/Info.plist"
+/usr/libexec/PlistBuddy \
+  -c "Set :LSMinimumSystemVersion $MIN_OS" \
   "$CONTENTS/Info.plist"
 
 # Generate matching host/extension entitlements in the ignored build directory.

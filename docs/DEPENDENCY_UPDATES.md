@@ -1,12 +1,21 @@
 # Dependency update safety
 
+## Rust toolchain pin
+
+`rust-toolchain.toml` is the sole source for the Rust compiler version,
+profile, and components. To bump Rust, edit only `rust-toolchain.toml`; the npm
+scripts, GitHub workflows, and Flatpak build read the pinned channel from it at
+runtime. Do not add a Rust version literal to another file.
+
+## Application version
+
 Set the new version by editing `package.json`, then run `npm run u`. That
 command copies the `package.json` version across the repo and proposes
 dependency lockfile updates. It does not bump `package.json` itself, install
 npm packages, run npm lifecycle scripts, compile Rust, execute Cargo build
 scripts or procedural macros, format source files, or run tests.
 
-The command requires Node.js `^22.22.2 || ^24.15.0 || >=26.0.0`, npm 12.0.1 or newer, and the Rust `1.98.1` toolchain pinned in `rust-toolchain.toml` to be installed. It performs these steps:
+The command requires Node.js `^24.22.1 || >=26.13.0`, npm 12.2.1 or newer, and the Rust toolchain pinned in `rust-toolchain.toml` to be installed. It performs these steps:
 
 1. Resolve npm updates with `--package-lock-only`, `--ignore-scripts`, and a three-day minimum release age in a disposable npm cache.
 2. Reject high-severity npm audit findings without populating the project `node_modules` directory.
@@ -43,3 +52,21 @@ Cargo audit's reviewed transitive warning set is also fail-closed. The exact
 `src-tauri/.cargo/audit.toml` ignore IDs are checked by
 `npm run check:rustsec-ignore-policy`, and the review date expires so the GTK3
 and other transitive debt must be re-evaluated rather than silently growing.
+
+The `audit.toml` ignores expire on 2027-03-01. No ignore is due before then.
+
+## Tauri updater plugin
+
+`@tauri-apps/plugin-updater` stays pinned to exact `2.10.1` in `package.json`.
+The Rust side is vendored at `src-tauri/vendor/tauri-plugin-updater`, and the
+vendored copy carries local patches. Upstream is at 2.14.x.
+
+A re-vendor against upstream 2.14.x is scheduled after 0.7.0-beta.1. It must
+re-apply every documented patch: macOS transactional install, confined tar
+extraction, Linux helper PATH, Windows ShellExecute, download stall limit,
+minisign-verify 0.3, and zip 9. Do not bump the npm pin on its own.
+
+## Lucide
+
+`lucide` is bumped from 1.68.0 to 1.70.0, with the caret range kept as
+`^1.70.0`. It is a shipped runtime dependency, so the production audit covers it.

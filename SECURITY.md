@@ -127,6 +127,10 @@ operations:
   namespaces) on every platform, so an archive created on Linux cannot produce
   a folder that collides with a device, an ADS, or a shell view when opened on
   Windows.
+- Archive listing limits: Browse shows up to about 200,000 ZIP or TAR entries (a 64 MiB
+  listing). Extraction refuses an archive whose member listing exceeds 256 MiB
+  (about 800,000 ZIP or TAR entries) and any archive that lists more than
+  1,000,000 entries.
 - Cancel/close keeps the global operation slot locked until the child has exited
   and staging cleanup has completed.
 - Extraction growth is limited by both expansion ratio and current free disk

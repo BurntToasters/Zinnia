@@ -11,14 +11,16 @@
   **Desktop development with C++** includes **C++ CMake tools for Windows** (updates can drop
   optional components; an old VS 2022 `cmake` on PATH stops working when 2022 is removed).
 - **Windows SDK** (`makeappx.exe`) for Win11 sparse context-menu packages
-- Node.js `^22.22.2 || ^24.15.0 || >=26` (`engines.node` in package.json)
+- Node.js `^24.22.1 || >=26.13.0` (`engines.node` in package.json)
 - Rust (rustup) + Visual Studio Build Tools (clang: x64 and arm64)
 
 ## macOS
 
-- macOS 26 or later
+- Build host: macOS 26 or later (Xcode / SDK used to compile the app)
+- Zinnia itself requires macOS 15.0 or later at runtime (`minimumSystemVersion` in
+  `src-tauri/tauri.conf.json`; see README)
 - Xcode Command Line Tools
-- Node.js `^22.22.2 || ^24.15.0 || >=26` (`engines.node` in package.json)
+- Node.js `^24.22.1 || >=26.13.0` (`engines.node` in package.json)
 - Rust (rustup)
 
 ## Linux
@@ -30,7 +32,7 @@
 - Build and test RPM artifacts on Fedora 43. Test the DEB/AppImage on Debian
   13 and the RPM on Fedora 43; these distributions are runtime targets, not
   interchangeable AppImage build baselines.
-- Node.js `^22.22.2 || ^24.15.0 || >=26` (`engines.node` in package.json)
+- Node.js `^24.22.1 || >=26.13.0` (`engines.node` in package.json)
 - Rust (rustup)
 - Build essentials (gcc, g++, make)
 - AppImage, rpm, deb tooling if building those bundles
@@ -38,14 +40,14 @@
 
 ## Rust toolchain policy
 
-Zinnia builds with Rust `1.98.1`, pinned in `rust-toolchain.toml` and used by
-CI, Flatpak, and release builds. Install that exact toolchain before building:
+Zinnia builds with the Rust toolchain pinned in `rust-toolchain.toml`, used by
+CI, Flatpak, and release builds. Install that pinned toolchain before building:
 
 ```sh
 npm run rust:update
 ```
 
-The Rust target setup commands also add targets to `1.98.1`.
+The Rust target setup commands also add targets to the pinned toolchain.
 
 ## License notice audit
 

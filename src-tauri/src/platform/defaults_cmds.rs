@@ -204,7 +204,7 @@ pub async fn enable_finder_sync() -> Result<(), String> {
 
         tokio::task::spawn_blocking(|| {
             register_macos_finder_sync();
-            let _ = command_output_with_timeout(
+            let output = command_output_with_timeout(
                 Command::new("/usr/bin/pluginkit").args([
                     "-e",
                     "use",
@@ -212,10 +212,21 @@ pub async fn enable_finder_sync() -> Result<(), String> {
                     MACOS_FINDER_SYNC_BUNDLE_ID,
                 ]),
                 std::time::Duration::from_secs(8),
-            );
+            )
+            .map_err(|error| format!("Could not run pluginkit: {error}"))?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                Err(if detail.is_empty() {
+                    "pluginkit did not enable the Finder Sync extension.".to_string()
+                } else {
+                    format!("pluginkit did not enable the Finder Sync extension: {detail}")
+                })
+            }
         })
         .await
-        .map_err(|error| format!("Finder Sync enable worker failed: {error}"))?;
+        .map_err(|error| format!("Finder Sync enable worker failed: {error}"))??;
         Ok(())
     }
 

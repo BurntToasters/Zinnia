@@ -1,7 +1,5 @@
 import { appendFileSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { isDirectExecutionOf } from "./direct-execution.mjs";
 
 export function resolveBetaBaseline(packageVersion, resolveTagCommit) {

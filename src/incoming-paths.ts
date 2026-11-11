@@ -55,10 +55,30 @@ function mergeIncomingPaths(paths: string[]): {
   return { accepted, rejected };
 }
 
-function logIncomingPathLimit(source: string, rejected: number): void {
+/** Same toast copy the drop path uses, plus a log line for diagnostics. */
+function reportIncomingPathLimit(source: string, rejected: number): void {
   if (rejected === 0) return;
+  showToast(
+    `Added the first ${MAX_ARCHIVE_PATHS} unique items; ${rejected} more were not added.`,
+    "error",
+    5000,
+  );
   log(
     `Received paths from ${source}, but kept only the first ${MAX_ARCHIVE_PATHS} unique inputs; ${rejected} excess path(s) were not added.`,
+  );
+}
+
+/**
+ * Tells the user that files arriving during a job or Basic preparation are
+ * added once it finishes. A hand-off that only waits on another hand-off is
+ * not an operation and shows nothing.
+ */
+export function notifyIncomingPathsQueuedIfBusy(): void {
+  if (!state.running && !state.operationPreparing) return;
+  showToast(
+    "Files will be added when the current operation finishes.",
+    "info",
+    5000,
   );
 }
 
@@ -136,6 +156,7 @@ export async function applyIncomingPaths(
 
   // Serialize against Power drops and other handoffs, and against active jobs /
   // Basic preparation. Keeping this promise pending also preserves file-open FIFO.
+  notifyIncomingPathsQueuedIfBusy();
   await acquireIncomingPathLock();
   try {
     await applyIncomingPathsUnlocked(paths, mode, source);
@@ -159,7 +180,7 @@ async function applyIncomingPathsUnlocked(
     const { rejected } = mergeIncomingPaths(paths);
     renderInputs();
     devLog(`Received ${paths.length} path(s) from ${source}.`);
-    logIncomingPathLimit(source, rejected);
+    reportIncomingPathLimit(source, rejected);
     if (getWorkspaceMode() === "basic") {
       setBasicView("compress");
     }
@@ -182,7 +203,7 @@ async function applyIncomingPathsUnlocked(
       "error",
     );
     showToast(
-      "Could not detect archive types for the dropped files. Try again.",
+      "Could not detect archive types for the selected files. Try again.",
       "error",
       5000,
     );
@@ -223,7 +244,7 @@ async function applyIncomingPathsUnlocked(
   }
   renderInputs();
   devLog(`Received ${paths.length} path(s) from ${source}.`);
-  logIncomingPathLimit(source, rejected);
+  reportIncomingPathLimit(source, rejected);
 
   if (getWorkspaceMode() === "basic") {
     if (shouldAutoExtract || shouldAutoBrowse) {

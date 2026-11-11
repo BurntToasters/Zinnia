@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/tests",
+    "src/e2e-wdio-plugin.ts",
+    "src/vite-env.d.ts",
+    "vite.config.ts",
+    "vitest.config.ts"
+  ]
+}

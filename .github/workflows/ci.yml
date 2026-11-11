@@ -18,15 +18,15 @@ permissions:
   contents: read
 
 env:
-  NODE_VERSION: "24.16.0"
-  NPM_VERSION: "12.0.2"
-  RUST_VERSION: "1.98.1"
+  NODE_VERSION: "26.13.0"
+  NPM_VERSION: "12.2.1"
   CARGO_AUDIT_VERSION: "0.22.2"
 
 jobs:
   commit-message-policy:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -52,6 +52,9 @@ jobs:
 
   quality-gate:
     runs-on: ubuntu-latest
+    # test:all includes the E2E runner, whose wrapper limit is about 121 minutes
+    # on Linux (scripts/test-e2e.js e2eWrapperTimeoutMs), plus setup and checks.
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -62,9 +65,16 @@ jobs:
           cache: npm
       - name: Install latest npm 12
         run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - name: Resolve pinned Rust toolchain
+        id: rust-pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node scripts/rust-toolchain.mjs)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: ${{ env.RUST_VERSION }}
+          toolchain: ${{ steps.rust-pin.outputs.version }}
           components: rustfmt, clippy
       - name: Install Linux dependencies
         run: |
@@ -112,7 +122,7 @@ jobs:
           sha(path.join("coverage/e2e",s.logFile))!==s.logSha256)) process.exit(1)'
       - name: Upload quality-gate E2E proof
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-proof-quality-gate
           path: coverage/e2e
@@ -170,10 +180,17 @@ jobs:
       - name: Install latest npm 12
         id: install-npm
         run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - name: Resolve pinned Rust toolchain
+        id: rust-pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node scripts/rust-toolchain.mjs)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         id: rust-toolchain
         with:
-          toolchain: ${{ env.RUST_VERSION }}
+          toolchain: ${{ steps.rust-pin.outputs.version }}
       - name: Install Linux E2E dependencies
         id: linux-dependencies
         if: runner.os == 'Linux'
@@ -251,7 +268,7 @@ jobs:
           ) | Set-Content -LiteralPath (Join-Path $reportDir 'workflow-diagnostics.txt') -Encoding utf8
       - name: Upload archive I/O smoke report and workflow diagnostics
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: archive-io-smoke-${{ matrix.os }}
           path: ${{ runner.temp }}/zinnia-archive-io
@@ -304,10 +321,17 @@ jobs:
       - name: Install latest npm 12
         id: install-npm
         run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - name: Resolve pinned Rust toolchain
+        id: rust-pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node scripts/rust-toolchain.mjs)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         id: rust-toolchain
         with:
-          toolchain: ${{ env.RUST_VERSION }}
+          toolchain: ${{ steps.rust-pin.outputs.version }}
       - name: Install Linux E2E dependencies
         id: linux-dependencies
         if: runner.os == 'Linux'
@@ -385,7 +409,7 @@ jobs:
           ) | Set-Content -LiteralPath (Join-Path $reportDir 'workflow-diagnostics.txt') -Encoding utf8
       - name: Upload archive I/O release report and workflow diagnostics
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: archive-io-promotion-${{ matrix.os }}
           path: ${{ runner.temp }}/zinnia-archive-io
@@ -396,11 +420,15 @@ jobs:
     needs: quality-gate
     strategy:
       matrix:
-        # Pin macos-26: bundled 7-Zip / minimumSystemVersion require 26.0+.
+        # Pin macos-26 for the hosted smoke/E2E environment; the package floor is 15.0.
+        # scripts/zip-macos.js checks every app, Finder Sync, and 7-Zip slice against it.
         # macos-latest still resolves to macOS 15 arm64 on GitHub-hosted runners.
         # ARM entries run the same unpackaged GUI E2E as x64, not only a smoke build.
         os: [windows-latest, macos-26, ubuntu-24.04-arm, windows-11-arm]
     runs-on: ${{ matrix.os }}
+    # Includes the unpackaged GUI E2E, whose wrapper limit is about 131 minutes
+    # on Windows (scripts/test-e2e.js e2eWrapperTimeoutMs), plus cargo checks.
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -411,9 +439,16 @@ jobs:
           cache: npm
       - name: Install latest npm 12
         run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - name: Resolve pinned Rust toolchain
+        id: rust-pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node scripts/rust-toolchain.mjs)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: ${{ env.RUST_VERSION }}
+          toolchain: ${{ steps.rust-pin.outputs.version }}
           components: clippy
       # Same Linux E2E packages as quality-gate, for the ubuntu-24.04-arm entry.
       - name: Install Linux dependencies
@@ -468,7 +503,7 @@ jobs:
           sha(path.join("coverage/e2e",s.logFile))!==s.logSha256)) process.exit(1)'
       - name: Upload E2E proof
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           # Unique per matrix OS, so the four rust-check legs never collide.
           name: e2e-proof-${{ matrix.os }}
@@ -480,6 +515,7 @@ jobs:
 
   updater-manifest:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -534,9 +570,16 @@ jobs:
           cache: npm
       - name: Install latest npm 12
         run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - name: Resolve pinned Rust toolchain
+        id: rust-pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node scripts/rust-toolchain.mjs)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: ${{ env.RUST_VERSION }}
+          toolchain: ${{ steps.rust-pin.outputs.version }}
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
@@ -578,6 +621,8 @@ jobs:
 
   security-audit:
     runs-on: ubuntu-latest
+    # Includes `cargo install cargo-audit` from source on a cold cache.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -588,9 +633,16 @@ jobs:
           cache: npm
       - name: Install latest npm 12
         run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
+      - name: Resolve pinned Rust toolchain
+        id: rust-pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node scripts/rust-toolchain.mjs)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: ${{ env.RUST_VERSION }}
+          toolchain: ${{ steps.rust-pin.outputs.version }}
       - run: npm ci --ignore-scripts
       - run: node scripts/npm-audit-signatures.cjs
       - name: npm audit - production
@@ -620,6 +672,7 @@ jobs:
       - archive-io-benchmark
       - archive-io-promotion-benchmark
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Require every release check
         env:

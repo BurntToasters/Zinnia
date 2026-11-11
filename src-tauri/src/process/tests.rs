@@ -1,5 +1,23 @@
 //! Unit tests for the process module.
 
+// Regression failure modes recorded before adding coverage:
+//
+// * Planned-link rewriting can resolve a later link through an earlier link
+//   that has already been rewritten. A collision-renamed target can then
+//   redirect the later link to a different staged file. Compute every target
+//   from the original staged tree before mutating any link.
+// * Missing relative targets are valid when their lexical destination remains
+//   inside the extraction root; external targets must still fail containment
+//   checks, and a failed publication must retain the existing rollback path.
+// * A child can exit before either pipe-reader thread is scheduled. If the wait
+//   thread emits Terminated before joining both readers, the collector stops
+//   early and drops final stdout/stderr records. A bounded channel also means
+//   joining readers is safe only while collection keeps draining it.
+// * Stream errors and reader panics must invalidate a successful exit without
+//   stopping the sibling reader from draining. Cancellation and deferred
+//   password writes must retain their existing child-registration ordering;
+//   stream setup failures must not orphan the child.
+
 use super::archive_snapshot::{
     archive_file_identity, archive_input_family, assert_archive_identity_unchanged,
     stage_extract_input, SnapshotStrategy,
@@ -502,7 +520,9 @@ fn rollback_cleanup_reports_pending_registry_failure() {
 
     let error = rollback_cleanup(&plan).expect_err("registry failure must retain ownership");
     assert!(
-        error.contains("expected a sequence") || error.contains("invalid type"),
+        error.contains("Pending-stage recovery record disappeared before cleanup")
+            || error.contains("expected a sequence")
+            || error.contains("invalid type"),
         "unexpected error: {error}"
     );
     assert!(
@@ -621,7 +641,7 @@ fn compound_tar_outer_extract_args_harden_and_link_policy() {
         assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-snz")));
         assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-sns-")));
     }
-    let source = include_str!("commands.rs");
+    let source = include_str!("commands/run.rs");
     assert!(source.contains("compound_tar_outer_extract_args(&snapshot, &outer_stage)"));
     assert!(
         source.contains("compound_tar_outer_unpack_ok(code, &collected.stdout, &collected.stderr)")
@@ -842,6 +862,11 @@ fn stream_error_keeps_collecting_until_termination() {
         ))
         .await
         .expect("send trailing output");
+        tx.send(tauri_plugin_shell::process::CommandEvent::Stderr(
+            b"stderr tail\n".to_vec(),
+        ))
+        .await
+        .expect("send trailing stderr");
         tx.send(tauri_plugin_shell::process::CommandEvent::Terminated(
             tauri_plugin_shell::process::TerminatedPayload {
                 code: Some(1),
@@ -860,7 +885,307 @@ fn stream_error_keeps_collecting_until_termination() {
             "a stream failure must invalidate an otherwise successful child exit"
         );
         assert_eq!(collected.stdout, "tail\n");
+        assert_eq!(
+            collected.stderr,
+            "7-Zip process error: broken pipe\nstderr tail\n"
+        );
     });
+}
+
+fn collected_preflight_output(
+    exit_code: Option<i32>,
+    stdout: &str,
+    stderr: &str,
+    stdout_truncated: bool,
+    stderr_truncated: bool,
+    stream_error: Option<&str>,
+) -> super::commands::CollectedOutput {
+    super::commands::CollectedOutput {
+        stdout: stdout.to_string(),
+        stderr: stderr.to_string(),
+        stdout_truncated,
+        stderr_truncated,
+        exit: exit_code.map(|code| tauri_plugin_shell::process::TerminatedPayload {
+            code: Some(code),
+            signal: None,
+        }),
+        stream_error: stream_error.map(str::to_string),
+    }
+}
+
+#[test]
+fn preflight_boundary_rejects_stream_error_with_exit_zero() {
+    let error = super::staging::checked_preflight_output(
+        collected_preflight_output(
+            Some(0),
+            "partial listing\n",
+            "",
+            false,
+            false,
+            Some("broken pipe"),
+        ),
+        "Archive encryption preflight",
+    )
+    .expect_err("stream error must invalidate exit-zero output");
+    assert!(error.contains("stream"), "unexpected error: {error}");
+}
+
+#[test]
+fn preflight_boundary_rejects_missing_termination() {
+    let error = super::staging::checked_preflight_output(
+        collected_preflight_output(None, "partial listing\n", "", false, false, None),
+        "Archive encryption preflight",
+    )
+    .expect_err("missing termination must invalidate output");
+    assert!(error.contains("termination"), "unexpected error: {error}");
+}
+
+#[test]
+fn preflight_boundary_rejects_truncated_output() {
+    let error = super::staging::checked_preflight_output(
+        collected_preflight_output(Some(0), "partial listing\n", "", true, false, None),
+        "Archive encryption preflight",
+    )
+    .expect_err("truncated output must invalidate preflight");
+    assert!(error.contains("output limit"), "unexpected error: {error}");
+}
+
+#[test]
+fn preflight_boundary_preserves_complete_exit_zero() {
+    let output = super::staging::checked_preflight_output(
+        collected_preflight_output(Some(0), "Path = safe.txt\n", "", false, false, None),
+        "Archive encryption preflight",
+    )
+    .expect("complete exit-zero output");
+    assert_eq!(output.code, 0);
+    assert_eq!(output.stdout, "Path = safe.txt\n");
+}
+
+#[test]
+fn preflight_boundary_preserves_complete_metadata_warning_for_caller() {
+    let output = super::staging::checked_preflight_output(
+        collected_preflight_output(
+            Some(1),
+            "WARNING: Cannot set owner\n",
+            "",
+            false,
+            false,
+            None,
+        ),
+        "Archive member-safety preflight",
+    )
+    .expect("complete metadata-warning output");
+    assert_eq!(output.code, 1);
+    assert!(listing_preflight_exit_is_acceptable(
+        output.code,
+        &output.stdout,
+        &output.stderr
+    ));
+}
+
+#[test]
+fn encrypted_member_alias_requires_whole_archive_password_check() {
+    let listing = "Path = tiny_secret.txt\nFolder = -\nSize = 1\nEncrypted = +\nMethod = AES-256 Store\n\nPath = tiny_secret.txt\nFolder = -\nSize = 1\nEncrypted = -\nMethod = Deflate\n";
+    let facts = super::staging::parse_update_encryption_facts(listing);
+    assert_eq!(
+        facts.smallest_encrypted_file.as_deref(),
+        Some("tiny_secret.txt")
+    );
+    assert!(facts.smallest_encrypted_file_ambiguous);
+    let member_test = super::staging::PreflightOutput {
+        code: 0,
+        stdout: "Testing tiny_secret.txt\nEverything is Ok\nFiles: 1\n".to_string(),
+        stderr: String::new(),
+    };
+    assert!(super::staging::member_password_test_needs_full_archive_check(&facts, &member_test));
+}
+
+#[test]
+fn member_test_reporting_no_files_requires_whole_archive_fallback() {
+    let facts = super::staging::parse_update_encryption_facts(
+        "Path = tiny_secret.txt\nFolder = -\nSize = 1\nEncrypted = +\nMethod = AES-256 Store\n",
+    );
+    assert!(!facts.smallest_encrypted_file_ambiguous);
+    let member_test = super::staging::PreflightOutput {
+        code: 0,
+        stdout: "No files to process\nEverything is Ok\nFiles: 0\n".to_string(),
+        stderr: String::new(),
+    };
+    assert!(super::staging::member_password_test_needs_full_archive_check(&facts, &member_test));
+}
+
+#[test]
+fn ordinary_encrypted_member_keeps_smallest_member_check() {
+    let facts = super::staging::parse_update_encryption_facts(
+        "Path = tiny.txt\nFolder = -\nSize = 1\nEncrypted = +\nMethod = AES-256 Store\n\nPath = large.txt\nFolder = -\nSize = 100\nEncrypted = +\nMethod = AES-256 Deflate\n",
+    );
+    assert_eq!(facts.smallest_encrypted_file.as_deref(), Some("tiny.txt"));
+    assert!(!facts.smallest_encrypted_file_ambiguous);
+    let member_test = super::staging::PreflightOutput {
+        code: 0,
+        stdout: "Testing tiny.txt\nEverything is Ok\nFiles: 1\n".to_string(),
+        stderr: String::new(),
+    };
+    assert!(!super::staging::member_password_test_needs_full_archive_check(&facts, &member_test));
+}
+
+#[test]
+fn cancelled_output_keeps_drained_streams_but_never_reports_success() {
+    tauri::async_runtime::block_on(async {
+        let (tx, mut rx) =
+            tauri::async_runtime::channel::<tauri_plugin_shell::process::CommandEvent>(4);
+        tx.send(tauri_plugin_shell::process::CommandEvent::Stdout(
+            b"partial stdout\n".to_vec(),
+        ))
+        .await
+        .expect("send stdout");
+        tx.send(tauri_plugin_shell::process::CommandEvent::Stderr(
+            b"partial stderr\n".to_vec(),
+        ))
+        .await
+        .expect("send stderr");
+        tx.send(tauri_plugin_shell::process::CommandEvent::Terminated(
+            tauri_plugin_shell::process::TerminatedPayload {
+                code: Some(0),
+                signal: None,
+            },
+        ))
+        .await
+        .expect("send termination");
+        drop(tx);
+
+        let collected = collect_command_output(&mut rx, 1024, |_| {}).await;
+        assert_eq!(collected.stdout, "partial stdout\n");
+        assert_eq!(collected.stderr, "partial stderr\n");
+        let result = collected.into_run_result(true, None);
+        assert_eq!(result.code, -1);
+        assert_eq!(result.stdout, "partial stdout\n");
+        assert_eq!(result.stderr, "partial stderr\n");
+    });
+}
+
+fn fast_output_command() -> std::process::Command {
+    #[cfg(unix)]
+    let mut command = {
+        let mut command = std::process::Command::new("sh");
+        command.args(["-c", "printf 'stdout-tail'; printf 'stderr-tail' >&2"]);
+        command
+    };
+    #[cfg(windows)]
+    let mut command = {
+        let mut command = std::process::Command::new("cmd");
+        command.args(["/C", "echo stdout-tail & echo stderr-tail 1>&2"]);
+        command
+    };
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    command
+}
+
+#[test]
+fn fast_child_waits_for_both_pipe_readers_before_termination() {
+    let reader_gate =
+        std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+    let mut command = fast_output_command();
+    // This test-only seam pauses both actual output readers while allowing the
+    // child waiter to observe process exit. It makes the old scheduling race
+    // deterministic without constructing a Tauri AppHandle or sidecar.
+    let (mut rx, _child, child_waited, _output_finished) =
+        super::commands::spawn_child_output_for_test(
+            &mut command,
+            Some(reader_gate.clone()),
+            false,
+        )
+        .expect("spawn output fixture");
+    child_waited
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("child wait should finish");
+
+    let early_event = tauri::async_runtime::block_on(async {
+        tokio::time::timeout(std::time::Duration::from_millis(150), rx.recv()).await
+    });
+    let terminated_while_readers_were_gated = matches!(
+        early_event,
+        Ok(Some(tauri_plugin_shell::process::CommandEvent::Terminated(
+            _
+        )))
+    );
+
+    let (released, changed) = &*reader_gate;
+    *released.lock().expect("reader gate") = true;
+    changed.notify_all();
+
+    let collected = tauri::async_runtime::block_on(async {
+        collect_command_output(&mut rx, 1024, |_| {}).await
+    });
+    assert!(
+        !terminated_while_readers_were_gated,
+        "waiter emitted Terminated before both pipe readers drained"
+    );
+    assert!(collected.output_is_complete());
+    assert_eq!(collected.exit_code(), 0);
+    assert!(collected.stdout.contains("stdout-tail"));
+    assert!(collected.stderr.contains("stderr-tail"));
+}
+
+#[test]
+fn reader_panic_is_a_stream_error_before_termination() {
+    let mut command = fast_output_command();
+    let (mut rx, _child, _child_waited, _output_finished) =
+        super::commands::spawn_child_output_for_test(&mut command, None, true)
+            .expect("spawn panic fixture");
+    let collected = tauri::async_runtime::block_on(async {
+        collect_command_output(&mut rx, 1024, |_| {}).await
+    });
+
+    assert!(
+        collected.exit.is_some(),
+        "reader panic must not hide child exit"
+    );
+    assert!(
+        collected
+            .stream_error
+            .as_deref()
+            .is_some_and(|error| error.contains("reader")),
+        "reader panic must invalidate output: {:?}",
+        collected.stream_error
+    );
+    assert_eq!(collected.exit_code(), -1);
+    assert!(!collected.output_is_complete());
+    assert!(collected.stderr.contains("stderr-tail"));
+}
+
+#[test]
+fn closed_output_receiver_does_not_block_pipe_readers_or_child_wait() {
+    #[cfg(unix)]
+    let mut command = {
+        let mut command = std::process::Command::new("sh");
+        command.args([
+            "-c",
+            "i=0; while [ $i -lt 10000 ]; do printf 'line\\n'; i=$((i+1)); done",
+        ]);
+        command
+    };
+    #[cfg(windows)]
+    let mut command = {
+        let mut command = std::process::Command::new("cmd");
+        command.args(["/C", "for /L %i in (1,1,10000) do @echo line"]);
+        command
+    };
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let (rx, _child, _child_waited, output_finished) =
+        super::commands::spawn_child_output_for_test(&mut command, None, false)
+            .expect("spawn chatty child");
+    drop(rx);
+    output_finished
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("closed receiver must not strand pipe draining or reader joins");
 }
 
 #[test]
@@ -2027,7 +2352,7 @@ fn extract_stage_placement_rejects_mismatched_layouts() {
 }
 
 #[test]
-fn extract_stage_placement_serializes_and_legacy_journals_remain_sibling_only() {
+fn extract_stage_placement_serializes_and_missing_fields_decode_as_defaults() {
     let destination = std::path::PathBuf::from("root/destination");
     let stage = destination.join(".zinnia-extract-0123456789abcdef0123456789abcdef");
     let journal = CleanupJournal {
@@ -2121,8 +2446,14 @@ fn extract_stage_placement_serializes_and_legacy_journals_remain_sibling_only() 
     assert_eq!(decoded.extract_stage_identity, None);
     assert_eq!(decoded.move_plan_identity, None);
     assert_eq!(decoded.move_identity_log_identity, None);
-    assert_eq!(decoded.stage.parent(), decoded.destination.parent());
-    assert_ne!(decoded.stage.parent(), Some(decoded.destination.as_path()));
+    assert_eq!(decoded.format_version, 0);
+    assert!(!decoded.move_plan_sidecar);
+    let error = super::journal::ensure_journal_format_supported(&decoded)
+        .expect_err("missing format_version must be refused");
+    assert!(
+        error.contains("older Zinnia version"),
+        "unexpected error: {error}"
+    );
 }
 
 #[test]
@@ -3020,14 +3351,8 @@ fn persisted_move_plan_rolls_back_a_partial_merge() {
     }];
     let move_plan_identity = write_move_plan(&staged, &plan).expect("durable move plan");
 
-    rollback_persisted_move_plan(
-        &staged,
-        &destination,
-        false,
-        Some(&move_plan_identity),
-        None,
-    )
-    .expect("rollback plan");
+    rollback_persisted_move_plan(&staged, &destination, Some(&move_plan_identity), None)
+        .expect("rollback plan");
 
     assert_eq!(
         std::fs::read(&source).expect("restored source"),
@@ -3058,14 +3383,8 @@ fn inside_destination_move_plan_rolls_back_a_partial_merge() {
     }];
     let move_plan_identity = write_move_plan(&staged, &plan).expect("durable sidecar move plan");
 
-    rollback_persisted_move_plan(
-        &staged,
-        &destination,
-        false,
-        Some(&move_plan_identity),
-        None,
-    )
-    .expect("rollback inside-destination plan");
+    rollback_persisted_move_plan(&staged, &destination, Some(&move_plan_identity), None)
+        .expect("rollback inside-destination plan");
 
     assert_eq!(
         std::fs::read(&source).expect("restored staged source"),
@@ -3099,14 +3418,9 @@ fn persisted_move_plan_preserves_a_target_modified_in_place() {
     }];
     let move_plan_identity = write_move_plan(&staged, &plan).expect("move plan");
 
-    let error = rollback_persisted_move_plan(
-        &staged,
-        &destination,
-        false,
-        Some(&move_plan_identity),
-        None,
-    )
-    .expect_err("modified target must be preserved");
+    let error =
+        rollback_persisted_move_plan(&staged, &destination, Some(&move_plan_identity), None)
+            .expect_err("modified target must be preserved");
     assert!(error.contains("changed after publication"));
     assert_eq!(std::fs::read(&target).unwrap(), b"user edit");
     let _ = std::fs::remove_file(move_plan_path(&staged));
@@ -3135,14 +3449,8 @@ fn persisted_move_plan_preserves_a_published_directory_with_edited_children() {
     }];
     let move_plan_identity = write_move_plan(&staged, &plan).expect("move plan");
 
-    rollback_persisted_move_plan(
-        &staged,
-        &destination,
-        false,
-        Some(&move_plan_identity),
-        None,
-    )
-    .expect_err("modified directory must be preserved");
+    rollback_persisted_move_plan(&staged, &destination, Some(&move_plan_identity), None)
+        .expect_err("modified directory must be preserved");
     assert_eq!(
         std::fs::read(target.join("child.txt")).unwrap(),
         b"user edit"
@@ -3323,14 +3631,8 @@ fn target_local_publish_recovery_removes_only_verified_copies() {
     }];
     let move_plan_identity = write_move_plan(&staged, &plan).expect("target-local move plan");
 
-    rollback_persisted_move_plan(
-        &staged,
-        &destination,
-        false,
-        Some(&move_plan_identity),
-        None,
-    )
-    .expect("remove verified partial copy");
+    rollback_persisted_move_plan(&staged, &destination, Some(&move_plan_identity), None)
+        .expect("remove verified partial copy");
 
     assert_eq!(std::fs::read(&source).unwrap(), b"staged source");
     assert!(!publish_temp.exists());
@@ -3387,7 +3689,6 @@ fn target_local_recovery_hydrates_append_only_identity_log() {
     rollback_persisted_move_plan(
         &staged,
         &destination,
-        false,
         Some(&move_plan_identity),
         Some(&move_identity_log_identity),
     )
@@ -3454,7 +3755,6 @@ fn identity_log_hydration_uses_latest_record_per_index() {
     rollback_persisted_move_plan(
         &staged,
         &destination,
-        false,
         Some(&move_plan_identity),
         Some(&move_identity_log_identity),
     )
@@ -3517,7 +3817,6 @@ fn identity_log_hydration_uses_latest_record_with_publish_temp() {
     rollback_persisted_move_plan(
         &staged,
         &destination,
-        false,
         Some(&move_plan_identity),
         Some(&move_identity_log_identity),
     )
@@ -3555,14 +3854,8 @@ fn target_local_publish_recovery_preserves_replacement_target() {
     }];
     let move_plan_identity = write_move_plan(&staged, &plan).expect("target-local move plan");
 
-    rollback_persisted_move_plan(
-        &staged,
-        &destination,
-        false,
-        Some(&move_plan_identity),
-        None,
-    )
-    .expect("leave replacement target untouched");
+    rollback_persisted_move_plan(&staged, &destination, Some(&move_plan_identity), None)
+        .expect("leave replacement target untouched");
 
     assert_eq!(std::fs::read(&source).unwrap(), b"staged source");
     assert_eq!(std::fs::read(&target).unwrap(), b"replacement");
@@ -3614,6 +3907,103 @@ fn merge_rewrites_relative_symlink_when_target_is_auto_renamed() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[test]
+fn merge_rewrites_chained_symlinks_from_original_targets() {
+    let root = temp_root("zinnia-chained-link-conflict-map");
+    let staged = root.join("staged");
+    let destination = root.join("destination");
+    std::fs::create_dir_all(&staged).expect("staged tree");
+    std::fs::create_dir_all(&destination).expect("destination tree");
+
+    // Keep the staged records in the adversarial order: b maps to b_1, then
+    // b_1 maps to b_1_1. Link a is rewritten before c resolves its target.
+    std::fs::write(staged.join("b"), b"new1").expect("first staged target");
+    std::fs::write(staged.join("b_1"), b"new2").expect("second staged target");
+    std::fs::write(destination.join("b"), b"old").expect("existing destination");
+    let a = staged.join("a");
+    let c = staged.join("c");
+    let dangling = staged.join("dangling");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        symlink("b", &a).expect("a link");
+        symlink("a", &c).expect("c link");
+        symlink("generated-later", &dangling).expect("contained dangling link");
+    }
+    #[cfg(windows)]
+    {
+        for (target, link) in [("b", &a), ("a", &c), ("generated-later", &dangling)] {
+            if let Err(error) = try_windows_symlink_file(target, link) {
+                if std::env::var_os("ZINNIA_REQUIRE_WINDOWS_SYMLINK_TESTS").is_some() {
+                    panic!("could not create test symlink: {error}");
+                }
+                eprintln!("skipping chained-link regression: {error}");
+                let _ = std::fs::remove_dir_all(root);
+                return;
+            }
+        }
+    }
+
+    merge_staged_extract(&staged, &destination, MAX_EXTRACTED_BYTES)
+        .expect("safe chained links should merge");
+
+    assert_eq!(
+        std::fs::read(destination.join("a")).expect("a target"),
+        b"new1"
+    );
+    assert_eq!(
+        std::fs::read(destination.join("c")).expect("c target"),
+        b"new1"
+    );
+    assert_eq!(
+        std::fs::read(destination.join("b")).expect("old destination preserved"),
+        b"old"
+    );
+    let mut published_conflicts = Vec::new();
+    for entry in std::fs::read_dir(&destination).expect("destination entries") {
+        let entry = entry.expect("destination entry");
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if matches!(name.as_str(), "a" | "b" | "c" | "dangling") {
+            continue;
+        }
+        let bytes = std::fs::read(entry.path()).expect("conflict payload");
+        if bytes == b"new1" || bytes == b"new2" {
+            published_conflicts.push((name, bytes));
+        }
+    }
+    published_conflicts.sort_by(|left, right| left.0.cmp(&right.0));
+    assert_eq!(published_conflicts.len(), 2);
+    let mut conflict_payloads = published_conflicts
+        .iter()
+        .map(|(_, bytes)| bytes.clone())
+        .collect::<Vec<_>>();
+    conflict_payloads.sort();
+    assert_eq!(conflict_payloads, vec![b"new1".to_vec(), b"new2".to_vec()]);
+    let new1_name = published_conflicts
+        .iter()
+        .find(|(_, bytes)| bytes == b"new1")
+        .map(|(name, _)| name.clone())
+        .expect("new1 conflict name");
+    let link_a = destination.join("a");
+    let link_c = destination.join("c");
+    let link_target = std::fs::read_link(&link_a).expect("link a target");
+    assert_eq!(
+        std::fs::read(destination.join(&link_target)).expect("link a resolves to new1"),
+        b"new1"
+    );
+    assert_eq!(link_target, std::path::PathBuf::from(new1_name));
+    assert_eq!(
+        std::fs::read_link(&link_c).expect("link c target"),
+        link_target
+    );
+    assert_eq!(
+        std::fs::read_link(destination.join("dangling")).expect("dangling link preserved"),
+        std::path::PathBuf::from("generated-later")
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
 #[cfg(unix)]
 #[test]
 fn persisted_move_plan_rolls_back_a_promoted_symlink() {
@@ -3637,14 +4027,8 @@ fn persisted_move_plan_rolls_back_a_promoted_symlink() {
     }];
     let move_plan_identity = write_move_plan(&staged, &plan).expect("move plan");
 
-    rollback_persisted_move_plan(
-        &staged,
-        &destination,
-        false,
-        Some(&move_plan_identity),
-        None,
-    )
-    .expect("rollback link");
+    rollback_persisted_move_plan(&staged, &destination, Some(&move_plan_identity), None)
+        .expect("rollback link");
 
     assert!(source.symlink_metadata().unwrap().file_type().is_symlink());
     assert!(!target.exists());
@@ -4490,7 +4874,7 @@ fn archive_journal_committed_when_promote_finished_and_stage_empty() {
         )],
         extract_stage_identity: None,
         extract_phase: None,
-        archive_phase: None,
+        archive_phase: Some(ArchiveJournalPhase::Committed),
     };
     assert!(archive_journal_is_committed(&journal));
     assert_eq!(std::fs::read(&destination).unwrap(), b"published");
@@ -4770,7 +5154,7 @@ fn extraction_recovery_rejects_a_symlinked_move_plan_sidecar() {
     std::fs::write(&outside, b"not a move plan").expect("outside file");
     symlink(&outside, move_plan_path(&stage)).expect("symlink sidecar");
 
-    let error = rollback_persisted_move_plan(&stage, &destination, false, None, None)
+    let error = rollback_persisted_move_plan(&stage, &destination, None, None)
         .expect_err("symlinked sidecar must be rejected");
     assert!(error.contains("sidecar") || error.contains("link"));
     assert_eq!(
@@ -4805,11 +5189,104 @@ fn archive_journal_not_committed_while_staged_outputs_remain() {
         )],
         extract_stage_identity: Some(super::journal::path_identity(&stage).unwrap()),
         extract_phase: None,
-        archive_phase: None,
+        archive_phase: Some(ArchiveJournalPhase::InProgress),
     };
     assert!(!archive_journal_is_committed(&journal));
     rollback_archive_journal(&journal).expect("rollback partial new archive");
     assert!(!destination.exists());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn archive_journal_rollback_refuses_family_paths_outside_the_destination() {
+    let root = temp_root("zinnia-journal-family-confinement");
+    let stage = root.join(".zinnia-archive-abc");
+    let destination = root.join("out.7z");
+    std::fs::create_dir_all(&stage).expect("stage");
+    let victim = root.join("important.docx");
+    std::fs::write(&victim, b"user document").expect("victim file");
+    let sibling_volume_of_other = root.join("other.7z.001");
+    std::fs::write(&sibling_volume_of_other, b"other archive").expect("other volume");
+    let nested_victim_dir = root.join("nested");
+    std::fs::create_dir_all(&nested_victim_dir).expect("nested dir");
+    let nested_victim = nested_victim_dir.join("out.7z");
+    std::fs::write(&nested_victim, b"same name, other folder").expect("nested victim");
+
+    let journal_for = |next: std::path::PathBuf| CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
+        stage: stage.clone(),
+        destination: destination.clone(),
+        archive: true,
+        extract_stage_placement: None,
+        move_plan_sidecar: false,
+        move_plan_identity: None,
+        move_identity_log_identity: None,
+        previous_archive_family: Vec::new(),
+        previous_archive_identities: Vec::new(),
+        next_archive_identities: vec![Some(
+            super::journal::regular_file_identity_with_fingerprint(&next).unwrap(),
+        )],
+        next_archive_family: vec![next],
+        extract_stage_identity: Some(super::journal::path_identity(&stage).unwrap()),
+        extract_phase: None,
+        archive_phase: Some(ArchiveJournalPhase::InProgress),
+    };
+
+    for outside in [&victim, &sibling_volume_of_other, &nested_victim] {
+        let error = rollback_archive_journal(&journal_for(outside.clone()))
+            .expect_err("a family path that is not the destination must be refused");
+        assert!(error.contains("destination"), "unexpected error: {error}");
+        assert!(
+            outside.is_file(),
+            "recovery deleted {} from a journal that does not own it",
+            outside.display()
+        );
+    }
+
+    std::fs::write(&destination, b"current archive").expect("destination archive");
+    let mut restore_elsewhere = journal_for(destination.clone());
+    restore_elsewhere.next_archive_family.clear();
+    restore_elsewhere.next_archive_identities.clear();
+    restore_elsewhere.previous_archive_family = vec![victim.clone()];
+    restore_elsewhere.previous_archive_identities = vec![None];
+    rollback_archive_journal(&restore_elsewhere)
+        .expect_err("a previous-family path that is not the destination must be refused");
+    assert!(victim.is_file());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn archive_journal_rollback_accepts_destination_and_numbered_volumes() {
+    let root = temp_root("zinnia-journal-family-accepts");
+    let stage = root.join(".zinnia-archive-abc");
+    let destination = root.join("out.7z");
+    std::fs::create_dir_all(&stage).expect("stage");
+    let volume_one = root.join("out.7z.001");
+    let volume_two = root.join("out.7z.002");
+    std::fs::write(&volume_one, b"v1").expect("volume 1");
+    std::fs::write(&volume_two, b"v2").expect("volume 2");
+    let journal = CleanupJournal {
+        format_version: super::journal::CLEANUP_JOURNAL_FORMAT_VERSION,
+        stage: stage.clone(),
+        destination: destination.clone(),
+        archive: true,
+        extract_stage_placement: None,
+        move_plan_sidecar: false,
+        move_plan_identity: None,
+        move_identity_log_identity: None,
+        previous_archive_family: Vec::new(),
+        previous_archive_identities: Vec::new(),
+        next_archive_family: vec![volume_one.clone(), volume_two.clone()],
+        next_archive_identities: vec![
+            Some(super::journal::regular_file_identity_with_fingerprint(&volume_one).unwrap()),
+            Some(super::journal::regular_file_identity_with_fingerprint(&volume_two).unwrap()),
+        ],
+        extract_stage_identity: Some(super::journal::path_identity(&stage).unwrap()),
+        extract_phase: None,
+        archive_phase: Some(ArchiveJournalPhase::InProgress),
+    };
+    rollback_archive_journal(&journal).expect("volumes of the destination roll back");
+    assert!(!volume_one.exists() && !volume_two.exists());
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -5762,17 +6239,49 @@ fn legacy_pending_stage_record_preserves_present_directory() {
     std::fs::write(stage.join("legacy.txt"), b"legacy").expect("legacy content");
     let legacy_json = serde_json::to_string(&vec![stage.to_string_lossy().to_string()])
         .expect("legacy registry json");
-    std::fs::write(cache.join("pending-stages.json"), legacy_json).expect("legacy registry");
+    std::fs::write(cache.join("pending-stages.json"), &legacy_json).expect("legacy registry");
 
-    cleanup_orphan_stages_at(&cache).expect("fail-closed legacy cleanup");
+    cleanup_orphan_stages_at(&cache).expect("legacy bare-string entry is ignored");
 
     assert_eq!(
         std::fs::read(stage.join("legacy.txt")).expect("preserved legacy stage"),
         b"legacy"
     );
+    assert!(read_pending_stages(&cache)
+        .expect("registry read")
+        .is_empty());
+    assert!(
+        !cache.join("pending-stages.json").exists(),
+        "unreadable registry is rewritten without its records"
+    );
+    let corrupt_copies = |dir: &std::path::Path| -> Vec<std::path::PathBuf> {
+        std::fs::read_dir(dir)
+            .expect("cache listing")
+            .map(|entry| entry.expect("cache entry").path())
+            .filter(|path| {
+                let name = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("");
+                name.starts_with("pending-stages.corrupt-") && name.ends_with(".json")
+            })
+            .collect()
+    };
+    let copies = corrupt_copies(&cache);
     assert_eq!(
-        read_pending_stages(&cache).expect("retained legacy record"),
-        vec![stage.to_string_lossy().to_string()]
+        copies.len(),
+        1,
+        "one preserved copy of the unreadable registry"
+    );
+    assert_eq!(
+        std::fs::read(&copies[0]).expect("preserved registry"),
+        legacy_json.as_bytes()
+    );
+    cleanup_orphan_stages_at(&cache).expect("repeat cleanup");
+    assert_eq!(
+        corrupt_copies(&cache).len(),
+        1,
+        "repeat cleanup does not copy the registry again"
     );
     let _ = std::fs::remove_dir_all(cache);
 }
@@ -6231,7 +6740,6 @@ fn rollback_unjournaled_fixture(fixture: &UnjournaledLogFixture) -> Result<(), S
     rollback_persisted_move_plan(
         &fixture.staged,
         &fixture.destination,
-        false,
         Some(&fixture.move_plan_identity),
         Some(&fixture.journaled_log_identity),
     )
@@ -6488,15 +6996,26 @@ fn journal_format_version_missing_decodes_as_pre_versioned() {
 }
 
 #[test]
-fn legacy_journal_without_format_version_still_reads_from_disk() {
+fn pre_versioned_journal_is_refused_without_touching_files() {
     let (root, path, journal) = partial_archive_journal_fixture("zinnia-format-legacy-read");
     write_journal_file(&path, &journal, None);
-    let read = super::journal::read_cleanup_journal_at(&path)
-        .expect("legacy journal must still read")
-        .expect("legacy journal present");
-    assert_eq!(read.format_version, 0);
-    assert!(read.archive);
-    assert_eq!(read.archive_phase, Some(ArchiveJournalPhase::InProgress));
+    let journal_before = std::fs::read(&path).expect("journal bytes");
+    let error = super::journal::read_cleanup_journal_at(&path)
+        .map(|_| ())
+        .expect_err("pre-versioned journal must be refused");
+    assert!(
+        error.contains("older Zinnia version"),
+        "unexpected error: {error}"
+    );
+    assert!(error.contains("was preserved"), "unexpected error: {error}");
+    assert_eq!(
+        std::fs::read(&path).expect("journal still present"),
+        journal_before
+    );
+    assert_eq!(
+        std::fs::read(&journal.destination).expect("partial destination"),
+        b"partial"
+    );
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -6660,6 +7179,8 @@ fn acknowledgment_gate_accepts_newer_journal_without_file_access() {
     };
     let newer = base(current_journal_format_version() + 1);
     assert!(super::recovery::journal_may_be_acknowledged(&newer).expect("newer gate"));
+    let older = base(0);
+    assert!(super::recovery::journal_may_be_acknowledged(&older).expect("older gate"));
     let ordinary = base(current_journal_format_version());
     assert!(!super::recovery::journal_may_be_acknowledged(&ordinary).expect("ordinary gate"));
 }

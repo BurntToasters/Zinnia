@@ -33,10 +33,12 @@ describe("power-helpers", () => {
     const { state } = await import("../state");
     state.inputs.push("/tmp/a.7z");
     state.lastAutoOutputPath = "/tmp/out.7z";
+    state.browseArchiveIdentityByPath.set("/tmp/a.7z", "identity:a");
     const { resetRuntimeStateForFirstRun } = await import("../power-helpers");
     resetRuntimeStateForFirstRun();
     expect(state.inputs).toEqual([]);
     expect(state.lastAutoOutputPath).toBeNull();
+    expect(state.browseArchiveIdentityByPath.size).toBe(0);
   });
   it("wires password toggles once", async () => {
     const { wirePasswordToggle } = await import("../power-helpers");

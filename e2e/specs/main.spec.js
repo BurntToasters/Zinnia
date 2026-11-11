@@ -157,7 +157,7 @@ describe("Zinnia main window", () => {
     await waitForE2eHook();
   });
 
-  it("shows the Basic workspace after launch", async () => {
+  it("shows the Basic workspace after launch (window height not asserted: the pinned e2e ACL omits core:window inner-size)", async () => {
     await expect($("#basic-workspace")).toBeDisplayed();
     await expect($("#setup-wizard-overlay")).not.toBeDisplayed();
   });

@@ -75,6 +75,53 @@ function sha256File(filePath) {
     .digest("hex");
 }
 
+/** Repository paths a release ships from: tracked plus untracked, not ignored. */
+function releaseSourcePaths(root) {
+  const listed = execFileSync(
+    "git",
+    ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+    { cwd: root, stdio: ["ignore", "pipe", "pipe"] },
+  )
+    .toString("utf8")
+    .split("\0")
+    .filter(Boolean)
+    .map((filePath) => filePath.replaceAll("\\", "/"))
+    .filter((filePath) => !isIgnorableReleaseDirtyPath(filePath));
+  return [...new Set(listed)].sort((left, right) =>
+    left < right ? -1 : left > right ? 1 : 0,
+  );
+}
+
+/**
+ * Digest of the working tree the quality gate tested. Covers tracked and
+ * untracked (not ignored) files, so a source edit, addition, or deletion
+ * after the gate invalidates its proof. Generated Tauri schemas and the proof
+ * files themselves are excluded because builds and the gate rewrite them.
+ */
+function releaseSourceSha256(root = defaultRoot) {
+  const hash = crypto.createHash("sha256");
+  for (const relativePath of releaseSourcePaths(root)) {
+    const absolute = path.join(root, ...relativePath.split("/"));
+    let record;
+    let stat;
+    try {
+      stat = fs.lstatSync(absolute);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    if (!stat) record = ["missing", relativePath];
+    else if (stat.isSymbolicLink())
+      record = ["link", relativePath, fs.readlinkSync(absolute)];
+    else if (stat.isFile())
+      record = ["file", relativePath, sha256File(absolute)];
+    else record = ["other", relativePath];
+    const encoded = Buffer.from(JSON.stringify(record));
+    hash.update(`${encoded.byteLength}:`);
+    hash.update(encoded);
+  }
+  return hash.digest("hex");
+}
+
 function currentReleaseIdentity(root = defaultRoot) {
   const packageJson = JSON.parse(
     fs.readFileSync(path.join(root, "package.json"), "utf8"),
@@ -88,6 +135,7 @@ function currentReleaseIdentity(root = defaultRoot) {
     rustc: command("rustc", ["--version"], root),
     packageLockSha256: sha256File(path.join(root, "package-lock.json")),
     cargoLockSha256: sha256File(path.join(root, "src-tauri", "Cargo.lock")),
+    sourceSha256: releaseSourceSha256(root),
   };
 }
 
@@ -156,13 +204,14 @@ function clearQualityGateProof(root = defaultRoot) {
 
 function recordSuccessfulQualityGate(
   root = defaultRoot,
-  { e2e = "passed" } = {},
+  { e2e = "passed", identity } = {},
 ) {
   const proofPath = path.join(root, QUALITY_GATE_RELATIVE_PATH);
+  const releaseIdentity = identity ?? currentReleaseIdentity(root);
   fs.mkdirSync(path.dirname(proofPath), { recursive: true });
   fs.writeFileSync(
     proofPath,
-    `${JSON.stringify({ ...currentReleaseIdentity(root), completedAt: Date.now(), e2e })}\n`,
+    `${JSON.stringify({ ...releaseIdentity, completedAt: Date.now(), e2e })}\n`,
     { mode: 0o600 },
   );
   return { recorded: true, dirtyFiles: null };
@@ -238,6 +287,7 @@ export {
   isIgnorableReleaseDirtyPath,
   porcelainPaths,
   recordSuccessfulQualityGate,
+  releaseSourceSha256,
   validateQualityGate,
   validateReleaseSession,
   verifyQualityGate,

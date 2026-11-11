@@ -52,7 +52,7 @@ describe("unpackaged E2E must not ship in release builds", () => {
     expect(read("src/e2e-wdio-plugin.ts")).toContain(
       'import.meta.env.VITE_ZINNIA_E2E !== "1"',
     );
-    expect(read("src/setup-wizard.ts")).toContain("isE2eFrontend");
+    expect(read("src/app-init.ts")).toContain("isE2eFrontend");
     expect(read("src/extract-destination.ts")).toContain("isE2eFrontend");
     expect(read("src/extract-destination.ts")).toContain("confirmChoice");
     expect(read("src/extract-destination.ts")).not.toContain(
@@ -224,14 +224,10 @@ describe("production archive IPC policy", () => {
     return files;
   }
 
-  it("centralizes bounded run_7z and probe envelopes in their IPC modules", () => {
+  it("centralizes bounded run_7z envelopes in the IPC module", () => {
     const backendPath = path.resolve(
       process.cwd(),
       "src/archive/backend-ipc.ts",
-    );
-    const probePath = path.resolve(
-      process.cwd(),
-      "src/archive/compress-probe-ipc.ts",
     );
     const backend = fs.readFileSync(backendPath, "utf8");
     expect(backend).not.toContain("import.meta.env.MODE");
@@ -239,26 +235,20 @@ describe("production archive IPC policy", () => {
     expect(backend).not.toMatch(
       /invoke(?:<[^>]+>)?\(\s*["']probe_compress_inputs["']/,
     );
-    const probe = fs.readFileSync(probePath, "utf8");
-    expect(probe).toMatch(
-      /invoke<T>\(\s*"probe_compress_inputs",\s*compressInputProbeInvokeArgs\(paths\),?\s*\)/,
-    );
 
     for (const file of productionTypeScriptFiles(
       path.resolve(process.cwd(), "src"),
     )) {
-      if (file === backendPath || file === probePath) continue;
+      if (file === backendPath) continue;
       const source = fs.readFileSync(file, "utf8");
-      expect(source, file).not.toMatch(
-        /invoke(?:<[^>]+>)?\(\s*["'](?:run_7z|probe_compress_inputs)["']/,
-      );
+      expect(source, file).not.toMatch(/invoke(?:<[^>]+>)?\(\s*["']run_7z["']/);
     }
 
     const commands = read("src-tauri/src/process/commands.rs");
     expect(commands).toMatch(
       /pub async fn run_7z\([\s\S]*?request_json: String,[\s\S]*?\) -> Result<RunResult, String>/,
     );
-    expect(commands).toMatch(
+    expect(commands).not.toMatch(
       /pub async fn probe_compress_inputs\(\s*request_json: String,\s*\)/,
     );
   });

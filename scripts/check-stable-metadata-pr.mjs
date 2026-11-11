@@ -1,9 +1,8 @@
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { pathToFileURL } from "node:url";
 import {
   macBundleVersionFromSemver,
   macMarketingVersionFromSemver,

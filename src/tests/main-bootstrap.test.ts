@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => {
       }),
       populateSettingsModal: vi.fn(),
       syncSettingsSecurityControlsForFormat: vi.fn(),
+      syncSettingsMethodForSelectedFormat: vi.fn(),
     },
     ui: {
       log: vi.fn(),
@@ -140,27 +141,33 @@ vi.mock("../settings", () => ({
   populateSettingsModal: mocks.settings.populateSettingsModal,
   syncSettingsSecurityControlsForFormat:
     mocks.settings.syncSettingsSecurityControlsForFormat,
+  syncSettingsMethodForSelectedFormat:
+    mocks.settings.syncSettingsMethodForSelectedFormat,
 }));
 
-vi.mock("../ui", () => ({
-  log: mocks.ui.log,
-  devLog: mocks.ui.devLog,
-  toggleActivity: mocks.ui.toggleActivity,
-  renderInputs: mocks.ui.renderInputs,
-  setMode: mocks.ui.setMode,
-  setActivityPanelVisible: mocks.ui.setActivityPanelVisible,
-  setWorkspaceMode: mocks.ui.setWorkspaceMode,
-  getWorkspaceMode: mocks.ui.getWorkspaceMode,
-  setUiDensity: mocks.ui.setUiDensity,
-  getMode: mocks.ui.getMode,
-  setBrowsePasswordFieldVisible: mocks.ui.setBrowsePasswordFieldVisible,
-  persistSettingsImmediately: mocks.ui.persistSettingsImmediately,
-  flushPendingSettingsPersistence: mocks.ui.flushPendingSettingsPersistence,
-  triggerIconRefresh: mocks.ui.triggerIconRefresh,
-  registerIconRefreshHook: mocks.ui.registerIconRefreshHook,
-  resizeWorkspaceWindow: mocks.ui.resizeWorkspaceWindow,
-  syncWorkspaceWindowFx: mocks.ui.syncWorkspaceWindowFx,
-}));
+vi.mock("../ui", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../ui")>();
+  return {
+    ...actual,
+    log: mocks.ui.log,
+    devLog: mocks.ui.devLog,
+    toggleActivity: mocks.ui.toggleActivity,
+    renderInputs: mocks.ui.renderInputs,
+    setMode: mocks.ui.setMode,
+    setActivityPanelVisible: mocks.ui.setActivityPanelVisible,
+    setWorkspaceMode: mocks.ui.setWorkspaceMode,
+    getWorkspaceMode: mocks.ui.getWorkspaceMode,
+    setUiDensity: mocks.ui.setUiDensity,
+    getMode: mocks.ui.getMode,
+    setBrowsePasswordFieldVisible: mocks.ui.setBrowsePasswordFieldVisible,
+    persistSettingsImmediately: mocks.ui.persistSettingsImmediately,
+    flushPendingSettingsPersistence: mocks.ui.flushPendingSettingsPersistence,
+    triggerIconRefresh: mocks.ui.triggerIconRefresh,
+    registerIconRefreshHook: mocks.ui.registerIconRefreshHook,
+    resizeWorkspaceWindow: mocks.ui.resizeWorkspaceWindow,
+    syncWorkspaceWindowFx: mocks.ui.syncWorkspaceWindowFx,
+  };
+});
 vi.mock("../window-fx", () => ({
   syncWorkspaceWindowFx: mocks.ui.syncWorkspaceWindowFx,
 }));
@@ -238,7 +245,8 @@ vi.mock("../os-integration", () => ({
   wireOsIntegrationEvents: mocks.osIntegration.wireOsIntegrationEvents,
 }));
 
-vi.mock("../extract-path", () => ({
+vi.mock("../extract-path", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../extract-path")>()),
   deriveOutputArchivePath: mocks.extractPath.deriveOutputArchivePath,
   resolveOutputArchiveAutofill: mocks.extractPath.resolveOutputArchiveAutofill,
 }));
@@ -304,6 +312,8 @@ function ensureMainDomElements(): void {
   ensureElement("progress", "div");
   ensureElement("version-label", "div");
   ensureElement("platform-label", "div");
+  ensureElement("cancel-benchmark", "button").hidden = true;
+  ensureElement("update-ready-indicator", "button").hidden = true;
 
   if (!document.querySelector(".grid")) {
     const grid = document.createElement("div");
@@ -728,7 +738,6 @@ describe("main bootstrap", () => {
     expect(state.currentSettings.autoCheckUpdates).toBe(false);
     expect(state.currentSettings.basicWindowEffects).toBe(false);
     expect(state.currentSettings.setupComplete).toBe(true);
-    expect(state.settingsExtras._setupComplete).toBe(true);
     expect(state.settingsExtras._setupWizardVersion).toBe(3);
     expect(mocks.updater.autoCheckUpdates).not.toHaveBeenCalled();
   });
@@ -1233,10 +1242,6 @@ describe("main bootstrap", () => {
     expect(invokeMock).not.toHaveBeenCalledWith("reset_settings");
 
     // 2. User confirms reset
-    const { relaunch } = await import("@tauri-apps/plugin-process");
-    const relaunchMock = vi.mocked(relaunch);
-    relaunchMock.mockReset();
-    relaunchMock.mockResolvedValue(undefined);
 
     askMock.mockResolvedValueOnce(true);
     (document.getElementById("reset-settings") as HTMLButtonElement).click();
@@ -1247,15 +1252,11 @@ describe("main bootstrap", () => {
     expect(invokeMock).toHaveBeenCalledWith("reset_settings");
     expect(invokeMock).toHaveBeenCalledWith("clear_logs");
     expect(localStorage.getItem("zinnia.basic.recentArchives")).toBeNull();
-    expect(relaunchMock).toHaveBeenCalled();
+    expect(invokeMock).toHaveBeenCalledWith("relaunch_app");
   });
 
   it("relaunches after reset even when localStorage cannot clear basic recents", async () => {
     await loadMainModule();
-    const { relaunch } = await import("@tauri-apps/plugin-process");
-    const relaunchMock = vi.mocked(relaunch);
-    relaunchMock.mockReset();
-    relaunchMock.mockResolvedValue(undefined);
     const removeItem = vi
       .spyOn(Storage.prototype, "removeItem")
       .mockImplementationOnce(() => {
@@ -1267,7 +1268,7 @@ describe("main bootstrap", () => {
     await flushAsync();
 
     expect(invokeMock).toHaveBeenCalledWith("reset_settings");
-    expect(relaunchMock).toHaveBeenCalled();
+    expect(invokeMock).toHaveBeenCalledWith("relaunch_app");
     removeItem.mockRestore();
   });
 
@@ -1373,7 +1374,9 @@ describe("main bootstrap", () => {
     const recoveryMessage =
       "Extraction stage is missing before its sibling publish was durably committed; the destination and recovery journal were preserved.";
     setInvokeRouter((command) => {
-      if (command === "get_startup_recovery_status") return recoveryMessage;
+      if (command === "get_startup_recovery_status") {
+        return { kind: "ambiguous", message: recoveryMessage };
+      }
       if (command === "acknowledge_preserved_transaction") {
         throw new Error("marker is locked");
       }

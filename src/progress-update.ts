@@ -1,3 +1,10 @@
+/**
+ * `currentFile` value the backend sends while it copies the archive byte by
+ * byte before extraction. Renderers should show it as-is, not as a file name.
+ */
+export const SAFE_COPY_PROGRESS_LABEL =
+  "Preparing a safe copy of the archive...";
+
 export interface ProgressUpdate {
   percent?: number;
   filesDone?: number;

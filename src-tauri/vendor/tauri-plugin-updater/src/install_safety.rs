@@ -10,17 +10,12 @@
 
 use std::path::{Component, Path, PathBuf};
 
-/// AppleScript used for privileged macOS bundle replacement.
-///
-/// Paths are handler arguments, then quoted with `quoted form of`. The live
-/// bundle is renamed to a sibling backup *before* the new bundle is moved into
-/// place. A leftover backup is deleted only when the live path already has
-/// `Contents`. Failure removes a partial new tree at `$SRC` (never the live
-/// copy, which is at `$BAK`) and restores the backup. `mv` onto an existing
-/// directory would nest the backup, so restore always clears `$SRC` first.
+/// Privileged replacement keeps the outer `.app` directory in place so Dock
+/// bookmarks do not follow the running app into the rollback directory.
+/// Both new and legacy backups store the original `Contents` under `$BAK`.
 pub const MACOS_PRIVILEGED_INSTALL_SCRIPT: &str = r#"
 on installUpdate(srcPath, newPath, backupPath)
-  do shell script "NEW=" & quoted form of newPath & "; SRC=" & quoted form of srcPath & "; BAK=" & quoted form of backupPath & "; /bin/test -d \"$NEW/Contents\" || exit 1; if /bin/test ! -d \"$SRC/Contents\"; then if /bin/test -d \"$BAK/Contents\"; then if /bin/test -e \"$SRC\"; then /bin/rm -rf \"$SRC\"; fi; /bin/mv -f \"$BAK\" \"$SRC\" || exit 1; fi; fi; /bin/test -d \"$SRC/Contents\" || exit 1; if /bin/test -e \"$BAK\"; then /bin/rm -rf \"$BAK\"; fi; /bin/mv -f \"$SRC\" \"$BAK\" || exit 1; if /bin/mv -f \"$NEW\" \"$SRC\" && /bin/test -d \"$SRC/Contents\"; then /bin/rm -rf \"$BAK\"; exit 0; fi; if /bin/test -e \"$SRC\"; then /bin/rm -rf \"$SRC\"; fi; /bin/mv -f \"$BAK\" \"$SRC\"; exit 1" with administrator privileges
+  do shell script "NEW=" & quoted form of newPath & "; SRC=" & quoted form of srcPath & "; BAK=" & quoted form of backupPath & "; /bin/test -d \"$NEW/Contents\" || exit 1; if /bin/test ! -d \"$SRC/Contents\"; then if /bin/test -d \"$BAK/Contents\"; then /bin/mkdir -p \"$SRC\" || exit 1; if /bin/test -e \"$SRC/Contents\"; then /bin/rm -rf \"$SRC/Contents\" || exit 1; fi; /bin/mv -f \"$BAK/Contents\" \"$SRC/Contents\" || exit 1; fi; fi; /bin/test -d \"$SRC/Contents\" || exit 1; if /bin/test -e \"$BAK\"; then /bin/rm -rf \"$BAK\"; fi; /bin/mkdir \"$BAK\" || exit 1; /bin/mv -f \"$SRC/Contents\" \"$BAK/Contents\" || exit 1; if /bin/mv -f \"$NEW/Contents\" \"$SRC/Contents\" && /bin/test -d \"$SRC/Contents\"; then /bin/rm -rf \"$BAK\"; exit 0; fi; if /bin/test -e \"$SRC/Contents\"; then /bin/rm -rf \"$SRC/Contents\"; fi; /bin/mv -f \"$BAK/Contents\" \"$SRC/Contents\"; exit 1" with administrator privileges
 end installUpdate
 "#;
 
@@ -49,6 +44,62 @@ pub fn macos_update_backup_path(extract_path: &Path) -> Option<PathBuf> {
         .map(|parent| parent.join(".zinnia-update-backup"))
 }
 
+/// Replace only `Contents`; the installed `.app` inode is the Dock identity.
+/// The caller recovers/removes any previous sibling backup before entering.
+pub fn install_macos_app_contents(stage: &Path, app: &Path, backup: &Path) -> std::io::Result<()> {
+    install_macos_app_contents_with(stage, app, backup, move_dir_replacing)
+}
+
+fn install_macos_app_contents_with(
+    stage: &Path,
+    app: &Path,
+    backup: &Path,
+    move_contents: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    if !macos_app_bundle_complete(stage) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "staged app is missing Contents",
+        ));
+    }
+    // create_dir deliberately refuses an existing backup: never overwrite the
+    // only recoverable copy when the caller has not completed recovery.
+    std::fs::create_dir(backup)?;
+    let live = app.join("Contents");
+    let saved = backup.join("Contents");
+    if let Err(error) = std::fs::rename(&live, &saved) {
+        let _ = std::fs::remove_dir(backup);
+        return Err(error);
+    }
+    let installed = move_contents(&stage.join("Contents"), &live).and_then(|()| {
+        if live.is_dir() {
+            Ok(())
+        } else {
+            Err(std::io::Error::other(
+                "new app is missing Contents after install",
+            ))
+        }
+    });
+    if let Err(error) = installed {
+        let restore = (|| -> std::io::Result<()> {
+            if live.exists() {
+                std::fs::remove_dir_all(&live)?;
+            }
+            std::fs::rename(&saved, &live)
+        })();
+        if let Err(restore_error) = restore {
+            return Err(std::io::Error::other(format!(
+                "{error}; could not restore app Contents: {restore_error}; backup retained at {}",
+                backup.display()
+            )));
+        }
+        let _ = std::fs::remove_dir(backup);
+        return Err(error);
+    }
+    let _ = std::fs::remove_dir_all(backup);
+    Ok(())
+}
+
 /// ShellExecuteW returns a value `<= 32` on failure (Win32).
 pub fn shell_execute_launch_ok(result: isize) -> bool {
     result > 32
@@ -62,6 +113,39 @@ pub fn is_cross_device(err: &std::io::Error) -> bool {
         // Windows ERROR_NOT_SAME_DEVICE
         Some(17) if cfg!(windows) => true,
         _ => false,
+    }
+}
+
+/// Error returned when no AppImage temp directory could be selected.
+#[derive(Debug)]
+pub(crate) enum SameDeviceTempDirError<E> {
+    /// Every candidate failed, so retain the last useful creation or metadata error.
+    Candidate(E),
+    /// No candidate was created on the same device as the live AppImage.
+    NoSameDeviceCandidate,
+}
+
+/// Return the first successfully created candidate on `extract_device`.
+/// Failed candidates and candidates on another device are skipped. A temp
+/// directory carried by a cross-device candidate is dropped before continuing.
+pub(crate) fn select_same_device_temp_dir<T, E>(
+    extract_device: u64,
+    candidates: impl IntoIterator<Item = Option<PathBuf>>,
+    mut attempt: impl FnMut(&Path) -> Result<(T, u64), E>,
+) -> Result<T, SameDeviceTempDirError<E>> {
+    let mut last_candidate_error = None;
+
+    for candidate in candidates.into_iter().flatten() {
+        match attempt(&candidate) {
+            Ok((temp_dir, device)) if device == extract_device => return Ok(temp_dir),
+            Ok((_temp_dir, _device)) => {}
+            Err(error) => last_candidate_error = Some(error),
+        }
+    }
+
+    match last_candidate_error {
+        Some(error) => Err(SameDeviceTempDirError::Candidate(error)),
+        None => Err(SameDeviceTempDirError::NoSameDeviceCandidate),
     }
 }
 
@@ -345,19 +429,20 @@ mod tests {
         assert!(MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("backupPath"));
         assert!(MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("/bin/test -d \\\"$NEW/Contents\\\""));
         assert!(MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("/bin/test -d \\\"$SRC/Contents\\\""));
-        assert!(MACOS_PRIVILEGED_INSTALL_SCRIPT.contains("/bin/mv -f \\\"$BAK\\\" \\\"$SRC\\\""));
+        assert!(MACOS_PRIVILEGED_INSTALL_SCRIPT
+            .contains("/bin/mv -f \\\"$BAK/Contents\\\" \\\"$SRC/Contents\\\""));
         assert!(
             MACOS_PRIVILEGED_INSTALL_SCRIPT
-                .contains("/bin/rm -rf \\\"$SRC\\\"; fi; /bin/mv -f \\\"$BAK\\\" \\\"$SRC\\\""),
+                .contains("/bin/rm -rf \\\"$SRC/Contents\\\"; fi; /bin/mv -f \\\"$BAK/Contents\\\" \\\"$SRC/Contents\\\""),
             "failed swap must remove the incomplete new tree before restoring the backup"
         );
         let swap_at = MACOS_PRIVILEGED_INSTALL_SCRIPT
-            .find("/bin/mv -f \\\"$SRC\\\" \\\"$BAK\\\"")
-            .expect("live bundle must be renamed to the sibling backup first");
+            .find("/bin/mv -f \\\"$SRC/Contents\\\" \\\"$BAK/Contents\\\"")
+            .expect("live Contents must be renamed to the sibling backup first");
         let stale_backup_rm = MACOS_PRIVILEGED_INSTALL_SCRIPT
             .find(concat!(
-                "if /bin/test -e \\\"$BAK\\\"; then /bin/rm -rf \\\"$BAK\\\"; fi; ",
-                "/bin/mv -f \\\"$SRC\\\" \\\"$BAK\\\""
+                "if /bin/test -e \\\"$BAK\\\"; then /bin/rm -rf \\\"$BAK\\\"; fi; /bin/mkdir \\\"$BAK\\\" || exit 1; ",
+                "/bin/mv -f \\\"$SRC/Contents\\\" \\\"$BAK/Contents\\\""
             ))
             .expect(
                 "stale backup may be removed only after live Contents exists and immediately before the swap",
@@ -386,6 +471,127 @@ mod tests {
             macos_update_backup_path(app).as_deref(),
             Some(Path::new("/Applications/.zinnia-update-backup"))
         );
+    }
+
+    #[cfg(unix)]
+    fn macos_fixture() -> (
+        std::path::PathBuf,
+        std::path::PathBuf,
+        std::path::PathBuf,
+        std::path::PathBuf,
+    ) {
+        static NEXT_FIXTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "zinnia-dock-{}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+            NEXT_FIXTURE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let app = root.join("Zinnia.app");
+        let stage = root.join("stage");
+        let backup = root.join("backup");
+        for (bundle, value) in [(&app, "old"), (&stage, "new")] {
+            std::fs::create_dir_all(bundle.join("Contents")).unwrap();
+            std::fs::write(bundle.join("Contents/version"), value).unwrap();
+        }
+        (root, app, stage, backup)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn macos_update_preserves_outer_app_identity() {
+        use std::os::unix::fs::MetadataExt;
+        let (root, app, stage, backup) = macos_fixture();
+        let inode = std::fs::metadata(&app).unwrap().ino();
+        std::fs::write(app.join("root-marker"), "preserved").unwrap();
+        install_macos_app_contents(&stage, &app, &backup).unwrap();
+        assert_eq!(std::fs::metadata(&app).unwrap().ino(), inode);
+        assert_eq!(
+            std::fs::read_to_string(app.join("Contents/version")).unwrap(),
+            "new"
+        );
+        assert!(app.join("root-marker").is_file());
+        assert!(!backup.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn macos_missing_stage_keeps_live_contents() {
+        let (root, app, stage, backup) = macos_fixture();
+        std::fs::remove_dir_all(stage.join("Contents")).unwrap();
+        assert!(install_macos_app_contents(&stage, &app, &backup).is_err());
+        assert_eq!(
+            std::fs::read_to_string(app.join("Contents/version")).unwrap(),
+            "old"
+        );
+        assert!(!backup.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn macos_failed_contents_move_restores_without_nesting() {
+        use std::os::unix::fs::MetadataExt;
+        let (root, app, stage, backup) = macos_fixture();
+        let inode = std::fs::metadata(&app).unwrap().ino();
+        let error = install_macos_app_contents_with(&stage, &app, &backup, |_, dest| {
+            std::fs::create_dir(dest)?;
+            std::fs::write(dest.join("partial"), "incomplete")?;
+            Err(std::io::Error::other("injected copy failure"))
+        })
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("injected copy failure"),
+            "{error}"
+        );
+        assert_eq!(std::fs::metadata(&app).unwrap().ino(), inode);
+        assert_eq!(
+            std::fs::read_to_string(app.join("Contents/version")).unwrap(),
+            "old"
+        );
+        assert!(!app.join("Contents/partial").exists());
+        assert!(!app.join("Contents/Contents").exists());
+        assert!(!backup.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn macos_failed_rollback_preserves_backup() {
+        let (root, app, stage, backup) = macos_fixture();
+        let error = install_macos_app_contents_with(&stage, &app, &backup, |_, dest| {
+            std::fs::write(dest, "blocks directory restoration")?;
+            Err(std::io::Error::other("injected move failure"))
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("restore"));
+        assert_eq!(
+            std::fs::read_to_string(backup.join("Contents/version")).unwrap(),
+            "old"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn macos_existing_backup_is_not_overwritten() {
+        let (root, app, stage, backup) = macos_fixture();
+        std::fs::create_dir_all(backup.join("Contents")).unwrap();
+        std::fs::write(backup.join("Contents/version"), "recovery").unwrap();
+        assert!(install_macos_app_contents(&stage, &app, &backup).is_err());
+        assert_eq!(
+            std::fs::read_to_string(app.join("Contents/version")).unwrap(),
+            "old"
+        );
+        assert_eq!(
+            std::fs::read_to_string(backup.join("Contents/version")).unwrap(),
+            "recovery"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -507,6 +713,137 @@ mod tests {
         assert!(!unix_directory_entry_is_trusted_helper(501, 0o777, true));
         assert!(!unix_directory_entry_is_trusted_helper(0, 0o777, false));
         assert!(!unix_directory_entry_is_trusted_helper(0, 0o775, false));
+    }
+
+    // AppImage temp-directory fallback failure cases, recorded before any
+    // production change:
+    // - a missing/unwritable first candidate must not prevent a later usable one;
+    // - a temp directory on another device and an unavailable cache location
+    //   must still allow a same-device app-directory sibling;
+    // - candidates on other devices must never be accepted;
+    // - if every candidate fails, selection must return a useful last error
+    //   without reaching the install callback or changing the live app.
+
+    #[test]
+    fn appimage_tempdir_falls_back_after_first_candidate_fails() {
+        let first = PathBuf::from("missing-temp-parent");
+        let second = PathBuf::from("usable-cache-parent");
+        let mut attempts = Vec::new();
+
+        let selected = select_same_device_temp_dir(
+            7,
+            [Some(first.clone()), Some(second.clone())],
+            |candidate| {
+                attempts.push(candidate.to_path_buf());
+                if candidate == first {
+                    Err("first candidate is unavailable")
+                } else {
+                    Ok((candidate.to_path_buf(), 7))
+                }
+            },
+        )
+        .expect("a failed first candidate must not block a suitable fallback");
+
+        assert_eq!(attempts, vec![first, second.clone()]);
+        assert_eq!(selected, second);
+    }
+
+    #[test]
+    fn appimage_tempdir_skips_cross_device_temp_and_missing_cache() {
+        let system_temp = PathBuf::from("system-temp");
+        let missing_cache = PathBuf::from("missing-cache-parent");
+        let app_sibling = PathBuf::from("app-sibling");
+        let mut attempts = Vec::new();
+
+        let selected = select_same_device_temp_dir(
+            1,
+            [
+                Some(system_temp.clone()),
+                Some(missing_cache.clone()),
+                Some(app_sibling.clone()),
+            ],
+            |candidate| {
+                attempts.push(candidate.to_path_buf());
+                if candidate == system_temp {
+                    Ok::<_, &str>((candidate.to_path_buf(), 2))
+                } else if candidate == missing_cache {
+                    Err("cache candidate path does not exist")
+                } else {
+                    Ok((candidate.to_path_buf(), 1))
+                }
+            },
+        )
+        .expect("a same-device app sibling must remain eligible after cache is unavailable");
+
+        assert_eq!(
+            attempts,
+            vec![system_temp, missing_cache, app_sibling.clone()]
+        );
+        assert_eq!(selected, app_sibling);
+    }
+
+    #[test]
+    fn appimage_tempdir_uses_last_useful_error_and_does_not_touch_live_app() {
+        let app =
+            std::env::temp_dir().join(format!("zinnia-appimage-fallback-{}", std::process::id()));
+        let _ = std::fs::remove_file(&app);
+        struct RemoveOnDrop(PathBuf);
+        impl Drop for RemoveOnDrop {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(&self.0);
+            }
+        }
+        let _cleanup = RemoveOnDrop(app.clone());
+        std::fs::write(&app, b"original app").unwrap();
+        let first = PathBuf::from("system-temp");
+        let last = PathBuf::from("app-sibling");
+        let mut install_reached = false;
+
+        let result = select_same_device_temp_dir(
+            1,
+            [Some(first.clone()), None, Some(last.clone())],
+            |candidate| {
+                if candidate == first {
+                    Ok((candidate.to_path_buf(), 2))
+                } else {
+                    Err("app sibling is unavailable")
+                }
+            },
+        )
+        .map(|selected| {
+            install_reached = true;
+            let _ = selected;
+            std::fs::write(&app, b"updated app").unwrap();
+        });
+
+        assert!(matches!(
+            result,
+            Err(SameDeviceTempDirError::Candidate(
+                "app sibling is unavailable"
+            ))
+        ));
+        assert!(
+            !install_reached,
+            "install work must wait for a suitable temp directory"
+        );
+        assert_eq!(std::fs::read(&app).unwrap(), b"original app");
+    }
+
+    #[test]
+    fn appimage_tempdir_rejects_all_cross_device_candidates() {
+        let selected = select_same_device_temp_dir(
+            1,
+            [
+                Some(PathBuf::from("system-temp")),
+                Some(PathBuf::from("app-sibling")),
+            ],
+            |candidate| Ok::<_, &str>((candidate.to_path_buf(), 2)),
+        );
+
+        assert!(matches!(
+            selected,
+            Err(SameDeviceTempDirError::NoSameDeviceCandidate)
+        ));
     }
 
     #[cfg(unix)]

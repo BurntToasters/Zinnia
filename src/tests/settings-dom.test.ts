@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { ask } from "@tauri-apps/plugin-dialog";
 import {
   applyTheme,
   applySettingsToForm,
@@ -94,10 +95,7 @@ describe("applySettingsToForm", () => {
       wordSize: "128",
       solid: "solid",
       threads: 4,
-      pathMode: "relative",
-      sfx: true,
       encryptHeaders: true,
-      deleteAfter: true,
     };
 
     applySettingsToForm();
@@ -109,10 +107,7 @@ describe("applySettingsToForm", () => {
     expect(getSelectValue("word-size")).toBe("128");
     expect(getSelectValue("solid")).toBe("solid");
     expect(getInputValue("threads")).toBe("4");
-    expect(getSelectValue("path-mode")).toBe("relative");
-    expect(getChecked("sfx")).toBe(false);
     expect(getChecked("encrypt-headers")).toBe(true);
-    expect(getChecked("delete-after")).toBe(false);
   });
 
   it("applies defaults when state has defaults", () => {
@@ -121,9 +116,7 @@ describe("applySettingsToForm", () => {
 
     expect(getSelectValue("format")).toBe(SETTING_DEFAULTS.format);
     expect(getSelectValue("level")).toBe(SETTING_DEFAULTS.level);
-    expect(getChecked("sfx")).toBe(false);
     expect(getChecked("encrypt-headers")).toBe(false);
-    expect(getChecked("delete-after")).toBe(false);
   });
 });
 
@@ -139,10 +132,7 @@ describe("populateSettingsModal", () => {
       wordSize: "32",
       solid: "4g",
       threads: 8,
-      pathMode: "relative",
-      sfx: true,
       encryptHeaders: false,
-      deleteAfter: true,
       autoCheckUpdates: false,
       updateChannel: "beta",
       localLoggingEnabled: true,
@@ -167,10 +157,7 @@ describe("populateSettingsModal", () => {
     expect(getSelectValue("s-word-size")).toBe("32");
     expect(getSelectValue("s-solid")).toBe("4g");
     expect(getInputValue("s-threads")).toBe("8");
-    expect(getSelectValue("s-path-mode")).toBe("relative");
-    expect(getChecked("s-sfx")).toBe(false);
     expect(getChecked("s-encrypt-headers")).toBe(false);
-    expect(getChecked("s-delete-after")).toBe(false);
     expect(getChecked("s-auto-check-updates")).toBe(false);
     expect(getSelectValue("s-update-channel")).toBe("beta");
     expect(getChecked("s-local-logging")).toBe(true);
@@ -208,10 +195,7 @@ describe("readSettingsModal", () => {
     setSelectValue("s-word-size", "128");
     setSelectValue("s-solid", "solid");
     setInputValue("s-threads", "4");
-    setSelectValue("s-path-mode", "relative");
-    setChecked("s-sfx", false);
     setChecked("s-encrypt-headers", true);
-    setChecked("s-delete-after", false);
     setChecked("s-auto-check-updates", true);
     setSelectValue("s-update-channel", "beta");
     setChecked("s-local-logging", true);
@@ -232,10 +216,7 @@ describe("readSettingsModal", () => {
     expect(settings.wordSize).toBe("128");
     expect(settings.solid).toBe("solid");
     expect(settings.threads).toBe(4);
-    expect(settings.pathMode).toBe("relative");
-    expect(settings.sfx).toBe(false);
     expect(settings.encryptHeaders).toBe(true);
-    expect(settings.deleteAfter).toBe(false);
     expect(settings.autoCheckUpdates).toBe(true);
     expect(settings.updateChannel).toBe("beta");
     expect(settings.localLoggingEnabled).toBe(true);
@@ -280,10 +261,7 @@ describe("readSettingsModal", () => {
       wordSize: "64",
       solid: "16g",
       threads: 2,
-      pathMode: "relative" as const,
-      sfx: true,
       encryptHeaders: true,
-      deleteAfter: false,
       autoCheckUpdates: true,
       updateChannel: "stable" as const,
       localLoggingEnabled: false,
@@ -305,7 +283,6 @@ describe("readSettingsModal", () => {
     expect(result.format).toBe(original.format);
     expect(result.level).toBe(original.level);
     expect(result.threads).toBe(original.threads);
-    expect(result.sfx).toBe(false);
     expect(result.encryptHeaders).toBe(original.encryptHeaders);
     expect(result.autoCheckUpdates).toBe(original.autoCheckUpdates);
     expect(result.updateChannel).toBe(original.updateChannel);
@@ -365,7 +342,7 @@ describe("openSettingsModal / closeSettingsModal", () => {
     overlay.hidden = true;
     openSettingsModal();
     expect(overlay.hidden).toBe(false);
-    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(trigger.hasAttribute("aria-expanded")).toBe(false);
   });
 
   it.each(["running", "operationPreparing", "incomingPathsApplying"] as const)(
@@ -399,10 +376,10 @@ describe("openSettingsModal / closeSettingsModal", () => {
     overlay.hidden = true;
     toggleSettingsModal();
     expect(overlay.hidden).toBe(false);
-    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(trigger.hasAttribute("aria-expanded")).toBe(false);
     toggleSettingsModal();
     expect(overlay.hidden).toBe(true);
-    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(trigger.hasAttribute("aria-expanded")).toBe(false);
   });
 
   it("hides settings overlay on close", () => {
@@ -411,10 +388,10 @@ describe("openSettingsModal / closeSettingsModal", () => {
     overlay.hidden = false;
     closeSettingsModal();
     expect(overlay.hidden).toBe(true);
-    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(trigger.hasAttribute("aria-expanded")).toBe(false);
   });
 
-  it("restores the live window-effects preview when settings are cancelled", () => {
+  it("restores the live window-effects preview when unsaved edits are discarded", async () => {
     state.currentSettings.basicWindowEffects = true;
     openSettingsModal();
     const basicFx = document.getElementById(
@@ -424,7 +401,12 @@ describe("openSettingsModal / closeSettingsModal", () => {
     basicFx.dispatchEvent(new Event("change"));
 
     expect(state.currentSettings.basicWindowEffects).toBe(false);
+    // Edits exist, so closing asks first; the user confirms the discard.
+    vi.mocked(ask).mockResolvedValueOnce(true);
     closeSettingsModal();
+    await vi.waitFor(() =>
+      expect(document.getElementById("settings-overlay")!.hidden).toBe(true),
+    );
 
     expect(state.currentSettings.basicWindowEffects).toBe(true);
   });

@@ -3,7 +3,11 @@ import { describe, expect, it } from "vitest";
 import { ALLOWED_METHOD_PREFIXES, validateExtraArgs } from "../archive-rules";
 
 function rustSource(): string {
-  return fs.readFileSync("src-tauri/src/validation.rs", "utf8");
+  const root = "src-tauri/src/validation";
+  return (
+    fs.readFileSync("src-tauri/src/validation.rs", "utf8") +
+    fs.readFileSync(`${root}/switches.rs`, "utf8")
+  );
 }
 
 function rustMethodPrefixes(src: string): string[] {
@@ -18,8 +22,12 @@ function rustMethodPrefixes(src: string): string[] {
 
 describe("custom argument allow-list", () => {
   it("keeps TypeScript method prefixes equal to validation.rs PREFIXES", () => {
+    // validation.rs still lists -mhe=, but extra args never reach it: the
+    // blocked list rejects every -mhe extra first.
     expect([...ALLOWED_METHOD_PREFIXES].sort()).toEqual(
-      rustMethodPrefixes(rustSource()).sort(),
+      rustMethodPrefixes(rustSource())
+        .filter((prefix) => prefix !== "-mhe=")
+        .sort(),
     );
   });
 

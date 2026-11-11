@@ -27,6 +27,10 @@ const supportedArchiveTypes = [
   ".gz",
   ".bz2",
   ".xz",
+  ".rar",
+  ".tgz",
+  ".tbz2",
+  ".txz",
   ".001",
 ];
 
@@ -164,8 +168,6 @@ describe("Windows 11 context-menu manifest", () => {
       "Uninstall was cancelled so Explorer can still find the shell files",
     );
     expect(hooks).toContain("!macro NSIS_HOOK_POSTUNINSTALL");
-    expect(hooks).toContain("!macro ZINNIA_CLEAN_LEGACY_SHELL_PAYLOAD");
-    expect(hooks).toContain('Delete /REBOOTOK "$INSTDIR\\zinnia_shell.dll"');
     expect(hooks).toContain("!macro ZINNIA_CLEAN_SHELL_PAYLOADS");
     expect(hooks).toContain('FindFirst $R8 $R9 "$INSTDIR\\shell-*"');
     expect(hooks).toContain("GetFileAttributesW");
@@ -322,14 +324,13 @@ describe("Windows 11 context-menu manifest", () => {
       path.resolve(process.cwd(), "src-tauri/windows/nsis-hooks.nsh"),
       "utf8",
     );
-    // Leftover SystemFileAssociations Open/Extract from earlier betas must be
-    // purged on every install; ProgId open is the only Open with Zinnia source.
-    expect(hooks).toContain("!macro ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS EXT");
+    // ProgId open is the only Open with Zinnia source; no parallel
+    // SystemFileAssociations ZinniaOpen verb.
     expect(hooks).toContain("!macro ZINNIA_REGISTER_PROGID_OPEN EXT");
     expect(hooks).toContain("!macro ZINNIA_REGISTER_CLASSIC_EXTRACT EXT");
-    expect(hooks).toContain(
-      'DeleteRegKey HKCU "Software\\Classes\\SystemFileAssociations\\${EXT}\\shell\\ZinniaOpen"',
-    );
+    expect(hooks).not.toContain("Zinnia.Archive");
+    expect(hooks).not.toContain('\\\\shell\\\\Zinnia"');
+    expect(hooks).not.toContain("ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS");
     expect(hooks).not.toContain(
       'WriteRegStr HKCU "Software\\Classes\\SystemFileAssociations\\${EXT}\\shell\\ZinniaOpen"',
     );
@@ -347,7 +348,6 @@ describe("Windows 11 context-menu manifest", () => {
       hooks.indexOf("!macro NSIS_HOOK_POSTINSTALL"),
       hooks.indexOf("!macro NSIS_HOOK_PREUNINSTALL"),
     );
-    expect(postInstall).toContain("ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS");
     expect(postInstall).toContain("ZINNIA_REGISTER_PROGID_OPEN");
     expect(postInstall).toContain("ZINNIA_REGISTER_COMPRESS_VERBS");
     expect(postInstall).toContain("ZINNIA_REGISTER_WIN11_CONTEXT_MENU");
@@ -355,9 +355,6 @@ describe("Windows 11 context-menu manifest", () => {
     expect(postInstall).toContain(
       "ZINNIA_POSTINSTALL_CLASSIC_EXTRACT_FALLBACK",
     );
-    expect(
-      postInstall.indexOf("ZINNIA_CLEAN_LEGACY_ARCHIVE_VERBS"),
-    ).toBeLessThan(postInstall.indexOf("ZINNIA_REGISTER_PROGID_OPEN"));
     expect(
       postInstall.indexOf("ZINNIA_REGISTER_WIN11_CONTEXT_MENU"),
     ).toBeLessThan(postInstall.indexOf("zinnia_postinstall_win11_ok"));

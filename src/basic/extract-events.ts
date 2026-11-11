@@ -1,4 +1,4 @@
-import { $ } from "../utils";
+import { $, isImeComposing } from "../utils";
 import { state } from "../state";
 import { setMode, renderInputs } from "../ui";
 import { applyPreset } from "../presets";
@@ -37,6 +37,14 @@ function resetExtractCompletion(): void {
 }
 
 export function wireBasicExtractEvents(): void {
+  const extractPathInput = document.getElementById(
+    "basic-extract-path",
+  ) as HTMLInputElement | null;
+  // Mirror a typed destination to Power; see the matching output-path
+  // listener in wire.ts. Only real `input` events fire, so autofill is intact.
+  extractPathInput?.addEventListener("input", () => {
+    $<HTMLInputElement>("extract-path").value = extractPathInput.value;
+  });
   document
     .getElementById("basic-choose-extract")
     ?.addEventListener("click", async () => {
@@ -83,7 +91,8 @@ export function wireBasicExtractEvents(): void {
   const browsePassword = document.getElementById("basic-browse-password");
   browsePassword?.addEventListener("change", syncBasicBrowsePasswordToPower);
   browsePassword?.addEventListener("keydown", (event) => {
-    if ((event as KeyboardEvent).key === "Enter") void runBasicBrowseArchive();
+    if (isImeComposing(event)) return;
+    if (event.key === "Enter") void runBasicBrowseArchive();
   });
   document
     .getElementById("basic-toggle-extract-password")
@@ -129,7 +138,7 @@ export function wireBasicExtractEvents(): void {
     ?.addEventListener("click", resetCompressCompletion);
   const extractAgain = document.getElementById("basic-extract-another");
   extractAgain?.addEventListener("click", () => {
-    if (extractAgain.textContent?.trim() === "Close")
+    if (extractAgain.dataset.completionAction === "dismiss")
       hideBasicCompletion("extract");
     else resetExtractCompletion();
   });

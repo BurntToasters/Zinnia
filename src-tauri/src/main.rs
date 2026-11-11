@@ -24,7 +24,7 @@ mod window_fx;
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::Mutex;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use launch::{
     collect_cli_context, emit_open_paths, enter_extract_warm_idle, has_extract_windows,
@@ -48,21 +48,62 @@ fn production_integrations_enabled() -> bool {
     }
 }
 
+/// Frontend event that asks the window owning a run to confirm before the run
+/// is cancelled. Its payload is "close" or "quit".
+const OPERATION_STOP_REQUEST_EVENT: &str = "operation-stop-request";
+
+/// The archive slot as seen by a close or quit request.
+struct SlotFacts {
+    owner: Option<String>,
+    /// An update install holds the slot. It is not a run the user started.
+    update_reserved: bool,
+    /// A 7-Zip child or its preparation that the user started is running.
+    user_run: bool,
+    /// Anything that closing or quitting must wait out.
+    busy: bool,
+}
+
+fn read_slot_facts(app: &tauri::AppHandle) -> SlotFacts {
+    let state = app.state::<RunningProcess>();
+    let mut process = match state.0.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    process.reap_orphaned_child();
+    process.expire_stale_update_reservation();
+    let update_reserved = process.blocks_quit_for_update_install();
+    let user_run = !update_reserved && (process.child.is_some() || process.preparing);
+    SlotFacts {
+        owner: process.owner_label.clone(),
+        update_reserved,
+        user_run,
+        busy: update_reserved || user_run || process.cancelling,
+    }
+}
+
+/// Asks the owning window to confirm. Returns false when that window is gone,
+/// so the caller falls back to cancelling without a prompt.
+fn ask_owner_to_confirm(app: &tauri::AppHandle, owner: &str, request: &str) -> bool {
+    if app.get_webview_window(owner).is_none() {
+        return false;
+    }
+    app.emit_to(
+        tauri::EventTarget::WebviewWindow {
+            label: owner.to_string(),
+        },
+        OPERATION_STOP_REQUEST_EVENT,
+        request,
+    )
+    .is_ok()
+}
+
 fn defer_close_while_operation_finishes(
     app: &tauri::AppHandle,
     label: &str,
     api: &tauri::CloseRequestApi,
 ) -> bool {
-    let state = app.state::<RunningProcess>();
-    let owns_busy_operation = state.0.lock().map_or(true, |mut process| {
-        process.reap_orphaned_child();
-        process.expire_stale_update_reservation();
-        process.owner_label.as_deref() == Some(label)
-            && (process.child.is_some()
-                || process.preparing
-                || process.cancelling
-                || process.blocks_quit_for_update_install())
-    });
+    let facts = read_slot_facts(app);
+    let owns_busy_operation = facts.owner.as_deref() == Some(label) && facts.busy;
     if !owns_busy_operation {
         if launch::is_extract_window_label(label) {
             launch::clear_extract_window_bindings(app, label);
@@ -71,6 +112,11 @@ fn defer_close_while_operation_finishes(
     }
 
     api.prevent_close();
+    // A user run waits for the window's answer. The frontend's accept path
+    // closes the window after the run is stopped, so the next request passes.
+    if facts.user_run && ask_owner_to_confirm(app, label, "close") {
+        return true;
+    }
     let handle = app.clone();
     let window_label = label.to_string();
     tauri::async_runtime::spawn(async move {
@@ -103,16 +149,28 @@ fn force_exit_after_busy_teardown(app: tauri::AppHandle) {
                 process.child.clone()
             };
             if let Some(child) = child {
-                if let Err(error) = process::terminate_child(&child) {
-                    eprintln!("Could not stop archive process during forced exit: {error}");
-                    if let Err(retry_error) = process::terminate_child_with_timeout(
-                        &child,
-                        std::time::Duration::from_secs(5),
-                    ) {
+                let child_for_term = child.clone();
+                let terminate_failed = tokio::task::spawn_blocking(move || {
+                    if let Err(error) = process::terminate_child(&child_for_term) {
                         eprintln!(
-                            "Retry stop during forced exit also failed: {retry_error}. A leftover 7-Zip process may hold staging locks until the next recovery pass."
+                            "Could not stop archive process during forced exit: {error}"
                         );
+                        if let Err(retry_error) = process::terminate_child_with_timeout(
+                            &child_for_term,
+                            std::time::Duration::from_secs(5),
+                        ) {
+                            eprintln!(
+                                "Retry stop during forced exit also failed: {retry_error}. A leftover 7-Zip process may hold staging locks until the next recovery pass."
+                            );
+                            return true;
+                        }
+                        return false;
                     }
+                    false
+                })
+                .await
+                .unwrap_or(true);
+                if terminate_failed {
                     {
                         let mut process = match state.0.lock() {
                             Ok(guard) => guard,
@@ -151,42 +209,27 @@ fn defer_exit_while_operation_finishes(
     app: &tauri::AppHandle,
     api: &tauri::ExitRequestApi,
 ) -> bool {
-    let state = app.state::<RunningProcess>();
-    let owner = match state.0.lock() {
-        Ok(mut process) => {
-            // An update reservation has no child to cancel. Do not mistake a
-            // user/system Quit during installation for the later updater
-            // relaunch. The frontend releases this reservation immediately
-            // before calling relaunch; until then, keep the process alive.
-            process.reap_orphaned_child();
-            process.expire_stale_update_reservation();
-            if process.blocks_quit_for_update_install() {
-                api.prevent_exit();
-                return true;
-            }
-            if process.child.is_some() || process.preparing || process.cancelling {
-                process.owner_label.clone()
-            } else {
-                return false;
-            }
-        }
-        Err(poisoned) => {
-            let mut process = poisoned.into_inner();
-            process.reap_orphaned_child();
-            process.expire_stale_update_reservation();
-            if process.blocks_quit_for_update_install() {
-                api.prevent_exit();
-                return true;
-            }
-            if process.child.is_some() || process.preparing || process.cancelling {
-                process.owner_label.clone()
-            } else {
-                return false;
-            }
-        }
-    };
+    let facts = read_slot_facts(app);
+    // An update reservation has no child to cancel. Do not mistake a
+    // user/system Quit during installation for the later updater relaunch.
+    // The frontend releases this reservation immediately before calling
+    // relaunch; until then, keep the process alive.
+    if facts.update_reserved {
+        api.prevent_exit();
+        return true;
+    }
+    if !facts.busy {
+        return false;
+    }
     api.prevent_exit();
-    let Some(owner) = owner else {
+    if facts.user_run {
+        if let Some(owner) = facts.owner.as_deref() {
+            if ask_owner_to_confirm(app, owner, "quit") {
+                return true;
+            }
+        }
+    }
+    let Some(owner) = facts.owner else {
         eprintln!("Busy archive slot has no owner; forcing teardown before exit.");
         force_exit_after_busy_teardown(app.clone());
         return true;
@@ -245,6 +288,12 @@ fn main() {
         builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     }
 
+    // Launch activation runs before setup, so the background flag must reach the builder.
+    #[cfg(all(feature = "e2e", target_os = "macos"))]
+    if launch::e2e_background() {
+        builder = builder.activate_ignoring_other_apps(false);
+    }
+
     let app = builder
         .manage(InitialPaths(Mutex::new(initial_paths.clone())))
         .manage(InitialMode(Mutex::new(initial_mode.clone())))
@@ -256,6 +305,11 @@ fn main() {
         .manage(LogFileLock(Mutex::new(())))
         .manage(RunningProcess::new())
         .setup(move |app| {
+            #[cfg(all(feature = "e2e", target_os = "macos"))]
+            if launch::e2e_background() {
+                // No Dock icon and no activation, so E2E launches never steal focus.
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            }
             // Primary instance only reaches setup. Resolve shell handoffs here
             // (and in emit_open_paths); collect_cli_context must not consume them
             // or warm-start Explorer selections are deleted by the secondary.
@@ -354,9 +408,13 @@ fn main() {
             let maintenance_handle = app.handle().clone();
             std::thread::spawn(move || {
                 let recovered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    if let Err(e) = process::recover_interrupted_transaction(&maintenance_handle) {
-                        eprintln!("Failed to recover an interrupted archive transaction: {e}");
-                        process::set_startup_recovery_error(Some(e));
+                    if let Err(failure) =
+                        process::recover_interrupted_transaction(&maintenance_handle)
+                    {
+                        eprintln!(
+                            "Failed to recover an interrupted archive transaction: {failure}"
+                        );
+                        process::set_startup_recovery_error(Some(failure));
                     } else {
                         process::set_startup_recovery_error(None);
                         if let Err(e) = process::cleanup_orphan_stages(&maintenance_handle) {
@@ -366,9 +424,9 @@ fn main() {
                 }));
                 if recovered.is_err() {
                     eprintln!("Startup recovery panicked; unblocking archive operations.");
-                    process::set_startup_recovery_error(Some(
-                        "Startup recovery failed unexpectedly.".to_string(),
-                    ));
+                    process::set_startup_recovery_error(Some(process::RecoveryFailure::error(
+                        "Startup recovery failed unexpectedly.",
+                    )));
                 }
                 // Unblock run_7z before temp cleanup; recovery is what must be serialized.
                 process::mark_startup_recovery_done();
@@ -384,7 +442,6 @@ fn main() {
             process::cancel_7z,
             process::is_7z_running,
             process::probe_7z,
-            process::probe_compress_inputs,
             process::archive_output_selection_token,
             process::get_startup_recovery_status,
             process::acknowledge_preserved_transaction,
@@ -416,6 +473,7 @@ fn main() {
             launch::mark_main_window_ready,
             platform::get_platform_info,
             platform::get_beta_updater_target,
+            platform::relaunch_app,
             platform::get_os_integration_status,
             platform::open_os_integration_settings,
             platform::open_finder_services_settings,
@@ -464,7 +522,9 @@ fn main() {
                 if let Some(extract_window) = first_extract_window(app_handle) {
                     launch::restore_foreground_activation(app_handle);
                     let _ = extract_window.show();
-                    let _ = extract_window.set_focus();
+                    if launch::window_may_take_focus() {
+                        let _ = extract_window.set_focus();
+                    }
                 } else {
                     // Dock/Spotlight activate while warm-idle: open the full app.
                     EXTRACT_ONLY_LAUNCH.store(false, Ordering::SeqCst);

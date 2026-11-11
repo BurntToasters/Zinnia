@@ -22,10 +22,12 @@ export function togglePasswordVisibility(
   if (input.type === "password") {
     input.type = "text";
     btn.textContent = "Hide";
+    btn.setAttribute("aria-label", "Hide password");
     btn.setAttribute("aria-pressed", "true");
   } else {
     input.type = "password";
     btn.textContent = "Show";
+    btn.setAttribute("aria-label", "Show password");
     btn.setAttribute("aria-pressed", "false");
   }
 }
@@ -48,6 +50,7 @@ export function resetRuntimeStateForFirstRun(): void {
   state.lastAutoExtractDestination = null;
   state.lastAutoOutputPath = null;
   state.browseArchiveInfoByPath.clear();
+  state.browseArchiveIdentityByPath.clear();
   state.browseSelectionsByArchive.clear();
   state.selectiveSearchQuery = "";
   state.selectiveActiveArchive = null;

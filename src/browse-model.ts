@@ -12,5 +12,7 @@ export interface ArchiveInfo {
   method: string;
   solid: boolean;
   encrypted: boolean;
+  /** True when any member uses ZipCrypto. 7-Zip reports it per member only. */
+  zipCrypto?: boolean;
   entries: BrowseEntry[];
 }

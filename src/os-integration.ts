@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { $ } from "./utils";
+import { log } from "./ui/log";
 import { showToast } from "./toast";
 
 export interface OsIntegrationStatus {
@@ -330,7 +331,7 @@ export function renderOsIntegrationStatus(status: OsIntegrationStatus): void {
     setText(
       "os-win11-menu-help",
       status.win11ModernMenuHelp ??
-        "Sparse identity package for the primary right-click menu (Zinnia stays a normal NSIS install).",
+        "Windows integration package for the primary right-click menu (Zinnia stays a normal installed app).",
     );
   }
 
@@ -347,7 +348,7 @@ export function renderOsIntegrationStatus(status: OsIntegrationStatus): void {
       help.textContent =
         status.win11ModernMenuHelp ??
         status.defaultArchiverHelp ??
-        "Zinnia installs as a normal NSIS app. Win11 modern menu uses a sparse identity package; classic Extract/Compress registry verbs are only a fallback when that package is unavailable. Open with Zinnia stays on the file-association ProgId.";
+        "Zinnia installs as a normal app. The Windows 11 modern menu uses a Windows integration package; classic Extract/Compress menu entries are only a fallback when that package is unavailable. Open with Zinnia uses file type registration.";
     } else if (status.platform === "linux") {
       help.textContent =
         status.defaultArchiverHelp ??
@@ -399,7 +400,7 @@ export async function refreshDefaultArchiverActionButton(
     configureDefaultArchiverActionButton(button, status);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`Failed to refresh default archiver action: ${msg}`);
+    log(`Failed to refresh default archiver action: ${msg}`, "error");
   }
 }
 
@@ -449,7 +450,7 @@ export async function refreshOsIntegrationStatus(): Promise<void> {
       renderOsIntegrationStatus(status);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`Failed to refresh OS integration status: ${msg}`);
+      log(`Failed to refresh OS integration status: ${msg}`, "error");
       renderOsIntegrationRefreshFailure();
     } finally {
       if (refresh) refresh.disabled = false;
@@ -474,7 +475,12 @@ export async function openFinderSyncSettings(): Promise<void> {
     latestStatus.finderSyncEnabled !== true;
   try {
     if (needsEnable) {
-      await invoke("enable_finder_sync");
+      try {
+        await invoke("enable_finder_sync");
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log(`Finder Sync pluginkit enable did not succeed: ${msg}`, "error");
+      }
       await refreshOsIntegrationStatus();
       if (latestStatus?.finderSyncEnabled) {
         showToast(FINDER_SYNC_ENABLED_MESSAGE, "success", 0);

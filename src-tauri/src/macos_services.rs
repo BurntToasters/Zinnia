@@ -134,6 +134,11 @@ fn read_paths_from_pasteboard(pasteboard: &NSPasteboard) -> Result<Vec<String>, 
             let url = obj
                 .downcast_ref::<NSURL>()
                 .ok_or_else(|| "pasteboard item was not NSURL".to_string())?;
+            // A web or custom-scheme URL has a `path()` too (`http://h/etc/x`
+            // gives `/etc/x`), which must never be routed as a local path.
+            if !url.isFileURL() {
+                continue;
+            }
             let Some(ns_path) = url.path() else {
                 continue;
             };
@@ -147,12 +152,14 @@ fn read_paths_from_pasteboard(pasteboard: &NSPasteboard) -> Result<Vec<String>, 
                 .map_err(|_| "path was not valid UTF-8".to_string())?;
             if !path.is_empty() {
                 paths.push(path.to_string());
+                // Reject as soon as the cap is passed instead of converting
+                // the rest of an arbitrarily large selection first.
+                if paths.len() > MAX_PATHS_PER_REQUEST {
+                    return Err(format!(
+                        "Finder Services selection exceeds {MAX_PATHS_PER_REQUEST} paths."
+                    ));
+                }
             }
-        }
-        if paths.len() > MAX_PATHS_PER_REQUEST {
-            return Err(format!(
-                "Finder Services selection exceeds {MAX_PATHS_PER_REQUEST} paths."
-            ));
         }
         Ok(paths)
     }
@@ -185,4 +192,67 @@ pub fn install_macos_services(app: &AppHandle) {
     // Keep the provider alive for the process lifetime.
     std::mem::forget(provider);
     NSUpdateDynamicServices();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use objc2::runtime::ProtocolObject;
+    use objc2_app_kit::{NSPasteboardItem, NSPasteboardType, NSPasteboardWriting};
+
+    fn item(url: &str) -> Retained<NSPasteboardItem> {
+        let item = NSPasteboardItem::new();
+        let kind: &NSPasteboardType = if url.starts_with("file:") {
+            // public.file-url
+            // SAFETY: reads an immutable AppKit string constant that is valid for the process.
+            unsafe { objc2_app_kit::NSPasteboardTypeFileURL }
+        } else {
+            // public.url
+            // SAFETY: reads an immutable AppKit string constant that is valid for the process.
+            unsafe { objc2_app_kit::NSPasteboardTypeURL }
+        };
+        assert!(item.setString_forType(&NSString::from_str(url), kind));
+        item
+    }
+
+    fn pasteboard_with(urls: &[&str]) -> Retained<NSPasteboard> {
+        let pasteboard = NSPasteboard::pasteboardWithUniqueName();
+        pasteboard.clearContents();
+        let items: Vec<Retained<ProtocolObject<dyn NSPasteboardWriting>>> = urls
+            .iter()
+            .map(|url| ProtocolObject::from_retained(item(url)))
+            .collect();
+        let array = NSArray::from_retained_slice(&items);
+        assert!(pasteboard.writeObjects(&array), "pasteboard rejected items");
+        pasteboard
+    }
+
+    #[test]
+    fn pasteboard_reader_keeps_file_urls_and_skips_other_schemes() {
+        let pasteboard = pasteboard_with(&[
+            "file:///tmp/zinnia-services-a.zip",
+            "http://example.invalid/etc/passwd",
+            "file:///tmp/zinnia-services-b.7z",
+        ]);
+        let paths = read_paths_from_pasteboard(&pasteboard).expect("file URLs are accepted");
+        assert_eq!(
+            paths,
+            vec![
+                "/tmp/zinnia-services-a.zip".to_string(),
+                "/tmp/zinnia-services-b.7z".to_string()
+            ],
+            "a non-file URL must be skipped, not turned into a local path"
+        );
+    }
+
+    #[test]
+    fn pasteboard_reader_rejects_a_selection_over_the_cap() {
+        let urls: Vec<String> = (0..=MAX_PATHS_PER_REQUEST)
+            .map(|index| format!("file:///tmp/zinnia-services-{index}.zip"))
+            .collect();
+        let refs: Vec<&str> = urls.iter().map(String::as_str).collect();
+        let pasteboard = pasteboard_with(&refs);
+        let error = read_paths_from_pasteboard(&pasteboard).expect_err("cap exceeded");
+        assert!(error.contains("exceeds"), "unexpected error: {error}");
+    }
 }

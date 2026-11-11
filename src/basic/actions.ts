@@ -18,6 +18,8 @@ import {
   looksLikePasswordRequiredError,
   parseArchiveListing,
 } from "../archive";
+import { runActionAfterNativeSave } from "../archive/ops";
+import { browsedArchivePasswordFor } from "../archive/inspection";
 import {
   clearPasswordFields,
   ensureRuntimeReady,
@@ -44,13 +46,15 @@ import {
 import { setRecentArchiveHandler } from "./recent";
 import { showToast } from "../toast";
 import { waitUntilIncomingPathsApplyingClear } from "../incoming-paths";
+import { confirmWithE2eQueue, takeE2eDialogResult } from "../e2e-dialog";
+import { userFacingBackendError } from "../error-hints";
 
 async function confirmBasicDrop(
   text: string,
   options: Parameters<typeof confirm>[1],
 ): Promise<boolean | null> {
   try {
-    return await confirm(text, options);
+    return await confirmWithE2eQueue(() => confirm(text, options));
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Could not open Basic confirmation dialog: ${msg}`, "error");
@@ -293,7 +297,7 @@ export async function handleBasicDrop(paths: string[]): Promise<void> {
   const preparation = beginBasicPreparation();
   if (!preparation) {
     showToast(
-      "Zinnia is busy preparing another action. Drop the files again in a moment.",
+      "An operation is already running. Drop the files again in a moment.",
       "error",
       4000,
     );
@@ -314,7 +318,7 @@ async function handleBasicCompressActionOnce(
     showBasicCompletion(
       "compress",
       false,
-      "Operation failed",
+      "Check your choices",
       "Add at least one input.",
     );
     return;
@@ -330,7 +334,7 @@ async function handleBasicCompressActionOnce(
     showBasicCompletion(
       "compress",
       false,
-      "Operation failed",
+      "Check your choices",
       `${(formatEarly || "format").toUpperCase()} accepts exactly one input. Pick one file, or use 7z/ZIP/TAR.`,
     );
     return;
@@ -367,12 +371,20 @@ async function handleBasicCompressActionOnce(
     "basic-output-path",
   ) as HTMLInputElement | null;
   let output: string | null = basicOutputPath?.value ?? null;
+  // The native save dialog already asked about overwriting the chosen file.
+  let chosenByNativeSave = false;
   if (!output) {
+    const queued = takeE2eDialogResult();
+    const queuedPath =
+      queued && typeof queued.result === "string" ? queued.result : null;
     try {
-      output = await save({
-        title: "Choose output archive",
-        defaultPath,
-      });
+      output =
+        queuedPath ??
+        (await save({
+          title: "Choose output archive",
+          defaultPath,
+        }));
+      chosenByNativeSave = Boolean(output);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log(`Could not open the save-archive dialog: ${msg}`, "error");
@@ -415,7 +427,11 @@ async function handleBasicCompressActionOnce(
   // Unlock prep, then enter runAction synchronously so setRunning(true) closes
   // the gap before any OS-handoff waiter can resume.
   finishBasicPreparation(preparation);
-  await runAction();
+  if (chosenByNativeSave) {
+    await runActionAfterNativeSave();
+  } else {
+    await runAction();
+  }
 }
 
 export async function handleBasicCompressAction(): Promise<void> {
@@ -428,44 +444,11 @@ export async function handleBasicCompressAction(): Promise<void> {
   }
 }
 
-export type PasswordCheckResult = "ok" | "wrong" | "error";
-
-/**
- * Test a candidate password against `archive`. Distinguishes a genuinely
- * wrong password from a transport/backend failure (busy backend, runtime
- * probe failure, IPC error): those must not be reported to the user as
- * "Incorrect password", which would loop forever on an unrelated problem.
- */
-export async function testArchivePassword(
-  archive: string,
-  password?: string,
-): Promise<PasswordCheckResult> {
-  if (!(await ensureRuntimeReady())) return "error";
-  try {
-    const args = ["t", "-spd"];
-    if (password) {
-      args.push(`-p${password}`);
-    }
-    args.push("--", archive);
-    const result = await invokeGuardedRun7z(args);
-    if (result.code > 1) {
-      return looksLikePasswordRequiredError(result.stdout, result.stderr)
-        ? "wrong"
-        : "error";
-    }
-    return "ok";
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log(`Password check failed: ${msg}`, "error");
-    return "error";
-  }
-}
-
 /**
  * `true`/`false` when the archive's encryption state is known, `null` when
- * it could not be determined (backend/IPC failure). Callers must treat
- * `null` as "assume encrypted": silently skipping the password prompt on an
- * error would let an encrypted archive fail extraction with no explanation.
+ * it could not be determined (truncated listing, probe or IPC failure). For
+ * `null`, callers skip the upfront password prompt and rely on the password
+ * prompt that runs when 7-Zip reports that a password is required.
  */
 export async function isArchiveEncrypted(
   archivePath: string,
@@ -494,11 +477,7 @@ export async function isArchiveEncrypted(
     const args = ["l", "-slt", "-spd", "--", archivePath];
     const result = await invokeGuardedRun7z(args);
     if (result.code > 1) {
-      // Fail closed: only return false when the listing is clearly unencrypted.
-      // Unknown failures must not skip the password prompt.
-      return looksLikePasswordRequiredError(result.stdout, result.stderr)
-        ? true
-        : null;
+      return looksLikePasswordRequiredError(result.stdout, result.stderr);
     }
     if (result.stdout_truncated || result.stderr_truncated) {
       return null;
@@ -526,24 +505,38 @@ async function handleBasicExtractActionOnce(
     return;
   }
 
-  // 1. Check if archive is encrypted. `null` means the check itself failed
-  // (busy backend, runtime probe failure, IPC error) rather than confirming
-  // the archive is plaintext; treat that the same as "encrypted" so a real
-  // password requirement is never silently skipped.
+  // 1. Check if archive is encrypted. `null` means the check could not decide
+  // (busy backend, truncated listing, IPC error). Do not prompt upfront then:
+  // the run prompts when 7-Zip reports that a password is required, so a
+  // plaintext archive is never blocked by a failed check.
   const encryptionCheck = await isArchiveEncrypted(archive);
   if (!isBasicPreparationCurrent(preparation)) return;
-  const isEncrypted = encryptionCheck ?? true;
   if (encryptionCheck === null) {
+    const [validation] = await validateArchivePaths([archive]);
+    if (!isBasicPreparationCurrent(preparation)) return;
+    if (!validation?.valid) {
+      showBasicCompletion(
+        "extract",
+        false,
+        "Check your choices",
+        userFacingBackendError(
+          validation?.reason?.trim() ??
+            "This archive path is not supported for extraction.",
+        ),
+      );
+      return;
+    }
     log(
-      "Could not determine whether this archive is encrypted; treating it as encrypted.",
+      "Could not determine whether this archive is encrypted; a password prompt appears only if one is needed.",
       "debug",
     );
   }
-  let password = "";
+  // Reuse the password that opened this archive in Browse, if it still matches.
+  let password = (await browsedArchivePasswordFor(archive)) ?? "";
+  if (!isBasicPreparationCurrent(preparation)) return;
 
-  if (isEncrypted) {
-    let correctPassword = false;
-    while (!correctPassword) {
+  if (encryptionCheck === true && !password) {
+    while (!password) {
       const input = await promptInput({
         title: "Password Required",
         label: "This archive is encrypted. Enter password:",
@@ -551,30 +544,9 @@ async function handleBasicExtractActionOnce(
       });
 
       if (!isBasicPreparationCurrent(preparation) || input === null) {
-        // User cancelled the prompt modal
         return;
       }
-
-      // Test the password. "error" means the check itself failed (busy
-      // backend, runtime probe, IPC) rather than confirming the password is
-      // wrong, so it must not loop the "Incorrect password" prompt forever.
-      const check = await testArchivePassword(archive, input);
-      if (!isBasicPreparationCurrent(preparation)) return;
-      if (check === "ok") {
-        password = input;
-        correctPassword = true;
-      } else if (check === "wrong") {
-        showToast("Incorrect password. Please try again.", "error", 5000);
-        if (!isBasicPreparationCurrent(preparation)) return;
-      } else {
-        showBasicCompletion(
-          "extract",
-          false,
-          "Operation failed",
-          "Could not verify the archive password. Check the log for details and try again.",
-        );
-        return;
-      }
+      password = input;
     }
   }
 
@@ -586,12 +558,19 @@ async function handleBasicExtractActionOnce(
   ) as HTMLInputElement | null;
   let output: string | null = basicExtractPath?.value ?? null;
   if (!output) {
+    const queued = takeE2eDialogResult();
+    const queuedPath =
+      queued && typeof queued.result === "string" ? queued.result : null;
     try {
-      const selected = await open({
-        title: "Choose destination folder",
-        directory: true,
-      });
-      output = typeof selected === "string" ? selected : null;
+      if (queuedPath) {
+        output = queuedPath;
+      } else {
+        const selected = await open({
+          title: "Choose destination folder",
+          directory: true,
+        });
+        output = typeof selected === "string" ? selected : null;
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log(`Could not open the destination-folder dialog: ${msg}`, "error");
@@ -609,19 +588,22 @@ async function handleBasicExtractActionOnce(
     return;
   }
 
-  // 3. Populate the fields only for the immediate extraction run. The normal
-  // run cleanup clears both fields when the operation finishes.
-  const basicPasswordInput = document.getElementById(
-    "basic-extract-password",
-  ) as HTMLInputElement | null;
-  if (basicPasswordInput) {
-    basicPasswordInput.value = password;
-  }
-  const powerPasswordInput = document.getElementById(
-    "extract-password",
-  ) as HTMLInputElement | null;
-  if (powerPasswordInput) {
-    powerPasswordInput.value = password;
+  // 3. Populate the fields only for the immediate extraction run. A password
+  // typed into the field stays when nothing was prompted (unknown encryption
+  // state), and the run cleanup clears both fields once 7-Zip has started.
+  if (password) {
+    const basicPasswordInput = document.getElementById(
+      "basic-extract-password",
+    ) as HTMLInputElement | null;
+    if (basicPasswordInput) {
+      basicPasswordInput.value = password;
+    }
+    const powerPasswordInput = document.getElementById(
+      "extract-password",
+    ) as HTMLInputElement | null;
+    if (powerPasswordInput) {
+      powerPasswordInput.value = password;
+    }
   }
 
   if (basicExtractPath) {
@@ -645,9 +627,14 @@ export async function handleBasicExtractAction(): Promise<void> {
   const preparation = beginBasicPreparation();
   if (!preparation) return;
   try {
+    // runAction clears the password fields once 7-Zip has started. Clearing
+    // here would also erase the password on pre-run errors. Only an unexpected
+    // rejection clears them, since no run can be trusted to have done so.
     await handleBasicExtractActionOnce(preparation);
-  } finally {
+  } catch (err) {
     clearPasswordFields();
+    throw err;
+  } finally {
     finishBasicPreparation(preparation);
   }
 }
@@ -664,20 +651,20 @@ export function togglePasswordVisibility(inputId: string, btnId: string): void {
     if (isIconOnly) {
       const icon = btn.querySelector<HTMLElement>("[data-lucide]");
       icon?.setAttribute("data-lucide", "eye-off");
-      btn.setAttribute("aria-label", "Hide password");
     } else {
       btn.textContent = "Hide";
     }
+    btn.setAttribute("aria-label", "Hide password");
     btn.setAttribute("aria-pressed", "true");
   } else {
     input.type = "password";
     if (isIconOnly) {
       const icon = btn.querySelector<HTMLElement>("[data-lucide]");
       icon?.setAttribute("data-lucide", "eye");
-      btn.setAttribute("aria-label", "Show password");
     } else {
       btn.textContent = "Show";
     }
+    btn.setAttribute("aria-label", "Show password");
     btn.setAttribute("aria-pressed", "false");
   }
   if (isIconOnly) triggerIconRefresh();

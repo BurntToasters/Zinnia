@@ -3,7 +3,12 @@ import {
   waitUntilIncomingPathIdle,
 } from "./incoming-paths";
 import { isE2eFrontend } from "./e2e-env";
-import { queueE2eConfirmResult, queueE2eDialogResult } from "./e2e-dialog";
+import { flushPendingSettingsPersistence } from "./ui/workspace";
+import {
+  queueE2eConfirmResult,
+  queueE2eDialogResult,
+  readE2eConfirmTitles,
+} from "./e2e-dialog";
 import { installWdioGuestPluginIfEnabled } from "./e2e-wdio-plugin";
 import type {
   ArchiveBenchmarkRequest,
@@ -14,6 +19,13 @@ export type E2eHook = {
   applyIncomingPaths: (paths: string[], mode: string) => Promise<void>;
   queueDialogResult: (result: string | string[] | null) => void;
   queueConfirmResult: (result: boolean) => void;
+  readConfirmTitles: () => string[];
+  /**
+   * Drop the debounced working-context write and wait for any write already in
+   * flight. A test that seeds settings.json calls this first so a stale write
+   * queued by earlier UI activity cannot land on top of the seed.
+   */
+  flushPendingSettingsPersistence: () => Promise<void>;
   runArchiveBenchmarkOperation: (
     request: ArchiveBenchmarkRequest,
   ) => Promise<ArchiveBenchmarkResult>;
@@ -37,6 +49,8 @@ export async function installE2eHookIfEnabled(): Promise<void> {
     },
     queueDialogResult: queueE2eDialogResult,
     queueConfirmResult: queueE2eConfirmResult,
+    readConfirmTitles: readE2eConfirmTitles,
+    flushPendingSettingsPersistence,
     runArchiveBenchmarkOperation,
   };
 }

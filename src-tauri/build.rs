@@ -240,7 +240,7 @@ fn provenance_version(contents: &str) -> String {
     });
     assert!(
         well_formed,
-        "7z-provenance.json \"version\" must look like 26.04, got {value:?}"
+        "7z-provenance.json \"version\" must look like NN.NN, got {value:?}"
     );
     value.to_string()
 }
@@ -421,7 +421,6 @@ fn main() {
         "cancel_7z",
         "is_7z_running",
         "probe_7z",
-        "probe_compress_inputs",
         "archive_output_selection_token",
         "get_startup_recovery_status",
         "acknowledge_preserved_transaction",
@@ -453,6 +452,7 @@ fn main() {
         "mark_main_window_ready",
         "get_platform_info",
         "get_beta_updater_target",
+        "relaunch_app",
         "get_os_integration_status",
         "open_os_integration_settings",
         "open_finder_services_settings",

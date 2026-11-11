@@ -14,15 +14,6 @@ export const ARCHIVE_EXTENSIONS = new Set([
   ".rar",
 ]);
 
-export function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
 export function $<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
   if (!el) throw new Error(`Element #${id} not found`);
@@ -31,6 +22,31 @@ export function $<T extends HTMLElement>(id: string): T {
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
+
+const handledKeyEvents = new WeakSet<Event>();
+
+/**
+ * Mark a key event as consumed by a handler that closed something. Document
+ * listeners that run later check `isKeyHandled` and skip the event.
+ */
+export function markKeyHandled(event: KeyboardEvent): void {
+  handledKeyEvents.add(event);
+}
+
+export function isKeyHandled(event: KeyboardEvent): boolean {
+  return handledKeyEvents.has(event);
+}
+
+/** True while an IME is composing. Its Enter confirms text, not the action. */
+export function isImeComposing(event: KeyboardEvent): boolean {
+  return event.isComposing === true || event.keyCode === 229;
+}
+
+/** Laid out and enabled. Hidden or disabled controls cannot take focus. */
+function isFocusCandidate(el: HTMLElement): boolean {
+  if (el.offsetParent === null) return false;
+  return (el as HTMLButtonElement).disabled !== true;
+}
 
 const activeFocusTraps = new Map<HTMLElement, (e: KeyboardEvent) => void>();
 const focusTrapStack: HTMLElement[] = [];
@@ -109,7 +125,7 @@ export function trapFocus(container: HTMLElement): void {
     if (focusTrapStack[focusTrapStack.length - 1] !== container) return;
     const focusable = Array.from(
       container.querySelectorAll<HTMLElement>(FOCUSABLE),
-    ).filter((el) => el.offsetParent !== null);
+    ).filter(isFocusCandidate);
     if (focusable.length === 0) return;
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
@@ -143,7 +159,9 @@ export function trapFocus(container: HTMLElement): void {
   focusTrapStack.push(container);
   document.addEventListener("keydown", handler);
   isolateModalBackground(container);
-  const first = container.querySelector<HTMLElement>(FOCUSABLE);
+  const first = Array.from(
+    container.querySelectorAll<HTMLElement>(FOCUSABLE),
+  ).find(isFocusCandidate);
   if (first) first.focus();
 }
 
@@ -166,13 +184,15 @@ export function parseThreads(raw: string, fallback: number): number {
 }
 
 export function formatSize(bytes: number): string {
-  if (bytes === 0) return "-";
+  if (!Number.isFinite(bytes) || bytes < 0) return "-";
+  const whole = Math.round(bytes);
+  if (whole === 0) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB"];
   const i = Math.min(
-    Math.floor(Math.log(bytes) / Math.log(1024)),
+    Math.floor(Math.log(whole) / Math.log(1024)),
     units.length - 1,
   );
-  const size = bytes / Math.pow(1024, i);
+  const size = whole / Math.pow(1024, i);
   return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 

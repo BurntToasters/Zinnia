@@ -75,9 +75,16 @@ function rederiveQuickPresetOutput(): void {
   state.lastAutoOutputPath = next;
 }
 
+/**
+ * A Repeat button is enabled only when its mode has an action to replay. The
+ * same rule applies to every mode, so `setRunning` can apply it without
+ * knowing which mode is active.
+ */
 export function refreshQuickActionRepeatState(): void {
-  const mode = getMode();
-  const repeatButtons: Array<{ id: string; targetMode: typeof mode }> = [
+  const repeatButtons: Array<{
+    id: string;
+    targetMode: "add" | "extract" | "browse";
+  }> = [
     { id: "quick-add-repeat", targetMode: "add" },
     { id: "quick-extract-repeat", targetMode: "extract" },
     { id: "quick-browse-repeat", targetMode: "browse" },
@@ -87,8 +94,7 @@ export function refreshQuickActionRepeatState(): void {
       entry.id,
     ) as HTMLButtonElement | null;
     if (!button) continue;
-    const replayTarget = getReplayTarget(entry.targetMode);
-    button.disabled = entry.targetMode === mode && !replayTarget;
+    button.disabled = !getReplayTarget(entry.targetMode);
   }
 }
 

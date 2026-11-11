@@ -63,7 +63,29 @@
     "./specs/cancel-extract.spec.js",
     "./specs/hostile-archives.spec.js",
     "./specs/split-update.spec.js",
-    "./specs/release-safeguards.spec.js"
+    "./specs/release-safeguards.spec.js",
+    "./specs/compress-flows.spec.js",
+    "./specs/extract-flows.spec.js",
+    "./specs/settings-flows.spec.js",
+    "./specs/ui-surfaces.spec.js",
+    "./specs/older-journal.spec.js",
+    "./specs/pending-registry.spec.js",
+    "./specs/cancel-race.spec.js",
+    "./specs/cancel-race-compound.spec.js",
+    "./specs/audit-argv.spec.js",
+    "./specs/audit-listing.spec.js",
+    "./specs/audit-operations.spec.js",
+    "./specs/audit-keyboard.spec.js",
+    "./specs/audit-presets.spec.js",
+    "./specs/audit-settings.spec.js",
+    "./specs/audit-tools.spec.js",
+    "./specs/audit-convert.spec.js",
+    "./specs/audit-password.spec.js",
+    "./specs/audit-basic.spec.js",
+    "./specs/audit-lifecycle.spec.js",
+    "./specs/audit-picker.spec.js",
+    "./specs/audit-a11y.spec.js",
+    "./specs/audit-copy.spec.js"
   ],
-  "suiteCount": 23
+  "suiteCount": 45
 }

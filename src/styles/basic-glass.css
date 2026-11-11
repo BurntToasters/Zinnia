@@ -119,8 +119,8 @@ html:not([data-window-fx])
   #app[data-workspace-mode="basic"]
   .modal--settings
   .modal__footer {
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 /* Native glass active: prefer OS vibrancy; skip heavy CSS blur on full surfaces. */
@@ -135,8 +135,8 @@ html[data-window-fx="basic"]
   th,
 html[data-window-fx="basic"] #app[data-workspace-mode="basic"] input,
 html[data-window-fx="basic"] #app[data-workspace-mode="basic"] select {
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   background: color-mix(in srgb, var(--surface) 55%, transparent) !important;
 }
 
@@ -199,16 +199,16 @@ html[data-window-fx="basic"] #input-modal-overlay .modal {
 #app[data-workspace-mode="basic"] .basic-dropzone {
   background: var(--basic-glass-bg) !important;
   backdrop-filter: blur(var(--basic-glass-blur))
-    saturate(var(--basic-glass-saturate)) !important;
+    saturate(var(--basic-glass-saturate));
   -webkit-backdrop-filter: blur(var(--basic-glass-blur))
-    saturate(var(--basic-glass-saturate)) !important;
+    saturate(var(--basic-glass-saturate));
   border: 1px dashed var(--basic-glass-border) !important;
   border-radius: 12px !important;
-  box-shadow: var(--basic-glass-shadow) !important;
+  box-shadow: var(--basic-glass-shadow);
   transition:
     transform var(--transition),
     background var(--transition),
-    border-color var(--transition) !important;
+    border-color var(--transition);
 }
 
 #app[data-workspace-mode="basic"] .basic-dropzone:hover {
@@ -216,7 +216,7 @@ html[data-window-fx="basic"] #input-modal-overlay .modal {
   border-color: var(--accent) !important;
   box-shadow:
     var(--basic-glass-shadow),
-    0 0 0 3px var(--accent-shadow) !important;
+    0 0 0 3px var(--accent-shadow);
 }
 
 html[data-window-fx="basic"] #app[data-workspace-mode="basic"] .basic-dropzone {
@@ -229,10 +229,10 @@ html[data-window-fx="basic"] #app[data-workspace-mode="basic"] .basic-dropzone {
 #app[data-workspace-mode="basic"] input[type="number"],
 #app[data-workspace-mode="basic"] select {
   background: var(--basic-glass-bg) !important;
-  border: 1px solid var(--basic-glass-border) !important;
-  backdrop-filter: blur(8px) !important;
-  -webkit-backdrop-filter: blur(8px) !important;
-  box-shadow: var(--basic-glass-shadow) !important;
+  border: 1px solid var(--control-border) !important;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: var(--basic-glass-shadow);
 }
 
 #app[data-workspace-mode="basic"] input[type="text"]:focus,
@@ -242,7 +242,7 @@ html[data-window-fx="basic"] #app[data-workspace-mode="basic"] .basic-dropzone {
   border-color: var(--accent-fg) !important;
   box-shadow:
     var(--basic-glass-shadow),
-    0 0 0 2px var(--accent-fg) !important;
+    0 0 0 2px var(--accent-fg);
 }
 
 /* 5. Glassmorphism Settings overlay (native vibrancy only). */
@@ -250,8 +250,8 @@ html[data-window-fx="basic"]
   #app[data-workspace-mode="basic"]
   .modal--settings {
   background: color-mix(in srgb, var(--bg) 85%, transparent) !important;
-  backdrop-filter: blur(32px) saturate(150%) !important;
-  -webkit-backdrop-filter: blur(32px) saturate(150%) !important;
+  backdrop-filter: blur(32px) saturate(150%);
+  -webkit-backdrop-filter: blur(32px) saturate(150%);
 }
 
 html[data-window-fx="basic"]
@@ -259,9 +259,9 @@ html[data-window-fx="basic"]
   .modal--settings
   .modal__header {
   background: transparent !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  border-bottom: none !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-bottom: none;
 }
 
 html[data-window-fx="basic"]
@@ -280,7 +280,7 @@ html[data-window-fx="basic"]
     var(--surface-alt) 80%,
     transparent
   ) !important;
-  border-bottom: 1px solid var(--basic-glass-border) !important;
+  border-bottom: 1px solid var(--basic-glass-border);
 }
 
 html[data-window-fx="basic"]
@@ -288,9 +288,9 @@ html[data-window-fx="basic"]
   .modal--settings
   .modal__footer {
   background: color-mix(in srgb, var(--surface) 80%, transparent) !important;
-  backdrop-filter: blur(20px) !important;
-  -webkit-backdrop-filter: blur(20px) !important;
-  border-top: 1px solid var(--basic-glass-border) !important;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-top: 1px solid var(--basic-glass-border);
 }
 
 #app[data-workspace-mode="basic"] #basic-name-location-divider,
@@ -299,7 +299,7 @@ html[data-window-fx="basic"]
 #app[data-workspace-mode="basic"] #basic-extract-destination-head,
 #app[data-workspace-mode="basic"] #basic-extract-destination-field,
 #app[data-workspace-mode="basic"] #basic-extract-password-field {
-  display: none !important;
+  display: none;
 }
 
 .basic-completion__close {
@@ -322,4 +322,21 @@ html[data-window-fx="basic"]
 .basic-completion__close:hover {
   color: var(--text);
   background: var(--hover-overlay);
+}
+
+@media (forced-colors: active) {
+  #app[data-workspace-mode="basic"] input[type="text"],
+  #app[data-workspace-mode="basic"] input[type="password"],
+  #app[data-workspace-mode="basic"] input[type="number"],
+  #app[data-workspace-mode="basic"] select {
+    border: 1px solid ButtonText;
+  }
+
+  #app[data-workspace-mode="basic"] input[type="text"]:focus,
+  #app[data-workspace-mode="basic"] input[type="password"]:focus,
+  #app[data-workspace-mode="basic"] input[type="number"]:focus,
+  #app[data-workspace-mode="basic"] select:focus {
+    border-color: Highlight;
+    outline: 2px solid Highlight;
+  }
 }

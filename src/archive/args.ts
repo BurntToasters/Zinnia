@@ -1,5 +1,6 @@
 import { $, parseThreads, splitArgs } from "../utils";
-import { SETTING_DEFAULTS, state } from "../state";
+import { state } from "../state";
+import { getDefaultThreads } from "../window-events";
 import { getMode } from "../ui";
 import { validateExtraArgs } from "../archive-rules";
 import {
@@ -64,7 +65,7 @@ export function buildCompressionMethodSwitches(format: string): string[] {
   const solid = $<HTMLSelectElement>("solid").value;
   const threads = parseThreads(
     $<HTMLInputElement>("threads").value,
-    SETTING_DEFAULTS.threads,
+    getDefaultThreads(),
   );
 
   const normalizedFormat = format.toLowerCase();
@@ -74,7 +75,11 @@ export function buildCompressionMethodSwitches(format: string): string[] {
       (normalizedMethod === "lzma2" || normalizedMethod === "lzma")) ||
     (normalizedFormat === "zip" &&
       (normalizedMethod === "deflate" || normalizedMethod === "lzma"));
-  const effectiveMethod = methodSupported ? normalizedMethod : "";
+  // Level 0 means store. An explicit -m0= makes 7-Zip deflate ZIP entries, so
+  // leave the method unset there and let -mx=0 pick Store (or copy for 7z).
+  const storeLevel = level.trim() === "0";
+  const effectiveMethod =
+    methodSupported && !storeLevel ? normalizedMethod : "";
   const switches = [`-t${normalizedFormat}`, `-mx=${level}`];
   if (effectiveMethod) switches.push(`-m0=${effectiveMethod}`);
   // 7-Zip method switches are not format-agnostic. In particular, Deflate and
@@ -97,7 +102,7 @@ export function buildCompressionMethodSwitches(format: string): string[] {
   if (normalizedFormat === "7z") {
     if (solid === "solid") switches.push("-ms=on");
     else if (solid === "off") switches.push("-ms=off");
-    else switches.push(`-ms=${solid}`);
+    else if (solid) switches.push(`-ms=${solid}`);
   }
   if (threads) switches.push(`-mmt=${threads}`);
   if (normalizedFormat === "zip") switches.push("-mcu=on");
@@ -197,7 +202,6 @@ export function buildArgs() {
   if (inputShapeError) throw new Error(inputShapeError);
   const rawPassword = $<HTMLInputElement>("password").value;
   const rawEncryptHeaders = $<HTMLInputElement>("encrypt-headers").checked;
-  const deleteAfter = $<HTMLInputElement>("delete-after").checked;
   const storeTimestamps = $<HTMLInputElement>("store-timestamps").checked;
 
   const validationError = validateCompressionSecurityOptions(
@@ -216,11 +220,13 @@ export function buildArgs() {
   );
 
   // -snl/-snh preserve symlinks/hardlinks (macOS .app / .framework bundles).
+  // -bsp1 sends progress lines to stdout so the UI can show a percent.
   const switches = [
     "-sse",
     "-snl",
     "-snh",
     "-spd",
+    "-bsp1",
     ...buildCompressionMethodSwitches(format),
   ];
   if (password) switches.push(`-p${password}`);
@@ -230,11 +236,6 @@ export function buildArgs() {
   if (storeTimestamps) switches.push("-mtc=on", "-mta=on");
   // Modification time is stored by default (-mtm=on). -mtc/-mta add creation
   // and access; 7-Zip has no separate portable "birth" switch beyond -mtc.
-  if (deleteAfter) {
-    throw new Error(
-      "Delete after compression is unavailable because source deletion cannot be rolled back safely. Delete the sources manually after testing the archive.",
-    );
-  }
 
   // 7-Zip does not support -v (split volumes) with the "u" update command;
   // Rust's validate_run_7z_args also rejects it there. Previously the UI

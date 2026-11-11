@@ -6,7 +6,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { showToast } from "./toast";
 import { $ } from "./utils";
-import { SETTING_DEFAULTS, state, dom } from "./state";
+import { state, dom } from "./state";
 import {
   applyTheme,
   loadSettingsWithMetadata,
@@ -50,8 +50,14 @@ import {
   applyIncomingPaths,
   acquireIncomingPathLock,
   isIncomingPathBusy,
+  notifyIncomingPathsQueuedIfBusy,
   releaseIncomingPathLock,
 } from "./incoming-paths";
+import {
+  getDefaultThreads,
+  listenForStopRequests,
+  setDetectedCpuCount,
+} from "./window-events";
 import {
   wireEvents,
   openShortcutsModal,
@@ -63,10 +69,16 @@ import { installNativeWebviewContextMenuGuard } from "./webview-context-menu";
 
 let persistentAlertDismissWired = false;
 let preservedRecoveryAcknowledgementAvailable = false;
-/** The preserved journal came from a newer Zinnia build this one cannot read. */
-let preservedRecoveryFromNewerVersion = false;
+type StartupRecoveryKind = "newer" | "older" | "ambiguous" | "error";
+type StartupRecoveryStatus = { kind: StartupRecoveryKind; message: string };
+type PreservedRecoveryKind = Exclude<StartupRecoveryKind, "error">;
 
-function showPersistentAlertBanner(message: string): void {
+let preservedRecoveryKind: PreservedRecoveryKind = "ambiguous";
+
+function showPersistentAlertBanner(
+  message: string,
+  kind: StartupRecoveryKind = "error",
+): void {
   const banner = document.getElementById("startup-recovery-banner");
   const text = document.getElementById("startup-recovery-banner-text");
   const dismiss = document.getElementById("startup-recovery-banner-dismiss");
@@ -78,41 +90,52 @@ function showPersistentAlertBanner(message: string): void {
   text.textContent =
     existing && existing !== message ? `${existing} ${message}` : message;
   banner.hidden = false;
-  if (/was preserved|were preserved/i.test(message)) {
+  if (kind !== "error") {
     preservedRecoveryAcknowledgementAvailable = true;
-    preservedRecoveryFromNewerVersion = /newer Zinnia version/i.test(message);
+    preservedRecoveryKind = kind;
   }
   if (acknowledge) {
     if (preservedRecoveryAcknowledgementAvailable) {
       acknowledge.hidden = false;
       acknowledge.onclick ??= async () => {
-        const proceed = await confirmWithE2eQueue(() =>
-          ask(
-            preservedRecoveryFromNewerVersion
-              ? "A newer Zinnia version left an unfinished archive job that this " +
-                  "version cannot read. Opening that newer version is the safest " +
-                  "way to finish it. Accepting here leaves the files exactly as " +
-                  "they are and only clears the recovery marker so archive jobs " +
-                  "can run again."
-              : "Zinnia cannot prove whether it wrote the kept extraction result " +
-                  "itself. Accepting leaves the files exactly as they are and only " +
-                  "clears the recovery marker so archive jobs can run again.",
-            {
-              title: preservedRecoveryFromNewerVersion
-                ? "Accept job from newer Zinnia"
-                : "Accept kept extraction result",
-              kind: "warning",
-              okLabel: "Accept and continue",
-              cancelLabel: "Keep blocked",
-            },
-          ),
+        const dialogTitle =
+          preservedRecoveryKind === "newer"
+            ? "Accept job from newer Zinnia"
+            : preservedRecoveryKind === "older"
+              ? "Accept job from older Zinnia"
+              : "Accept kept extraction result";
+        const proceed = await confirmWithE2eQueue(
+          () =>
+            ask(
+              preservedRecoveryKind === "newer"
+                ? "A newer Zinnia version left an unfinished archive job that this " +
+                    "version cannot read. Opening that newer version is the safest " +
+                    "way to finish it. Accepting here leaves the files exactly as " +
+                    "they are and only clears the recovery marker so archive jobs " +
+                    "can run again."
+                : preservedRecoveryKind === "older"
+                  ? "An older Zinnia version left an unfinished archive job in a legacy " +
+                    "format. Opening Zinnia 0.6.2 or earlier is the safest way to " +
+                    "recover it. Accepting here leaves the files exactly as they are " +
+                    "and only clears the recovery marker so archive jobs can run again."
+                  : "Zinnia cannot prove whether it wrote the kept extraction result " +
+                    "itself. Accepting leaves the files exactly as they are and only " +
+                    "clears the recovery marker so archive jobs can run again.",
+              {
+                title: dialogTitle,
+                kind: "warning",
+                okLabel: "Accept and continue",
+                cancelLabel: "Keep blocked",
+              },
+            ),
+          dialogTitle,
         );
         if (!proceed) return;
         try {
           acknowledge.hidden = true;
           text.textContent = "";
           preservedRecoveryAcknowledgementAvailable = false;
-          preservedRecoveryFromNewerVersion = false;
+          preservedRecoveryKind = "ambiguous";
           showPersistentAlertBanner(
             await invoke<string>("acknowledge_preserved_transaction"),
           );
@@ -139,6 +162,22 @@ function showPersistentAlertBanner(message: string): void {
       banner.hidden = true;
     }
   });
+}
+
+/** True only when settings.json holds a threads value. Unknown counts as absent. */
+async function hasPersistedThreadsSetting(): Promise<boolean> {
+  try {
+    const raw = await invoke<string>("load_settings");
+    const parsed: unknown = JSON.parse(raw);
+    return (
+      parsed !== null &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed) &&
+      Object.prototype.hasOwnProperty.call(parsed, "threads")
+    );
+  } catch {
+    return false;
+  }
 }
 
 function wireTitlebar(): void {
@@ -237,6 +276,14 @@ export async function init() {
   }
 
   try {
+    // Quit (Cmd+Q) and close while a run is active ask first. See main.rs.
+    await listenForStopRequests();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Failed to subscribe to stop requests: ${msg}`, "error");
+  }
+
+  try {
     await listen<string>("open-paths-dropped", (event) => {
       const detail =
         typeof event.payload === "string" && event.payload.trim()
@@ -272,7 +319,7 @@ export async function init() {
 
   try {
     const cpuCount = await invoke<number>("get_cpu_count");
-    SETTING_DEFAULTS.threads = cpuCount;
+    setDetectedCpuCount(cpuCount);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     devLog(`Unable to determine CPU count, using default: ${msg}`);
@@ -282,12 +329,30 @@ export async function init() {
   state.currentSettings = loadedSettings.settings;
   state.lastPersistedSettings = { ...loadedSettings.settings };
   state.settingsExtras = { ...loadedSettings.extras };
+  if (!(await hasPersistedThreadsSetting())) {
+    // First run: start from the detected CPU count, not the static default.
+    state.currentSettings.threads = getDefaultThreads();
+    state.lastPersistedSettings.threads = getDefaultThreads();
+  }
   if (isE2eFrontend()) {
     state.currentSettings.autoCheckUpdates = false;
     state.currentSettings.basicWindowEffects = false;
-    state.currentSettings.setupComplete = true;
-    state.settingsExtras._setupComplete = true;
-    state.settingsExtras._setupWizardVersion = 3;
+    let persistedSetupExplicitlyIncomplete = false;
+    try {
+      const raw = await invoke<string>("load_settings");
+      const parsed: unknown = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        persistedSetupExplicitlyIncomplete =
+          Object.prototype.hasOwnProperty.call(parsed, "setupComplete") &&
+          (parsed as { setupComplete?: unknown }).setupComplete === false;
+      }
+    } catch {
+      persistedSetupExplicitlyIncomplete = false;
+    }
+    if (!persistedSetupExplicitlyIncomplete) {
+      state.currentSettings.setupComplete = true;
+      state.settingsExtras._setupWizardVersion = 3;
+    }
   }
 
   let isFlatpak = false;
@@ -360,14 +425,15 @@ export async function init() {
   uiReadyForOpenPaths = true;
   refreshQuickActionRepeatState();
 
-  const startupRecoveryStatus = invoke<string | null>(
+  const startupRecoveryStatus = invoke<StartupRecoveryStatus | null>(
     "get_startup_recovery_status",
   );
   void startupRecoveryStatus
-    .then((message) => {
-      if (!message) return;
+    .then((status) => {
+      if (!status) return;
       showPersistentAlertBanner(
-        `Could not finish recovering an interrupted archive job: ${message}`,
+        `Could not finish recovering an interrupted archive job: ${status.message}`,
+        status.kind,
       );
     })
     .catch((err) => {
@@ -489,6 +555,7 @@ export async function init() {
         dom.inputList.classList.remove("list--dragover");
         const paths = event.payload.paths;
         if (!paths.length) return;
+        notifyIncomingPathsQueuedIfBusy();
         await acquireIncomingPathLock();
         try {
           const previousPrimary = state.inputs[0] ?? null;

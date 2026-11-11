@@ -1413,6 +1413,71 @@ describe("release script safeguards", () => {
     ).toThrow(/unsafe artifact filename/);
   });
 
+  it("deduplicates shared updater artifacts only when signatures also match", () => {
+    const url =
+      "https://github.com/BurntToasters/zinnia/releases/download/v0.7.0/Zinnia-macOS-universal.dmg";
+    const manifest = (entries: Array<[string, string]>) =>
+      JSON.stringify({
+        platforms: Object.fromEntries(
+          entries.map(([target, signature]) => [target, { url, signature }]),
+        ),
+      });
+    const refs = collectManifestArtifactRefs([
+      manifest([
+        ["darwin-aarch64", "shared-signature"],
+        ["darwin-x86_64", "shared-signature"],
+      ]),
+      manifest([["darwin-universal", "shared-signature"]]),
+    ]);
+
+    expect(refs.size).toBe(1);
+    expect(refs.get("Zinnia-macOS-universal.dmg")).toEqual({
+      url,
+      signature: "shared-signature",
+    });
+  });
+
+  it("rejects conflicting signatures for a shared updater artifact in either order", () => {
+    const url =
+      "https://github.com/BurntToasters/zinnia/releases/download/v0.7.0/Zinnia-macOS-universal.dmg";
+    const manifest = (entries: Array<[string, string]>) =>
+      JSON.stringify({
+        platforms: Object.fromEntries(
+          entries.map(([target, signature]) => [target, { url, signature }]),
+        ),
+      });
+    const arm = ["darwin-aarch64", "arm-signature"] as [string, string];
+    const intel = ["darwin-x86_64", "intel-signature"] as [string, string];
+    const cases = [
+      [manifest([arm, intel])],
+      [manifest([intel, arm])],
+      [manifest([arm]), manifest([intel])],
+      [manifest([intel]), manifest([arm])],
+    ];
+
+    for (const bodies of cases) {
+      expect(() => collectManifestArtifactRefs(bodies)).toThrow(
+        /conflicting signatures for Zinnia-macOS-universal\.dmg/,
+      );
+    }
+  });
+
+  it("continues rejecting conflicting updater artifact URLs", () => {
+    const artifact = (url: string) =>
+      JSON.stringify({
+        platforms: {
+          windows: { url, signature: "same-signature" },
+        },
+      });
+
+    expect(() =>
+      collectManifestArtifactRefs([
+        artifact("https://example.invalid/releases/a/Zinnia-Windows-x64.exe"),
+        artifact("https://example.invalid/releases/b/Zinnia-Windows-x64.exe"),
+      ]),
+    ).toThrow(/conflicting URLs for Zinnia-Windows-x64\.exe/);
+  });
+
   it("requires an explicit 7z:update action and treats --help as non-mutating", () => {
     expect(parseUpdate7zArgv(["--help"]).help).toBe(true);
     expect(parseUpdate7zArgv(["--update", "--help"]).help).toBe(true);

@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import {
   clearQualityGateProof,
+  currentReleaseIdentity,
   recordSuccessfulQualityGate,
 } from "./release-session.js";
 import { e2eWrapperTimeoutMs } from "./test-e2e.js";
@@ -26,7 +27,7 @@ const criticalCoverageThresholds = {
   "archive/": { lines: 80, branches: 62, functions: 88 },
   "basic/": { lines: 60, branches: 44, functions: 44 },
   "basic/extract-events.ts": { lines: 70, branches: 50, functions: 70 },
-  "extract-window.ts": { lines: 72, branches: 53, functions: 66 },
+  "extract-window/": { lines: 72, branches: 53, functions: 66 },
   "app-init.ts": { lines: 70, branches: 50, functions: 52 },
   "updater.ts": { lines: 76, branches: 62, functions: 68 },
   // Peeled from power-events.ts; keep these high so boot helpers stay tested.
@@ -416,6 +417,7 @@ function main({
   root = resolve(__dirname, ".."),
   clearProof = clearQualityGateProof,
   recordProof = recordSuccessfulQualityGate,
+  captureIdentity = currentReleaseIdentity,
   runner = runCommand,
   parseCoverage: parseCoverageResults = parseCoverage,
   requireCleanProof = false,
@@ -431,7 +433,23 @@ function main({
     );
     return 1;
   }
+  if (process.env.ZINNIA_E2E_ONLY?.trim()) {
+    console.error(
+      `${colors.red}ZINNIA_E2E_ONLY is not allowed for npm run test:all. Unset it and run the full unpackaged WebdriverIO suite, or use npm run test:e2e -- --only=<spec> for local iteration.${colors.reset}`,
+    );
+    return 1;
+  }
   printBanner();
+
+  let testedIdentity;
+  try {
+    testedIdentity = captureIdentity(root);
+  } catch (error) {
+    console.error(
+      `${colors.red}Release identity could not be captured before the quality gate: ${error instanceof Error ? error.message : String(error)}${colors.reset}`,
+    );
+    return 1;
+  }
 
   runner("typecheck", npm, ["run", "typecheck"], null, results);
   runner("lint", npm, ["run", "lint"], null, results);
@@ -570,8 +588,31 @@ function main({
       );
       return 0;
     }
+    let completedIdentity;
+    try {
+      completedIdentity = captureIdentity(root);
+    } catch (error) {
+      console.error(
+        `${colors.red}Release quality-gate proof NOT recorded because the final release identity could not be captured: ${error instanceof Error ? error.message : String(error)}${colors.reset}`,
+      );
+      return 1;
+    }
+    const identityKeys = new Set([
+      ...Object.keys(testedIdentity),
+      ...Object.keys(completedIdentity),
+    ]);
+    const changedIdentityKeys = [...identityKeys].filter(
+      (key) => testedIdentity[key] !== completedIdentity[key],
+    );
+    if (changedIdentityKeys.length > 0) {
+      console.error(
+        `${colors.red}Release quality-gate proof NOT recorded because the release identity changed during the gate (${changedIdentityKeys.join(", ")}). Rerun test:all.${colors.reset}`,
+      );
+      return 1;
+    }
     const qualityGate = recordProof(root, {
       e2e: skipE2e ? "skipped" : "passed",
+      identity: testedIdentity,
     });
     if (qualityGate.recorded) {
       console.log("Release quality-gate proof recorded for this checkout.");

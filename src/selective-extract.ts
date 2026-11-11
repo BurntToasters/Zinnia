@@ -221,13 +221,18 @@ export function buildEntryTree(
   return root.children;
 }
 
+const TREE_NAME_COLLATOR = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: "base",
+});
+
 function sortTree(node: TreeNode): void {
   const pending = [node];
   while (pending.length > 0) {
     const current = pending.pop()!;
     current.children.sort((a, b) => {
       if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
-      return a.name.localeCompare(b.name);
+      return TREE_NAME_COLLATOR.compare(a.name, b.name);
     });
     pending.push(...current.children);
   }
@@ -269,6 +274,48 @@ export function computeNodeCheckState(
 }
 
 /**
+ * For each folder prefix, count the distinct archive paths nested under it.
+ * Built once per call so folder checks cost O(1) instead of a scan of every
+ * entry. Matches `isPathWithinFolder` at separator boundaries only.
+ */
+function indexArchiveChildren(
+  entries: BrowseEntry[],
+  windowsPaths: boolean,
+): { prefixCounts: Map<string, number>; paths: Set<string> } {
+  const prefixCounts = new Map<string, number>();
+  const paths = new Set<string>();
+  for (const entry of entries) {
+    if (paths.has(entry.path)) continue;
+    paths.add(entry.path);
+    const path = entry.path;
+    for (let i = 0; i < path.length; i += 1) {
+      const ch = path[i];
+      if (ch !== "/" && !(windowsPaths && ch === "\\")) continue;
+      const prefix = path.slice(0, i);
+      prefixCounts.set(prefix, (prefixCounts.get(prefix) ?? 0) + 1);
+    }
+  }
+  return { prefixCounts, paths };
+}
+
+/** Same answer as `entries.some(c => c.path !== folder && within(c, folder))`. */
+function folderHasArchiveChildren(
+  folderPath: string,
+  index: { prefixCounts: Map<string, number>; paths: Set<string> },
+  windowsPaths: boolean,
+): boolean {
+  const normalized = normalizeFolderPath(folderPath, windowsPaths);
+  // isPathWithinFolder matches nothing but the folder itself for an empty name.
+  if (!normalized) return false;
+  // A folder with trailing separators is itself counted under its own
+  // normalized prefix, so remove that one self-match.
+  const selfMatch = normalized !== folderPath ? 1 : 0;
+  if ((index.prefixCounts.get(normalized) ?? 0) - selfMatch > 0) return true;
+  // The same folder without its trailing separators is a distinct child.
+  return normalized !== folderPath && index.paths.has(normalized);
+}
+
+/**
  * Map UI selection paths to 7-Zip member filters. Never pass a non-empty folder
  * path: `7z x … folder` expands the full archive subtree, including members
  * outside the rendered/search selection scope.
@@ -279,6 +326,7 @@ export function resolveSelectiveExtractMemberPaths(
   windowsPaths = false,
 ): string[] {
   const byPath = new Map(entries.map((entry) => [entry.path, entry]));
+  const index = indexArchiveChildren(entries, windowsPaths);
   const resolved: string[] = [];
   const seen = new Set<string>();
   for (const path of selectedPaths) {
@@ -291,10 +339,10 @@ export function resolveSelectiveExtractMemberPaths(
       }
       continue;
     }
-    const hasArchiveChildren = entries.some(
-      (candidate) =>
-        candidate.path !== path &&
-        isPathWithinFolder(candidate.path, path, windowsPaths),
+    const hasArchiveChildren = folderHasArchiveChildren(
+      path,
+      index,
+      windowsPaths,
     );
     // Empty folders must still be passed so 7-Zip creates the directory.
     if (!hasArchiveChildren && !seen.has(path)) {

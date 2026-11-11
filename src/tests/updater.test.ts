@@ -3,7 +3,6 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { check } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
 import {
   isPermissionGranted,
   requestPermission,
@@ -43,6 +42,7 @@ import {
 function defaultInvoke(command: string): Promise<unknown> {
   if (command === "is_7z_running") return Promise.resolve(false);
   if (command === "is_flatpak") return Promise.resolve(false);
+  if (command === "relaunch_app") return Promise.resolve(undefined);
   if (command === "get_beta_updater_target") {
     return Promise.resolve("windows-beta-x86_64-nsis");
   }
@@ -53,7 +53,10 @@ const askMock = vi.mocked(ask);
 const getVersionMock = vi.mocked(getVersion);
 const invokeMock = vi.mocked(invoke);
 const checkMock = vi.mocked(check);
-const relaunchMock = vi.mocked(relaunch);
+function relaunchCalls(): number {
+  return invokeMock.mock.calls.filter((call) => call[0] === "relaunch_app")
+    .length;
+}
 const isPermissionGrantedMock = vi.mocked(isPermissionGranted);
 const requestPermissionMock = vi.mocked(requestPermission);
 const sendNotificationMock = vi.mocked(sendNotification);
@@ -66,7 +69,6 @@ beforeEach(() => {
   getVersionMock.mockReset();
   invokeMock.mockReset();
   checkMock.mockReset();
-  relaunchMock.mockReset();
   isPermissionGrantedMock.mockReset();
   requestPermissionMock.mockReset();
   sendNotificationMock.mockReset();
@@ -79,7 +81,6 @@ beforeEach(() => {
   getVersionMock.mockResolvedValue("0.4.1");
   invokeMock.mockImplementation((command) => defaultInvoke(String(command)));
   checkMock.mockResolvedValue(null);
-  relaunchMock.mockResolvedValue(undefined);
   isPermissionGrantedMock.mockResolvedValue(true);
   requestPermissionMock.mockResolvedValue("denied");
 });
@@ -198,7 +199,20 @@ describe("checkUpdates", () => {
 
     expect(download).toHaveBeenCalledWith(undefined, { timeout: 120_000 });
     expect(install).toHaveBeenCalledOnce();
-    expect(relaunchMock).toHaveBeenCalledOnce();
+    expect(relaunchCalls()).toBe(1);
+    // The reservation must be released before relaunch_app, or Quit stays deferred.
+    const releaseIndex = invokeMock.mock.calls.findIndex(
+      (call) =>
+        call[0] === "is_7z_running" &&
+        (call[1] as { mode?: string } | undefined)?.mode === "release_update",
+    );
+    const relaunchIndex = invokeMock.mock.calls.findIndex(
+      (call) => call[0] === "relaunch_app",
+    );
+    expect(releaseIndex).toBeGreaterThanOrEqual(0);
+    expect(invokeMock.mock.invocationCallOrder[releaseIndex]).toBeLessThan(
+      invokeMock.mock.invocationCallOrder[relaunchIndex],
+    );
     expect(invokeMock).toHaveBeenCalledWith("is_7z_running", {
       mode: "reserve_update",
     });
@@ -224,7 +238,7 @@ describe("checkUpdates", () => {
     expect(invokeMock).toHaveBeenCalledWith("is_7z_running", {
       mode: "release_update",
     });
-    expect(relaunchMock).not.toHaveBeenCalled();
+    expect(relaunchCalls()).toBe(0);
   });
 
   it("does not relaunch after install when reservation release IPC fails", async () => {
@@ -249,7 +263,7 @@ describe("checkUpdates", () => {
     await checkUpdates();
 
     expect(install).toHaveBeenCalledOnce();
-    expect(relaunchMock).not.toHaveBeenCalled();
+    expect(relaunchCalls()).toBe(0);
     expect(logMock).toHaveBeenCalledWith(
       "Unable to release update reservation: release IPC unavailable",
       "error",
@@ -285,7 +299,7 @@ describe("checkUpdates", () => {
         ),
       );
       expect(setStatusMock).toHaveBeenCalledWith("Still installing update");
-      expect(relaunchMock).not.toHaveBeenCalled();
+      expect(relaunchCalls()).toBe(0);
 
       resolveInstall?.();
       await pending;
@@ -293,7 +307,7 @@ describe("checkUpdates", () => {
       expect(invokeMock).toHaveBeenCalledWith("is_7z_running", {
         mode: "release_update",
       });
-      expect(relaunchMock).toHaveBeenCalledOnce();
+      expect(relaunchCalls()).toBe(1);
     } finally {
       vi.useRealTimers();
     }
@@ -359,7 +373,7 @@ describe("checkUpdates", () => {
       expect.stringContaining("Unable to release update reservation"),
       "error",
     );
-    expect(relaunchMock).not.toHaveBeenCalled();
+    expect(relaunchCalls()).toBe(0);
   });
 
   it("downloads update and defers install when user chooses later", async () => {
@@ -377,7 +391,7 @@ describe("checkUpdates", () => {
 
     expect(download).toHaveBeenCalledOnce();
     expect(install).not.toHaveBeenCalled();
-    expect(relaunchMock).not.toHaveBeenCalled();
+    expect(relaunchCalls()).toBe(0);
     expect(sendNotificationMock).toHaveBeenCalledWith({
       title: "Zinnia",
       body: "Update downloaded and ready to install from Check now.",

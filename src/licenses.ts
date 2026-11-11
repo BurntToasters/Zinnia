@@ -54,7 +54,7 @@ async function renderLicenses() {
       `<strong>7-Zip</strong><span class="license-card__tag">LGPL-2.1 / BSD-3-Clause</span>` +
       `</summary>` +
       `<div class="license-card__body">` +
-      `<p><a href="https://7-zip.org/" target="_blank" rel="noopener">7-Zip</a> by Igor Pavlov.</p>` +
+      `<p><a href="https://7-zip.org/" target="_blank" rel="noopener noreferrer">7-Zip</a> by Igor Pavlov.</p>` +
       `<p>Most code is GNU LGPL; portions use BSD-3-Clause and the unRAR restriction.</p>` +
       `</div>`;
     if (sevenZipLicense) {
@@ -85,7 +85,7 @@ async function renderLicenses() {
         const repoLink = document.createElement("a");
         repoLink.href = href;
         repoLink.target = "_blank";
-        repoLink.rel = "noopener";
+        repoLink.rel = "noopener noreferrer";
         repoLink.textContent = entry.repository!;
         body.appendChild(repoLink);
       } else {
@@ -116,7 +116,7 @@ async function renderLicenses() {
           if (refHref !== "#") {
             link.href = refHref;
             link.target = "_blank";
-            link.rel = "noopener";
+            link.rel = "noopener noreferrer";
           }
           link.textContent = reference.identifier;
           note.appendChild(link);

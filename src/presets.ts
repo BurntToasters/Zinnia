@@ -1,7 +1,7 @@
 import { $ } from "./utils";
 import { getCompressionSecuritySupport } from "./compression-security";
 import { state } from "./state";
-import type { CustomPreset } from "./settings-model";
+import { MAX_CUSTOM_PRESETS, type CustomPreset } from "./settings-model";
 
 export interface PresetConfig {
   format: string;
@@ -13,6 +13,11 @@ export interface PresetConfig {
 }
 
 const CUSTOM_PRESET_PREFIX = "custom:";
+const MAX_CUSTOM_PRESET_NAME_LENGTH = 64;
+
+function isBuiltInPresetName(name: string): boolean {
+  return Object.hasOwn(PRESETS, name);
+}
 
 function currentConfig(): PresetConfig {
   return {
@@ -23,6 +28,12 @@ function currentConfig(): PresetConfig {
     wordSize: $<HTMLSelectElement>("word-size").value,
     solid: $<HTMLSelectElement>("solid").value,
   };
+}
+
+function solidOptionOrOff(select: HTMLSelectElement, value: string): string {
+  return [...select.options].some((option) => option.value === value)
+    ? value
+    : "off";
 }
 
 function getCustomPreset(name: string): CustomPreset | undefined {
@@ -94,6 +105,7 @@ function updateSecurityControlsForFormat(format: string) {
     passwordInput.type = "password";
     passwordToggle.textContent = "Show";
     passwordToggle.setAttribute("aria-pressed", "false");
+    passwordToggle.setAttribute("aria-label", "Show password");
   }
 
   if (!support.encryptHeaders) {
@@ -188,15 +200,13 @@ export function updateCompressionOptionsForFormat(format: string) {
     wordSizeSelect.value = "";
   }
 
-  if (currentSolid) {
-    solidSelect.value = currentSolid;
-  }
-
   // Solid mode is only supported for 7z archives
   const solidSupported = format === "7z";
   solidSelect.disabled = !solidSupported;
   if (!solidSupported) {
     solidSelect.value = "off";
+  } else {
+    solidSelect.value = solidOptionOrOff(solidSelect, currentSolid);
   }
 
   if (
@@ -216,7 +226,9 @@ export function updateCompressionOptionsForFormat(format: string) {
 export function applyPreset(name: string) {
   if (name === "custom") return;
 
-  let preset: PresetConfig | undefined = PRESETS[name];
+  let preset: PresetConfig | undefined = isBuiltInPresetName(name)
+    ? PRESETS[name]
+    : undefined;
   if (!preset && name.startsWith(CUSTOM_PRESET_PREFIX)) {
     preset = getCustomPreset(name.slice(CUSTOM_PRESET_PREFIX.length));
   }
@@ -228,7 +240,8 @@ export function applyPreset(name: string) {
   $<HTMLSelectElement>("method").value = preset.method;
   $<HTMLSelectElement>("dict").value = preset.dict;
   $<HTMLSelectElement>("word-size").value = preset.wordSize;
-  $<HTMLSelectElement>("solid").value = preset.solid;
+  const solidSelect = $<HTMLSelectElement>("solid");
+  solidSelect.value = solidOptionOrOff(solidSelect, preset.solid);
 }
 
 function configsMatch(a: PresetConfig, b: PresetConfig): boolean {
@@ -258,15 +271,31 @@ export function detectPreset(): string {
 export function saveCustomPreset(name: string): CustomPreset {
   const trimmed = name.trim();
   if (!trimmed) throw new Error("Preset name cannot be empty.");
-  if (trimmed in PRESETS) {
+  if (isBuiltInPresetName(trimmed)) {
     throw new Error(`"${trimmed}" is a built-in preset name. Choose another.`);
+  }
+  if (trimmed.length > MAX_CUSTOM_PRESET_NAME_LENGTH) {
+    throw new Error(
+      `Preset names can be at most ${MAX_CUSTOM_PRESET_NAME_LENGTH} characters.`,
+    );
+  }
+
+  const customPresets = state.currentSettings.customPresets;
+  const existingIndex = customPresets.findIndex((p) => p.name === trimmed);
+  if (existingIndex < 0 && customPresets.length >= MAX_CUSTOM_PRESETS) {
+    throw new Error(
+      `You can save up to ${MAX_CUSTOM_PRESETS} custom presets. Delete one or use an existing name to replace it.`,
+    );
   }
 
   const preset: CustomPreset = { name: trimmed, ...currentConfig() };
-  const existing = state.currentSettings.customPresets.filter(
-    (p) => p.name !== trimmed,
-  );
-  state.currentSettings.customPresets = [...existing, preset];
+  const updated = [...customPresets];
+  if (existingIndex >= 0) {
+    updated[existingIndex] = preset;
+  } else {
+    updated.push(preset);
+  }
+  state.currentSettings.customPresets = updated;
   return preset;
 }
 

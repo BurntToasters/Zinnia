@@ -160,7 +160,13 @@ describe("universal macOS 7-Zip merge", () => {
 });
 
 describe("macOS compatibility", () => {
-  it("requires macOS 26+ and a numeric bundle build version", () => {
+  // Compatibility failure modes to guard before changing the deployment floor:
+  // - the host app remains above or below the advertised macOS 15.0 minimum;
+  // - the Finder Sync source plist disagrees with the host app minimum;
+  // - the extension compiler target and generated plist diverge, especially
+  //   when ZINNIA_FINDERSYNC_MIN_OS overrides the config-derived default;
+  // - a shipped 7-Zip architecture still requires a newer macOS release.
+  it("requires macOS 15+ and a numeric bundle build version", () => {
     const config = JSON.parse(
       fs.readFileSync(
         path.resolve(process.cwd(), "src-tauri", "tauri.conf.json"),
@@ -173,7 +179,7 @@ describe("macOS compatibility", () => {
       };
     };
 
-    expect(config.bundle?.macOS?.minimumSystemVersion).toBe("26.0");
+    expect(config.bundle?.macOS?.minimumSystemVersion).toBe("15.0");
     expect(config.bundle?.macOS?.bundleVersion).toMatch(/^\d+(?:\.\d+){0,2}$/);
     expect(config.bundle?.macOS?.bundleVersion).toBe(
       macBundleVersionFromSemver(config.version ?? ""),
@@ -188,6 +194,52 @@ describe("macOS compatibility", () => {
     expect(infoPlist).toContain("run.rosie.zinnia.split-volume");
     expect(infoPlist).toContain("<string>001</string>");
     expect(infoPlist).toContain("Extract with Zinnia");
+
+    const finderSyncInfoPlist = fs.readFileSync(
+      path.resolve(
+        process.cwd(),
+        "src-tauri",
+        "macos",
+        "ZinniaFinderSync",
+        "Info.plist",
+      ),
+      "utf8",
+    );
+    expect(finderSyncInfoPlist).toContain(
+      "<key>LSMinimumSystemVersion</key>\n\t<string>15.0</string>",
+    );
+  });
+
+  it("links the Finder Sync compiler target and generated plist to the effective minimum", () => {
+    const finderSyncBuildScript = fs.readFileSync(
+      path.resolve(process.cwd(), "scripts", "build-macos-finder-sync.sh"),
+      "utf8",
+    );
+    expect(finderSyncBuildScript).toContain(
+      "ZINNIA_FINDERSYNC_MIN_OS:-$(node -e",
+    );
+    expect(finderSyncBuildScript).toContain("src-tauri/tauri.conf.json");
+    expect(finderSyncBuildScript).toContain(
+      "config.bundle?.macOS?.minimumSystemVersion",
+    );
+    expect(finderSyncBuildScript).toContain(
+      "Set :LSMinimumSystemVersion $MIN_OS",
+    );
+    expect(finderSyncBuildScript).toContain(
+      '-target "${arch}-apple-macosx${MIN_OS}"',
+    );
+  });
+
+  it("stores each official macOS 7-Zip slice as its own thin Mach-O", () => {
+    for (const [dir, arch] of MAC_7Z_SLICES) {
+      const bytes = fs.readFileSync(
+        path.resolve(process.cwd(), "assets", "mac", dir, "7zz"),
+      );
+      expect(readThinMachOArch(bytes), `assets/mac/${dir}/7zz`).toBe(arch);
+    }
+    expect(
+      fs.existsSync(path.resolve(process.cwd(), "assets", "mac", "7zz")),
+    ).toBe(false);
   });
 
   it("stores each official macOS 7-Zip slice as its own thin Mach-O", () => {
@@ -330,7 +382,7 @@ describe("macOS compatibility", () => {
     expect(finderSyncPlist).toContain("ZinniaAppGroupIdentifier");
   });
 
-  it("replaces the live app with a sibling backup instead of rm -rf before mv", () => {
+  it("preserves the outer app directory while backing up and replacing Contents", () => {
     const updaterSrc = fs.readFileSync(
       path.resolve(
         process.cwd(),
@@ -349,15 +401,15 @@ describe("macOS compatibility", () => {
       updaterSrc.indexOf("on installUpdate"),
       updaterSrc.indexOf("end installUpdate"),
     );
-    expect(script).toContain('/bin/mv -f \\"$BAK\\" \\"$SRC\\"');
-    expect(script).toContain('/bin/test -d \\"$SRC/Contents\\"');
     expect(script).toContain(
-      '/bin/rm -rf \\"$SRC\\"; fi; /bin/mv -f \\"$BAK\\" \\"$SRC\\"',
+      '/bin/mv -f \\\"$BAK/Contents\\\" \\\"$SRC/Contents\\\"',
     );
+    expect(script).toContain('/bin/test -d \\\"$SRC/Contents\\\"');
+    expect(script).toContain(
+      '/bin/mv -f \\\"$SRC/Contents\\\" \\\"$BAK/Contents\\\"',
+    );
+    expect(script).not.toContain('/bin/mv -f \\\"$SRC\\\" \\\"$BAK\\\"');
     expect(script).not.toContain('rm -rf " & quoted form of srcPath');
-    expect(script).toContain(
-      'if /bin/test -e \\"$BAK\\"; then /bin/rm -rf \\"$BAK\\"; fi; /bin/mv -f \\"$SRC\\" \\"$BAK\\"',
-    );
     const installInner = fs.readFileSync(
       path.resolve(
         process.cwd(),
@@ -370,6 +422,10 @@ describe("macOS compatibility", () => {
       "utf8",
     );
     expect(installInner).toContain("MACOS_PRIVILEGED_INSTALL_SCRIPT");
+    expect(installInner).toContain("install_macos_app_contents(");
+    expect(installInner).not.toContain(
+      "std::fs::rename(&self.extract_path, &backup_path)",
+    );
     const productionInstall = installInner.split("#[cfg(test)]")[0];
     expect(productionInstall).not.toMatch(/rm -rf .*quoted form of srcPath/);
     expect(productionInstall).not.toContain("script.compile().expect");

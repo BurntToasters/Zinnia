@@ -1,9 +1,22 @@
 import { getWorkspaceMode } from "../ui";
 import { state } from "../state";
+import { isImeComposing, isKeyHandled } from "../utils";
 import { setBasicView } from "./sync";
+
+/** Input types where Enter means "run" and not a native form action. */
+const RUN_ON_ENTER_INPUT_TYPES = new Set([
+  "text",
+  "search",
+  "url",
+  "tel",
+  "email",
+  "password",
+  "number",
+]);
 
 export function wireBasicKeyboardEvents(): void {
   document.addEventListener("keydown", (event) => {
+    if (isKeyHandled(event)) return;
     if (getWorkspaceMode() !== "basic") return;
     if (document.querySelector(".modal-overlay:not([hidden])")) return;
     if (state.running || state.operationPreparing) return;
@@ -58,8 +71,17 @@ export function wireBasicKeyboardEvents(): void {
     }
 
     if (event.key !== "Enter") return;
-    const activeElement = document.activeElement as HTMLElement;
-    if (["BUTTON", "A"].includes(activeElement?.tagName)) return;
+    if (isImeComposing(event)) return;
+    // Only a text field runs the operation. Checkboxes, selects and buttons
+    // keep their own Enter behavior. Key events target the focused element,
+    // so the event target is the field that received the key.
+    const target = event.target;
+    if (
+      !(target instanceof HTMLInputElement) ||
+      !RUN_ON_ENTER_INPUT_TYPES.has(target.type)
+    ) {
+      return;
+    }
     if (
       document.getElementById("basic-compress")?.classList.contains("is-active")
     ) {

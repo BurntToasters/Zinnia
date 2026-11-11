@@ -51,28 +51,14 @@ describe("setup wizard state", () => {
     expect(shouldShowSetupWizard()).toBe(true);
   });
 
-  it("never shows the wizard in unpackaged E2E builds", () => {
-    e2eEnv.isE2eFrontend.mockReturnValue(true);
-    expect(shouldShowSetupWizard()).toBe(false);
-  });
-
   it("does not show wizard when setup is complete for current version", () => {
     state.currentSettings.setupComplete = true;
-    state.settingsExtras._setupComplete = true;
     state.settingsExtras._setupWizardVersion = 3;
     expect(shouldShowSetupWizard()).toBe(false);
   });
 
-  it("shows the upgraded wizard for legacy completion without a version", () => {
-    state.currentSettings.setupComplete = false;
-    state.settingsExtras._setupComplete = true;
-    delete state.settingsExtras._setupWizardVersion;
-    expect(shouldShowSetupWizard()).toBe(true);
-  });
-
   it("shows wizard again when setup version is outdated", () => {
     state.currentSettings.setupComplete = true;
-    state.settingsExtras._setupComplete = true;
     state.settingsExtras._setupWizardVersion = 0;
     expect(shouldShowSetupWizard()).toBe(true);
   });
@@ -80,7 +66,7 @@ describe("setup wizard state", () => {
   it("marks setup complete and persists settings", async () => {
     await markSetupComplete();
     expect(state.currentSettings.setupComplete).toBe(true);
-    expect(state.settingsExtras._setupComplete).toBe(true);
+    expect(state.settingsExtras._setupComplete).toBeUndefined();
     expect(state.settingsExtras._setupWizardVersion).toBe(3);
     expect(mockSaveSettings).toHaveBeenCalledOnce();
   });

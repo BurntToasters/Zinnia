@@ -41,6 +41,32 @@ use crate::{
     Config,
 };
 
+/// Upper bound for one update download. The body is buffered in memory and
+/// only verified after it is complete, so an endless or oversized stream from
+/// a misbehaving host must be refused before it exhausts memory. Signed
+/// installers are far below this.
+pub(crate) const MAX_UPDATE_DOWNLOAD_BYTES: u64 = 1024 * 1024 * 1024;
+
+/// Refuse a download that declares, or has accumulated, more than
+/// [`MAX_UPDATE_DOWNLOAD_BYTES`]. `buffered` is what is already held,
+/// `incoming` is the next chunk, and `declared` is `Content-Length` when sent.
+/// Both are checked because the header is optional and not trustworthy.
+pub(crate) fn ensure_download_within_limit(
+    buffered: usize,
+    incoming: usize,
+    declared: Option<u64>,
+) -> Result<()> {
+    let too_large = declared.is_some_and(|length| length > MAX_UPDATE_DOWNLOAD_BYTES)
+        || (buffered as u64).saturating_add(incoming as u64) > MAX_UPDATE_DOWNLOAD_BYTES;
+    if too_large {
+        return Err(Error::Network(format!(
+            "Update download exceeds the {} MiB safety limit.",
+            MAX_UPDATE_DOWNLOAD_BYTES / (1024 * 1024)
+        )));
+    }
+    Ok(())
+}
+
 const UPDATER_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"),);
 
 #[derive(Copy, Clone)]
@@ -689,11 +715,14 @@ impl Update {
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.parse().ok());
 
+        ensure_download_within_limit(0, 0, content_length)?;
+
         let mut buffer = Vec::new();
 
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
+            ensure_download_within_limit(buffer.len(), chunk.len(), content_length)?;
             on_chunk(chunk.len(), content_length);
             buffer.extend(chunk);
         }
@@ -972,73 +1001,79 @@ impl Update {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
         let extract_path_metadata = self.extract_path.metadata()?;
 
-        let tmp_dir_locations = vec![
-            Box::new(|| Some(std::env::temp_dir())) as Box<dyn FnOnce() -> Option<PathBuf>>,
-            Box::new(dirs::cache_dir),
-            Box::new(|| Some(self.extract_path.parent().unwrap().to_path_buf())),
+        let tmp_dir_locations = [
+            Some(std::env::temp_dir()),
+            dirs::cache_dir(),
+            self.extract_path.parent().map(Path::to_path_buf),
         ];
-
-        for tmp_dir_location in tmp_dir_locations {
-            if let Some(tmp_dir_location) = tmp_dir_location() {
+        let tmp_dir = match crate::install_safety::select_same_device_temp_dir(
+            extract_path_metadata.dev(),
+            tmp_dir_locations,
+            |location| -> std::io::Result<_> {
                 let tmp_dir = tempfile::Builder::new()
                     .prefix("tauri_current_app")
-                    .tempdir_in(tmp_dir_location)?;
-                let tmp_dir_metadata = tmp_dir.path().metadata()?;
+                    .tempdir_in(location)?;
+                let device = tmp_dir.path().metadata()?.dev();
+                Ok((tmp_dir, device))
+            },
+        ) {
+            Ok(tmp_dir) => tmp_dir,
+            Err(crate::install_safety::SameDeviceTempDirError::Candidate(err)) => {
+                return Err(err.into());
+            }
+            Err(crate::install_safety::SameDeviceTempDirError::NoSameDeviceCandidate) => {
+                return Err(Error::TempDirNotOnSameMountPoint);
+            }
+        };
 
-                if extract_path_metadata.dev() == tmp_dir_metadata.dev() {
-                    let mut perms = tmp_dir_metadata.permissions();
-                    perms.set_mode(0o700);
-                    std::fs::set_permissions(tmp_dir.path(), perms)?;
+        let mut perms = tmp_dir.path().metadata()?.permissions();
+        perms.set_mode(0o700);
+        std::fs::set_permissions(tmp_dir.path(), perms)?;
 
-                    let tmp_app_image = &tmp_dir.path().join("current_app.AppImage");
+        let tmp_app_image = &tmp_dir.path().join("current_app.AppImage");
 
-                    let permissions = std::fs::metadata(&self.extract_path)?.permissions();
+        let permissions = std::fs::metadata(&self.extract_path)?.permissions();
 
-                    // create a backup of our current app image
-                    std::fs::rename(&self.extract_path, tmp_app_image)?;
+        // create a backup of our current app image
+        std::fs::rename(&self.extract_path, tmp_app_image)?;
 
-                    #[cfg(feature = "zip")]
-                    if infer::archive::is_gz(bytes) {
-                        log::debug!("extracting AppImage");
-                        // extract the buffer to the tmp_dir
-                        // we extract our signed archive into our final directory without any temp file
-                        let archive = Cursor::new(bytes);
-                        let decoder = flate2::read::GzDecoder::new(archive);
-                        let mut archive = tar::Archive::new(decoder);
-                        for mut entry in archive.entries()?.flatten() {
-                            if let Ok(path) = entry.path() {
-                                if path.extension() == Some(OsStr::new("AppImage")) {
-                                    // if something went wrong during the extraction, we should restore previous app
-                                    if let Err(err) = entry.unpack(&self.extract_path) {
-                                        std::fs::rename(tmp_app_image, &self.extract_path)?;
-                                        return Err(err.into());
-                                    }
-                                    // early finish we have everything we need here
-                                    return Ok(());
-                                }
-                            }
-                        }
-                        // if we have not returned early we should restore the backup
-                        std::fs::rename(tmp_app_image, &self.extract_path)?;
-                        return Err(Error::BinaryNotFoundInArchive);
-                    }
-
-                    log::debug!("rewriting AppImage");
-                    return match std::fs::write(&self.extract_path, bytes)
-                        .and_then(|_| std::fs::set_permissions(&self.extract_path, permissions))
-                    {
-                        Err(err) => {
-                            // if something went wrong during the extraction, we should restore previous app
+        #[cfg(feature = "zip")]
+        if infer::archive::is_gz(bytes) {
+            log::debug!("extracting AppImage");
+            // extract the buffer to the tmp_dir
+            // we extract our signed archive into our final directory without any temp file
+            let archive = Cursor::new(bytes);
+            let decoder = flate2::read::GzDecoder::new(archive);
+            let mut archive = tar::Archive::new(decoder);
+            for mut entry in archive.entries()?.flatten() {
+                if let Ok(path) = entry.path() {
+                    if path.extension() == Some(OsStr::new("AppImage")) {
+                        // if something went wrong during the extraction, we should restore previous app
+                        if let Err(err) = entry.unpack(&self.extract_path) {
                             std::fs::rename(tmp_app_image, &self.extract_path)?;
-                            Err(err.into())
+                            return Err(err.into());
                         }
-                        Ok(_) => Ok(()),
-                    };
+                        // early finish we have everything we need here
+                        return Ok(());
+                    }
                 }
             }
+            // if we have not returned early we should restore the backup
+            std::fs::rename(tmp_app_image, &self.extract_path)?;
+            return Err(Error::BinaryNotFoundInArchive);
         }
 
-        Err(Error::TempDirNotOnSameMountPoint)
+        log::debug!("rewriting AppImage");
+        match std::fs::write(&self.extract_path, bytes)
+            .and_then(|_| std::fs::set_permissions(&self.extract_path, permissions))
+        {
+            Err(err) => {
+                // if something went wrong during the extraction, we should restore previous app
+                std::fs::rename(tmp_app_image, &self.extract_path)?;
+                Err(err.into())
+            }
+            Ok(_) => Ok(()),
+        }
     }
 
     fn install_deb(&self, bytes: &[u8]) -> Result<()> {
@@ -1291,8 +1326,8 @@ impl Update {
     /// └── ...
     fn install_inner(&self, bytes: &[u8]) -> Result<()> {
         use crate::install_safety::{
-            is_cross_device, macos_app_bundle_complete, macos_update_backup_path,
-            move_dir_replacing, MACOS_PRIVILEGED_INSTALL_SCRIPT,
+            install_macos_app_contents, is_cross_device, macos_app_bundle_complete,
+            macos_update_backup_path, MACOS_PRIVILEGED_INSTALL_SCRIPT,
         };
 
         let app_parent = self
@@ -1325,10 +1360,18 @@ impl Update {
 
         if !macos_app_bundle_complete(&self.extract_path) && macos_app_bundle_complete(&backup_path)
         {
-            if self.extract_path.exists() {
-                let _ = std::fs::remove_dir_all(&self.extract_path);
-            }
-            if let Err(err) = std::fs::rename(&backup_path, &self.extract_path) {
+            // New backups and legacy whole-bundle backups both contain
+            // Contents. Recover it without moving the outer app directory.
+            let restore = (|| -> std::io::Result<()> {
+                std::fs::create_dir_all(&self.extract_path)?;
+                let contents = self.extract_path.join("Contents");
+                if contents.exists() {
+                    std::fs::remove_file(&contents)?;
+                }
+                std::fs::rename(backup_path.join("Contents"), contents)?;
+                std::fs::remove_dir_all(&backup_path)
+            })();
+            if let Err(err) = restore {
                 if err.kind() != std::io::ErrorKind::PermissionDenied {
                     return Err(err.into());
                 }
@@ -1337,36 +1380,11 @@ impl Update {
             let _ = std::fs::remove_dir_all(&backup_path);
         }
 
-        let unprivileged = (|| -> std::io::Result<()> {
-            std::fs::rename(&self.extract_path, &backup_path)?;
-            match move_dir_replacing(tmp_extract_dir.path(), &self.extract_path) {
-                Ok(()) => {
-                    if !macos_app_bundle_complete(&self.extract_path) {
-                        if self.extract_path.exists() {
-                            let _ = std::fs::remove_dir_all(&self.extract_path);
-                        }
-                        std::fs::rename(&backup_path, &self.extract_path)?;
-                        return Err(std::io::Error::other(
-                            "new app bundle is missing Contents after install",
-                        ));
-                    }
-                    let _ = std::fs::remove_dir_all(&backup_path);
-                    Ok(())
-                }
-                Err(err) => {
-                    if self.extract_path.exists() {
-                        let _ = std::fs::remove_dir_all(&self.extract_path);
-                    }
-                    let _ = std::fs::rename(&backup_path, &self.extract_path);
-                    Err(err)
-                }
-            }
-        })();
+        let unprivileged =
+            install_macos_app_contents(tmp_extract_dir.path(), &self.extract_path, &backup_path);
 
         match unprivileged {
-            Ok(()) => {
-                let _ = tmp_extract_dir.keep();
-            }
+            Ok(()) => {}
             Err(err)
                 if err.kind() == std::io::ErrorKind::PermissionDenied || is_cross_device(&err) =>
             {
@@ -1420,12 +1438,11 @@ impl Update {
                         "Failed to move the new app into place",
                     )));
                 }
-                let _ = tmp_extract_dir.keep();
             }
             Err(err) => return Err(err.into()),
         }
 
-        let _ = std::process::Command::new("touch")
+        let _ = std::process::Command::new("/usr/bin/touch")
             .arg(&self.extract_path)
             .status();
 
@@ -1767,6 +1784,36 @@ fn escape_msi_property_arg(arg: impl AsRef<OsStr>) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::{ensure_download_within_limit, MAX_UPDATE_DOWNLOAD_BYTES};
+
+    #[test]
+    fn download_limit_rejects_a_declared_oversize_body_before_reading() {
+        let error = ensure_download_within_limit(0, 0, Some(MAX_UPDATE_DOWNLOAD_BYTES + 1))
+            .expect_err("declared size over the limit");
+        assert!(error.to_string().contains("exceeds"), "{error}");
+    }
+
+    #[test]
+    fn download_limit_rejects_a_stream_that_outgrows_a_missing_or_false_length() {
+        for declared in [None, Some(10)] {
+            let error = ensure_download_within_limit(
+                (MAX_UPDATE_DOWNLOAD_BYTES - 5) as usize,
+                6,
+                declared,
+            )
+            .expect_err("accumulated size over the limit");
+            assert!(error.to_string().contains("exceeds"), "{error}");
+        }
+    }
+
+    #[test]
+    fn download_limit_accepts_sizes_up_to_and_including_the_limit() {
+        ensure_download_within_limit(0, 0, Some(MAX_UPDATE_DOWNLOAD_BYTES)).expect("exact limit");
+        ensure_download_within_limit((MAX_UPDATE_DOWNLOAD_BYTES - 5) as usize, 5, None)
+            .expect("exactly at the limit");
+        ensure_download_within_limit(1024, 1024, Some(2048)).expect("ordinary download");
+        ensure_download_within_limit(0, 4096, None).expect("unknown length, small body");
+    }
 
     #[test]
     #[cfg(windows)]

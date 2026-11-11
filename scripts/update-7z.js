@@ -147,7 +147,8 @@ export function syncChangelog7zVersion(changelog, appVersion, sevenZipVersion) {
     );
   }
   const bodyStart = headingIndex + heading.length;
-  const nextHeading = text.indexOf("\n## ", bodyStart);
+  const boundary = text.slice(bodyStart).search(/\n(?:#{2,3} |<details)/);
+  const nextHeading = boundary === -1 ? -1 : bodyStart + boundary;
   const bodyEnd = nextHeading === -1 ? text.length : nextHeading + 1;
   const bullet = `${CHANGELOG_7Z_BULLET_PREFIX} Updated bundled 7-Zip to \`${sevenZipVersion}\`.`;
   const lines = text

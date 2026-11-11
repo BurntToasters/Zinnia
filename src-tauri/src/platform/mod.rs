@@ -4,6 +4,7 @@ mod defaults_cmds;
 mod integration_status;
 mod linux_defaults;
 mod os_command;
+mod relaunch;
 
 #[cfg(target_os = "macos")]
 mod macos_defaults;
@@ -387,6 +388,9 @@ pub use defaults_cmds::{
 pub use integration_status::{
     __cmd__get_os_integration_status, __tauri_command_name_get_os_integration_status,
 };
+pub use relaunch::relaunch_app;
+#[doc(hidden)]
+pub use relaunch::{__cmd__relaunch_app, __tauri_command_name_relaunch_app};
 
 #[cfg(test)]
 mod handler_tests {
