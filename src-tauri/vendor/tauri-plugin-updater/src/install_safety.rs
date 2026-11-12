@@ -15,7 +15,7 @@ use std::path::{Component, Path, PathBuf};
 /// Both new and legacy backups store the original `Contents` under `$BAK`.
 pub const MACOS_PRIVILEGED_INSTALL_SCRIPT: &str = r#"
 on installUpdate(srcPath, newPath, backupPath)
-  do shell script "NEW=" & quoted form of newPath & "; SRC=" & quoted form of srcPath & "; BAK=" & quoted form of backupPath & "; /bin/test -d \"$NEW/Contents\" || exit 1; if /bin/test ! -d \"$SRC/Contents\"; then if /bin/test -d \"$BAK/Contents\"; then /bin/mkdir -p \"$SRC\" || exit 1; if /bin/test -e \"$SRC/Contents\"; then /bin/rm -rf \"$SRC/Contents\" || exit 1; fi; /bin/mv -f \"$BAK/Contents\" \"$SRC/Contents\" || exit 1; fi; fi; /bin/test -d \"$SRC/Contents\" || exit 1; if /bin/test -e \"$BAK\"; then /bin/rm -rf \"$BAK\"; fi; /bin/mkdir \"$BAK\" || exit 1; /bin/mv -f \"$SRC/Contents\" \"$BAK/Contents\" || exit 1; if /bin/mv -f \"$NEW/Contents\" \"$SRC/Contents\" && /bin/test -d \"$SRC/Contents\"; then /bin/rm -rf \"$BAK\"; exit 0; fi; if /bin/test -e \"$SRC/Contents\"; then /bin/rm -rf \"$SRC/Contents\"; fi; /bin/mv -f \"$BAK/Contents\" \"$SRC/Contents\"; exit 1" with administrator privileges
+  do shell script "NEW=" & quoted form of newPath & "; SRC=" & quoted form of srcPath & "; BAK=" & quoted form of backupPath & "; /bin/test -d \"$NEW/Contents\" || exit 1; if /bin/test ! -d \"$SRC/Contents\"; then if /bin/test -d \"$BAK/Contents\"; then /bin/mkdir -p \"$SRC\" || exit 1; if /bin/test -e \"$SRC/Contents\"; then /bin/rm -rf \"$SRC/Contents\" || exit 1; fi; /bin/mv -f \"$BAK/Contents\" \"$SRC/Contents\" || exit 1; fi; fi; /bin/test -d \"$SRC/Contents\" || exit 1; if /bin/test -e \"$BAK\"; then /bin/rm -rf \"$BAK\"; fi; /bin/mkdir \"$BAK\" || exit 1; /bin/mv -f \"$SRC/Contents\" \"$BAK/Contents\" || exit 1; if /bin/mv -f \"$NEW/Contents\" \"$SRC/Contents\" && /bin/test -d \"$SRC/Contents\"; then /bin/rm -rf \"$BAK\"; /usr/bin/touch \"$SRC\"; exit 0; fi; if /bin/test -e \"$SRC/Contents\"; then /bin/rm -rf \"$SRC/Contents\"; fi; /bin/mv -f \"$BAK/Contents\" \"$SRC/Contents\"; exit 1" with administrator privileges
 end installUpdate
 "#;
 
@@ -46,8 +46,92 @@ pub fn macos_update_backup_path(extract_path: &Path) -> Option<PathBuf> {
 
 /// Replace only `Contents`; the installed `.app` inode is the Dock identity.
 /// The caller recovers/removes any previous sibling backup before entering.
+/// An atomic exchange is tried first; the backup transaction is the fallback.
 pub fn install_macos_app_contents(stage: &Path, app: &Path, backup: &Path) -> std::io::Result<()> {
+    if let Some(result) = swap_app_contents_when_possible(stage, app, backup, exchange_contents) {
+        return result;
+    }
     install_macos_app_contents_with(stage, app, backup, move_dir_replacing)
+}
+
+/// Exchanges the staged and live `Contents` in one step, so the live bundle is
+/// never missing. `None` means the caller should use the backup transaction.
+fn swap_app_contents_when_possible(
+    stage: &Path,
+    app: &Path,
+    backup: &Path,
+    exchange: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
+) -> Option<std::io::Result<()>> {
+    if !macos_app_bundle_complete(stage) || !backup_slot_is_free(backup) {
+        return None;
+    }
+    match exchange(&stage.join("Contents"), &app.join("Contents")) {
+        Ok(()) => Some(Ok(())),
+        // Admin-owned bundles must reach the privileged path, not the fallback.
+        Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => Some(Err(err)),
+        Err(_) => None,
+    }
+}
+
+/// True when nothing, not even a dangling link, occupies the backup path.
+fn backup_slot_is_free(backup: &Path) -> bool {
+    matches!(
+        std::fs::symlink_metadata(backup),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn exchange_contents(from: &Path, to: &Path) -> std::io::Result<()> {
+    use std::ffi::{c_char, c_int, c_uint, CString};
+    use std::os::unix::ffi::OsStrExt;
+
+    extern "C" {
+        fn renamex_np(from: *const c_char, to: *const c_char, flags: c_uint) -> c_int;
+    }
+    // RENAME_SWAP from <sys/stat.h>: exchange both paths in one step.
+    const RENAME_SWAP: c_uint = 0x0000_0002;
+
+    let invalid =
+        |err: std::ffi::NulError| std::io::Error::new(std::io::ErrorKind::InvalidInput, err);
+    let from = CString::new(from.as_os_str().as_bytes()).map_err(invalid)?;
+    let to = CString::new(to.as_os_str().as_bytes()).map_err(invalid)?;
+    // SAFETY: both pointers come from live, NUL-terminated CStrings.
+    let status = unsafe { renamex_np(from.as_ptr(), to.as_ptr(), RENAME_SWAP) };
+    if status == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn exchange_contents(_from: &Path, _to: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
+}
+
+/// Reads `CFBundleShortVersionString` from an XML `Info.plist`. Binary or
+/// malformed input yields `None`, and the caller then skips the version check.
+pub fn macos_plist_short_version(xml: &str) -> Option<String> {
+    const KEY: &str = "<key>CFBundleShortVersionString</key>";
+    let rest = xml.split_once(KEY)?.1.trim_start();
+    let value = rest
+        .strip_prefix("<string>")?
+        .split_once("</string>")?
+        .0
+        .trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+/// True when pkexec exited because the user dismissed its prompt (exit 126).
+pub fn pkexec_authorization_cancelled(exit_code: Option<i32>) -> bool {
+    exit_code == Some(126)
+}
+
+/// True when restoring the backup was refused for permissions. The privileged
+/// script can finish that recovery, so the unprivileged install is skipped.
+pub fn restore_error_needs_admin(error: Option<&std::io::Error>) -> bool {
+    error.is_some_and(|err| err.kind() == std::io::ErrorKind::PermissionDenied)
 }
 
 fn install_macos_app_contents_with(
@@ -591,6 +675,154 @@ mod tests {
             std::fs::read_to_string(backup.join("Contents/version")).unwrap(),
             "recovery"
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn plist_short_version_reads_plain_xml_value() {
+        let xml = "<?xml version=\"1.0\"?>\n<plist version=\"1.0\"><dict>\n\t<key>CFBundleShortVersionString</key>\n\t<string>0.7.1</string>\n\t<key>CFBundleVersion</key>\n\t<string>999</string>\n</dict></plist>";
+        assert_eq!(macos_plist_short_version(xml).as_deref(), Some("0.7.1"));
+    }
+
+    #[test]
+    fn plist_short_version_missing_or_non_string_is_none() {
+        let only_build = "<plist><dict><key>CFBundleVersion</key><string>1</string></dict></plist>";
+        assert_eq!(macos_plist_short_version(only_build), None);
+        let integer = "<key>CFBundleShortVersionString</key><integer>7</integer>";
+        assert_eq!(macos_plist_short_version(integer), None);
+        let blank = "<key>CFBundleShortVersionString</key><string>  </string>";
+        assert_eq!(macos_plist_short_version(blank), None);
+    }
+
+    #[test]
+    fn plist_short_version_ignores_binary_and_garbage() {
+        assert_eq!(
+            macos_plist_short_version("bplist00\u{0}\u{1}\u{ff}CFBundleShortVersionString"),
+            None
+        );
+        assert_eq!(macos_plist_short_version("\u{0}\u{ff}not xml"), None);
+        assert_eq!(macos_plist_short_version(""), None);
+    }
+
+    #[test]
+    fn plist_short_version_keeps_prerelease_text_for_the_caller() {
+        let xml = "<key>CFBundleShortVersionString</key><string>0.7.0-beta.2</string>";
+        assert_eq!(
+            macos_plist_short_version(xml).as_deref(),
+            Some("0.7.0-beta.2")
+        );
+    }
+
+    #[test]
+    fn script_touches_bundle_before_success_exit() {
+        let moved = MACOS_PRIVILEGED_INSTALL_SCRIPT
+            .find("/bin/mv -f \\\"$NEW/Contents\\\" \\\"$SRC/Contents\\\"")
+            .expect("new Contents must be moved into the app");
+        let touch = MACOS_PRIVILEGED_INSTALL_SCRIPT
+            .find("/usr/bin/touch \\\"$SRC\\\"; exit 0")
+            .expect("bundle must be touched right before the success exit");
+        assert!(moved < touch, "touch must run after the successful move");
+    }
+
+    #[test]
+    fn pkexec_exit_126_means_the_prompt_was_dismissed() {
+        assert!(pkexec_authorization_cancelled(Some(126)));
+        assert!(!pkexec_authorization_cancelled(Some(0)));
+        assert!(!pkexec_authorization_cancelled(Some(127)));
+        assert!(!pkexec_authorization_cancelled(None));
+    }
+
+    #[test]
+    fn restore_permission_denied_routes_to_admin_install() {
+        let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        assert!(restore_error_needs_admin(Some(&denied)));
+        let missing = std::io::Error::from(std::io::ErrorKind::NotFound);
+        assert!(!restore_error_needs_admin(Some(&missing)));
+        assert!(!restore_error_needs_admin(None));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn swap_is_not_attempted_without_staged_contents() {
+        let (root, app, stage, backup) = macos_fixture();
+        std::fs::remove_dir_all(stage.join("Contents")).unwrap();
+        let mut called = false;
+        let outcome = swap_app_contents_when_possible(&stage, &app, &backup, |_, _| {
+            called = true;
+            Ok(())
+        });
+        assert!(outcome.is_none());
+        assert!(!called);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn swap_is_not_attempted_over_an_existing_backup() {
+        let (root, app, stage, backup) = macos_fixture();
+        std::fs::create_dir_all(backup.join("Contents")).unwrap();
+        let mut called = false;
+        let outcome = swap_app_contents_when_possible(&stage, &app, &backup, |_, _| {
+            called = true;
+            Ok(())
+        });
+        assert!(outcome.is_none());
+        assert!(!called, "a pending backup must be recovered, not bypassed");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn swap_permission_denied_goes_to_admin_path_unchanged() {
+        let (root, app, stage, backup) = macos_fixture();
+        for code in [1, 13] {
+            let outcome = swap_app_contents_when_possible(&stage, &app, &backup, |_, _| {
+                Err(std::io::Error::from_raw_os_error(code))
+            });
+            let error = outcome
+                .expect("EACCES/EPERM must not fall back")
+                .unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        }
+        assert!(!backup.exists());
+        assert_eq!(
+            std::fs::read_to_string(app.join("Contents/version")).unwrap(),
+            "old"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn other_swap_errors_fall_back_to_backup_transaction() {
+        let (root, app, stage, backup) = macos_fixture();
+        for code in [18, 22, 45] {
+            let outcome = swap_app_contents_when_possible(&stage, &app, &backup, |_, _| {
+                Err(std::io::Error::from_raw_os_error(code))
+            });
+            assert!(outcome.is_none(), "errno {code} must fall back");
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_swap_keeps_outer_app_and_leaves_old_contents_in_stage() {
+        use std::os::unix::fs::MetadataExt;
+        let (root, app, stage, backup) = macos_fixture();
+        let inode = std::fs::metadata(&app).unwrap().ino();
+        install_macos_app_contents(&stage, &app, &backup).unwrap();
+        assert_eq!(std::fs::metadata(&app).unwrap().ino(), inode);
+        assert_eq!(
+            std::fs::read_to_string(app.join("Contents/version")).unwrap(),
+            "new"
+        );
+        // An exchange leaves the old tree in the stage dir; a rename would not.
+        assert_eq!(
+            std::fs::read_to_string(stage.join("Contents/version")).unwrap(),
+            "old"
+        );
+        assert!(!backup.exists());
         std::fs::remove_dir_all(root).unwrap();
     }
 

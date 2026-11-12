@@ -19,6 +19,8 @@ while kill -0 "$1" 2>/dev/null; do
   fi
   /bin/sleep 0.1
 done
+# LaunchServices can still list the exited instance for a moment.
+/bin/sleep 0.5
 exec /usr/bin/open "$2"
 "#;
 
@@ -141,6 +143,20 @@ mod tests {
         assert!(RELAUNCH_HELPER_SCRIPT.contains("exec /usr/bin/open \"$2\""));
         assert!(RELAUNCH_HELPER_SCRIPT.contains("/bin/sleep 0.1"));
         assert!(!RELAUNCH_HELPER_SCRIPT.contains("-n"));
+    }
+
+    #[test]
+    fn helper_script_settles_after_old_pid_exits_before_opening() {
+        // LaunchServices can still list the exited instance for a moment.
+        let loop_end = RELAUNCH_HELPER_SCRIPT.find("done\n").expect("loop end");
+        let settle_at = RELAUNCH_HELPER_SCRIPT
+            .find("/bin/sleep 0.5")
+            .expect("settle delay");
+        let open_at = RELAUNCH_HELPER_SCRIPT
+            .find("exec /usr/bin/open \"$2\"")
+            .expect("open");
+        assert!(loop_end < settle_at);
+        assert!(settle_at < open_at);
     }
 
     #[test]

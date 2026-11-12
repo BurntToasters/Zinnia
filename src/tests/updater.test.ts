@@ -61,6 +61,33 @@ const isPermissionGrantedMock = vi.mocked(isPermissionGranted);
 const requestPermissionMock = vi.mocked(requestPermission);
 const sendNotificationMock = vi.mocked(sendNotification);
 
+function fakeUpdate(version: string) {
+  return {
+    version,
+    download: vi.fn().mockResolvedValue(undefined),
+    install: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+function asCheckResult(update: ReturnType<typeof fakeUpdate> | null) {
+  return update as unknown as Awaited<ReturnType<typeof check>>;
+}
+
+function indicatorButton(): HTMLElement {
+  const element = document.getElementById("update-ready-indicator");
+  if (!element) throw new Error("update-ready-indicator is missing");
+  return element;
+}
+
+function toastText(): string {
+  return document.getElementById("toast-region")?.textContent ?? "";
+}
+
+function flushAsync(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 beforeEach(() => {
   discardPendingUpdate();
   mockState.currentSettings.updateChannel = "stable";
@@ -241,7 +268,7 @@ describe("checkUpdates", () => {
     expect(relaunchCalls()).toBe(0);
   });
 
-  it("does not relaunch after install when reservation release IPC fails", async () => {
+  it("still requests relaunch when reservation release IPC fails after install", async () => {
     const install = vi.fn().mockResolvedValue(undefined);
     checkMock.mockResolvedValue({
       version: "0.5.0",
@@ -263,11 +290,35 @@ describe("checkUpdates", () => {
     await checkUpdates();
 
     expect(install).toHaveBeenCalledOnce();
-    expect(relaunchCalls()).toBe(0);
+    expect(relaunchCalls()).toBe(1);
     expect(logMock).toHaveBeenCalledWith(
       "Unable to release update reservation: release IPC unavailable",
       "error",
     );
+    expect(toastText()).not.toContain("Failed to");
+  });
+
+  it("reports an installed update when release fails and relaunch resolves", async () => {
+    checkMock.mockResolvedValue(asCheckResult(fakeUpdate("0.5.0")));
+    askMock.mockResolvedValue(true);
+    invokeMock.mockImplementation((command, payload) => {
+      if (
+        command === "is_7z_running" &&
+        (payload as { mode?: string } | undefined)?.mode === "release_update"
+      ) {
+        return Promise.reject(new Error("release IPC unavailable"));
+      }
+      return defaultInvoke(String(command));
+    });
+
+    await checkUpdates();
+
+    expect(relaunchCalls()).toBe(1);
+    expect(toastText()).toContain(
+      "Update installed. Quit and reopen Zinnia to finish.",
+    );
+    expect(document.querySelectorAll('[data-sticky="true"]')).toHaveLength(1);
+    expect(setStatusMock).toHaveBeenLastCalledWith("Update installed");
   });
 
   it("keeps the archive-operation reservation when install watchdog fires", async () => {
@@ -492,24 +543,26 @@ describe("checkUpdates", () => {
 });
 
 describe("autoCheckUpdates", () => {
-  it("notifies without prompting for notification permission when an update is found", async () => {
-    const download = vi.fn().mockResolvedValue(undefined);
-    checkMock.mockResolvedValue({
-      version: "0.5.0",
-      download,
-      install: vi.fn().mockResolvedValue(undefined),
-      close: vi.fn().mockResolvedValue(undefined),
-    } as unknown as Awaited<ReturnType<typeof check>>);
+  it("parks a background update without downloading and notifies without prompting for permission", async () => {
+    const update = fakeUpdate("0.5.0");
+    checkMock.mockResolvedValue(asCheckResult(update));
     isPermissionGrantedMock.mockResolvedValue(true);
 
     await autoCheckUpdates();
 
+    expect(update.download).not.toHaveBeenCalled();
+    expect(update.install).not.toHaveBeenCalled();
+    expect(askMock).not.toHaveBeenCalled();
     expect(sendNotificationMock).toHaveBeenCalledWith({
       title: "Zinnia Update Available",
-      body: "Version 0.5.0 is available. Downloading in the background...",
+      body: "Version 0.5.0 is available. Use the update button in the status bar to install.",
     });
     expect(requestPermissionMock).not.toHaveBeenCalled();
-    expect(download).toHaveBeenCalledOnce();
+    expect(indicatorButton().hidden).toBe(false);
+    expect(indicatorButton().textContent).toBe(
+      "Update 0.5.0 available. Click to install",
+    );
+    expect(setStatusMock).toHaveBeenLastCalledWith("Update available");
     discardPendingUpdate();
   });
 
@@ -527,24 +580,23 @@ describe("autoCheckUpdates", () => {
     );
   });
 
-  it("continues the background download when notification permission probing fails", async () => {
-    const download = vi.fn().mockResolvedValue(undefined);
-    checkMock.mockResolvedValue({
-      version: "0.5.1",
-      download,
-      install: vi.fn().mockResolvedValue(undefined),
-      close: vi.fn().mockResolvedValue(undefined),
-    } as unknown as Awaited<ReturnType<typeof check>>);
+  it("parks the background update when notification permission probing fails", async () => {
+    const update = fakeUpdate("0.5.1");
+    checkMock.mockResolvedValue(asCheckResult(update));
     isPermissionGrantedMock.mockRejectedValue(
       new Error("notification service unavailable"),
     );
 
     await autoCheckUpdates();
 
-    expect(download).toHaveBeenCalledOnce();
+    expect(update.download).not.toHaveBeenCalled();
     expect(devLogMock).toHaveBeenCalledWith(
       "Unable to send update notification: notification service unavailable",
     );
+    expect(indicatorButton().textContent).toBe(
+      "Update 0.5.1 available. Click to install",
+    );
+    discardPendingUpdate();
   });
 
   it("logs and resets status when auto-check fails", async () => {
@@ -555,5 +607,300 @@ describe("autoCheckUpdates", () => {
     expect(logMock).toHaveBeenCalledWith("Update check failed: timeout");
     expect(setStatusMock).toHaveBeenCalledWith("Idle");
     expect(document.getElementById("toast-region")).toBeNull();
+  });
+});
+
+describe("install outcome", () => {
+  it("reports an installed update when relaunch throws after release succeeds", async () => {
+    const update = fakeUpdate("0.5.0");
+    checkMock.mockResolvedValue(asCheckResult(update));
+    askMock.mockResolvedValue(true);
+    invokeMock.mockImplementation((command) => {
+      if (command === "relaunch_app") {
+        return Promise.reject(new Error("relaunch failed"));
+      }
+      return defaultInvoke(String(command));
+    });
+
+    await expect(checkUpdates()).resolves.toBeUndefined();
+
+    expect(update.install).toHaveBeenCalledOnce();
+    expect(toastText()).toContain(
+      "Update installed. Quit and reopen Zinnia to finish.",
+    );
+    expect(toastText()).not.toContain("Failed to");
+    expect(document.querySelector('[data-sticky="true"]')).not.toBeNull();
+    expect(setStatusMock).toHaveBeenLastCalledWith("Update installed");
+    expect(logMock).toHaveBeenCalledWith(
+      "Update installed but relaunch failed: relaunch failed",
+      "error",
+    );
+  });
+
+  it("reports an installed update when release and relaunch both fail", async () => {
+    const update = fakeUpdate("0.5.0");
+    checkMock.mockResolvedValue(asCheckResult(update));
+    askMock.mockResolvedValue(true);
+    invokeMock.mockImplementation((command, payload) => {
+      if (command === "relaunch_app") {
+        return Promise.reject(new Error("relaunch failed"));
+      }
+      if (
+        command === "is_7z_running" &&
+        (payload as { mode?: string } | undefined)?.mode === "release_update"
+      ) {
+        return Promise.reject(new Error("release IPC unavailable"));
+      }
+      return defaultInvoke(String(command));
+    });
+
+    await expect(checkUpdates()).resolves.toBeUndefined();
+
+    expect(update.install).toHaveBeenCalledOnce();
+    expect(toastText()).toContain(
+      "Update installed. Quit and reopen Zinnia to finish.",
+    );
+    expect(toastText()).not.toContain("Failed to");
+    expect(document.querySelectorAll('[data-sticky="true"]')).toHaveLength(1);
+    expect(setStatusMock).toHaveBeenLastCalledWith("Update installed");
+    expect(logMock).toHaveBeenCalledWith(
+      "Unable to release update reservation: release IPC unavailable",
+      "error",
+    );
+  });
+
+  it("keeps install errors as failures and does not relaunch", async () => {
+    const update = fakeUpdate("0.5.0");
+    update.install.mockRejectedValue(new Error("install failed"));
+    checkMock.mockResolvedValue(asCheckResult(update));
+    askMock.mockResolvedValue(true);
+
+    await checkUpdates();
+
+    expect(invokeMock).toHaveBeenCalledWith("is_7z_running", {
+      mode: "release_update",
+    });
+    expect(relaunchCalls()).toBe(0);
+    expect(toastText()).toContain(
+      "Failed to check for updates. install failed",
+    );
+    expect(toastText()).not.toContain("Update installed");
+    expect(setStatusMock).toHaveBeenLastCalledWith("Idle");
+  });
+});
+
+describe("restart prompt guard", () => {
+  it("does not open a second restart prompt from the indicator or an interactive check", async () => {
+    const update = fakeUpdate("0.5.0");
+    checkMock.mockResolvedValue(asCheckResult(update));
+    askMock.mockResolvedValueOnce(false);
+    await checkUpdates();
+    expect(askMock).toHaveBeenCalledTimes(1);
+
+    let resolveAsk: (value: boolean) => void = () => {};
+    askMock.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveAsk = resolve;
+        }),
+    );
+    indicatorButton().click();
+    await vi.waitFor(() => expect(askMock).toHaveBeenCalledTimes(2));
+
+    indicatorButton().click();
+    await checkUpdates();
+    await flushAsync();
+
+    expect(askMock).toHaveBeenCalledTimes(2);
+    expect(update.download).toHaveBeenCalledOnce();
+    expect(update.install).not.toHaveBeenCalled();
+    expect(update.close).not.toHaveBeenCalled();
+
+    resolveAsk(false);
+    await flushAsync();
+    indicatorButton().click();
+    await vi.waitFor(() => expect(askMock).toHaveBeenCalledTimes(3));
+  });
+
+  it("closes a new candidate found while a prompt is open instead of stacking prompts", async () => {
+    const first = fakeUpdate("0.5.0");
+    checkMock.mockResolvedValueOnce(asCheckResult(first));
+    await autoCheckUpdates();
+
+    let resolveAsk: (value: boolean) => void = () => {};
+    askMock.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveAsk = resolve;
+        }),
+    );
+    indicatorButton().click();
+    await vi.waitFor(() => expect(askMock).toHaveBeenCalledOnce());
+
+    discardPendingUpdate();
+    const second = fakeUpdate("0.6.0");
+    checkMock.mockResolvedValueOnce(asCheckResult(second));
+    await checkUpdates();
+
+    expect(second.download).toHaveBeenCalledOnce();
+    expect(second.close).toHaveBeenCalledOnce();
+    expect(askMock).toHaveBeenCalledOnce();
+    expect(indicatorButton().hidden).toBe(true);
+
+    resolveAsk(false);
+    await flushAsync();
+  });
+});
+
+describe("parked background update", () => {
+  it("downloads on indicator click before prompting", async () => {
+    const update = fakeUpdate("0.5.0");
+    checkMock.mockResolvedValue(asCheckResult(update));
+    await autoCheckUpdates();
+
+    indicatorButton().click();
+    await vi.waitFor(() => expect(askMock).toHaveBeenCalledOnce());
+
+    expect(update.download).toHaveBeenCalledWith(undefined, {
+      timeout: 120_000,
+    });
+    expect(update.download.mock.invocationCallOrder[0]).toBeLessThan(
+      askMock.mock.invocationCallOrder[0],
+    );
+    expect(setStatusMock).toHaveBeenCalledWith("Downloading update");
+    expect(indicatorButton().textContent).toBe(
+      "Update 0.5.0 ready. Restart to install",
+    );
+  });
+
+  it("keeps the update parked after a failed download and retries on the next click", async () => {
+    const update = fakeUpdate("0.5.0");
+    update.download.mockRejectedValueOnce(new Error("download failed"));
+    checkMock.mockResolvedValue(asCheckResult(update));
+    await autoCheckUpdates();
+
+    indicatorButton().click();
+    await vi.waitFor(() =>
+      expect(toastText()).toContain(
+        "Failed to install update. download failed",
+      ),
+    );
+    expect(logMock).toHaveBeenCalledWith(
+      "Updater error: download failed",
+      "error",
+    );
+    expect(setStatusMock).toHaveBeenLastCalledWith("Update available");
+    expect(indicatorButton().hidden).toBe(false);
+    expect(indicatorButton().textContent).toBe(
+      "Update 0.5.0 available. Click to install",
+    );
+    expect(askMock).not.toHaveBeenCalled();
+    expect(update.close).not.toHaveBeenCalled();
+
+    indicatorButton().click();
+    await vi.waitFor(() => expect(askMock).toHaveBeenCalledOnce());
+    expect(update.download).toHaveBeenCalledTimes(2);
+    expect(indicatorButton().textContent).toBe(
+      "Update 0.5.0 ready. Restart to install",
+    );
+  });
+
+  it("does not start a second download while one is running", async () => {
+    let resolveDownload: (() => void) | undefined;
+    const update = fakeUpdate("0.5.0");
+    update.download.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveDownload = resolve;
+        }),
+    );
+    checkMock.mockResolvedValue(asCheckResult(update));
+    await autoCheckUpdates();
+
+    indicatorButton().click();
+    await vi.waitFor(() => expect(update.download).toHaveBeenCalledOnce());
+    indicatorButton().click();
+    await checkUpdates();
+    expect(update.download).toHaveBeenCalledOnce();
+
+    resolveDownload?.();
+    await vi.waitFor(() => expect(askMock).toHaveBeenCalledOnce());
+    expect(update.download).toHaveBeenCalledOnce();
+  });
+
+  it("downloads a parked update when an interactive check runs", async () => {
+    const update = fakeUpdate("0.5.0");
+    checkMock.mockResolvedValue(asCheckResult(update));
+    await autoCheckUpdates();
+
+    await checkUpdates();
+
+    expect(update.download).toHaveBeenCalledOnce();
+    expect(askMock).toHaveBeenCalledOnce();
+    expect(checkMock).toHaveBeenCalledOnce();
+  });
+
+  it("restores Update available when an interactive check cannot download a parked update", async () => {
+    const update = fakeUpdate("0.5.0");
+    update.download.mockRejectedValueOnce(new Error("download failed"));
+    checkMock.mockResolvedValue(asCheckResult(update));
+    await autoCheckUpdates();
+
+    await checkUpdates();
+
+    expect(logMock).toHaveBeenCalledWith("Updater error: download failed");
+    expect(toastText()).toContain(
+      "Failed to check for updates. download failed",
+    );
+    expect(setStatusMock).toHaveBeenLastCalledWith("Update available");
+    expect(indicatorButton().textContent).toBe(
+      "Update 0.5.0 available. Click to install",
+    );
+    expect(update.close).not.toHaveBeenCalled();
+    discardPendingUpdate();
+  });
+
+  it("closes a parked update discarded mid-download once the download settles", async () => {
+    let resolveDownload: (() => void) | undefined;
+    const update = fakeUpdate("0.5.0");
+    update.download.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveDownload = resolve;
+        }),
+    );
+    checkMock.mockResolvedValue(asCheckResult(update));
+    await autoCheckUpdates();
+
+    indicatorButton().click();
+    await vi.waitFor(() => expect(update.download).toHaveBeenCalledOnce());
+    discardPendingUpdate();
+    expect(update.close).not.toHaveBeenCalled();
+    expect(indicatorButton().hidden).toBe(true);
+
+    resolveDownload?.();
+    await vi.waitFor(() => expect(update.close).toHaveBeenCalledOnce());
+    expect(askMock).not.toHaveBeenCalled();
+  });
+
+  it("treats a newly parked update as not downloaded after discard", async () => {
+    const first = fakeUpdate("0.5.0");
+    checkMock.mockResolvedValueOnce(asCheckResult(first));
+    askMock.mockResolvedValueOnce(false);
+    await checkUpdates();
+    discardPendingUpdate();
+
+    const second = fakeUpdate("0.6.0");
+    checkMock.mockResolvedValueOnce(asCheckResult(second));
+    await autoCheckUpdates();
+
+    expect(second.download).not.toHaveBeenCalled();
+    expect(indicatorButton().textContent).toBe(
+      "Update 0.6.0 available. Click to install",
+    );
+
+    indicatorButton().click();
+    await vi.waitFor(() => expect(second.download).toHaveBeenCalledOnce());
+    discardPendingUpdate();
   });
 });

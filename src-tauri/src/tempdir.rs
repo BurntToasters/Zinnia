@@ -14,6 +14,19 @@ fn reserved_temp_extract_paths(
         .get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
 }
 
+/// Upper bound on tracked reservations. Random tokens make reuse unlikely, so
+/// a full reset only costs duplicate-path protection for in-flight requests.
+const MAX_RESERVED_TEMP_EXTRACT_PATHS: usize = 256;
+
+/// Drops reservations whose path was published and clears the set when it
+/// grows past the cap. Only a successful stat counts as "published".
+fn prune_reserved_temp_extract_paths(reserved: &mut std::collections::HashSet<std::path::PathBuf>) {
+    reserved.retain(|path| std::fs::symlink_metadata(path).is_err());
+    if reserved.len() > MAX_RESERVED_TEMP_EXTRACT_PATHS {
+        reserved.clear();
+    }
+}
+
 fn managed_base(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?;
     Ok(dir.join("convert"))
@@ -255,10 +268,11 @@ fn reserve_temp_extract_path_blocking(
         match std::fs::symlink_metadata(&dir) {
             Ok(_) => continue,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                reserved_temp_extract_paths()
+                let mut reserved = reserved_temp_extract_paths()
                     .lock()
-                    .map_err(|_| "Conversion temp-path reservation is unavailable.".to_string())?
-                    .insert(dir.clone());
+                    .map_err(|_| "Conversion temp-path reservation is unavailable.".to_string())?;
+                prune_reserved_temp_extract_paths(&mut reserved);
+                reserved.insert(dir.clone());
                 // The returned path is intentionally absent. run_7z creates a
                 // sibling stage and publishes the completed tree with one
                 // whole-stage rename, avoiding a second recursive copy.
@@ -382,7 +396,61 @@ pub fn list_managed_temp_children(
 
 #[cfg(test)]
 mod tests {
-    use super::is_direct_managed_child;
+    use super::{
+        is_direct_managed_child, prune_reserved_temp_extract_paths, MAX_RESERVED_TEMP_EXTRACT_PATHS,
+    };
+    use std::collections::HashSet;
+    use std::path::PathBuf;
+
+    fn temp_root(label: &str) -> PathBuf {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        std::env::temp_dir().join(format!(
+            "{label}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ))
+    }
+
+    #[test]
+    fn prune_drops_reservations_whose_path_was_published() {
+        let root = temp_root("zinnia-reserve-published");
+        std::fs::create_dir_all(&root).expect("root");
+        let published = root.join("tmp-published");
+        let pending = root.join("tmp-pending");
+        std::fs::create_dir(&published).expect("published dir");
+        let mut reserved = HashSet::from([published.clone(), pending.clone()]);
+
+        prune_reserved_temp_extract_paths(&mut reserved);
+
+        assert!(!reserved.contains(&published));
+        assert!(reserved.contains(&pending));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn prune_clears_the_set_once_it_exceeds_the_cap() {
+        let root = temp_root("zinnia-reserve-cap");
+        let mut reserved: HashSet<PathBuf> = (0..=MAX_RESERVED_TEMP_EXTRACT_PATHS)
+            .map(|index| root.join(format!("tmp-{index}")))
+            .collect();
+        assert_eq!(reserved.len(), MAX_RESERVED_TEMP_EXTRACT_PATHS + 1);
+
+        prune_reserved_temp_extract_paths(&mut reserved);
+
+        assert!(reserved.is_empty());
+    }
+
+    #[test]
+    fn prune_keeps_a_set_exactly_at_the_cap() {
+        let root = temp_root("zinnia-reserve-at-cap");
+        let mut reserved: HashSet<PathBuf> = (0..MAX_RESERVED_TEMP_EXTRACT_PATHS)
+            .map(|index| root.join(format!("tmp-{index}")))
+            .collect();
+
+        prune_reserved_temp_extract_paths(&mut reserved);
+
+        assert_eq!(reserved.len(), MAX_RESERVED_TEMP_EXTRACT_PATHS);
+    }
 
     #[test]
     fn starts_with_guards_outside_base() {

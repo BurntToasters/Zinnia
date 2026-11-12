@@ -9,6 +9,8 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
+use std::sync::Arc;
 use std::time::Duration;
 
 use objc2_foundation::{NSFileManager, NSString};
@@ -23,6 +25,9 @@ const MAX_REQUEST_AGE_MS: u64 = 120_000;
 const MAX_FUTURE_SKEW_MS: u64 = 5_000;
 const MIN_POLL_MS: u64 = 250;
 const MAX_POLL_MS: u64 = 2_000;
+// Idle ceiling while the kqueue watch is healthy; wakes cover new requests.
+const IDLE_POLL_WATCHED_MS: u64 = 30_000;
+const WATCH_RETRY_DELAY: Duration = Duration::from_secs(5);
 // Darwin's renameatx_np(2) exclusive flag. It provides an atomic no-replace
 // claim/restore primitive; plain renameat(2) would overwrite a collision.
 const RENAME_EXCL: u32 = 0x0000_0004;
@@ -503,40 +508,256 @@ pub(crate) fn route_pending_requests(app: &AppHandle) -> bool {
     })
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum DirectoryEvent {
+    Changed,
+    /// The watched vnode was removed or renamed, so the watch is stale.
+    Gone,
+}
+
+/// A kqueue with one EVFILT_VNODE registration on the request directory.
+struct DirectoryWatch {
+    kqueue: libc::c_int,
+}
+
+impl DirectoryWatch {
+    fn watch_directory(dir_fd: libc::c_int) -> Result<Self, String> {
+        // SAFETY: kqueue takes no arguments and returns a new descriptor, or -1 on failure.
+        let kqueue = unsafe { libc::kqueue() };
+        if kqueue < 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        // Owned from here on, so every early return below closes it through Drop.
+        let watch = Self { kqueue };
+        let change = libc::kevent {
+            ident: dir_fd as libc::uintptr_t,
+            filter: libc::EVFILT_VNODE,
+            flags: libc::EV_ADD | libc::EV_CLEAR,
+            fflags: libc::NOTE_WRITE
+                | libc::NOTE_EXTEND
+                | libc::NOTE_RENAME
+                | libc::NOTE_DELETE
+                | libc::NOTE_LINK,
+            data: 0,
+            udata: std::ptr::null_mut(),
+        };
+        // SAFETY: `change` is a live kevent for the call, and zero output events are requested,
+        // so no buffer is written. `watch.kqueue` stays open until `watch` drops.
+        let result = unsafe {
+            libc::kevent(
+                watch.kqueue,
+                &change,
+                1,
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null(),
+            )
+        };
+        if result < 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        Ok(watch)
+    }
+}
+
+impl Drop for DirectoryWatch {
+    fn drop(&mut self) {
+        // SAFETY: `kqueue` came from kqueue() and is closed only here, once.
+        unsafe { libc::close(self.kqueue) };
+    }
+}
+
+/// Waits for one directory event. `None` blocks until an event arrives; a
+/// timeout returns `Ok(None)`.
+fn wait_for_directory_event(
+    watch: &DirectoryWatch,
+    timeout: Option<Duration>,
+) -> Result<Option<DirectoryEvent>, String> {
+    let limit = timeout.map(|timeout| libc::timespec {
+        tv_sec: timeout.as_secs() as libc::time_t,
+        tv_nsec: timeout.subsec_nanos() as libc::c_long,
+    });
+    loop {
+        let mut event = libc::kevent {
+            ident: 0,
+            filter: 0,
+            flags: 0,
+            fflags: 0,
+            data: 0,
+            udata: std::ptr::null_mut(),
+        };
+        let limit_ptr = limit
+            .as_ref()
+            .map_or(std::ptr::null(), |limit| limit as *const libc::timespec);
+        // SAFETY: `watch.kqueue` is open for the call. No changes are submitted, and `event` is a
+        // live buffer for one output event. `limit_ptr` is null or points at `limit`, which lives
+        // across the call.
+        let count =
+            unsafe { libc::kevent(watch.kqueue, std::ptr::null(), 0, &mut event, 1, limit_ptr) };
+        if count < 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::EINTR) {
+                continue;
+            }
+            return Err(error.to_string());
+        }
+        if count == 0 {
+            return Ok(None);
+        }
+        if event.flags & libc::EV_ERROR != 0 {
+            return Err(std::io::Error::from_raw_os_error(event.data as i32).to_string());
+        }
+        let gone = event.fflags & (libc::NOTE_DELETE | libc::NOTE_RENAME) != 0;
+        return Ok(Some(if gone {
+            DirectoryEvent::Gone
+        } else {
+            DirectoryEvent::Changed
+        }));
+    }
+}
+
+/// Sets up the watch and forwards changes as wakes. Returns when the watch
+/// can no longer be trusted, so the caller retries from scratch.
+fn watch_request_directory_once(wake: &Sender<()>, healthy: &AtomicBool) -> Result<(), String> {
+    let directory = request_directory()?;
+    let watch = DirectoryWatch::watch_directory(directory.fd())?;
+    healthy.store(true, Ordering::SeqCst);
+    // Requests written before registration raise no event, so scan once now.
+    let _ = wake.send(());
+    loop {
+        match wait_for_directory_event(&watch, None)? {
+            Some(DirectoryEvent::Changed) => {
+                let _ = wake.send(());
+            }
+            Some(DirectoryEvent::Gone) => {
+                return Err("Finder request directory was removed or renamed.".to_string());
+            }
+            None => {}
+        }
+    }
+}
+
+fn run_directory_watcher(wake: Sender<()>, healthy: Arc<AtomicBool>) {
+    loop {
+        // Failures are expected until the extension creates the directory. Polling
+        // still delivers requests in the meantime, so the error is not logged.
+        let _ = watch_request_directory_once(&wake, &healthy);
+        healthy.store(false, Ordering::SeqCst);
+        std::thread::sleep(WATCH_RETRY_DELAY);
+    }
+}
+
+fn spawn_directory_watcher(wake: Sender<()>, healthy: Arc<AtomicBool>) -> std::io::Result<()> {
+    std::thread::Builder::new()
+        .name("finder-sync-watch".to_string())
+        .spawn(move || run_directory_watcher(wake, healthy))
+        .map(drop)
+}
+
+/// The idle backoff ceiling. The relaxed value applies only while the watch is live.
+fn idle_poll_ceiling_ms(watcher_healthy: bool) -> u64 {
+    if watcher_healthy {
+        IDLE_POLL_WATCHED_MS
+    } else {
+        MAX_POLL_MS
+    }
+}
+
+/// Clears queued wakes and reports whether any were pending.
+fn take_pending_wake(wake: &Receiver<()>) -> bool {
+    let mut pending = false;
+    while wake.try_recv().is_ok() {
+        pending = true;
+    }
+    pending
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum WaitOutcome {
+    Woke,
+    TimedOut,
+    /// Every sender is gone, so no wake can ever arrive.
+    Disconnected,
+}
+
+/// Blocks until a wake, the timeout, or disconnect. Queued wakes collapse into one pass.
+fn wait_for_wake(wake: &Receiver<()>, timeout: Duration) -> WaitOutcome {
+    match wake.recv_timeout(timeout) {
+        Ok(()) => {
+            take_pending_wake(wake);
+            WaitOutcome::Woke
+        }
+        Err(RecvTimeoutError::Timeout) => WaitOutcome::TimedOut,
+        Err(RecvTimeoutError::Disconnected) => WaitOutcome::Disconnected,
+    }
+}
+
 /// `openApplication` activates an existing app but doesn't consistently emit a
 /// reopen event. A short poll guarantees warm-host delivery without relying on
 /// launch arguments or private plug-in behavior.
 pub(crate) fn start_request_monitor(app: AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        let mut poll_ms = MIN_POLL_MS;
-        loop {
-            tokio::time::sleep(Duration::from_millis(poll_ms)).await;
-            if !has_pending_requests() {
-                poll_ms = (poll_ms * 2).min(MAX_POLL_MS);
-                continue;
-            }
-            poll_ms = MIN_POLL_MS;
-            if DRAIN_SCHEDULED
-                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-                .is_err()
-            {
-                continue;
-            }
-            let handle = app.clone();
-            if let Err(error) = app.run_on_main_thread(move || {
-                route_pending_requests(&handle);
-                DRAIN_SCHEDULED.store(false, Ordering::SeqCst);
-            }) {
-                DRAIN_SCHEDULED.store(false, Ordering::SeqCst);
-                eprintln!("Zinnia Finder Sync: could not schedule request drain: {error}");
+    let (wake, wake_rx) = std::sync::mpsc::channel::<()>();
+    let healthy = Arc::new(AtomicBool::new(false));
+    // The monitor starts first, so a failed spawn never leaves a watcher with no receiver.
+    let monitor_healthy = Arc::clone(&healthy);
+    if let Err(error) = std::thread::Builder::new()
+        .name("finder-sync-monitor".to_string())
+        .spawn(move || run_request_monitor(app, wake_rx, monitor_healthy))
+    {
+        eprintln!("Zinnia Finder Sync: could not start request monitor: {error}");
+        return;
+    }
+    if let Err(error) = spawn_directory_watcher(wake, healthy) {
+        eprintln!("Zinnia Finder Sync: could not start request watcher: {error}");
+    }
+}
+
+/// Runs the poll loop on its own thread. `recv_timeout` blocks with no periodic
+/// wakeups, so an idle monitor costs nothing between polls.
+fn run_request_monitor(app: AppHandle, wake: Receiver<()>, healthy: Arc<AtomicBool>) {
+    let mut poll_ms = MIN_POLL_MS;
+    loop {
+        let interval = poll_ms.min(idle_poll_ceiling_ms(healthy.load(Ordering::SeqCst)));
+        match wait_for_wake(&wake, Duration::from_millis(interval)) {
+            WaitOutcome::Woke => poll_ms = MIN_POLL_MS,
+            WaitOutcome::TimedOut => {}
+            WaitOutcome::Disconnected => {
+                // The watcher is gone. Sleep so a closed channel cannot spin.
+                healthy.store(false, Ordering::SeqCst);
+                std::thread::sleep(Duration::from_millis(
+                    poll_ms.min(idle_poll_ceiling_ms(false)),
+                ));
             }
         }
-    });
+        if !has_pending_requests() {
+            poll_ms = (poll_ms * 2).min(idle_poll_ceiling_ms(healthy.load(Ordering::SeqCst)));
+            continue;
+        }
+        poll_ms = MIN_POLL_MS;
+        if DRAIN_SCHEDULED
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            continue;
+        }
+        let handle = app.clone();
+        if let Err(error) = app.run_on_main_thread(move || {
+            route_pending_requests(&handle);
+            DRAIN_SCHEDULED.store(false, Ordering::SeqCst);
+        }) {
+            DRAIN_SCHEDULED.store(false, Ordering::SeqCst);
+            eprintln!("Zinnia Finder Sync: could not schedule request drain: {error}");
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{drain_directory, valid_request_at, FinderSyncRequest, RequestDirectory};
+    use super::{
+        drain_directory, valid_request_at, DirectoryEvent, DirectoryWatch, FinderSyncRequest,
+        RequestDirectory,
+    };
+    use std::time::Duration;
 
     fn temp_root(label: &str) -> std::path::PathBuf {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -715,5 +936,101 @@ mod tests {
                 .to_string_lossy()
                 .starts_with(".zinnia-request-quarantine-")));
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn idle_ceiling_is_relaxed_only_while_the_watch_is_healthy() {
+        assert_eq!(super::idle_poll_ceiling_ms(true), 30_000);
+        assert_eq!(super::idle_poll_ceiling_ms(false), 2_000);
+    }
+
+    #[test]
+    fn directory_watch_wakes_when_a_file_is_created() {
+        let root = temp_root("zinnia-finder-watch-create");
+        std::fs::create_dir_all(&root).expect("request dir");
+        let directory = RequestDirectory::open(&root).expect("open directory");
+        let watch = DirectoryWatch::watch_directory(directory.fd()).expect("register watch");
+        write_request(&root.join("0000000010000-token.json"), 10_000);
+
+        let event = super::wait_for_directory_event(&watch, Some(Duration::from_secs(5)))
+            .expect("kevent wait");
+        assert_eq!(event, Some(DirectoryEvent::Changed));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn directory_watch_reports_when_the_directory_itself_is_renamed() {
+        let root = temp_root("zinnia-finder-watch-rename");
+        let moved = temp_root("zinnia-finder-watch-renamed");
+        std::fs::create_dir_all(&root).expect("request dir");
+        let directory = RequestDirectory::open(&root).expect("open directory");
+        let watch = DirectoryWatch::watch_directory(directory.fd()).expect("register watch");
+        std::fs::rename(&root, &moved).expect("rename request dir");
+
+        let event = super::wait_for_directory_event(&watch, Some(Duration::from_secs(5)))
+            .expect("kevent wait");
+        assert_eq!(event, Some(DirectoryEvent::Gone));
+        let _ = std::fs::remove_dir_all(moved);
+    }
+
+    #[test]
+    fn directory_watch_registration_fails_cleanly_on_invalid_fd() {
+        assert!(DirectoryWatch::watch_directory(-1).is_err());
+    }
+
+    #[test]
+    fn pending_wakes_are_consumed_once() {
+        let (wake, pending) = std::sync::mpsc::channel::<()>();
+        assert!(!super::take_pending_wake(&pending));
+        wake.send(()).expect("send wake");
+        wake.send(()).expect("send wake");
+        assert!(super::take_pending_wake(&pending));
+        assert!(!super::take_pending_wake(&pending));
+    }
+
+    #[test]
+    fn monitor_wait_returns_woke_when_a_wake_is_sent() {
+        let (wake, pending) = std::sync::mpsc::channel::<()>();
+        wake.send(()).expect("send wake");
+        assert_eq!(
+            super::wait_for_wake(&pending, Duration::from_secs(1)),
+            super::WaitOutcome::Woke
+        );
+    }
+
+    #[test]
+    fn monitor_wait_times_out_without_blocking_past_the_poll_interval() {
+        let (_wake, pending) = std::sync::mpsc::channel::<()>();
+        let started = std::time::Instant::now();
+        assert_eq!(
+            super::wait_for_wake(&pending, Duration::from_millis(30)),
+            super::WaitOutcome::TimedOut
+        );
+        assert!(started.elapsed() >= Duration::from_millis(30));
+    }
+
+    #[test]
+    fn monitor_wait_reports_disconnect_instead_of_timing_out() {
+        let (wake, pending) = std::sync::mpsc::channel::<()>();
+        drop(wake);
+        assert_eq!(
+            super::wait_for_wake(&pending, Duration::from_secs(5)),
+            super::WaitOutcome::Disconnected
+        );
+    }
+
+    #[test]
+    fn monitor_wait_coalesces_queued_wakes_into_one_pass() {
+        let (wake, pending) = std::sync::mpsc::channel::<()>();
+        wake.send(()).expect("send wake");
+        wake.send(()).expect("send wake");
+        assert_eq!(
+            super::wait_for_wake(&pending, Duration::from_secs(1)),
+            super::WaitOutcome::Woke
+        );
+        assert_eq!(
+            super::wait_for_wake(&pending, Duration::from_millis(30)),
+            super::WaitOutcome::TimedOut
+        );
     }
 }
