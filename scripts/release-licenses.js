@@ -24,10 +24,27 @@ function runReleaseLicenses({
   cwd = root,
 } = {}) {
   const npm = npmInvocation({ env, platform, execPath });
+  let childEnv = env;
+  if (platform === "win32") {
+    // An absolute Node command starts npm, but npm's lifecycle shell still
+    // resolves `node` through PATH. Merge Windows aliases before spawning.
+    const pathKeys = Object.keys(env).filter(
+      (key) => key.toLowerCase() === "path",
+    );
+    childEnv = Object.fromEntries(
+      Object.entries(env).filter(([key]) => key.toLowerCase() !== "path"),
+    );
+    childEnv.PATH = [
+      path.win32.dirname(execPath),
+      ...pathKeys.map((key) => env[key]),
+    ]
+      .filter(Boolean)
+      .join(path.win32.delimiter);
+  }
   for (const script of RELEASE_LICENSE_SCRIPTS) {
     const result = spawn(npm.command, [...npm.prefixArgs, "run", script], {
       cwd,
-      env,
+      env: childEnv,
       stdio: "inherit",
       shell: false,
     });

@@ -256,7 +256,7 @@ and notarization, and Linux MIME/desktop integration where applicable.
 Fix and rebuild any failing artifact. Do not publish a draft that has not
 passed this matrix.
 
-### Manual target checks for 0.7.0
+### Manual target checks for X.Y.Z
 
 These checks need real Windows, Linux or macOS machines and cannot run on the
 build host. Record the OS version, the Zinnia build and the result for each

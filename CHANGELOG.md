@@ -1,10 +1,13 @@
+> [!NOTE]
+> 🅱️ This is a Beta build.
+
 # ⬇️ Downloads
 
 | <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                                          | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux        |
 | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------- |
 | **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.1/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.1/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.1/Zinnia-macOS.dmg)**   | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.1/Zinnia-Linux-x64.AppImage) |
-| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>-->                     | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.1/Zinnia-macOS.zip)**   | **DEB:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.1/Zinnia-Linux-x64.deb)           |
-|                                                                                                                                                                                                                            |                                                                                                                 | **RPM:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.1/Zinnia-Linux-x64.rpm)           |
+| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>-->                     | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.1/Zinnia-macOS.zip)**   | **DEB (Deprecated):** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.1/Zinnia-Linux-x64.deb)           |
+|                                                                                                                                                                                                                            |                                                                                                                 | **RPM (Deprecated):** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.1/Zinnia-Linux-x64.rpm)           |
 |                                                                                                                                                                                                                            |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.1/Zinnia-Linux-x64.flatpak)   |
 
 > macOS downloads require macOS 15 or later.
@@ -20,153 +23,92 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 
 ## Changes in `v0.7.0-beta.1:`
 
-### Breaking
-
-- Settings no longer restore from `.bak` backups. Old setting names that Zinnia no longer uses are removed the next time settings are saved. Upgrading from 0.6.x does not show the setup wizard again.
-- SFX, delete-after-archive and path-mode options were removed from Settings and the compress form.
-- Recovery records from older Zinnia versions are no longer restored automatically, and incomplete recovery records are refused. Your files are left in place. Use 0.6.2 to finish an older recovery, or dismiss the recovery banner to clear it.
-- Users who never saved compression values now start with the Balanced preset (dictionary 64 MB, solid block 4 GB). Values you saved are kept.
-
-### Compress and extract
-
-- Power's first mode tab is now **Compress**. The Basic home card still says "Make an archive", and its buttons say **Compress**.
-- Compress output is labelled **Output archive**, and extract targets are labelled **Destination folder**. In Basic, the output save button is **Choose location**.
-- The selective picker is **Extract selected** everywhere: the quick action, the Browse button, the picker title, and the shortcuts list. Listing is **List contents**.
-- Update mode asks "Replace" or "Add files" based on the Update checkbox at the moment you click Run. A successful update says "Archive updated."
-- Changing the format swaps the output file extension, including `.tar.gz` and `.tgz`. A typed archive name keeps the folder you chose with Browse. A name with a slash is refused with a message.
-- The Store preset writes ZIP entries without compression, and level 0 no longer leaves a stale dictionary setting behind.
-- Split volumes such as `a.7z.001` use the base name (`a`) for the default folder.
-- Custom preset names reject built-in names such as `constructor`, and names are limited to 64 characters.
-- Command preview quotes paths with spaces and escapes quotes, and masks passwords before quoting.
-- A 7-Zip failure shows a plain hint (for example, wrong password, not an archive, or permission denied) instead of raw 7-Zip text. The hint matches 7-Zip 26.06 output.
-- Passwords you typed stay in place when a run fails before 7-Zip starts, and are cleared once 7-Zip has started.
-- Adding files to an encrypted 7z or ZIP requires the archive password and checks it before writing. Before this, an empty or wrong password could store new files unencrypted or under a different key.
-- Adding files to a ZIP with ZipCrypto members is refused. Convert it to an AES-256 ZIP first.
-- Add files and Convert show a percent and ETA, and clear their progress line on success, failure and cancel.
-- Compress and extract progress reaches the UI while the run is live, and the bar reaches 100% on success.
-- Power's Cancel shows "Could not cancel" and keeps the running state when the cancel request fails.
-- Benchmark runs in the normal busy state. Cancel stops it and shows "Benchmark cancelled." The rating is labelled MIPS.
-
-### Convert
-
-- Convert has its own dialog. It no longer reads hidden Add-tab settings. Each time it opens, it defaults to 7z with no password.
-- Converting an encrypted archive without an output password asks first. Declining writes nothing and keeps your typed values.
-- Convert refuses to write over the source archive, and refuses an extension that does not match the chosen format.
-- Split size and file-name encryption are checked in the dialog before anything runs.
-- Esc and Ctrl+Enter stay in the dialog while it is open.
-
-### Browse and extraction
-
-- Browse lists archives with listings up to 64 MiB, which covers archives with tens of thousands of entries. The archive listing is shown in full, not as a partial list.
-- Extraction checks archives with listings up to 256 MiB, up from 32 MiB. Extracting 30,000 files publishes every file.
-- Selective extract accepts large selections, such as 9,000 files, which used to fail.
-- Selective extract handles names that start with `-`, such as `-notes.txt`, `-web/app.js` and `-sidebar.png`, and names with leading or trailing spaces or quotes.
-- The extraction safety check waits as long as the archive size needs, so a large TAR on a slow USB stick or network share no longer fails after two minutes.
-- When Zinnia copies an archive before reading it, the copy shows progress and can be cancelled.
-- A ZIP with data after its end extracts with a warning instead of an error.
-- Basic progress shows the current file name without its folder path.
-
-### Basic mode
-
-- Basic progress shows a percent and ETA while the bar moves. The label stays "Compressing..." or "Extracting..." during the run.
-- Cancelling a Basic run shows its own "Cancelled" result, not an error.
-- Basic validation problems show "Check your choices" instead of "Operation failed." The busy message says an operation is already running.
-- Repeat buttons are enabled only after an action that can be repeated.
-- Basic's open-archive dialogs include split first volumes (`.001`) and an "All files" option.
-- Basic browse of a header-encrypted archive asks for the password. A wrong password asks again, and Cancel ends the browse without an error.
-- A large archive whose encryption state cannot be checked no longer shows a password prompt with no way to skip it.
-- Extract all uses the browse password only for the archive it was typed for.
-- The native save dialog confirms an overwrite once, not twice.
-- Enter with IME composition (Japanese, Chinese, Korean) no longer opens a dialog, starts a browse, or starts an extraction in Basic.
-
-### Password prompts
-
-- A wrong password opens the prompt again with "Incorrect password." Cancel ends the run.
-- The password prompt has a Show/Hide toggle. An empty submit keeps the prompt open with a message.
-
-### Picker and activity log
-
-- Toggling an entry in search results keeps keyboard focus where it was.
-- Toggling and typing in the picker are faster on large archives.
-- The picker sorts numbers naturally (`file2` before `file10`) and keeps folders first.
-- The activity log keeps the newest 1,000 lines and appends faster.
-
-### Quick extract
-
-- A failed quick extract offers **Retry**. Retry is not offered for validation failures.
-- Cancelling a quick extract shows an empty progress bar every time.
-- Copy details falls back to a plain copy when the clipboard is blocked, and says "Copy failed" if that fails too.
-
-### Settings and setup
-
-- A corrupt `settings.json` is moved aside as `settings.json.corrupt-<UTC time>` and replaced with new settings, so Save works again. The original file is kept next to it.
-- The compression method list follows the selected format. Saved methods that the format does not support are reset when settings load.
-- Closing Settings with unsaved changes asks before discarding them. Save never asks.
-- The reset confirmation names what is removed: settings, custom presets, the recent list and logs.
-- Setup wizard steps all have Skip, and Esc closes the wizard. Choosing Basic when the wizard is re-run updates the Basic view.
-- On first run, the thread count uses the detected CPU count. If detection fails, it uses 8.
-- Local logging is described accurately: it writes operations, paths and errors to a log file on this device.
-
-### Windows, macOS and Linux
-
-- Closing or quitting while an operation runs asks for confirmation. Declining keeps the operation running. Accepting cancels it safely and then closes.
-- Files dropped or handed to Zinnia during a running job are queued, and a toast says they will be added when the current operation finishes.
-- Hand-offs over 4,096 new items show the same limit message as drops.
-- The Power window saves its restored size after maximize or full screen. Double-clicking the Power title bar toggles maximize.
-- Right-click in text fields shows the native menu with Copy and Paste.
-- macOS path and password fields no longer autocorrect, use smart dashes, or auto-capitalize.
-- Finder Services ignores non-file items and refuses very large selections.
-- Keyboard Shortcuts does not open over another dialog.
-- Esc closes only the dialog or menu on top. Esc does not also return Basic to Home.
-- The Basic Recent menu supports arrow keys, Home and End, and returns focus to its button on Esc.
-- Opening a dialog places focus on a visible, enabled control.
-- The status bar keeps an "Update ready" button until the update is installed or discarded.
-- Choosing "Later" on the update prompt no longer asks for notification permission.
-- The restart prompt does not appear during an archive operation or a background update check.
-
-### Accessibility
-
-- Timed toasts can be dismissed with a Dismiss button or Esc.
-- Toast text keeps its line breaks and wraps long Windows paths. At most three sticky toasts stay on screen; the oldest closes when a fourth appears.
-- Basic progress bars have accessible names, and the input list is announced as a group.
-- Screen readers hear progress at 25%, 50% and 75%, and at the end, instead of every percent.
-- Control borders meet 3:1 contrast in both themes, and text is at least 12 px.
-- The density toggle keeps one label and changes its pressed state. The settings button announces that it opens a dialog.
-- The hidden About logo toggle is not in the tab order.
-- The selective picker keeps focus in search mode.
-
-### Display
-
-- File sizes show "0 B" for empty files and round fractional byte counts.
-
-### Security
-
-- Convert asks before it writes an unencrypted copy of an encrypted archive.
-- Crash recovery only touches the destination archive and its numbered volumes. Recovery records that name other files are refused.
-- Finder Services rejects very large selections before converting them.
-- The updater refuses a download larger than 1 GiB instead of buffering it.
-- The Windows updater uses `zip` 9, which fixes RUSTSEC-2026-0367, -0368, -0369 and -0429.
-
-### Other
-
-- Raw 7-Zip output is no longer shown in toasts, Basic, or the extract window. Friendly hints are shown instead, and the raw text stays in the activity log.
-- The version and platform labels no longer flash placeholder text on startup.
-- The keyboard shortcuts help lists Basic-mode keys.
-- Saving Settings no longer stores the current Power compression values as new defaults. Use "Use current session values" to copy the Power form into Settings.
-- The main window opens at the Basic workspace height instead of growing after launch.
-- Finder Sync enable reports `pluginkit` errors.
-- The About dialog's debug toggle is hidden from keyboard navigation.
-- Bundled 7-Zip is updated to `26.06`. On macOS, Zinnia combines the separate Apple Silicon and Intel 7-Zip downloads into one universal helper. Each half is copied byte for byte from the official download. Build checks stop if a macOS download has the wrong architecture.
+- **Linux:** Deprecated `DEB` and `RPM` packages in favor of `AppImage` and `Flatpak` starting with `v0.7.0`. DEB and RPM are still built and released for now, but are scheduled for removal in `v0.8.0`.
+- **Codebase:** Removed restoration from `.bak` settings backups. Unused legacy settings are now removed when settings are saved, and upgrading from `v0.6.x` no longer shows the setup wizard again.
+- **UI:** Removed SFX, delete-after-archive, and path-mode options from `Settings` and the compression form.
+- **Security:** Removed automatic restoration of recovery records from older Zinnia versions and refused incomplete recovery records. Your files stay in place; use `v0.6.2` to finish an older recovery, or dismiss the recovery banner to clear it.
+- **UI:** Updated the default compression preset to Balanced for users who have never saved compression values, with a `64 MB` dictionary and `4 GB` solid block. Saved values are kept.
+- **UI:** Renamed Power's first mode tab to `Compress`. Basic keeps its `Make an archive` home card and uses `Compress` for its buttons.
+- **UI:** Updated compression output labels to `Output archive`, extraction targets to `Destination folder`, and Basic's output save button to `Choose location`.
+- **UI:** Renamed the selective picker to `Extract selected` across quick actions, Browse, dialog titles, and shortcut help. Listing is now labelled `List contents`.
+- **UI:** Updated the Run confirmation to ask `Replace` or `Add files` based on the current Update checkbox. Successful updates now say `Archive updated`.
+- **UI:** Fixed an issue where changing archive formats could leave the wrong output extension, including `.tar.gz` and `.tgz`. Typing an archive name keeps the folder chosen with Browse; names containing a slash are refused with a message.
+- **Codebase:** Fixed the Store preset to write ZIP entries without compression, and cleared stale dictionary settings when compression level is `0`.
+- **UI:** Updated default extraction folders for split volumes such as `a.7z.001` to use the base name, `a`.
+- **UI:** Limited custom preset names to 64 characters and rejected reserved built-in names such as `constructor`.
+- **Security:** Updated command preview to quote paths containing spaces, escape quotes, and mask passwords before quoting.
+- **UI:** Updated failure hints for 7-Zip `26.06`, including wrong passwords, invalid archives, and permission errors. Raw output stays in the activity log instead of appearing in toasts, Basic, or the extract window.
+- **Security:** Kept typed passwords when validation fails before 7-Zip starts, and cleared them once 7-Zip has started.
+- **Security:** Required the existing archive password before adding files to an encrypted 7z or ZIP. Empty or incorrect passwords can no longer add unencrypted files or files protected with a different key.
+- **Security:** Refused additions to ZIP archives containing ZipCrypto members. Convert the archive to an AES-256 ZIP first.
+- **UI:** Added percentage and ETA progress to Add files and Convert, with progress cleared after success, failure, or cancellation.
+- **UI:** Fixed live compression and extraction progress updates and made the bar reach `100%` on success.
+- **UI:** Fixed an issue where Power could leave its running state after a failed cancellation request. It now shows `Could not cancel` and keeps the operation running.
+- **UI:** Updated Benchmark to use the normal busy state, show `Benchmark cancelled` after cancellation, and label its rating as MIPS.
+- **NEW - Convert dialog:** Added a separate dialog with its own settings. Each opening defaults to 7z without a password instead of reading hidden Add-tab values.
+  - Refuses to overwrite the source archive or use an extension that does not match the selected format.
+  - Validates split size and file-name encryption before starting.
+  - Keeps Esc and Ctrl+Enter inside the dialog while it is open.
+- **Security:** Added confirmation before Convert writes an unencrypted copy of an encrypted archive. Declining writes nothing and keeps your typed values.
+- **Codebase:** Increased Browse's listing limit to `64 MiB` and extraction's safety-check listing limit from `32 MiB` to `256 MiB`. Browse shows the full accepted listing, and extracting an archive containing 30,000 files publishes every file.
+- **Codebase:** Fixed selective extraction of large selections, including 9,000 files, and names beginning with `-` or containing leading or trailing spaces or quotes.
+- **Codebase:** Removed the fixed two-minute extraction safety-check timeout so large TAR archives on slow USB drives or network shares can finish checking.
+- **UI:** Added cancellable progress when Zinnia copies an archive before reading it.
+- **Codebase:** Updated extraction of ZIP archives with trailing data to show a warning instead of failing.
+- **UI:** Updated Basic progress to show the current file name without its folder path, alongside percentage and ETA. The operation label stays `Compressing...` or `Extracting...` while running.
+- **UI:** Added a separate `Cancelled` result for Basic runs and changed validation failures to `Check your choices`. Busy messages now explain that an operation is already running.
+- **UI:** Enabled Repeat buttons only after an action that can be repeated.
+- **UI:** Added split first volumes (`.001`) and an `All files` option to Basic's open-archive dialogs.
+- **UI:** Fixed browsing of header-encrypted archives in Basic to request a password, retry after an incorrect password, and cancel without an error. Large archives with an unknown encryption state no longer leave you at an unskippable password prompt.
+- **Security:** Limited reuse of the Browse password to extraction of the archive it was entered for.
+- **UI:** Fixed duplicate overwrite confirmations in the native save dialog.
+- **UI:** Fixed an issue where Enter during IME composition could open a dialog, browse an archive, or start extraction in Basic.
+- **UI:** Updated password prompts to retry with `Incorrect password`, provide a Show/Hide toggle, and keep empty submissions open with a message. Cancel ends the run.
+- **UI:** Fixed keyboard focus when toggling selective-extraction search results and improved picker responsiveness while toggling or typing in large archives.
+- **UI:** Updated picker sorting to keep folders first and sort numbered names naturally, with `file2` before `file10`.
+- **UI:** Limited the activity log to its newest 1,000 lines and improved append performance.
+- **UI:** Added `Retry` after failed quick extractions, except validation failures, and reset the progress bar after cancellation.
+- **UI:** Added a plain-copy fallback for quick extraction's `Copy details` action when clipboard access is blocked, with `Copy failed` shown if the fallback also fails.
+- **Codebase:** Fixed recovery from corrupt `settings.json` files by moving the original to `settings.json.corrupt-<UTC time>` and creating fresh settings so Save works again.
+- **UI:** Updated compression method choices to follow the selected format and reset unsupported saved methods when settings load.
+- **UI:** Added confirmation when closing `Settings` with unsaved changes. Save does not prompt, and the reset confirmation now lists settings, custom presets, recents, and logs as the items it removes.
+- **UI:** Changed saving `Settings` to preserve existing compression defaults instead of copying the current Power form. Use `Use current session values` to copy those values explicitly.
+- **UI:** Added Skip to every setup wizard step and Esc to close the wizard. Choosing Basic when re-running setup now updates the Basic view.
+- **Codebase:** Updated the first-run thread count to use the detected CPU count, falling back to `8` if detection fails.
+- **UI:** Clarified that local logging writes operations, paths, and errors to a log file on this device.
+- **UI:** Added confirmation before closing or quitting during an operation. Declining keeps it running; accepting cancels it safely before closing.
+- **UI:** Queued dropped files and OS hand-offs during running jobs, with a toast explaining when they will be added. Hand-offs exceeding 4,096 new items now show the same limit message as drops.
+- **UI:** Fixed restored Power window size after maximize or full screen, and added double-click maximize to the Power title bar. Basic now opens at its intended workspace height.
+- **UI:** Added native text-field context menus with Copy and Paste.
+- **macOS:** Disabled autocorrect, smart dashes, and automatic capitalization in path and password fields.
+- **macOS:** Updated Finder Services to ignore non-file items and reject very large selections before converting them. Enabling Finder Sync now reports `pluginkit` errors.
+- **UI:** Prevented Keyboard Shortcuts from opening over another dialog and added Basic-mode keys to shortcut help.
+- **UI:** Fixed Esc to close only the topmost dialog or menu without also returning Basic to Home. The Basic Recent menu now supports arrow keys, Home, End, and focus restoration on Esc.
+- **UI:** Updated dialogs to focus a visible, enabled control when opened and removed startup flashes of placeholder version and platform labels.
+- **Updater:** Added a persistent `Update ready` status-bar button until a downloaded update is installed or discarded. Choosing `Later` no longer requests notification permission, and background checks or active archive operations do not open the restart prompt.
+- **UI:** Added Dismiss buttons and Esc support to timed toasts, preserved line breaks, and wrapped long Windows paths. At most three sticky toasts remain visible; a fourth closes the oldest.
+- **UI:** Added accessible names to Basic progress bars and announced the input list as a group. Screen readers now hear progress at `25%`, `50%`, `75%`, and completion instead of every percentage point.
+- **UI:** Updated control borders to meet `3:1` contrast in both themes and kept text at least `12 px`.
+- **UI:** Kept the density toggle label stable while updating its pressed state, announced that the settings button opens a dialog, and removed the hidden About debug toggle from keyboard navigation.
+- **UI:** Fixed empty file sizes to show `0 B` and rounded fractional byte counts.
+- **Security:** Limited crash recovery to the destination archive and its numbered volumes. Recovery records referring to other files are refused.
+- **Security:** Refused updater downloads larger than `1 GiB` instead of buffering them.
+- **Security:** Updated the Windows updater to `zip` `9`, fixing `RUSTSEC-2026-0367`, `RUSTSEC-2026-0368`, `RUSTSEC-2026-0369`, and `RUSTSEC-2026-0429`.
+- **PKG:** Updated packages, including bundled 7-Zip to `26.06`.
+  - macOS uses a universal helper assembled from the official Apple Silicon and Intel downloads, with each half copied byte for byte. Build checks reject downloads with the wrong architecture.
 
 ### Known issues
 
-- Archives with more than about 100,000 entries extract very slowly.
-- Convert cannot handle archives whose listing exceeds 64 MiB.
-- Browse and extraction read the full listing before showing it. A streaming parser is not in this release.
-- Quick extract does not offer "Choose another folder". Use Retry, or extract from Power.
-- The read-only volume extraction fallback is not implemented. If the destination is read-only, choose a writable folder.
-- Dependabot cannot watch vendored path crates, so those are updated by hand.
-- Linting uses an explicit rule list. `eslint:recommended` needs the `@eslint/js` dev dependency first.
+- **Codebase:** Archives with more than about 100,000 entries still extract very slowly, and Browse and extraction read the full listing before showing it. A streaming parser is not included in this release.
+- **Codebase:** Convert cannot handle archive listings larger than `64 MiB`.
+- **UI:** Quick extract does not offer `Choose another folder`. Use Retry, or extract from Power.
+- **Codebase:** Read-only destination fallback is not implemented. Choose a writable destination folder if extraction cannot write to the selected location.
+- **Codebase:** Vendored path crates must be updated manually because Dependabot cannot watch them.
+- **Codebase:** Linting still uses an explicit rule list; adopting `eslint:recommended` requires adding the `@eslint/js` development dependency first.
+
+
+> [!IMPORTANT]
+> **Note:** MSI builds are NOT provided for beta releases. Use the EXE installer.
 
 ### FULL CHANGELOG:
 
