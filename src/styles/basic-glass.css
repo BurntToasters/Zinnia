@@ -211,7 +211,7 @@ html[data-window-fx="basic"] #input-modal-overlay .modal {
     border-color var(--transition);
 }
 
-#app[data-workspace-mode="basic"] .basic-dropzone:hover {
+#app[data-workspace-mode="basic"] .basic-dropzone:hover:not(.is-disabled) {
   background: color-mix(in srgb, var(--surface) 74%, transparent) !important;
   border-color: var(--accent) !important;
   box-shadow:

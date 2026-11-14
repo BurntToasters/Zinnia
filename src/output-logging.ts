@@ -1,4 +1,5 @@
 import type { ArchiveIoDiagnostics } from "./archive/backend-ipc";
+import { pluralize } from "./utils";
 
 export type OutputLogVerbosity = "info" | "debug";
 export type OutputLogEntry = { level: "info" | "error"; text: string };
@@ -23,7 +24,7 @@ function summarizeStream(label: string, text: string): string {
     .filter(Boolean);
   const previewText =
     preview.length > 0 ? ` Preview: ${preview.join(" | ")}` : "";
-  return `${label}: ${lines.length} line(s), ${normalized.length} chars.${previewText}`;
+  return `${label}: ${pluralize(lines.length, "line")}, ${normalized.length} chars.${previewText}`;
 }
 
 export function formatCommandOutputForLogs(

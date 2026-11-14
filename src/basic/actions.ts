@@ -12,6 +12,7 @@ import {
   triggerIconRefresh,
 } from "../ui";
 import { MAX_ARCHIVE_PATHS, validateArchivePaths } from "../archive-rules";
+import { pluralize } from "../utils";
 import {
   runAction,
   browseArchive,
@@ -36,6 +37,9 @@ import {
   setBasicBrowsePasswordVisible,
   syncBasicBeforeRun,
   syncBasicBrowsePasswordToPower,
+  chooseBasicExtractDestination,
+  chooseBasicOutputPath,
+  renderBasicDestinations,
 } from "./sync";
 import {
   showBasicProgress,
@@ -43,7 +47,6 @@ import {
   showBasicCompletion,
   updateBasicPreparingState,
 } from "./progress";
-import { setRecentArchiveHandler } from "./recent";
 import { showToast } from "../toast";
 import { waitUntilIncomingPathsApplyingClear } from "../incoming-paths";
 import { confirmWithE2eQueue, takeE2eDialogResult } from "../e2e-dialog";
@@ -79,6 +82,8 @@ export async function openPathWithFeedback(path: string): Promise<void> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Failed to open path: ${msg}`, "error");
+    const reason = userFacingBackendError(msg).trim() || "Unknown error.";
+    showToast(`Could not open the folder: ${reason}`, "error", 5000);
   }
 }
 
@@ -137,7 +142,7 @@ function limitBasicInputPaths(paths: string[]): {
 function showBasicInputLimitToast(overLimit: number): void {
   if (overLimit === 0) return;
   showToast(
-    `Selected the first 4,096 items; ${overLimit} more were not added.`,
+    `Selected the first ${MAX_ARCHIVE_PATHS.toLocaleString()} items; ${overLimit} more ${overLimit === 1 ? "item was" : "items were"} not added.`,
     "error",
     5000,
   );
@@ -178,6 +183,7 @@ export function beginBasicPreparation(): BasicPreparation | null {
     view: getBasicView(),
   };
   updateBasicPreparingState(true);
+  renderBasicDestinations();
   return preparation;
 }
 
@@ -199,6 +205,7 @@ export function isBasicPreparationCurrent(
 export function finishBasicPreparation(preparation: BasicPreparation): void {
   if (preparation.generation !== basicPreparationGeneration) return;
   updateBasicPreparingState(false);
+  renderBasicDestinations();
 }
 
 async function handleBasicDropOnce(
@@ -225,7 +232,7 @@ async function handleBasicDropOnce(
   // Mixed drop: let the user choose extract-the-archives vs compress-everything.
   if (mixed) {
     const extractThem = await confirmBasicDrop(
-      `You dropped ${archives.length} archive(s) and ${others.length} other file(s). Extract the archives?`,
+      `You dropped ${pluralize(archives.length, "archive")} and ${pluralize(others.length, "other file")}. ${archives.length === 1 ? "Extract the archive?" : "Extract the archives?"}`,
       {
         title: "Mixed selection",
         okLabel: "Extract archives",
@@ -406,9 +413,7 @@ async function handleBasicCompressActionOnce(
     return;
   }
 
-  if (basicOutputPath) {
-    basicOutputPath.value = output;
-  }
+  chooseBasicOutputPath(output);
 
   const basicArchiveName = document.getElementById(
     "basic-archive-name",
@@ -509,10 +514,27 @@ async function handleBasicExtractActionOnce(
   // (busy backend, truncated listing, IPC error). Do not prompt upfront then:
   // the run prompts when 7-Zip reports that a password is required, so a
   // plaintext archive is never blocked by a failed check.
+  const carriedPassword = browsedArchivePasswordFor(archive);
   const encryptionCheck = await isArchiveEncrypted(archive);
   if (!isBasicPreparationCurrent(preparation)) return;
   if (encryptionCheck === null) {
-    const [validation] = await validateArchivePaths([archive]);
+    let validations: Awaited<ReturnType<typeof validateArchivePaths>>;
+    try {
+      validations = await validateArchivePaths([archive]);
+    } catch (err) {
+      if (!isBasicPreparationCurrent(preparation)) return;
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`Archive path check failed: ${msg}`, "error");
+      showBasicCompletion(
+        "extract",
+        false,
+        "Operation failed",
+        userFacingBackendError(msg).trim() ||
+          "Could not check this archive. Try again.",
+      );
+      return;
+    }
+    const [validation] = validations;
     if (!isBasicPreparationCurrent(preparation)) return;
     if (!validation?.valid) {
       showBasicCompletion(
@@ -532,13 +554,13 @@ async function handleBasicExtractActionOnce(
     );
   }
   // Reuse the password that opened this archive in Browse, if it still matches.
-  let password = (await browsedArchivePasswordFor(archive)) ?? "";
+  let password = (await carriedPassword) ?? "";
   if (!isBasicPreparationCurrent(preparation)) return;
 
   if (encryptionCheck === true && !password) {
     while (!password) {
       const input = await promptInput({
-        title: "Password Required",
+        title: "Password required",
         label: "This archive is encrypted. Enter password:",
         password: true,
       });
@@ -606,9 +628,7 @@ async function handleBasicExtractActionOnce(
     }
   }
 
-  if (basicExtractPath) {
-    basicExtractPath.value = output;
-  }
+  chooseBasicExtractDestination(output);
 
   setMode("extract");
   syncBasicBeforeRun();
@@ -705,7 +725,3 @@ export function handleBasicDragDrop(type: string, paths?: string[]): void {
 }
 
 export { parentDirForPath };
-
-setRecentArchiveHandler((path) => {
-  void handleBasicDrop([path]);
-});

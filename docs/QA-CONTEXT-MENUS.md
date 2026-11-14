@@ -172,6 +172,9 @@ Requires a **signed** NSIS install with full `AZURE_ARTIFACT_SIGNING_PUBLISHER_D
 | MSIX missing `AllowExternalContent` | Register log shows `0x80073D2E`                                     |
 | Explorer still has shell DLL loaded | Register log shows deferred `0x80073D02` retry                       |
 | Reinstall / upgrade                 | Versioned shell directory + AppX retry/defer; no file-write prompt |
+| Signed reinstall over a classic-fallback install (`SKIP_WIN_CODESIGN=1` or stub MSIX first) | Register log shows OK; `reg query HKCU\Software\Classes\SystemFileAssociations\<ext>\shell\ZinniaExtract` finds nothing for `.zip`, `.7z`, `.rar`, `.tgz` and `.001`; `reg query HKCU\Software\Classes\*\shell\ZinniaCompress` finds nothing; Show more options lists no classic Extract or Compress next to the package entries |
+| Quick extract into a read-only folder, then **Choose another folder** | Picker opens; the chosen folder receives `<chosen folder>\<archive name>` (the leaf the first destination used, for example `hello` for `hello.7z`); cancelling the picker keeps the previous destination and leaves **Choose another folder** visible |
+| Archive with an empty `Zone.Identifier` stream (`[IO.File]::WriteAllBytes('<archive>:Zone.Identifier', [byte[]]@())`) | Extract and compress succeed with no invalid-format error; the output has no `Zone.Identifier` stream |
 
 ## Classic Windows verbs
 

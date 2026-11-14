@@ -12,6 +12,7 @@ import { browseArchive } from "./archive";
 import { MAX_ARCHIVE_PATHS, validateArchivePaths } from "./archive-rules";
 import { setBasicView } from "./basic";
 import { showToast } from "./toast";
+import { pluralize } from "./utils";
 
 export async function allPathsAreArchives(
   paths: string[],
@@ -59,12 +60,12 @@ function mergeIncomingPaths(paths: string[]): {
 function reportIncomingPathLimit(source: string, rejected: number): void {
   if (rejected === 0) return;
   showToast(
-    `Added the first ${MAX_ARCHIVE_PATHS} unique items; ${rejected} more were not added.`,
+    `Added the first ${MAX_ARCHIVE_PATHS.toLocaleString()} unique items; ${rejected} more ${rejected === 1 ? "item was" : "items were"} not added.`,
     "error",
     5000,
   );
   log(
-    `Received paths from ${source}, but kept only the first ${MAX_ARCHIVE_PATHS} unique inputs; ${rejected} excess path(s) were not added.`,
+    `Received paths from ${source}, but kept only the first ${MAX_ARCHIVE_PATHS.toLocaleString()} unique inputs; ${rejected} excess ${rejected === 1 ? "path was" : "paths were"} not added.`,
   );
 }
 
@@ -179,7 +180,7 @@ async function applyIncomingPathsUnlocked(
     setMode("add");
     const { rejected } = mergeIncomingPaths(paths);
     renderInputs();
-    devLog(`Received ${paths.length} path(s) from ${source}.`);
+    devLog(`Received ${pluralize(paths.length, "path")} from ${source}.`);
     reportIncomingPathLimit(source, rejected);
     if (getWorkspaceMode() === "basic") {
       setBasicView("compress");
@@ -243,7 +244,7 @@ async function applyIncomingPathsUnlocked(
     setBrowsePasswordFieldVisible(false);
   }
   renderInputs();
-  devLog(`Received ${paths.length} path(s) from ${source}.`);
+  devLog(`Received ${pluralize(paths.length, "path")} from ${source}.`);
   reportIncomingPathLimit(source, rejected);
 
   if (getWorkspaceMode() === "basic") {

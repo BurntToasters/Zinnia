@@ -1,7 +1,13 @@
 import { $ } from "../utils";
 import { state } from "../state";
-import { toggleActivity, setWorkspaceMode, setUiDensity } from "../ui";
+import {
+  toggleActivity,
+  getWorkspaceMode,
+  setWorkspaceMode,
+  setUiDensity,
+} from "../ui";
 import { setBasicView, syncBasicWorkspaceFromPower } from "../basic";
+import { resumeBasicView, syncBasicSecretsToPower } from "../basic/sync";
 import { refreshQuickActionRepeatState } from "../quick-actions";
 
 export function wireWorkspaceChromeEvents(): void {
@@ -13,10 +19,18 @@ export function wireWorkspaceChromeEvents(): void {
         if (state.running || state.operationPreparing) return;
         const mode =
           btn.dataset.workspaceModeBtn === "power" ? "power" : "basic";
+        const previousMode = getWorkspaceMode();
+        if (previousMode === "basic" && mode === "power") {
+          syncBasicSecretsToPower();
+        }
         setWorkspaceMode(mode);
         if (mode === "basic") {
           syncBasicWorkspaceFromPower();
-          setBasicView("home");
+          if (previousMode === "basic") {
+            setBasicView("home");
+          } else {
+            resumeBasicView();
+          }
         }
         refreshQuickActionRepeatState();
       });

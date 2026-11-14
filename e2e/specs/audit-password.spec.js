@@ -302,8 +302,7 @@ describe("archive password retry and error hints", function () {
     );
     await confirmInputModal(PASSWORD_B);
 
-    // Payloads sit at the archive root, so each one lands directly in dest.
-    const extracted = path.join(dest, "from-b.txt");
+    const extracted = path.join(dest, "skip-b", "from-b.txt");
     await browser.waitUntil(() => fs.existsSync(extracted), {
       timeout: EXTRACT_TIMEOUT_MS,
       timeoutMsg: `batch did not extract ${extracted} after Skip; ${await uiDiagnostics()}`,
@@ -311,7 +310,7 @@ describe("archive password retry and error hints", function () {
     await waitForIdle();
     assert.equal(fs.readFileSync(extracted, "utf8"), "b payload\n");
     assert.equal(
-      fs.existsSync(path.join(dest, "from-a.txt")),
+      fs.existsSync(path.join(dest, "skip-a", "from-a.txt")),
       false,
       "the skipped archive must not be extracted",
     );
@@ -376,8 +375,8 @@ describe("archive password retry and error hints", function () {
     );
     await confirmInputModal(PASSWORD_B);
 
-    const outA = path.join(dest, "pair-a.txt");
-    const outB = path.join(dest, "pair-b.txt");
+    const outA = path.join(dest, "pair-a", "pair-a.txt");
+    const outB = path.join(dest, "pair-b", "pair-b.txt");
     await browser.waitUntil(() => fs.existsSync(outA) && fs.existsSync(outB), {
       timeout: EXTRACT_TIMEOUT_MS,
       timeoutMsg: `batch did not extract both archives; a=${fs.existsSync(outA)} b=${fs.existsSync(outB)}; ${await uiDiagnostics()}`,

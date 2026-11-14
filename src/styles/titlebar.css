@@ -95,6 +95,11 @@ html[data-window-fx="basic"] body.platform-windows #titlebar {
   color: var(--titlebar-close-hover-fg) !important;
 }
 
+[inert] .titlebar-btn:hover {
+  background: transparent !important;
+  color: var(--text-secondary) !important;
+}
+
 /* Platform Adjustments */
 body.platform-macos #titlebar {
   height: 38px;

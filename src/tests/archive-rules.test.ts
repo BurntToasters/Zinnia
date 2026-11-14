@@ -222,7 +222,7 @@ describe("validateArchivePaths", () => {
 
     expect(invokeMock).not.toHaveBeenCalled();
     expect(results).toHaveLength(MAX_ARCHIVE_PATHS + 1);
-    expect(results[0]).toMatchObject({ valid: false, reason: /At most 4096/ });
+    expect(results[0]).toMatchObject({ valid: false, reason: /At most 4,096/ });
   });
 
   it("rejects oversized serialized IPC requests without invoking the backend", async () => {

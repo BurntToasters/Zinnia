@@ -1,7 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { confirm, open, save } from "@tauri-apps/plugin-dialog";
 import { confirmWithE2eQueue, takeE2eDialogResult } from "../e2e-dialog";
-import { $, parseThreads, releaseFocusTrap, trapFocus } from "../utils";
+import {
+  $,
+  parseThreads,
+  pluralize,
+  releaseFocusTrap,
+  trapFocus,
+} from "../utils";
 import { state } from "../state";
 import { getDefaultThreads } from "../window-events";
 import {
@@ -218,7 +224,7 @@ export async function addFilesToArchive(): Promise<void> {
 
     setStatus("Done", 2000);
     if (isDebugEnabled()) {
-      debugLog(`Added ${files.length} file(s) to archive.`);
+      debugLog(`Added ${pluralize(files.length, "file")} to archive.`);
     }
     showToast(
       `Added ${files.length} file${files.length === 1 ? "" : "s"} to the archive.`,

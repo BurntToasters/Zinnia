@@ -7,27 +7,24 @@
   align-items: stretch;
   justify-content: stretch;
   z-index: 10050;
-  width: 100vw;
-  height: 100vh;
-  position: fixed;
+  position: absolute;
   top: 0;
+  right: 0;
+  bottom: 0;
   left: 0;
 }
 
 /* Account for titlebar height in basic mode fullscreen settings */
 body.platform-windows #app[data-workspace-mode="basic"] #settings-overlay {
   top: 32px;
-  height: calc(100vh - 32px);
 }
 
 body.platform-macos #app[data-workspace-mode="basic"] #settings-overlay {
   top: 38px;
-  height: calc(100vh - 38px);
 }
 
 body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
   top: 32px;
-  height: calc(100vh - 32px);
 }
 
 #app[data-workspace-mode="basic"] #settings-overlay:not([hidden]) {
@@ -214,10 +211,6 @@ body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
   letter-spacing: 0.07em;
   text-transform: uppercase;
   color: var(--text-secondary);
-}
-
-#app[data-workspace-mode="basic"] .modal--settings .setting-divider {
-  display: none;
 }
 
 #app[data-workspace-mode="basic"] #setting-ui-density {
@@ -741,5 +734,11 @@ body.platform-linux #app[data-workspace-mode="basic"] #settings-overlay {
     .modal--settings
     .settings-tab:focus-visible {
     outline: 2px solid Highlight;
+  }
+
+  #app[data-workspace-mode="basic"] .modal--settings .setting-item select:focus,
+  #app[data-workspace-mode="basic"] .modal--settings .setting-item input:focus {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
   }
 }

@@ -170,6 +170,41 @@ export function deriveExtractDestinationPath(archivePath: string): string {
   return joinPath(parent, folderName, separator);
 }
 
+export function deriveBatchExtractDestinations(
+  destination: string,
+  archivePaths: readonly string[],
+): string[] {
+  const { separator } = splitPathParts(destination);
+  const used = new Set<string>();
+  return archivePaths.map((archivePath) => {
+    const stem =
+      deriveExtractFolderName(splitPathParts(archivePath).name) || "_extracted";
+    let folder = stem;
+    for (let n = 2; used.has(folder.toLowerCase()); n += 1) {
+      folder = `${stem} (${n})`;
+    }
+    used.add(folder.toLowerCase());
+    return joinPath(destination, folder, separator);
+  });
+}
+
+export function deriveBatchExtractParent(inputs: readonly string[]): string {
+  const parents = inputs.map((raw) => splitPathParts(normalizeInputPath(raw)));
+  if (parents.length === 0 || parents.some((parts) => !parts.parent)) return "";
+  const { separator } = parents[0];
+  const [first, ...rest] = parents.map((parts) => parts.parent.split(/[\\/]/));
+  let shared = 0;
+  while (
+    shared < first.length &&
+    rest.every((segments) => segments[shared] === first[shared])
+  ) {
+    shared += 1;
+  }
+  const joined = first.slice(0, shared).join(separator);
+  if (!joined) return shared > 0 ? separator : "";
+  return /^[A-Za-z]:$/.test(joined) ? `${joined}${separator}` : joined;
+}
+
 export function shouldAutofillExtractDestination(
   currentValue: string,
   lastAutoValue: string | null,
@@ -184,13 +219,17 @@ export function resolveExtractDestinationAutofill(
   currentValue: string,
   lastAutoValue: string | null,
   primaryArchivePath: string | null | undefined,
+  inputs: readonly string[] = [],
 ): string | null {
   const archive = primaryArchivePath ?? "";
   if (!archive) return null;
   if (!shouldAutofillExtractDestination(currentValue, lastAutoValue))
     return null;
 
-  const next = deriveExtractDestinationPath(archive);
+  const next =
+    inputs.length > 1
+      ? deriveBatchExtractParent(inputs)
+      : deriveExtractDestinationPath(archive);
   return next || null;
 }
 
@@ -284,8 +323,7 @@ export function deriveOutputArchivePath(
     const fallbackSep = fallback.includes("\\") ? "\\" : "/";
     return joinPath(fallback, fileName, fallbackSep);
   }
-  // Last resort: bare name for OS save dialogs only, never for silent Run.
-  return fileName;
+  return null;
 }
 
 /** Typed names are a file name only; folders come from the output path. */

@@ -38,7 +38,7 @@
 }
 
 .setup-wizard-overlay {
-  position: fixed;
+  position: absolute;
   inset: 0;
   z-index: 10050;
   display: flex;
@@ -102,10 +102,6 @@
   flex-wrap: wrap;
   justify-content: center;
   gap: 8px;
-}
-
-.setup-wizard-btn-wide {
-  min-width: 200px;
 }
 
 .setup-wizard-choice-grid {
@@ -300,20 +296,6 @@
   line-height: 1.45;
 }
 
-.settings-group {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 14px 16px;
-  margin: 0;
-}
-
-.settings-group legend {
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  padding: 0 6px;
-}
-
 .settings-hint {
   margin: 0 0 12px;
   font-size: 0.75rem;
@@ -340,12 +322,6 @@
 .settings-value {
   font-size: 0.75rem;
   color: var(--text);
-}
-
-.settings-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
 }
 
 [data-mode="add"] [data-mode-visible="extract"],

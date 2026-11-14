@@ -192,3 +192,26 @@ body.platform-macos #app[data-workspace-mode="basic"] .titlebar-logo {
     animation: none;
   }
 }
+
+body:has(#app[data-workspace-mode="basic"]) .toast-region {
+  top: 46px;
+  bottom: auto;
+  max-height: 40vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+body:has(#app[data-workspace-mode="basic"]) .toast-region > .toast {
+  flex-shrink: 0;
+}
+
+body:has(#app[data-workspace-mode="basic"]) .skip-link:focus {
+  z-index: 10100;
+}
+
+#app[data-workspace-mode="basic"] .update-ready-indicator:not([hidden]) {
+  height: 30px;
+  padding: 0 8px;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}

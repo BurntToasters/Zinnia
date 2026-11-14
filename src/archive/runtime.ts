@@ -11,6 +11,7 @@ import {
   setCancelAvailable,
   setStatus,
 } from "../ui";
+import { forgetBrowseSecrets } from "../ui/inputs";
 import {
   formatArchiveIoDiagnosticsForDebug,
   formatCommandOutputForLogs,
@@ -34,7 +35,10 @@ import { assertRunResult } from "../utils";
 export const formatBatchEta = formatEta;
 
 /** `skipped` is set when the user chose "Skip this archive" in a batch. */
-export type Run7zResult = RunResult & { skipped?: boolean };
+export type Run7zResult = RunResult & {
+  skipped?: boolean;
+  passwordRequired?: boolean;
+};
 
 const OUTPUT_TRUNCATION_LIMIT_MIB = 10;
 const RUNTIME_PROBE_TIMEOUT_MS = 7000;
@@ -96,6 +100,7 @@ export function clearPasswordFields(): void {
   for (const [inputId, toggleId] of PASSWORD_FIELD_TOGGLES) {
     resetPasswordFieldControl(inputId, toggleId);
   }
+  forgetBrowseSecrets();
 }
 
 export function logCommandResult(
@@ -257,9 +262,9 @@ export async function withLiveProgress<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-export type PasswordCarry = { value: string };
+type PasswordCarry = { value: string };
 
-export type PasswordRetryOptions = {
+type PasswordRetryOptions = {
   /** Batch callers only. Lets the password prompt skip this archive. */
   allowSkip?: boolean;
 };
@@ -275,6 +280,41 @@ function cancelledRunResult(): Run7zResult {
 function archivePathFromArgs(args: string[]): string {
   const separator = args.indexOf("--");
   return separator === -1 ? "" : (args[separator + 1] ?? "");
+}
+
+const CLOSED_STDIN_PROMPT_PATTERN = /\bbreak signaled\b/i;
+
+function isClosedStdinPasswordRejection(detail: string): boolean {
+  return (
+    looksLikePasswordRequiredError("", detail) ||
+    CLOSED_STDIN_PROMPT_PATTERN.test(detail)
+  );
+}
+
+function isPasswordRequiredResult(result: Run7zResult): boolean {
+  return (
+    result.passwordRequired === true ||
+    looksLikePasswordRequiredError(result.stdout, result.stderr)
+  );
+}
+
+async function invokeRunForPasswordRetry(
+  args: string[],
+  expectedArchiveIdentity: string | undefined,
+  convertPasswordRejection: boolean,
+): Promise<Run7zResult> {
+  try {
+    return await invokeGuardedRun7z(args, expectedArchiveIdentity);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    // Header-encrypted archives can fail backend member-safety listing before
+    // `run_7z` has a normal result. Convert only a recognized password prompt
+    // into retry flow; all other backend errors remain rejected.
+    if (!convertPasswordRejection || !isClosedStdinPasswordRejection(detail)) {
+      throw error;
+    }
+    return { stdout: "", stderr: detail, code: 255, passwordRequired: true };
+  }
 }
 
 /**
@@ -302,26 +342,15 @@ export async function runWithPasswordRetry(
       : args;
   // Once a password has gone to 7-Zip, a repeated failure means it was wrong.
   let passwordSent = effectiveArgs !== args || hasPasswordSwitch;
-  let result: Run7zResult;
-  try {
-    result = await invokeGuardedRun7z(effectiveArgs, expectedArchiveIdentity);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    // Header-encrypted archives can fail backend member-safety listing before
-    // `run_7z` has a normal result. Convert only a recognized password prompt
-    // into retry flow; all other backend errors remain rejected.
-    if (
-      !retryForMissingPassword ||
-      !looksLikePasswordRequiredError("", detail)
-    ) {
-      throw error;
-    }
-    result = { stdout: "", stderr: detail, code: 255 };
-  }
+  let result = await invokeRunForPasswordRetry(
+    effectiveArgs,
+    expectedArchiveIdentity,
+    retryForMissingPassword,
+  );
   while (
     retryForMissingPassword &&
     result.code > 1 &&
-    looksLikePasswordRequiredError(result.stdout, result.stderr)
+    isPasswordRequiredResult(result)
   ) {
     if (state.cancelRequested || state.batchCancelled) {
       return result;
@@ -356,9 +385,10 @@ export async function runWithPasswordRetry(
     }
     if (passwordCarry) passwordCarry.value = outcome.value;
     setStatus("Retrying with password");
-    result = await invokeGuardedRun7z(
+    result = await invokeRunForPasswordRetry(
       withPassword(args, outcome.value),
       expectedArchiveIdentity,
+      true,
     );
     passwordSent = true;
   }

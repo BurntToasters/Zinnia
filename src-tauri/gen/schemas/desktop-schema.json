@@ -411,6 +411,12 @@
           "markdownDescription": "Enables the cancel_7z command without any pre-configured scope."
         },
         {
+          "description": "Enables the choose_extract_destination command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-choose-extract-destination",
+          "markdownDescription": "Enables the choose_extract_destination command without any pre-configured scope."
+        },
+        {
           "description": "Enables the clear_logs command without any pre-configured scope.",
           "type": "string",
           "const": "allow-clear-logs",
@@ -715,6 +721,12 @@
           "type": "string",
           "const": "deny-cancel-7z",
           "markdownDescription": "Denies the cancel_7z command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the choose_extract_destination command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-choose-extract-destination",
+          "markdownDescription": "Denies the choose_extract_destination command without any pre-configured scope."
         },
         {
           "description": "Denies the clear_logs command without any pre-configured scope.",

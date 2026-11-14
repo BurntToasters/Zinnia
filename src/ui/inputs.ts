@@ -67,21 +67,26 @@ function startInputValidation(paths: string[]): void {
   }
 
   syncValidationMapForInputs(paths);
+  const pending = [...new Set(paths)].filter(
+    (path) => state.inputValidationByPath.get(path)?.state === "unknown",
+  );
+  if (pending.length === 0) return;
   const requestId = ++state.inputValidationRequestId;
 
-  void validateArchivePaths(paths)
+  void validateArchivePaths(pending)
     .then((results) => {
       if (requestId !== state.inputValidationRequestId) return;
-      const next = new Map<string, InputValidationInfo>();
+      const next = new Map(state.inputValidationByPath);
+      const resolved = new Set<string>();
       for (const result of results) {
         const key = result.path;
         if (!key) continue;
-        next.set(key, mapArchiveValidationResult(result));
+        resolved.add(key);
+        if (next.has(key)) next.set(key, mapArchiveValidationResult(result));
       }
-      for (const path of paths) {
-        const key = path;
-        if (!key || next.has(key)) continue;
-        next.set(key, {
+      for (const path of pending) {
+        if (resolved.has(path) || !next.has(path)) continue;
+        next.set(path, {
           state: "invalid",
           reason: "Validation unavailable.",
           reasonShort: "Validation unavailable.",
@@ -94,7 +99,7 @@ function startInputValidation(paths: string[]): void {
       if (requestId !== state.inputValidationRequestId) return;
       const msg = err instanceof Error ? err.message : String(err);
       devLog(`Background archive validation failed: ${msg}`);
-      for (const path of paths) {
+      for (const path of pending) {
         const key = path;
         if (!key) continue;
         const current = state.inputValidationByPath.get(key);
@@ -144,6 +149,16 @@ export function resetPasswordFieldControl(
   toggle.setAttribute("aria-pressed", "false");
 }
 
+const browseSecretForgetListeners: Array<() => void> = [];
+
+export function onBrowseSecretsForget(listener: () => void): void {
+  browseSecretForgetListeners.push(listener);
+}
+
+export function forgetBrowseSecrets(): void {
+  for (const listener of browseSecretForgetListeners) listener();
+}
+
 /** Clears Basic then Power browse password fields and resets Show/Hide toggles. */
 export function clearBrowsePasswordFields(): void {
   resetPasswordFieldControl(
@@ -151,6 +166,7 @@ export function clearBrowsePasswordFields(): void {
     "basic-toggle-browse-password",
   );
   resetPasswordFieldControl("browse-password", "toggle-browse-password");
+  forgetBrowseSecrets();
 }
 
 export function setBrowsePasswordFieldVisible(visible: boolean) {
@@ -188,6 +204,7 @@ function clearBrowsePickerSessionState() {
     if (modal) releaseFocusTrap(modal);
     overlay.hidden = true;
   }
+  forgetBrowseSecrets();
 }
 
 export function setMode(
@@ -231,6 +248,7 @@ export function renderInputs() {
   const signatureChanged = signature !== state.lastInputsSignature;
   if (signatureChanged) {
     clearBrowsePickerSessionState();
+    clearBrowsePasswordFields();
     state.lastInputsSignature = signature;
   }
 
@@ -242,6 +260,7 @@ export function renderInputs() {
       state.inputValidationByPath.clear();
     }
   } else if (signatureChanged || modeChangedForValidation) {
+    if (modeChangedForValidation) state.inputValidationByPath.clear();
     const normalized = state.inputs.filter((path) => path.length > 0);
     startInputValidation(normalized);
   } else {
@@ -257,6 +276,7 @@ export function renderInputs() {
         extractPathInput.value,
         state.lastAutoExtractDestination,
         state.inputs[0] ?? null,
+        state.inputs,
       );
       if (nextExtractPath) {
         extractPathInput.value = nextExtractPath;
@@ -333,7 +353,7 @@ export function renderInputs() {
           ? "\u2713 Valid"
           : validation.state === "invalid"
             ? "\u2717 Invalid"
-            : "\u22ef Checking";
+            : "\u2026 Checking";
       content.appendChild(badge);
 
       if (validation.state === "invalid") {

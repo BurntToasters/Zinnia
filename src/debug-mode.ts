@@ -272,7 +272,7 @@ export function clearDebugConsole(): void {
   }
 }
 
-export async function copyDebugConsole(): Promise<void> {
+async function copyDebugConsole(): Promise<void> {
   const text = lineBuffer.length
     ? `${lineBuffer.join("\n")}\n`
     : (consoleLogEl()?.textContent ?? "");
@@ -325,7 +325,7 @@ export async function restoreDebugConsolePopOutIfNeeded(): Promise<void> {
   await popOutDebugConsole();
 }
 
-export async function focusOrPopOutDebugConsole(): Promise<void> {
+async function focusOrPopOutDebugConsole(): Promise<void> {
   if (!debugEnabled) return;
   if (poppedOut) {
     try {
@@ -383,9 +383,26 @@ export function setDebugEnabled(
   }
 }
 
+let rejectionReporterInstalled = false;
+
+function installUnhandledRejectionReporter(): void {
+  if (rejectionReporterInstalled) return;
+  rejectionReporterInstalled = true;
+  window.addEventListener("unhandledrejection", (event) => {
+    if (!debugEnabled) return;
+    event.preventDefault();
+    const reason =
+      event.reason instanceof Error
+        ? event.reason.message
+        : String(event.reason);
+    debugLog(`Unhandled promise rejection: ${reason}`);
+  });
+}
+
 export function wireDebugConsoleControls(): void {
   if (consoleControlsWired) return;
   consoleControlsWired = true;
+  installUnhandledRejectionReporter();
 
   const clearBtn = document.getElementById("debug-console-clear");
   const copyBtn = document.getElementById("debug-console-copy");

@@ -101,7 +101,7 @@ export async function validateArchivePaths(
     return normalized.map((path) => ({
       path,
       valid: false,
-      reason: `At most ${MAX_ARCHIVE_PATHS} paths can be validated at once.`,
+      reason: `At most ${MAX_ARCHIVE_PATHS.toLocaleString()} paths can be validated at once.`,
     }));
   }
   const byPath = new Map<string, ArchivePathValidation>();

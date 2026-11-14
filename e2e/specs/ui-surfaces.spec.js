@@ -346,41 +346,48 @@ describe("ui surfaces", function () {
     assert.ok(hiddenAgain.iconClasses.includes("lucide-eye"));
   });
 
-  it("lists Basic and Power rows in the keyboard shortcuts modal", async () => {
-    await dispatchDocumentKey("?");
-    await browser.waitUntil(() => isShortcutsOverlayOpen(), {
-      timeout: 10_000,
-      timeoutMsg: "? did not open the shortcuts overlay",
-    });
-
-    const rows = await browser.execute(() =>
-      [...document.querySelectorAll("#shortcut-list .shortcut-list__row")].map(
-        (row) => ({
+  it("lists only the rows of the open workspace in the keyboard shortcuts modal", async () => {
+    const openShortcutRows = async () => {
+      await dispatchDocumentKey("?");
+      await browser.waitUntil(() => isShortcutsOverlayOpen(), {
+        timeout: 10_000,
+        timeoutMsg: "? did not open the shortcuts overlay",
+      });
+      const rows = await browser.execute(() =>
+        [
+          ...document.querySelectorAll("#shortcut-list .shortcut-list__row"),
+        ].map((row) => ({
           workspace: row.dataset.workspace ?? null,
           keys: row.querySelector("dt")?.textContent?.trim() ?? "",
           description: row.querySelector("dd")?.textContent?.trim() ?? "",
-        }),
-      ),
-    );
-    assert.ok(
-      rows.some(
-        (row) => row.workspace === "basic" && row.keys.includes("Enter"),
-      ),
-      `shortcuts modal lacks a Basic row: ${JSON.stringify(rows)}`,
-    );
-    assert.ok(
-      rows.some(
-        (row) => row.workspace === "power" && row.description.length > 0,
-      ),
-      `shortcuts modal lacks a Power row: ${JSON.stringify(rows)}`,
-    );
+        })),
+      );
+      await browser.execute(() => {
+        document.getElementById("close-shortcuts")?.click();
+      });
+      await browser.waitUntil(async () => !(await isShortcutsOverlayOpen()), {
+        timeout: 10_000,
+        timeoutMsg: "shortcuts overlay did not close",
+      });
+      return rows;
+    };
+    const workspacesOf = (rows) =>
+      [...new Set(rows.map((row) => row.workspace))].sort();
 
-    await browser.execute(() => {
-      document.getElementById("close-shortcuts")?.click();
-    });
-    await browser.waitUntil(async () => !(await isShortcutsOverlayOpen()), {
-      timeout: 10_000,
-      timeoutMsg: "shortcuts overlay did not close",
-    });
+    await switchToPowerWorkspace();
+    const powerRows = await openShortcutRows();
+    await switchToBasicWorkspace();
+    const basicRows = await openShortcutRows();
+
+    assert.deepEqual(
+      workspacesOf(powerRows),
+      ["all", "power"],
+      `shortcuts modal in Power lists the wrong rows: ${JSON.stringify(powerRows)}`,
+    );
+    assert.deepEqual(
+      workspacesOf(basicRows),
+      ["all", "basic"],
+      `shortcuts modal in Basic lists the wrong rows: ${JSON.stringify(basicRows)}`,
+    );
   });
 });

@@ -618,24 +618,124 @@ pub fn emit_open_paths(app: &tauri::AppHandle, argv: Vec<String>) -> bool {
     route_open_request(app, paths, mode)
 }
 
-fn cli_args_lossy() -> impl Iterator<Item = String> {
+fn cli_argv_lossy() -> Vec<String> {
     // `std::env::args()` panics on non-UTF-8 argv. Unix filenames may contain
     // arbitrary bytes; lossy conversion keeps startup alive and still opens
     // the vast majority of real paths.
     std::env::args_os()
-        .skip(1)
         .map(|arg| arg.to_string_lossy().into_owned())
+        .collect()
+}
+
+fn resolve_cli_argv_against_current_dir(argv: Vec<String>) -> Vec<String> {
+    match std::env::current_dir() {
+        Ok(cwd) => resolve_open_args_against_cwd(argv, &cwd.to_string_lossy()),
+        Err(_) => argv,
+    }
+}
+
+fn cli_args_resolved_against_current_dir() -> impl Iterator<Item = String> {
+    resolve_cli_argv_against_current_dir(cli_argv_lossy())
+        .into_iter()
+        .skip(1)
 }
 
 pub fn collect_cli_context() -> (Vec<String>, String) {
     // Do not consume shell handoffs here. A secondary single-instance process
     // would delete the file before the primary receives forwarded argv.
-    parse_open_request_args_ex(cli_args_lossy(), false)
+    parse_open_request_args_ex(cli_args_resolved_against_current_dir(), false)
 }
 
 /// Resolve launch argv including Windows shell handoffs. Call only from the
 /// primary instance (app setup / open routing), never from a process that may
 /// exit as a single-instance secondary.
 pub fn resolve_cli_context_with_handoffs() -> (Vec<String>, String) {
-    parse_open_request_args_ex(cli_args_lossy(), true)
+    parse_open_request_args_ex(cli_args_resolved_against_current_dir(), true)
+}
+
+#[cfg(test)]
+mod cold_start_argv_tests {
+    use super::{parse_open_request_args, resolve_cli_argv_against_current_dir};
+    use crate::launch::open_path::{derive_extract_destination_path, normalize_destination_path};
+    use std::path::Path;
+
+    fn cwd_join(leaf: &str) -> String {
+        std::env::current_dir()
+            .expect("cwd")
+            .join(leaf)
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    #[test]
+    fn cold_start_relative_archive_resolves_against_current_dir() {
+        let argv = vec![
+            "zinnia".to_string(),
+            "--extract".to_string(),
+            "foo.zip".to_string(),
+        ];
+        assert_eq!(
+            resolve_cli_argv_against_current_dir(argv),
+            vec![
+                "zinnia".to_string(),
+                "--extract".to_string(),
+                cwd_join("foo.zip"),
+            ]
+        );
+    }
+
+    #[test]
+    fn cold_start_relative_subdirectory_resolves_against_current_dir() {
+        let argv = vec!["zinnia".to_string(), "sub/foo.zip".to_string()];
+        let resolved = resolve_cli_argv_against_current_dir(argv);
+        assert!(Path::new(&resolved[1]).is_absolute());
+        assert_eq!(resolved[1], cwd_join("sub/foo.zip"));
+    }
+
+    #[test]
+    fn cold_start_dot_slash_archive_resolves_against_current_dir() {
+        let argv = vec!["zinnia".to_string(), "./foo.zip".to_string()];
+        let resolved = resolve_cli_argv_against_current_dir(argv);
+        assert!(Path::new(&resolved[1]).is_absolute());
+        assert_eq!(resolved[1], cwd_join("./foo.zip"));
+    }
+
+    #[test]
+    fn cold_start_absolute_archive_is_unchanged() {
+        let absolute = std::env::current_dir()
+            .expect("cwd")
+            .join("absolute-foo.zip")
+            .to_string_lossy()
+            .into_owned();
+        let argv = vec!["zinnia".to_string(), absolute];
+        assert_eq!(resolve_cli_argv_against_current_dir(argv.clone()), argv);
+    }
+
+    #[test]
+    fn cold_start_relative_archive_still_routes_to_extract() {
+        let argv = vec!["zinnia".to_string(), "foo.zip".to_string()];
+        let (paths, mode) = parse_open_request_args(
+            resolve_cli_argv_against_current_dir(argv)
+                .into_iter()
+                .skip(1),
+        );
+        assert_eq!(paths, vec![cwd_join("foo.zip")]);
+        assert_eq!(mode, "extract");
+    }
+
+    #[test]
+    fn cold_start_resolved_archive_derives_an_absolute_destination() {
+        let argv = vec![
+            "zinnia".to_string(),
+            "./zinnia-beta2-cold-start.zip".to_string(),
+        ];
+        let resolved = resolve_cli_argv_against_current_dir(argv);
+        let destination = derive_extract_destination_path(&resolved[1]).expect("destination");
+        let normalized = normalize_destination_path(&destination).expect("normalize");
+        let canonical_cwd = std::env::current_dir()
+            .expect("cwd")
+            .canonicalize()
+            .expect("canonical cwd");
+        assert_eq!(normalized, canonical_cwd.join("zinnia-beta2-cold-start"));
+    }
 }

@@ -195,7 +195,7 @@ function afterInputsMerged(
   renderInputs();
   if (rejected > 0) {
     showToast(
-      `Added the first ${MAX_ARCHIVE_PATHS} unique items; ${rejected} more were not added.`,
+      `Added the first ${MAX_ARCHIVE_PATHS.toLocaleString()} unique items; ${rejected} more ${rejected === 1 ? "item was" : "items were"} not added.`,
       "error",
       5000,
     );

@@ -99,8 +99,14 @@ function buildRow(entry: ShortcutEntry): HTMLElement {
   return row;
 }
 
-export function renderShortcuts(): void {
+export function renderShortcuts(
+  workspace?: Exclude<ShortcutWorkspace, "all">,
+): void {
   const list = document.getElementById("shortcut-list");
   if (!list) return;
-  list.replaceChildren(...SHORTCUTS.map(buildRow));
+  const entries = SHORTCUTS.filter(
+    (entry) =>
+      !workspace || entry.workspace === "all" || entry.workspace === workspace,
+  );
+  list.replaceChildren(...entries.map(buildRow));
 }

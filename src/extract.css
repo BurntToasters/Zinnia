@@ -31,8 +31,23 @@ body {
   font-size: 0.8125rem;
   color: var(--text);
   background: var(--bg);
-  min-height: 100vh;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   -webkit-font-smoothing: antialiased;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0 !important;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0 !important;
 }
 
 /* Native glass: let OS vibrancy show through (matches Basic main window). */
@@ -42,18 +57,16 @@ html[data-window-fx="basic"] body {
 }
 
 .extract-app {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  min-height: calc(100vh - 32px);
   padding: 20px 24px;
   gap: 16px;
 }
 
-body.platform-macos .extract-app {
-  min-height: calc(100vh - 38px);
-}
-
 .extract-header {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -71,18 +84,23 @@ body.platform-macos .extract-app {
 
 .extract-body {
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 16px;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .extract-info {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
 .extract-field {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -113,6 +131,8 @@ body.platform-macos .extract-app {
 }
 
 .extract-progress-area {
+  position: relative;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -165,11 +185,16 @@ body.platform-macos .extract-app {
 }
 
 .extract-status {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 0.75rem;
   color: var(--text-secondary);
 }
 
 .extract-error {
+  min-width: 0;
   background: var(--danger-bg);
   border: 1px solid var(--danger-border);
   border-radius: var(--radius);
@@ -194,10 +219,12 @@ body.platform-macos .extract-app {
 
 .extract-error-detail {
   margin: 0;
+  min-width: 0;
   font-size: 0.75rem;
   color: var(--text);
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-wrap: anywhere;
   max-height: 120px;
   overflow-y: auto;
   font-family: "Cascadia Code", "SF Mono", "Fira Code", "Consolas", monospace;
@@ -209,7 +236,9 @@ body.platform-macos .extract-app {
 }
 
 .extract-footer {
+  flex-shrink: 0;
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
   padding-top: 8px;
@@ -290,7 +319,7 @@ html[data-window-fx="basic"] .extract-input-modal-overlay {
   padding: 7px 8px;
   color: var(--text);
   background: var(--surface);
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--control-border);
   border-radius: var(--radius);
   font: inherit;
 }
@@ -359,6 +388,31 @@ html[data-window-fx="basic"] .extract-input-modal-overlay {
   border-color: var(--accent-fg-hover);
 }
 
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn:disabled:hover {
+  background: var(--surface);
+  border-color: var(--border-strong);
+}
+
+.btn--ghost:disabled:hover {
+  background: transparent;
+}
+
+.btn--open:disabled:hover {
+  background: transparent;
+  border-color: var(--accent-fg);
+  color: var(--accent-fg);
+}
+
+.btn--close:disabled:hover {
+  background: var(--accent);
+  border-color: var(--accent-fg);
+}
+
 @media (prefers-reduced-motion: reduce) {
   :root {
     --transition: 0ms;
@@ -366,6 +420,12 @@ html[data-window-fx="basic"] .extract-input-modal-overlay {
 
   .extract-progress-fill {
     animation: none;
+  }
+
+  .extract-progress-fill.is-indeterminate {
+    animation: none;
+    width: 40%;
+    margin-left: 30%;
   }
 }
 

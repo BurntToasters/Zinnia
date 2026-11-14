@@ -248,7 +248,34 @@ input[type="number"] {
 .btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
-  pointer-events: none;
+}
+
+.btn:disabled:hover {
+  background: var(--surface);
+  border-color: var(--border-strong);
+}
+
+.btn--primary:disabled:hover {
+  background: var(--accent);
+  border-color: var(--accent-fg);
+  box-shadow: 0 0 0 1px var(--accent-shadow);
+}
+
+.btn--danger:disabled:hover {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+.btn--ghost:disabled:hover {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-secondary);
+}
+
+.btn--accent-outline:disabled:hover {
+  background: transparent;
+  border-color: var(--accent-fg);
+  color: var(--accent-fg);
 }
 
 .btn:focus-visible {

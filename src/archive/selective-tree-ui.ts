@@ -4,11 +4,12 @@ import type { BrowseEntry } from "../browse-model";
 import {
   buildEntryTree,
   computeNodeCheckState,
+  computeNodeCheckStates,
   detectWindowsMemberPaths,
   filterBrowseEntriesByQuery,
   toggleEntrySelection,
 } from "../selective-extract";
-import type { TreeNode } from "../selective-extract";
+import type { NodeCheckState, TreeNode } from "../selective-extract";
 import {
   getOrCreateSelection,
   getCachedArchiveInfo,
@@ -52,8 +53,17 @@ function filteredFor(model: ListingModel, query: string): BrowseEntry[] {
   return model.filtered;
 }
 
+function treeFor(model: ListingModel): TreeNode[] {
+  model.tree ??= buildEntryTree(model.entries, model.windowsPaths);
+  return model.tree;
+}
+
+type CheckStates = ReadonlyMap<TreeNode, NodeCheckState>;
+
 /** Re-applies one rendered row's checked state from a selection set. */
-type RowRefresh = (selected: Set<string>) => void;
+type RowRefresh = (selected: Set<string>, checkStates: CheckStates) => void;
+
+const NO_CHECK_STATES: CheckStates = new Map();
 
 interface SummaryShape {
   total: number;
@@ -64,18 +74,18 @@ interface SummaryShape {
 // Rows in the DOM right now. A toggle updates these in place; a full render
 // replaces them.
 let renderedRows: RowRefresh[] = [];
+let renderedTree: TreeNode[] | null = null;
 let pickerSummary: { archive: string; shape: SummaryShape } | null = null;
 
+interface PickerSelectAllScope {
+  targets: BrowseEntry[];
+  recursionScope: BrowseEntry[];
+  windowsPaths: boolean;
+}
+
 /** Selection scope matches rendered rows so folder toggles cannot reach hidden members. */
-export function collectRenderedSelectiveScope(
-  entries: BrowseEntry[],
-  searching: boolean,
-  windowsPaths: boolean,
-): BrowseEntry[] {
-  if (searching) {
-    return entries.slice(0, MAX_RENDERED_SELECTIVE_ROWS);
-  }
-  const byPath = new Map(entries.map((entry) => [entry.path, entry]));
+function collectRenderedTreeScope(model: ListingModel): BrowseEntry[] {
+  const byPath = new Map(model.entries.map((entry) => [entry.path, entry]));
   const budget = { remaining: MAX_RENDERED_SELECTIVE_ROWS };
   const scoped = new Map<string, BrowseEntry>();
   const visit = (node: TreeNode) => {
@@ -102,11 +112,34 @@ export function collectRenderedSelectiveScope(
       for (const child of node.children) visit(child);
     }
   };
-  for (const node of buildEntryTree(entries, windowsPaths)) {
+  for (const node of treeFor(model)) {
     visit(node);
     if (budget.remaining <= 0) break;
   }
   return [...scoped.values()];
+}
+
+export function collectPickerSelectAllScope(
+  entries: BrowseEntry[],
+  query: string,
+): PickerSelectAllScope {
+  const model = modelFor(entries);
+  if (query.trim().length > 0) {
+    const targets = filteredFor(model, query).slice(
+      0,
+      MAX_RENDERED_SELECTIVE_ROWS,
+    );
+    return {
+      targets,
+      recursionScope: targets,
+      windowsPaths: model.windowsPaths,
+    };
+  }
+  return {
+    targets: collectRenderedTreeScope(model),
+    recursionScope: entries,
+    windowsPaths: model.windowsPaths,
+  };
 }
 
 function writeSelectiveSummary(archive: string, shape: SummaryShape): void {
@@ -132,7 +165,10 @@ function writeSelectiveSummary(archive: string, shape: SummaryShape): void {
  */
 function refreshRenderedRows(archive: string): void {
   const selected = getOrCreateSelection(archive);
-  for (const refresh of renderedRows) refresh(selected);
+  const checkStates = renderedTree
+    ? computeNodeCheckStates(renderedTree, selected)
+    : NO_CHECK_STATES;
+  for (const refresh of renderedRows) refresh(selected, checkStates);
   if (pickerSummary?.archive === archive) {
     writeSelectiveSummary(archive, pickerSummary.shape);
   }
@@ -155,8 +191,9 @@ function renderSelectiveFlatRow(
   const applyState: RowRefresh = (selected) => {
     checkbox.checked = selected.has(entry.path);
     checkbox.disabled = state.running;
+    row.classList.toggle("is-selected", selected.has(entry.path));
   };
-  applyState(getOrCreateSelection(archive));
+  applyState(getOrCreateSelection(archive), NO_CHECK_STATES);
   renderedRows.push(applyState);
   checkbox.addEventListener("change", () => {
     const current = getOrCreateSelection(archive);
@@ -194,6 +231,7 @@ function renderSelectiveTreeNode(
   windowsPaths: boolean,
   list: HTMLElement,
   budget: { remaining: number; truncated: boolean },
+  checkStates: CheckStates,
 ): void {
   if (budget.remaining <= 0) {
     budget.truncated = true;
@@ -238,11 +276,13 @@ function renderSelectiveTreeNode(
   checkbox.type = "checkbox";
   checkbox.tabIndex = -1;
   checkbox.setAttribute("aria-label", `Select ${node.path}`);
-  const applyState: RowRefresh = (selected) => {
-    const checkState = computeNodeCheckState(node, selected);
+  const applyState: RowRefresh = (selected, states) => {
+    const checkState =
+      states.get(node) ?? computeNodeCheckState(node, selected);
     checkbox.checked = checkState === "checked";
     checkbox.indeterminate = checkState === "indeterminate";
     checkbox.disabled = state.running;
+    row.classList.toggle("is-selected", checkState === "checked");
     row.setAttribute(
       "aria-selected",
       checkState === "checked" ? "true" : "false",
@@ -254,7 +294,7 @@ function renderSelectiveTreeNode(
         : String(checkState === "checked"),
     );
   };
-  applyState(getOrCreateSelection(archive));
+  applyState(getOrCreateSelection(archive), checkStates);
   renderedRows.push(applyState);
   checkbox.addEventListener("change", () => {
     const current = getOrCreateSelection(archive);
@@ -360,6 +400,7 @@ function renderSelectiveTreeNode(
         windowsPaths,
         list,
         budget,
+        checkStates,
       );
     }
   }
@@ -382,6 +423,7 @@ function renderSelectiveEntryList(
   model: ListingModel,
 ): void {
   renderedRows = [];
+  renderedTree = null;
   const list = document.getElementById("selective-list");
   if (!list) return;
   // Remember focus inside the list so a full re-render can restore it.
@@ -398,7 +440,10 @@ function renderSelectiveEntryList(
   if (entries.length === 0) {
     const empty = document.createElement("div");
     empty.className = "selective-empty";
-    empty.textContent = "No archive entries match this search.";
+    empty.textContent =
+      allEntries.length === 0
+        ? "This archive has no entries."
+        : "No entries match your search.";
     list.appendChild(empty);
     return;
   }
@@ -407,7 +452,7 @@ function renderSelectiveEntryList(
   // selection must include the folder's complete archive subtree even while
   // collapsed, otherwise its checkbox appears to work but extracts nothing.
   const scopeEntries = searching
-    ? collectRenderedSelectiveScope(entries, true, model.windowsPaths)
+    ? entries.slice(0, MAX_RENDERED_SELECTIVE_ROWS)
     : allEntries;
 
   // Searching shows a flat result list; otherwise a collapsible tree.
@@ -445,12 +490,17 @@ function renderSelectiveEntryList(
   list.setAttribute("aria-multiselectable", "true");
 
   // The tree depends only on the listing, so build it once per listing.
-  model.tree ??= buildEntryTree(allEntries, model.windowsPaths);
+  const tree = treeFor(model);
+  renderedTree = tree;
+  const checkStates = computeNodeCheckStates(
+    tree,
+    getOrCreateSelection(archive),
+  );
   const budget = {
     remaining: MAX_RENDERED_SELECTIVE_ROWS,
     truncated: false,
   };
-  for (const node of model.tree) {
+  for (const node of tree) {
     if (budget.remaining <= 0) {
       budget.truncated = true;
       break;
@@ -462,6 +512,7 @@ function renderSelectiveEntryList(
       model.windowsPaths,
       list,
       budget,
+      checkStates,
     );
   }
   if (budget.truncated) {

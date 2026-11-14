@@ -3,12 +3,12 @@
 
 # ⬇️ Downloads
 
-| <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                                          | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux        |
-| :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------- |
-| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.1/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.1/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.1/Zinnia-macOS.dmg)**   | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.1/Zinnia-Linux-x64.AppImage) |
-| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>-->                     | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.1/Zinnia-macOS.zip)**   | **DEB (Deprecated):** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.1/Zinnia-Linux-x64.deb)           |
-|                                                                                                                                                                                                                            |                                                                                                                 | **RPM (Deprecated):** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.1/Zinnia-Linux-x64.rpm)           |
-|                                                                                                                                                                                                                            |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.1/Zinnia-Linux-x64.flatpak)   |
+| <img height="20" src="https://github.com/user-attachments/assets/340d360e-79b1-4c70-bfab-d944085f75df" /> Windows                                                                                                          | <img height="20" src="https://github.com/user-attachments/assets/42d7e887-4616-4e8c-b1d3-e44e01340f8c" /> macOS | <img height="20" src="https://github.com/user-attachments/assets/e0cc4f33-4516-408b-9c5c-be71a3ac316b" /> Linux           |
+| :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------ |
+| **EXE: [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.2/Zinnia-Windows-x64.exe) / [arm64](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.2/Zinnia-Windows-arm64.exe)** | **[Universal DMG](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.2/Zinnia-macOS.dmg)**   | **AppImage:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.2/Zinnia-Linux-x64.AppImage)    |
+| <!-- <div align="center"><a href="https://apps.microsoft.com/detail/9pkgd6lkcl5j?referrer=appbadge&mode=full"><img src="https://get.microsoft.com/images/en-us%20light.svg" width="150"/></a></div>-->                     | **[Universal ZIP](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.2/Zinnia-macOS.zip)**   | **DEB (Deprecated):** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.2/Zinnia-Linux-x64.deb) |
+|                                                                                                                                                                                                                            |                                                                                                                 | **RPM (Deprecated):** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.2/Zinnia-Linux-x64.rpm) |
+|                                                                                                                                                                                                                            |                                                                                                                 | **Flatpak:** [x64](https://github.com/BurntToasters/Zinnia/releases/download/v0.7.0-beta.2/Zinnia-Linux-x64.flatpak)      |
 
 > macOS downloads require macOS 15 or later.
 
@@ -20,6 +20,51 @@
 ### ℹ️ Enjoying Zinnia? Consider [❤️ Supporting Me! ❤️](https://rosie.run/support)
 
 Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
+
+## Changes in `v0.7.0-beta.2:`
+
+- **Security:** Refused 7-Zip extraction folders whose path contains `*`, including folders above the destination. 7-Zip would replace the `*` with the archive name and write outside the staging folder, so Zinnia now stops before anything is written.
+- **Security:** Basic passwords are no longer replaced by empty or stale Power values. Before this fix, Compress could write an unencrypted archive after you typed a password in Basic.
+- **Security:** Password switches are hidden in messages and logs when they follow a quote, bracket, or other separator, not only a space.
+- **UI:** Accepting close or quit during a batch extract now stops the whole batch instead of starting the next archive.
+- **UI:** Basic shows where it writes: a read-only `Save to` row when compressing and an `Extract to` row when extracting, each with `Change`. Zinnia re-derives the path from your current inputs and writes to the path shown.
+- **UI:** Basic batch extraction gives each archive its own folder, so archives with the same member names no longer merge.
+- **UI:** After a failed quick extraction, `Choose another folder` lets you pick a new destination and retry there. The failure view keeps its header and footer in place.
+- **UI:** Power and Basic ask for a password when a header-encrypted archive opens without one. Power used to fail with `Break signaled`.
+- **UI:** A second wrong password on a header-encrypted archive reopens the prompt instead of ending the run.
+- **UI:** The remembered Browse password is cleared when the archive changes at the same path, so Extract all asks again.
+- **UI:** Batch extraction names the failed and skipped archives in the summary. A batch with only skipped archives no longer shows `Extraction complete`.
+- **UI:** Settings are no longer overwritten by automatic saves after the settings file fails to load.
+- **UI:** Toasts no longer dismiss when you click their text, and error toasts have a `Copy` button.
+- **UI:** Fatal startup errors keep the titlebar and its Close button visible.
+- **UI:** Fixed High Contrast, disabled-control, overflow, and banner-overlay styles in Power, Basic, and quick extract.
+- **UI:** Sentence case, one ellipsis character (`…`), and consistent terms across the app.
+- **UI:** Files dropped in Power, and files opened from the OS, wait until the running operation finishes and then show a toast. Basic drops during a running operation are refused with `An operation is already running. Drop the files again in a moment.` and are not queued.
+- **Codebase:** Extracting into an existing folder batches journal writes, so a 110,000-entry ZIP now publishes. In testing on Windows it took about four minutes.
+- **Codebase:** The extraction safety check reads the archive listing as it arrives instead of holding it in memory. The 256 MiB listing limit is gone. Extraction refuses archives with more than 1,000,000 entries or about 4 GB of listing text.
+- **Codebase:** Browse and Convert drop nine listing fields that Zinnia never shows, so about four times more entries fit in the `64 MiB` listing limit.
+- **Codebase:** `zinnia foo.zip` from a terminal opens quick extract on a cold start, resolving a relative path against the current folder.
+- **Codebase:** Forced exit no longer loops when a 7-Zip process cannot be stopped.
+- **Codebase:** Fixed later operations reporting busy after a recovery worker failed.
+- **Codebase:** Added `npm run deps:vendored`, a read-only report that compares vendored Rust crates with crates.io.
+- **Windows:** Windows 11 registration removes the classic Extract verbs as well as the Compress verbs, so entries do not stack under Show more options.
+- **Windows:** Archives with an empty Mark-of-the-Web stream no longer fail with an invalid-format error.
+- **Windows:** A failed Mark-of-the-Web copy removes its partial snapshot.
+- **Windows:** Fixed COM object and string leaks in the shell extension when a memory allocation fails.
+
+### Known issues
+
+- **Codebase:** Some macOS and Linux fixes were checked by reading the code only. They were not compiled or run on those systems for this beta, including the macOS quarantine read for symlinked archives and platform cleanups.
+- **Windows:** The classic Extract verb cleanup and the shell extension change are not tested on a signed installer. Check Show more options after a signed install over a classic-fallback install.
+- **UI:** High Contrast and reduced motion styles were verified by reading the CSS only. The test harness cannot emulate forced colors or reduced motion.
+- **Codebase:** Very large archives are still slow. A 110,000-entry ZIP extracted into an existing folder took about four minutes in testing on Windows.
+- **Codebase:** Convert cannot handle archive listings larger than `64 MiB`.
+- **Codebase:** The main window has no read-only destination fallback. Choose a writable destination folder if extraction cannot write to the selected location; the quick extract window offers `Choose another folder` instead.
+- **Codebase:** Vendored crates are not watched by Dependabot. `npm run deps:vendored` reports `tauri-plugin-wdio-webdriver` `1.4.0` (latest `1.5.1`) and `tauri-plugin-updater` `2.10.1` (latest `2.14.1`).
+- **Codebase:** Linting still uses an explicit rule list; adopting `eslint:recommended` requires adding the `@eslint/js` development dependency first.
+
+> [!IMPORTANT]
+> **Note:** MSI builds are NOT provided for beta releases. Use the EXE installer.
 
 ## Changes in `v0.7.0-beta.1:`
 
@@ -96,19 +141,6 @@ Zinnia! A cross platform 7Z gui frontend built on Tauri V2!
 - **Security:** Updated the Windows updater to `zip` `9`, fixing `RUSTSEC-2026-0367`, `RUSTSEC-2026-0368`, `RUSTSEC-2026-0369`, and `RUSTSEC-2026-0429`.
 - **PKG:** Updated packages, including bundled 7-Zip to `26.06`.
   - macOS uses a universal helper assembled from the official Apple Silicon and Intel downloads, with each half copied byte for byte. Build checks reject downloads with the wrong architecture.
-
-### Known issues
-
-- **Codebase:** Archives with more than about 100,000 entries still extract very slowly, and Browse and extraction read the full listing before showing it. A streaming parser is not included in this release.
-- **Codebase:** Convert cannot handle archive listings larger than `64 MiB`.
-- **UI:** Quick extract does not offer `Choose another folder`. Use Retry, or extract from Power.
-- **Codebase:** Read-only destination fallback is not implemented. Choose a writable destination folder if extraction cannot write to the selected location.
-- **Codebase:** Vendored path crates must be updated manually because Dependabot cannot watch them.
-- **Codebase:** Linting still uses an explicit rule list; adopting `eslint:recommended` requires adding the `@eslint/js` development dependency first.
-
-
-> [!IMPORTANT]
-> **Note:** MSI builds are NOT provided for beta releases. Use the EXE installer.
 
 ### FULL CHANGELOG:
 

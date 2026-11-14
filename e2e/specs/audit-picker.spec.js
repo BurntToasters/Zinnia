@@ -349,8 +349,8 @@ describe("audit picker", function () {
       ACTIVITY_LOG_CAP,
       `activity log must hold exactly ${ACTIVITY_LOG_CAP} lines after ${LOG_PROBE_CALLS} writes`,
     );
-    assert.match(lines.at(-1), /Received 3 path\(s\) from e2e\./);
-    assert.match(lines[0], /Received \d+ path\(s\) from e2e\./);
+    assert.match(lines.at(-1), /Received 3 paths from e2e\./);
+    assert.match(lines[0], /Received \d+ paths? from e2e\./);
 
     writeEvidence(EVIDENCE_DIR, "audit-picker-log-cap", {
       scenario: "audit-picker-log-cap",

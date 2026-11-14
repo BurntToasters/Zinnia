@@ -135,28 +135,25 @@ pub use debug_console_window::{
 // Public API re-exports (stable `launch::…` paths for main.rs / process / macos_services).
 pub(crate) use extract_window::bump_extract_warm_idle_generation;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-#[allow(unused_imports)]
 pub use extract_window::first_extract_window;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub use extract_window::leave_extract_warm;
 #[cfg(target_os = "macos")]
 pub(crate) use extract_window::open_main_from_extract_warm;
-#[allow(unused_imports)]
 pub use extract_window::{
-    cancel_owner_and_wait, clear_extract_window_bindings, close_extract_window, ensure_main_window,
-    enter_extract_warm_idle, get_extract_paths, has_extract_windows, inspect_extract_destination,
-    leave_extract_warm, mark_main_window_ready, restore_foreground_activation,
+    cancel_owner_and_wait, choose_extract_destination, clear_extract_window_bindings,
+    close_extract_window, enter_extract_warm_idle, get_extract_paths, has_extract_windows,
+    inspect_extract_destination, mark_main_window_ready, restore_foreground_activation,
     should_keep_extract_warm, show_main_window, spawn_extract_window,
 };
-#[allow(unused_imports)]
 pub use open_path::{
-    assert_extract_bound_archive, assert_extract_bound_destination,
-    derive_extract_destination_path, drain_pending_paths, get_initial_mode, get_initial_paths,
-    open_path, register_extract_open_path, remember_openable_directory,
+    assert_extract_bound_archive, assert_extract_bound_destination, drain_pending_paths,
+    get_initial_mode, get_initial_paths, open_path, register_extract_open_path,
+    remember_openable_directory,
 };
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-#[allow(unused_imports)]
 pub use open_routing::emit_open_urls;
 pub(crate) use open_routing::resolve_open_args_against_cwd;
-#[allow(unused_imports)]
 pub use open_routing::{
     collect_cli_context, emit_open_paths, get_shell_handoff_error,
     resolve_cli_context_with_handoffs,
@@ -174,8 +171,9 @@ pub use debug_console_window::{
 };
 #[doc(hidden)]
 pub use extract_window::{
-    __cmd__close_extract_window, __cmd__get_extract_paths, __cmd__inspect_extract_destination,
-    __cmd__mark_main_window_ready, __tauri_command_name_close_extract_window,
+    __cmd__choose_extract_destination, __cmd__close_extract_window, __cmd__get_extract_paths,
+    __cmd__inspect_extract_destination, __cmd__mark_main_window_ready,
+    __tauri_command_name_choose_extract_destination, __tauri_command_name_close_extract_window,
     __tauri_command_name_get_extract_paths, __tauri_command_name_inspect_extract_destination,
     __tauri_command_name_mark_main_window_ready,
 };

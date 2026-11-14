@@ -96,7 +96,7 @@ export function hideBasicProgress(section: "compress" | "extract"): void {
   }
 }
 
-type BasicCompletionVariant = "success" | "error" | "cancelled";
+type BasicCompletionVariant = "success" | "error" | "cancelled" | "partial";
 
 const COMPLETION_ICONS: Record<
   BasicCompletionVariant,
@@ -105,6 +105,14 @@ const COMPLETION_ICONS: Record<
   success: { icon: "check", className: "lucide-icon text-success" },
   error: { icon: "alert-triangle", className: "lucide-icon text-danger" },
   cancelled: { icon: "ban", className: "lucide-icon" },
+  partial: { icon: "alert-triangle", className: "lucide-icon text-danger" },
+};
+
+const COMPLETION_TONE: Record<BasicCompletionVariant, string> = {
+  success: "success",
+  error: "error",
+  cancelled: "cancelled",
+  partial: "error",
 };
 
 export function showBasicCompletion(
@@ -124,13 +132,25 @@ export function showBasicCompletion(
 }
 
 /** A user-requested stop. Neutral tone: it is not a failure. */
-export function showBasicCancelled(section: "compress" | "extract"): void {
+function showBasicCancelled(section: "compress" | "extract"): void {
   renderBasicCompletion(
     section,
     "cancelled",
     "Cancelled",
     "The operation was stopped before it finished.",
   );
+}
+
+const COMPLETION_PATH_MAX_CHARACTERS = 48;
+
+function completionPathForDisplay(path: string): string {
+  if (path.length <= COMPLETION_PATH_MAX_CHARACTERS) return path;
+  const separator = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  if (separator < 0) return path;
+  const folder = path.slice(0, separator + 1);
+  const name = path.slice(separator + 1);
+  const keep = Math.max(0, COMPLETION_PATH_MAX_CHARACTERS - name.length - 1);
+  return `…${folder.slice(folder.length - keep)}${name}`;
 }
 
 function renderBasicCompletion(
@@ -143,13 +163,14 @@ function renderBasicCompletion(
   const completion = document.getElementById(`basic-${section}-completion`);
   if (!completion) return;
   const succeeded = variant === "success";
+  const opensFolder = variant === "success" || variant === "partial";
 
   completion.classList.remove(
     "basic-completion--success",
     "basic-completion--error",
     "basic-completion--cancelled",
   );
-  completion.classList.add(`basic-completion--${variant}`);
+  completion.classList.add(`basic-completion--${COMPLETION_TONE[variant]}`);
   completion.classList.add("is-active");
 
   const iconEl = document.getElementById(`basic-${section}-completion-icon`);
@@ -167,14 +188,22 @@ function renderBasicCompletion(
   if (titleEl) titleEl.textContent = title;
   if (msgEl) msgEl.textContent = message;
   if (pathEl) {
-    pathEl.textContent = pathLabel ?? "";
+    pathEl.textContent = completionPathForDisplay(pathLabel ?? "");
+    pathEl.title = pathLabel ?? "";
+    if (pathLabel) {
+      pathEl.setAttribute("role", "group");
+      pathEl.setAttribute("aria-label", pathLabel);
+    } else {
+      pathEl.removeAttribute("role");
+      pathEl.removeAttribute("aria-label");
+    }
     pathEl.hidden = !(pathLabel ?? "");
   }
 
   // Manage "Open folder" button visibility based on success state
   const openDestBtn = document.getElementById(`basic-${section}-open-dest`);
   if (openDestBtn) {
-    openDestBtn.hidden = !succeeded;
+    openDestBtn.hidden = !opensFolder;
   }
 
   // The secondary button's behavior is stored as data, not read back from its
@@ -510,7 +539,8 @@ export function updateBasicStatus(text: string, errorDetail?: string): void {
       let detail = errorDetail?.trim();
       // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
       if (!detail) {
-        detail = "Something went wrong. Check the activity log for details.";
+        detail =
+          "Something went wrong. The archive tool did not give a clear reason. Try again.";
       }
       setBasicBrowseStatusMessage(detail, "error");
       return;
@@ -555,26 +585,39 @@ export function updateBasicStatus(text: string, errorDetail?: string): void {
     ) {
       pathLabel = `${pathLabel}.001`;
     }
-    showBasicCompletion(
-      section,
-      true,
-      section === "compress" ? "Archive created" : "Extraction complete",
-      section === "compress"
-        ? "Your archive has been created successfully."
-        : "Files have been extracted successfully.",
-      pathLabel,
-    );
-    if (section === "extract" && state.inputs[0]) {
-      rememberRecentArchive(state.inputs[0]);
-    } else if (section === "compress" && pathLabel) {
-      rememberRecentArchive(pathLabel);
+    const partialSummary =
+      section === "extract" ? (errorDetail?.trim() ?? "") : "";
+    if (partialSummary) {
+      renderBasicCompletion(
+        section,
+        "partial",
+        "Extraction incomplete",
+        partialSummary,
+        pathLabel,
+      );
+    } else {
+      showBasicCompletion(
+        section,
+        true,
+        section === "compress" ? "Archive created" : "Extraction complete",
+        section === "compress"
+          ? "Your archive has been created successfully."
+          : "Files have been extracted successfully.",
+        pathLabel,
+      );
+      if (section === "extract" && state.inputs[0]) {
+        rememberRecentArchive(state.inputs[0]);
+      } else if (section === "compress" && pathLabel) {
+        rememberRecentArchive(pathLabel);
+      }
     }
   } else if (text === "Error") {
     hideBasicProgress(section);
     let detail = errorDetail?.trim();
     // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
     if (!detail) {
-      detail = "Something went wrong. Check the activity log for details.";
+      detail =
+        "Something went wrong. The archive tool did not give a clear reason. Try again.";
     }
     showBasicCompletion(section, false, "Operation failed", detail);
   } else if (text === "Cancelled") {

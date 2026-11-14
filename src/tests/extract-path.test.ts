@@ -278,7 +278,7 @@ describe("deriveOutputArchivePath", () => {
         ["C:\\Program Files\\Some App\\readme.txt"],
         "zip",
       ),
-    ).toBe("readme.txt.zip");
+    ).toBeNull();
   });
 
   it("still allows paths under Microsoft\\Windows user folders", () => {

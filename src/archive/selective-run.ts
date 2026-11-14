@@ -1,5 +1,5 @@
 import { confirm } from "@tauri-apps/plugin-dialog";
-import { $ } from "../utils";
+import { $, pluralize } from "../utils";
 import { state, clearBrowseCache } from "../state";
 import { log, devLog, setStatus, hideProgress, setRunning } from "../ui";
 import { ensureArchivePaths } from "../archive-rules";
@@ -137,7 +137,7 @@ export async function runSelectiveExtractFromModal(): Promise<void> {
     if (isDebugEnabled()) {
       debugLog(
         selectedPaths.length > 0
-          ? `Selective extract starting (${selectedPaths.length} path(s)).`
+          ? `Selective extract starting (${pluralize(selectedPaths.length, "path")}).`
           : "Selective extract starting (full archive).",
       );
     }

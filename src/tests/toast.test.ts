@@ -77,13 +77,77 @@ describe("showToast", () => {
     expect(toast.classList.contains("toast--leaving")).toBe(true);
   });
 
-  it("dismisses on click", () => {
+  it("keeps the toast when its body or text is clicked", () => {
     showToast("Tap", "info", 0);
     const toast = document.querySelector(".toast") as HTMLElement;
     expect(toast.tabIndex).toBe(0);
     toast.click();
+    (toast.querySelector(".toast-message") as HTMLElement).click();
+    vi.advanceTimersByTime(200);
+    expect(document.querySelectorAll(".toast")).toHaveLength(1);
+    expect(toast.classList.contains("toast--leaving")).toBe(false);
+  });
+
+  it("dismisses through the close button", () => {
+    showToast("Close me", "error", 0);
+    const toast = document.querySelector(".toast") as HTMLElement;
+    toast.querySelector<HTMLButtonElement>(".toast-dismiss")?.click();
     vi.advanceTimersByTime(200);
     expect(document.querySelectorAll(".toast")).toHaveLength(0);
+  });
+
+  it("offers Copy on error toasts only and copies the message text", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    try {
+      showToast("Could not read archive. Details here", "error", 0);
+      const toast = document.querySelector(".toast") as HTMLElement;
+      const copy = toast.querySelector<HTMLButtonElement>(".toast-copy");
+      expect(copy?.textContent).toBe("Copy");
+      copy?.click();
+      await vi.waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+      expect(writeText).toHaveBeenCalledWith(
+        "Could not read archive. Details here",
+      );
+      expect(document.querySelectorAll(".toast")).toHaveLength(1);
+    } finally {
+      Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
+
+  it("shows no Copy button on success or info toasts", () => {
+    showToast("Saved", "success");
+    showToast("Note", "info");
+    expect(document.querySelectorAll(".toast-copy")).toHaveLength(0);
+  });
+
+  it("collapses an identical visible toast and shows how many times it fired", () => {
+    showToast("Select an archive to test.", "info", 0);
+    showToast("Select an archive to test.", "info", 0);
+    const toasts = document.querySelectorAll(".toast");
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].querySelector(".toast-count")?.textContent).toBe("(2)");
+  });
+
+  it("keeps toasts with different text or kind separate", () => {
+    showToast("Same", "info", 0);
+    showToast("Other", "info", 0);
+    showToast("Same", "error", 0);
+    expect(document.querySelectorAll(".toast")).toHaveLength(3);
+  });
+
+  it("restarts the timer of a collapsed timed toast", () => {
+    showToast("Again", "info", 1000);
+    vi.advanceTimersByTime(800);
+    showToast("Again", "info", 1000);
+    const toast = document.querySelector(".toast") as HTMLElement;
+    vi.advanceTimersByTime(800);
+    expect(toast.classList.contains("toast--leaving")).toBe(false);
+    vi.advanceTimersByTime(200);
+    expect(toast.classList.contains("toast--leaving")).toBe(true);
   });
 
   it("dismisses sticky toasts with Escape", () => {

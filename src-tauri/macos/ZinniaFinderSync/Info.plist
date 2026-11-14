@@ -19,7 +19,7 @@
 	<key>CFBundleShortVersionString</key>
 	<string>0.7.0</string>
 	<key>CFBundleVersion</key>
-	<string>0.7.3001</string>
+	<string>0.7.3002</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>15.0</string>
 	<!-- Set by the build script. Both the app and this extension must use it. -->

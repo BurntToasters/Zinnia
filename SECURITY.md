@@ -127,10 +127,15 @@ operations:
   namespaces) on every platform, so an archive created on Linux cannot produce
   a folder that collides with a device, an ADS, or a shell view when opened on
   Windows.
-- Archive listing limits: Browse shows up to about 200,000 ZIP or TAR entries (a 64 MiB
-  listing). Extraction refuses an archive whose member listing exceeds 256 MiB
-  (about 800,000 ZIP or TAR entries) and any archive that lists more than
-  1,000,000 entries.
+- Archive listing limits: Browse reads a listing of up to 64 MiB, after dropping
+  the listing fields Zinnia never shows. Extraction's member-safety check streams
+  the `7z l -slt` listing as it arrives and keeps only the facts its checks need,
+  so the listing is not held in memory. It refuses an archive that lists more
+  than 1,000,000 entries or about 4 GB of listing text. Each streamed line is
+  bounded to 256 KiB, and stderr is capped at 10 MiB.
+- Extraction output paths containing `*` are refused before anything is staged.
+  7-Zip replaces every `*` in an `-o` argument with the archive name, so such a
+  path could send writes outside Zinnia's staging folder.
 - Cancel/close keeps the global operation slot locked until the child has exited
   and staging cleanup has completed.
 - Extraction growth is limited by both expansion ratio and current free disk

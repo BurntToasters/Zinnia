@@ -26,7 +26,7 @@ const sidecar = requireHostSidecar();
 
 const BROWSE_ENTRIES = 40_000;
 // 110,000 entries exposed a pre-existing superlinear slowdown (see failure inventory).
-const EXTRACT_ENTRIES = 30_000;
+const EXTRACT_ENTRIES = 110_000;
 
 /** Write `count` tiny flat files. Kept to one line of work per file. */
 function writeFlatFiles(dir, count, prefix) {
@@ -132,13 +132,13 @@ describe("archive listing limits", function () {
     await waitForArchiveIdle();
   });
 
-  it("extracts a ZIP with 30,000 small entries end to end", async () => {
+  it("extracts a ZIP with 110,000 small entries end to end", async () => {
     const source = path.join(ROOT, "extract-src");
     writeFlatFiles(source, EXTRACT_ENTRIES, "extract");
-    const archive = path.join(ROOT, "extract-30k.zip");
+    const archive = path.join(ROOT, "extract-110k.zip");
     createStoredZip(source, archive);
 
-    const dest = path.join(ROOT, "extract-30k-out");
+    const dest = path.join(ROOT, "extract-110k-out");
     fs.rmSync(dest, { recursive: true, force: true });
     fs.mkdirSync(dest, { recursive: true });
     const lastFile = `extract-${String(EXTRACT_ENTRIES).padStart(6, "0")}.txt`;
@@ -146,7 +146,7 @@ describe("archive listing limits", function () {
     const started = Date.now();
     await startPowerExtract(archive, dest);
     await browser.waitUntil(() => fs.existsSync(path.join(dest, lastFile)), {
-      timeout: 20 * 60_000,
+      timeout: 15 * 60_000,
       interval: 500,
       timeoutMsg: `extract did not publish ${lastFile}; ${await uiDiagnostics()}`,
     });
@@ -156,8 +156,8 @@ describe("archive listing limits", function () {
     const published = countFiles(dest);
     assert.equal(published, EXTRACT_ENTRIES);
 
-    writeEvidence(EVIDENCE_DIR, "audit-listing-extract-30k", {
-      scenario: "extract-30k-zip",
+    writeEvidence(EVIDENCE_DIR, "audit-listing-extract-110k", {
+      scenario: "extract-110k-zip",
       entries: EXTRACT_ENTRIES,
       publishedFiles: published,
       lastFile,

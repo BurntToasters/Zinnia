@@ -42,6 +42,18 @@ where
     .map_err(super::classify_preparation_error)
 }
 
+const COMPOUND_WILDCARD_MESSAGE: &str =
+    "Zinnia cannot read a compressed TAR archive from a folder whose path contains '*'. Move the archive to another folder.";
+
+fn reject_compound_snapshot_wildcard(archive: &str) -> Result<(), String> {
+    let location =
+        std::fs::canonicalize(archive).unwrap_or_else(|_| std::path::PathBuf::from(archive));
+    if location.to_string_lossy().contains('*') {
+        return Err(COMPOUND_WILDCARD_MESSAGE.to_string());
+    }
+    Ok(())
+}
+
 fn prepare_cleanup_plan_inner<C, P>(
     args: &[String],
     cache_dir: Option<std::path::PathBuf>,
@@ -65,6 +77,11 @@ where
             .iter()
             .any(|suffix| lower.ends_with(suffix))
     });
+    if matches!(command, Some("x" | "l" | "t")) && compound_stream {
+        if let Some(archive) = args.get(separator + 1) {
+            reject_compound_snapshot_wildcard(archive)?;
+        }
+    }
     let Some(target) = super::operation_output_path(args) else {
         if matches!(command, Some("l" | "t")) && compound_stream {
             const MAX_EXTRACT_BYTES: u64 = 1024 * 1024 * 1024 * 1024;
@@ -152,6 +169,7 @@ where
 
     match args.first().map(String::as_str) {
         Some("x") => {
+            crate::validation::reject_extract_output_wildcard(&target.to_string_lossy())?;
             let expected_archive_identity = expected_archive_identity.ok_or_else(|| {
                 "Mutating archive operations require an archive identity token.".to_string()
             })?;
@@ -162,6 +180,7 @@ where
             } else {
                 super::resolve_new_target(&target)?
             };
+            crate::validation::reject_extract_output_wildcard(&destination.to_string_lossy())?;
             let separator = args
                 .iter()
                 .position(|arg| arg == "--")
@@ -401,5 +420,129 @@ where
             min_free_bytes: None,
             extract_destination_preexisting: false,
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::prepare_cleanup_plan;
+    use crate::process::archive_identity_token;
+    use crate::process::commit::rollback_cleanup;
+
+    const WILDCARD_OUTPUT_MESSAGE: &str =
+        "Zinnia cannot extract into a folder whose path contains '*'. Choose another folder.";
+    const WILDCARD_COMPOUND_MESSAGE: &str =
+        "Zinnia cannot read a compressed TAR archive from a folder whose path contains '*'. Move the archive to another folder.";
+
+    fn temp_root(prefix: &str) -> std::path::PathBuf {
+        let token = crate::process::staging::random_token().expect("random token");
+        std::env::temp_dir().join(format!("{prefix}-{token}"))
+    }
+
+    fn directory_entries(root: &std::path::Path) -> Vec<std::ffi::OsString> {
+        let mut names: Vec<std::ffi::OsString> = std::fs::read_dir(root)
+            .expect("read test root")
+            .map(|entry| entry.expect("directory entry").file_name())
+            .collect();
+        names.sort();
+        names
+    }
+
+    fn extract_args(destination: &std::path::Path, archive: &std::path::Path) -> Vec<String> {
+        vec![
+            "x".to_string(),
+            format!("-o{}", destination.display()),
+            "-aou".to_string(),
+            "--".to_string(),
+            archive.to_string_lossy().into_owned(),
+        ]
+    }
+
+    #[test]
+    fn extract_plan_rejects_wildcard_ancestor_before_creating_stage() {
+        let root = temp_root("zinnia-wildcard-ancestor");
+        std::fs::create_dir_all(&root).expect("test root");
+        let before = directory_entries(&root);
+        let destination = root.join("an*cestor").join("out");
+        let args = extract_args(&destination, &root.join("archive.7z"));
+        let err = prepare_cleanup_plan(&args, None, Some("absent"))
+            .expect_err("wildcard ancestor is rejected");
+        assert_eq!(err, WILDCARD_OUTPUT_MESSAGE);
+        assert_eq!(directory_entries(&root), before);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn extract_plan_rejects_wildcard_basename_before_creating_stage() {
+        let root = temp_root("zinnia-wildcard-basename");
+        std::fs::create_dir_all(&root).expect("test root");
+        let before = directory_entries(&root);
+        let destination = root.join("out*");
+        let args = extract_args(&destination, &root.join("archive.7z"));
+        let err = prepare_cleanup_plan(&args, None, Some("absent"))
+            .expect_err("wildcard basename is rejected");
+        assert_eq!(err, WILDCARD_OUTPUT_MESSAGE);
+        assert_eq!(directory_entries(&root), before);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn extract_plan_keeps_plain_destination_staging_beside_destination() {
+        let root = temp_root("zinnia-plain-destination");
+        std::fs::create_dir_all(&root).expect("test root");
+        let archive = root.join("archive.7z");
+        std::fs::write(&archive, b"archive").expect("test archive");
+        let destination = root.join("out");
+        let args = extract_args(&destination, &archive);
+        let identity = archive_identity_token(&archive).expect("archive identity");
+        let plan = prepare_cleanup_plan(&args, None, Some(&identity)).expect("plain plan");
+        let (staged, target) = plan.staged_extract.clone().expect("staging plan");
+        assert_eq!(staged.parent(), target.parent());
+        if let Some(input_stage) = plan
+            .staged_input_archive
+            .as_ref()
+            .and_then(|path| path.parent())
+        {
+            crate::process::release_snapshot_handles(input_stage);
+        }
+        rollback_cleanup(&plan).expect("rollback");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn compound_archive_in_wildcard_folder_is_rejected_before_snapshot() {
+        let root = temp_root("zinnia-wildcard-compound");
+        std::fs::create_dir_all(&root).expect("test root");
+        let before = directory_entries(&root);
+        let archive = root.join("an*cestor").join("bundle.tar.gz");
+        let args = vec![
+            "l".to_string(),
+            "--".to_string(),
+            archive.to_string_lossy().into_owned(),
+        ];
+        let err = prepare_cleanup_plan(&args, None, None)
+            .expect_err("wildcard compound archive is rejected");
+        assert_eq!(err, WILDCARD_COMPOUND_MESSAGE);
+        assert_eq!(directory_entries(&root), before);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn compress_input_named_like_compound_archive_is_not_rejected() {
+        let root = temp_root("zinnia-compress-compound-input");
+        std::fs::create_dir_all(&root).expect("test root");
+        let output = root.join("out.7z");
+        let input = root.join("an*cestor").join("bundle.tar.gz");
+        let args = vec![
+            "a".to_string(),
+            "-t7z".to_string(),
+            output.to_string_lossy().into_owned(),
+            "--".to_string(),
+            input.to_string_lossy().into_owned(),
+        ];
+        let plan = prepare_cleanup_plan(&args, None, Some("absent"))
+            .expect("compress input is not a staged archive");
+        rollback_cleanup(&plan).expect("rollback");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

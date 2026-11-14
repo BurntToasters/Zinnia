@@ -3,7 +3,7 @@ import { $ } from "./utils";
 import { log } from "./ui/log";
 import { showToast } from "./toast";
 
-export interface OsIntegrationStatus {
+interface OsIntegrationStatus {
   platform: string;
   packaged: boolean;
   fileAssociationsKnown: boolean;
@@ -31,7 +31,7 @@ export interface OsIntegrationStatus {
   archiveDefaults?: ArchiveDefaultStatus[];
 }
 
-export interface ArchiveDefaultStatus {
+interface ArchiveDefaultStatus {
   key: string;
   label: string;
   extension: string;
@@ -132,8 +132,8 @@ function defaultActionLabel(status: OsIntegrationStatus): string {
   if (status.defaultArchiverActionLabel)
     return status.defaultArchiverActionLabel;
   return status.platform === "windows"
-    ? "Open Default Apps"
-    : "Make Zinnia Default";
+    ? "Open default apps"
+    : "Make Zinnia default";
 }
 
 function defaultArchiverActionAvailable(status: OsIntegrationStatus): boolean {
@@ -272,7 +272,7 @@ export function renderOsIntegrationStatus(status: OsIntegrationStatus): void {
     ) as HTMLButtonElement | null;
     if (syncBtn) {
       syncBtn.textContent =
-        syncKnown && syncEnabled ? "Open Extensions…" : "Enable…";
+        syncKnown && syncEnabled ? "Open extensions…" : "Enable…";
       syncBtn.disabled = false;
       syncBtn.title =
         syncKnown && syncEnabled
@@ -302,7 +302,7 @@ export function renderOsIntegrationStatus(status: OsIntegrationStatus): void {
     ) as HTMLButtonElement | null;
     if (finderBtn) {
       finderBtn.textContent =
-        finderKnown && finderEnabled ? "Open Services…" : "Enable…";
+        finderKnown && finderEnabled ? "Open services…" : "Enable…";
       finderBtn.disabled = false;
       finderBtn.title =
         finderKnown && finderEnabled
@@ -370,7 +370,7 @@ export function renderOsIntegrationStatus(status: OsIntegrationStatus): void {
     "reset-os-integration-defaults",
   ) as HTMLButtonElement | null;
   if (resetBtn) {
-    resetBtn.textContent = "Reset Preferred Archiver to System Archiver";
+    resetBtn.textContent = "Reset preferred archiver to system archiver";
     resetBtn.disabled = !systemResetAvailable(status);
     resetBtn.title = systemResetHelp(status);
   }
@@ -460,7 +460,7 @@ export async function refreshOsIntegrationStatus(): Promise<void> {
   return osIntegrationRefreshInFlight;
 }
 
-export async function openOsIntegrationSettings(): Promise<void> {
+async function openOsIntegrationSettings(): Promise<void> {
   try {
     await invoke("open_os_integration_settings");
   } catch (err) {
@@ -538,6 +538,7 @@ export async function setZinniaDefaultArchiver(
   ) as HTMLButtonElement | null,
 ): Promise<void> {
   const previousLabel = button?.textContent ?? "";
+  const wasDisabled = button?.disabled ?? false;
   if (button) {
     button.disabled = true;
     button.textContent = "Working…";
@@ -557,10 +558,12 @@ export async function setZinniaDefaultArchiver(
     showToast(msg, "error", 0);
   } finally {
     if (button) {
-      button.disabled = false;
-      button.textContent = latestStatus
-        ? defaultActionLabel(latestStatus)
-        : previousLabel;
+      if (latestStatus) {
+        configureDefaultArchiverActionButton(button, latestStatus);
+      } else {
+        button.disabled = wasDisabled;
+        button.textContent = previousLabel;
+      }
     }
   }
 }

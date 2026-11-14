@@ -75,6 +75,10 @@
   background: var(--hover-overlay);
 }
 
+.selective-row.is-selected {
+  background: var(--accent-bg-strong);
+}
+
 .selective-row input[type="checkbox"] {
   margin: 0;
 }
@@ -201,7 +205,7 @@
   border: 1px solid var(--border);
   border-radius: 6px;
   font:
-    0.6875rem/1.45 ui-monospace,
+    0.75rem/1.45 ui-monospace,
     SFMono-Regular,
     Consolas,
     monospace;
@@ -332,5 +336,16 @@
   }
   .setup-wizard-card {
     animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .selective-row.is-selected {
+    background: Highlight;
+    color: HighlightText;
+  }
+
+  .selective-row.is-selected .selective-row__meta {
+    color: HighlightText;
   }
 }

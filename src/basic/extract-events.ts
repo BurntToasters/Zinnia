@@ -8,6 +8,10 @@ import {
   setBasicView,
   syncBasicBrowsePasswordToPower,
   setBasicBrowsePasswordVisible,
+  syncBasicExtractPasswordToPower,
+  syncBasicExtractToPower,
+  chooseBasicExtractDestination,
+  renderBasicDestinations,
 } from "./sync";
 import { hideBasicCompletion } from "./progress";
 import {
@@ -19,6 +23,29 @@ import {
   finishBasicPreparation,
   isBasicPreparationCurrent,
 } from "./actions";
+
+async function changeBasicExtractFolder(): Promise<void> {
+  const preparation = beginBasicPreparation();
+  if (!preparation) return;
+  const basicExtract = document.getElementById(
+    "basic-extract-path",
+  ) as HTMLInputElement | null;
+  const before = basicExtract?.value ?? "";
+  let accepted = false;
+  try {
+    syncBasicExtractToPower();
+    await chooseExtractIfCurrent(() => isBasicPreparationCurrent(preparation));
+    accepted = isBasicPreparationCurrent(preparation);
+  } finally {
+    finishBasicPreparation(preparation);
+  }
+  if (!accepted) return;
+  const extractPath = $<HTMLInputElement>("extract-path").value;
+  if (extractPath && extractPath !== before) {
+    chooseBasicExtractDestination(extractPath);
+  }
+  renderBasicDestinations();
+}
 
 function resetCompressCompletion(): void {
   state.inputs.length = 0;
@@ -44,27 +71,22 @@ export function wireBasicExtractEvents(): void {
   // listener in wire.ts. Only real `input` events fire, so autofill is intact.
   extractPathInput?.addEventListener("input", () => {
     $<HTMLInputElement>("extract-path").value = extractPathInput.value;
+    renderBasicDestinations();
   });
   document
+    .getElementById("basic-extract-password")
+    ?.addEventListener("input", () => {
+      syncBasicExtractPasswordToPower();
+    });
+  document
     .getElementById("basic-choose-extract")
-    ?.addEventListener("click", async () => {
-      const preparation = beginBasicPreparation();
-      if (!preparation) return;
-      let accepted = false;
-      try {
-        await chooseExtractIfCurrent(() =>
-          isBasicPreparationCurrent(preparation),
-        );
-        accepted = isBasicPreparationCurrent(preparation);
-      } finally {
-        finishBasicPreparation(preparation);
-      }
-      if (!accepted) return;
-      const basicExtract = document.getElementById(
-        "basic-extract-path",
-      ) as HTMLInputElement | null;
-      const extractPath = $<HTMLInputElement>("extract-path").value;
-      if (basicExtract && extractPath) basicExtract.value = extractPath;
+    ?.addEventListener("click", () => {
+      void changeBasicExtractFolder();
+    });
+  document
+    .getElementById("basic-change-extract-folder")
+    ?.addEventListener("click", () => {
+      void changeBasicExtractFolder();
     });
   document
     .getElementById("basic-run-extract")

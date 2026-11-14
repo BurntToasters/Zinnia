@@ -347,6 +347,7 @@ pub(crate) fn rewrite_extract_output(
     args: &mut [String],
     staged_dir: &std::path::Path,
 ) -> Result<(), String> {
+    crate::validation::reject_extract_output_wildcard(&staged_dir.to_string_lossy())?;
     let output = format!("-o{}", staged_dir.to_string_lossy());
     let Some(arg) = args
         .iter_mut()
@@ -426,3 +427,40 @@ pub(crate) fn rewrite_archive_update_output(
 
 pub(crate) use plan::*;
 pub(crate) use slt::*;
+
+#[cfg(test)]
+mod tests {
+    use super::rewrite_extract_output;
+
+    const WILDCARD_OUTPUT_MESSAGE: &str =
+        "Zinnia cannot extract into a folder whose path contains '*'. Choose another folder.";
+
+    fn extract_args() -> Vec<String> {
+        ["x", "-o/tmp/out", "-aou", "--", "archive.7z"]
+            .map(str::to_string)
+            .to_vec()
+    }
+
+    #[test]
+    fn rewrite_extract_output_rejects_wildcard_stage_path() {
+        let mut args = extract_args();
+        let err = rewrite_extract_output(
+            &mut args,
+            std::path::Path::new("/tmp/an*c/.zinnia-extract-abc"),
+        )
+        .expect_err("wildcard stage path");
+        assert_eq!(err, WILDCARD_OUTPUT_MESSAGE);
+        assert_eq!(args[1], "-o/tmp/out", "arguments must stay unrewritten");
+    }
+
+    #[test]
+    fn rewrite_extract_output_accepts_plain_stage_path() {
+        let mut args = extract_args();
+        rewrite_extract_output(
+            &mut args,
+            std::path::Path::new("/tmp/ancestor/.zinnia-extract-abc"),
+        )
+        .expect("plain stage path");
+        assert_eq!(args[1], "-o/tmp/ancestor/.zinnia-extract-abc");
+    }
+}

@@ -14,6 +14,8 @@ import {
   onCompressionOptionChange,
 } from "../presets";
 import {
+  deriveOutputArchivePath,
+  outputPathForFormatChange,
   resolveOutputArchiveAutofill,
   resolveExtractDestinationAutofill,
 } from "../extract-path";
@@ -26,6 +28,31 @@ export { basename } from "../path-display";
 export type BasicView = "home" | "compress" | "extract" | "browse";
 
 let currentBasicView: BasicView = "home";
+let compressInputsKey: string | null = null;
+let autoOutputPath: string | null = null;
+let extractInputsKey: string | null = null;
+let autoExtractDestination: string | null = null;
+
+type DestinationRowIds = {
+  output: string;
+  folder: string;
+  name: string;
+  change: string;
+};
+
+const SAVE_TO_IDS: DestinationRowIds = {
+  output: "basic-save-to-path",
+  folder: "basic-save-to-folder",
+  name: "basic-save-to-name",
+  change: "basic-change-save-location",
+};
+
+const EXTRACT_TO_IDS: DestinationRowIds = {
+  output: "basic-extract-to-path",
+  folder: "basic-extract-to-folder",
+  name: "basic-extract-to-name",
+  change: "basic-change-extract-folder",
+};
 
 export function extension(path: string): string {
   const name = basename(path);
@@ -170,13 +197,42 @@ export function syncBasicExtractToPower(): void {
   }
 }
 
+function fillBasicSecretFromPower(
+  basic: HTMLInputElement,
+  powerValue: string,
+): void {
+  if (powerValue !== "" || basic.value === "") {
+    basic.value = powerValue;
+  }
+}
+
+export function syncBasicPasswordToPower(): void {
+  const basicPassword = document.getElementById(
+    "basic-password",
+  ) as HTMLInputElement | null;
+  if (basicPassword) {
+    $<HTMLInputElement>("password").value = basicPassword.value;
+  }
+}
+
+export function syncBasicExtractPasswordToPower(): void {
+  const basicExtractPassword = document.getElementById(
+    "basic-extract-password",
+  ) as HTMLInputElement | null;
+  if (basicExtractPassword) {
+    $<HTMLInputElement>("extract-password").value = basicExtractPassword.value;
+  }
+}
+
+export function syncBasicSecretsToPower(): void {
+  syncBasicPasswordToPower();
+  syncBasicExtractPasswordToPower();
+}
+
 export function syncPowerToBasicCompress(): void {
   const basicFormat = document.getElementById(
     "basic-format",
   ) as HTMLSelectElement | null;
-  const basicOutputPath = document.getElementById(
-    "basic-output-path",
-  ) as HTMLInputElement | null;
   const basicArchiveName = document.getElementById(
     "basic-archive-name",
   ) as HTMLInputElement | null;
@@ -190,17 +246,22 @@ export function syncPowerToBasicCompress(): void {
     "basic-split-size",
   ) as HTMLSelectElement | null;
 
-  if (basicFormat) {
-    basicFormat.value = $<HTMLSelectElement>("format").value;
-  }
-  if (basicOutputPath) {
-    basicOutputPath.value = $<HTMLInputElement>("output-path").value;
-  }
   if (basicArchiveName) {
     basicArchiveName.value = $<HTMLInputElement>("archive-name").value;
   }
+  if (basicFormat) {
+    const powerFormat = $<HTMLSelectElement>("format").value;
+    const formatChanged = basicFormat.value !== powerFormat;
+    basicFormat.value = powerFormat;
+    if (formatChanged && basicFormat.value) {
+      syncBasicOutputForFormat(basicFormat.value);
+    }
+  }
   if (basicPassword) {
-    basicPassword.value = $<HTMLInputElement>("password").value;
+    fillBasicSecretFromPower(
+      basicPassword,
+      $<HTMLInputElement>("password").value,
+    );
   }
   if (basicEncryptHeaders) {
     basicEncryptHeaders.checked =
@@ -255,18 +316,23 @@ export function setBasicBrowsePasswordVisible(visible: boolean): void {
   setBrowsePasswordFieldVisible(visible);
 }
 
+export function revealBasicBrowsePasswordIfNeeded(): void {
+  if (getWorkspaceMode() !== "basic" || currentBasicView !== "browse") return;
+  const powerField = document.getElementById("browse-password-field");
+  if (powerField && !powerField.hidden) {
+    setBasicBrowsePasswordVisible(true);
+  }
+}
+
 export function syncPowerToBasicExtract(): void {
-  const basicExtractPath = document.getElementById(
-    "basic-extract-path",
-  ) as HTMLInputElement | null;
   const basicExtractPassword = document.getElementById(
     "basic-extract-password",
   ) as HTMLInputElement | null;
-  if (basicExtractPath) {
-    basicExtractPath.value = $<HTMLInputElement>("extract-path").value;
-  }
   if (basicExtractPassword) {
-    basicExtractPassword.value = $<HTMLInputElement>("extract-password").value;
+    fillBasicSecretFromPower(
+      basicExtractPassword,
+      $<HTMLInputElement>("extract-password").value,
+    );
   }
 }
 
@@ -288,6 +354,15 @@ export function syncBasicWorkspaceFromPower(): void {
   syncPowerToBasicBrowsePassword();
   updateBasicPasswordField();
   updateBasicSplitCustomVisibility();
+  rederiveBasicDestinations();
+}
+
+export function resumeBasicView(): void {
+  const needsArchive =
+    currentBasicView === "extract" || currentBasicView === "browse";
+  setBasicView(
+    needsArchive && state.inputs.length === 0 ? "home" : currentBasicView,
+  );
 }
 
 export function updateBasicExtractInfo(): void {
@@ -302,20 +377,7 @@ export function updateBasicExtractInfo(): void {
   if (nameEl) nameEl.textContent = name;
   if (metaEl) metaEl.textContent = ext;
 
-  const extractPathInput = document.getElementById(
-    "basic-extract-path",
-  ) as HTMLInputElement | null;
-  if (extractPathInput && !extractPathInput.value) {
-    const autofill = resolveExtractDestinationAutofill(
-      extractPathInput.value,
-      state.lastAutoExtractDestination,
-      archivePath,
-    );
-    if (autofill) {
-      extractPathInput.value = autofill;
-      state.lastAutoExtractDestination = autofill;
-    }
-  }
+  syncBasicExtractDestination();
 }
 
 export function updateBasicBrowseInfo(): void {
@@ -340,6 +402,7 @@ export function refreshBasicArchiveInfo(): void {
 
 export function renderBasicInputs(): void {
   if (getWorkspaceMode() !== "basic") return;
+  rederiveBasicDestinations();
 
   const list = document.getElementById("basic-input-list");
   if (!list) return;
@@ -402,8 +465,24 @@ export function renderBasicInputs(): void {
     item.appendChild(removeBtn);
     list.appendChild(item);
   }
+}
 
-  syncBasicOutputAutofill();
+function inputsKey(): string {
+  return JSON.stringify(state.inputs);
+}
+
+function isExplicitPath(value: string, autoValue: string | null): boolean {
+  return value !== "" && value !== autoValue;
+}
+
+function setAutoOutputPath(path: string | null): void {
+  autoOutputPath = path;
+  state.lastAutoOutputPath = path;
+}
+
+function setAutoExtractDestination(path: string | null): void {
+  autoExtractDestination = path;
+  state.lastAutoExtractDestination = path;
 }
 
 export function syncBasicOutputAutofill(): void {
@@ -416,21 +495,153 @@ export function syncBasicOutputAutofill(): void {
   const basicFormat = document.getElementById(
     "basic-format",
   ) as HTMLSelectElement | null;
-  if (!basicOutputPath || !basicFormat) return;
-
-  const format = basicFormat.value;
-  const customName = basicArchiveName?.value ?? undefined;
-  const next = resolveOutputArchiveAutofill(
-    basicOutputPath.value,
-    state.lastAutoOutputPath,
-    state.inputs,
-    format,
-    customName,
-  );
-  if (next) {
-    basicOutputPath.value = next;
-    state.lastAutoOutputPath = next;
+  if (basicOutputPath && basicFormat && !state.running) {
+    const key = inputsKey();
+    const inputsChanged = key !== compressInputsKey;
+    compressInputsKey = key;
+    if (
+      inputsChanged ||
+      !isExplicitPath(basicOutputPath.value, autoOutputPath)
+    ) {
+      const next =
+        resolveOutputArchiveAutofill(
+          "",
+          null,
+          state.inputs,
+          basicFormat.value,
+          basicArchiveName?.value ?? undefined,
+        ) ?? "";
+      basicOutputPath.value = next;
+      setAutoOutputPath(next === "" ? null : next);
+    }
   }
+  renderBasicDestinations();
+}
+
+function syncBasicExtractDestination(): void {
+  const basicExtractPath = document.getElementById(
+    "basic-extract-path",
+  ) as HTMLInputElement | null;
+  if (basicExtractPath && !state.running) {
+    const key = inputsKey();
+    const inputsChanged = key !== extractInputsKey;
+    extractInputsKey = key;
+    if (
+      inputsChanged ||
+      !isExplicitPath(basicExtractPath.value, autoExtractDestination)
+    ) {
+      const next =
+        resolveExtractDestinationAutofill(
+          "",
+          null,
+          state.inputs[0],
+          state.inputs,
+        ) ?? "";
+      basicExtractPath.value = next;
+      setAutoExtractDestination(next === "" ? null : next);
+    }
+  }
+  renderBasicDestinations();
+}
+
+export function rederiveBasicDestinations(): void {
+  syncBasicOutputAutofill();
+  syncBasicExtractDestination();
+}
+
+export function syncBasicOutputForFormat(format: string): void {
+  const basicOutput = document.getElementById(
+    "basic-output-path",
+  ) as HTMLInputElement | null;
+  const basicName = document.getElementById(
+    "basic-archive-name",
+  ) as HTMLInputElement | null;
+  if (basicOutput) {
+    const current = basicOutput.value;
+    const next = outputPathForFormatChange(
+      current,
+      autoOutputPath,
+      format,
+      basicName?.value ?? "",
+      (customName) => deriveOutputArchivePath(state.inputs, format, customName),
+    );
+    if (next && next !== current) {
+      const wasAutofilled = !current || current === autoOutputPath;
+      basicOutput.value = next;
+      if (wasAutofilled) setAutoOutputPath(next);
+    }
+  }
+  renderBasicDestinations();
+}
+
+export function chooseBasicOutputPath(path: string): void {
+  const basicOutputPath = document.getElementById(
+    "basic-output-path",
+  ) as HTMLInputElement | null;
+  if (basicOutputPath) basicOutputPath.value = path;
+  setAutoOutputPath(null);
+  renderBasicDestinations();
+}
+
+export function chooseBasicExtractDestination(path: string): void {
+  const basicExtractPath = document.getElementById(
+    "basic-extract-path",
+  ) as HTMLInputElement | null;
+  if (basicExtractPath) basicExtractPath.value = path;
+  setAutoExtractDestination(null);
+  renderBasicDestinations();
+}
+
+function renderDestinationRow(
+  ids: DestinationRowIds,
+  value: string,
+  placeholder: string,
+  canChange: boolean,
+): void {
+  const output = document.getElementById(ids.output);
+  const folder = document.getElementById(ids.folder);
+  const name = document.getElementById(ids.name);
+  const change = document.getElementById(
+    ids.change,
+  ) as HTMLButtonElement | null;
+  if (output) {
+    output.classList.toggle("is-placeholder", value === "");
+    if (value === "") output.removeAttribute("title");
+    else output.title = value;
+  }
+  const sep = Math.max(value.lastIndexOf("/"), value.lastIndexOf("\\"));
+  if (folder)
+    folder.textContent = value !== "" && sep > 0 ? value.slice(0, sep) : "";
+  if (name) {
+    name.textContent =
+      value === "" ? placeholder : sep >= 0 ? value.slice(sep) : value;
+  }
+  if (change) change.disabled = !canChange;
+}
+
+export function renderBasicDestinations(): void {
+  const locked = state.running || state.operationPreparing;
+  const hasInputs = state.inputs.length > 0;
+  const basicOutputPath = document.getElementById(
+    "basic-output-path",
+  ) as HTMLInputElement | null;
+  const basicExtractPath = document.getElementById(
+    "basic-extract-path",
+  ) as HTMLInputElement | null;
+  renderDestinationRow(
+    SAVE_TO_IDS,
+    basicOutputPath?.value ?? "",
+    hasInputs ? "Choose where to save" : "Add files first",
+    hasInputs && !locked,
+  );
+  renderDestinationRow(
+    EXTRACT_TO_IDS,
+    basicExtractPath?.value ?? "",
+    hasInputs ? "Choose a folder" : "Choose an archive first",
+    hasInputs && !locked,
+  );
+  const note = document.getElementById("basic-extract-to-note");
+  if (note) note.hidden = state.inputs.length < 2;
 }
 
 export function updateBasicPasswordField(): void {

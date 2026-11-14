@@ -46,6 +46,17 @@ remains busy until the child has exited and staging has been promoted or rolled
 back. The extract-only window asks the backend to cancel and waits for that
 cleanup before it can be destroyed.
 
+Large listings and merges are bounded in three places. The extraction
+member-safety check (`process/staging/slt.rs`, `SltManifestParser`) parses
+`7z l -slt` output chunk by chunk instead of buffering it. Browse and Convert
+listings pass through `ListingLineFilter` (`output.rs`), which drops nine fields
+the frontend never reads before the 64 MiB output cap applies. Extraction into
+an existing folder (`process/commit/extract_merge.rs`) journals direct renames
+in batches of up to `MOVE_IDENTITY_BATCH_RECORDS` (256): one identity-log fsync
+and one journal update per batch, with each rename still checked. The move-plan
+and identity-log sidecars are capped at 512 MiB and 1 GiB (`process/journal.rs`),
+and recovery accepts an unjournaled tail of up to one batch.
+
 ### Window glass and Basic chrome
 
 - Main window is configured with `transparent: true` and `macOSPrivateApi` so
@@ -64,6 +75,16 @@ After a quick-extract window closes, optional warm-idle keeps the process
 resident (tray + idle timer; macOS Dock accessory policy) so the next file open
 is faster. Generation counters and main-thread re-checks prevent idle quit from
 racing a newly opened extract window.
+
+### Quick-extract destination recovery
+
+After a failed quick extraction, `Choose another folder` opens the native folder
+picker through `choose_extract_destination` (`launch/extract_window.rs`). The
+command rejects any caller whose window label is not `extract-*` before the
+dialog opens. Only the extract-window capability (`src-tauri/capabilities/extract.json`)
+grants `allow-choose-extract-destination`; the main window's default capability
+does not. The chosen folder receives the archive's destination folder name, as
+the first destination did, and the retry runs there.
 
 ## Frontend (`src/`)
 

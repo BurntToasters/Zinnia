@@ -303,7 +303,7 @@ describe("focus trap helpers", () => {
     overlay.remove();
   });
 
-  it("keeps titlebar and header interactive while a modal is open", () => {
+  it("makes titlebar and header inert while a modal is open, keeping toasts and recovery interactive", () => {
     const app = document.createElement("div");
     app.id = "app";
     const titlebar = document.createElement("div");
@@ -338,14 +338,14 @@ describe("focus trap helpers", () => {
     setVisibleForFocus(modalBtn, modal);
 
     trapFocus(modal);
-    expect(Boolean(titlebar.inert)).toBe(false);
-    expect(Boolean(header.inert)).toBe(false);
+    expect(titlebar.inert).toBe(true);
+    expect(header.inert).toBe(true);
     expect(Boolean(extractApp.inert)).toBe(false);
     expect(Boolean(toastRegion.inert)).toBe(false);
     expect(Boolean(recoveryBanner.inert)).toBe(false);
     expect(main.inert).toBe(true);
-    expect(closeBtn.closest("[inert]")).toBeNull();
-    expect(settingsBtn.closest("[inert]")).toBeNull();
+    expect(titlebar.contains(closeBtn)).toBe(true);
+    expect(header.contains(settingsBtn)).toBe(true);
 
     releaseFocusTrap(modal);
     expect(main.inert).toBe(false);

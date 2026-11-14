@@ -1,6 +1,7 @@
 //! 7-Zip SLT member listing and path-safety preflight.
 
-use crate::output::sanitize_output;
+use crate::output::MAX_OUTPUT_BYTES;
+use crate::output::{append_limited_output, sanitize_output, Utf8StreamDecoder, WarningScan};
 use crate::validation::archive_member_path_is_unsafe;
 
 use crate::process::archive_snapshot::{archive_file_identity, ArchiveFileIdentity};
@@ -9,12 +10,40 @@ use crate::process::commands::{
     CollectedOutput,
 };
 use crate::process::{lock_process, ArchiveManifestSummary, RunningProcess};
+use tauri_plugin_shell::process::CommandEvent;
 
 /// Stdout/stderr cap for backend-owned preflight listings and tests. At about
 /// 325 bytes per ZIP `-slt` record this covers roughly 800,000 entries.
 pub(crate) const PREFLIGHT_LIST_OUTPUT_LIMIT: usize = 256 * 1024 * 1024;
 
-pub(crate) const MEMBER_LIST_LIMIT_MESSAGE: &str = "This archive lists more entries than Zinnia can check safely (listing over 256 MiB, roughly 800,000 entries). Nothing was extracted.";
+const LISTING_LINE_LIMIT_BYTES: usize = 256 * 1024;
+const LISTING_TEXT_BYTES_PER_ENTRY: u64 = 4 * 1024;
+
+pub(crate) const LISTING_LINE_LIMIT_MESSAGE: &str =
+    "This archive has a listing record longer than Zinnia can check safely. Nothing was extracted.";
+
+pub(crate) const MEMBER_LIST_LIMIT_MESSAGE: &str = "This archive lists more entries or listing text than Zinnia can check safely (more than 1,000,000 entries or about 4 GB of listing text). Nothing was extracted.";
+
+#[derive(Clone)]
+pub(crate) struct ListingLimits {
+    max_entries: u64,
+    max_path_bytes: u64,
+    max_line_bytes: usize,
+    max_total_bytes: u64,
+}
+
+impl Default for ListingLimits {
+    fn default() -> Self {
+        Self {
+            max_entries: crate::process::quota::MAX_EXTRACT_ENTRIES,
+            max_path_bytes: crate::process::quota::MAX_EXTRACT_PATH_BYTES,
+            max_line_bytes: LISTING_LINE_LIMIT_BYTES,
+            max_total_bytes: crate::process::quota::MAX_EXTRACT_ENTRIES
+                * LISTING_TEXT_BYTES_PER_ENTRY
+                + crate::process::quota::MAX_EXTRACT_PATH_BYTES,
+        }
+    }
+}
 
 const PREFLIGHT_BASE_TIMEOUT_SECS: u64 = 120;
 const PREFLIGHT_BYTES_PER_EXTRA_SECOND: u64 = 16 * 1024 * 1024;
@@ -121,52 +150,216 @@ fn unix_mode_is_symlink(mode: &str) -> bool {
             .all(|byte| matches!(byte, b'r' | b'w' | b'x' | b'-' | b's' | b'S' | b't' | b'T'))
 }
 
-fn parse_slt_archive_manifest(
-    slt_output: &str,
-    archive_path: &str,
+#[derive(Default)]
+struct PathlessRecord {
+    runs: u64,
+    in_run: bool,
+    invalid: bool,
+    size: Option<String>,
+    has_content: bool,
+}
+
+pub(crate) struct SltManifestParser {
+    archive_path: String,
     max_bytes: Option<u64>,
-) -> Result<ArchiveManifestSummary, String> {
-    let mut seen_member = false;
-    let mut current_member: Option<&str> = None;
-    let mut summary = ArchiveManifestSummary::default();
-    for line in slt_output.lines() {
+    limits: ListingLimits,
+    line: Vec<u8>,
+    line_overflowed: bool,
+    total_bytes: u64,
+    error: Option<String>,
+    seen_member: bool,
+    summary: ArchiveManifestSummary,
+    current_member: Option<String>,
+    pathless: PathlessRecord,
+    warnings: WarningScan,
+}
+
+impl SltManifestParser {
+    pub(crate) fn new(archive_path: &str, max_bytes: Option<u64>) -> Self {
+        Self::with_limits(archive_path, max_bytes, ListingLimits::default())
+    }
+
+    fn with_limits(archive_path: &str, max_bytes: Option<u64>, limits: ListingLimits) -> Self {
+        Self {
+            archive_path: archive_path.to_string(),
+            max_bytes,
+            limits,
+            line: Vec::new(),
+            line_overflowed: false,
+            total_bytes: 0,
+            error: None,
+            seen_member: false,
+            summary: ArchiveManifestSummary::default(),
+            current_member: None,
+            pathless: PathlessRecord::default(),
+            warnings: WarningScan::default(),
+        }
+    }
+
+    pub(crate) fn push(&mut self, chunk: &[u8]) {
+        let mut rest = chunk;
+        while let Some(index) = rest.iter().position(|&byte| byte == b'\n') {
+            self.total_bytes = self.total_bytes.saturating_add(index as u64 + 1);
+            self.append_line_part(&rest[..index]);
+            self.end_line(true);
+            rest = &rest[index + 1..];
+        }
+        self.total_bytes = self.total_bytes.saturating_add(rest.len() as u64);
+        self.append_line_part(rest);
+    }
+
+    pub(crate) fn close(&mut self) {
+        if !self.line.is_empty() || self.line_overflowed {
+            self.end_line(false);
+        }
+    }
+
+    pub(crate) fn warnings(&self) -> &WarningScan {
+        &self.warnings
+    }
+
+    pub(crate) fn finish(mut self) -> Result<ArchiveManifestSummary, String> {
+        self.close();
+        if let Some(error) = self.error {
+            return Err(error);
+        }
+        // Empty archives legitimately produce no records. Non-empty output with no
+        // Path records means the machine-readable schema was not understood; fail
+        // closed instead of silently bypassing the safety check.
+        if !self.seen_member && self.pathless.has_content {
+            return self.finish_pathless();
+        }
+        Ok(self.summary)
+    }
+
+    #[cfg(test)]
+    fn retained_bytes(&self) -> usize {
+        self.line.capacity()
+            + self.current_member.as_ref().map_or(0, String::capacity)
+            + self.pathless.size.as_ref().map_or(0, String::capacity)
+    }
+
+    fn append_line_part(&mut self, part: &[u8]) {
+        if self.line_overflowed || part.is_empty() {
+            return;
+        }
+        if self.line.len() + part.len() > self.limits.max_line_bytes {
+            self.line_overflowed = true;
+            self.line.clear();
+            return;
+        }
+        self.line.extend_from_slice(part);
+    }
+
+    fn end_line(&mut self, terminated: bool) {
+        self.check_total_bytes();
+        if std::mem::take(&mut self.line_overflowed) {
+            self.line.clear();
+            self.warnings.mark_unscannable();
+            self.set_error(LISTING_LINE_LIMIT_MESSAGE.to_string());
+            return;
+        }
+        let mut bytes = std::mem::take(&mut self.line);
+        if terminated && bytes.last() == Some(&b'\r') {
+            bytes.pop();
+        }
+        let text = String::from_utf8_lossy(&bytes);
+        self.handle_line(&text);
+        bytes.clear();
+        self.line = bytes;
+    }
+
+    fn check_total_bytes(&mut self) {
+        if self.total_bytes > self.limits.max_total_bytes {
+            self.set_error(MEMBER_LIST_LIMIT_MESSAGE.to_string());
+        }
+    }
+
+    fn set_error(&mut self, message: String) {
+        if self.error.is_none() {
+            self.error = Some(message);
+        }
+    }
+
+    fn handle_line(&mut self, line: &str) {
+        self.warnings.push_line(line);
+        if self.error.is_some() {
+            return;
+        }
+        self.track_pathless(line);
+        if let Err(error) = self.apply_manifest_line(line) {
+            self.set_error(error);
+        }
+    }
+
+    fn track_pathless(&mut self, line: &str) {
+        if !line.trim().is_empty() {
+            self.pathless.has_content = true;
+        }
+        let trimmed = line.trim_end();
+        if trimmed.is_empty() {
+            self.pathless.in_run = false;
+            return;
+        }
+        // Group by blank lines; `lines()` and `trim_end` also cover CRLF output.
+        if !self.pathless.in_run {
+            self.pathless.runs += 1;
+            self.pathless.in_run = true;
+        }
+        match trimmed.split_once(" =") {
+            Some((key, value))
+                if !key.is_empty()
+                    && key.chars().all(|c| c.is_ascii_alphanumeric() || c == ' ') =>
+            {
+                match key {
+                    "Path" | "Symbolic Link" | "Hard Link" => self.pathless.invalid = true,
+                    "Size" => self.pathless.size = Some(value.trim().to_string()),
+                    _ => {}
+                }
+            }
+            _ => self.pathless.invalid = true,
+        }
+    }
+
+    fn apply_manifest_line(&mut self, line: &str) -> Result<(), String> {
         if let Some(path) = line.strip_prefix("Path = ") {
             if path.is_empty() {
-                continue;
+                return Ok(());
             }
             // `-ba` suppresses the archive-container record, so every Path entry is
             // normally a member. Keep exact full-path container tolerance for older
             // sidecars without `-ba`. Never skip a member that only matches the
             // archive basename; that name is a legal archive member.
-            if path == archive_path {
-                current_member = None;
-                continue;
+            if path == self.archive_path {
+                self.current_member = None;
+                return Ok(());
             }
-            seen_member = true;
-            summary.entry_count = summary.entry_count.saturating_add(1);
-            if summary.entry_count > crate::process::quota::MAX_EXTRACT_ENTRIES {
+            self.seen_member = true;
+            self.summary.entry_count = self.summary.entry_count.saturating_add(1);
+            if self.summary.entry_count > self.limits.max_entries {
                 return Err(format!(
                     "Archive exceeds the safety limit of {} entries.",
-                    crate::process::quota::MAX_EXTRACT_ENTRIES
+                    self.limits.max_entries
                 ));
             }
-            summary.path_bytes = summary
+            self.summary.path_bytes = self
+                .summary
                 .path_bytes
                 .checked_add(path.len() as u64)
                 .ok_or_else(|| "Archive path-name safety counter overflowed.".to_string())?;
-            if summary.path_bytes > crate::process::quota::MAX_EXTRACT_PATH_BYTES {
+            if self.summary.path_bytes > self.limits.max_path_bytes {
                 return Err(format!(
                     "Archive exceeds the {} MiB aggregate path-name safety limit.",
-                    crate::process::quota::MAX_EXTRACT_PATH_BYTES / (1024 * 1024)
+                    self.limits.max_path_bytes / (1024 * 1024)
                 ));
             }
-            current_member = Some(path);
+            self.current_member = Some(path.to_string());
             if archive_member_path_is_unsafe(path) {
                 return Err(format!(
                     "Archive contains an unsafe member path that could escape the extract folder: {path}"
                 ));
             }
-            continue;
+            return Ok(());
         }
         // ZIP keeps a symlink's target in the member data, so the listing has no
         // `Symbolic Link =` line, only a Unix `l` mode as the last `Attributes`
@@ -178,16 +371,16 @@ fn parse_slt_archive_manifest(
                 .next_back()
                 .is_some_and(unix_mode_is_symlink)
             {
-                summary.has_symbolic_links = true;
+                self.summary.has_symbolic_links = true;
             }
-            continue;
+            return Ok(());
         }
         if let Some(target) = line.strip_prefix("Symbolic Link = ") {
-            summary.has_symbolic_links = true;
+            self.summary.has_symbolic_links = true;
             if target.is_empty() {
-                continue;
+                return Ok(());
             }
-            let member = current_member.ok_or_else(|| {
+            let member = self.current_member.as_deref().ok_or_else(|| {
                 "Could not associate an archive symbolic-link target with a member path."
                     .to_string()
             })?;
@@ -196,14 +389,14 @@ fn parse_slt_archive_manifest(
                     "Archive contains an unsafe link target that could escape the extract folder: {target}"
                 ));
             }
-            continue;
+            return Ok(());
         }
         if let Some(target) = line.strip_prefix("Hard Link = ") {
-            summary.has_hard_links = true;
+            self.summary.has_hard_links = true;
             if target.is_empty() {
-                continue;
+                return Ok(());
             }
-            if current_member.is_none() {
+            if self.current_member.is_none() {
                 return Err(
                     "Could not associate an archive hard-link target with a member path."
                         .to_string(),
@@ -214,18 +407,22 @@ fn parse_slt_archive_manifest(
                     "Archive contains an unsafe link target that could escape the extract folder: {target}"
                 ));
             }
+            return Ok(());
         }
-        if current_member.is_some() {
+        if self.current_member.is_some() {
             if let Some(size) = line.strip_prefix("Size = ") {
                 let size = size.parse::<u64>().map_err(|_| {
                     "Archive listing contains an invalid declared member size.".to_string()
                 })?;
-                summary.declared_bytes =
-                    summary.declared_bytes.checked_add(size).ok_or_else(|| {
+                self.summary.declared_bytes = self
+                    .summary
+                    .declared_bytes
+                    .checked_add(size)
+                    .ok_or_else(|| {
                         "Archive declared size overflowed its safety counter.".to_string()
                     })?;
-                if let Some(max_bytes) = max_bytes {
-                    if summary.declared_bytes > max_bytes {
+                if let Some(max_bytes) = self.max_bytes {
+                    if self.summary.declared_bytes > max_bytes {
                         return Err(format!(
                             "Archive declares more than {:.1} GiB of extracted data.",
                             max_bytes as f64 / 1_073_741_824.0
@@ -234,76 +431,149 @@ fn parse_slt_archive_manifest(
                 }
             }
         }
+        Ok(())
     }
-    // Empty archives legitimately produce no records. Non-empty output with no
-    // Path records means the machine-readable schema was not understood; fail
-    // closed instead of silently bypassing the safety check.
-    if !seen_member && !slt_output.trim().is_empty() {
-        return parse_pathless_single_stream_record(slt_output, archive_path, max_bytes);
+
+    /// bzip2, xz and similar single-stream formats store no member name, so
+    /// `-ba -slt` prints one record without `Path =`. 7-Zip derives the output
+    /// name from the archive file name, which cannot escape the destination.
+    /// Accept exactly one such key/value record with a `Size` field; anything
+    /// else still fails closed.
+    fn finish_pathless(&self) -> Result<ArchiveManifestSummary, String> {
+        let unparsed = || "Could not parse archive member paths from 7-Zip listing.".to_string();
+        if self.pathless.runs != 1 || self.pathless.invalid {
+            return Err(unparsed());
+        }
+        let size = self.pathless.size.as_deref().ok_or_else(unparsed)?;
+        let mut summary = ArchiveManifestSummary {
+            entry_count: 1,
+            declared_size_untrusted: true,
+            ..ArchiveManifestSummary::default()
+        };
+        // The derived output name is at most the archive's own file name.
+        summary.path_bytes = std::path::Path::new(&self.archive_path)
+            .file_name()
+            .map_or(0, |name| name.len() as u64);
+        if !size.is_empty() {
+            summary.declared_bytes = size.parse::<u64>().map_err(|_| {
+                "Archive listing contains an invalid declared member size.".to_string()
+            })?;
+            if let Some(max_bytes) = self.max_bytes {
+                if summary.declared_bytes > max_bytes {
+                    return Err(format!(
+                        "Archive declares more than {:.1} GiB of extracted data.",
+                        max_bytes as f64 / 1_073_741_824.0
+                    ));
+                }
+            }
+        }
+        Ok(summary)
     }
-    Ok(summary)
 }
 
-/// bzip2, xz and similar single-stream formats store no member name, so
-/// `-ba -slt` prints one record without `Path =`. 7-Zip derives the output
-/// name from the archive file name, which cannot escape the destination.
-/// Accept exactly one such key/value record with a `Size` field; anything
-/// else still fails closed.
-fn parse_pathless_single_stream_record(
+#[cfg(test)]
+fn parse_slt_archive_manifest(
     slt_output: &str,
     archive_path: &str,
     max_bytes: Option<u64>,
 ) -> Result<ArchiveManifestSummary, String> {
-    let unparsed = || "Could not parse archive member paths from 7-Zip listing.".to_string();
-    // Group by blank lines; `lines()` and `trim_end` also cover CRLF output.
-    let mut records: Vec<Vec<&str>> = vec![Vec::new()];
-    for line in slt_output.lines().map(str::trim_end) {
-        match records.last_mut() {
-            Some(current) if !line.is_empty() => current.push(line),
-            Some(current) if !current.is_empty() => records.push(Vec::new()),
-            _ => {}
-        }
+    let mut parser = SltManifestParser::new(archive_path, max_bytes);
+    parser.push(slt_output.as_bytes());
+    parser.finish()
+}
+
+pub(crate) fn listing_exit_is_acceptable_scanned(
+    code: i32,
+    warnings: &WarningScan,
+    stderr: &str,
+) -> bool {
+    code == 0 || (code == 1 && warnings.metadata_only(stderr))
+}
+
+fn listing_exit_rejection(output: &PreflightOutput, warnings: &WarningScan) -> Option<String> {
+    if listing_exit_is_acceptable_scanned(output.code, warnings, &output.stderr) {
+        return None;
     }
-    records.retain(|lines| !lines.is_empty());
-    let [record] = records.as_slice() else {
-        return Err(unparsed());
+    let detail = preflight_failure_detail(output);
+    let code = output.code;
+    Some(if detail.is_empty() {
+        format!("Could not list archive members for path safety (exit {code}).")
+    } else {
+        format!("Could not list archive members for path safety: {detail}")
+    })
+}
+
+async fn collect_listing_events(
+    rx: &mut tauri::async_runtime::Receiver<CommandEvent>,
+    parser: &mut SltManifestParser,
+) -> CollectedOutput {
+    let mut out = CollectedOutput {
+        stdout: String::new(),
+        stderr: String::new(),
+        stdout_truncated: false,
+        stderr_truncated: false,
+        exit: None,
+        stream_error: None,
     };
-    let mut size = None;
-    for line in record {
-        let (key, value) = line.split_once(" =").ok_or_else(unparsed)?;
-        if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == ' ') {
-            return Err(unparsed());
-        }
-        match key {
-            "Path" | "Symbolic Link" | "Hard Link" => return Err(unparsed()),
-            "Size" => size = Some(value.trim()),
-            _ => {}
-        }
-    }
-    let size = size.ok_or_else(unparsed)?;
-    let mut summary = ArchiveManifestSummary {
-        entry_count: 1,
-        declared_size_untrusted: true,
-        ..ArchiveManifestSummary::default()
-    };
-    // The derived output name is at most the archive's own file name.
-    summary.path_bytes = std::path::Path::new(archive_path)
-        .file_name()
-        .map_or(0, |name| name.len() as u64);
-    if !size.is_empty() {
-        summary.declared_bytes = size
-            .parse::<u64>()
-            .map_err(|_| "Archive listing contains an invalid declared member size.".to_string())?;
-        if let Some(max_bytes) = max_bytes {
-            if summary.declared_bytes > max_bytes {
-                return Err(format!(
-                    "Archive declares more than {:.1} GiB of extracted data.",
-                    max_bytes as f64 / 1_073_741_824.0
-                ));
+    let mut stdout_head_truncated = false;
+    let mut stdout_decoder = Utf8StreamDecoder::default();
+    let mut stderr_decoder = Utf8StreamDecoder::default();
+    while let Some(event) = rx.recv().await {
+        match event {
+            CommandEvent::Stdout(bytes) => {
+                parser.push(&bytes);
+                let head = stdout_decoder.push(&bytes);
+                append_limited_output(
+                    &mut out.stdout,
+                    &head,
+                    MAX_OUTPUT_BYTES,
+                    &mut stdout_head_truncated,
+                );
             }
+            CommandEvent::Stderr(bytes) => {
+                let text = stderr_decoder.push(&bytes);
+                append_limited_output(
+                    &mut out.stderr,
+                    &text,
+                    MAX_OUTPUT_BYTES,
+                    &mut out.stderr_truncated,
+                );
+            }
+            CommandEvent::Terminated(payload) => {
+                let stdout_tail = stdout_decoder.finish();
+                append_limited_output(
+                    &mut out.stdout,
+                    &stdout_tail,
+                    MAX_OUTPUT_BYTES,
+                    &mut stdout_head_truncated,
+                );
+                let stderr_tail = stderr_decoder.finish();
+                append_limited_output(
+                    &mut out.stderr,
+                    &stderr_tail,
+                    MAX_OUTPUT_BYTES,
+                    &mut out.stderr_truncated,
+                );
+                out.exit = Some(payload);
+                break;
+            }
+            CommandEvent::Error(error) => {
+                let detail = format!("7-Zip process error: {error}\n");
+                append_limited_output(
+                    &mut out.stderr,
+                    &detail,
+                    MAX_OUTPUT_BYTES,
+                    &mut out.stderr_truncated,
+                );
+                if out.stream_error.is_none() {
+                    out.stream_error = Some(error);
+                }
+            }
+            _ => {}
         }
     }
-    Ok(summary)
+    parser.close();
+    out
 }
 
 #[cfg(test)]
@@ -390,15 +660,15 @@ pub(crate) fn checked_preflight_output_with_limit(
 /// Run a short backend-owned 7-Zip child under the current operation slot.
 /// The child is registered before password transport so Cancel can stop it,
 /// and the slot's child is cleared again before returning.
-pub(crate) async fn run_registered_preflight_7z(
+async fn collect_registered_preflight(
     app: &tauri::AppHandle,
     state: &tauri::State<'_, RunningProcess>,
     args: Vec<String>,
     timeout: std::time::Duration,
     label: &str,
-    limit_message: Option<&str>,
     #[cfg_attr(not(feature = "e2e"), allow(unused_variables))] pause_point: &str,
-) -> Result<PreflightOutput, String> {
+    listing: Option<&mut SltManifestParser>,
+) -> Result<CollectedOutput, String> {
     let (mut rx, child, pending_password) =
         crate::process::commands::spawn_7z_noninteractive(app, args, state)?;
     #[cfg(feature = "e2e")]
@@ -438,10 +708,12 @@ pub(crate) async fn run_registered_preflight_7z(
             return Err("Operation cancelled.".to_string());
         }
     }
-    let collected = match tokio::time::timeout(
-        timeout,
-        collect_command_output(&mut rx, PREFLIGHT_LIST_OUTPUT_LIMIT, |_| {}),
-    )
+    let collected = match tokio::time::timeout(timeout, async {
+        match listing {
+            Some(parser) => collect_listing_events(&mut rx, parser).await,
+            None => collect_command_output(&mut rx, PREFLIGHT_LIST_OUTPUT_LIMIT, |_| {}).await,
+        }
+    })
     .await
     {
         Ok(collected) => collected,
@@ -460,7 +732,20 @@ pub(crate) async fn run_registered_preflight_7z(
             return Err("Operation cancelled.".to_string());
         }
     }
-    checked_preflight_output_with_limit(collected, label, limit_message)
+    Ok(collected)
+}
+
+pub(crate) async fn run_registered_preflight_7z(
+    app: &tauri::AppHandle,
+    state: &tauri::State<'_, RunningProcess>,
+    args: Vec<String>,
+    timeout: std::time::Duration,
+    label: &str,
+    #[cfg_attr(not(feature = "e2e"), allow(unused_variables))] pause_point: &str,
+) -> Result<PreflightOutput, String> {
+    let collected =
+        collect_registered_preflight(app, state, args, timeout, label, pause_point, None).await?;
+    checked_preflight_output_with_limit(collected, label, None)
 }
 
 /// Sanitized 7-Zip failure detail (stderr first, then stdout).
@@ -496,26 +781,23 @@ pub(crate) async fn assert_extract_archive_members_safe_with_summary(
         crate::process::archive_snapshot::archive_identity_from_snapshot_handle(&archive_path)
             .or_else(|| archive_file_identity(&archive_path).ok())
             .ok_or_else(|| "Could not read archive identity for member preflight.".to_string())?;
-    let output = run_registered_preflight_7z(
+    let label = "Archive member-safety preflight";
+    let mut listing = SltManifestParser::new(&archive, max_declared_bytes);
+    let collected = collect_registered_preflight(
         app,
         state,
         list_args,
         preflight_timeout_for_archive(&archive_path),
-        "Archive member-safety preflight",
-        Some(MEMBER_LIST_LIMIT_MESSAGE),
+        label,
         "member-preflight-spawned",
+        Some(&mut listing),
     )
     .await?;
-    let code = output.code;
-    if !listing_preflight_exit_is_acceptable(code, &output.stdout, &output.stderr) {
-        let detail = preflight_failure_detail(&output);
-        return Err(if detail.is_empty() {
-            format!("Could not list archive members for path safety (exit {code}).")
-        } else {
-            format!("Could not list archive members for path safety: {detail}")
-        });
+    let output = checked_preflight_output_with_limit(collected, label, None)?;
+    if let Some(error) = listing_exit_rejection(&output, listing.warnings()) {
+        return Err(error);
     }
-    let mut manifest = parse_slt_archive_manifest(&output.stdout, &archive, max_declared_bytes)?;
+    let mut manifest = listing.finish()?;
     let lower = archive.to_ascii_lowercase();
     if [".gz", ".bz2", ".xz", ".tgz", ".tbz2", ".txz"]
         .iter()
@@ -687,7 +969,6 @@ async fn run_update_password_check(
         test_args,
         preflight_timeout_for_archive(std::path::Path::new(archive)),
         "Archive password check",
-        None,
         "update-password-check-spawned",
     )
     .await
@@ -742,7 +1023,6 @@ pub(crate) async fn assert_update_encryption_policy(
         list_args,
         preflight_timeout_for_archive(std::path::Path::new(&archive)),
         "Archive encryption preflight",
-        None,
         "update-encryption-preflight-spawned",
     )
     .await?;
@@ -879,7 +1159,506 @@ mod preflight_budget_tests {
         )
         .expect_err("truncated listing must fail");
         assert_eq!(error, MEMBER_LIST_LIMIT_MESSAGE);
-        assert!(error.contains("256 MiB"), "{error}");
+        assert!(error.contains("1,000,000 entries"), "{error}");
         assert!(error.contains("Nothing was extracted."), "{error}");
+        assert!(!error.contains("256 MiB"), "{error}");
+    }
+}
+
+#[cfg(test)]
+mod streaming_listing_tests {
+    use super::*;
+    use tauri_plugin_shell::process::{CommandEvent, TerminatedPayload};
+
+    const ARCHIVE: &str = "/tmp/archive.7z";
+    const MIB: u64 = 1024 * 1024;
+
+    const PLAIN_ZIP: &str =
+        "Path = a.txt\nSize = 3\nAttributes = A_ -rw-r--r--\n\nPath = dir/b.txt\nSize = 5\n\n";
+    const SAFE_SYMLINK: &str = "Path = bin/tool\nSymbolic Link = ../lib/tool\nSize = 0\n\n";
+    const UNIX_SYMLINK_MODE: &str =
+        "Path = link\nSize = 3\nAttributes = A_ lrwxrwxrwx\n\nPath = target.txt\nSize = 2\n\n";
+    const SAFE_HARD_LINK: &str = "Path = a\nHard Link = b\nSize = 1\n\n";
+    const UNSAFE_SYMLINK: &str = "Path = bin/tool\nSymbolic Link = /etc/passwd\nSize = 0\n\n";
+    const UNSAFE_PATH: &str = "Path = ../evil\nSize = 1\n\n";
+    const PATHLESS_XZ: &str = "Size = 100000\nPacked Size = 100064\nMethod = LZMA2:17 CRC32\n\n";
+    const PATHLESS_BAD: &str = "Size = lots\n\n";
+    const ARCHIVE_RECORD_THEN_MEMBER: &str =
+        "Path = archive.7z\nType = 7z\n\n----------\nPath = inner.txt\nSize = 4\n";
+    const MULTIBYTE_CRLF: &str =
+        "Path = café/naïve-日本.txt\r\nSize = 9\r\nAttributes = A\r\n\r\nPath = ü/ñ.txt\r\nSize = 2\r\n";
+    const UNTERMINATED_UNSAFE: &str = "Path = ok.txt\nSize = 1\n\nPath = ../unterminated";
+    const UNTERMINATED_SAFE: &str = "Path = ok.txt\nSize = 1\n\nPath = fine.txt";
+    const WHITESPACE_ONLY: &str = "  \n\n\t\n";
+    const EMPTY: &str = "";
+
+    const FIXTURES: [&str; 14] = [
+        PLAIN_ZIP,
+        SAFE_SYMLINK,
+        UNIX_SYMLINK_MODE,
+        SAFE_HARD_LINK,
+        UNSAFE_SYMLINK,
+        UNSAFE_PATH,
+        PATHLESS_XZ,
+        PATHLESS_BAD,
+        ARCHIVE_RECORD_THEN_MEMBER,
+        MULTIBYTE_CRLF,
+        UNTERMINATED_UNSAFE,
+        UNTERMINATED_SAFE,
+        WHITESPACE_ONLY,
+        EMPTY,
+    ];
+
+    fn debug_result(result: &Result<ArchiveManifestSummary, String>) -> String {
+        format!("{result:?}")
+    }
+
+    fn parse_in_two_chunks(
+        text: &str,
+        split: usize,
+        archive: &str,
+        limits: ListingLimits,
+    ) -> Result<ArchiveManifestSummary, String> {
+        let bytes = text.as_bytes();
+        let mut parser = SltManifestParser::with_limits(archive, None, limits);
+        parser.push(&bytes[..split]);
+        parser.push(&bytes[split..]);
+        parser.finish()
+    }
+
+    #[test]
+    fn stream_split_at_every_byte_matches_whole_parse() {
+        for fixture in FIXTURES {
+            let whole = debug_result(&parse_slt_archive_manifest(fixture, ARCHIVE, None));
+            for split in 0..=fixture.len() {
+                let streamed = debug_result(&parse_in_two_chunks(
+                    fixture,
+                    split,
+                    ARCHIVE,
+                    ListingLimits::default(),
+                ));
+                assert_eq!(streamed, whole, "fixture {fixture:?} split at {split}");
+            }
+        }
+    }
+
+    #[test]
+    fn stream_handles_crlf_and_multibyte_splits() {
+        let whole = parse_slt_archive_manifest(MULTIBYTE_CRLF, ARCHIVE, None)
+            .expect("multibyte CRLF listing is safe");
+        assert_eq!(whole.entry_count, 2);
+        assert_eq!(
+            whole.path_bytes,
+            "café/naïve-日本.txt".len() as u64 + "ü/ñ.txt".len() as u64
+        );
+        let cr = MULTIBYTE_CRLF.find('\r').expect("fixture has CR");
+        assert_eq!(MULTIBYTE_CRLF.as_bytes()[cr + 1], b'\n');
+        let split_between_cr_and_lf = debug_result(&parse_in_two_chunks(
+            MULTIBYTE_CRLF,
+            cr + 1,
+            ARCHIVE,
+            ListingLimits::default(),
+        ));
+        assert_eq!(split_between_cr_and_lf, debug_result(&Ok(whole.clone())));
+        let split_inside_first_char = debug_result(&parse_in_two_chunks(
+            MULTIBYTE_CRLF,
+            "Path = caf".len() + 1,
+            ARCHIVE,
+            ListingLimits::default(),
+        ));
+        assert_eq!(split_inside_first_char, debug_result(&Ok(whole)));
+    }
+
+    #[test]
+    fn stream_final_unterminated_line_is_checked() {
+        for split in 0..=UNTERMINATED_UNSAFE.len() {
+            let error = parse_in_two_chunks(
+                UNTERMINATED_UNSAFE,
+                split,
+                ARCHIVE,
+                ListingLimits::default(),
+            )
+            .expect_err("unsafe final member without a newline must fail");
+            assert!(error.contains("../unterminated"), "{error}");
+        }
+        for split in 0..=UNTERMINATED_SAFE.len() {
+            let summary =
+                parse_in_two_chunks(UNTERMINATED_SAFE, split, ARCHIVE, ListingLimits::default())
+                    .expect("safe final member");
+            assert_eq!(summary.entry_count, 2);
+        }
+    }
+
+    #[test]
+    fn stream_rejects_line_over_bound_and_accepts_exact_bound() {
+        let limits = ListingLimits {
+            max_line_bytes: 64,
+            ..ListingLimits::default()
+        };
+        let exact = format!("Path = {}\nSize = 1\n\n", "a".repeat(64 - "Path = ".len()));
+        let over = format!(
+            "Path = {}\nSize = 1\n\n",
+            "a".repeat(64 - "Path = ".len() + 1)
+        );
+        let comment_over = format!("Comment = {}\n\n", "c".repeat(64));
+        for split in 0..=exact.len() {
+            let summary = parse_in_two_chunks(&exact, split, ARCHIVE, limits.clone())
+                .expect("line exactly at the bound is accepted");
+            assert_eq!(summary.entry_count, 1);
+        }
+        for split in 0..=over.len() {
+            let error = parse_in_two_chunks(&over, split, ARCHIVE, limits.clone())
+                .expect_err("line one byte over the bound is rejected");
+            assert_eq!(error, LISTING_LINE_LIMIT_MESSAGE, "split {split}");
+        }
+        assert_eq!(
+            parse_in_two_chunks(&comment_over, 3, ARCHIVE, limits).expect_err("non-path line"),
+            LISTING_LINE_LIMIT_MESSAGE
+        );
+    }
+
+    #[test]
+    fn stream_keeps_retained_state_bounded_by_the_line_limit() {
+        let limits = ListingLimits {
+            max_line_bytes: 64,
+            ..ListingLimits::default()
+        };
+        let mut parser = SltManifestParser::with_limits(ARCHIVE, None, limits);
+        let hostile = vec![b'x'; 10 * 1024 * 1024];
+        for chunk in hostile.chunks(4096) {
+            parser.push(chunk);
+        }
+        assert!(
+            parser.retained_bytes() <= 4 * 64,
+            "{}",
+            parser.retained_bytes()
+        );
+        assert_eq!(
+            parser.finish().expect_err("hostile line"),
+            LISTING_LINE_LIMIT_MESSAGE
+        );
+    }
+
+    #[test]
+    fn stream_entry_cap_is_enforced_across_chunks() {
+        let limits = ListingLimits {
+            max_entries: 2,
+            ..ListingLimits::default()
+        };
+        let listing = "Path = a\n\nPath = b\n\nPath = c\n\n";
+        for split in 0..=listing.len() {
+            assert_eq!(
+                parse_in_two_chunks(listing, split, ARCHIVE, limits.clone())
+                    .expect_err("third entry exceeds the cap"),
+                "Archive exceeds the safety limit of 2 entries.",
+                "split {split}"
+            );
+        }
+        let path_limits = ListingLimits {
+            max_path_bytes: 3,
+            ..ListingLimits::default()
+        };
+        let paths = "Path = ab\n\nPath = cd\n\n";
+        for split in 0..=paths.len() {
+            let error = parse_in_two_chunks(paths, split, ARCHIVE, path_limits.clone())
+                .expect_err("aggregate path bytes exceed the cap");
+            assert!(
+                error.contains("aggregate path-name safety limit"),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn stream_total_bytes_bound_is_enforced_at_line_end() {
+        let limits = ListingLimits {
+            max_total_bytes: 19,
+            ..ListingLimits::default()
+        };
+        let within = "Path = a\nSize = 1\n\n";
+        parse_in_two_chunks(within, 4, ARCHIVE, limits.clone()).expect("exactly at the bound");
+        let over = "Path = a\nSize = 1\n\nPath = b\n";
+        for split in 0..=over.len() {
+            assert_eq!(
+                parse_in_two_chunks(over, split, ARCHIVE, limits.clone())
+                    .expect_err("listing text over the bound"),
+                MEMBER_LIST_LIMIT_MESSAGE,
+                "split {split}"
+            );
+        }
+    }
+
+    #[test]
+    fn stream_wrapper_matches_streaming_for_existing_fixture_shapes() {
+        let zip = parse_slt_archive_manifest(PLAIN_ZIP, ARCHIVE, None).expect("plain zip");
+        assert_eq!(zip.entry_count, 2);
+        assert!(!zip.has_links());
+        let link = parse_slt_archive_manifest(SAFE_SYMLINK, ARCHIVE, None).expect("safe link");
+        assert!(link.has_symbolic_links);
+        let mode_link =
+            parse_slt_archive_manifest(UNIX_SYMLINK_MODE, ARCHIVE, None).expect("unix mode link");
+        assert!(mode_link.has_symbolic_links);
+        let hard = parse_slt_archive_manifest(SAFE_HARD_LINK, ARCHIVE, None).expect("hard link");
+        assert!(hard.has_hard_links);
+        assert!(parse_slt_archive_manifest(UNSAFE_SYMLINK, ARCHIVE, None)
+            .expect_err("absolute link target")
+            .contains("unsafe link target"));
+        assert!(parse_slt_archive_manifest(UNSAFE_PATH, ARCHIVE, None)
+            .expect_err("escaping member")
+            .contains("unsafe member path"));
+        let xz = parse_slt_archive_manifest(PATHLESS_XZ, "/tmp/payload.bin.xz", None)
+            .expect("pathless single stream");
+        assert_eq!(xz.declared_bytes, 100_000);
+        assert!(xz.declared_size_untrusted);
+        assert_eq!(
+            parse_slt_archive_manifest(PATHLESS_BAD, "/tmp/payload.bin.xz", None)
+                .expect_err("invalid pathless size"),
+            "Archive listing contains an invalid declared member size."
+        );
+        let empty = parse_slt_archive_manifest(EMPTY, ARCHIVE, None).expect("empty listing");
+        assert_eq!(empty.entry_count, 0);
+        assert!(parse_slt_archive_manifest(PLAIN_ZIP, ARCHIVE, Some(7))
+            .expect_err("declared bytes over the limit")
+            .contains("GiB of extracted data"));
+    }
+
+    #[test]
+    fn stream_first_error_wins_over_later_errors() {
+        let listing = "Path = ../evil\nPath = a\nSize = 99999999999999999999999\n";
+        for split in 0..=listing.len() {
+            let error = parse_in_two_chunks(listing, split, ARCHIVE, ListingLimits::default())
+                .expect_err("unsafe path");
+            assert!(error.contains("../evil"), "split {split}: {error}");
+        }
+    }
+
+    #[test]
+    fn stream_warning_scan_matches_buffered_classifier_at_every_split() {
+        let stdouts = [
+            "Path = a.txt\nSize = 1\n\nArchives with Warnings: 1\n",
+            "Path = a.txt\n\nWARNING: Cannot open 1 file\n",
+            "Path = cannot open.txt\n\nThere are data after the end of archive\n",
+            "Path = a\n\nWARNING: cannot set owner\r\nArchives with Warnings: 1\r\n",
+            "Path = a\n\nERROR: Cannot open the file\n",
+            "Path = a\n\nPath with no newline at the end",
+        ];
+        let stderrs = [
+            "",
+            "WARNING: cannot set file time\n",
+            "ERROR: unknown\n",
+            "data after the end of archive\n",
+        ];
+        for stdout in stdouts {
+            for stderr in stderrs {
+                for code in [0, 1, 2] {
+                    let buffered = listing_preflight_exit_is_acceptable(code, stdout, stderr);
+                    for split in 0..=stdout.len() {
+                        let mut parser =
+                            SltManifestParser::with_limits(ARCHIVE, None, ListingLimits::default());
+                        parser.push(&stdout.as_bytes()[..split]);
+                        parser.push(&stdout.as_bytes()[split..]);
+                        parser.close();
+                        assert_eq!(
+                            listing_exit_is_acceptable_scanned(code, parser.warnings(), stderr),
+                            buffered,
+                            "stdout {stdout:?} stderr {stderr:?} code {code} split {split}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    const SYNTHETIC_COMMENT: [u8; 200] = [b'c'; 200];
+
+    fn push_zero_padded(out: &mut Vec<u8>, mut value: u64, width: usize) {
+        let start = out.len();
+        out.resize(start + width, b'0');
+        for slot in out[start..].iter_mut().rev() {
+            *slot = b'0' + (value % 10) as u8;
+            value /= 10;
+        }
+    }
+
+    fn write_record(out: &mut Vec<u8>, index: u64) {
+        out.extend_from_slice(b"Path = d");
+        push_zero_padded(out, index % 1000, 3);
+        out.extend_from_slice(b"/f");
+        push_zero_padded(out, index, 7);
+        out.extend_from_slice(b".dat\nFolder = -\nSize = 0\nPacked Size = 0\n");
+        out.extend_from_slice(b"Modified = 2026-11-12 22:56:10.0174470\nAttributes = A\n");
+        out.extend_from_slice(b"Encrypted = -\nComment = ");
+        out.extend_from_slice(&SYNTHETIC_COMMENT);
+        out.extend_from_slice(b"\nCRC = 00000000\nMethod = Store\n");
+        out.extend_from_slice(b"Host OS = FAT\nVersion = 10\nOffset = 0\n\n");
+    }
+
+    #[test]
+    fn stream_listing_over_256_mib_succeeds_with_bounded_state() {
+        const RECORDS: u64 = 700_000;
+        let started = std::time::Instant::now();
+        let mut parser =
+            SltManifestParser::with_limits(ARCHIVE, Some(u64::MAX), ListingLimits::default());
+        let mut chunk = Vec::with_capacity(64 * 1024);
+        let mut total_bytes: u64 = 0;
+        let mut expected_path_bytes: u64 = 0;
+        for index in 0..RECORDS {
+            let before = chunk.len();
+            write_record(&mut chunk, index);
+            total_bytes += (chunk.len() - before) as u64;
+            expected_path_bytes += "d000/f0000000.dat".len() as u64;
+            if chunk.len() >= 64 * 1024 {
+                parser.push(&chunk);
+                chunk.clear();
+            }
+        }
+        parser.push(&chunk);
+        assert!(
+            total_bytes > 256 * MIB,
+            "synthetic listing is {total_bytes} bytes"
+        );
+        assert!(
+            parser.retained_bytes() < 64 * 1024,
+            "{}",
+            parser.retained_bytes()
+        );
+        let summary = parser.finish().expect("large safe listing");
+        assert_eq!(summary.entry_count, RECORDS);
+        assert_eq!(summary.path_bytes, expected_path_bytes);
+        assert_eq!(summary.declared_bytes, 0);
+        assert!(!summary.has_links());
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(120),
+            "parse took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn collect_listing_reports_stream_error_as_incomplete() {
+        tauri::async_runtime::block_on(async {
+            let (tx, mut rx) = tauri::async_runtime::channel::<CommandEvent>(8);
+            tx.send(CommandEvent::Error("broken pipe".to_string()))
+                .await
+                .expect("send error");
+            drop(tx);
+            let mut parser =
+                SltManifestParser::with_limits(ARCHIVE, None, ListingLimits::default());
+            let collected = collect_listing_events(&mut rx, &mut parser).await;
+            assert!(collected.exit.is_none());
+            let error = checked_preflight_output_with_limit(
+                collected,
+                "Archive member-safety preflight",
+                None,
+            )
+            .expect_err("stream error is not a clean listing");
+            assert!(
+                error.contains("could not read the complete output stream: broken pipe"),
+                "{error}"
+            );
+        });
+    }
+
+    #[test]
+    fn collect_listing_keeps_only_a_bounded_stdout_head() {
+        tauri::async_runtime::block_on(async {
+            let (tx, mut rx) = tauri::async_runtime::channel::<CommandEvent>(8);
+            tx.send(CommandEvent::Stdout(vec![
+                b'x';
+                crate::output::MAX_OUTPUT_BYTES
+                    + 100
+            ]))
+            .await
+            .expect("send stdout");
+            tx.send(CommandEvent::Terminated(TerminatedPayload {
+                code: Some(0),
+                signal: None,
+            }))
+            .await
+            .expect("send exit");
+            drop(tx);
+            let mut parser =
+                SltManifestParser::with_limits(ARCHIVE, None, ListingLimits::default());
+            let collected = collect_listing_events(&mut rx, &mut parser).await;
+            assert_eq!(collected.stdout.len(), crate::output::MAX_OUTPUT_BYTES);
+            assert!(!collected.stdout_truncated);
+            let output = checked_preflight_output_with_limit(
+                collected,
+                "Archive member-safety preflight",
+                None,
+            )
+            .expect("complete exit-0 output is not a preflight failure");
+            assert_eq!(output.code, 0);
+            assert_eq!(
+                parser.finish().expect_err("over-long listing line"),
+                LISTING_LINE_LIMIT_MESSAGE
+            );
+        });
+    }
+
+    #[test]
+    fn listing_exit_error_is_reported_before_parse_errors() {
+        let mut parser = SltManifestParser::with_limits(ARCHIVE, None, ListingLimits::default());
+        parser.push(b"Path = ../evil\n");
+        parser.close();
+        let stderr_failure = PreflightOutput {
+            code: 2,
+            stdout: String::new(),
+            stderr: "ERROR: Data Error\n".to_string(),
+        };
+        assert_eq!(
+            listing_exit_rejection(&stderr_failure, parser.warnings()),
+            Some("Could not list archive members for path safety: ERROR: Data Error".to_string())
+        );
+        let stdout_failure = PreflightOutput {
+            code: 2,
+            stdout: "  bad header \n".to_string(),
+            stderr: String::new(),
+        };
+        assert_eq!(
+            listing_exit_rejection(&stdout_failure, parser.warnings()),
+            Some("Could not list archive members for path safety: bad header".to_string())
+        );
+        let silent_failure = PreflightOutput {
+            code: -1,
+            stdout: String::new(),
+            stderr: String::new(),
+        };
+        assert_eq!(
+            listing_exit_rejection(&silent_failure, parser.warnings()),
+            Some("Could not list archive members for path safety (exit -1).".to_string())
+        );
+        let clean = PreflightOutput {
+            code: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+        };
+        assert_eq!(listing_exit_rejection(&clean, parser.warnings()), None);
+        assert!(parser
+            .finish()
+            .expect_err("unsafe member")
+            .contains("../evil"));
+    }
+
+    #[test]
+    fn streaming_limits_default_to_extract_constants() {
+        let limits = ListingLimits::default();
+        assert_eq!(
+            limits.max_entries,
+            crate::process::quota::MAX_EXTRACT_ENTRIES
+        );
+        assert_eq!(
+            limits.max_path_bytes,
+            crate::process::quota::MAX_EXTRACT_PATH_BYTES
+        );
+        assert_eq!(limits.max_line_bytes, 256 * 1024);
+        assert_eq!(
+            limits.max_total_bytes,
+            crate::process::quota::MAX_EXTRACT_ENTRIES * 4096
+                + crate::process::quota::MAX_EXTRACT_PATH_BYTES
+        );
+        assert!(limits.max_total_bytes >= 4_000_000_000);
+        assert!(MEMBER_LIST_LIMIT_MESSAGE.contains("Nothing was extracted."));
+        assert!(!MEMBER_LIST_LIMIT_MESSAGE.contains("256 MiB"));
     }
 }

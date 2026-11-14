@@ -190,6 +190,20 @@
   !insertmacro ZINNIA_REGISTER_CLASSIC_EXTRACT ".001"
 !macroend
 
+!macro ZINNIA_UNREGISTER_CLASSIC_EXTRACT_VERBS
+  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".7z"
+  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".zip"
+  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".tar"
+  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".gz"
+  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".bz2"
+  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".xz"
+  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".rar"
+  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".tgz"
+  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".tbz2"
+  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".txz"
+  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".001"
+!macroend
+
 !macro NSIS_HOOK_PREINSTALL
   ; Refuse a pre-created junction/symlink before Tauri copies any resources
   ; through it. A missing destination returns INVALID_FILE_ATTRIBUTES (-1).
@@ -232,12 +246,14 @@
   zinnia_postinstall_win11_ok:
   DetailPrint "Removing classic Extract/Compress verbs; Win11 packages cover legacy menu too."
   !insertmacro ZINNIA_UNREGISTER_COMPRESS_VERBS
+  !insertmacro ZINNIA_UNREGISTER_CLASSIC_EXTRACT_VERBS
   !insertmacro ZINNIA_CLEAN_SHELL_PAYLOADS "shell-${VERSION}" zinnia_update_shell_cleanup
   zinnia_postinstall_verbs_done:
   Goto zinnia_postinstall_done
   zinnia_postinstall_win11_restored:
   DetailPrint "Removing classic Extract/Compress verbs; restored Win11 packages cover legacy menu too."
   !insertmacro ZINNIA_UNREGISTER_COMPRESS_VERBS
+  !insertmacro ZINNIA_UNREGISTER_CLASSIC_EXTRACT_VERBS
   ; The restored package may still be loaded from an older shell-* directory.
   ; Leave all payloads intact until a later successful registration.
   zinnia_postinstall_done:
@@ -276,16 +292,6 @@
   !insertmacro ZINNIA_CLEAN_SHELL_PAYLOADS "" zinnia_uninstall_shell_cleanup
   Delete /REBOOTOK "$INSTDIR\zinnia-context-menu-register.log"
   !insertmacro ZINNIA_UNREGISTER_COMPRESS_VERBS
-  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".7z"
-  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".zip"
-  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".tar"
-  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".gz"
-  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".bz2"
-  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".xz"
-  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".rar"
-  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".tgz"
-  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".tbz2"
-  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".txz"
-  !insertmacro ZINNIA_UNREGISTER_ARCHIVE_VERBS ".001"
+  !insertmacro ZINNIA_UNREGISTER_CLASSIC_EXTRACT_VERBS
   RMDir /REBOOTOK "$INSTDIR"
 !macroend

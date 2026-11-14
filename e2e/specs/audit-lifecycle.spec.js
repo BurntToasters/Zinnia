@@ -31,7 +31,7 @@ const sidecar = requireHostSidecar();
 // Keep in sync with the native confirm copy in src/window-events.ts.
 const CONFIRM_TITLE = "Operation in progress";
 const HANDOFF_QUEUED_COPY = "will be added when the current operation finishes";
-const LIMIT_COPY = "more were not added";
+const LIMIT_COPY = "not added.";
 const MAX_PATHS = 4096;
 const LONG_JOB_BYTES = 240 * 1024 * 1024;
 

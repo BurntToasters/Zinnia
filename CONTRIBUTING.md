@@ -86,10 +86,17 @@ the publish/verify ordering. Follow `docs/RELEASE-STABLE.md`.
 
 - Match the surrounding code's style; no framework: vanilla TS + DOM.
 - Use ASCII punctuation only in repo text: no Unicode em dash (U+2014). Use `-`, `,`, or `:` instead (see `.cursor/rules/no-em-dash.mdc`).
-- Add tests with each change. Pure logic is unit-tested directly; DOM-dependent
-  code uses the jsdom fixture in [`src/tests/setup-dom.ts`](src/tests/setup-dom.ts).
-- New 7z switches/commands need both a Vitest arg-builder test and a Rust
-  `validate_run_7z_args` test.
+- Testing order for each change:
+  1. Write a failure inventory first, in `docs/validation/<piece>.failure-modes.md`.
+     List each way the change could fail or regress, and the test that covers it.
+  2. Prefer GUI E2E specs in [`e2e/specs/`](e2e/specs/) as the main proof. Each
+     spec should write a repeatable JSON evidence artifact.
+  3. Use Vitest or Rust unit tests only where E2E cannot reach the code. Write
+     them before the code they test, and never after it. DOM-dependent Vitest
+     tests use the jsdom fixture in [`src/tests/setup-dom.ts`](src/tests/setup-dom.ts).
+- New 7z switches or commands need E2E coverage and a Rust
+  `validate_run_7z_args` check. If E2E cannot reach the validation, follow the
+  testing order above.
 - Archive format coverage lives in [`zips/`](zips/). Regenerating writable
   fixtures: `npm run prepare:7z && npm run test:archives:generate`. Do not
   overwrite `hello.rar` unless you pass `--write-rar` (7-Zip cannot create RAR).

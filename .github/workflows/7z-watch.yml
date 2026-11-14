@@ -31,6 +31,9 @@ jobs:
       - name: Install latest npm 12
         run: npm install --global npm@${{ env.NPM_VERSION }} --ignore-scripts --min-release-age=3
       - run: npm ci --ignore-scripts
+      - name: Report vendored crate versions
+        continue-on-error: true
+        run: npm run deps:vendored
       - name: Check for a newer official 7-Zip
         id: check
         run: |

@@ -101,14 +101,16 @@ export function selectEntries(
   windowsPaths = false,
 ): Set<string> {
   const next = new Set(current);
+  const index = indexArchiveChildren(scopeEntries, windowsPaths);
   for (const entry of targetEntries) {
-    const recursiveTargets = getRecursiveSelectionPaths(
-      scopeEntries,
-      entry.path,
-      entry.isFolder,
-      windowsPaths,
-    );
-    for (const path of recursiveTargets) next.add(path);
+    if (!entry.isFolder) {
+      next.add(entry.path);
+      continue;
+    }
+    const members = folderMembers(entry.path, index, windowsPaths);
+    for (const path of members.length > 0 ? members : [entry.path]) {
+      next.add(path);
+    }
   }
   return next;
 }
@@ -240,49 +242,64 @@ function sortTree(node: TreeNode): void {
 
 export type NodeCheckState = "checked" | "unchecked" | "indeterminate";
 
+interface LeafSummary {
+  checked: boolean;
+  unchecked: boolean;
+}
+
+function stateFromSummary(summary: LeafSummary): NodeCheckState {
+  if (summary.checked && summary.unchecked) return "indeterminate";
+  return summary.checked ? "checked" : "unchecked";
+}
+
 // Tri-state for a node: checked if all descendant files are selected,
 // unchecked if none, indeterminate if mixed.
+export function computeNodeCheckStates(
+  roots: TreeNode[],
+  selected: Set<string>,
+): Map<TreeNode, NodeCheckState> {
+  const states = new Map<TreeNode, NodeCheckState>();
+  const summarize = (node: TreeNode): LeafSummary => {
+    if (!node.isFolder || node.children.length === 0) {
+      const checked = selected.has(node.path);
+      states.set(node, checked ? "checked" : "unchecked");
+      return { checked, unchecked: !checked };
+    }
+    const summary: LeafSummary = { checked: false, unchecked: false };
+    for (const child of node.children) {
+      const childSummary = summarize(child);
+      if (childSummary.checked) summary.checked = true;
+      if (childSummary.unchecked) summary.unchecked = true;
+    }
+    states.set(node, stateFromSummary(summary));
+    return summary;
+  };
+  for (const root of roots) summarize(root);
+  return states;
+}
+
 export function computeNodeCheckState(
   node: TreeNode,
   selected: Set<string>,
 ): NodeCheckState {
-  if (!node.isFolder) {
-    return selected.has(node.path) ? "checked" : "unchecked";
-  }
-  if (node.children.length === 0) {
-    return selected.has(node.path) ? "checked" : "unchecked";
-  }
-  let hasChecked = false;
-  let hasUnchecked = false;
-  const visit = (n: TreeNode): void => {
-    if (!n.isFolder) {
-      if (selected.has(n.path)) hasChecked = true;
-      else hasUnchecked = true;
-      return;
-    }
-    if (n.children.length === 0) {
-      if (selected.has(n.path)) hasChecked = true;
-      else hasUnchecked = true;
-      return;
-    }
-    for (const child of n.children) visit(child);
-  };
-  for (const child of node.children) visit(child);
-  if (hasChecked && hasUnchecked) return "indeterminate";
-  if (hasChecked) return "checked";
-  return "unchecked";
+  return computeNodeCheckStates([node], selected).get(node) ?? "unchecked";
 }
 
+type ArchiveChildIndex = {
+  children: Map<string, string[]>;
+  paths: Set<string>;
+};
+
 /**
- * For each folder prefix, count the distinct archive paths nested under it.
+ * For each folder prefix, list the distinct archive paths nested under it.
  * Built once per call so folder checks cost O(1) instead of a scan of every
  * entry. Matches `isPathWithinFolder` at separator boundaries only.
  */
 function indexArchiveChildren(
   entries: BrowseEntry[],
   windowsPaths: boolean,
-): { prefixCounts: Map<string, number>; paths: Set<string> } {
-  const prefixCounts = new Map<string, number>();
+): ArchiveChildIndex {
+  const children = new Map<string, string[]>();
   const paths = new Set<string>();
   for (const entry of entries) {
     if (paths.has(entry.path)) continue;
@@ -292,16 +309,29 @@ function indexArchiveChildren(
       const ch = path[i];
       if (ch !== "/" && !(windowsPaths && ch === "\\")) continue;
       const prefix = path.slice(0, i);
-      prefixCounts.set(prefix, (prefixCounts.get(prefix) ?? 0) + 1);
+      const nested = children.get(prefix);
+      if (nested) nested.push(path);
+      else children.set(prefix, [path]);
     }
   }
-  return { prefixCounts, paths };
+  return { children, paths };
+}
+
+function folderMembers(
+  folderPath: string,
+  index: ArchiveChildIndex,
+  windowsPaths: boolean,
+): string[] {
+  const normalized = normalizeFolderPath(folderPath, windowsPaths);
+  if (!normalized) return index.paths.has(folderPath) ? [folderPath] : [];
+  const nested = index.children.get(normalized) ?? [];
+  return index.paths.has(normalized) ? [normalized, ...nested] : nested;
 }
 
 /** Same answer as `entries.some(c => c.path !== folder && within(c, folder))`. */
 function folderHasArchiveChildren(
   folderPath: string,
-  index: { prefixCounts: Map<string, number>; paths: Set<string> },
+  index: ArchiveChildIndex,
   windowsPaths: boolean,
 ): boolean {
   const normalized = normalizeFolderPath(folderPath, windowsPaths);
@@ -310,7 +340,9 @@ function folderHasArchiveChildren(
   // A folder with trailing separators is itself counted under its own
   // normalized prefix, so remove that one self-match.
   const selfMatch = normalized !== folderPath ? 1 : 0;
-  if ((index.prefixCounts.get(normalized) ?? 0) - selfMatch > 0) return true;
+  if ((index.children.get(normalized)?.length ?? 0) - selfMatch > 0) {
+    return true;
+  }
   // The same folder without its trailing separators is a distinct child.
   return normalized !== folderPath && index.paths.has(normalized);
 }

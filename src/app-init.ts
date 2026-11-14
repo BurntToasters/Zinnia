@@ -68,6 +68,8 @@ import { installE2eHookIfEnabled } from "./e2e-hook";
 import { installNativeWebviewContextMenuGuard } from "./webview-context-menu";
 
 let persistentAlertDismissWired = false;
+const PERSISTENT_BANNER_MAX_MESSAGES = 3;
+let persistentBannerMessages: string[] = [];
 let preservedRecoveryAcknowledgementAvailable = false;
 type StartupRecoveryKind = "newer" | "older" | "ambiguous" | "error";
 type StartupRecoveryStatus = { kind: StartupRecoveryKind; message: string };
@@ -86,14 +88,21 @@ function showPersistentAlertBanner(
     "startup-recovery-banner-acknowledge",
   ) as HTMLButtonElement | null;
   if (!banner || !text) return;
-  const existing = text.textContent?.trim() ?? "";
-  text.textContent =
-    existing && existing !== message ? `${existing} ${message}` : message;
-  banner.hidden = false;
+  const trimmed = message.trim();
+  if (trimmed) {
+    persistentBannerMessages = [
+      ...persistentBannerMessages.filter((existing) => existing !== trimmed),
+      trimmed,
+    ].slice(-PERSISTENT_BANNER_MAX_MESSAGES);
+  }
+  text.textContent = persistentBannerMessages.join(" ");
   if (kind !== "error") {
     preservedRecoveryAcknowledgementAvailable = true;
     preservedRecoveryKind = kind;
   }
+  banner.hidden =
+    persistentBannerMessages.length === 0 &&
+    !preservedRecoveryAcknowledgementAvailable;
   if (acknowledge) {
     if (preservedRecoveryAcknowledgementAvailable) {
       acknowledge.hidden = false;
@@ -131,14 +140,16 @@ function showPersistentAlertBanner(
           dialogTitle,
         );
         if (!proceed) return;
+        acknowledge.hidden = true;
         try {
-          acknowledge.hidden = true;
+          const outcome = await invoke<string>(
+            "acknowledge_preserved_transaction",
+          );
+          persistentBannerMessages = [];
           text.textContent = "";
           preservedRecoveryAcknowledgementAvailable = false;
           preservedRecoveryKind = "ambiguous";
-          showPersistentAlertBanner(
-            await invoke<string>("acknowledge_preserved_transaction"),
-          );
+          showPersistentAlertBanner(outcome);
         } catch (err) {
           preservedRecoveryAcknowledgementAvailable = true;
           acknowledge.hidden = false;
@@ -154,6 +165,7 @@ function showPersistentAlertBanner(
   if (persistentAlertDismissWired) return;
   persistentAlertDismissWired = true;
   dismiss?.addEventListener("click", () => {
+    persistentBannerMessages = [];
     text.textContent = "";
     if (acknowledge && preservedRecoveryAcknowledgementAvailable) {
       acknowledge.hidden = false;
@@ -178,6 +190,28 @@ async function hasPersistedThreadsSetting(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function armBatchCancelForStop(): void {
+  state.batchCancelled = true;
+  state.cancelRequested = true;
+}
+
+function reportTitlebarError(err: unknown): void {
+  const msg = err instanceof Error ? err.message : String(err);
+  devLog(`Unable to update the titlebar: ${msg}`);
+}
+
+async function syncMaximizeLabel(): Promise<void> {
+  const maxBtn = document.getElementById("titlebar-max");
+  if (!maxBtn) return;
+  const basic = getWorkspaceMode() === "basic";
+  const label =
+    !basic && (await getCurrentWebviewWindow().isMaximized())
+      ? "Restore"
+      : "Maximize";
+  maxBtn.setAttribute("aria-label", label);
+  if (!basic) maxBtn.title = label;
 }
 
 function wireTitlebar(): void {
@@ -208,6 +242,10 @@ function wireTitlebar(): void {
       void appWindow.close();
     });
   }
+  void appWindow
+    .onResized(() => syncMaximizeLabel().catch(reportTitlebarError))
+    .catch(reportTitlebarError);
+  void syncMaximizeLabel().catch(reportTitlebarError);
 }
 
 export async function init() {
@@ -277,7 +315,7 @@ export async function init() {
 
   try {
     // Quit (Cmd+Q) and close while a run is active ask first. See main.rs.
-    await listenForStopRequests();
+    await listenForStopRequests(armBatchCancelForStop);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`Failed to subscribe to stop requests: ${msg}`, "error");
@@ -374,6 +412,11 @@ export async function init() {
     }
   }
 
+  applyTheme(state.currentSettings.theme);
+  setUiDensity(state.currentSettings.uiDensity, { persist: false });
+  registerIconRefreshHook(refreshIcons);
+  refreshIcons();
+
   if (shouldShowSetupWizard()) {
     try {
       await runSetupWizardFlow({ skipUpdates: isFlatpak });
@@ -390,8 +433,7 @@ export async function init() {
   applySettingsToForm();
   updateCompressionOptionsForFormat($<HTMLSelectElement>("format").value);
   onCompressionOptionChange();
-  registerIconRefreshHook(refreshIcons);
-  refreshIcons();
+  void syncMaximizeLabel().catch(reportTitlebarError);
 
   void invoke<string>("get_log_dir")
     .then((directory) => {
@@ -520,10 +562,13 @@ export async function init() {
       const msg = err instanceof Error ? err.message : String(err);
       log(`Failed to process launch paths: ${msg}`, "error");
     });
-  await openPathsQueue;
 
   // Drain any paths that queued up while we were initializing
-  await drainPendingPaths();
+  openPathsQueue = openPathsQueue.then(drainPendingPaths).catch((err) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Failed to process incoming Explorer paths: ${msg}`, "error");
+  });
+  await openPathsQueue;
   await shellHandoffError;
   await invoke("mark_main_window_ready").catch((err) => {
     const msg = err instanceof Error ? err.message : String(err);
@@ -531,6 +576,7 @@ export async function init() {
   });
 
   const appWindow = getCurrentWebviewWindow();
+  let dragDropErrorReported = false;
   await appWindow.onDragDropEvent(async (event) => {
     try {
       const isDrop = event.payload.type === "drop";
@@ -578,7 +624,7 @@ export async function init() {
           }
           renderInputs();
           if (rejected > 0) {
-            const detail = `Added the first ${MAX_ARCHIVE_PATHS} unique items; ${rejected} more were not added.`;
+            const detail = `Added the first ${MAX_ARCHIVE_PATHS.toLocaleString()} unique items; ${rejected} more ${rejected === 1 ? "item was" : "items were"} not added.`;
             showToast(detail, "error", 5000);
             log(detail, "error");
           }
@@ -601,6 +647,10 @@ export async function init() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       devLog(`Drag-drop handler error: ${msg}`);
+      if (!dragDropErrorReported) {
+        dragDropErrorReported = true;
+        showToast(`Could not add the dropped items. ${msg}`, "error", 0);
+      }
     }
   });
 }

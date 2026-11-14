@@ -157,15 +157,9 @@ export function updateCompressionOptionsForFormat(format: string) {
           ? "LZMA2"
           : m === "lzma"
             ? "LZMA"
-            : m === "ppmd"
-              ? "PPMd"
-              : m === "bzip2"
-                ? "BZip2"
-                : m === "deflate"
-                  ? "Deflate"
-                  : m === "zstd"
-                    ? "Zstandard"
-                    : m;
+            : m === "deflate"
+              ? "Deflate"
+              : m;
       methodSelect.appendChild(opt);
     });
     if (methods.includes(currentMethod)) {

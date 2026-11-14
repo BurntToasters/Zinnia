@@ -31,7 +31,8 @@ import { writeEvidence } from "../helpers/recovery-harness.js";
 
 // Titles the app passes to confirmWithE2eQueue. The E2E hook records them.
 const DISCARD_TITLE = "Discard unsaved settings";
-const RESET_TITLE = "Reset Settings";
+const RESET_TITLE = "Reset settings";
+const REPLACE_TITLE = "Replace unreadable settings";
 
 const EVIDENCE_DIR = process.env.ZINNIA_E2E_EVIDENCE_DIR;
 const WORK_ROOT = path.join(process.env.ZINNIA_E2E_WORK, "audit-settings");
@@ -155,8 +156,13 @@ describe("Audit settings flows", function () {
 
     await openSettingsModal();
     await setSelectValue("#s-theme", "dark");
+    await queueConfirmResult(true);
     await clickSettingsSave();
     await waitForSettingsSavedAndClosed();
+    assert.ok(
+      (await confirmDialogTitles()).includes(REPLACE_TITLE),
+      "Save replaced the unreadable settings file without asking first",
+    );
 
     const loaded = await loadSettingsObject();
     assert.equal(loaded.theme, "dark", "saved theme did not persist");

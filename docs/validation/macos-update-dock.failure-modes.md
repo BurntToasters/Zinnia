@@ -68,3 +68,42 @@ Failure inventory for `relaunch_app` (macOS helper that waits for the old PID):
 - Frontend: both call sites (update install and settings reset) must invoke
   `relaunch_app`. The update path keeps the order install, clear pending update,
   release reservation, relaunch, so a failed release still prevents relaunch.
+
+## Updater hardening (0.7.0 audit)
+
+Failure inventory, written before the matching tests and code.
+
+- F1 payload downgrade: the signature covers only archive bytes, so a tampered
+  manifest can label an old signed build as newer. The staged
+  `Contents/Info.plist` must not declare a version that is not strictly greater
+  than the installed version. A missing, binary, or unparsable plist value must
+  not block the update, because the signature remains the primary gate.
+- F1 false positives: a prerelease such as `0.7.0-beta.2` must compare by semver
+  rules, and an installed version that does not parse must not block the update.
+- F2 recovery stall: when restoring a sibling backup fails with PermissionDenied,
+  the unprivileged install reports AlreadyExists and returns before the privileged
+  script, which is the only code that can finish the recovery.
+- F3 non-atomic replace: rename-to-backup followed by a move leaves a window with
+  no live `Contents`. A crash in that window relies on backup recovery. An atomic
+  exchange must be used when the volume supports it.
+- F3 swap failures: EACCES/EPERM must go to the admin path unchanged. ENOTSUP,
+  EXDEV, EINVAL, or a missing live `Contents` must fall back to the backup
+  transaction. A stale backup slot must never be overwritten or bypassed by a swap.
+- F3 swap leftovers: after a swap, the old `Contents` sits in the staging dir. The
+  staging dir must be removed by its owner, and no backup dir may remain.
+- F5 insecure redirect: a redirect from an https endpoint to http could leak or
+  serve an unverified manifest. Release builds must refuse non-https requests,
+  while debug builds and explicit dangerous opt-ins keep the current behavior.
+- F6 truncated AppImage: writing the new bytes straight onto the live AppImage can
+  leave a partial file after a write error or power loss. The bytes must be written
+  to a temp file in the same directory and renamed into place.
+- F6 cross-device: the temp file must live beside the AppImage so `persist` is a
+  same-filesystem rename.
+- F7 pkexec cancel: exit code 126 means the user dismissed the authorization dialog.
+  Falling through would show zenity, kdialog, and sudo prompts for the same action.
+  Other exit codes must keep the existing fall-through.
+- F8 check ordering: calling `get_urls` before the version decision makes a
+  manifest without this platform fail even when no update is needed.
+- F13 stale Dock icon: a root-owned bundle replaced by the privileged script can
+  leave LaunchServices with the old metadata. The script must touch the bundle
+  before its success exit, and the swift fault-injection match must still apply.

@@ -1,6 +1,6 @@
-import { isKeyHandled, markKeyHandled } from "./utils";
+import { copyTextToClipboard, isKeyHandled, markKeyHandled } from "./utils";
 
-export type ToastKind = "success" | "info" | "error";
+type ToastKind = "success" | "info" | "error";
 
 const DEFAULT_DURATION_MS = 3500;
 const REGION_ID = "toast-region";
@@ -8,7 +8,14 @@ const MAX_TOAST_CHARS = 4000;
 /** Sticky toasts stay until dismissed; keep the newest few so they cannot stack forever. */
 const MAX_STICKY_TOASTS = 3;
 
-const dismissers = new WeakMap<HTMLElement, () => void>();
+type ToastRecord = {
+  kind: ToastKind;
+  text: string;
+  dismiss: () => void;
+  refresh: () => void;
+};
+
+const records = new WeakMap<HTMLElement, ToastRecord>();
 
 function boundToastText(text: string): string {
   if (text.length <= MAX_TOAST_CHARS) return text;
@@ -36,6 +43,21 @@ function createDismissButton(): HTMLButtonElement {
   return close;
 }
 
+function createCopyButton(text: string): HTMLButtonElement {
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.className = "btn btn--ghost btn--sm toast-copy";
+  copy.textContent = "Copy";
+  copy.title = "Copy error message";
+  copy.setAttribute("aria-label", "Copy error message");
+  copy.addEventListener("click", () => {
+    void copyTextToClipboard(text).then((copied) => {
+      if (!copied) showToast("Could not copy the error message.", "info");
+    });
+  });
+  return copy;
+}
+
 function ensureRegion(): HTMLElement {
   let region = document.getElementById(REGION_ID);
   if (!region) {
@@ -56,8 +78,24 @@ function trimStickyToasts(region: HTMLElement): void {
   );
   const excess = sticky.length - MAX_STICKY_TOASTS;
   for (let i = 0; i < excess; i += 1) {
-    dismissers.get(sticky[i])?.();
+    records.get(sticky[i])?.dismiss();
   }
+}
+
+function findVisibleDuplicate(
+  region: HTMLElement,
+  kind: ToastKind,
+  text: string,
+): HTMLElement | null {
+  const visible = Array.from(
+    region.querySelectorAll<HTMLElement>(".toast:not(.toast--leaving)"),
+  );
+  return (
+    visible.find((el) => {
+      const record = records.get(el);
+      return record?.kind === kind && record.text === text;
+    }) ?? null
+  );
 }
 
 export function showToast(
@@ -66,6 +104,12 @@ export function showToast(
   durationMs = DEFAULT_DURATION_MS,
 ): void {
   const region = ensureRegion();
+  const bounded = boundToastText(text);
+  const duplicate = findVisibleDuplicate(region, kind, bounded);
+  if (duplicate) {
+    records.get(duplicate)?.refresh();
+    return;
+  }
 
   const toast = document.createElement("div");
   toast.className = `toast toast--${kind}`;
@@ -73,8 +117,19 @@ export function showToast(
   if (durationMs <= 0) toast.dataset.sticky = "true";
   const message = document.createElement("span");
   message.className = "toast-message";
-  message.textContent = boundToastText(text);
+  message.textContent = bounded;
   toast.appendChild(message);
+
+  let count = 1;
+  let countEl: HTMLSpanElement | null = null;
+  const showCount = () => {
+    if (!countEl) {
+      countEl = document.createElement("span");
+      countEl.className = "toast-count";
+      message.after(countEl);
+    }
+    countEl.textContent = `(${count})`;
+  };
 
   let dismissed = false;
   let dismissTimer: number | undefined;
@@ -85,10 +140,9 @@ export function showToast(
     toast.classList.add("toast--leaving");
     window.setTimeout(() => toast.remove(), 200);
   };
-  dismissers.set(toast, dismiss);
 
   toast.tabIndex = 0;
-  toast.addEventListener("click", dismiss);
+  if (kind === "error") toast.appendChild(createCopyButton(bounded));
 
   const close = createDismissButton();
   close.addEventListener("click", (event) => {
@@ -108,6 +162,7 @@ export function showToast(
   region.appendChild(toast);
   if (durationMs <= 0) trimStickyToasts(region);
 
+  let restartTimer = () => {};
   if (durationMs > 0) {
     let remainingMs = durationMs;
     let timerStartedAt = 0;
@@ -123,6 +178,14 @@ export function showToast(
       if (dismissed || dismissTimer !== undefined) return;
       timerStartedAt = Date.now();
       dismissTimer = window.setTimeout(dismiss, remainingMs);
+    };
+    restartTimer = () => {
+      remainingMs = durationMs;
+      if (dismissTimer !== undefined) {
+        window.clearTimeout(dismissTimer);
+        dismissTimer = undefined;
+      }
+      if (!hovered && !focused) resume();
     };
     toast.addEventListener("mouseenter", () => {
       hovered = true;
@@ -142,4 +205,15 @@ export function showToast(
     });
     resume();
   }
+
+  records.set(toast, {
+    kind,
+    text: bounded,
+    dismiss,
+    refresh: () => {
+      count += 1;
+      showCount();
+      restartTimer();
+    },
+  });
 }

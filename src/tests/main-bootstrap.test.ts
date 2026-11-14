@@ -126,6 +126,7 @@ const mocks = vi.hoisted(() => {
       handleBasicDragDrop: vi.fn(),
       syncBasicBeforeRun: vi.fn(),
       syncBasicWorkspaceFromPower: vi.fn(),
+      getBasicView: vi.fn(() => "home"),
     },
   };
 });
@@ -257,6 +258,7 @@ vi.mock("../basic", () => ({
   handleBasicDragDrop: mocks.basicUi.handleBasicDragDrop,
   syncBasicBeforeRun: mocks.basicUi.syncBasicBeforeRun,
   syncBasicWorkspaceFromPower: mocks.basicUi.syncBasicWorkspaceFromPower,
+  getBasicView: mocks.basicUi.getBasicView,
 }));
 
 const invokeMock = vi.mocked(invoke);
@@ -465,6 +467,7 @@ function ensureMainDomElements(): void {
   ensureElement("close-shortcuts", "button");
   ensureElement("close-shortcuts-footer", "button");
   ensureElement("setup-wizard-overlay", "div");
+  ensureElement("convert-overlay", "div");
 
   (document.getElementById("settings-overlay") as HTMLElement).hidden = true;
   (document.getElementById("licenses-overlay") as HTMLElement).hidden = true;
@@ -475,6 +478,7 @@ function ensureMainDomElements(): void {
   (document.getElementById("input-modal-overlay") as HTMLElement).hidden = true;
   (document.getElementById("setup-wizard-overlay") as HTMLElement).hidden =
     true;
+  (document.getElementById("convert-overlay") as HTMLElement).hidden = true;
 }
 
 function setInvokeRouter(
@@ -654,6 +658,7 @@ beforeEach(async () => {
   dragDropHandler = null;
   getCurrentWebviewWindowMock.mockReset();
   getCurrentWebviewWindowMock.mockReturnValue({
+    onResized: vi.fn().mockResolvedValue(() => {}),
     onDragDropEvent: vi.fn().mockImplementation(async (handler) => {
       dragDropHandler = handler;
       return () => {};
@@ -827,6 +832,7 @@ describe("main bootstrap", () => {
   it("handles keyboard shortcuts for browse, run, and escape overlays", async () => {
     await loadMainModule();
 
+    mocks.runtime.workspaceMode = "power";
     mocks.runtime.mode = "browse";
     document.dispatchEvent(
       new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true }),
@@ -836,6 +842,39 @@ describe("main bootstrap", () => {
     expect(mocks.basicUi.syncBasicBeforeRun).toHaveBeenCalled();
     expect(mocks.archive.browseArchive).toHaveBeenCalled();
 
+    mocks.runtime.workspaceMode = "basic";
+    mocks.basicUi.getBasicView.mockReturnValue("compress");
+    const basicRunButton = ensureElement("basic-run-compress", "button");
+    const basicRunClicked = vi.fn();
+    basicRunButton.addEventListener("click", basicRunClicked);
+    mocks.basicUi.syncBasicBeforeRun.mockClear();
+    mocks.archive.browseArchive.mockClear();
+    mocks.archive.runAction.mockClear();
+    mocks.runtime.mode = "add";
+    const clicksBeforeCompress = basicRunClicked.mock.calls.length;
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true }),
+    );
+    await flushAsync();
+
+    expect(basicRunClicked.mock.calls.length).toBeGreaterThan(
+      clicksBeforeCompress,
+    );
+    expect(mocks.basicUi.syncBasicBeforeRun).not.toHaveBeenCalled();
+    expect(mocks.archive.runAction).not.toHaveBeenCalled();
+    expect(mocks.archive.browseArchive).not.toHaveBeenCalled();
+
+    mocks.basicUi.getBasicView.mockReturnValue("home");
+    const clicksBeforeHome = basicRunClicked.mock.calls.length;
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true }),
+    );
+    await flushAsync();
+
+    expect(basicRunClicked.mock.calls.length).toBe(clicksBeforeHome);
+    expect(mocks.archive.runAction).not.toHaveBeenCalled();
+
+    mocks.runtime.workspaceMode = "power";
     mocks.runtime.mode = "add";
     document.dispatchEvent(
       new KeyboardEvent("keydown", { key: "Enter", metaKey: true }),
@@ -968,10 +1007,10 @@ describe("main bootstrap", () => {
     expect(state.inputs).toHaveLength(4_096);
     expect(state.inputs.at(-1)).toBe("/tmp/drop-4095.txt");
     expect(document.querySelector(".toast")?.textContent).toContain(
-      "1 more were not added",
+      "1 more item was not added",
     );
     expect(mocks.ui.log).toHaveBeenCalledWith(
-      expect.stringContaining("1 more were not added"),
+      expect.stringContaining("1 more item was not added"),
       "error",
     );
   });
@@ -1553,7 +1592,7 @@ describe("main bootstrap", () => {
     expect(state.inputs).toHaveLength(4_096);
     expect(state.inputs).not.toContain("/tmp/overflow.7z");
     expect(mocks.ui.log).toHaveBeenCalledWith(
-      expect.stringContaining("1 excess path(s) were not added"),
+      expect.stringContaining("1 excess path was not added"),
     );
   });
 
@@ -1764,6 +1803,7 @@ describe("main bootstrap", () => {
     const closeMock = vi.fn().mockResolvedValue(undefined);
 
     getCurrentWebviewWindowMock.mockReturnValue({
+      onResized: vi.fn().mockResolvedValue(() => {}),
       minimize: minimizeMock,
       maximize: maximizeMock,
       isMaximized: isMaximizedMock,
@@ -1805,6 +1845,7 @@ describe("main bootstrap", () => {
     const isMaximizedMock = vi.fn().mockResolvedValue(false);
 
     getCurrentWebviewWindowMock.mockReturnValue({
+      onResized: vi.fn().mockResolvedValue(() => {}),
       minimize: vi.fn().mockResolvedValue(undefined),
       maximize: maximizeMock,
       isMaximized: isMaximizedMock,

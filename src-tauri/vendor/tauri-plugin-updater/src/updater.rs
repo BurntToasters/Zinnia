@@ -465,6 +465,10 @@ impl Updater {
             }
 
             let mut request = ClientBuilder::new().user_agent(UPDATER_USER_AGENT);
+            request = request.https_only(https_only_enforced(
+                cfg!(debug_assertions),
+                self.config.dangerous_insecure_transport_protocol,
+            ));
             if self.config.dangerous_accept_invalid_certs {
                 request = request.danger_accept_invalid_certs(true);
             }
@@ -548,10 +552,11 @@ impl Updater {
             None => release.version > self.current_version,
         };
 
-        let installer = installer_for_bundle_type(bundle_type());
-        let (download_url, signature) = self.get_urls(&release, &installer)?;
-
+        // Resolve download URLs only when an update is offered, so a manifest
+        // without this platform does not fail a check that needs no update.
         let update = if should_update {
+            let installer = installer_for_bundle_type(bundle_type());
+            let (download_url, signature) = self.get_urls(&release, &installer)?;
             Some(Update {
                 run_on_main_thread: self.run_on_main_thread.clone(),
                 config: self.config.clone(),
@@ -677,6 +682,10 @@ impl Update {
         }
 
         let mut request = ClientBuilder::new().user_agent(UPDATER_USER_AGENT);
+        request = request.https_only(https_only_enforced(
+            cfg!(debug_assertions),
+            self.config.dangerous_insecure_transport_protocol,
+        ));
         if self.config.dangerous_accept_invalid_certs {
             request = request.danger_accept_invalid_certs(true);
         }
@@ -1064,13 +1073,29 @@ impl Update {
         }
 
         log::debug!("rewriting AppImage");
-        match std::fs::write(&self.extract_path, bytes)
-            .and_then(|_| std::fs::set_permissions(&self.extract_path, permissions))
-        {
+        // Write beside the live AppImage and rename over it, so a failed write
+        // never leaves a partial file at the launch path.
+        let written = (|| -> Result<()> {
+            use std::io::Write;
+            let parent = self
+                .extract_path
+                .parent()
+                .ok_or(Error::FailedToDetermineExtractPath)?;
+            let mut staged = tempfile::Builder::new()
+                .prefix(".zinnia-appimage-")
+                .tempfile_in(parent)?;
+            staged.write_all(bytes)?;
+            staged.as_file().set_permissions(permissions)?;
+            staged
+                .persist(&self.extract_path)
+                .map_err(|err| err.error)?;
+            Ok(())
+        })();
+        match written {
             Err(err) => {
                 // if something went wrong during the extraction, we should restore previous app
                 std::fs::rename(tmp_app_image, &self.extract_path)?;
-                Err(err.into())
+                Err(err)
             }
             Ok(_) => Ok(()),
         }
@@ -1154,6 +1179,10 @@ impl Update {
                 if status.success() {
                     log::debug!("installed {pkg_path:?} with pkexec");
                     return Ok(());
+                }
+                // The user dismissed the prompt; do not stack more prompts.
+                if crate::install_safety::pkexec_authorization_cancelled(status.code()) {
+                    return Err(Error::AuthenticationFailed);
                 }
             }
         }
@@ -1358,6 +1387,23 @@ impl Update {
             return Err(Error::BinaryNotFoundInArchive);
         }
 
+        // The signature covers only the archive, so refuse a payload that
+        // declares an old version even when the manifest offered it.
+        let payload = std::fs::read_to_string(tmp_extract_dir.path().join("Contents/Info.plist"))
+            .ok()
+            .and_then(|xml| crate::install_safety::macos_plist_short_version(&xml));
+        if !payload_version_is_acceptable(payload.as_deref(), &self.current_version) {
+            return Err(Error::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "update payload version {} is not newer than installed version {}",
+                    payload.unwrap_or_default(),
+                    self.current_version
+                ),
+            )));
+        }
+
+        let mut restore_denied = None;
         if !macos_app_bundle_complete(&self.extract_path) && macos_app_bundle_complete(&backup_path)
         {
             // New backups and legacy whole-bundle backups both contain
@@ -1375,13 +1421,20 @@ impl Update {
                 if err.kind() != std::io::ErrorKind::PermissionDenied {
                     return Err(err.into());
                 }
+                restore_denied = Some(err);
             }
         } else if macos_app_bundle_complete(&self.extract_path) && backup_path.exists() {
             let _ = std::fs::remove_dir_all(&backup_path);
         }
 
+        // A backup that could not be restored still exists, so the unprivileged
+        // install would fail on it. The privileged script completes the recovery.
         let unprivileged =
-            install_macos_app_contents(tmp_extract_dir.path(), &self.extract_path, &backup_path);
+            if crate::install_safety::restore_error_needs_admin(restore_denied.as_ref()) {
+                Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+            } else {
+                install_macos_app_contents(tmp_extract_dir.path(), &self.extract_path, &backup_path)
+            };
 
         match unprivileged {
             Ok(()) => {}
@@ -1448,6 +1501,20 @@ impl Update {
 
         Ok(())
     }
+}
+
+/// Accepts a payload unless it declares a semver version that is not strictly
+/// newer than the installed one. Unparsable values are accepted, because the
+/// archive signature is the primary gate.
+#[cfg(target_os = "macos")]
+fn payload_version_is_acceptable(payload: Option<&str>, current: &str) -> bool {
+    let Some(payload) = payload.and_then(|value| Version::parse(value).ok()) else {
+        return true;
+    };
+    let Ok(current) = Version::parse(current) else {
+        return true;
+    };
+    payload > current
 }
 
 #[cfg(target_os = "macos")]
@@ -1533,6 +1600,12 @@ fn extract_macos_app_archive(bytes: &[u8], dest_root: &Path) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+/// Redirects and downloads must stay on https in release builds. Debug builds
+/// and an explicit insecure opt-in keep plain http working.
+fn https_only_enforced(debug_build: bool, insecure_allowed: bool) -> bool {
+    !debug_build && !insecure_allowed
 }
 
 /// Gets the base target string used by the updater. If bundle type is available it
@@ -1796,12 +1869,9 @@ mod tests {
     #[test]
     fn download_limit_rejects_a_stream_that_outgrows_a_missing_or_false_length() {
         for declared in [None, Some(10)] {
-            let error = ensure_download_within_limit(
-                (MAX_UPDATE_DOWNLOAD_BYTES - 5) as usize,
-                6,
-                declared,
-            )
-            .expect_err("accumulated size over the limit");
+            let error =
+                ensure_download_within_limit((MAX_UPDATE_DOWNLOAD_BYTES - 5) as usize, 6, declared)
+                    .expect_err("accumulated size over the limit");
             assert!(error.to_string().contains("exceeds"), "{error}");
         }
     }
@@ -1813,6 +1883,38 @@ mod tests {
             .expect("exactly at the limit");
         ensure_download_within_limit(1024, 1024, Some(2048)).expect("ordinary download");
         ensure_download_within_limit(0, 4096, None).expect("unknown length, small body");
+    }
+
+    #[test]
+    fn https_only_is_enforced_for_release_builds_without_opt_out() {
+        use super::https_only_enforced;
+        assert!(https_only_enforced(false, false));
+        assert!(!https_only_enforced(true, false));
+        assert!(!https_only_enforced(false, true));
+        assert!(!https_only_enforced(true, true));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn payload_version_must_be_strictly_newer_when_declared() {
+        use super::payload_version_is_acceptable;
+        assert!(payload_version_is_acceptable(None, "0.7.0"));
+        assert!(payload_version_is_acceptable(Some("0.7.1"), "0.7.0"));
+        assert!(!payload_version_is_acceptable(Some("0.7.0"), "0.7.0"));
+        assert!(!payload_version_is_acceptable(Some("0.6.9"), "0.7.0"));
+        assert!(!payload_version_is_acceptable(
+            Some("0.7.0-beta.2"),
+            "0.7.0"
+        ));
+        assert!(payload_version_is_acceptable(Some("0.7.1-beta.1"), "0.7.0"));
+        assert!(payload_version_is_acceptable(
+            Some("not-a-version"),
+            "0.7.0"
+        ));
+        assert!(payload_version_is_acceptable(
+            Some("0.7.1"),
+            "not-a-version"
+        ));
     }
 
     #[test]

@@ -7,6 +7,7 @@ import {
 } from "./webview-context-menu";
 import { parseSettingsRaw } from "./settings-model";
 import { appendCappedLogText } from "./log-tail";
+import { redactSensitiveText } from "./utils";
 
 const MAX_LOG_LINES = 1000;
 
@@ -89,6 +90,14 @@ async function closeWindow(
 }
 
 async function run(): Promise<void> {
+  window.addEventListener("unhandledrejection", (event) => {
+    event.preventDefault();
+    const reason =
+      event.reason instanceof Error
+        ? event.reason.message
+        : String(event.reason);
+    appendLine(redactSensitiveText(`Unhandled promise rejection: ${reason}`));
+  });
   installNativeWebviewContextMenuGuard();
   setNativeWebviewContextMenuAllowed(true);
   const appWindow = getCurrentWebviewWindow();

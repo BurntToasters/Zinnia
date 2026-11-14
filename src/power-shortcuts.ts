@@ -7,11 +7,16 @@ let shortcutsTrigger: HTMLElement | null = null;
 const OPEN_DIALOG_SELECTOR =
   ".modal-overlay:not([hidden]), #setup-wizard-overlay:not([hidden])";
 
+function openWorkspace(): "basic" | "power" {
+  return $("app").dataset.workspaceMode === "power" ? "power" : "basic";
+}
+
 export function openShortcutsModal(): void {
   const overlay = $("shortcuts-overlay");
   if (!overlay.hidden) return;
   if (document.querySelector(OPEN_DIALOG_SELECTOR)) return;
   shortcutsTrigger = document.activeElement as HTMLElement | null;
+  renderShortcuts(openWorkspace());
   overlay.hidden = false;
   const modal = overlay.querySelector<HTMLElement>(".modal");
   if (modal) trapFocus(modal);
@@ -29,7 +34,6 @@ export function closeShortcutsModal(): void {
 }
 
 export function wireShortcutsEvents(): void {
-  renderShortcuts();
   $("close-shortcuts").addEventListener("click", closeShortcutsModal);
   $("close-shortcuts-footer").addEventListener("click", closeShortcutsModal);
   $("shortcuts-overlay").addEventListener("click", (e) => {

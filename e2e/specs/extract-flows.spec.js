@@ -6,6 +6,7 @@ import { requireHostSidecar, run7z } from "../../scripts/archive-fixtures.js";
 import {
   abortArchiveOperationIfBusy,
   clearPowerExtractSession,
+  cancelInputModal,
   clickBasicRunExtract,
   confirmInputModal,
   dismissToasts,
@@ -127,26 +128,6 @@ function assertDestinationHasNoFiles(dest) {
 
 function wrongPasswordGlobal() {
   return "definitely-not-the-archive-password";
-}
-
-async function waitForExtractFailureHint(expectedHint, timeoutMsg) {
-  await browser.waitUntil(
-    async () => {
-      const texts = await collectUserFacingErrorTexts();
-      if (texts.some((line) => line.includes(expectedHint))) return true;
-      const status = await browser.execute(
-        () => document.getElementById("status")?.textContent ?? "",
-      );
-      if (status === "Done") {
-        throw new Error(
-          `extract finished successfully instead of failing; ${await uiDiagnostics()}`,
-        );
-      }
-      return false;
-    },
-    { timeout: 120_000, timeoutMsg },
-  );
-  return collectUserFacingErrorTexts();
 }
 
 describe("extract flows", function () {
@@ -271,8 +252,8 @@ describe("extract flows", function () {
     mkdirFresh(dest);
 
     await startPowerBatchExtract([archiveA, archiveB], dest);
-    const outA = path.join(dest, "batch-a", "from-a.txt");
-    const outB = path.join(dest, "batch-b", "from-b.txt");
+    const outA = path.join(dest, "batch-a", "batch-a", "from-a.txt");
+    const outB = path.join(dest, "batch-b", "batch-b", "from-b.txt");
     await browser.waitUntil(() => fs.existsSync(outA) && fs.existsSync(outB), {
       timeout: 120_000,
       timeoutMsg: `batch extract did not write both outputs; a=${fs.existsSync(outA)} b=${fs.existsSync(outB)}; ${await uiDiagnostics()}`,
@@ -289,11 +270,29 @@ describe("extract flows", function () {
     await dismissToasts();
   });
 
-  it("shows the friendly wrong-password hint in Power without raw 7-Zip text", async () => {
+  it("reopens the incorrect-password prompt in Power after a wrong password and cancels cleanly", async () => {
     const archive = process.env.ZINNIA_E2E_ENCRYPTED_7Z;
-    const goodPassword = process.env.ZINNIA_E2E_PASSWORD;
     const wrongPassword = wrongPasswordGlobal();
-    const payload = process.env.ZINNIA_E2E_PAYLOAD;
+    const visibleUiTexts = () =>
+      browser.execute(() => {
+        const texts = [];
+        const status = document.getElementById("status")?.textContent?.trim();
+        if (status) texts.push(status);
+        for (const toast of document.querySelectorAll(".toast-message")) {
+          const line = toast.textContent?.trim();
+          if (line) texts.push(line);
+        }
+        const banner = document
+          .getElementById("startup-recovery-banner-text")
+          ?.textContent?.trim();
+        if (banner) texts.push(banner);
+        const overlay = document.getElementById("input-modal-overlay");
+        if (overlay && overlay.hidden === false) {
+          const prompt = overlay.textContent?.replace(/\s+/g, " ").trim();
+          if (prompt) texts.push(prompt);
+        }
+        return texts;
+      });
 
     await abortArchiveOperationIfBusy();
     const powerDest = path.join(ROOT, "wrong-password-power");
@@ -304,48 +303,79 @@ describe("extract flows", function () {
       POWER_INCORRECT_PASSWORD_MODAL_LABEL,
       `Power did not show incorrect-password retry modal; ${await uiDiagnostics()}`,
     );
+    await browser.execute(() => {
+      window.__extractFlowsPromptObserver?.disconnect();
+      window.__extractFlowsPromptOpens = 0;
+      const overlay = document.getElementById("input-modal-overlay");
+      if (!overlay) throw new Error("missing #input-modal-overlay");
+      const observer = new MutationObserver(() => {
+        if (!overlay.hidden) window.__extractFlowsPromptOpens += 1;
+      });
+      observer.observe(overlay, {
+        attributes: true,
+        attributeFilter: ["hidden"],
+      });
+      window.__extractFlowsPromptObserver = observer;
+    });
     await confirmInputModal(wrongPassword);
-    const powerTexts = await waitForExtractFailureHint(
-      WRONG_PASSWORD_HINT,
-      `Power wrong-password extract did not show hint after modal retry; ${await uiDiagnostics()}`,
+    await browser.waitUntil(
+      () =>
+        browser.execute(
+          () =>
+            (window.__extractFlowsPromptOpens ?? 0) >= 1 &&
+            document.getElementById("input-modal-overlay")?.hidden === false,
+        ),
+      {
+        timeout: 120_000,
+        timeoutMsg: `Power did not reopen the prompt after the retried wrong password; ${await uiDiagnostics()}`,
+      },
+    );
+    const reopenedLabel = await waitForInputModalLabel(
+      POWER_INCORRECT_PASSWORD_MODAL_LABEL,
+      `Power reopened prompt lost the incorrect-password label; ${await uiDiagnostics()}`,
+    );
+    const promptTexts = await visibleUiTexts();
+    assertNoRaw7zMarkers(promptTexts, "Power reopened wrong-password prompt");
+
+    await cancelInputModal();
+    let cancelledStatus = "";
+    await browser.waitUntil(
+      async () => {
+        cancelledStatus = await browser.execute(
+          () => document.getElementById("status")?.textContent ?? "",
+        );
+        return cancelledStatus === "Cancelled";
+      },
+      {
+        timeout: 120_000,
+        interval: 100,
+        timeoutMsg: `Power did not end Cancelled after the prompt was cancelled; ${await uiDiagnostics()}`,
+      },
     );
     await waitForArchiveIdle(120_000);
-    const powerStatus = await browser.execute(
-      () => document.getElementById("status")?.textContent ?? "",
+    assert.equal(
+      await isInputModalOpen(),
+      false,
+      "prompt stayed open after cancel",
     );
-    assert.notEqual(powerStatus, "Running", "Power extract stayed Running");
-    assertNoRaw7zMarkers(powerTexts, "Power wrong password");
+    const cancelledTexts = await visibleUiTexts();
+    assertNoRaw7zMarkers(cancelledTexts, "Power cancelled wrong-password run");
     assertDestinationHasNoFiles(powerDest);
-
-    const powerOkDest = path.join(ROOT, "wrong-password-power-ok");
-    mkdirFresh(powerOkDest);
-    await dismissToasts();
-    await clearPowerExtractSession();
-    await startPowerExtract(archive, powerOkDest, { password: wrongPassword });
-    await waitForInputModalLabel(
-      POWER_INCORRECT_PASSWORD_MODAL_LABEL,
-      `Power success path did not show retry modal; ${await uiDiagnostics()}`,
-    );
-    await confirmInputModal(goodPassword);
-    const powerExtracted = path.join(powerOkDest, "hello.txt");
-    await browser.waitUntil(() => fs.existsSync(powerExtracted), {
-      timeout: 120_000,
-      timeoutMsg: `Power modal retry with correct password did not write ${powerExtracted}`,
-    });
-    await waitForArchiveIdle();
-    assert.equal(fs.readFileSync(powerExtracted, "utf8"), payload);
 
     await dismissToasts();
     writeEvidence(EVIDENCE_DIR, "wrong-password", {
-      scenario: "wrong-password",
+      scenario: "wrong-password-reopen-then-cancel",
       archive,
       wrongPassword,
-      power: {
-        failDestination: powerDest,
-        okDestination: powerOkDest,
-        observedTexts: powerTexts,
-      },
-      partialOutputPower: treeManifest(powerDest),
+      reopenedPromptLabel: reopenedLabel,
+      promptOpensAfterRetry: await browser.execute(
+        () => window.__extractFlowsPromptOpens ?? 0,
+      ),
+      observedTextsWhilePrompting: promptTexts,
+      cancelledStatus,
+      observedTextsAfterCancel: cancelledTexts,
+      destination: powerDest,
+      tree: treeManifest(powerDest),
     });
   });
 

@@ -4,15 +4,15 @@ export type ThemePreference = "system" | "light" | "dark";
 export type ArchiveFormat = "7z" | "zip" | "tar" | "gzip" | "bzip2" | "xz";
 export type LogVerbosity = "info" | "debug";
 export type UpdateChannel = "auto" | "stable" | "beta";
-export type WorkingMode = "add" | "extract" | "browse";
+type WorkingMode = "add" | "extract" | "browse";
 export type WorkspaceMode = "basic" | "power";
 export type UiDensity = "comfortable" | "compact";
-export type AutoCloseDelay = -1 | 0 | 1.5 | 3 | 5 | 10;
+type AutoCloseDelay = -1 | 0 | 1.5 | 3 | 5 | 10;
 
-export const POWER_WINDOW_WIDTH_MIN = 800;
-export const POWER_WINDOW_WIDTH_MAX = 4096;
-export const POWER_WINDOW_HEIGHT_MIN = 600;
-export const POWER_WINDOW_HEIGHT_MAX = 2160;
+const POWER_WINDOW_WIDTH_MIN = 800;
+const POWER_WINDOW_WIDTH_MAX = 4096;
+const POWER_WINDOW_HEIGHT_MIN = 600;
+const POWER_WINDOW_HEIGHT_MAX = 2160;
 
 export interface CustomPreset {
   name: string;
@@ -159,13 +159,11 @@ const VALID_METHODS = new Set([
   "",
   "lzma",
   "lzma2",
-  "ppmd",
-  "bzip2",
   "deflate",
   "deflate64",
   "copy",
-  "zstd",
 ]);
+const RETIRED_METHODS = new Set(["ppmd", "bzip2", "zstd"]);
 /**
  * Methods the runtime can configure for each format. Must match `validMethods`
  * in presets.ts. An empty list means the format has no method choice.
@@ -182,7 +180,7 @@ export const COMPRESSION_METHODS_BY_FORMAT: Readonly<
 };
 
 /** Keep a method the format supports; otherwise use its first supported one. */
-export function normalizeMethodForFormat(
+function normalizeMethodForFormat(
   format: ArchiveFormat,
   method: string,
 ): string {
@@ -346,11 +344,10 @@ function asCustomPresets(
       VALID_LEVELS,
       SETTING_DEFAULTS.level,
     );
-    const method = optionalPresetField(
-      r.method,
-      VALID_METHODS,
-      SETTING_DEFAULTS.method,
-    );
+    const method =
+      typeof r.method === "string" && RETIRED_METHODS.has(r.method)
+        ? SETTING_DEFAULTS.method
+        : optionalPresetField(r.method, VALID_METHODS, SETTING_DEFAULTS.method);
     const normalizedMethod =
       format === null || method === null
         ? null

@@ -18,6 +18,7 @@ import {
 import {
   log,
   renderInputs,
+  getWorkspaceMode,
   setWorkspaceMode,
   setUiDensity,
   persistSettingsImmediately,
@@ -31,7 +32,8 @@ import {
   onCompressionOptionChange,
 } from "../presets";
 import { discardPendingUpdate } from "../updater";
-import { setBasicView, syncBasicWorkspaceFromPower } from "../basic";
+import { syncBasicWorkspaceFromPower } from "../basic";
+import { resumeBasicView, syncBasicSecretsToPower } from "../basic/sync";
 import { resetRuntimeStateForFirstRun } from "../power-helpers";
 import { showToast } from "../toast";
 import { runSetupWizardFlow } from "./setup-wizard-flow";
@@ -81,13 +83,19 @@ export function wireSettingsEvents(): void {
       discardPendingUpdate();
     }
     applyTheme(state.currentSettings.theme);
+    if (
+      getWorkspaceMode() === "basic" &&
+      state.currentSettings.workspaceMode === "power"
+    ) {
+      syncBasicSecretsToPower();
+    }
     setWorkspaceMode(state.currentSettings.workspaceMode, { persist: false });
     void syncWorkspaceWindowFx();
     if (
       state.currentSettings.workspaceMode === "basic" &&
       previous.workspaceMode !== "basic"
     ) {
-      setBasicView("home");
+      resumeBasicView();
     }
     setUiDensity(state.currentSettings.uiDensity, { persist: false });
     if (compressionDefaultsChanged(previous, state.currentSettings)) {
@@ -172,13 +180,13 @@ export function wireSettingsEvents(): void {
         ask(
           "Are you sure you want to reset all settings to default and restart Zinnia? This also deletes all logs, recent archives, and custom presets.",
           {
-            title: "Reset Settings",
+            title: "Reset settings",
             kind: "warning",
             okLabel: "Reset & Restart",
             cancelLabel: "Cancel",
           },
         ),
-      "Reset Settings",
+      "Reset settings",
     );
     if (!confirmed) return;
 

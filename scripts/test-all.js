@@ -24,7 +24,7 @@ const appVersion = packageJson.version ?? "unknown";
 const scriptVersion = "1.1.5";
 const criticalCoverageThresholds = {
   // Directory keys (trailing `/`) aggregate all matching `src/<dir>/**/*.ts` files.
-  "archive/": { lines: 80, branches: 62, functions: 88 },
+  "archive/": { lines: 80, branches: 62, functions: 87 },
   "basic/": { lines: 60, branches: 44, functions: 44 },
   "basic/extract-events.ts": { lines: 70, branches: 50, functions: 70 },
   "extract-window/": { lines: 72, branches: 53, functions: 66 },

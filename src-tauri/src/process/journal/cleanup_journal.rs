@@ -9,6 +9,7 @@ use super::identity::{
 };
 use super::{
     MAX_MOVE_IDENTITY_LOG_BYTES, MAX_MOVE_IDENTITY_RECORD_BYTES, MAX_RECOVERY_JOURNAL_BYTES,
+    MOVE_IDENTITY_BATCH_RECORDS,
 };
 use crate::process::commit::{archive_backup_path, archive_destination_for, archive_family};
 use crate::process::CleanupPlan;
@@ -210,15 +211,18 @@ pub(crate) fn effective_move_identity_log_identity(
     {
         return unchanged;
     }
-    // At most one record can be unjournaled: either torn (no newline yet) or
-    // complete (exactly one newline, at the end).
-    let newlines = suffix.iter().filter(|byte| **byte == b'\n').count();
-    let one_record = match newlines {
-        0 => true,
-        1 => suffix.last() == Some(&b'\n'),
-        _ => false,
-    };
-    if !one_record || suffix.len() > MAX_MOVE_IDENTITY_RECORD_BYTES.saturating_add(1) {
+    let complete_len = suffix
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(0, |last| last + 1);
+    let (complete, torn) = suffix.split_at(complete_len);
+    let complete_records = complete.iter().filter(|byte| **byte == b'\n').count();
+    if complete_records > MOVE_IDENTITY_BATCH_RECORDS
+        || complete.len()
+            > MOVE_IDENTITY_BATCH_RECORDS
+                .saturating_mul(MAX_MOVE_IDENTITY_RECORD_BYTES.saturating_add(1))
+        || torn.len() > MAX_MOVE_IDENTITY_RECORD_BYTES
+    {
         return unchanged;
     }
     Ok(Some(identity_with_file_content(
@@ -1099,5 +1103,149 @@ impl CleanupJournalGuard {
             self.active = false;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod batch_tail_tests {
+    use super::*;
+    use sha2::Digest as _;
+
+    struct LogFixture {
+        root: std::path::PathBuf,
+        stage: std::path::PathBuf,
+        expected: FileIdentity,
+    }
+
+    impl LogFixture {
+        fn new(name: &str, journaled: &[u8], tail: &[u8]) -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "{name}-{}",
+                crate::process::staging::random_token().expect("random test token")
+            ));
+            std::fs::create_dir_all(&root).expect("root");
+            let stage = root.join(".zinnia-extract-tail");
+            let path = move_identity_log_path(&stage);
+            std::fs::write(&path, journaled).expect("journaled prefix");
+            let identity = {
+                let file = std::fs::File::open(&path).expect("open prefix");
+                file_identity(&file).expect("prefix identity")
+            };
+            let expected = identity_with_file_content(
+                identity,
+                journaled.len() as u64,
+                sha2::Sha256::digest(journaled).into(),
+            );
+            if !tail.is_empty() {
+                use std::io::Write as _;
+                let mut file = std::fs::OpenOptions::new()
+                    .append(true)
+                    .open(&path)
+                    .expect("append tail");
+                file.write_all(tail).expect("write tail");
+            }
+            Self {
+                root,
+                stage,
+                expected,
+            }
+        }
+
+        fn effective(&self) -> FileIdentity {
+            effective_move_identity_log_identity(&self.stage, Some(&self.expected))
+                .expect("effective identity")
+                .expect("expected identity is present")
+        }
+
+        fn remove(self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn record_line(index: usize) -> Vec<u8> {
+        format!("{{\"index\":{index}}}\n").into_bytes()
+    }
+
+    fn records(count: usize) -> Vec<u8> {
+        (0..count).flat_map(record_line).collect()
+    }
+
+    fn fingerprint_len(identity: &FileIdentity) -> u64 {
+        match identity.fingerprint() {
+            Some(ObjectFingerprint::File { len, .. }) => *len,
+            _ => panic!("expected a file fingerprint"),
+        }
+    }
+
+    #[test]
+    fn effective_identity_accepts_single_unjournaled_record() {
+        let journaled = record_line(0);
+        let tail = record_line(1);
+        let fixture = LogFixture::new("zinnia-tail-one", &journaled, &tail);
+        let effective = fixture.effective();
+        assert_ne!(effective, fixture.expected);
+        assert_eq!(
+            fingerprint_len(&effective),
+            (journaled.len() + tail.len()) as u64
+        );
+        fixture.remove();
+    }
+
+    #[test]
+    fn effective_identity_accepts_full_batch_tail() {
+        let journaled = record_line(0);
+        let tail = records(MOVE_IDENTITY_BATCH_RECORDS);
+        let fixture = LogFixture::new("zinnia-tail-batch", &journaled, &tail);
+        let effective = fixture.effective();
+        assert_eq!(
+            fingerprint_len(&effective),
+            (journaled.len() + tail.len()) as u64
+        );
+        fixture.remove();
+    }
+
+    #[test]
+    fn effective_identity_rejects_tail_beyond_one_batch() {
+        let journaled = record_line(0);
+        let tail = records(MOVE_IDENTITY_BATCH_RECORDS + 1);
+        let fixture = LogFixture::new("zinnia-tail-too-long", &journaled, &tail);
+        assert_eq!(fixture.effective(), fixture.expected);
+        fixture.remove();
+    }
+
+    #[test]
+    fn effective_identity_accepts_torn_final_record_after_batch() {
+        let journaled = record_line(0);
+        let mut tail = records(MOVE_IDENTITY_BATCH_RECORDS - 1);
+        tail.extend_from_slice(b"{\"index\":300,\"ident");
+        let fixture = LogFixture::new("zinnia-tail-torn", &journaled, &tail);
+        let effective = fixture.effective();
+        assert_eq!(
+            fingerprint_len(&effective),
+            (journaled.len() + tail.len()) as u64
+        );
+        fixture.remove();
+    }
+
+    #[test]
+    fn effective_identity_rejects_oversized_torn_record() {
+        let journaled = record_line(0);
+        let tail = vec![b'x'; MAX_MOVE_IDENTITY_RECORD_BYTES + 1];
+        let fixture = LogFixture::new("zinnia-tail-torn-big", &journaled, &tail);
+        assert_eq!(fixture.effective(), fixture.expected);
+        fixture.remove();
+    }
+
+    #[test]
+    fn effective_identity_ignores_tail_when_prefix_changed() {
+        let journaled = record_line(0);
+        let tail = records(2);
+        let fixture = LogFixture::new("zinnia-tail-prefix-changed", &journaled, &tail);
+        let path = move_identity_log_path(&fixture.stage);
+        let mut bytes = std::fs::read(&path).expect("log bytes");
+        bytes[0] = b'[';
+        std::fs::write(&path, bytes).expect("rewrite prefix");
+        assert_eq!(fixture.effective(), fixture.expected);
+        fixture.remove();
     }
 }

@@ -137,3 +137,11 @@
   flex-wrap: wrap;
   gap: 6px;
 }
+
+@media (forced-colors: active) {
+  .segmented__btn.is-active {
+    background: Highlight;
+    color: HighlightText;
+    border-color: Highlight;
+  }
+}

@@ -7,8 +7,14 @@ import {
   type UiDensity,
   sanitizePowerWindowSize,
 } from "../settings-model";
-import { saveSettings } from "../settings";
+import {
+  isSettingsFileUnreadable,
+  persistableSettingsSnapshot,
+  saveSettings,
+  takeSettingsReplacementPermit,
+} from "../settings";
 import { syncWorkspaceWindowFx } from "../window-fx";
+import { showToast } from "../toast";
 import { devLog } from "./log";
 
 export { syncWorkspaceWindowFx } from "../window-fx";
@@ -19,6 +25,13 @@ const BASIC_WINDOW_HEIGHT = 650;
 let workingContextPersistTimer: number | undefined;
 let settingsPersistQueue: Promise<void> = Promise.resolve();
 let settingsPersistGeneration = 0;
+let workingContextFailureReported = false;
+type WorkspaceModeListener = (mode: WorkspaceMode) => void;
+const workspaceModeListeners = new Set<WorkspaceModeListener>();
+
+export function onWorkspaceModeChange(listener: WorkspaceModeListener): void {
+  workspaceModeListeners.add(listener);
+}
 
 export class SettingsPersistSupersededError extends Error {
   constructor() {
@@ -41,6 +54,7 @@ function enqueueSettingsPersist(
   snapshot: typeof state.currentSettings,
   extras: typeof state.settingsExtras,
   generation: number,
+  replacementAllowed: boolean,
 ): Promise<void> {
   const operation = settingsPersistQueue
     .catch(() => undefined)
@@ -48,7 +62,7 @@ function enqueueSettingsPersist(
       if (generation < settingsPersistGeneration) {
         throw new SettingsPersistSupersededError();
       }
-      await saveSettings(snapshot, extras);
+      await saveSettings(snapshot, extras, { replacementAllowed });
       if (generation !== settingsPersistGeneration) {
         throw new SettingsPersistSupersededError();
       }
@@ -66,8 +80,14 @@ export async function persistSettingsImmediately(
     clearTimeout(workingContextPersistTimer);
     workingContextPersistTimer = undefined;
   }
+  const replacementAllowed = takeSettingsReplacementPermit();
   const generation = ++settingsPersistGeneration;
-  await enqueueSettingsPersist({ ...snapshot }, { ...extras }, generation);
+  await enqueueSettingsPersist(
+    { ...snapshot },
+    { ...extras },
+    generation,
+    replacementAllowed,
+  );
 }
 
 /**
@@ -95,17 +115,27 @@ export async function flushPendingSettingsPersistence(): Promise<void> {
 export function queuePersistWorkingContext(): void {
   if (workingContextPersistTimer !== undefined) {
     clearTimeout(workingContextPersistTimer);
+    workingContextPersistTimer = undefined;
   }
-  const snapshot = { ...state.currentSettings };
+  if (isSettingsFileUnreadable()) return;
+  const snapshot = persistableSettingsSnapshot();
   const extras = { ...state.settingsExtras };
   const generation = ++settingsPersistGeneration;
   workingContextPersistTimer = window.setTimeout(() => {
     workingContextPersistTimer = undefined;
-    void enqueueSettingsPersist(snapshot, extras, generation).catch((err) => {
-      if (isSettingsPersistSupersededError(err)) return;
-      const msg = err instanceof Error ? err.message : String(err);
-      devLog(`Failed to persist working context: ${msg}`);
-    });
+    if (isSettingsFileUnreadable()) return;
+    void enqueueSettingsPersist(snapshot, extras, generation, false)
+      .then(() => {
+        workingContextFailureReported = false;
+      })
+      .catch((err) => {
+        if (isSettingsPersistSupersededError(err)) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        devLog(`Failed to persist working context: ${msg}`);
+        if (workingContextFailureReported) return;
+        workingContextFailureReported = true;
+        showToast(`Could not save settings. ${msg}`, "error", 0);
+      });
   }, WORKING_CONTEXT_PERSIST_DEBOUNCE_MS);
 }
 
@@ -123,7 +153,7 @@ export async function resizeWorkspaceWindow(
   const generation = ++workspaceResizeGeneration;
   const size =
     mode === "basic"
-      ? { width: BASIC_WINDOW_WIDTH, height: BASIC_WINDOW_HEIGHT }
+      ? { width: BASIC_WINDOW_WIDTH, height: basicWindowHeight() }
       : sanitizePowerWindowSize(
           state.currentSettings.powerWindowWidth,
           state.currentSettings.powerWindowHeight,
@@ -173,6 +203,18 @@ export async function resizeWorkspaceWindow(
   await operation;
 }
 
+function basicWindowHeight(): number {
+  const available = window.screen?.availHeight;
+  if (
+    typeof available === "number" &&
+    Number.isFinite(available) &&
+    available > 0
+  ) {
+    return Math.min(BASIC_WINDOW_HEIGHT, Math.floor(available));
+  }
+  return BASIC_WINDOW_HEIGHT;
+}
+
 function syncBasicWindowChrome(resizable: boolean): void {
   const maxBtn = document.getElementById(
     "titlebar-max",
@@ -208,6 +250,7 @@ export function setWorkspaceMode(
     "s-workspace-mode",
   ) as HTMLSelectElement | null;
   if (workspaceSelect) workspaceSelect.value = mode;
+  for (const listener of workspaceModeListeners) listener(mode);
   if (options.persist !== false && previousMode !== mode) {
     queuePersistWorkingContext();
   }

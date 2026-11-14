@@ -574,7 +574,7 @@ describe("basic-ui views and rendering", () => {
     ).toBe("bundle");
     expect(
       (document.getElementById("basic-output-path") as HTMLInputElement).value,
-    ).toBe("/tmp/bundle.tar");
+    ).toBe("");
     expect(basicPassword.disabled).toBe(true);
     expect(basicPassword.value).toBe("");
     expect(basicPassword.placeholder).toContain(
@@ -1354,7 +1354,7 @@ describe("basic-ui drag and init wiring", () => {
     expect(uiMocks.setMode).toHaveBeenCalledWith("extract");
     expect(getBasicView()).toBe("extract");
     expect(document.querySelector(".toast")?.textContent).toContain(
-      "1 more were not added",
+      "1 more item was not added",
     );
   });
 
@@ -1868,7 +1868,7 @@ describe("basic-ui drag and init wiring", () => {
     expect(state.inputs).toHaveLength(4_096);
     expect(state.inputs.at(-1)).toBe("/tmp/archive-4095.7z");
     expect(document.querySelector(".toast")?.textContent).toContain(
-      "1 more were not added",
+      "1 more item was not added",
     );
   });
 
